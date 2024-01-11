@@ -2,4 +2,6 @@ keyboard
 pynput
 pyperclip
 pyaudio
+torch
+faster-whisper
 insanely-fast-whisper

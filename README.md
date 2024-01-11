@@ -1,8 +1,9 @@
 # Whisper-Typer
 
-An application for TTS using [Insanely-Fast-Whisper](https://github.com/Vaibhavs10/insanely-fast-whisper)
+An application for desktop STT using [Insanely-Fast-Whisper](https://github.com/Vaibhavs10/insanely-fast-whisper)
+
 This allows you to type in any desktop application using your voice in over 99 languages, with very high speed and accuracy.
-The app runs locally, no need for any internet connection.
+The app runs locally, so there is no need for an internet connection.
 
 ## Setup
 
@@ -22,7 +23,7 @@ cd Whisper-Typer
 
 install the requirements:
 
- ```
+```
 pip install -r requirements.txt
 ```
 
@@ -52,3 +53,9 @@ Releasing the key will transcribe the audio you recorded, paste it wherever your
 
 - The application only records while the record key is held down.
 - The application does not transcribe audio that is less than 1 second long.
+
+## Acknowledgments
+
+- This tool is powered by Hugging Face's ASR models, primarily Whisper by OpenAI.
+- [Silero's Voice Activity Detection (VAD)](https://github.com/snakers4/silero-vad) is implemented to prevent hallucinations on silence start.
+- Optimizations are developed by [Vaibhavs10/insanely-fast-whisper](https://github.com/Vaibhavs10/insanely-fast-whisper)
