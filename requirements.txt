@@ -3,5 +3,9 @@ pynput
 pyperclip
 pyaudio
 torch
+pygame
+pystray
+ninja
+ttkbootstrap
 faster-whisper
 insanely-fast-whisper
