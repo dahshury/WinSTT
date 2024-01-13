@@ -1,9 +1,10 @@
 # Whisper-Typer
 
+![Alt text](<Screenshot 2024-01-13 222002.png>)
+
 An application for desktop STT using [Insanely-Fast-Whisper](https://github.com/Vaibhavs10/insanely-fast-whisper) and [Faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 
-This allows you to type in any desktop application using your voice and state of the art AI TTS model in over 99 languages (GPU-only, or CPU with English only), with very high speed and accuracy.
-The app runs locally, so there is no need for an internet connection.
+Whisper-Typer is a Python-based Graphical User Interface (GUI) application that leverages the power of Insanely-Fast-Whisper and Faster-whisper for efficient  voice typing functionality. This desktop tool allows users to transcribe speech into text across various desktop applications using Whisper by OpenAI. With support for over 99 languages and the capability to run locally without the need for an internet connection.
 
 ## Setup
 
@@ -42,6 +43,12 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 ### Start The App
 
 - Start the python script by running the bash command:
+
+```
+python winTTS.py
+```
+
+- alternatively, you can use the python script listener.py, which contains the default functionality:
 
 ```
 python listener.py
