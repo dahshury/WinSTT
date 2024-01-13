@@ -1,4 +1,4 @@
-/cache
 /output.wav
 __pycache__
-/logs
+/log
+/utils/cache
