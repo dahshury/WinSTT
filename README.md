@@ -1,6 +1,6 @@
-# Whisper-Typer
+# WinSTT
 
-![Alt text](<Screenshot 2024-01-13 222002.png>)
+![Alt text](<untitled.png>)
 
 An application for desktop STT using [Insanely-Fast-Whisper](https://github.com/Vaibhavs10/insanely-fast-whisper) and [Faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 
@@ -45,7 +45,7 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 - Start the python script by running the bash command:
 
 ```
-python winTTS.py
+python winSTT.py
 ```
 
 - alternatively, you can use the python script listener.py, which contains the default functionality:
@@ -68,6 +68,7 @@ Releasing the key will transcribe the audio you recorded, paste it wherever your
 - You can use this app using a CPU, it will run Faster-whisper small.en by default. However, if you have a CUDA GPU, this will increase the speed and the accuracy and is highly recommended.
 - The application does not transcribe audio that is less than 0.5 second long.
 - Currently, supporting only a single hotkey, not a combination of keys.
+- Currently, the progress bar is not really measuring the progress of the application. It's there to indicate that the app is loading.
 
 ## Acknowledgments
 

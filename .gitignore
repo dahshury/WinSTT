@@ -3,3 +3,6 @@ __pycache__
 /log
 /utils/cache
 /auto pytoexe
+MyTTS.bat
+RealtimeSTT.py
+transcribe_all_wavs.sh
