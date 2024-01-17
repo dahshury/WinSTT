@@ -6,7 +6,10 @@ An application for desktop STT using [Insanely-Fast-Whisper](https://github.com/
 
 Whisper-Typer is a Python-based Graphical User Interface (GUI) application that leverages the power of Insanely-Fast-Whisper and Faster-whisper for efficient  voice typing functionality. This desktop tool allows users to transcribe speech into text across various desktop applications using Whisper by OpenAI. With support for over 99 languages and the capability to run locally without the need for an internet connection.
 
-## Setup
+You can download the CUDA 11.8 version from [WinSTT GPU](https://drive.google.com/file/d/1WG0pXaPl9BKXYLbGdh6Wb4UcwKa_vS0A/view?usp=sharing)
+or you can download the CPU version from [WinSTT](https://drive.google.com/file/d/1-8lx3uvvkrD1aG92uLLIUGvHhHTlcZKv/view?usp=sharing)
+
+## Python Version Setup
 
 ### Install Dependencies
 
@@ -56,7 +59,7 @@ python listener.py
 
 ### Usage
 
-After starting the app, wait until "Ready." is displayed in the terminal. Upon first usage, the application might take a while to download the required files.
+After starting the app, wait until "Ready." is displayed in the terminal.
 
 Hold the right control key to start recording, release it to stop. There can be a very slight (0.2ms) delay between the start of the pressing and the start of the app listening to the audio from your microphone. You should only start speaking after hearing the audio cue, or seeing the "Ready." printed in the terminal.
 
@@ -64,6 +67,7 @@ Releasing the key will transcribe the audio you recorded, paste it wherever your
 
 ### Notes
 
+- Upon loading the app for the first time, nothing may appear for a while. Please wait for the model files to be downloaded, (about 1 GB) this will depend on your internet connection. After the model is downloaded, no internet connection needed unless you change the model.
 - The application only records while the record key is held down.
 - You can use this app using a CPU, it will run Faster-whisper small.en by default. However, if you have a CUDA GPU, this will increase the speed and the accuracy and is highly recommended.
 - The application does not transcribe audio that is less than 0.5 second long.
