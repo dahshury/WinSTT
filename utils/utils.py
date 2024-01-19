@@ -9,38 +9,43 @@ torch.set_num_threads(1)
 
 logger = setup_logger()
 torch.nn.functional.scaled_dot_product_attention
+
 def has_speech(audio_file_path):
-    try:
-        model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad',
-                                        model='silero_vad',
-                                        verbose=False
-                                        )
+    if os.path.getsize(audio_file_path) > 1024:
+        try:
+            model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad',
+                                            model='silero_vad',
+                                            verbose=False
+                                            )
 
-        SAMPLING_RATE = 16000
-        (get_speech_timestamps,
-        save_audio,
-        read_audio,
-        VADIterator,
-        collect_chunks) = utils
-    except Exception as e:
-        logger.exception(f"Error initializing Silero VAD "
-                                f"voice activity detection engine: {e}")
-        raise
-    vad_iterator = VADIterator(model)
-    wav = read_audio(audio_file_path, sampling_rate=SAMPLING_RATE)
+            SAMPLING_RATE = 16000
+            (get_speech_timestamps,
+            save_audio,
+            read_audio,
+            VADIterator,
+            collect_chunks) = utils
+        except Exception as e:
+            logger.exception(f"Error initializing Silero VAD "
+                                    f"voice activity detection engine: {e}")
+            raise
+        vad_iterator = VADIterator(model)
+        wav = read_audio(audio_file_path, sampling_rate=SAMPLING_RATE)
 
-    window_size_samples = 1536  # number of samples in a single audio chunk
-    for i in range(0, len(wav), window_size_samples):
-        chunk = wav[i: i + window_size_samples]
-        if len(chunk) < window_size_samples:
-            break
-        speech_dict = vad_iterator(chunk)
-        if speech_dict:
-            vad_iterator.reset_states()
-            return True
-            
-    vad_iterator.reset_states()  # reset model states after each audio
-    return False
+        window_size_samples = 1536  # number of samples in a single audio chunk
+        for i in range(0, len(wav), window_size_samples):
+            chunk = wav[i: i + window_size_samples]
+            if len(chunk) < window_size_samples:
+                break
+            speech_dict = vad_iterator(chunk)
+            if speech_dict:
+                vad_iterator.reset_states()
+                return True
+                
+        vad_iterator.reset_states()  # reset model states after each audio
+        return False
+    
+    else:
+        return False
 
 def get_model(model_type, model_size):
     CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")

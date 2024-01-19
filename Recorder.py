@@ -17,37 +17,46 @@ class Recorder():
         self._frames = []
         self.data = None
         self.p = pyaudio.PyAudio()
+        self.stream = None
 
-    def start(self):
-        self._running.set()
-        threading.Thread(target=self.__recording).start()
+    def start(self, error_callback=None):
+        self.error_callback = error_callback
+        try:
+            self._running.set()
+            threading.Thread(target=self.__recording).start()
+        except Exception as e:
+            raise e
 
     def __recording(self):
         self._frames = []
 
-        stream = self.p.open(format=self.FORMAT,
-                        channels=self.CHANNELS,
-                        rate=self.RATE,
-                        input=True,
-                        frames_per_buffer=self.CHUNK)
+        try:
+            self.stream = self.p.open(format=self.FORMAT,
+                            channels=self.CHANNELS,
+                            rate=self.RATE,
+                            input=True,
+                            frames_per_buffer=self.CHUNK)
 
-        while self._running.is_set():
-            self.data = stream.read(self.CHUNK)
-            self._frames.append(self.data)
-        stream.stop_stream()
-        stream.close()
-        self.p.terminate()
+            while self._running.is_set():
+                self.data = self.stream.read(self.CHUNK)
+                self._frames.append(self.data)
+            self.stream.stop_stream()
+            self.stream.close()
+            self.p.terminate()
+        
+        except Exception as e:
+            if hasattr(self, 'error_callback') and callable(self.error_callback):
+                self.error_callback(e)
+            raise e
 
     def stop(self):
         self._running.clear()
+        self.p = pyaudio.PyAudio()
 
     def save(self, filename):
-        p = pyaudio.PyAudio()
-        if not filename.endswith(".wav"):
-            filename = filename + ".wav"
         wf = wave.open(filename, 'wb')
         wf.setnchannels(self.CHANNELS)
-        wf.setsampwidth(p.get_sample_size(self.FORMAT))
+        wf.setsampwidth(self.p.get_sample_size(self.FORMAT))
         wf.setframerate(self.RATE)
         wf.writeframes(b''.join(self._frames))
         wf.close()
@@ -63,26 +72,3 @@ class Recorder():
         if os.path.isfile(mp3):
             Recorder.delete(mp3)
         subprocess.call('ffmpeg -i "'+wav+'" "'+mp3+'"')
-
-
-# if __name__ == "__main__":
-#     rec = Recorder()
-#     print("Start recording")
-#     rec.start()
-    
-#     # Allow some time for recording (adjust as needed)
-#     time.sleep(5)
-    
-#     print("Stop recording")
-#     rec.stop()
-    
-#     # Wait for the recording thread to finish
-#     rec_thread = threading.Thread(target=rec.start)
-#     rec_thread.join()
-
-#     print("Saving")
-#     rec.save("test.wav")
-#     print("Converting wav to mp3")
-#     Recorder.wavTomp3("test.wav")
-#     print("Deleting wav")
-#     Recorder.delete("test.wav")
