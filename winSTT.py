@@ -14,10 +14,8 @@ import os
 import torch
 import keyboard
 import threading
-import time
 from utils.utils import get_model
 from listener import AudioToTextRecorder
-# from logger import setup_logger
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -433,4 +431,4 @@ class Window(QMainWindow, Ui_MainWindow):
 app = QApplication(sys.argv)
 window = Window()
 window.show()
-sys.exit(app.exec())
+app.exec()

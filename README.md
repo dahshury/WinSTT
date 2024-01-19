@@ -6,9 +6,9 @@ An application for desktop STT using [Insanely-Fast-Whisper](https://github.com/
 
 WinSTT is an application that leverages the power of OpenAI's Whisper STT model for efficient  voice typing functionality. This desktop tool allows users to transcribe speech into text in any application. With support for over 99 languages and the capability to run locally without the need for an internet connection.
 
-You can download the CUDA 11.8 version from [WinSTT GPU](https://drive.google.com/file/d/1WG0pXaPl9BKXYLbGdh6Wb4UcwKa_vS0A/view?usp=sharing) (Must have the torch CUDA from below)
+<!-- You can download the CUDA 11.8 version from [WinSTT GPU](https://drive.google.com/file/d/1WG0pXaPl9BKXYLbGdh6Wb4UcwKa_vS0A/view?usp=sharing) (Must have the torch CUDA from below)
 
-or you can download the CPU version from [WinSTT](https://drive.google.com/file/d/1I09x-8JnrZQ140ZHOAawxZEwS6HyPE3s/view?usp=sharing)
+or you can download the CPU version from [WinSTT](https://drive.google.com/file/d/1I09x-8JnrZQ140ZHOAawxZEwS6HyPE3s/view?usp=sharing) -->
 
 ## Why
 

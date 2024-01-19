@@ -9,6 +9,7 @@ from keyboard import KEY_DOWN, KEY_UP, hook_key, wait, unhook_all
 from pynput.keyboard import Key, Controller
 from Recorder import Recorder
 import pygame
+import subprocess
 
 class AudioToTextRecorder:
     def __init__(self,
@@ -44,6 +45,10 @@ class AudioToTextRecorder:
         self.stream_status = ""
         self.stream_flag = False
         self.callback_fn = callback_fn
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        self.scriptdir = os.path.dirname(os.path.abspath(__file__))
         hook_key(self.rec_key, self.transcribe_recording)
         
     def initialize_model(self):
@@ -113,18 +118,19 @@ class AudioToTextRecorder:
             time_since_last_press = current_time - self.last_playback_time
             self.last_press_time = time_since_last_press
             if time_since_last_press >= self.min_duration:
-                self.rec.save("output.wav")
+                wav_path = os.path.join(self.scriptdir ,"output.wav")
+                self.rec.save(wav_path)
                 self.logger.debug("Recording stopped")
-                if os.path.getsize("output.wav") > 1024:
+                if os.path.getsize(wav_path) > 1024:
                     
-                    if not has_speech("output.wav"):
+                    if not has_speech(wav_path):
                         self.logger.warning("No speech detected during the recording.")
                         self.stream_status = "No speech detected during the recording."
                         self.callback_fn(self.stream_status)
 
                     elif self.model_type == "Insanely-Fast-Whisper":
                         outputs = self.model(
-                            "output.wav",
+                            os.path.join(wav_path),
                             chunk_length_s=30,
                             batch_size=24,
                             return_timestamps=True,
@@ -133,7 +139,7 @@ class AudioToTextRecorder:
 
                     else:
                         # Faster-Whisper inference
-                        segments, info = self.model.transcribe('output.wav', beam_size=5)
+                        segments, info = self.model.transcribe(wav_path, beam_size=5)
                         for segment in segments:
                             self.logger.debug(segment.text)
                             self.paste_transcription(segment.text)
@@ -147,6 +153,7 @@ class AudioToTextRecorder:
                 self.callback_fn(self.stream_status)
                 
 if __name__ == "__main__":
-    att = AudioToTextRecorder().initialize_model()
+    att = AudioToTextRecorder(print)
+    att.initialize_model()
     while True:
         att.capture_keys()
