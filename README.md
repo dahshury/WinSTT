@@ -84,7 +84,7 @@ The app contains a "record key" button, which allows you to change the recording
 - Currently, supporting only a single hotkey, not a combination of keys.
 - Mashing the record key fast in sequence might crash the application.
 - Currently, the progress bar is not really measuring the progress. It's there to indicate that the app is loading/downloading files.
-- The app contains no viruses. It was compiled using Pyinstaller.
+<!-- - The app contains no viruses. It was compiled using Pyinstaller. -->
 
 ## Acknowledgments
 
