@@ -65,6 +65,7 @@ class Ui_MainWindow(object):
         self.centralwidget.setSizePolicy(sizePolicy)
         self.centralwidget.setObjectName("centralwidget")
         self.line = QFrame(parent=self.centralwidget)
+        self.line.setStyleSheet("color: rgb(144, 164, 174);")
         self.line.setGeometry(QtCore.QRect(80, 190, 241, 20))
         self.line.setFrameShape(QFrame.Shape.HLine)
         self.line.setFrameShadow(QFrame.Shadow.Sunken)
@@ -77,20 +78,34 @@ class Ui_MainWindow(object):
         self.checkBox.setAcceptDrops(True)
         self.checkBox.setObjectName("checkBox")
         self.checkBox.setStyleSheet("""QCheckBox {
-                                            border-style: outset; border-radius: 3px;
-                                            }
-                                            QCheckBox::indicator {background-color: rgb(54, 71, 84);
-                                            border-width: 1px;
-                                            border-color: rgb(78, 106, 129);}
-                                            QCheckBox::indicator:checked {background-color: rgb(20, 89, 134);}
-                                            """)
+                                    border-style: outset;
+                                    border-radius: 3px;
+                                    color: rgb(144, 164, 174);
+                                }
+                                QCheckBox::indicator {
+                                    background-color: rgb(54, 71, 84);
+                                    border-width: 1px;
+                                    border-color: rgb(78, 106, 129);
+                                }
+                                QCheckBox::indicator:checked {
+                                    background-color: rgb(20, 89, 134);
+                                }
+                                """)
         self.label = QLabel(parent=self.centralwidget)
         self.label.setGeometry(QtCore.QRect(190, 269, 161, 31))
+        self.label.setStyleSheet("""QLabel {
+                                    color: rgb(144, 164, 174);
+                                }
+                                """)
         font = QtGui.QFont()
         font.setFamily("Roboto")
         self.label.setFont(font)
         self.label.setObjectName("label")
         self.WinSTT = QLabel(parent=self.centralwidget)
+        self.WinSTT.setStyleSheet("""QLabel {
+                                    color: rgb(144, 164, 174);
+                                }
+                                """)
         self.WinSTT.setGeometry(QtCore.QRect(150, 10, 131, 31))
         font = QtGui.QFont()
         font.setFamily("Codec Pro ExtraBold")
@@ -103,6 +118,7 @@ class Ui_MainWindow(object):
         self.WinSTT.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.WinSTT.setObjectName("WinSTT")
         self.label_3 = QLabel(parent=self.centralwidget)
+        self.label_3.setStyleSheet("color: rgb(144, 164, 174);")
         self.label_3.setGeometry(QtCore.QRect(35, 200, 330, 50))
         self.label_3.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         font = QtGui.QFont()
@@ -113,7 +129,11 @@ class Ui_MainWindow(object):
         self.progressBar = QProgressBar(parent=self.centralwidget)
         self.progressBar.setGeometry(QtCore.QRect(60, 240, 290, 14))
         self.progressBar.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.progressBar.setStyleSheet("QProgressBar {background-color: rgb(8, 11, 14);  border-radius: 5px}")
+        self.progressBar.setStyleSheet("""
+                                            QProgressBar {background-color: rgb(8, 11, 14);
+                                            color: rgb(144, 164, 174);
+                                            border-radius: 5px}
+                                            """)
         font = QtGui.QFont()
         font.setFamily("Input")
         self.progressBar.setFont(font)
@@ -144,7 +164,7 @@ class Ui_MainWindow(object):
         self.pushButton = QPushButton(parent=self.centralwidget)
         self.pushButton.setGeometry(QtCore.QRect(230, 70, 101, 31))
         self.pushButton.setObjectName("pushButton")
-        self.pushButton.setStyleSheet("QPushButton {background-color: rgb(54, 71, 84); border-style: outset;  border-radius: 3px; border-width: 1px; border-color: rgb(78, 106, 129)}")
+        self.pushButton.setStyleSheet("QPushButton {background-color: rgb(54, 71, 84); color: rgb(144, 164, 174); border-style: outset;  border-radius: 3px; border-width: 1px; border-color: rgb(78, 106, 129)}")
 
         self.textEdit = QTextEdit(parent=self.centralwidget)
         self.textEdit.setGeometry(QtCore.QRect(70, 70, 110, 31))
@@ -153,7 +173,12 @@ class Ui_MainWindow(object):
         self.textEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.textEdit.setReadOnly(True)
         self.textEdit.setObjectName("Current Key")
-        self.textEdit.setStyleSheet("QTextEdit {background-color: rgb(54, 71, 84); border-style: outset;  border-radius: 3px; border-width: 1px; border-color: rgb(78, 106, 129)}")
+        self.textEdit.setStyleSheet("""
+                                    QTextEdit {background-color: rgb(54, 71, 84);
+                                    color: rgb(144, 164, 174); border-style: outset;
+                                    border-radius: 3px; border-width: 1px;
+                                    border-color: rgb(78, 106, 129)}
+                                    """)
         self.comboBox = QComboBox(parent=self.centralwidget)
         self.comboBox.setGeometry(QtCore.QRect(70, 140, 111, 31))
         self.comboBox.setObjectName("Model Type")
@@ -162,6 +187,7 @@ class Ui_MainWindow(object):
         self.comboBox.setStyleSheet("""
             QComboBox {
                 background-color: rgb(54, 71, 84);
+                color: rgb(144, 164, 174);
                 placeholder-text-color: rgb(173, 190, 203);
                 border-style: outset;
                 border-radius: 3px;
@@ -191,6 +217,7 @@ class Ui_MainWindow(object):
         self.comboBox_2.setStyleSheet("""
             QComboBox {
                 background-color: rgb(54, 71, 84);
+                color: rgb(144, 164, 174);
                 placeholder-text-color: rgb(173, 190, 203);
                 border-style: outset;
                 border-radius: 3px;
@@ -306,7 +333,7 @@ class Ui_MainWindow(object):
         self.progressBar.setVisible(False)
         self.pushButton.setEnabled(True)
         self.textEdit.setEnabled(True)
-        self.comboBox.setEnabled(True)
+        self.comboBox.setEnabled(True if torch.cuda.is_available() else False)
         self.comboBox_2.setEnabled(True)
         self.label_3.setText("")
         
