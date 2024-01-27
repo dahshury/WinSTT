@@ -80,8 +80,7 @@ class AudioToTextRecorder:
         threading.Thread(target=self.play_sound, args=(sound_file,)).start()
 
     def capture_keys(self):
-        
-        wait(self.rec_key)
+        hook_key(self.rec_key, self.transcribe_recording)
         
     def paste_transcription(self, transcript_text):
         if self.model_type == "Insanely-Fast-Whisper":
@@ -151,7 +150,8 @@ class AudioToTextRecorder:
                 self.logger.warning(f"Audio duration is less than {self.min_duration}s long. Please make a longer recording.")
                 self.stream_status = f"Audio duration is less than {self.min_duration}s long.\n Please make a longer recording."
                 self.callback_fn(self.stream_status)
-                
+        # hook_key(self.rec_key, self.transcribe_recording)   
+        # wait(self.rec_key)
 if __name__ == "__main__":
     att = AudioToTextRecorder(print)
     att.initialize_model()
