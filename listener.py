@@ -109,7 +109,8 @@ class AudioToTextRecorder:
                 self.stream_status = f"{e}"
                 self.callback_fn(self.stream_status)
             # Start playing the sound in a separate thread
-            self.play_sound_thread(self.start_sound)
+            if self.start_sound != "":
+                self.play_sound_thread(self.start_sound)
         elif e.event_type == KEY_UP and e.name == self.rec_key and self.recording:
             self.recording = False
             current_time = time.time()

@@ -1,4 +1,4 @@
-# WinSTT
+# <img src="Windows 1 Theta.ico" alt="Alt text" width="30"> WinSTT
 
 ![Alt text](<untitled.png>)
 

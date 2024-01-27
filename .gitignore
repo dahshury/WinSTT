@@ -6,3 +6,4 @@ __pycache__
 MyTTS.bat
 RealtimeSTT.py
 transcribe_all_wavs.sh
+/output
