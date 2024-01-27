@@ -430,19 +430,13 @@ class Window(QMainWindow, Ui_MainWindow):
         self.tray_icon.hide()
         QtCore.QCoreApplication.quit()
 
-    def closeEvent(self, event):
-        # Override the close event to minimize to the system tray instead
-        event.ignore()
-        self.hide()
-        self.show_notification()
-
     def show_notification(self):
         self.minimize_counter +=1
     # Only show notification when the window is minimized the first time
         if self.minimize_counter == 1:
             self.tray_icon.showMessage(
                 "App Minimized",
-                "The application is still running in the background. Right click on icon to exit",
+                "The app is minimized, and still running in the background. Right click on icon to exit",
                 QSystemTrayIcon.MessageIcon.Information,
                 2000
             )
@@ -454,6 +448,13 @@ class Window(QMainWindow, Ui_MainWindow):
     def show_window(self):
         self.showNormal()
         self.activateWindow()
+        
+    def changeEvent(self, event):
+        if event.type() == QtCore.QEvent.Type.WindowStateChange and self.isMinimized():
+            # Override the close event to minimize to the system tray instead
+            event.ignore()
+            self.hide()
+            self.show_notification()
 
 app = QApplication(sys.argv)
 window = Window()
