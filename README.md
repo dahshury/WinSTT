@@ -8,7 +8,7 @@ WinSTT is an application that leverages the power of OpenAI's Whisper STT model 
 
 <!-- You can download the CUDA 11.8 version from [WinSTT GPU](https://drive.google.com/file/d/1WG0pXaPl9BKXYLbGdh6Wb4UcwKa_vS0A/view?usp=sharing) (Must have the torch CUDA from below) -->
 
-or you can download the CPU version from [WinSTT v0.1 CPU](https://drive.google.com/file/d/1u20s9QokghYoQ3sNN6HsaEljVuM9Oo6f/view?usp=drive_link)
+You can download the CPU version from [WinSTT v0.1 CPU](https://drive.google.com/file/d/1u20s9QokghYoQ3sNN6HsaEljVuM9Oo6f/view?usp=drive_link)
 
 ## Why
 
