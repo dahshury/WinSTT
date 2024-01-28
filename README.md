@@ -6,9 +6,9 @@ An application for desktop STT using [Insanely-Fast-Whisper](https://github.com/
 
 WinSTT is an application that leverages the power of OpenAI's Whisper STT model for efficient  voice typing functionality. This desktop tool allows users to transcribe speech into text in any application. With support for over 99 languages and the capability to run locally without the need for an internet connection.
 
-<!-- You can download the CUDA 11.8 version from [WinSTT GPU](https://drive.google.com/file/d/1WG0pXaPl9BKXYLbGdh6Wb4UcwKa_vS0A/view?usp=sharing) (Must have the torch CUDA from below)
+<!-- You can download the CUDA 11.8 version from [WinSTT GPU](https://drive.google.com/file/d/1WG0pXaPl9BKXYLbGdh6Wb4UcwKa_vS0A/view?usp=sharing) (Must have the torch CUDA from below) -->
 
-or you can download the CPU version from [WinSTT](https://drive.google.com/file/d/1I09x-8JnrZQ140ZHOAawxZEwS6HyPE3s/view?usp=sharing) -->
+or you can download the CPU version from [WinSTT v0.1 CPU](https://drive.google.com/file/d/1u20s9QokghYoQ3sNN6HsaEljVuM9Oo6f/view?usp=drive_link)
 
 ## Why
 
@@ -76,6 +76,7 @@ The app contains a "record key" button, which allows you to change the recording
 
 ## Notes
 
+- The .EXE versions of the program can be detected as viruses. This is [common](https://medium.com/@markhank/how-to-stop-your-python-programs-being-seen-as-malware-bfd7eb407a7) as this program is compiled using Pyinstaller. You  can check the [CPU version Virustotal](https://www.virustotal.com/gui/file/dd6483c19dd3abc2ffa0508da80d9e514806413895b347655bfc45e49d45e681?nocache=1) to confirm this isn't malicious. You can also alternatively use the python .py version to avoid this problem.
 - Upon loading the app for the first time, Please wait for the model files to be downloaded, (about 1 GB) this will depend on your internet connection. After the model is downloaded, no internet connection needed unless you change the model.
 - The app will automatically detect if audio is present in the speech. If not, or if an error occurs, it will output a message inside the app.
 - The application only records while the record key is held down.
