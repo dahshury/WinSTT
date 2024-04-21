@@ -12,7 +12,7 @@ You can download the CPU version from [WinSTT v0.1 CPU](https://drive.google.com
 
 ## Why
 
-Existing Windows speech to text is slow, not accurate, and not intuitive. I think this app provides customizable hotkey activation, and fast and accurate transcription for rapid typing. This is especially useful to those who write articles, blogs, and even conversations.
+Existing Windows speech-to-text is slow, not accurate, and not intuitive. This app provides customizable hotkey activation, and fast and accurate transcription for rapid typing. This is especially useful to those who write articles, blogs, and even conversations.
 
 ## Python Version Setup
 
