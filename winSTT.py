@@ -22,13 +22,13 @@ class Ui_MainWindow(object):
         
         self.script_path = (os.path.dirname(os.path.abspath(__file__)))
         
-        # self.logger = setup_logger()
+        # self.logger = setup_logger()https://github.com/dahshury/WinSTT.git
         
         MainWindow.setObjectName("MainWindow")
         MainWindow.setEnabled(True)
         MainWindow.setFixedSize(400, 300)
         
-        icon = QIcon(os.path.join(self.script_path, "Windows 1 Theta.png"))
+        icon = QIcon(os.path.join(self.script_path, "./media/Windows 1 Theta.png"))
         MainWindow.setWindowIcon(icon)
         
         sizePolicy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -157,7 +157,7 @@ class Ui_MainWindow(object):
         self.label_2 = QLabel(parent=self.centralwidget)
         self.label_2.setGeometry(QtCore.QRect(160, 10, 21, 21))
         self.label_2.setText("")
-        self.label_2.setPixmap(QtGui.QPixmap(os.path.join(self.script_path, "Windows 1 Theta.png")))
+        self.label_2.setPixmap(QtGui.QPixmap(os.path.join(self.script_path, "./media/Windows 1 Theta.png")))
         self.label_2.setScaledContents(True)
         self.label_2.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.label_2.setObjectName("label_2")
@@ -233,13 +233,13 @@ class Ui_MainWindow(object):
         self.label_4 = QLabel(parent=self.centralwidget)
         self.label_4.setGeometry(QtCore.QRect(360, 270, 31, 31))
         self.label_4.setText("")
-        self.label_4.setPixmap(QtGui.QPixmap(os.path.join(self.script_path, "switch-on.png" if torch.cuda.is_available() else "switch-off.png")))
+        self.label_4.setPixmap(QtGui.QPixmap(os.path.join(self.script_path, "./media/switch-on.png" if torch.cuda.is_available() else "switch-off.png")))
         self.label_4.setScaledContents(True)
         self.label_4.setObjectName("label_4")
         self.label_5 = QLabel(parent=self.centralwidget)
         self.label_5.setGeometry(QtCore.QRect(0, -5, 401, 51))
         self.label_5.setText("")
-        self.label_5.setPixmap(QtGui.QPixmap(os.path.join(self.script_path,"Untitled-1.png")))
+        self.label_5.setPixmap(QtGui.QPixmap(os.path.join(self.script_path,"./media/Untitled-1.png")))
         self.label_5.setScaledContents(True)
         self.label_5.setObjectName("label_5")
         self.label_5.raise_()
@@ -266,7 +266,7 @@ class Ui_MainWindow(object):
         MainWindow.setWindowTitle(_translate("MainWindow", "WinSTT"))
         self.checkBox.setText(_translate("MainWindow", "Recording sound (Drag/Drop)"))
         self.checkBox.setChecked(True)
-        self.label.setText(_translate("MainWindow", "Hardware Acceleration Status:"))
+        self.label.setText(_translate("MainWindow", "H/W Acceleration:"))
         self.WinSTT.setText(_translate("MainWindow", "STT"))
         self.label_3.setText(_translate("MainWindow", ""))
         self.pushButton.setText(_translate("MainWindow", "Change Rec Key"))
@@ -409,7 +409,7 @@ class Window(QMainWindow, Ui_MainWindow):
         
     def create_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(QIcon("Windows 1 Theta.png"))
+        self.tray_icon.setIcon(QIcon("./media/Windows 1 Theta.png"))
 
         show_action = QAction("Show", self)
         close_action = QAction("Exit", self)
