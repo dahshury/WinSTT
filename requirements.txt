@@ -2,7 +2,7 @@ keyboard
 pynput
 pyperclip
 pyaudio
-torch
+torch>=2.0.1
 pygame
 pystray
 pyqt6

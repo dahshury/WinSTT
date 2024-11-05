@@ -1,10 +1,10 @@
-# <img src="Windows 1 Theta.ico" alt="Alt text" width="30"> WinSTT
+# <img src="./media/Windows 1 Theta.ico" alt="Alt text" width="30"> WinSTT
 
-![Alt text](<untitled.png>)
+![Alt text](</media/untitled.png>)
 
 An application for desktop STT using [Insanely-Fast-Whisper](https://github.com/Vaibhavs10/insanely-fast-whisper) and [Faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 
-WinSTT is an application that leverages the power of OpenAI's Whisper STT model for efficient  voice typing functionality. This desktop tool allows users to transcribe speech into text in any application. With support for over 99 languages and the capability to run locally without the need for an internet connection.
+WinSTT is an application that leverages the power of OpenAI's Whisper STT model for efficient voice typing functionality. This desktop tool allows users to transcribe speech into text in any application, with support for over 99 languages and the capability to run locally without the need for an internet connection.
 
 <!-- You can download the CUDA 11.8 version from [WinSTT GPU](https://drive.google.com/file/d/1WG0pXaPl9BKXYLbGdh6Wb4UcwKa_vS0A/view?usp=sharing) (Must have the torch CUDA from below) -->
 
@@ -20,27 +20,47 @@ Existing Windows speech to text is slow, not accurate, and not intuitive. I thin
 
 - First, clone the repo:
 
-```
-git clone https://github.com/dahshury/Whisper-Typer.git
-```
+    ```bash
+    git clone https://github.com/dahshury/Whisper-Typer.git
+    ```
 
 - Navigate to the cloned directory:
 
-```
-cd Whisper-Typer
-```
+    ```bash
+    cd Whisper-Typer
+    ```
 
-initialize the environment using conda:
+- Initialize the environment using conda:
 
-```
-conda env create -f env.yml
-```
+    ```bash
+    conda env create -f env.yaml
+    ```
 
-install the requirements:
+- Install the requirements:
 
-```
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+<details>
+<summary>Linux Users: Additional Setup for PyAudio</summary>
+
+For Linux, you need to install `PortAudio`, which PyAudio depends on. Use the following commands to install PortAudio on common Linux distributions:
+
+- **Debian/Ubuntu**:
+    ```bash
+    sudo apt update
+    sudo apt install 
+    sudo apt install portaudio19-dev libxcb1 libxcb-cursor0 libxcb-keysyms1 libxcb-render0 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-icccm4 libxcb-image0 libxcb-sync1 libxcb-xinerama0 libxcb-randr0 libxcb-util1 libx11-xcb1 libxrender1 libxkbcommon-x11-0
+    ```
+
+After installing PortAudio, retry installing the requirements:
+    
+```bash
 pip install -r requirements.txt
 ```
+
+</details>
 
 - For CUDA inference (If you have a CUDA GPU), run the following commands in your bash terminal (optional, highly recommended, must have for GPU version):
 

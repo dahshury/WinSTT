@@ -40,7 +40,7 @@ class AudioToTextRecorder:
         self.last_playback_time = 0
         self.last_press_time = 0
         self.set_key_toggle = False
-        self.model_sizes = ["tiny.en", "tiny", "base.en", "base" ,"small.en", "small", "medium.en", "medium",  "large-v1", "large-v2", "large-v3"]
+        self.model_sizes = ["tiny.en", "tiny", "base.en", "base" ,"small.en", "small", "large-v1", "large-v2", "large-v3", "large-v3-turbo"]
         self.model_types = ["Insanely-Fast-Whisper", "Faster-Whisper"]
         self.stream_status = ""
         self.stream_flag = False
