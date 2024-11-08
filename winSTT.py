@@ -21,7 +21,8 @@ class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         
         self.script_path = (os.path.dirname(os.path.abspath(__file__)))
-        
+        print(self.script_path)
+        print(torch.cuda.is_available())
         # self.logger = setup_logger()https://github.com/dahshury/WinSTT.git
         
         MainWindow.setObjectName("MainWindow")
@@ -71,7 +72,7 @@ class Ui_MainWindow(object):
         self.line.setFrameShadow(QFrame.Shadow.Sunken)
         self.line.setObjectName("line")
         self.checkBox = QCheckBox(parent=self.centralwidget)
-        self.checkBox.setGeometry(QtCore.QRect(10, 269, 175, 31))
+        self.checkBox.setGeometry(QtCore.QRect(10, 269, 180, 31))
         font = QtGui.QFont()
         font.setFamily("Roboto")
         self.checkBox.setFont(font)
@@ -92,7 +93,7 @@ class Ui_MainWindow(object):
                                 }
                                 """)
         self.label = QLabel(parent=self.centralwidget)
-        self.label.setGeometry(QtCore.QRect(190, 269, 161, 31))
+        self.label.setGeometry(QtCore.QRect(262, 269, 161, 31))
         self.label.setStyleSheet("""QLabel {
                                     color: rgb(144, 164, 174);
                                 }
@@ -211,9 +212,6 @@ class Ui_MainWindow(object):
         self.comboBox_2.addItem("")
         self.comboBox_2.addItem("")
         self.comboBox_2.addItem("")
-        self.comboBox_2.addItem("")
-        self.comboBox_2.addItem("")
-        self.comboBox_2.addItem("")
         self.comboBox_2.setStyleSheet("""
             QComboBox {
                 background-color: rgb(54, 71, 84);
@@ -233,7 +231,7 @@ class Ui_MainWindow(object):
         self.label_4 = QLabel(parent=self.centralwidget)
         self.label_4.setGeometry(QtCore.QRect(360, 270, 31, 31))
         self.label_4.setText("")
-        self.label_4.setPixmap(QtGui.QPixmap(os.path.join(self.script_path, "./media/switch-on.png" if torch.cuda.is_available() else "switch-off.png")))
+        self.label_4.setPixmap(QtGui.QPixmap(os.path.join(self.script_path, "./media/switch-on.png" if torch.cuda.is_available() else "./media/switch-off.png")))
         self.label_4.setScaledContents(True)
         self.label_4.setObjectName("label_4")
         self.label_5 = QLabel(parent=self.centralwidget)
@@ -276,16 +274,13 @@ class Ui_MainWindow(object):
         self.comboBox.setEnabled(True if torch.cuda.is_available() else False)
         self.comboBox_2.setItemText(0, _translate("MainWindow", "tiny.en"))
         self.comboBox_2.setItemText(1, _translate("MainWindow", "tiny"))
-        self.comboBox_2.setItemText(2, _translate("MainWindow", "base.en"))
-        self.comboBox_2.setItemText(3, _translate("MainWindow", "base"))
-        self.comboBox_2.setItemText(4, _translate("MainWindow", "small.en"))
-        self.comboBox_2.setItemText(5, _translate("MainWindow", "small"))
-        self.comboBox_2.setItemText(6, _translate("MainWindow", "medium.en"))
-        self.comboBox_2.setItemText(7, _translate("MainWindow", "medium"))
-        self.comboBox_2.setItemText(8, _translate("MainWindow", "large"))
-        self.comboBox_2.setItemText(9, _translate("MainWindow", "large-v2"))
-        self.comboBox_2.setItemText(10, _translate("MainWindow", "large-v3"))
-        self.comboBox_2.setCurrentText("small")
+        self.comboBox_2.setItemText(2, _translate("MainWindow", "small.en"))
+        self.comboBox_2.setItemText(3, _translate("MainWindow", "small"))
+        self.comboBox_2.setItemText(4, _translate("MainWindow", "large"))
+        self.comboBox_2.setItemText(5, _translate("MainWindow", "large-v2"))
+        self.comboBox_2.setItemText(6, _translate("MainWindow", "large-v3"))
+        self.comboBox_2.setItemText(7, _translate("MainWindow", "large-v3-turbo"))
+        self.comboBox_2.setCurrentText("tiny.en")
         
     def keyPressEvent(self, event: QtGui.QKeyEvent):
         if self.record_key_toggle:
@@ -315,6 +310,7 @@ class Ui_MainWindow(object):
     def select_model_size(self, model_size):
         self.label_3.setText("Downloading & Loading model, please wait...")
         self.progressBar.setVisible(True)
+        self.listener.model_type = self.comboBox.currentText()
         self.listener.model_size = self.comboBox_2.currentText()
         self.pushButton.setEnabled(False)
         self.textEdit.setEnabled(False)
@@ -369,9 +365,9 @@ class Window(QMainWindow, Ui_MainWindow):
         super().__init__()
         self.listener = AudioToTextRecorder(callback_fn=self.display_error)
         self.setupUi(self)
-        self.select_model_size("small")
+        self.select_model_size("tiny.en")
         self.comboBox_2.currentIndexChanged.connect(self.select_model_size)
-        
+        self.comboBox.currentIndexChanged.connect(self.select_model_size)
         self.start_sound = os.path.join(self.script_path, "splash.mp3")
         self.currently_hooked = None
         self.record_key_toggle = False

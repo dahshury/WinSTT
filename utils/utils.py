@@ -3,12 +3,15 @@ import joblib
 import os
 from logger import setup_logger
 from faster_whisper import WhisperModel
-from transformers import pipeline
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 from transformers.utils import is_flash_attn_2_available
 torch.set_num_threads(1)
 
 logger = setup_logger()
 torch.nn.functional.scaled_dot_product_attention
+
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+torch_dtype = torch.float16
 
 def has_speech(audio_file_path):
     if os.path.getsize(audio_file_path) > 1024:
@@ -62,13 +65,22 @@ def get_model(model_type, model_size):
     elif model_type == "Insanely-Fast-Whisper":
         try:
         # If not in cache, create the pipeline and save to cache
+            model_id="openai/whisper-"+model_size
+            processor = AutoProcessor.from_pretrained(model_id)
+            model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True, uswe_safetensors=True
+            )
+            model.to(device)
             model = pipeline(
                 "automatic-speech-recognition",
-                model="openai/whisper-"+model_size,
-                torch_dtype=torch.float16,
-                device="cuda:0",
+                model=model_id,
+                tokenizer=processor.tokenizer,
+                feature_extractor=processor.feature_extractor,
+                torch_dtype=torch_dtype,
+                device=device,
                 model_kwargs={"attn_implementation": "flash_attention_2"} if is_flash_attn_2_available() else {"attn_implementation": "sdpa"},
             )
+
             joblib.dump(model, cache_file)
             logger.debug(f"Model: {model_type} {model_size} loaded and cached.")
         except Exception as e:
@@ -77,7 +89,8 @@ def get_model(model_type, model_size):
     else:
         # Run on CPU with int8
         try:
-            model = WhisperModel(model_size_or_path=model_size, device='cuda' if torch.cuda.is_available() else 'cpu', compute_type="auto")
+            model = WhisperModel(model_size_or_path=model_size, device="cuda" if torch.cuda.is_available() else "cpu", compute_type="auto")
+            # joblib.dump(model.model, cache_file)
             logger.debug(f"Model: {model_type} {model_size} loaded and cached.")
         except Exception as e:
              logger.exception(f"Error initializing transcription model: {model_type} {model_size}, {e}")

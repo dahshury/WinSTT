@@ -40,8 +40,6 @@ class AudioToTextRecorder:
         self.last_playback_time = 0
         self.last_press_time = 0
         self.set_key_toggle = False
-        self.model_sizes = ["tiny.en", "tiny", "base.en", "base" ,"small.en", "small", "large-v1", "large-v2", "large-v3", "large-v3-turbo"]
-        self.model_types = ["Insanely-Fast-Whisper", "Faster-Whisper"]
         self.stream_status = ""
         self.stream_flag = False
         self.callback_fn = callback_fn
@@ -145,7 +143,7 @@ class AudioToTextRecorder:
                             self.paste_transcription(segment.text)
                             
                 else:
-                    self.stream_status = f"Invalid device configuratgion.\n Check log for details"
+                    self.stream_status = f"Invalid device configuratgion.\n Check log   for details"
                     self.callback_fn(self.stream_status)
             else:
                 self.logger.warning(f"Audio duration is less than {self.min_duration}s long. Please make a longer recording.")
