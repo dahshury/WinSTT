@@ -21,13 +21,13 @@ Existing Windows speech to text is slow, not accurate, and not intuitive. I thin
 - First, clone the repo:
 
     ```bash
-    git clone https://github.com/dahshury/Whisper-Typer.git
+    git clone https://github.com/dahshury/WinSTT
     ```
 
 - Navigate to the cloned directory:
 
     ```bash
-    cd Whisper-Typer
+    cd WinSTT
     ```
 
 - Initialize the environment using conda:
@@ -36,37 +36,52 @@ Existing Windows speech to text is slow, not accurate, and not intuitive. I thin
     conda env create -f env.yaml
     ```
 
+- Activate the environment:
+
+    ```bash
+    conda activate WinSTT
+    ```
+
 - Install the requirements:
 
+    <details>
+    <summary>CPU VERSION</summary>
+
+    ```bash
+    pip install -r requirements.txt torch torchvision torchaudio
+    ```
+
+    </details>
+
+    <details>
+    <summary>GPU VERSION</summary>
+
+    ```bash
+    pip install -r requirements.txt 
+    pip install torch==2.5.1+cu124 torchvision==0.20.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124
+    ```
+
+    </details>
+
+    <details>
+    <summary>Linux users only: additional setup for PyAudio</summary>
+
+    For Linux, you need to install `PortAudio`, which PyAudio depends on. Use the following commands to install PortAudio on common Linux distributions:
+
+    - **Debian/Ubuntu**:
+        ```bash
+        sudo apt update
+        sudo apt install 
+        sudo apt install portaudio19-dev libxcb1 libxcb-cursor0 libxcb-keysyms1 libxcb-render0 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-icccm4 libxcb-image0 libxcb-sync1 libxcb-xinerama0 libxcb-randr0 libxcb-util1 libx11-xcb1 libxrender1 libxkbcommon-x11-0
+        ```
+
+    After installing PortAudio, retry installing the requirements:
+        
     ```bash
     pip install -r requirements.txt
     ```
 
-<details>
-<summary>Linux Users: Additional Setup for PyAudio</summary>
-
-For Linux, you need to install `PortAudio`, which PyAudio depends on. Use the following commands to install PortAudio on common Linux distributions:
-
-- **Debian/Ubuntu**:
-    ```bash
-    sudo apt update
-    sudo apt install 
-    sudo apt install portaudio19-dev libxcb1 libxcb-cursor0 libxcb-keysyms1 libxcb-render0 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-icccm4 libxcb-image0 libxcb-sync1 libxcb-xinerama0 libxcb-randr0 libxcb-util1 libx11-xcb1 libxrender1 libxkbcommon-x11-0
-    ```
-
-After installing PortAudio, retry installing the requirements:
-    
-```bash
-pip install -r requirements.txt
-```
-
-</details>
-
-- For CUDA inference (If you have a CUDA GPU), run the following commands in your bash terminal (optional, highly recommended, must have for GPU version):
-
-```
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
+    </details>
 
 ### Start The App
 

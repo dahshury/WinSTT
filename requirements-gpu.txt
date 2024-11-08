@@ -1,0 +1,13 @@
+keyboard==0.13.5
+pynput==1.7.7
+pyperclip==1.9.0
+PyAudio==0.2.14
+pygame==2.6.1
+pystray==0.19.5
+PyQt6==6.7.1
+faster-whisper==1.0.3
+insanely-fast-whisper==0.0.15
+numpy==1.26.3
+transformers==4.46.1
+torchaudio==2.3.1
+cudatoolkit==12.1
