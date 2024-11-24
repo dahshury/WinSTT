@@ -1,9 +1,7 @@
-/output.wav
 __pycache__
 /log
 /utils/cache
+test.ipynb
 /pyqt
-MyTTS.bat
 RealtimeSTT.py
-transcribe_all_wavs.sh
 /output
