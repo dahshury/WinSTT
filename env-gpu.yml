@@ -1,0 +1,25 @@
+name: winstt
+channels:
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - cudatoolkit=12.2  # NVIDIA CUDA Toolkit
+  - cudnn=9.1         # NVIDIA cuDNN Library
+  - numpy=2.0.2
+  - requests=2.31.0
+  - tqdm=4.67.0
+  - pip
+  - pip:
+      - PyAudio==0.2.14
+      - PyQt6==6.7.1
+      - keyboard==0.13.5
+      - librosa==0.10.0.post2
+      - onnxruntime-gpu==1.20.0
+      - pydub==0.25.1
+      - pygame==2.6.1
+      - pynput==1.7.7
+      - pyperclip==1.9.0
+      - transformers==4.46.1
+      - PyAutoGUI==0.9.54
