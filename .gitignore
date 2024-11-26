@@ -1,7 +1,7 @@
 __pycache__
 /log
 /utils/cache
-test.ipynb
-/pyqt
-RealtimeSTT.py
+/test.ipynb
+/RealtimeSTT
 /output
+setup.py

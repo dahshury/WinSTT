@@ -7,6 +7,10 @@ import numpy as np
 from transformers import WhisperTokenizerFast, WhisperFeatureExtractor
 import json
 import librosa
+import queue
+from collections import deque
+import threading
+import time
 import onnxruntime as ort
 from logger import setup_logger
 from pydub import AudioSegment
@@ -16,12 +20,13 @@ script_path = (os.path.dirname(os.path.abspath(__file__)))
 cache_path = os.path.join(script_path, "cache")
 
 class WhisperONNXTranscriber:
-    def __init__(self, cache_path=cache_path, q="full" if 'CUDAExecutionProvider' in ort.get_available_providers() else "quantized"):
+    def __init__(self, cache_path=cache_path, q="full" if 'CUDAExecutionProvider' in ort.get_available_providers() else "quantized", display_message_signal=None):
         self.cache_path = cache_path
         self.q = q
         self.model_type = "Whisper-turbo"
         # Subfolder for ONNX files
         self.onnx_folder = os.path.join(self.cache_path, "onnx")
+        self.display_message_signal = display_message_signal
         # Ensure models are downloaded
         self.update_names()
         self.download_and_prepare_models()
@@ -31,6 +36,13 @@ class WhisperONNXTranscriber:
         self.tokenizer = WhisperTokenizerFast.from_pretrained(self.cache_path)
         self.feature_extractor = WhisperFeatureExtractor.from_pretrained(self.cache_path)
         
+        # Streaming attributes
+        self.audio_buffer = deque(maxlen=96000)  # 6 seconds buffer at 16kHz
+        self.buffer_lock = threading.Lock()
+        self.processing_thread = None
+        self.is_processing = False
+        self.current_transcript = ""
+        self.transcript_queue = queue.Queue()
         # Load configuration files
         with open(os.path.join(self.cache_path, "config.json"), 'r') as f:
             self.config = json.load(f)
@@ -73,7 +85,6 @@ class WhisperONNXTranscriber:
             os.remove(encoder_path)
             if self.q.lower()=="full":
                 encoder_onnx_data_path = os.path.join(self.onnx_folder, self.encoder_name.replace("onnx", "onnx_data"))
-                print(encoder_onnx_data_path)
                 if os.path.exists(encoder_onnx_data_path):
                     os.remove(encoder_onnx_data_path)
             self.download_and_prepare_models()
@@ -120,7 +131,7 @@ class WhisperONNXTranscriber:
                 if not os.path.exists(file_path):
                     print(f"File '{file_name}' not found. Downloading...")
                     file_url = repo_url + file_name
-                    self.download_file_with_progress(file_url, file_path)
+                    self.download_file_with_progress(file_url, file_path, file_name)
 
         # Download configuration files
         for config_file in config_files:
@@ -128,10 +139,10 @@ class WhisperONNXTranscriber:
             config_url = f"https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/{config_file}"
             if not os.path.exists(config_path):
                 print(f"Configuration file '{config_file}' not found. Downloading...")
-                self.download_file_with_progress(config_url, config_path)
+                self.download_file_with_progress(config_url, config_path, config_file)
+        self.display_message_signal.emit(None, None, None, None, True)
 
-    @staticmethod
-    def download_file_with_progress(url, save_path):
+    def download_file_with_progress(self, url, save_path, name):
         """Download a file from a URL with a progress bar and handle errors."""
         try:
             response = requests.get(url, stream=True, timeout=10)
@@ -139,29 +150,40 @@ class WhisperONNXTranscriber:
 
             total_size = int(response.headers.get('content-length', 0))
             block_size = 1024  # 1 KiB
-
+            curr_perc = 0
             with open(save_path, 'wb') as file, tqdm(
                 desc=f"Downloading {os.path.basename(save_path)}",
                 total=total_size,
                 unit='B',
                 unit_scale=True,
                 unit_divisor=1024,
-            ) as bar:
+            ) as bar: 
                 for data in response.iter_content(block_size):
                     file.write(data)
                     bar.update(len(data))
-            print(f"File downloaded successfully: {save_path}")
+                    
+                    percent = (bar.n / total_size) * 100 if total_size > 1024 else 0
+                    
+                    # Signal progress
+                    if self.display_message_signal:
+                        self.display_message_signal.emit(None, name, percent, True, None)
+            custom_logger.debug(f"File downloaded successfully: {save_path}")
 
         except requests.ConnectionError:
-            print("Failed to connect to the internet. Please check your connection.")
+            self.display_message_signal.emit("Failed to connect to the internet. Please check your connection.", None, None, None, None)
+            custom_logger.error(f"Failed to connect to the internet. Please check your connection.")
         except requests.HTTPError as http_err:
-            print(f"HTTP error occurred: {http_err}")
+            self.display_message_signal.emit("Failed to connect to the internet. Please check your connection.", None, None, None, None)
+            custom_logger.error(f"HTTP error occurred: {http_err}")
         except requests.Timeout:
-            print("The request timed out. Please try again later.")
+            self.display_message_signal.emit("Failed to connect to the internet. Please check your connection.", None, None, None, None)
+            custom_logger.error("The request timed out. Please try again later.")
         except requests.RequestException as req_err:
-            print(f"An error occurred: {req_err}")
+            self.display_message_signal.emit("Failed to connect to the internet. Please check your connection.", None, None, None, None)
+            custom_logger.error(f"An error occurred: {req_err}")
         except Exception as err:
-            print(f"An unexpected error occurred: {err}")
+            self.self.display_message_signal = ("Failed to connect to the internet. Please check your connection.", None, None, None, None)
+            custom_logger.error(f"An unexpected error occurred: {err}")
 
     def preprocess_audio(self, audio_path):
         # Load audio file using librosa
@@ -269,7 +291,7 @@ class WhisperONNXTranscriber:
                     break
 
             except Exception as e:
-                print(f"Error in decoder iteration: {e}")
+                custom_logger.error(f"Error in decoder iteration: {e}")
                 break
 
         return np.array(output_ids, dtype=np.int64).T  # Ensure int64
@@ -301,22 +323,94 @@ class WhisperONNXTranscriber:
             
             return transcription
         except Exception as e:
-            print(f"Error in transcription pipeline: {str(e)}")
+            custom_logger.error(f"Error in transcription pipeline: {str(e)}")
             raise
         
+    def process_audio_chunk(self, chunk):
+        """Process a single chunk of audio data."""
+        with self.buffer_lock:
+            # Convert int16 to float32 and normalize
+            if chunk.dtype == np.int16:
+                chunk = chunk.astype(np.float32) / 32768.0
+            
+            # Add to buffer
+            self.audio_buffer.extend(chunk)
+            
+            # Only process if we have enough data
+            if len(self.audio_buffer) >= 16000:  # 1 second of audio
+                # Convert buffer to numpy array
+                audio_data = np.array(list(self.audio_buffer), dtype=np.float32)
+                
+                # Process through feature extractor
+                inputs = self.feature_extractor(
+                    audio_data,
+                    sampling_rate=16000,
+                    return_tensors="np"
+                )
+                
+                # Get encoder outputs
+                encoder_outputs = self.encode(inputs.input_features)
+                
+                # Run decoder
+                output_ids = self.decode(encoder_outputs)
+                
+                # Get transcription
+                transcription = self.postprocess(output_ids)
+                
+                # Update current transcript and put in queue
+                self.current_transcript = transcription
+                self.transcript_queue.put(transcription)
+                
+                # Keep only the last 0.5 seconds of audio for context
+                self.audio_buffer = deque(list(self.audio_buffer)[-8000:], maxlen=48000)
+
+    def start_processing(self):
+        """Start the background processing thread."""
+        self.is_processing = True
+        self.processing_thread = threading.Thread(target=self._process_stream, daemon=True)
+        self.processing_thread.start()
+
+    def stop_processing(self):
+        """Stop the background processing thread."""
+        self.is_processing = False
+        if self.processing_thread:
+            self.processing_thread.join()
+
+    def _process_stream(self):
+        """Background thread for continuous processing."""
+        while self.is_processing:
+            try:
+                if len(self.audio_buffer) >= 16000:
+                    self.process_audio_chunk(np.array([]))
+                else:
+                    time.sleep(0.1)  # Prevent busy waiting
+            except Exception as e:
+                custom_logger.error(f"Error in processing thread: {e}")
+                break
+
+    def get_current_transcript(self):
+        """Get the latest transcript."""
+        try:
+            while not self.transcript_queue.empty():
+                self.current_transcript = self.transcript_queue.get_nowait()
+        except queue.Empty:
+            pass
+        return self.current_transcript
+                
 class VaDetector:
-    def __init__(self, onnx_path=cache_path, model_filename="silero_vad_16k.onnx"):
+    def __init__(self, onnx_path=cache_path, model_filename="silero_vad_16k.onnx", progress_callback=None):
         # Ensure the ONNX directory exists
         if not os.path.exists(onnx_path):
             os.makedirs(onnx_path)
-        
+        self.progress_callback = progress_callback
         # Full path to the ONNX model
         onnx_model_path = os.path.join(onnx_path, "onnx", model_filename)
         
         # Download the ONNX model if it doesn't exist
         if not os.path.exists(onnx_model_path):
+            filename="silero_vad_16k_op15"
             custom_logger.info(f"Downloading ONNX model to {onnx_model_path}...")
-            url = "https://github.com/snakers4/silero-vad/blob/master/src/silero_vad/data/silero_vad_16k_op15.onnx?raw=true"
+            url = f"https://github.com/snakers4/silero-vad/blob/master/src/silero_vad/data/{filename}.onnx?raw=true"
             try:
                 response = requests.get(url, stream=True)
                 response.raise_for_status()
@@ -326,20 +420,26 @@ class VaDetector:
                     for data in response.iter_content(block_size):
                         t.update(len(data))
                         f.write(data)
+                        self.progress_callback(filename=filename, percentage=int(t.n/total_size *100) if total_size>1024 else 0)
                 custom_logger.info(f"File downloaded successfully: {onnx_model_path}")
             except requests.ConnectionError:
+                self.progress_callback(txt="Failed to connect to the internet. Please check your connection.")
                 custom_logger.error("Failed to connect to the internet. Please check your connection.")
                 raise
             except requests.HTTPError as http_err:
+                self.progress_callback(txt="Failed to connect to the internet. Please check your connection.")
                 custom_logger.error(f"HTTP error occurred: {http_err}")
                 raise
             except requests.Timeout:
+                self.progress_callback(txt="Failed to connect to the internet. Please check your connection.")
                 custom_logger.error("The request timed out. Please try again later.")
                 raise
             except requests.RequestException as req_err:
+                self.progress_callback(txt="An error occurred while initializing VAD, check logs")
                 custom_logger.error(f"An error occurred while initializing VAD: {req_err}")
                 raise
             except Exception as err:
+                self.progress_callback(txt="An error occurred while initializing VAD, check logs")
                 custom_logger.error(f"An unexpected error occurred while initializing VAD: {err}")
                 raise
         
