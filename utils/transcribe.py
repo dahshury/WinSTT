@@ -14,13 +14,23 @@ import time
 import onnxruntime as ort
 from logger import setup_logger
 from pydub import AudioSegment
+import sys
 
 custom_logger = setup_logger()
-script_path = (os.path.dirname(os.path.abspath(__file__)))
-cache_path = os.path.join(script_path, "cache")
+# cache_path = os.path.join(os.path.dirname(os.path.dirname(script_path)), "cache") # For exe
+# cache_path = os.path.join(os.path.dirname(script_path), "cache")
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        base_path = os.path.dirname(sys._MEIPASS)
+    except Exception:
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    return os.path.join(base_path, relative_path)
 
 class WhisperONNXTranscriber:
-    def __init__(self, cache_path=cache_path, q="full" if 'CUDAExecutionProvider' in ort.get_available_providers() else "quantized", display_message_signal=None):
+    def __init__(self, cache_path=resource_path("cache"), q="full" if 'CUDAExecutionProvider' in ort.get_available_providers() else "quantized", display_message_signal=None):
         self.cache_path = cache_path
         self.q = q
         self.model_type = "Whisper-turbo"
@@ -99,6 +109,45 @@ class WhisperONNXTranscriber:
             os.remove(decoder_path) 
             self.download_and_prepare_models()
             custom_logger.debug(e)
+            
+    def reinitialize_sessions(self, q):
+        """
+        Reinitialize ONNX sessions with a new quantization type (e.g., 'full' or 'quantized').
+        
+        Args:
+            new_q (str): The new quantization type ('full' or 'quantized').
+        """
+        try:
+            # Log the operation
+            custom_logger.info(f"Reinitializing ONNX sessions with quantization: {q}")
+            
+            # Ensure the quantization type is valid
+            if q.lower() not in ["full", "quantized"]:
+                raise ValueError("Invalid quantization type. Choose 'full' or 'quantized'.")
+            
+            self.clear_sessions()
+            
+            # Update quantization and model names
+            self.q = q
+            self.update_names()
+
+            # Reinitialize ONNX sessions
+            self.initialize_sessions(q=self.q)
+
+            custom_logger.info("ONNX sessions successfully reinitialized.")
+
+        except Exception as e:
+            custom_logger.error(f"Error reinitializing ONNX sessions: {e}")
+            raise
+        
+    def clear_sessions(self):
+        # Delete current ONNX sessions
+        if hasattr(self, "encoder_session"):
+            del self.encoder_session
+        if hasattr(self, "decoder_session"):
+            del self.decoder_session
+        # Force garbage collection to release old sessions
+        gc.collect()
         
     def download_and_prepare_models(self):
         """Downloads the model files if they don't exist."""
@@ -140,7 +189,8 @@ class WhisperONNXTranscriber:
             if not os.path.exists(config_path):
                 print(f"Configuration file '{config_file}' not found. Downloading...")
                 self.download_file_with_progress(config_url, config_path, config_file)
-        self.display_message_signal.emit(None, None, None, None, True)
+        if self.display_message_signal:
+            self.display_message_signal.emit(None, None, None, None, True)
 
     def download_file_with_progress(self, url, save_path, name):
         """Download a file from a URL with a progress bar and handle errors."""
@@ -398,7 +448,7 @@ class WhisperONNXTranscriber:
         return self.current_transcript
                 
 class VaDetector:
-    def __init__(self, onnx_path=cache_path, model_filename="silero_vad_16k.onnx", progress_callback=None):
+    def __init__(self, onnx_path=resource_path("cache"), model_filename="silero_vad_16k.onnx", progress_callback=None):
         # Ensure the ONNX directory exists
         if not os.path.exists(onnx_path):
             os.makedirs(onnx_path)
