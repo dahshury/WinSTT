@@ -172,12 +172,11 @@ class WhisperONNXTranscriber:
             "normalizer.json"             # Optional normalization configurations for text preprocessing
         ]
 
-
         # Download ONNX files
         for file_name in files:
             if file_name is not None:
                 file_path = os.path.join(self.onnx_folder, file_name)
-                if not os.path.exists(file_path):
+                if not os.path.exists(file_path) or os.path.getsize(file_path) <= 2048:
                     print(f"File '{file_name}' not found. Downloading...")
                     file_url = repo_url + file_name
                     self.download_file_with_progress(file_url, file_path, file_name)
@@ -195,45 +194,163 @@ class WhisperONNXTranscriber:
     def download_file_with_progress(self, url, save_path, name):
         """Download a file from a URL with a progress bar and handle errors."""
         try:
+            # First check if the URL responds (without downloading the content)
+            head_response = requests.head(url, timeout=10)
+            head_response.raise_for_status()
+            
+            # Get the file from the server
             response = requests.get(url, stream=True, timeout=10)
-            response.raise_for_status()  # Raise HTTPError for bad responses (4xx and 5xx)
-
+            response.raise_for_status()
+            
+            # Log content type for debugging
+            content_type = response.headers.get('content-type', '').lower()
+            custom_logger.debug(f"Downloading {url} with content-type: {content_type}")
+            
+            # For small files, we'll check the first part to detect HTML error pages
+            content_is_html = False
+            
+            # Only download to a temporary file first for validation
+            temp_path = save_path + ".tmp"
+            
             total_size = int(response.headers.get('content-length', 0))
             block_size = 1024  # 1 KiB
-            curr_perc = 0
-            with open(save_path, 'wb') as file, tqdm(
+            
+            with open(temp_path, 'wb') as file, tqdm(
                 desc=f"Downloading {os.path.basename(save_path)}",
                 total=total_size,
                 unit='B',
                 unit_scale=True,
                 unit_divisor=1024,
-            ) as bar: 
+            ) as bar:
+                first_chunk = True
+                downloaded_size = 0
+                
                 for data in response.iter_content(block_size):
+                    if not data:  # Skip empty chunks
+                        continue
+                        
+                    # Check the first chunk for HTML content
+                    if first_chunk:
+                        try:
+                            text_sample = data[:512].decode('utf-8', errors='ignore')
+                            # Check for HTML markers
+                            content_is_html = (
+                                '<html' in text_sample or 
+                                '<body' in text_sample or 
+                                '<!DOCTYPE' in text_sample or
+                                '<head' in text_sample
+                            )
+                            
+                            # If dealing with JSON file but received HTML, abort
+                            if content_is_html and save_path.endswith('.json'):
+                                custom_logger.error(f"Received HTML content for a JSON file: {url}")
+                                raise Exception(f"Received HTML content instead of JSON: {url}")
+                                
+                            first_chunk = False
+                        except UnicodeDecodeError:
+                            # If we can't decode as text, it's probably binary data which is good
+                            # (assuming we're downloading a binary file)
+                            first_chunk = False
+                    
+                    # Write the data regardless of content type
                     file.write(data)
+                    downloaded_size += len(data)
                     bar.update(len(data))
                     
-                    percent = (bar.n / total_size) * 100 if total_size > 1024 else 0
-                    
-                    # Signal progress
+                    # Update progress
+                    percent = (downloaded_size / total_size) * 100 if total_size > 0 else 0
                     if self.display_message_signal:
                         self.display_message_signal.emit(None, name, percent, True, None)
-            custom_logger.debug(f"File downloaded successfully: {save_path}")
+            
+            # File downloaded, now validate based on file type
+            if os.path.exists(temp_path):
+                file_valid = True
+                
+                # For JSON files, verify they contain valid JSON
+                if save_path.endswith('.json'):
+                    try:
+                        with open(temp_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            # Basic check for HTML in JSON file
+                            if '<html' in content or '<!DOCTYPE' in content:
+                                custom_logger.error(f"Downloaded file contains HTML, not JSON: {save_path}")
+                                file_valid = False
+                            else:
+                                # Verify it parses as JSON
+                                import json
+                                json.loads(content)
+                    except json.JSONDecodeError as e:
+                        custom_logger.error(f"Downloaded file is not valid JSON: {save_path}, error: {e}")
+                        file_valid = False
+                    except Exception as e:
+                        custom_logger.error(f"Error validating JSON file: {save_path}, error: {e}")
+                        file_valid = False
+                
+                # For ONNX files, do basic size check
+                if save_path.endswith('.onnx'):
+                    file_size = os.path.getsize(temp_path)
+                    if file_size < 1000:  # ONNX files should be larger than this
+                        with open(temp_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content_peek = f.read(512)
+                            if '<html' in content_peek or '<!DOCTYPE' in content_peek:
+                                custom_logger.error(f"Downloaded file contains HTML, not an ONNX model: {save_path}")
+                                file_valid = False
+                
+                # Move temp file to final location if valid
+                if file_valid:
+                    os.replace(temp_path, save_path)
+                    custom_logger.debug(f"File validated and saved successfully: {save_path}")
+                    return True
+                else:
+                    # Remove invalid file
+                    os.remove(temp_path)
+                    raise Exception(f"Downloaded file failed validation: {save_path}")
+            else:
+                raise Exception(f"Failed to download file: {save_path}")
 
         except requests.ConnectionError:
-            self.display_message_signal.emit("Failed to connect to the internet. Please check your connection.", None, None, None, None)
-            custom_logger.error(f"Failed to connect to the internet. Please check your connection.")
+            if self.display_message_signal:
+                self.display_message_signal.emit("Failed to connect to the internet. Please check your connection.", None, None, None, None)
+            custom_logger.error("Failed to connect to the internet. Please check your connection.")
+            if os.path.exists(save_path + ".tmp"):
+                os.remove(save_path + ".tmp")
+            raise
         except requests.HTTPError as http_err:
-            self.display_message_signal.emit("Failed to connect to the internet. Please check your connection.", None, None, None, None)
-            custom_logger.error(f"HTTP error occurred: {http_err}")
+            if http_err.response.status_code == 404:
+                custom_logger.error(f"File not found (404): {url}")
+                if self.display_message_signal:
+                    self.display_message_signal.emit(f"File not found: {os.path.basename(url)}", None, None, None, None)
+            else:
+                if self.display_message_signal:
+                    self.display_message_signal.emit(f"HTTP error occurred: {http_err}", None, None, None, None)
+                custom_logger.error(f"HTTP error occurred: {http_err}")
+            if os.path.exists(save_path + ".tmp"):
+                os.remove(save_path + ".tmp")
+            raise
         except requests.Timeout:
-            self.display_message_signal.emit("Failed to connect to the internet. Please check your connection.", None, None, None, None)
+            if self.display_message_signal:
+                self.display_message_signal.emit("The request timed out. Please try again later.", None, None, None, None)
             custom_logger.error("The request timed out. Please try again later.")
+            if os.path.exists(save_path + ".tmp"):
+                os.remove(save_path + ".tmp")
+            raise
         except requests.RequestException as req_err:
-            self.display_message_signal.emit("Failed to connect to the internet. Please check your connection.", None, None, None, None)
+            if self.display_message_signal:
+                self.display_message_signal.emit(f"An error occurred during download: {req_err}", None, None, None, None)
             custom_logger.error(f"An error occurred: {req_err}")
+            if os.path.exists(save_path + ".tmp"):
+                os.remove(save_path + ".tmp")
+            raise
         except Exception as err:
-            self.self.display_message_signal = ("Failed to connect to the internet. Please check your connection.", None, None, None, None)
+            if self.display_message_signal:
+                self.display_message_signal.emit(f"An unexpected error occurred: {err}", None, None, None, None)
             custom_logger.error(f"An unexpected error occurred: {err}")
+            # Clean up
+            if os.path.exists(save_path + ".tmp"):
+                os.remove(save_path + ".tmp")
+            if os.path.exists(save_path):
+                os.remove(save_path)
+            raise
 
     def preprocess_audio(self, audio_path):
         # Load audio file using librosa
@@ -371,11 +488,70 @@ class WhisperONNXTranscriber:
             # Get transcription
             transcription = self.postprocess(output_ids)
             
+            # Store the audio path for possible segment extraction
+            self.last_audio_path = audio_path
+            
+            # Store the transcription for possible segment extraction
+            self.last_transcription = transcription
+            
             return transcription
         except Exception as e:
             custom_logger.error(f"Error in transcription pipeline: {str(e)}")
             raise
-        
+    
+    def get_segments(self):
+        """
+        Extract segments with timestamps from the last transcription.
+        Returns a list of segments with start time, end time, and text.
+        """
+        if not hasattr(self, 'last_audio_path') or not hasattr(self, 'last_transcription'):
+            custom_logger.warning("No previous transcription available for segmentation")
+            return []
+            
+        try:
+            import librosa
+            from pydub import AudioSegment
+            
+            # Load audio file to get duration
+            try:
+                audio_duration = librosa.get_duration(path=self.last_audio_path)
+            except:
+                # Fall back to pydub if librosa fails
+                audio = AudioSegment.from_file(self.last_audio_path)
+                audio_duration = len(audio) / 1000.0  # Convert ms to seconds
+            
+            # If this is a very short audio file, create a simple segment
+            if audio_duration < 5:
+                return [{'start': 0, 'end': audio_duration, 'text': self.last_transcription}]
+            
+            # Split transcription into sentences for segments
+            import re
+            sentences = re.split(r'(?<=[.!?])\s+', self.last_transcription)
+            sentences = [s for s in sentences if s.strip()]
+            
+            # If only one sentence, create a simple segment
+            if len(sentences) <= 1:
+                return [{'start': 0, 'end': audio_duration, 'text': self.last_transcription}]
+            
+            # Create segments with evenly distributed timestamps
+            segments = []
+            duration_per_segment = audio_duration / len(sentences)
+            
+            for i, sentence in enumerate(sentences):
+                start_time = i * duration_per_segment
+                end_time = min((i + 1) * duration_per_segment, audio_duration)
+                
+                segments.append({
+                    'start': start_time,
+                    'end': end_time,
+                    'text': sentence.strip()
+                })
+            
+            return segments
+        except Exception as e:
+            custom_logger.error(f"Error creating segments: {str(e)}")
+            return [{'start': 0, 'end': 30, 'text': self.last_transcription}]  # Fallback
+
     def process_audio_chunk(self, chunk):
         """Process a single chunk of audio data."""
         with self.buffer_lock:
@@ -450,46 +626,60 @@ class WhisperONNXTranscriber:
 class VaDetector:
     def __init__(self, onnx_path=resource_path("cache"), model_filename="silero_vad_16k.onnx", progress_callback=None):
         # Ensure the ONNX directory exists
-        if not os.path.exists(onnx_path):
-            os.makedirs(onnx_path)
+        self.onnx_folder = os.path.join(onnx_path, "onnx")
+        if not os.path.exists(self.onnx_folder):
+            os.makedirs(self.onnx_folder, exist_ok=True)
         self.progress_callback = progress_callback
         # Full path to the ONNX model
-        onnx_model_path = os.path.join(onnx_path, "onnx", model_filename)
+        onnx_model_path = os.path.join(self.onnx_folder, model_filename)
         
         # Download the ONNX model if it doesn't exist
-        if not os.path.exists(onnx_model_path):
-            filename="silero_vad_16k_op15"
+        if not os.path.exists(onnx_model_path) or os.path.getsize(onnx_model_path) <= 2048:
+            filename = "silero_vad_16k_op15"
             custom_logger.info(f"Downloading ONNX model to {onnx_model_path}...")
             url = f"https://github.com/snakers4/silero-vad/blob/master/src/silero_vad/data/{filename}.onnx?raw=true"
             try:
-                response = requests.get(url, stream=True)
+                response = requests.get(url, stream=True, timeout=30)
                 response.raise_for_status()
                 total_size = int(response.headers.get('content-length', 0))
                 block_size = 1024  # 1 Kibibyte
-                with open(onnx_model_path, 'wb') as f, tqdm(total=total_size, unit='iB', unit_scale=True) as t:
+                
+                with open(onnx_model_path, 'wb') as f:
+                    downloaded = 0
                     for data in response.iter_content(block_size):
-                        t.update(len(data))
+                        downloaded += len(data)
                         f.write(data)
-                        self.progress_callback(filename=filename, percentage=int(t.n/total_size *100) if total_size>1024 else 0)
+                        if total_size > 0:
+                            percent = int((downloaded / total_size) * 100)
+                            if self.progress_callback:
+                                self.progress_callback(filename=filename, percentage=percent)
+                
                 custom_logger.info(f"File downloaded successfully: {onnx_model_path}")
+                if self.progress_callback:
+                    self.progress_callback(filename=filename, percentage=100)
             except requests.ConnectionError:
-                self.progress_callback(txt="Failed to connect to the internet. Please check your connection.")
+                if self.progress_callback:
+                    self.progress_callback(txt="Failed to connect to the internet. Please check your connection.")
                 custom_logger.error("Failed to connect to the internet. Please check your connection.")
                 raise
             except requests.HTTPError as http_err:
-                self.progress_callback(txt="Failed to connect to the internet. Please check your connection.")
+                if self.progress_callback:
+                    self.progress_callback(txt=f"HTTP error occurred: {http_err}")
                 custom_logger.error(f"HTTP error occurred: {http_err}")
                 raise
             except requests.Timeout:
-                self.progress_callback(txt="Failed to connect to the internet. Please check your connection.")
+                if self.progress_callback:
+                    self.progress_callback(txt="The request timed out. Please try again later.")
                 custom_logger.error("The request timed out. Please try again later.")
                 raise
             except requests.RequestException as req_err:
-                self.progress_callback(txt="An error occurred while initializing VAD, check logs")
-                custom_logger.error(f"An error occurred while initializing VAD: {req_err}")
+                if self.progress_callback:
+                    self.progress_callback(txt="An error occurred while downloading VAD model, check logs")
+                custom_logger.error(f"An error occurred while downloading VAD model: {req_err}")
                 raise
             except Exception as err:
-                self.progress_callback(txt="An error occurred while initializing VAD, check logs")
+                if self.progress_callback:
+                    self.progress_callback(txt="An unexpected error occurred while initializing VAD, check logs")
                 custom_logger.error(f"An unexpected error occurred while initializing VAD: {err}")
                 raise
         
