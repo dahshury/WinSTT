@@ -6,15 +6,19 @@ An application for desktop STT using [OpenAI-Whisper](https://github.com/openai/
 
 Type in any application using your voice. WinSTT is an application that leverages the power of OpenAI's Whisper STT model for efficient voice typing functionality. This desktop tool allows users to transcribe speech into text, with support for over 99 languages and the capability to run locally without the need for an internet connection.
 
-<!-- You can download the CPU version from [WinSTT v0.1 CPU](https://drive.google.com/file/d/1u20s9QokghYoQ3sNN6HsaEljVuM9Oo6f/view?usp=drive_link) -->
-
 ## Why
 
 Existing Windows speech to text is slow, not accurate, and not intuitive. This app provides customizable hotkey activation, and fast and accurate transcription for rapid typing. This is especially useful to those who write articles, blogs, and even conversations.
 
-## Python Version Setup
+## Setup
 
-### Install Dependencies
+### Precompiled Binary (Recommended for Windows Users)
+
+- Download the `.exe` file from the latest release from the [Releases](https://github.com/dahshury/WinSTT/releases) section .
+
+### Python Version Setup
+
+#### Install Dependencies
 
 - First, clone the repo:
 
@@ -67,7 +71,7 @@ Existing Windows speech to text is slow, not accurate, and not intuitive. This a
     conda activate WinSTT
     ```
 
-### Start The App
+#### Start The App
 
 - Start the GUI by running the bash command:
 
@@ -83,23 +87,22 @@ python -m utils.listener
 
 ## Usage
 
-Hold the right control key to start recording, release it to stop. There can be a very slight (0.2s) delay between the start of the pressing and the start of the app listening to the audio from your microphone. You should only start speaking after hearing the audio cue.
+Hold the Alt+Ctrl+A key combination to start recording, release it to stop. There can be a very slight delay between the start of the pressing and the start of the app listening to the audio from your microphone. You should only start speaking after hearing the audio cue.
 
-Releasing the key will transcribe the audio you recorded, paste it wherever your typing pointer is in any application.
+- Releasing the key will transcribe the audio you recorded, paste it wherever your typing pointer is in any application. The processing speed will depend on the model chosen and your computer capabilities.
 
-The app contains a "record key" button, which allows you to change the recording key that you have to hold to start recording. Press record key, and then press and hold the buttons you wish to start the recording with, then click stop to change the recording key.
+- The app contains a "record key" button, which allows you to change the recording key that you have to hold to start recording. Press record key, and then press and hold the buttons you wish to start the recording with, then click stop to change the recording key.
 
 - This tool is powered by Hugging Face's ASR models, primarily Whisper by OpenAI. The larger the model, the better the accuracy and the slower the speed. Try the model that best suits your hardware and needs.
 
 ## Notes
 
-<!-- - The .EXE versions of the program can be detected as viruses. This is [common](https://medium.com/@markhank/how-to-stop-your-python-programs-being-seen-as-malware-bfd7eb407a7) as this program is compiled using Pyinstaller. You  can check the [CPU version Virustotal](https://www.virustotal.com/gui/file/dd6483c19dd3abc2ffa0508da80d9e514806413895b347655bfc45e49d45e681?nocache=1) to confirm this isn't malicious. You can also alternatively use the python .py version to avoid this problem. -->
-- Upon loading the app for the first time, Please wait for the model files to be downloaded, (about 1 GB for CPU version, 3 GB for GPU version) this will depend on your internet connection. After the model is downloaded, no internet connection needed unless you change the model.
+- Upon loading the app for the first time, Please wait for the model files to be downloaded, (about 1 GB for CPU version, 3 GB for GPU version) this will depend on your internet connection. After the model is downloaded, no internet connection needed unless you change the model. After that, the first recording might be pasted a little bit slower than the consequent ones.
 - The app will automatically detect if audio is present in the speech. If not, or if an error occurs, it will output a message inside the app and inside the logs folder.
 - The application only records while the record key is held down.
 - You can use this app using a CPU, it will run Whisper-Turbo quantized by default. However, if you have a CUDA GPU, the app will run the full version and this will increase the speed and the accuracy and is highly recommended.
 - The application does not transcribe audio that is less than 0.5 second long. If your sentence is short, consider not letting go of the button until 0.5s has passed.
-<!-- - The app contains no viruses. It was compiled using Pyinstaller. -->
+- Some antivirus programs may flag .exe files generated by PyInstaller as current releases as suspicious. This is a known issue. Rest assured, the binaries are clean and safe. The app has passed most VirusTotal's tests, which you can check out [here](https://www.virustotal.com/gui/file/fd093cae0e778901d77e2a87fdfeed5ae259031640ca097cdd8900861f7ce36a?nocache=1), the rest are false positives.
 
 ## Acknowledgments
 

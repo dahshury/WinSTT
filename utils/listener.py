@@ -10,7 +10,7 @@ import gc
 from logger.logger import setup_logger
 from .transcribe import WhisperONNXTranscriber, VaDetector
 import keyboard
-from keyboard import KEY_DOWN, KEY_UP, wait, hook, unhook_all
+from keyboard import wait, hook, unhook_all
 from pynput.keyboard import Key, Controller
 import pygame
 from collections import deque  # Import deque for efficient sliding window
@@ -130,7 +130,7 @@ class AudioToText:
         self.rec = Recorder(channels=channels, rate=rate)
         self.is_recording = False
         self.start_sound = None
-        self.start_sound_file = os.path.join(self.scriptdir, start_sound_file)
+        self.start_sound_file = start_sound_file  # Store the path directly without joining
         self.sound_play_lock = threading.Lock()
         self.last_playback_time = 0
         self.min_duration = 0.5  # Minimum recording duration in seconds
@@ -154,24 +154,26 @@ class AudioToText:
         self.previous_transcript = ""
         
         self.logger = setup_logger()
-        self.init_pygame()
+        pygame.mixer.init()  # Initialize Pygame mixer here
         
     def init_pygame(self):
-        # Initialize Pygame mixer and load sound
-        pygame.mixer.init()
-        if os.path.exists(self.start_sound_file):
-            try:
+        # Load the sound file
+        try:
+            if self.start_sound_file and os.path.exists(self.start_sound_file):
                 self.start_sound = pygame.mixer.Sound(self.start_sound_file)
-                # self.logger.debug("Start sound loaded: %s", self.start_sound_file)
-            except Exception as e:
-                self.logger.exception("Failed to load start sound: %s", e)
-                if self.error_callback:
-                    self.error_callback.emit("Failed to load start sound", None, None, None, None)# txt=None, filename=None, percentage=None, hold=False, reset=None
-        else:
-            self.logger.warning("Sound file %s not found.", self.start_sound_file)
+                self.logger.debug("Start sound loaded: %s", self.start_sound_file)
+            else:
+                self.start_sound = None
+                if self.start_sound_file:  # Only log if a file was specified
+                    self.logger.warning("Sound file %s not found.", self.start_sound_file)
+                    if self.error_callback:
+                        self.error_callback.emit("Sound file not found: " + str(self.start_sound_file), None, None, None, None)
+        except Exception as e:
+            self.start_sound = None
+            self.logger.exception("Failed to load start sound: %s", e)
             if self.error_callback:
-                self.error_callback.emit("Sound file not found.", None, None, None, None)# txt=None, filename=None, percentage=None, hold=False, reset=None
-                
+                self.error_callback.emit("Failed to load start sound: " + str(e), None, None, None, None)
+
     def play_sound(self):
         try:
             with self.sound_play_lock:
