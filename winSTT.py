@@ -73,15 +73,17 @@ def resource_path(relative_path):
 
     return os.path.join(base_path, relative_path)
 
+# Import ONNX Runtime BEFORE the subprocess patch to avoid DLL loading issues
+import onnxruntime as ort
+import sys
+import gc
+
 # Suppression patch
 with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
     from PyQt6 import QtCore, QtGui
     from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QSizePolicy, QWidget, QFrame, QLabel, QProgressBar, QCheckBox, QPushButton, QTextEdit, QMessageBox, QMainWindow, QGraphicsView, QComboBox, QApplication, QGraphicsOpacityEffect, QToolBar, QHBoxLayout, QDialog, QVBoxLayout, QDialogButtonBox, QFormLayout, QGroupBox, QGridLayout, QFileDialog
     from PyQt6.QtCore import QObject, pyqtSignal, QThread, QTimer, QPropertyAnimation, QTimer, QEasingCurve, Qt, QParallelAnimationGroup
     from PyQt6.QtGui import QAction, QIcon
-    import sys
-    import onnxruntime as ort
-    import gc
     from utils.transcribe import WhisperONNXTranscriber, VaDetector
     from utils.listener import AudioToText
     from logger import setup_logger
