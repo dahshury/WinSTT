@@ -13,7 +13,7 @@ import threading
 import time
 import onnxruntime as ort
 from logger import setup_logger
-from pydub import AudioSegment
+# from pydub import AudioSegment  # Temporarily disabled for Python 3.13 compatibility
 import sys
 
 custom_logger = setup_logger()
@@ -83,13 +83,16 @@ class WhisperONNXTranscriber:
         # Update model names based on the current quantization setting
         self.update_names()
 
-        # Load new ONNX models
+        # Load new ONNX models with GPU priority
         available_providers = ort.get_available_providers()
+        # Prioritize CUDA for better performance
+        preferred_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if 'CUDAExecutionProvider' in available_providers else ['CPUExecutionProvider']
+        custom_logger.info(f"Using providers: {preferred_providers}")
         try:
             encoder_path = os.path.join(self.onnx_folder, self.encoder_name)
             self.encoder_session = ort.InferenceSession(
                 os.path.join(encoder_path),
-                providers=available_providers
+                providers=preferred_providers
             )
         except Exception as e:
             os.remove(encoder_path)
@@ -103,7 +106,7 @@ class WhisperONNXTranscriber:
             decoder_path = os.path.join(self.onnx_folder, self.decoder_name)
             self.decoder_session = ort.InferenceSession(
                 os.path.join(decoder_path),
-                providers=available_providers
+                providers=preferred_providers
             ) 
         except Exception as e:
             os.remove(decoder_path) 
@@ -353,11 +356,26 @@ class WhisperONNXTranscriber:
             raise
 
     def preprocess_audio(self, audio_path):
-        # Load audio file using librosa
-        audio, sr = librosa.load(audio_path, sr=None)  # sr=None to keep original sampling rate
+        # Load audio file using soundfile (Python 3.13 compatible)
+        import soundfile as sf
+        try:
+            audio, sr = sf.read(audio_path, dtype='float32')
+            
+            # Convert stereo to mono if necessary
+            if len(audio.shape) > 1:
+                audio = audio.mean(axis=1)
+        except Exception as e:
+            # Fallback for unsupported formats
+            print(f"Soundfile failed: {e}, trying wave module...")
+            import wave
+            with wave.open(audio_path, 'rb') as wav_file:
+                frames = wav_file.readframes(-1)
+                audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+                sr = wav_file.getframerate()
 
         # Resample if necessary
         if sr != self.feature_extractor.sampling_rate:
+            import librosa
             audio = librosa.resample(audio, orig_sr=sr, target_sr=self.feature_extractor.sampling_rate)
             sr = self.feature_extractor.sampling_rate
 
@@ -510,15 +528,15 @@ class WhisperONNXTranscriber:
             
         try:
             import librosa
-            from pydub import AudioSegment
+            # from pydub import AudioSegment  # Temporarily disabled for Python 3.13 compatibility
             
             # Load audio file to get duration
             try:
                 audio_duration = librosa.get_duration(path=self.last_audio_path)
             except:
-                # Fall back to pydub if librosa fails
-                audio = AudioSegment.from_file(self.last_audio_path)
-                audio_duration = len(audio) / 1000.0  # Convert ms to seconds
+                # Fall back to default duration if librosa fails
+                # audio = AudioSegment.from_file(self.last_audio_path)  # Disabled for Python 3.13
+                audio_duration = 10.0  # Default duration fallback
             
             # If this is a very short audio file, create a simple segment
             if audio_duration < 5:
@@ -683,9 +701,11 @@ class VaDetector:
                 custom_logger.error(f"An unexpected error occurred while initializing VAD: {err}")
                 raise
         
-        # Load the ONNX model for inference
+        # Load the ONNX model for inference with GPU support
         self.onnx_model_path = onnx_model_path
-        self.session = ort.InferenceSession(onnx_model_path)
+        available_providers = ort.get_available_providers()
+        preferred_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if 'CUDAExecutionProvider' in available_providers else ['CPUExecutionProvider']
+        self.session = ort.InferenceSession(onnx_model_path, providers=preferred_providers)
         
         # Model parameters
         self.sample_rate = 16000
@@ -760,15 +780,34 @@ class VaDetector:
         Returns:
             numpy.ndarray: The loaded and resampled audio waveform.
         """
-        # Load audio using pydub for flexibility with formats like mp3, wav, etc.
-        audio = AudioSegment.from_file(file_path)
-        audio = audio.set_frame_rate(target_sample_rate).set_channels(1)
-        samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
-        
-        # Normalize samples to [-1, 1]
-        sample_width = audio.sample_width  # in bytes
-        max_value = float(1 << (8 * sample_width - 1))
-        samples = samples / max_value
+        # Load audio using soundfile for Python 3.13 compatibility (avoiding librosa.load)
+        import soundfile as sf
+        try:
+            # Use soundfile which doesn't depend on aifc
+            samples, sample_rate = sf.read(file_path, dtype='float32')
+            
+            # Convert stereo to mono if necessary
+            if len(samples.shape) > 1:
+                samples = samples.mean(axis=1)
+            
+            # Resample if necessary
+            if sample_rate != target_sample_rate:
+                import librosa
+                samples = librosa.resample(samples, orig_sr=sample_rate, target_sr=target_sample_rate)
+            
+            # Convert to float32 and normalize if needed
+            samples = samples.astype(np.float32)
+        except Exception as e:
+            # Fallback: try with minimal librosa usage
+            print(f"Soundfile failed: {e}, trying alternative method...")
+            import wave
+            with wave.open(file_path, 'rb') as wav_file:
+                frames = wav_file.readframes(-1)
+                samples = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+                sample_rate = wav_file.getframerate()
+                if sample_rate != target_sample_rate:
+                    import librosa
+                    samples = librosa.resample(samples, orig_sr=sample_rate, target_sr=target_sample_rate)
         
         return samples
     

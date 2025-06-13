@@ -1,11 +1,202 @@
-__pycache__
-/log
-/utils/cache
-/utils/test.wav
-/test.ipynb
-/RealtimeSTT
-/output
-/cache
-/utils/whisper_online.py
-/RealtimeSTT
-/faster.py
+# WinSTT - Python 3.13 + CUDA 12.9 Enhanced Fork
+# ================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# WinSTT Specific
+# ===============
+
+# Cache directories (large, regenerated locally)
+cache/
+Cache/
+Cached/
+*.cache
+*.cached
+
+# Log files
+log/
+logs/
+*.log
+*.log.*
+debug.log
+error.log
+transcription.log
+
+# Temporary files
+_scripting/
+_Backup/
+_temp/
+temp/
+tmp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# Audio processing temp files
+*.wav.tmp
+*.mp3.tmp
+*.flac.tmp
+
+# Model cache (large files, downloaded locally)
+cache/onnx/
+*.onnx
+*.onnx_data
+models/
+model_cache/
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.sublime-project
+.sublime-workspace
+
+# System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Windows
+*.lnk
+
+# GPU runtime files
+*.gpu
+*.cuda
+*.cudnn
+
+# Build artifacts
+build/
+dist/
+*.exe
+*.msi
+
+# Configuration overrides (keep local)
+config.local.json
+settings.local.ini
+user_config.py
+
+# Test recordings (potentially sensitive)
+test_recordings/
+recordings/
+audio_samples/
+test_audio/
+
+# Documentation build
+docs/_build/
+docs/build/
+
+# Package files
+*.deb
+*.rpm
+*.tar.gz
+*.zip
+*.7z
+
+# Performance profiling
+*.prof
+*.profile
+profile_results/

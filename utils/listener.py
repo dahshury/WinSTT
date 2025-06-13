@@ -209,6 +209,17 @@ class AudioToText:
 
     def paste_transcription(self, transcript_text):
         transcript_text = transcript_text.replace("New paragraph.", "\n\n")
+        
+        # Leerzeichen von Anfang an Ende verschieben
+        if transcript_text.startswith(' '):
+            # Entferne alle führenden Leerzeichen
+            cleaned_text = transcript_text.lstrip(' ')
+            # Füge genau ein Leerzeichen am Ende hinzu (falls noch nicht vorhanden)
+            if cleaned_text and not cleaned_text.endswith(' '):
+                transcript_text = cleaned_text + ' '
+            else:
+                transcript_text = cleaned_text
+        
         pyperclip.copy(transcript_text)
         self.keyboard.press(Key.ctrl)
         self.keyboard.press('v')

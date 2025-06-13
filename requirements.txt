@@ -1,0 +1,15 @@
+numpy>=1.26.0,<2.0.0
+tqdm==4.67.0
+requests==2.31.0
+PyQt6==6.7.1
+keyboard==0.13.5
+pydub==0.25.1
+pygame==2.6.1
+pynput==1.7.7
+pyperclip==1.9.0
+faster-whisper
+pvporcupine==1.9.5
+pywin32==310
+librosa==0.10.0.post2
+pyaudio==0.2.14
+onnxruntime==1.18.0
