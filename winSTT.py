@@ -9,23 +9,24 @@
 #? Add: live system audio transcription with diarization (live subtitles), LLM Options: Translate, CODE, reformat (summerize, PII redaction, funny, academic, simple, formal), wake-word detection, more models.
 
 # Disable terminal flashing
-import subprocess
-from unittest.mock import patch
-
-# Add socket for single-instance check
-import socket
-import tempfile
 import atexit
 
 # Suppress pygame welcome message and warnings
 import os
-os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
+
+# Add socket for single-instance check
+import socket
+import subprocess
+import tempfile
+from unittest.mock import patch
+
+os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "hide"
 # Suppress libpng warnings - more thorough approach
-os.environ['PYTHONWARNINGS'] = "ignore::DeprecationWarning:pygame"
-os.environ['QT_LOGGING_RULES'] = "qt.gui.imageio=false"
+os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning:pygame"
+os.environ["QT_LOGGING_RULES"] = "qt.gui.imageio=false"
 
 # Import win32gui for handling existing window activation (Windows only)
-if os.name == 'nt' or os.name == 'win32':
+if os.name in {"nt", "win32"}:
     try:
         import win32gui
         HAS_WIN32GUI = True
@@ -33,7 +34,7 @@ if os.name == 'nt' or os.name == 'win32':
         HAS_WIN32GUI = False
 
 # Create a unique socket name based on the app name
-socket_name = os.path.join(tempfile.gettempdir(), 'winstt_single_instance.sock')
+socket_name = os.path.join(tempfile.gettempdir(), "winstt_single_instance.sock")
 
 # Function to check for an existing instance
 def is_already_running():
@@ -41,11 +42,11 @@ def is_already_running():
     try:
         # Try to create and bind a socket
         single_instance_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        single_instance_socket.bind(('localhost', 47123))  # Use a unique, unlikely-to-be-used port
+        single_instance_socket.bind(("localhost", 47123))  # Use a unique, unlikely-to-be-used port
         # If we get here, no other instance is running
         atexit.register(cleanup_socket)
         return False
-    except socket.error:
+    except OSError:
         # Socket is already in use, another instance is running
         return True
 
@@ -61,7 +62,7 @@ original_popen = subprocess.Popen
 def suppress_subprocess_call(*args, **kwargs):
     # Suppress the console window
     CREATE_NO_WINDOW = 0x08000000
-    kwargs['creationflags'] = kwargs.get('creationflags', 0) | CREATE_NO_WINDOW
+    kwargs["creationflags"] = kwargs.get("creationflags", 0) | CREATE_NO_WINDOW
     return original_popen(*args, **kwargs)
 
 def resource_path(relative_path):
@@ -75,16 +76,51 @@ def resource_path(relative_path):
 
 # Suppression patch
 with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
-    from PyQt6 import QtCore, QtGui
-    from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QSizePolicy, QWidget, QFrame, QLabel, QProgressBar, QCheckBox, QPushButton, QTextEdit, QMessageBox, QMainWindow, QGraphicsView, QComboBox, QApplication, QGraphicsOpacityEffect, QToolBar, QHBoxLayout, QDialog, QVBoxLayout, QDialogButtonBox, QFormLayout, QGroupBox, QGridLayout, QFileDialog
-    from PyQt6.QtCore import QObject, pyqtSignal, QThread, QTimer, QPropertyAnimation, QTimer, QEasingCurve, Qt, QParallelAnimationGroup
-    from PyQt6.QtGui import QAction, QIcon
-    import sys
-    import onnxruntime as ort
     import gc
-    from utils.transcribe import WhisperONNXTranscriber, VaDetector
-    from utils.listener import AudioToText
+    import sys
+
+    import onnxruntime as ort
+    from PyQt6 import QtCore, QtGui
+    from PyQt6.QtCore import (
+        QEasingCurve,
+        QObject,
+        QParallelAnimationGroup,
+        QPropertyAnimation,
+        Qt,
+        QThread,
+        QTimer,
+        pyqtSignal,
+    )
+    from PyQt6.QtGui import QAction, QIcon
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QCheckBox,
+        QComboBox,
+        QDialog,
+        QFileDialog,
+        QFormLayout,
+        QFrame,
+        QGraphicsOpacityEffect,
+        QGraphicsView,
+        QGridLayout,
+        QGroupBox,
+        QHBoxLayout,
+        QLabel,
+        QMainWindow,
+        QMenu,
+        QMessageBox,
+        QProgressBar,
+        QPushButton,
+        QSizePolicy,
+        QSystemTrayIcon,
+        QTextEdit,
+        QVBoxLayout,
+        QWidget,
+    )
+
     from logger import setup_logger
+    from utils.listener import AudioToText
+    from utils.transcribe import VaDetector, WhisperONNXTranscriber
 
     logger = setup_logger()
 
@@ -385,13 +421,13 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 if event.type() == QtCore.QEvent.Type.DragEnter:
                     if event.mimeData().hasUrls():
                         url = event.mimeData().urls()[0].toLocalFile()
-                        if os.path.splitext(url)[1].lower() in ['.mp3', '.wav']:
+                        if os.path.splitext(url)[1].lower() in [".mp3", ".wav"]:
                             event.acceptProposedAction()
                     return True
-                elif event.type() == QtCore.QEvent.Type.Drop:
+                if event.type() == QtCore.QEvent.Type.Drop:
                     if event.mimeData().hasUrls():
                         url = event.mimeData().urls()[0].toLocalFile()
-                        if os.path.splitext(url)[1].lower() in ['.mp3', '.wav']:
+                        if os.path.splitext(url)[1].lower() in [".mp3", ".wav"]:
                             self.current_sound_path = url
                             self.sound_path_display.setText(os.path.basename(url))
                             self.sound_path_display.setToolTip(url)
@@ -407,7 +443,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 valid_files = False
                 for url in mime_data.urls():
                     file_path = url.toLocalFile()
-                    if os.path.splitext(file_path)[1].lower() in ['.mp3', '.wav']:
+                    if os.path.splitext(file_path)[1].lower() in [".mp3", ".wav"]:
                         valid_files = True
                         break
                 
@@ -426,7 +462,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 # Check if this is from the SettingsDialog (for sound file)
                 if event.source() and isinstance(event.source(), SettingsDialog):
                     url = mime_data.urls()[0].toLocalFile()
-                    if os.path.splitext(url)[1].lower() in ['.mp3', '.wav']:
+                    if os.path.splitext(url)[1].lower() in [".mp3", ".wav"]:
                         self.current_sound_path = url
                         
                         # Only set start_sound on listener if recording sound is enabled
@@ -439,7 +475,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 file_paths = []
                 for url in mime_data.urls():
                     file_path = url.toLocalFile()
-                    if os.path.splitext(file_path)[1].lower() in ['.mp3', '.wav']:
+                    if os.path.splitext(file_path)[1].lower() in [".mp3", ".wav"]:
                         file_paths.append(file_path)
                 
                 if file_paths:
@@ -624,7 +660,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 logger.debug(f"Failed to initialize VAD: {e}")
                 
         def toggle_status(self):
-            self.status = True if self.status==False else False
+            self.status = not self.status
             
     class ModelWorker(QObject):
         initialized = pyqtSignal()
@@ -646,7 +682,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 logger.debug(f"Failed to initialize model: {e}")
                 
         def toggle_status(self):
-            self.status = True if self.status==False else False
+            self.status = not self.status
             
     class ListenerWorker(QObject):
         transcription_ready = pyqtSignal(str)
@@ -661,7 +697,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
             self.listener = AudioToText(model, vad, error_callback=self.display_message_signal)
             self.rec_key = rec_key
 
-        def run(self,):
+        def run(self):
             try:
                 self.listener.capture_keys(self.rec_key)
                 self.initialized.emit()
@@ -678,7 +714,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
         def stop(self):
             self._running = False
             
-    class Ui_MainWindow(object):
+    class Ui_MainWindow:
         def setupUi(self, MainWindow):
             self.script_path = (os.path.dirname(os.path.abspath(__file__)))
             # print(self.script_path)
@@ -812,7 +848,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
             self.textEdit.setGeometry(QtCore.QRect(70, 70, 110, 22))
             self.textEdit.setFixedHeight(22)
             self.textEdit.setLineWidth(0)
-            self.textEdit.setText('CTRL+ALT+A')
+            self.textEdit.setText("CTRL+ALT+A")
             self.textEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.textEdit.setReadOnly(True)
             self.textEdit.setObjectName("Current Key")
@@ -882,7 +918,6 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
             self.transcription_queue = []  # Queue for multiple file transcription
             
             # Set consistent button height
-            button_height = 22  # Standard button height for main window
             
             # Dynamically determine the MouseButtonPress event type
             try:
@@ -1001,10 +1036,9 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 if self.enable_recording_sound and hasattr(self.listener_worker, "listener"):
                     self.listener_worker.listener.start_sound_file = self.start_sound
                     self.listener_worker.listener.init_pygame()
-                else:
-                    if hasattr(self.listener_worker, "listener"):
-                        self.listener_worker.listener.start_sound_file = None
-                        self.listener_worker.listener.start_sound = None
+                elif hasattr(self.listener_worker, "listener"):
+                    self.listener_worker.listener.start_sound_file = None
+                    self.listener_worker.listener.start_sound = None
 
         def handle_transcription(self, transcription):
             self.display_message(txt=f"{transcription}")
@@ -1017,7 +1051,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                     "App Minimized",
                     "The app is minimized, and still running in the background. Right click on icon to exit",
                     QSystemTrayIcon.MessageIcon.Information,
-                    2000
+                    2000,
                 ) 
 
         def open_files(self):
@@ -1041,7 +1075,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
             
             # Add files to the transcription queue
             for file_path in file_paths:
-                if os.path.splitext(file_path)[1].lower() in ['.mp3', '.wav']:
+                if os.path.splitext(file_path)[1].lower() in [".mp3", ".wav"]:
                     self.transcription_queue.append(file_path)
             
             # Start processing if not already in progress
@@ -1060,7 +1094,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                         self.listener_worker.listener.stream.stop_stream()
                         logger.debug("Audio stream stopped")
                 except Exception as e:
-                    logger.error(f"Error pausing listener: {str(e)}")
+                    logger.exception(f"Error pausing listener: {e!s}")
                     
         def resume_listener(self):
             """Resume the listener worker after file transcription."""
@@ -1072,14 +1106,14 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                             self.listener_worker.listener.stream.start_stream()
                             logger.debug("Audio stream restarted")
                 except Exception as e:
-                    logger.error(f"Error resuming listener: {str(e)}")
+                    logger.exception(f"Error resuming listener: {e!s}")
                     
                     # If we can't resume, try to reinitialize
                     try:
                         logger.debug("Reinitializing listener")
                         self.init_listener()
                     except Exception as e2:
-                        logger.error(f"Error reinitializing listener: {str(e2)}")
+                        logger.exception(f"Error reinitializing listener: {e2!s}")
             
         def process_next_file(self):
             """Process the next file in the transcription queue."""
@@ -1103,7 +1137,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 valid_files = False
                 for url in mime_data.urls():
                     file_path = url.toLocalFile()
-                    if os.path.splitext(file_path)[1].lower() in ['.mp3', '.wav']:
+                    if os.path.splitext(file_path)[1].lower() in [".mp3", ".wav"]:
                         valid_files = True
                         break
                 
@@ -1130,7 +1164,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 # Check if this is from the SettingsDialog (for sound file)
                 if event.source() and isinstance(event.source(), SettingsDialog):
                     url = mime_data.urls()[0].toLocalFile()
-                    if os.path.splitext(url)[1].lower() in ['.mp3', '.wav']:
+                    if os.path.splitext(url)[1].lower() in [".mp3", ".wav"]:
                         self.start_sound = url
                         
                         # Only set start_sound on listener if recording sound is enabled
@@ -1143,7 +1177,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 file_paths = []
                 for url in mime_data.urls():
                     file_path = url.toLocalFile()
-                    if os.path.splitext(file_path)[1].lower() in ['.mp3', '.wav']:
+                    if os.path.splitext(file_path)[1].lower() in [".mp3", ".wav"]:
                         file_paths.append(file_path)
                 
                 if file_paths:
@@ -1163,7 +1197,8 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 
                 # Check if file exists
                 if not os.path.exists(file_path):
-                    raise FileNotFoundError(f"File not found: {file_path}")
+                    msg = f"File not found: {file_path}"
+                    raise FileNotFoundError(msg)
                 
                 # Log the transcription attempt
                 logger.debug(f"Starting transcription of file: {file_path}")
@@ -1200,7 +1235,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                                     segments = self.model.get_segments()
                                     logger.debug(f"Retrieved {len(segments)} segments with timestamps")
                                 except Exception as e:
-                                    logger.warning(f"Could not retrieve segments with timestamps: {str(e)}")
+                                    logger.warning(f"Could not retrieve segments with timestamps: {e!s}")
                             
                             # Save either SRT or TXT based on settings
                             if self.output_srt and segments:
@@ -1213,23 +1248,23 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                                 # Save as TXT file
                                 output_path = os.path.splitext(self.file_path)[0] + ".txt"
                                 logger.debug(f"Saving transcription to {output_path}")
-                                with open(output_path, 'w', encoding='utf-8') as f:
+                                with open(output_path, "w", encoding="utf-8") as f:
                                     f.write(result)
                                 
                             self.transcription_complete.emit(output_path, result, segments)
                         except Exception as e:
-                            logger.error(f"Transcription error: {str(e)}")
+                            logger.exception(f"Transcription error: {e!s}")
                             self.transcription_error.emit(str(e))
                     
                     def save_as_srt(self, segments, srt_path):
                         """Save segments as an SRT file."""
                         try:
-                            with open(srt_path, 'w', encoding='utf-8') as f:
+                            with open(srt_path, "w", encoding="utf-8") as f:
                                 for i, segment in enumerate(segments):
                                     # Extract start and end times in seconds
-                                    start_time = segment.get('start', 0)
-                                    end_time = segment.get('end', 0)
-                                    text = segment.get('text', '')
+                                    start_time = segment.get("start", 0)
+                                    end_time = segment.get("end", 0)
+                                    text = segment.get("text", "")
                                     
                                     # Format times as SRT format: HH:MM:SS,mmm
                                     start_formatted = self.format_time(start_time)
@@ -1242,7 +1277,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                             
                             logger.debug(f"Successfully saved SRT file to {srt_path}")
                         except Exception as e:
-                            logger.error(f"Error saving SRT file: {str(e)}")
+                            logger.exception(f"Error saving SRT file: {e!s}")
                             
                     def format_time(self, time_seconds):
                         """Format time in seconds to SRT format: HH:MM:SS,mmm."""
@@ -1265,8 +1300,8 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 self.transcription_thread.start()
                 
             except Exception as e:
-                logger.error(f"Error setting up transcription: {str(e)}")
-                self.display_message(txt=f"Error: {str(e)}")
+                logger.exception(f"Error setting up transcription: {e!s}")
+                self.display_message(txt=f"Error: {e!s}")
                 self.is_transcribing = False
                 self.pushButton.setEnabled(True)
                 self.textEdit.setEnabled(True)
@@ -1299,7 +1334,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                     # Resume the listener since we're done with transcription
                     self.resume_listener()
             except Exception as e:
-                logger.error(f"Error in transcription_finished: {str(e)}")
+                logger.exception(f"Error in transcription_finished: {e!s}")
                 self.is_transcribing = False
                 self.pushButton.setEnabled(True)
                 self.textEdit.setEnabled(True)
@@ -1351,18 +1386,17 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
             # Handle modifier keys
             if key == Qt.Key.Key_Control:
                 return "Ctrl"
-            elif key == Qt.Key.Key_Alt:
+            if key == Qt.Key.Key_Alt:
                 return "Alt"
-            elif key == Qt.Key.Key_Shift:
+            if key == Qt.Key.Key_Shift:
                 return "Shift"
-            elif key == Qt.Key.Key_Meta:
+            if key == Qt.Key.Key_Meta:
                 return "Meta"
-            else:
-                # Handle regular keys using key()
-                key_text = QtGui.QKeySequence(key).toString()
-                if key_text:
-                    return key_text
-                return f"Key_{key}"
+            # Handle regular keys using key()
+            key_text = QtGui.QKeySequence(key).toString()
+            if key_text:
+                return key_text
+            return f"Key_{key}"
             
         def changeEvent(self, event):
             if event.type() == QtCore.QEvent.Type.WindowStateChange:
@@ -1376,7 +1410,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                             "App Minimized",
                             "The app is minimized to the system tray and running in the background. Right-click the tray icon to restore or exit.",
                             QSystemTrayIcon.MessageIcon.Information,
-                            3000
+                            3000,
                         )
                 elif event.oldState() & Qt.WindowState.WindowMinimized:
                     # Restore the window and show it in the taskbar
@@ -1430,7 +1464,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
             # Map buttons to menus
             self.button_menu_map = {
                 file_button: file_menu,
-                options_button: options_menu
+                options_button: options_menu,
             }
             
             # Add spacer to push buttons to the left
@@ -1533,7 +1567,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 toolbar_rect = self.toolbar_widget.geometry()
                 toolbar_global_rect = QtCore.QRect(
                     self.mapToGlobal(toolbar_rect.topLeft()),
-                    self.mapToGlobal(toolbar_rect.bottomRight())
+                    self.mapToGlobal(toolbar_rect.bottomRight()),
                 )
                 if not toolbar_global_rect.contains(click_pos):
                     # Check if the click is not on a menu
@@ -1633,11 +1667,11 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 
         def display_message(self, txt=None, filename=None, percentage=None, hold=None, reset=None):
             # Create opacity effects if they don't exist
-            if not hasattr(self, 'label_opacity_effect'):
+            if not hasattr(self, "label_opacity_effect"):
                 self.label_opacity_effect = QGraphicsOpacityEffect(self.label_3)
                 self.label_3.setGraphicsEffect(self.label_opacity_effect)
             
-            if not hasattr(self, 'progress_opacity_effect'):
+            if not hasattr(self, "progress_opacity_effect"):
                 self.progress_opacity_effect = QGraphicsOpacityEffect(self.progressBar)
                 self.progressBar.setGraphicsEffect(self.progress_opacity_effect)
 
@@ -1735,7 +1769,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
         def adjust_window_for_toolbar(self):
             """Adjust window height based on toolbar persistence."""
             toolbar_height = self.toolbar_widget.height()
-            current_size = self.size()
+            self.size()
             
             if self.toolbar_persistent:
                 # Ensure the window is tall enough to accommodate the toolbar without covering content
@@ -1785,7 +1819,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
                 toolbar_rect = self.toolbar_widget.geometry()
                 toolbar_global_rect = QtCore.QRect(
                     self.mapToGlobal(toolbar_rect.topLeft()),
-                    self.mapToGlobal(toolbar_rect.bottomRight())
+                    self.mapToGlobal(toolbar_rect.bottomRight()),
                 )
                 if not toolbar_global_rect.contains(click_pos):
                     # Check if the click is not on a menu
@@ -1830,7 +1864,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
         # Send signal to bring existing window to front
         try:
             # If we're on Windows, use win32gui to activate the existing window
-            if sys.platform == 'win32':
+            if sys.platform == "win32":
                 if HAS_WIN32GUI:
                     # Find window by class name and title
                     def enum_windows_callback(hwnd, result_list):
@@ -1855,7 +1889,7 @@ with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
             logger.info("An instance of WinSTT is already running. Exiting.")
             sys.exit(0)
         except Exception as e:
-            logger.error(f"Error activating existing instance: {e}")
+            logger.exception(f"Error activating existing instance: {e}")
             # If activation fails, show message and exit
             QMessageBox.warning(None, "WinSTT", "An instance of WinSTT is already running.")
             sys.exit(0)

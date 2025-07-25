@@ -1,0 +1,233 @@
+"""
+UI Domain Value Objects
+
+This module contains immutable value objects that represent concepts
+in the UI domain, with built-in validation and business rules.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+
+@dataclass(frozen=True)
+class WindowDimensions:
+    """Value object for window dimensions with validation."""
+    width: int
+    height: int
+    
+    def __post_init__(self):
+        if self.width < 100 or self.width > 3840:
+            msg = f"Invalid width: {self.width}. Must be between 100 and 3840."
+            raise ValueError(msg)
+        if self.height < 100 or self.height > 2160:
+            msg = f"Invalid height: {self.height}. Must be between 100 and 2160."
+            raise ValueError(msg)
+    
+    @property
+    def aspect_ratio(self) -> float:
+        """Calculate aspect ratio."""
+        return self.width / self.height
+    
+    @property
+    def area(self) -> int:
+        """Calculate area in pixels."""
+        return self.width * self.height
+
+@dataclass(frozen=True)
+class StyleConfiguration:
+    """Value object for UI styling configuration."""
+    theme: str
+    primary_color: str
+    secondary_color: str
+    font_family: str
+    font_size: int
+    
+    def __post_init__(self):
+        if self.theme not in ["dark", "light", "auto"]:
+            msg = f"Invalid theme: {self.theme}"
+            raise ValueError(msg)
+        if self.font_size < 8 or self.font_size > 72:
+            msg = f"Invalid font size: {self.font_size}"
+            raise ValueError(msg)
+        if not self._is_valid_color(self.primary_color):
+            msg = f"Invalid primary color: {self.primary_color}"
+            raise ValueError(msg)
+        if not self._is_valid_color(self.secondary_color):
+            msg = f"Invalid secondary color: {self.secondary_color}"
+            raise ValueError(msg)
+    
+    def _is_valid_color(self, color: str) -> bool:
+        """Validate color format (hex or rgb)."""
+        if color.startswith("#") and len(color) == 7:
+            try:
+                int(color[1:], 16)
+                return True
+            except ValueError:
+                return False
+        return color in ["red", "green", "blue", "white", "black", "transparent"]
+
+@dataclass(frozen=True)
+class KeyCombination:
+    """Value object for keyboard key combinations."""
+    modifiers: list[str]
+    key: str
+    
+    def __post_init__(self):
+        valid_modifiers = {"CTRL", "ALT", "SHIFT", "META", "CMD"}
+        for modifier in self.modifiers:
+            if modifier.upper() not in valid_modifiers:
+                msg = f"Invalid modifier: {modifier}"
+                raise ValueError(msg)
+        
+        if not self.key:
+            msg = "Key cannot be empty"
+            raise ValueError(msg)
+        
+        # Ensure modifiers are unique and uppercase
+        unique_modifiers = list({mod.upper() for mod in self.modifiers})
+        object.__setattr__(self, "modifiers", sorted(unique_modifiers))
+    
+    @classmethod
+    def from_string(cls, key_string: str) -> KeyCombination:
+        """Create from string like 'CTRL+ALT+A'."""
+        parts = [part.strip().upper() for part in key_string.split("+")]
+        if len(parts) < 1:
+            msg = "Invalid key combination string"
+            raise ValueError(msg)
+        
+        key = parts[-1]
+        modifiers = parts[:-1]
+        return cls(modifiers=modifiers, key=key)
+    
+    def to_string(self) -> str:
+        """Convert to string representation."""
+        if self.modifiers:
+            return "+".join([*self.modifiers, self.key])
+        return self.key
+
+@dataclass(frozen=True)
+class AudioConfiguration:
+    """Value object for audio configuration."""
+    sample_rate: int
+    channels: int
+    bit_depth: int
+    buffer_size: int
+    enable_noise_reduction: bool = True
+    
+    def __post_init__(self):
+        if self.sample_rate not in [8000, 16000, 22050, 44100, 48000]:
+            msg = f"Unsupported sample rate: {self.sample_rate}"
+            raise ValueError(msg)
+        if self.channels not in [1, 2]:
+            msg = f"Invalid channels: {self.channels}"
+            raise ValueError(msg)
+        if self.bit_depth not in [16, 24, 32]:
+            msg = f"Invalid bit depth: {self.bit_depth}"
+            raise ValueError(msg)
+        if self.buffer_size < 64 or self.buffer_size > 8192:
+            msg = f"Invalid buffer size: {self.buffer_size}"
+            raise ValueError(msg)
+
+class ModelType(Enum):
+    """Enumeration of supported model types."""
+    WHISPER_TURBO = "whisper-turbo"
+    LITE_WHISPER_TURBO = "lite-whisper-turbo"
+    LITE_WHISPER_TURBO_FAST = "lite-whisper-turbo-fast"
+
+class Quantization(Enum):
+    """Enumeration of quantization levels."""
+    FULL = "Full"
+    QUANTIZED = "Quantized"
+
+@dataclass(frozen=True)
+class ModelConfiguration:
+    """Value object for model configuration."""
+    model_type: ModelType
+    quantization: Quantization
+    use_gpu: bool
+    max_memory: int | None = None
+    
+    def __post_init__(self):
+        # Validate quantization compatibility
+        if self.model_type in [ModelType.LITE_WHISPER_TURBO, ModelType.LITE_WHISPER_TURBO_FAST]:
+            if self.quantization != Quantization.FULL:
+                msg = "Lite models only support full quantization"
+                raise ValueError(msg)
+        
+        if self.max_memory is not None and self.max_memory < 512:
+            msg = "Max memory must be at least 512 MB"
+            raise ValueError(msg)
+    
+    @property
+    def requires_download(self) -> bool:
+        """Check if model requires download."""
+        return True  # All models require download initially
+    
+    @property
+    def estimated_size_mb(self) -> int:
+        """Estimate model size in MB."""
+        size_map = {
+            ModelType.WHISPER_TURBO: 1550,
+            ModelType.LITE_WHISPER_TURBO: 800,
+            ModelType.LITE_WHISPER_TURBO_FAST: 400,
+        }
+        base_size = size_map.get(self.model_type, 1000)
+        
+        # Quantized models are roughly 50% smaller
+        if self.quantization == Quantization.QUANTIZED:
+            base_size = int(base_size * 0.5)
+        
+        return base_size
+
+@dataclass(frozen=True)
+class LLMConfiguration:
+    """Value object for LLM configuration."""
+    model_name: str
+    quantization: Quantization
+    system_prompt: str
+    max_tokens: int = 512
+    temperature: float = 0.7
+    
+    def __post_init__(self):
+        if not self.model_name:
+            msg = "Model name cannot be empty"
+            raise ValueError(msg)
+        if self.max_tokens < 1 or self.max_tokens > 4096:
+            msg = f"Invalid max tokens: {self.max_tokens}"
+            raise ValueError(msg)
+        if self.temperature < 0.0 or self.temperature > 2.0:
+            msg = f"Invalid temperature: {self.temperature}"
+            raise ValueError(msg)
+        if len(self.system_prompt) > 1000:
+            msg = "System prompt too long (max 1000 characters)"
+            raise ValueError(msg)
+
+@dataclass(frozen=True)
+class OutputConfiguration:
+    """Value object for output configuration."""
+    format_type: str
+    include_timestamps: bool
+    output_directory: str | None = None
+    
+    def __post_init__(self):
+        if self.format_type not in ["txt", "srt", "vtt", "json"]:
+            msg = f"Unsupported format: {self.format_type}"
+            raise ValueError(msg)
+        
+        if self.output_directory and not self.output_directory.strip():
+            msg = "Output directory cannot be empty string"
+            raise ValueError(msg)
+
+__all__ = [
+    "AudioConfiguration",
+    "KeyCombination",
+    "LLMConfiguration",
+    "ModelConfiguration",
+    "ModelType",
+    "OutputConfiguration",
+    "Quantization",
+    "StyleConfiguration",
+    "WindowDimensions",
+] 

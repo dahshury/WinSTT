@@ -1,0 +1,125 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "typer"
+version = "0.1.0"
+description = "Voice typing application using Whisper"
+readme = "README.md"
+license = { file = "license" }
+authors = [
+  { name = "Your Name", email = "your.email@example.com" }
+]
+requires-python = ">=3.12"
+
+# Core dependencies required for all installations
+dependencies = [
+  # Core application framework
+  "requests==2.31.0",
+  "tqdm==4.67.0",
+  "pyqt6==6.7.1",
+  "keyboard==0.13.5",
+  "pydub==0.25.1",
+  "pygame==2.6.1",
+  "pynput==1.7.7",
+  "pyperclip==1.9.0",
+  "pvporcupine==1.9.5",
+  "pywin32==310",
+  "pyqtgraph==0.13.7",
+  "pyaudio==0.2.14",
+  # Core ML dependencies
+  "numpy>=2.0.2",
+  "transformers>=4.46.1",
+  "flatbuffers",
+  "packaging",
+  "protobuf",
+  "sympy",
+  # Essential development tools (always installed)
+  "pre-commit>=4.2.0",
+  "mypy>=1.10.0",
+  "ruff>=0.4.4",
+  "mdformat>=0.7.22",
+  "pyinstaller>=6.14.2",
+  # Utilities
+  "aiofiles>=24.1.0",
+  "psutil>=7.0.0",
+  "librosa>=0.10.0.post2",
+]
+
+[project.optional-dependencies]
+# CPU-only inference (lighter, more compatible)
+cpu = [
+  "faster-whisper>=0.10.0",
+  "onnxruntime==1.20.0",
+]
+
+# GPU-accelerated inference (requires CUDA)
+gpu = [
+  "librosa==0.10.0.post2",
+  "transformers>=4.46.1",
+  "torch>=2.7.1",
+  "openai-whisper>=20250625",
+  "onnxruntime-gpu==1.20.0",
+]
+
+# Advanced development tools and type checking
+dev = [
+  "types-requests>=2.32.4.20250611",
+  "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
+  "black>=23.0.0",
+]
+
+# Build and distribution tools
+build = [
+  "setuptools>=45",
+  "wheel",
+  "twine>=4.0.0",
+]
+
+# All development dependencies
+dev-all = [
+  "typer[dev]",
+  "typer[build]",
+]
+
+# ---------------------------------------------------------------------------
+# Tool configuration
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+strict = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "C90", "N", "UP", "S", "BLE", "FBT", "A", "COM", "C4", "DTZ", "T10", "EM", "EXE", "ISC", "ICN", "G", "INP", "PIE", "T20", "PYI", "PT", "Q", "RSE", "RET", "SLF", "SIM", "TID", "TCH", "ARG", "PTH", "ERA", "PGH", "PL", "TRY", "FLY", "NPY", "PERF", "FURB", "LOG", "RUF"]
+ignore = [
+  "S101",   # Use of assert
+  "T201",   # print() usage
+  "FBT001", # Boolean positional argument
+  "FBT002", # Boolean default argument
+  "PLR0913", # Too many arguments
+  "PLR0912", # Too many branches
+  "PLR0915", # Too many statements
+  "C901",   # Complex function
+] 
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+# ---------------------------------------------------------------------------
+# UV configuration
+# ---------------------------------------------------------------------------
+
+[tool.uv]
+dev-dependencies = [
+    "types-requests>=2.32.4.20250611",
+]

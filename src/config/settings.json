@@ -1,0 +1,8 @@
+{
+    "model": "lite-whisper-turbo",
+    "quantization": "Full",
+    "recording_sound_enabled": true,
+    "sound_file_path": "C:/Users/MASTER/Downloads/Music/ncc postal.wav",
+    "output_srt": false,
+    "recording_key": "CTRL+ALT+A"
+}

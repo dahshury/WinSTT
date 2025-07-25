@@ -1,0 +1,133 @@
+[2025-07-25 00:01:22,846] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:04:40,631] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:05:27,147] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:07:03,481] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:08:03,232] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:08:32,214] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:11:01,371] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:11:22,202] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:15:42,628] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:16:21,004] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:17:17,053] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:18:53,346] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:20:27,666] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:20:28,076] logger.logger - WARNING - Sound file ../media/splash.mp3 not found.
+[2025-07-25 00:20:34,291] logger.logger - ERROR - Error during transcription: 'VaDetector' object has no attribute 'has_speech'
+Traceback (most recent call last):
+  File "E:\DL\Projects\typer\utils\listener.py", line 226, in transcribe_and_paste
+    if not self.vad.has_speech(wav_buffer):
+           ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'VaDetector' object has no attribute 'has_speech'
+[2025-07-25 00:22:56,295] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:22:56,450] logger.logger - INFO - Downloading ONNX model to E:\DL\Projects\typer\cache\onnx\silero_vad_16k.onnx...
+[2025-07-25 00:22:56,551] logger.logger - ERROR - Failed to initialize model: WhisperONNXTranscriber.__init__() got an unexpected keyword argument 'repo_id'
+Traceback (most recent call last):
+  File "E:\DL\Projects\typer\src\workers\worker_classes.py", line 98, in run
+    self.model = WhisperONNXTranscriber(
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: WhisperONNXTranscriber.__init__() got an unexpected keyword argument 'repo_id'
+[2025-07-25 00:22:58,477] logger.logger - INFO - File downloaded successfully: E:\DL\Projects\typer\cache\onnx\silero_vad_16k.onnx
+[2025-07-25 00:25:01,608] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:28:45,144] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:29:06,694] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:29:06,846] logger.logger - INFO - Downloading ONNX model to E:\DL\Projects\typer\cache\onnx\silero_vad_16k.onnx...
+[2025-07-25 00:31:11,156] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:33:27,979] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:37:52,153] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 00:40:11,436] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 01:33:17,934] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 01:46:28,360] logger.logger - WARNING - Sound file ../media/splash.mp3 not found.
+[2025-07-25 01:52:43,204] logger.logger - ERROR - Failed to start recording: [Errno -9996] Invalid input device (no default output device)
+Traceback (most recent call last):
+  File "E:\DL\Projects\typer\utils\listener.py", line 40, in start
+    self.stream = self.p.open(
+                  ^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 639, in open
+    stream = PyAudio.Stream(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 441, in __init__
+    self._stream = pa.open(**arguments)
+                   ^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno -9996] Invalid input device (no default output device)
+[2025-07-25 01:52:43,223] logger.logger - ERROR - Cannot start recording: [Errno -9996] Invalid input device (no default output device)
+Traceback (most recent call last):
+  File "E:\DL\Projects\typer\utils\listener.py", line 255, in start_recording
+    self.rec.start()
+  File "E:\DL\Projects\typer\utils\listener.py", line 40, in start
+    self.stream = self.p.open(
+                  ^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 639, in open
+    stream = PyAudio.Stream(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 441, in __init__
+    self._stream = pa.open(**arguments)
+                   ^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno -9996] Invalid input device (no default output device)
+[2025-07-25 01:52:43,872] logger.logger - WARNING - Audio data is too small. Check your recording device.
+[2025-07-25 01:52:51,727] logger.logger - ERROR - Failed to start recording: [Errno -9996] Invalid input device (no default output device)
+Traceback (most recent call last):
+  File "E:\DL\Projects\typer\utils\listener.py", line 40, in start
+    self.stream = self.p.open(
+                  ^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 639, in open
+    stream = PyAudio.Stream(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 441, in __init__
+    self._stream = pa.open(**arguments)
+                   ^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno -9996] Invalid input device (no default output device)
+[2025-07-25 01:52:51,728] logger.logger - ERROR - Cannot start recording: [Errno -9996] Invalid input device (no default output device)
+Traceback (most recent call last):
+  File "E:\DL\Projects\typer\utils\listener.py", line 255, in start_recording
+    self.rec.start()
+  File "E:\DL\Projects\typer\utils\listener.py", line 40, in start
+    self.stream = self.p.open(
+                  ^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 639, in open
+    stream = PyAudio.Stream(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 441, in __init__
+    self._stream = pa.open(**arguments)
+                   ^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno -9996] Invalid input device (no default output device)
+[2025-07-25 01:52:52,223] logger.logger - WARNING - Recording too short (0.50 seconds). Minimum duration is 0.50 seconds.
+[2025-07-25 01:57:58,804] logger.logger - ERROR - Failed to start recording: [Errno -9996] Invalid input device (no default output device)
+Traceback (most recent call last):
+  File "E:\DL\Projects\typer\utils\listener.py", line 40, in start
+    self.stream = self.p.open(
+                  ^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 639, in open
+    stream = PyAudio.Stream(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 441, in __init__
+    self._stream = pa.open(**arguments)
+                   ^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno -9996] Invalid input device (no default output device)
+[2025-07-25 01:57:58,808] logger.logger - ERROR - Cannot start recording: [Errno -9996] Invalid input device (no default output device)
+Traceback (most recent call last):
+  File "E:\DL\Projects\typer\utils\listener.py", line 255, in start_recording
+    self.rec.start()
+  File "E:\DL\Projects\typer\utils\listener.py", line 40, in start
+    self.stream = self.p.open(
+                  ^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 639, in open
+    stream = PyAudio.Stream(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\typer\.venv\Lib\site-packages\pyaudio\__init__.py", line 441, in __init__
+    self._stream = pa.open(**arguments)
+                   ^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno -9996] Invalid input device (no default output device)
+[2025-07-25 01:58:00,096] logger.logger - WARNING - Audio data is too small. Check your recording device.
+[2025-07-25 02:09:25,766] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 02:09:29,860] logger.logger - WARNING - Sound file ../media/splash.mp3 not found.
+[2025-07-25 02:09:29,861] logger.logger - WARNING - Sound file ../media/splash.mp3 not found.
+[2025-07-25 02:12:52,208] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 02:12:57,481] logger.logger - WARNING - Sound file ../media/splash.mp3 not found.
+[2025-07-25 02:12:57,482] logger.logger - WARNING - Sound file ../media/splash.mp3 not found.
+[2025-07-25 02:13:32,929] logger.logger - WARNING - No recording device detected. Please connect a microphone.
+[2025-07-25 02:13:37,575] logger.logger - WARNING - No recording device detected. Please connect a microphone.
+[2025-07-25 02:13:47,832] logger.logger - WARNING - No recording device detected. Please connect a microphone.
+[2025-07-25 02:16:48,185] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 02:16:51,962] logger.logger - WARNING - Sound file ../media/splash.mp3 not found.
+[2025-07-25 02:23:48,708] logger.logger - INFO - WinSTT application started successfully
+[2025-07-25 02:23:52,570] logger.logger - WARNING - Sound file ../media/splash.mp3 not found.

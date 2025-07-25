@@ -1,11 +1,12 @@
 import logging
-from logging import StreamHandler
 import os
 from datetime import datetime
+from logging import StreamHandler
+
 
 def setup_logger():
     log_file_name = f"{datetime.now().strftime('%m_%d')}.log"
-    log_path = os.path.join('log', log_file_name)
+    log_path = os.path.join("log", log_file_name)
     os.makedirs(log_path, exist_ok=True)
     log_file_path = os.path.join(log_path, log_file_name)
 
