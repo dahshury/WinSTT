@@ -1,3 +1,81 @@
+Metadata-Version: 2.4
+Name: typer
+Version: 0.1.0
+Summary: Voice typing application using Whisper
+Author-email: Your Name <your.email@example.com>
+License: MIT License
+        
+        Copyright (c) 2022 OpenAI
+        
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+        
+        The above copyright notice and this permission notice shall be included in all
+        copies or substantial portions of the Software.
+        
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+        SOFTWARE.
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+License-File: license
+Requires-Dist: requests==2.31.0
+Requires-Dist: tqdm==4.67.0
+Requires-Dist: pyqt6==6.7.1
+Requires-Dist: keyboard==0.13.5
+Requires-Dist: pydub==0.25.1
+Requires-Dist: pygame==2.6.1
+Requires-Dist: pynput==1.7.7
+Requires-Dist: pyperclip==1.9.0
+Requires-Dist: pvporcupine==1.9.5
+Requires-Dist: pywin32==310
+Requires-Dist: pyqtgraph==0.13.7
+Requires-Dist: pyaudio==0.2.14
+Requires-Dist: numpy>=2.0.2
+Requires-Dist: transformers>=4.46.1
+Requires-Dist: flatbuffers
+Requires-Dist: packaging
+Requires-Dist: protobuf
+Requires-Dist: sympy
+Requires-Dist: pre-commit>=4.2.0
+Requires-Dist: mypy>=1.10.0
+Requires-Dist: ruff>=0.4.4
+Requires-Dist: mdformat>=0.7.22
+Requires-Dist: pyinstaller>=6.14.2
+Requires-Dist: aiofiles>=24.1.0
+Requires-Dist: psutil>=7.0.0
+Requires-Dist: librosa>=0.10.0.post2
+Provides-Extra: cpu
+Requires-Dist: faster-whisper>=0.10.0; extra == "cpu"
+Requires-Dist: onnxruntime==1.20.0; extra == "cpu"
+Provides-Extra: gpu
+Requires-Dist: librosa==0.10.0.post2; extra == "gpu"
+Requires-Dist: transformers>=4.46.1; extra == "gpu"
+Requires-Dist: torch>=2.7.1; extra == "gpu"
+Requires-Dist: openai-whisper>=20250625; extra == "gpu"
+Requires-Dist: onnxruntime-gpu==1.20.0; extra == "gpu"
+Provides-Extra: dev
+Requires-Dist: types-requests>=2.32.4.20250611; extra == "dev"
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Provides-Extra: build
+Requires-Dist: setuptools>=45; extra == "build"
+Requires-Dist: wheel; extra == "build"
+Requires-Dist: twine>=4.0.0; extra == "build"
+Provides-Extra: dev-all
+Requires-Dist: typer[dev]; extra == "dev-all"
+Requires-Dist: typer[build]; extra == "dev-all"
+Dynamic: license-file
+
 # <img src="./media/Windows 1 Theta.ico" alt="Alt text" width="30"> WinSTT
 
 ![Alt text](/media/untitled.png)

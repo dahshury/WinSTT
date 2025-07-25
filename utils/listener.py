@@ -1,19 +1,21 @@
+import io
 import os
 import threading
 import time
-import io
-import pyperclip
-import pyaudio
 import wave
-import gc
+from collections import deque  # Import deque for efficient sliding window
+
+import pyaudio
+import pygame
+import pyperclip
+from keyboard import hook, unhook_all, wait
+from pynput.keyboard import Controller, Key
+
 # import pyautogui
 from logger.logger import setup_logger
-from .transcribe import WhisperONNXTranscriber, VaDetector
-import keyboard
-from keyboard import wait, hook, unhook_all
-from pynput.keyboard import Key, Controller
-import pygame
-from collections import deque  # Import deque for efficient sliding window
+
+from .transcribe import VaDetector, WhisperONNXTranscriber
+
 # import difflib
 
 logger = setup_logger()
@@ -44,9 +46,20 @@ class Recorder:
             )
             threading.Thread(target=self._recording, daemon=True).start()
             # self.logger.debug("Recording started.")
+        except OSError as e:
+            if "Invalid input device" in str(e) or "no default output device" in str(e):
+                # Nice message for missing recording device
+                self.logger.warning("No recording device detected. Please connect a microphone.")
+                msg = "No recording device detected. Please connect a microphone."
+                raise RuntimeError(msg)
+            else:
+                self.logger.exception("Failed to access audio device: %s", e)
+                msg = f"Failed to access audio device: {e}"
+                raise RuntimeError(msg)
         except Exception as e:
             self.logger.exception("Failed to start recording: %s", e)
-            raise
+            msg = f"Failed to start recording: {e}"
+            raise RuntimeError(msg)
 
     def _recording(self):
         try:
@@ -72,11 +85,11 @@ class Recorder:
         """
         try:
             with io.BytesIO() as wf:
-                with wave.open(wf, 'wb') as wave_file:
+                with wave.open(wf, "wb") as wave_file:
                     wave_file.setnchannels(self.CHANNELS)
                     wave_file.setsampwidth(self.p.get_sample_size(self.FORMAT))
                     wave_file.setframerate(self.RATE)
-                    wave_file.writeframes(b''.join(self._frames))
+                    wave_file.writeframes(b"".join(self._frames))
                 wf.seek(0)
                 return wf.read()
         except Exception as e:
@@ -115,11 +128,11 @@ class AudioToText:
         self,
         model_cls,
         vad_cls,
-        rec_key: str = 'Ctrl+Alt+A',
+        rec_key: str = "Ctrl+Alt+A",
         channels: int = 1,
         rate: int = 16000,
         start_sound_file: str = "../media/splash.mp3",
-        error_callback = None
+        error_callback = None,
     ):
         self.scriptdir = os.path.dirname(os.path.abspath(__file__))
         self.model = model_cls
@@ -129,8 +142,9 @@ class AudioToText:
         self.rate = rate
         self.rec = Recorder(channels=channels, rate=rate)
         self.is_recording = False
+        self.recording_successful = False  # Track if recording actually started
         self.start_sound = None
-        self.start_sound_file = start_sound_file  # Store the path directly without joining
+        self._start_sound_file = start_sound_file  # Private attribute
         self.sound_play_lock = threading.Lock()
         self.last_playback_time = 0
         self.min_duration = 0.5  # Minimum recording duration in seconds
@@ -138,9 +152,8 @@ class AudioToText:
         self.keys_down = set()
         self.keyboard = Controller()
         
-
         self.transcription_thread = None
-        self.stop_event = threading.Event()
+        
         self.error_callback = error_callback
         # self.logger.debug("AudioToText initialized.")
 
@@ -155,7 +168,17 @@ class AudioToText:
         
         self.logger = setup_logger()
         pygame.mixer.init()  # Initialize Pygame mixer here
-        
+        self.init_pygame()  # Load initial sound file
+    
+    @property
+    def start_sound_file(self):
+        return self._start_sound_file
+    
+    @start_sound_file.setter
+    def start_sound_file(self, value):
+        self._start_sound_file = value
+        self.init_pygame()  # Automatically reload sound when path changes
+
     def init_pygame(self):
         # Load the sound file
         try:
@@ -187,7 +210,7 @@ class AudioToText:
     def play_sound_thread(self):
         threading.Thread(target=self.play_sound, daemon=True).start()
 
-    def capture_keys(self, new_key:str=None):
+    def capture_keys(self, new_key:str | None=None):
         """Handle key events and track the combo."""
         # Check if any hotkeys are currently registered
         if new_key and self.rec_key.lower() != new_key.lower():
@@ -211,8 +234,8 @@ class AudioToText:
         transcript_text = transcript_text.replace("New paragraph.", "\n\n")
         pyperclip.copy(transcript_text)
         self.keyboard.press(Key.ctrl)
-        self.keyboard.press('v')
-        self.keyboard.release('v')
+        self.keyboard.press("v")
+        self.keyboard.release("v")
         self.keyboard.release(Key.ctrl)
 
     def transcribe_and_paste(self, wav_bytes):
@@ -246,19 +269,29 @@ class AudioToText:
     def start_recording(self):
         start_time = time.time()
         self.last_playback_time = start_time
+        self.recording_successful = False  # Reset flag
         # self.logger.debug("Recording key pressed.")
         if self.error_callback:
             self.error_callback.emit("Recording...", None, None, None, None) # txt=None, filename=None, percentage=None, hold=False, reset=None
         try:
             self.rec.start()
+            self.recording_successful = True  # Mark as successful
             # self.logger.debug("Recorder started in %.4f seconds.", time.time() - start_time)
+        except RuntimeError as e:
+            # Handle our custom RuntimeError messages nicely
+            self.rec.stop()
+            self.rec.close(reset=True)
+            if self.error_callback:
+                self.error_callback.emit(str(e), None, None, None, None) # Show the nice error message
+            return  # Don't raise, just return to prevent further errors
         except Exception as e:
             self.logger.exception("Cannot start recording: %s", e)
             self.rec.stop()
             self.rec.close(reset=True)
             if self.error_callback:
-                self.error_callback.emit("Cannot start recording, check logs", None, None, None, None) # txt=None, filename=None, percentage=None, hold=False, reset=None
-                raise
+                self.error_callback.emit("Cannot start recording. Check logs for details.", None, None, None, None)
+            return  # Don't raise, just return to prevent further errors
+        
         if self.start_sound is not None:
             self.play_sound_thread()
                 
@@ -267,26 +300,27 @@ class AudioToText:
             recording_duration = time.time() - self.last_playback_time
             if self.error_callback:
                 self.error_callback.emit(None, None, None, None, True)
+            
+            # Only process audio if recording was successful
+            if not self.recording_successful:
+                return  # Don't process if recording never started
+                
             if recording_duration >= self.min_duration:
                 try:
                     wav_bytes = self.rec.get_wav_bytes()
                     # Start transcription in a separate thread
                     self.transcription_thread = threading.Thread(
-                        target=self.transcribe_and_paste, args=(wav_bytes,), daemon=True
+                        target=self.transcribe_and_paste, args=(wav_bytes,), daemon=True,
                     )
                     self.transcription_thread.start()
                 except Exception as e:
-                    self.logger.exception("Failed to get WAV bytes: %s", e)
+                    self.logger.exception("Error during transcription: %s", e)
                     if self.error_callback:
-                        self.error_callback.emit("Failed to get WAV bytes, check logs", None, None, None, None) # txt=None, filename=None, percentage=None, hold=False, reset=None
+                        self.error_callback.emit("Transcription Error. Check logs.", None, None, None, None)
             else:
-                self.logger.warning(
-                    "Recording too short (%.2f seconds). Minimum duration is %.2f seconds.",
-                    recording_duration,
-                    self.min_duration,
-                )
                 if self.error_callback:
-                    self.error_callback.emit(f"Recording too short. Please record at least {self.min_duration}s.", None, None, None, None) # txt=None, filename=None, percentage=None, hold=False, reset=None
+                    self.error_callback.emit(f"Recording too short ({recording_duration:.2f} seconds). Minimum duration is {self.min_duration} seconds.", None, None, None, None)
+                self.logger.warning("Recording too short (%.2f seconds). Minimum duration is %.2f seconds.", recording_duration, self.min_duration)
                 
     # Live transcription code
     # def _streaming_callback(self, in_data, frame_count, time_info, status):

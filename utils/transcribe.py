@@ -1,20 +1,21 @@
-import os
 import gc
-import requests
-from tqdm import tqdm
-import onnxruntime as ort
-import numpy as np
-from transformers import WhisperTokenizerFast, WhisperFeatureExtractor
 import json
-import librosa
+import os
 import queue
-from collections import deque
+import sys
 import threading
 import time
+from collections import deque
+
+import librosa
+import numpy as np
 import onnxruntime as ort
-from logger import setup_logger
+import requests
 from pydub import AudioSegment
-import sys
+from tqdm import tqdm
+from transformers import WhisperFeatureExtractor, WhisperTokenizerFast
+
+from logger import setup_logger
 
 custom_logger = setup_logger()
 # cache_path = os.path.join(os.path.dirname(os.path.dirname(script_path)), "cache") # For exe
@@ -23,28 +24,40 @@ custom_logger = setup_logger()
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
-        base_path = os.path.dirname(sys._MEIPASS)
+        base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Get project root, then go to src directory
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_path = os.path.join(project_root, "src")
 
     return os.path.join(base_path, relative_path)
 
 class WhisperONNXTranscriber:
-    def __init__(self, cache_path=resource_path("cache"), q="full" if 'CUDAExecutionProvider' in ort.get_available_providers() else "quantized", display_message_signal=None):
+    def __init__(self, cache_path=resource_path("cache"), q="full" if "CUDAExecutionProvider" in ort.get_available_providers() else "quantized", display_message_signal=None, model_type="whisper-turbo"):
         self.cache_path = cache_path
         self.q = q
-        self.model_type = "Whisper-turbo"
-        # Subfolder for ONNX files
-        self.onnx_folder = os.path.join(self.cache_path, "onnx")
+        self.model_type = model_type
+        
+        # Determine model directory based on type
+        if model_type == "lite-whisper-turbo":
+            self.model_cache_path = os.path.join(self.cache_path, "models", "lite-whisper-turbo")
+        elif model_type == "lite-whisper-turbo-fast":
+            self.model_cache_path = os.path.join(self.cache_path, "models", "lite-whisper-turbo-fast")
+        else:  # Default to standard whisper-turbo
+            self.model_cache_path = os.path.join(self.cache_path, "models", "whisper-turbo")
+        
+        # ONNX files are in the onnx subdirectory
+        self.onnx_folder = os.path.join(self.model_cache_path, "onnx")
         self.display_message_signal = display_message_signal
+        
         # Ensure models are downloaded
         self.update_names()
         self.download_and_prepare_models()
         # Load ONNX models  
         self.initialize_sessions(q=self.q)
-        # Load tokenizer and feature extractor
-        self.tokenizer = WhisperTokenizerFast.from_pretrained(self.cache_path)
-        self.feature_extractor = WhisperFeatureExtractor.from_pretrained(self.cache_path)
+        # Load tokenizer and feature extractor from model cache path (where HF files are)
+        self.tokenizer = WhisperTokenizerFast.from_pretrained(self.model_cache_path)
+        self.feature_extractor = WhisperFeatureExtractor.from_pretrained(self.model_cache_path)
         
         # Streaming attributes
         self.audio_buffer = deque(maxlen=96000)  # 6 seconds buffer at 16kHz
@@ -54,11 +67,11 @@ class WhisperONNXTranscriber:
         self.current_transcript = ""
         self.transcript_queue = queue.Queue()
         # Load configuration files
-        with open(os.path.join(self.cache_path, "config.json"), 'r') as f:
+        with open(os.path.join(self.model_cache_path, "config.json")) as f:
             self.config = json.load(f)
-        with open(os.path.join(self.cache_path, "generation_config.json"), 'r') as f:
+        with open(os.path.join(self.model_cache_path, "generation_config.json")) as f:
             self.generation_config = json.load(f)
-        with open(os.path.join(self.cache_path, "preprocessor_config.json"), 'r') as f:
+        with open(os.path.join(self.model_cache_path, "preprocessor_config.json")) as f:
             self.preprocessor_config = json.load(f)
             
     def update_names(self):
@@ -89,7 +102,7 @@ class WhisperONNXTranscriber:
             encoder_path = os.path.join(self.onnx_folder, self.encoder_name)
             self.encoder_session = ort.InferenceSession(
                 os.path.join(encoder_path),
-                providers=available_providers
+                providers=available_providers,
             )
         except Exception as e:
             os.remove(encoder_path)
@@ -103,7 +116,7 @@ class WhisperONNXTranscriber:
             decoder_path = os.path.join(self.onnx_folder, self.decoder_name)
             self.decoder_session = ort.InferenceSession(
                 os.path.join(decoder_path),
-                providers=available_providers
+                providers=available_providers,
             ) 
         except Exception as e:
             os.remove(decoder_path) 
@@ -123,7 +136,8 @@ class WhisperONNXTranscriber:
             
             # Ensure the quantization type is valid
             if q.lower() not in ["full", "quantized"]:
-                raise ValueError("Invalid quantization type. Choose 'full' or 'quantized'.")
+                msg = "Invalid quantization type. Choose 'full' or 'quantized'."
+                raise ValueError(msg)
             
             self.clear_sessions()
             
@@ -137,7 +151,7 @@ class WhisperONNXTranscriber:
             custom_logger.info("ONNX sessions successfully reinitialized.")
 
         except Exception as e:
-            custom_logger.error(f"Error reinitializing ONNX sessions: {e}")
+            custom_logger.exception(f"Error reinitializing ONNX sessions: {e}")
             raise
         
     def clear_sessions(self):
@@ -157,7 +171,7 @@ class WhisperONNXTranscriber:
         files = [
             self.encoder_name,
             "encoder_model.onnx_data" if self.q.lower() == "full" else None,
-            self.decoder_name
+            self.decoder_name,
         ]
 
         config_files = [
@@ -169,7 +183,7 @@ class WhisperONNXTranscriber:
             "added_tokens.json",          # Custom added tokens (if any)
             "special_tokens_map.json",    # Mapping of special tokens (e.g., <pad>, <eos>)
             "tokenizer_config.json",      # Tokenizer-specific configuration
-            "normalizer.json"             # Optional normalization configurations for text preprocessing
+            "normalizer.json",             # Optional normalization configurations for text preprocessing
         ]
 
         # Download ONNX files
@@ -183,7 +197,7 @@ class WhisperONNXTranscriber:
 
         # Download configuration files
         for config_file in config_files:
-            config_path = os.path.join(self.cache_path, config_file)
+            config_path = os.path.join(self.model_cache_path, config_file)
             config_url = f"https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/{config_file}"
             if not os.path.exists(config_path):
                 print(f"Configuration file '{config_file}' not found. Downloading...")
@@ -203,7 +217,7 @@ class WhisperONNXTranscriber:
             response.raise_for_status()
             
             # Log content type for debugging
-            content_type = response.headers.get('content-type', '').lower()
+            content_type = response.headers.get("content-type", "").lower()
             custom_logger.debug(f"Downloading {url} with content-type: {content_type}")
             
             # For small files, we'll check the first part to detect HTML error pages
@@ -212,13 +226,13 @@ class WhisperONNXTranscriber:
             # Only download to a temporary file first for validation
             temp_path = save_path + ".tmp"
             
-            total_size = int(response.headers.get('content-length', 0))
+            total_size = int(response.headers.get("content-length", 0))
             block_size = 1024  # 1 KiB
             
-            with open(temp_path, 'wb') as file, tqdm(
+            with open(temp_path, "wb") as file, tqdm(
                 desc=f"Downloading {os.path.basename(save_path)}",
                 total=total_size,
-                unit='B',
+                unit="B",
                 unit_scale=True,
                 unit_divisor=1024,
             ) as bar:
@@ -232,19 +246,20 @@ class WhisperONNXTranscriber:
                     # Check the first chunk for HTML content
                     if first_chunk:
                         try:
-                            text_sample = data[:512].decode('utf-8', errors='ignore')
+                            text_sample = data[:512].decode("utf-8", errors="ignore")
                             # Check for HTML markers
                             content_is_html = (
-                                '<html' in text_sample or 
-                                '<body' in text_sample or 
-                                '<!DOCTYPE' in text_sample or
-                                '<head' in text_sample
+                                "<html" in text_sample or 
+                                "<body" in text_sample or 
+                                "<!DOCTYPE" in text_sample or
+                                "<head" in text_sample
                             )
                             
                             # If dealing with JSON file but received HTML, abort
-                            if content_is_html and save_path.endswith('.json'):
+                            if content_is_html and save_path.endswith(".json"):
                                 custom_logger.error(f"Received HTML content for a JSON file: {url}")
-                                raise Exception(f"Received HTML content instead of JSON: {url}")
+                                msg = f"Received HTML content instead of JSON: {url}"
+                                raise Exception(msg)
                                 
                             first_chunk = False
                         except UnicodeDecodeError:
@@ -267,12 +282,12 @@ class WhisperONNXTranscriber:
                 file_valid = True
                 
                 # For JSON files, verify they contain valid JSON
-                if save_path.endswith('.json'):
+                if save_path.endswith(".json"):
                     try:
-                        with open(temp_path, 'r', encoding='utf-8') as f:
+                        with open(temp_path, encoding="utf-8") as f:
                             content = f.read()
                             # Basic check for HTML in JSON file
-                            if '<html' in content or '<!DOCTYPE' in content:
+                            if "<html" in content or "<!DOCTYPE" in content:
                                 custom_logger.error(f"Downloaded file contains HTML, not JSON: {save_path}")
                                 file_valid = False
                             else:
@@ -280,19 +295,19 @@ class WhisperONNXTranscriber:
                                 import json
                                 json.loads(content)
                     except json.JSONDecodeError as e:
-                        custom_logger.error(f"Downloaded file is not valid JSON: {save_path}, error: {e}")
+                        custom_logger.exception(f"Downloaded file is not valid JSON: {save_path}, error: {e}")
                         file_valid = False
                     except Exception as e:
-                        custom_logger.error(f"Error validating JSON file: {save_path}, error: {e}")
+                        custom_logger.exception(f"Error validating JSON file: {save_path}, error: {e}")
                         file_valid = False
                 
                 # For ONNX files, do basic size check
-                if save_path.endswith('.onnx'):
+                if save_path.endswith(".onnx"):
                     file_size = os.path.getsize(temp_path)
                     if file_size < 1000:  # ONNX files should be larger than this
-                        with open(temp_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        with open(temp_path, encoding="utf-8", errors="ignore") as f:
                             content_peek = f.read(512)
-                            if '<html' in content_peek or '<!DOCTYPE' in content_peek:
+                            if "<html" in content_peek or "<!DOCTYPE" in content_peek:
                                 custom_logger.error(f"Downloaded file contains HTML, not an ONNX model: {save_path}")
                                 file_valid = False
                 
@@ -301,50 +316,50 @@ class WhisperONNXTranscriber:
                     os.replace(temp_path, save_path)
                     custom_logger.debug(f"File validated and saved successfully: {save_path}")
                     return True
-                else:
-                    # Remove invalid file
-                    os.remove(temp_path)
-                    raise Exception(f"Downloaded file failed validation: {save_path}")
-            else:
-                raise Exception(f"Failed to download file: {save_path}")
+                # Remove invalid file
+                os.remove(temp_path)
+                msg = f"Downloaded file failed validation: {save_path}"
+                raise Exception(msg)
+            msg = f"Failed to download file: {save_path}"
+            raise Exception(msg)
 
         except requests.ConnectionError:
             if self.display_message_signal:
                 self.display_message_signal.emit("Failed to connect to the internet. Please check your connection.", None, None, None, None)
-            custom_logger.error("Failed to connect to the internet. Please check your connection.")
+            custom_logger.exception("Failed to connect to the internet. Please check your connection.")
             if os.path.exists(save_path + ".tmp"):
                 os.remove(save_path + ".tmp")
             raise
         except requests.HTTPError as http_err:
             if http_err.response.status_code == 404:
-                custom_logger.error(f"File not found (404): {url}")
+                custom_logger.exception(f"File not found (404): {url}")
                 if self.display_message_signal:
                     self.display_message_signal.emit(f"File not found: {os.path.basename(url)}", None, None, None, None)
             else:
                 if self.display_message_signal:
                     self.display_message_signal.emit(f"HTTP error occurred: {http_err}", None, None, None, None)
-                custom_logger.error(f"HTTP error occurred: {http_err}")
+                custom_logger.exception(f"HTTP error occurred: {http_err}")
             if os.path.exists(save_path + ".tmp"):
                 os.remove(save_path + ".tmp")
             raise
         except requests.Timeout:
             if self.display_message_signal:
                 self.display_message_signal.emit("The request timed out. Please try again later.", None, None, None, None)
-            custom_logger.error("The request timed out. Please try again later.")
+            custom_logger.exception("The request timed out. Please try again later.")
             if os.path.exists(save_path + ".tmp"):
                 os.remove(save_path + ".tmp")
             raise
         except requests.RequestException as req_err:
             if self.display_message_signal:
                 self.display_message_signal.emit(f"An error occurred during download: {req_err}", None, None, None, None)
-            custom_logger.error(f"An error occurred: {req_err}")
+            custom_logger.exception(f"An error occurred: {req_err}")
             if os.path.exists(save_path + ".tmp"):
                 os.remove(save_path + ".tmp")
             raise
         except Exception as err:
             if self.display_message_signal:
                 self.display_message_signal.emit(f"An unexpected error occurred: {err}", None, None, None, None)
-            custom_logger.error(f"An unexpected error occurred: {err}")
+            custom_logger.exception(f"An unexpected error occurred: {err}")
             # Clean up
             if os.path.exists(save_path + ".tmp"):
                 os.remove(save_path + ".tmp")
@@ -365,18 +380,17 @@ class WhisperONNXTranscriber:
         inputs = self.feature_extractor(
             audio,
             sampling_rate=sr,
-            return_tensors="np"
+            return_tensors="np",
         )
 
-        input_features = inputs.input_features
+        return inputs.input_features
 
-        return input_features
 
     def encode(self, input_features):
         # Run encoder
         encoder_outputs = self.encoder_session.run(
             None,
-            {"input_features": input_features}
+            {"input_features": input_features},
         )
         return encoder_outputs[0]
 
@@ -386,9 +400,9 @@ class WhisperONNXTranscriber:
         decoder_input_ids = np.array([[self.generation_config["decoder_start_token_id"]]] * batch_size, dtype=np.int64)
 
         # Initialize past key values with correct dimensions from config
-        num_layers = self.config['decoder_layers']
-        num_attention_heads = self.config['decoder_attention_heads']
-        head_dim = self.config['d_model'] // num_attention_heads
+        num_layers = self.config["decoder_layers"]
+        num_attention_heads = self.config["decoder_attention_heads"]
+        head_dim = self.config["d_model"] // num_attention_heads
 
         past_key_values = []
         for _ in range(num_layers):
@@ -407,7 +421,7 @@ class WhisperONNXTranscriber:
             # Prepare decoder inputs
             decoder_inputs = {
                 "input_ids": decoder_input_ids,
-                "use_cache_branch": np.array([False], dtype=bool)
+                "use_cache_branch": np.array([False], dtype=bool),
             }
 
             # Add past key values to inputs
@@ -416,7 +430,7 @@ class WhisperONNXTranscriber:
                     f"past_key_values.{layer}.decoder.key": past_key_values[layer][0],
                     f"past_key_values.{layer}.decoder.value": past_key_values[layer][1],
                     f"past_key_values.{layer}.encoder.key": past_key_values[layer][2],
-                    f"past_key_values.{layer}.encoder.value": past_key_values[layer][3]
+                    f"past_key_values.{layer}.encoder.value": past_key_values[layer][3],
                 })
 
             # Add encoder hidden states and encoder attention mask
@@ -441,7 +455,7 @@ class WhisperONNXTranscriber:
                         decoder_outputs[idx],     # decoder key
                         decoder_outputs[idx + 1], # decoder value
                         decoder_outputs[idx + 2], # encoder key
-                        decoder_outputs[idx + 3]  # encoder value
+                        decoder_outputs[idx + 3],  # encoder value
                     ))
                 past_key_values = updated_past_key_values
 
@@ -450,7 +464,7 @@ class WhisperONNXTranscriber:
 
                 # Update decoder input ids
                 decoder_input_ids = np.concatenate(
-                    [decoder_input_ids, next_tokens[:, None]], axis=-1
+                    [decoder_input_ids, next_tokens[:, None]], axis=-1,
                 )
 
                 # Check for end of sequence
@@ -458,7 +472,7 @@ class WhisperONNXTranscriber:
                     break
 
             except Exception as e:
-                custom_logger.error(f"Error in decoder iteration: {e}")
+                custom_logger.exception(f"Error in decoder iteration: {e}")
                 break
 
         return np.array(output_ids, dtype=np.int64).T  # Ensure int64
@@ -468,10 +482,9 @@ class WhisperONNXTranscriber:
         output_ids_list = output_ids.tolist()
 
         # Decode the predicted tokens to text
-        transcription = self.tokenizer.batch_decode(
-            output_ids_list, skip_special_tokens=True
+        return self.tokenizer.batch_decode(
+            output_ids_list, skip_special_tokens=True,
         )[0]
-        return transcription
 
     def transcribe(self, audio_path):
         """Convenience method to handle complete transcription process"""
@@ -496,7 +509,7 @@ class WhisperONNXTranscriber:
             
             return transcription
         except Exception as e:
-            custom_logger.error(f"Error in transcription pipeline: {str(e)}")
+            custom_logger.exception(f"Error in transcription pipeline: {e!s}")
             raise
     
     def get_segments(self):
@@ -504,7 +517,7 @@ class WhisperONNXTranscriber:
         Extract segments with timestamps from the last transcription.
         Returns a list of segments with start time, end time, and text.
         """
-        if not hasattr(self, 'last_audio_path') or not hasattr(self, 'last_transcription'):
+        if not hasattr(self, "last_audio_path") or not hasattr(self, "last_transcription"):
             custom_logger.warning("No previous transcription available for segmentation")
             return []
             
@@ -522,16 +535,16 @@ class WhisperONNXTranscriber:
             
             # If this is a very short audio file, create a simple segment
             if audio_duration < 5:
-                return [{'start': 0, 'end': audio_duration, 'text': self.last_transcription}]
+                return [{"start": 0, "end": audio_duration, "text": self.last_transcription}]
             
             # Split transcription into sentences for segments
             import re
-            sentences = re.split(r'(?<=[.!?])\s+', self.last_transcription)
+            sentences = re.split(r"(?<=[.!?])\s+", self.last_transcription)
             sentences = [s for s in sentences if s.strip()]
             
             # If only one sentence, create a simple segment
             if len(sentences) <= 1:
-                return [{'start': 0, 'end': audio_duration, 'text': self.last_transcription}]
+                return [{"start": 0, "end": audio_duration, "text": self.last_transcription}]
             
             # Create segments with evenly distributed timestamps
             segments = []
@@ -542,15 +555,15 @@ class WhisperONNXTranscriber:
                 end_time = min((i + 1) * duration_per_segment, audio_duration)
                 
                 segments.append({
-                    'start': start_time,
-                    'end': end_time,
-                    'text': sentence.strip()
+                    "start": start_time,
+                    "end": end_time,
+                    "text": sentence.strip(),
                 })
             
             return segments
         except Exception as e:
-            custom_logger.error(f"Error creating segments: {str(e)}")
-            return [{'start': 0, 'end': 30, 'text': self.last_transcription}]  # Fallback
+            custom_logger.exception(f"Error creating segments: {e!s}")
+            return [{"start": 0, "end": 30, "text": self.last_transcription}]  # Fallback
 
     def process_audio_chunk(self, chunk):
         """Process a single chunk of audio data."""
@@ -571,7 +584,7 @@ class WhisperONNXTranscriber:
                 inputs = self.feature_extractor(
                     audio_data,
                     sampling_rate=16000,
-                    return_tensors="np"
+                    return_tensors="np",
                 )
                 
                 # Get encoder outputs
@@ -611,7 +624,7 @@ class WhisperONNXTranscriber:
                 else:
                     time.sleep(0.1)  # Prevent busy waiting
             except Exception as e:
-                custom_logger.error(f"Error in processing thread: {e}")
+                custom_logger.exception(f"Error in processing thread: {e}")
                 break
 
     def get_current_transcript(self):
@@ -624,68 +637,19 @@ class WhisperONNXTranscriber:
         return self.current_transcript
                 
 class VaDetector:
-    def __init__(self, onnx_path=resource_path("cache"), model_filename="silero_vad_16k.onnx", progress_callback=None):
-        # Ensure the ONNX directory exists
-        self.onnx_folder = os.path.join(onnx_path, "onnx")
-        if not os.path.exists(self.onnx_folder):
-            os.makedirs(self.onnx_folder, exist_ok=True)
+    def __init__(self, onnx_path=resource_path("cache/vad"), model_filename="silero_vad_16k.onnx", progress_callback=None):
+        self.model_filename = model_filename
+        self.model_path = os.path.join(onnx_path, model_filename)
         self.progress_callback = progress_callback
-        # Full path to the ONNX model
-        onnx_model_path = os.path.join(self.onnx_folder, model_filename)
         
-        # Download the ONNX model if it doesn't exist
-        if not os.path.exists(onnx_model_path) or os.path.getsize(onnx_model_path) <= 2048:
-            filename = "silero_vad_16k_op15"
-            custom_logger.info(f"Downloading ONNX model to {onnx_model_path}...")
-            url = f"https://github.com/snakers4/silero-vad/blob/master/src/silero_vad/data/{filename}.onnx?raw=true"
-            try:
-                response = requests.get(url, stream=True, timeout=30)
-                response.raise_for_status()
-                total_size = int(response.headers.get('content-length', 0))
-                block_size = 1024  # 1 Kibibyte
-                
-                with open(onnx_model_path, 'wb') as f:
-                    downloaded = 0
-                    for data in response.iter_content(block_size):
-                        downloaded += len(data)
-                        f.write(data)
-                        if total_size > 0:
-                            percent = int((downloaded / total_size) * 100)
-                            if self.progress_callback:
-                                self.progress_callback(filename=filename, percentage=percent)
-                
-                custom_logger.info(f"File downloaded successfully: {onnx_model_path}")
-                if self.progress_callback:
-                    self.progress_callback(filename=filename, percentage=100)
-            except requests.ConnectionError:
-                if self.progress_callback:
-                    self.progress_callback(txt="Failed to connect to the internet. Please check your connection.")
-                custom_logger.error("Failed to connect to the internet. Please check your connection.")
-                raise
-            except requests.HTTPError as http_err:
-                if self.progress_callback:
-                    self.progress_callback(txt=f"HTTP error occurred: {http_err}")
-                custom_logger.error(f"HTTP error occurred: {http_err}")
-                raise
-            except requests.Timeout:
-                if self.progress_callback:
-                    self.progress_callback(txt="The request timed out. Please try again later.")
-                custom_logger.error("The request timed out. Please try again later.")
-                raise
-            except requests.RequestException as req_err:
-                if self.progress_callback:
-                    self.progress_callback(txt="An error occurred while downloading VAD model, check logs")
-                custom_logger.error(f"An error occurred while downloading VAD model: {req_err}")
-                raise
-            except Exception as err:
-                if self.progress_callback:
-                    self.progress_callback(txt="An unexpected error occurred while initializing VAD, check logs")
-                custom_logger.error(f"An unexpected error occurred while initializing VAD: {err}")
-                raise
+        # Download model if it doesn't exist
+        if not os.path.exists(self.model_path):
+            os.makedirs(onnx_path, exist_ok=True)
+            self.download_model()
         
-        # Load the ONNX model for inference
-        self.onnx_model_path = onnx_model_path
-        self.session = ort.InferenceSession(onnx_model_path)
+        # Load the ONNX model
+        providers = ort.get_available_providers()
+        self.session = ort.InferenceSession(self.model_path, providers=providers)
         
         # Model parameters
         self.sample_rate = 16000
@@ -741,11 +705,13 @@ class VaDetector:
         """
         # Ensure waveform is a numpy array
         if not isinstance(audio_waveform, np.ndarray):
-            raise ValueError("The input audio waveform must be a numpy array.")
+            msg = "The input audio waveform must be a numpy array."
+            raise ValueError(msg)
         
         # Check if the audio waveform is 1D, as expected
         if audio_waveform.ndim > 1:
-            raise ValueError("The input audio waveform must be a 1D array.")
+            msg = "The input audio waveform must be a 1D array."
+            raise ValueError(msg)
         
         # Normalize and reshape
         audio_waveform = audio_waveform.astype(np.float32)
@@ -768,9 +734,8 @@ class VaDetector:
         # Normalize samples to [-1, 1]
         sample_width = audio.sample_width  # in bytes
         max_value = float(1 << (8 * sample_width - 1))
-        samples = samples / max_value
+        return samples / max_value
         
-        return samples
     
     def predict(self, data):
         """
@@ -783,13 +748,13 @@ class VaDetector:
         
         # Prepare additional required inputs
         input_feed = {
-            'input': input_data,
-            'state': self.state,
-            'sr': np.array([self.sample_rate], dtype=np.int64)
+            "input": input_data,
+            "state": self.state,
+            "sr": np.array([self.sample_rate], dtype=np.int64),
         }
         
         # Run inference
-        outputs = self.session.run(['output', 'stateN'], input_feed)
+        outputs = self.session.run(["output", "stateN"], input_feed)
         
         # Extract outputs
         speech_prob = outputs[0][0]  # Speech probability
@@ -806,28 +771,27 @@ class VaDetector:
                     self.next_start = self.current_sample - self.window_size_samples
             if not self.triggered:
                 self.triggered = True
-                self.current_speech = {'start': self.current_sample - self.window_size_samples}
+                self.current_speech = {"start": self.current_sample - self.window_size_samples}
         elif (self.threshold - 0.15) <= speech_prob < self.threshold:
             # Do nothing
             pass
-        else:
-            if self.triggered:
-                if self.temp_end == 0:
-                    self.temp_end = self.current_sample
-                if self.current_sample - self.temp_end > self.min_silence_samples_at_max_speech:
-                    self.prev_end = self.temp_end
-                if (self.current_sample - self.temp_end) < self.min_silence_samples:
-                    # Continue speaking
-                    pass
-                else:
-                    self.current_speech['end'] = self.temp_end
-                    if self.current_speech['end'] - self.current_speech['start'] > self.min_speech_samples:
-                        self.speeches.append(self.current_speech)
-                        self.current_speech = None
-                        self.prev_end = 0
-                        self.next_start = 0
-                        self.temp_end = 0
-                        self.triggered = False
+        elif self.triggered:
+            if self.temp_end == 0:
+                self.temp_end = self.current_sample
+            if self.current_sample - self.temp_end > self.min_silence_samples_at_max_speech:
+                self.prev_end = self.temp_end
+            if (self.current_sample - self.temp_end) < self.min_silence_samples:
+                # Continue speaking
+                pass
+            else:
+                self.current_speech["end"] = self.temp_end
+                if self.current_speech["end"] - self.current_speech["start"] > self.min_speech_samples:
+                    self.speeches.append(self.current_speech)
+                    self.current_speech = None
+                    self.prev_end = 0
+                    self.next_start = 0
+                    self.temp_end = 0
+                    self.triggered = False
     
     def has_speech(self, file_path):
         """
@@ -853,13 +817,13 @@ class VaDetector:
             window = audio_waveform[start:end]
             if len(window) < self.window_size_samples:
                 # Pad the last chunk if necessary
-                window = np.pad(window, (0, int(self.window_size_samples - len(window))), mode='constant')
+                window = np.pad(window, (0, int(self.window_size_samples - len(window))), mode="constant")
             
             self.predict(window)
         
         # Handle any remaining speech segment
-        if self.current_speech and 'start' in self.current_speech:
-            self.current_speech['end'] = self.current_sample
+        if self.current_speech and "start" in self.current_speech:
+            self.current_speech["end"] = self.current_sample
             self.speeches.append(self.current_speech)
             self.current_speech = None
             self.prev_end = 0
@@ -869,3 +833,55 @@ class VaDetector:
         
         # Return True if any speech segments were detected
         return len(self.speeches) > 0
+
+    def download_model(self):
+        """Download the VAD model if it doesn't exist"""
+        filename = "silero_vad_16k_op15"
+        custom_logger.info(f"Downloading ONNX model to {self.model_path}...")
+        url = f"https://github.com/snakers4/silero-vad/blob/master/src/silero_vad/data/{filename}.onnx?raw=true"
+        
+        try:
+            response = requests.get(url, stream=True, timeout=30)
+            response.raise_for_status()
+            total_size = int(response.headers.get("content-length", 0))
+            block_size = 1024  # 1 Kibibyte
+            
+            with open(self.model_path, "wb") as f:
+                downloaded = 0
+                for data in response.iter_content(block_size):
+                    downloaded += len(data)
+                    f.write(data)
+                    if total_size > 0:
+                        percent = int((downloaded / total_size) * 100)
+                        if self.progress_callback:
+                            self.progress_callback(filename=filename, percentage=percent)
+            
+            custom_logger.info(f"File downloaded successfully: {self.model_path}")
+            if self.progress_callback:
+                self.progress_callback(filename=filename, percentage=100)
+                
+        except requests.ConnectionError:
+            if self.progress_callback:
+                self.progress_callback(txt="Failed to connect to the internet. Please check your connection.")
+            custom_logger.exception("Failed to connect to the internet. Please check your connection.")
+            raise
+        except requests.HTTPError as http_err:
+            if self.progress_callback:
+                self.progress_callback(txt=f"HTTP error occurred: {http_err}")
+            custom_logger.exception(f"HTTP error occurred: {http_err}")
+            raise
+        except requests.Timeout:
+            if self.progress_callback:
+                self.progress_callback(txt="The request timed out. Please try again later.")
+            custom_logger.exception("The request timed out. Please try again later.")
+            raise
+        except requests.RequestException as req_err:
+            if self.progress_callback:
+                self.progress_callback(txt="An error occurred while downloading VAD model, check logs")
+            custom_logger.exception(f"An error occurred while downloading VAD model: {req_err}")
+            raise
+        except Exception as err:
+            if self.progress_callback:
+                self.progress_callback(txt="An unexpected error occurred while initializing VAD, check logs")
+            custom_logger.exception(f"An unexpected error occurred while initializing VAD: {err}")
+            raise

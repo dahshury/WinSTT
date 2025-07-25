@@ -1,0 +1,145 @@
+---
+alwaysApply: true
+---
+
+### Package Management with `uv`
+
+- **Exclusive Usage**: Use `uv` exclusively for Python dependency management
+- **Basic Commands**:
+  - `uv add <package>` - Add dependencies
+  - `uv remove <package>` - Remove dependencies
+  - `uv sync` - Reinstall from lock file
+  - `uv run script.py` - Run scripts with dependencies
+- **Script Dependencies**: Use inline metadata or `uv add --script` for script-specific dependencies
+- **Never Use**: Avoid `pip`, `pip-tools`, or `poetry` for dependency management
+
+### Development Tools
+
+- **Testing**: Use appropriate testing frameworks (pytest, Django's unittest, RoboCorp testing)
+- **Code Quality**: Use ruff for formatting, mypy for type checking
+- **Monitoring**: Implement structured logging and monitoring for all applications
+
+## Key Conventions
+
+1. **Configuration Management**: Use environment-specific configuration files and environment variables
+1. **API Versioning**: Implement proper API versioning strategy (URL-based versioning recommended)
+1. **Security**: Implement proper CSRF protection, CORS configuration, and input sanitization
+1. **Testing**: Write comprehensive tests for all components and maintain good test coverage
+1. **Documentation**: Maintain clear documentation for APIs, models, and complex business logic
+1. **Monitoring**: Implement proper logging, monitoring, and error tracking
+1. **Deployment**: Use containerization (Docker) and proper CI/CD pipelines
+1. **Performance**: Optimize for cloud-native and serverless deployments where applicable
+1. **Security-First**: Apply security best practices at every layer of development
+1. **Maintainability**: Structure code for long-term maintainability and team collaboration
+
+### Core Guidelines
+
+- **Task Definitions**: Use functional components (plain functions) with clear return type annotations
+- **Input Validation**: Use Pydantic models for input validation and response schemas
+- **Error Handling**: Use specific exceptions like `RPA.HTTP.HTTPException` for expected errors
+- **Performance**: Prioritize RPA performance metrics (execution time, resource utilization, throughput)
+- **Asynchronous Operations**: Use async functions for I/O-bound tasks and external API calls
+- **Middleware**: Use middleware for logging, error monitoring, and performance optimization
+
+### Async Operations
+
+- **I/O Operations**: Use asynchronous operations for all database calls and external API requests
+- **Background Tasks**: Use appropriate background task systems (Celery, FastAPI background tasks, RoboCorp async tasks)
+- **Parallel Processing**: Utilize appropriate parallelization for compute-intensive tasks
+
+### FastAPI Development
+
+- **Type Hints**: Use type hints for all function signatures; prefer Pydantic models over raw dictionaries
+- **Error Handling**: Use early returns and guard clauses; handle errors at the beginning of functions
+- **Dependencies**: Rely on FastAPI's dependency injection system for managing state and shared resources
+- **Performance**: Minimize blocking I/O operations; use asynchronous operations for database calls
+- **Middleware**: Use middleware for logging, error monitoring, and performance optimization
+
+### Programming Paradigms
+
+- **Functional Programming**: Use functional, declarative programming; avoid classes where possible (except for models, views, ML architectures, and Flask views)
+- **Object-Oriented Programming**: Use OOP for model architectures (Django/Odoo models, PyTorch nn.Module, Flask-RESTful views) and complex business logic
+- **Vectorized Operations**: Prefer vectorized operations over explicit loops for better performance
+- **Method Chaining**: Use method chaining for data transformations when possible
+- **Pure Functions**: Ensure functions are free of side effects for compatibility with JAX transformations and microservices
+- **Immutability**: Embrace functional programming principles; avoid mutable states where possible
+- **RORO Pattern**: Use the Receive an Object, Return an Object (RORO) pattern for consistent interfaces
+
+### Function Definitions
+
+- **Synchronous Functions**: Use `def` for pure functions and synchronous operations
+- **Asynchronous Functions**: Use `async def` for asynchronous operations and I/O-bound tasks
+- **Type Hints**: Use type hints for all function signatures; prefer Pydantic models over raw dictionaries for input validation
+- **Early Returns**: Use early returns for error conditions to avoid deeply nested if statements
+- **Guard Clauses**: Use guard clauses to handle preconditions and invalid states early
+
+### Package Management with `uv`
+
+- **Exclusive Usage**: Use `uv` exclusively for Python dependency management
+- **Basic Commands**:
+  - `uv add <package>` - Add dependencies
+  - `uv remove <package>` - Remove dependencies
+  - `uv sync` - Reinstall from lock file
+  - `uv run script.py` - Run scripts with dependencies
+- **Script Dependencies**: Use inline metadata or `uv add --script` for script-specific dependencies
+- **Never Use**: Avoid `pip`, `pip-tools`, or `poetry` for dependency management
+
+### Development Tools
+
+- **Testing**: Use appropriate testing frameworks (pytest, Django's unittest, RoboCorp testing)
+- **Code Quality**: Use ruff for formatting, mypy for type checking
+- **Monitoring**: Implement structured logging and monitoring for all applications
+
+## Key Conventions
+
+1. **Configuration Management**: Use environment-specific configuration files and environment variables
+1. **API Versioning**: Implement proper API versioning strategy (URL-based versioning recommended)
+1. **Security**: Implement proper CSRF protection, CORS configuration, and input sanitization
+1. **Testing**: Write comprehensive tests for all components and maintain good test coverage
+1. **Documentation**: Maintain clear documentation for APIs, models, and complex business logic
+1. **Monitoring**: Implement proper logging, monitoring, and error tracking
+1. **Deployment**: Use containerization (Docker) and proper CI/CD pipelines
+1. **Performance**: Optimize for cloud-native and serverless deployments where applicable
+1. **Security-First**: Apply security best practices at every layer of development
+1. **Maintainability**: Structure code for long-term maintainability and team collaboration
+
+### Core Guidelines
+
+- **Task Definitions**: Use functional components (plain functions) with clear return type annotations
+- **Input Validation**: Use Pydantic models for input validation and response schemas
+- **Error Handling**: Use specific exceptions like `RPA.HTTP.HTTPException` for expected errors
+- **Performance**: Prioritize RPA performance metrics (execution time, resource utilization, throughput)
+- **Asynchronous Operations**: Use async functions for I/O-bound tasks and external API calls
+- **Middleware**: Use middleware for logging, error monitoring, and performance optimization
+
+### Async Operations
+
+- **I/O Operations**: Use asynchronous operations for all database calls and external API requests
+- **Background Tasks**: Use appropriate background task systems (Celery, FastAPI background tasks, RoboCorp async tasks)
+- **Parallel Processing**: Utilize appropriate parallelization for compute-intensive tasks
+
+### FastAPI Development
+
+- **Type Hints**: Use type hints for all function signatures; prefer Pydantic models over raw dictionaries
+- **Error Handling**: Use early returns and guard clauses; handle errors at the beginning of functions
+- **Dependencies**: Rely on FastAPI's dependency injection system for managing state and shared resources
+- **Performance**: Minimize blocking I/O operations; use asynchronous operations for database calls
+- **Middleware**: Use middleware for logging, error monitoring, and performance optimization
+
+### Programming Paradigms
+
+- **Functional Programming**: Use functional, declarative programming; avoid classes where possible (except for models, views, ML architectures, and Flask views)
+- **Object-Oriented Programming**: Use OOP for model architectures (Django/Odoo models, PyTorch nn.Module, Flask-RESTful views) and complex business logic
+- **Vectorized Operations**: Prefer vectorized operations over explicit loops for better performance
+- **Method Chaining**: Use method chaining for data transformations when possible
+- **Pure Functions**: Ensure functions are free of side effects for compatibility with JAX transformations and microservices
+- **Immutability**: Embrace functional programming principles; avoid mutable states where possible
+- **RORO Pattern**: Use the Receive an Object, Return an Object (RORO) pattern for consistent interfaces
+
+### Function Definitions
+
+- **Synchronous Functions**: Use `def` for pure functions and synchronous operations
+- **Asynchronous Functions**: Use `async def` for asynchronous operations and I/O-bound tasks
+- **Type Hints**: Use type hints for all function signatures; prefer Pydantic models over raw dictionaries for input validation
+- **Early Returns**: Use early returns for error conditions to avoid deeply nested if statements
+- **Guard Clauses**: Use guard clauses to handle preconditions and invalid states early
