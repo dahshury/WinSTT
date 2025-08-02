@@ -1,0 +1,2284 @@
+---
+alwaysApply: true
+---
+
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Code Quality & Testing Rules
+
+## Code Quality Rules for Audio/Transcription
+
+### 1. Naming Convention Rules for Audio Domain
+
+- **MUST**: Use descriptive names that reflect audio/ML domain concepts
+- **MUST**: Use PascalCase for classes (AudioSession, TranscriptionResult)
+- **MUST**: Use snake_case for functions and variables (start_recording, audio_config)
+- **MUST**: Use SCREAMING_SNAKE_CASE for constants (DEFAULT_SAMPLE_RATE, MODEL_CACHE_SIZE)
+- **MUST**: Prefix private members with underscore (\_audio_stream, \_model_cache)
+- **FORBIDDEN**: Generic names without domain context (data, info, manager)
+- **FORBIDDEN**: Abbreviations that obscure meaning (aud, xscr, cfg)
+
+```python
+# ✅ CORRECT - Audio domain naming
+class AudioRecordingSession:
+    def __init__(self, session_id: str, microphone_config: MicrophoneConfiguration):
+        self._session_id = session_id
+        self._microphone_config = microphone_config
+        self._recording_state = RecordingState.IDLE
+        self._audio_buffer: List[bytes] = []
+    
+    def start_microphone_capture(self) -> Result[None]:
+        """Start capturing audio from the configured microphone."""
+        pass
+    
+    def get_transcription_confidence_score(self) -> ConfidenceScore:
+        """Get the confidence score for the current transcription."""
+        pass
+
+# ❌ INCORRECT - Generic naming
+class Manager:
+    def __init__(self, id: str, cfg: Config):
+        self.id = id
+        self.cfg = cfg
+        self.state = 0
+        self.data = []
+```
+
+### 2. Type Annotation Rules for Audio/ML
+
+- **MUST**: Use type hints for all public methods
+- **MUST**: Use generic types for containers (List[AudioFrame], Dict[str, ModelInstance])
+- **MUST**: Use Union types for multiple possible types
+- **MUST**: Use Optional for nullable values
+- **MUST**: Import types from typing module
+- **FORBIDDEN**: Any type without justification
+- **FORBIDDEN**: Missing return type annotations
+
+```python
+# ✅ CORRECT - Audio type annotations
+from typing import List, Dict, Optional, Union, Callable
+import numpy as np
+from numpy.typing import NDArray
+
+class TranscriptionEngine:
+    def __init__(self, model_path: Path, device_type: DeviceType) -> None:
+        self._model_path = model_path
+        self._device_type = device_type
+        self._audio_preprocessors: List[Callable[[NDArray], NDArray]] = []
+    
+    def transcribe_audio_frames(
+        self, 
+        audio_frames: List[NDArray[np.float32]], 
+        language_hint: Optional[str] = None
+    ) -> Result[TranscriptionResult]:
+        """Transcribe a sequence of audio frames to text.
+        
+        Args:
+            audio_frames: List of audio frame arrays (float32 format)
+            language_hint: Optional language code for improved accuracy
+            
+        Returns:
+            Result containing transcription with confidence scores
+        """
+        pass
+```
+
+````
+
+### 4. Code Organization Rules
+- **MUST**: Organize imports in groups: standard library, third-party, local
+- **MUST**: Keep functions small and focused (max 20 lines)
+- **MUST**: Use early returns to reduce nesting
+- **MUST**: Group related functionality into cohesive modules
+- **FORBIDDEN**: Deep nesting (max 3 levels)
+- **FORBIDDEN**: Functions with more than 5 parameters
+
+```python
+# ✅ CORRECT - Import organization
+import os
+from datetime import datetime
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api.common.models import ApplicationResult, Envelope
+from domain.entities import Calendar
+from infrastructure.discovery.type_registry import register_type
+
+# ✅ CORRECT - Function organization
+def validate_appointment_time(start_time: datetime, end_time: datetime) -> Result[None]:
+    """Validate appointment time constraints."""
+    if start_time >= end_time:
+        return Result.failure("Start time must be before end time")
+    
+    if start_time < datetime.now():
+        return Result.failure("Cannot schedule appointments in the past")
+    
+    return Result.success(None)
+
+def schedule_appointment(self, title: str, start_time: datetime, end_time: datetime) -> Result[Appointment]:
+    """Schedule appointment with validation."""
+    # Early validation
+    time_validation = validate_appointment_time(start_time, end_time)
+    if not time_validation.is_success:
+        return Result.failure(time_validation.error())
+    
+    # Create appointment
+    appointment_result = Appointment.create(title, start_time, end_time, self.id)
+    if not appointment_result.is_success:
+        return Result.failure(appointment_result.error())
+    
+    # Business rule validation
+    appointment = appointment_result.value()
+    if not self._can_schedule_appointment(appointment):
+        return Result.failure("Cannot schedule overlapping appointments")
+    
+    # Success path
+    self.appointments.append(appointment)
+    self.add_domain_event(AppointmentScheduled(self.id, appointment.id, title, start_time, end_time))
+    self.mark_as_updated()
+    
+    return Result.success(appointment)
+````
+
+## 🧪 Testing & Quality Workflow Steps
+
+### Testing Strategy for DDD Features
+
+**When implementing new features, follow this testing approach:**
+
+#### 1. Domain Layer Testing (Unit Tests)
+
+**Test all domain entities, value objects, and business logic:**
+
+```python
+# tests/unit/domain/entities/test_task.py
+import pytest
+from datetime import datetime, timedelta
+from domain.entities.task import Task
+from domain.entities.task_value_objects import TaskTitle, TaskStatus
+from domain.common.result import Result
+
+class TestTask:
+    """Unit tests for Task entity."""
+    
+    def test_create_task_with_valid_data_should_succeed(self):
+        # Arrange
+        title = "Complete project documentation"
+        description = "Write comprehensive docs for the new feature"
+        calendar_id = 1
+        due_date = datetime.now() + timedelta(days=7)
+        
+        # Act
+        result = Task.create(
+            title=title,
+            description=description,
+            calendar_id=calendar_id,
+            due_date=due_date
+        )
+        
+        # Assert
+        assert result.is_success
+        task = result.value
+        assert task.title.value == title
+        assert task.description == description
+        assert task.calendar_id == calendar_id
+        assert task.status == TaskStatus.PENDING
+        assert task.due_date == due_date
+        assert len(task.domain_events) == 1  # TaskCreated event
+    
+    def test_create_task_with_empty_title_should_fail(self):
+        # Arrange
+        empty_title = ""
+        calendar_id = 1
+        
+        # Act
+        result = Task.create(title=empty_title, calendar_id=calendar_id)
+        
+        # Assert
+        assert result.is_failure
+        assert "Title cannot be empty" in result.error
+    
+    def test_complete_task_should_update_status_and_completion_date(self):
+        # Arrange
+        task_result = Task.create(title="Test task", calendar_id=1)
+        task = task_result.value
+        
+        # Act
+        result = task.complete()
+        
+        # Assert
+        assert result.is_success
+        assert task.status == TaskStatus.COMPLETED
+        assert task.completed_at is not None
+        assert len(task.domain_events) == 2  # TaskCreated + TaskCompleted
+    
+    def test_complete_already_completed_task_should_fail(self):
+        # Arrange
+        task_result = Task.create(title="Test task", calendar_id=1)
+        task = task_result.value
+        task.complete()  # Complete first time
+        
+        # Act
+        result = task.complete()  # Try to complete again
+        
+        # Assert
+        assert result.is_failure
+        assert "Task is already completed" in result.error
+    
+    def test_update_priority_should_change_priority_and_add_event(self):
+        # Arrange
+        task_result = Task.create(title="Test task", calendar_id=1)
+        task = task_result.value
+        new_priority = "high"
+        
+        # Act
+        result = task.update_priority(new_priority)
+        
+        # Assert
+        assert result.is_success
+        assert task.priority == new_priority
+        assert any(event.__class__.__name__ == "TaskPriorityChanged" 
+                  for event in task.domain_events)
+
+# tests/unit/domain/value_objects/test_task_value_objects.py
+class TestTaskTitle:
+    """Unit tests for TaskTitle value object."""
+    
+    def test_create_valid_title_should_succeed(self):
+        # Arrange
+        valid_title = "Valid task title"
+        
+        # Act
+        result = TaskTitle.create(valid_title)
+        
+        # Assert
+        assert result.is_success
+        assert result.value.value == valid_title
+    
+    def test_create_empty_title_should_fail(self):
+        # Arrange
+        empty_title = ""
+        
+        # Act
+        result = TaskTitle.create(empty_title)
+        
+        # Assert
+        assert result.is_failure
+        assert "Title cannot be empty" in result.error
+    
+    def test_create_too_long_title_should_fail(self):
+        # Arrange
+        long_title = "x" * 201  # Assuming max length is 200
+        
+        # Act
+        result = TaskTitle.create(long_title)
+        
+        # Assert
+        assert result.is_failure
+        assert "Title too long" in result.error
+    
+    def test_title_equality_should_work_correctly(self):
+        # Arrange
+        title1 = TaskTitle.create("Same title").value
+        title2 = TaskTitle.create("Same title").value
+        title3 = TaskTitle.create("Different title").value
+        
+        # Act & Assert
+        assert title1 == title2
+        assert title1 != title3
+        assert hash(title1) == hash(title2)
+        assert hash(title1) != hash(title3)
+```
+
+#### 2. Application Layer Testing (Integration Tests)
+
+**Test command/query handlers with mocked dependencies:**
+
+```python
+# tests/integration/application/handlers/test_create_task_handler.py
+import pytest
+from unittest.mock import Mock, AsyncMock
+from datetime import datetime, timedelta
+
+from application.task.commands.create_task_command import CreateTaskCommand
+from application.task.handlers.create_task_handler import CreateTaskHandler
+from domain.entities.task import Task
+from domain.contracts.task_repository import TaskRepository
+from domain.contracts.calendar_repository import CalendarRepository
+from domain.common.result import Result
+
+class TestCreateTaskHandler:
+    """Integration tests for CreateTaskHandler."""
+    
+    @pytest.fixture
+    def mock_task_repository(self):
+        return Mock(spec=TaskRepository)
+    
+    @pytest.fixture
+    def mock_calendar_repository(self):
+        return Mock(spec=CalendarRepository)
+    
+    @pytest.fixture
+    def handler(self, mock_task_repository, mock_calendar_repository):
+        return CreateTaskHandler(
+            task_repository=mock_task_repository,
+            calendar_repository=mock_calendar_repository
+        )
+    
+    @pytest.mark.asyncio
+    async def test_handle_valid_command_should_create_task(
+        self, 
+        handler, 
+        mock_task_repository, 
+        mock_calendar_repository
+    ):
+        # Arrange
+        command = CreateTaskCommand(
+            title="Test task",
+            description="Test description",
+            calendar_id=1,
+            due_date=datetime.now() + timedelta(days=7),
+            user_id=1
+        )
+        
+        # Mock calendar exists
+        mock_calendar_repository.get_by_id_and_user.return_value = Result.success(
+            Mock(id=1, user_id=1)
+        )
+        
+        # Mock task save
+        created_task = Mock(id=1, title="Test task")
+        mock_task_repository.save.return_value = Result.success(created_task)
+        
+        # Act
+        result = await handler.handle(command)
+        
+        # Assert
+        assert result.is_success
+        mock_calendar_repository.get_by_id_and_user.assert_called_once_with(1, 1)
+        mock_task_repository.save.assert_called_once()
+        
+        # Verify the task was created with correct data
+        saved_task_call = mock_task_repository.save.call_args[0][0]
+        assert saved_task_call.title.value == "Test task"
+        assert saved_task_call.description == "Test description"
+        assert saved_task_call.calendar_id == 1
+    
+    @pytest.mark.asyncio
+    async def test_handle_nonexistent_calendar_should_fail(
+        self, 
+        handler, 
+        mock_calendar_repository
+    ):
+        # Arrange
+        command = CreateTaskCommand(
+            title="Test task",
+            calendar_id=999,  # Non-existent calendar
+            user_id=1
+        )
+        
+        # Mock calendar not found
+        mock_calendar_repository.get_by_id_and_user.return_value = Result.success(None)
+        
+        # Act
+        result = await handler.handle(command)
+        
+        # Assert
+        assert result.is_failure
+        assert "Calendar not found" in result.error
+    
+    @pytest.mark.asyncio
+    async def test_handle_unauthorized_calendar_access_should_fail(
+        self, 
+        handler, 
+        mock_calendar_repository
+    ):
+        # Arrange
+        command = CreateTaskCommand(
+            title="Test task",
+            calendar_id=1,
+            user_id=2  # Different user
+        )
+        
+        # Mock calendar belongs to different user
+        mock_calendar_repository.get_by_id_and_user.return_value = Result.success(None)
+        
+        # Act
+        result = await handler.handle(command)
+        
+        # Assert
+        assert result.is_failure
+        assert "Calendar not found" in result.error
+```
+
+#### 3. API Layer Testing (End-to-End Tests)
+
+**Test complete API endpoints with real database:**
+
+```python
+# tests/e2e/api/test_task_endpoints.py
+import pytest
+from httpx import AsyncClient
+from datetime import datetime, timedelta
+from tests.conftest import TestDatabase
+
+class TestTaskEndpoints:
+    """End-to-end tests for task API endpoints."""
+    
+    @pytest.mark.asyncio
+    async def test_create_task_endpoint_should_return_created_task(
+        self, 
+        client: AsyncClient, 
+        test_db: TestDatabase,
+        authenticated_user_headers
+    ):
+        # Arrange
+        # Create a calendar first
+        calendar_data = {
+            "name": "Test Calendar",
+            "description": "Test calendar for tasks",
+            "timezone": "UTC"
+        }
+        calendar_response = await client.post(
+            "/api/v1/calendars", 
+            json=calendar_data,
+            headers=authenticated_user_headers
+        )
+        calendar_id = calendar_response.json()["data"]["id"]
+        
+        # Prepare task data
+        task_data = {
+            "title": "Complete project documentation",
+            "description": "Write comprehensive docs",
+            "calendar_id": calendar_id,
+            "due_date": (datetime.now() + timedelta(days=7)).isoformat(),
+            "priority": "high"
+        }
+        
+        # Act
+        response = await client.post(
+            "/api/v1/tasks", 
+            json=task_data,
+            headers=authenticated_user_headers
+        )
+        
+        # Assert
+        assert response.status_code == 201
+        response_data = response.json()
+        
+        assert response_data["success"] is True
+        assert response_data["data"]["title"] == task_data["title"]
+        assert response_data["data"]["description"] == task_data["description"]
+        assert response_data["data"]["calendar_id"] == calendar_id
+        assert response_data["data"]["status"] == "pending"
+        assert response_data["data"]["priority"] == "high"
+        assert "id" in response_data["data"]
+        assert "created_at" in response_data["data"]
+    
+    @pytest.mark.asyncio
+    async def test_create_task_with_invalid_data_should_return_validation_error(
+        self, 
+        client: AsyncClient,
+        authenticated_user_headers
+    ):
+        # Arrange
+        invalid_task_data = {
+            "title": "",  # Empty title
+            "calendar_id": 999,  # Non-existent calendar
+        }
+        
+        # Act
+        response = await client.post(
+            "/api/v1/tasks", 
+            json=invalid_task_data,
+            headers=authenticated_user_headers
+        )
+        
+        # Assert
+        assert response.status_code == 400
+        response_data = response.json()
+        assert response_data["success"] is False
+        assert "error" in response_data
+    
+    @pytest.mark.asyncio
+    async def test_get_tasks_should_return_paginated_results(
+        self, 
+        client: AsyncClient,
+        test_db: TestDatabase,
+        authenticated_user_headers
+    ):
+        # Arrange
+        # Create calendar and multiple tasks
+        calendar_id = await self._create_test_calendar(client, authenticated_user_headers)
+        task_ids = []
+        
+        for i in range(5):
+            task_data = {
+                "title": f"Task {i+1}",
+                "calendar_id": calendar_id
+            }
+            response = await client.post(
+                "/api/v1/tasks", 
+                json=task_data,
+                headers=authenticated_user_headers
+            )
+            task_ids.append(response.json()["data"]["id"])
+        
+        # Act
+        response = await client.get(
+            "/api/v1/tasks?limit=3&offset=0",
+            headers=authenticated_user_headers
+        )
+        
+        # Assert
+        assert response.status_code == 200
+        response_data = response.json()
+        
+        assert response_data["success"] is True
+        assert len(response_data["data"]) == 3
+        assert "pagination" in response_data
+        assert response_data["pagination"]["total"] == 5
+        assert response_data["pagination"]["limit"] == 3
+        assert response_data["pagination"]["offset"] == 0
+    
+    async def _create_test_calendar(self, client: AsyncClient, headers) -> int:
+        """Helper method to create a test calendar."""
+        calendar_data = {
+            "name": "Test Calendar",
+            "timezone": "UTC"
+        }
+        response = await client.post(
+            "/api/v1/calendars", 
+            json=calendar_data,
+            headers=headers
+        )
+        return response.json()["data"]["id"]
+```
+
+#### 4. Repository Testing (Database Integration)
+
+**Test repository implementations with real database:**
+
+```python
+# tests/integration/persistence/test_task_repository.py
+import pytest
+from datetime import datetime, timedelta
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from domain.entities.task import Task
+from persistence.repositories.task_repository import TaskRepository
+from tests.conftest import TestDatabase
+
+class TestTaskRepository:
+    """Integration tests for TaskRepository."""
+    
+    @pytest.fixture
+    async def repository(self, db_session: AsyncSession):
+        return TaskRepository(db_session)
+    
+    @pytest.mark.asyncio
+    async def test_save_new_task_should_persist_and_return_with_id(
+        self, 
+        repository: TaskRepository,
+        test_db: TestDatabase
+    ):
+        # Arrange
+        task_result = Task.create(
+            title="Test task",
+            description="Test description",
+            calendar_id=1
+        )
+        task = task_result.value
+        
+        # Act
+        result = await repository.save(task)
+        
+        # Assert
+        assert result.is_success
+        saved_task = result.value
+        assert saved_task.id is not None
+        assert saved_task.title.value == "Test task"
+        assert saved_task.description == "Test description"
+        assert saved_task.calendar_id == 1
+        assert saved_task.created_at is not None
+    
+    @pytest.mark.asyncio
+    async def test_get_by_id_existing_task_should_return_task(
+        self, 
+        repository: TaskRepository,
+        test_db: TestDatabase
+    ):
+        # Arrange
+        # Create and save a task first
+        task_result = Task.create(title="Test task", calendar_id=1)
+        task = task_result.value
+        save_result = await repository.save(task)
+        task_id = save_result.value.id
+        
+        # Act
+        result = await repository.get_by_id(task_id)
+        
+        # Assert
+        assert result.is_success
+        retrieved_task = result.value
+        assert retrieved_task is not None
+        assert retrieved_task.id == task_id
+        assert retrieved_task.title.value == "Test task"
+    
+    @pytest.mark.asyncio
+    async def test_get_by_id_nonexistent_task_should_return_none(
+        self, 
+        repository: TaskRepository
+    ):
+        # Arrange
+        nonexistent_id = 99999
+        
+        # Act
+        result = await repository.get_by_id(nonexistent_id)
+        
+        # Assert
+        assert result.is_success
+        assert result.value is None
+    
+    @pytest.mark.asyncio
+    async def test_find_by_criteria_should_filter_correctly(
+        self, 
+        repository: TaskRepository,
+        test_db: TestDatabase
+    ):
+        # Arrange
+        # Create tasks with different statuses
+        pending_task = Task.create(title="Pending task", calendar_id=1).value
+        completed_task = Task.create(title="Completed task", calendar_id=1).value
+        completed_task.complete()
+        
+        await repository.save(pending_task)
+        await repository.save(completed_task)
+        
+        # Act
+        result = await repository.find_by_criteria({
+            "calendar_id": 1,
+            "status": "pending"
+        })
+        
+        # Assert
+        assert result.is_success
+        tasks = result.value
+        assert len(tasks) == 1
+        assert tasks[0].title.value == "Pending task"
+        assert tasks[0].status.value == "pending"
+```
+
+### Testing Best Practices
+
+1. **Test Naming**: Use descriptive test names that explain the scenario and expected outcome
+1. **AAA Pattern**: Structure tests with clear Arrange, Act, Assert sections
+1. **Test Independence**: Each test should be independent and not rely on other tests
+1. **Mock External Dependencies**: Mock external services, databases in unit tests
+1. **Test Data Builders**: Use factory patterns for creating test data
+1. **Parameterized Tests**: Use pytest.mark.parametrize for testing multiple scenarios
+1. **Async Testing**: Use pytest-asyncio for testing async code
+1. **Database Cleanup**: Ensure test database is cleaned between tests
+1. **Error Testing**: Test both success and failure scenarios
+1. **Performance Testing**: Include performance tests for critical paths
+
+### Test Configuration
+
+```python
+# tests/conftest.py
+import pytest
+import asyncio
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+
+from api.app import create_app
+from persistence.db_models.base import BaseModel
+from infrastructure.database import get_db_session
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create an instance of the default event loop for the test session."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+
+@pytest.fixture(scope="session")
+async def test_engine():
+    """Create test database engine."""
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///./test.db",
+        echo=False
+    )
+    
+    # Create all tables
+    async with engine.begin() as conn:
+        await conn.run_sync(BaseModel.metadata.create_all)
+    
+    yield engine
+    
+    # Cleanup
+    async with engine.begin() as conn:
+        await conn.run_sync(BaseModel.metadata.drop_all)
+    await engine.dispose()
+
+@pytest.fixture
+async def db_session(test_engine):
+    """Create a database session for testing."""
+    async_session = sessionmaker(
+        test_engine, 
+        class_=AsyncSession, 
+        expire_on_commit=False
+    )
+    
+    async with async_session() as session:
+        yield session
+        await session.rollback()
+
+@pytest.fixture
+async def client(db_session):
+    """Create test client with dependency overrides."""
+    app = create_app()
+    
+    # Override database dependency
+    app.dependency_overrides[get_db_session] = lambda: db_session
+    
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
+
+@pytest.fixture
+def authenticated_user_headers():
+    """Provide authentication headers for testing."""
+    return {
+        "Authorization": "Bearer test-token",
+        "Content-Type": "application/json"
+    }
+```
+
+## Testing Strategy
+
+### 1. Unit Testing Rules
+
+- **MUST**: Write unit tests for all domain entities and value objects
+- **MUST**: Test business rules and invariant validation
+- **MUST**: Use AAA pattern (Arrange, Act, Assert)
+- **MUST**: Use descriptive test names that explain behavior
+- **MUST**: Achieve >90% code coverage for domain and application layers
+- **FORBIDDEN**: Tests that depend on external resources
+- **FORBIDDEN**: Tests that test implementation details instead of behavior
+
+```python
+# ✅ CORRECT - Unit test examples
+class TestCalendar:
+    """Test cases for Calendar aggregate."""
+    
+    def test_create_calendar_with_valid_name_succeeds(self):
+        """Should create calendar when name is valid."""
+        # Arrange
+        name = "My Calendar"
+        
+        # Act
+        result = Calendar.create(name)
+        
+        # Assert
+        assert result.is_success
+        calendar = result.value()
+        assert calendar.name.value == name
+        assert len(calendar.appointments) == 0
+    
+    def test_create_calendar_with_empty_name_fails(self):
+        """Should fail to create calendar when name is empty."""
+        # Arrange
+        name = ""
+        
+        # Act
+        result = Calendar.create(name)
+        
+        # Assert
+        assert result.is_failure
+        assert "empty" in result.error().lower()
+    
+    def test_schedule_appointment_adds_domain_event(self):
+        """Should raise domain event when appointment is scheduled."""
+        # Arrange
+        calendar = Calendar.create("Test Calendar").value()
+        start_time = datetime(2024, 1, 15, 10, 0)
+        end_time = datetime(2024, 1, 15, 11, 0)
+        
+        # Act
+        result = calendar.schedule_appointment("Meeting", start_time, end_time)
+        
+        # Assert
+        assert result.is_success
+        assert len(calendar.domain_events) == 1
+        event = calendar.domain_events[0]
+        assert isinstance(event, AppointmentScheduled)
+        assert event.aggregate_id == calendar.id
+    
+    def test_schedule_overlapping_appointment_when_not_allowed_fails(self):
+        """Should fail to schedule overlapping appointment when not allowed."""
+        # Arrange
+        config = CalendarConfiguration(allow_overlapping_appointments=False)
+        calendar = Calendar.create("Test Calendar", config).value()
+        
+        start_time = datetime(2024, 1, 15, 10, 0)
+        end_time = datetime(2024, 1, 15, 11, 0)
+        
+        # Schedule first appointment
+        calendar.schedule_appointment("Meeting 1", start_time, end_time)
+        
+        # Act - try to schedule overlapping appointment
+        overlapping_start = datetime(2024, 1, 15, 10, 30)
+        overlapping_end = datetime(2024, 1, 15, 11, 30)
+        result = calendar.schedule_appointment("Meeting 2", overlapping_start, overlapping_end)
+        
+        # Assert
+        assert result.is_failure
+        assert "overlap" in result.error().lower()
+```
+
+### 2. Integration Testing Rules
+
+- **MUST**: Test complete vertical slices from endpoint to database
+- **MUST**: Use test containers for database testing
+- **MUST**: Test mapper conversions in both directions
+- **MUST**: Test error scenarios and edge cases
+- **MUST**: Use realistic test data and scenarios
+- **FORBIDDEN**: Tests that depend on production data
+- **FORBIDDEN**: Tests that modify shared test state
+
+```python
+# ✅ CORRECT - Integration test
+@pytest.mark.asyncio
+async def test_create_calendar_integration():
+    """Integration test for calendar creation through complete stack."""
+    # Arrange
+    async with TestDatabase() as db:
+        app = create_test_app()
+        client = AsyncTestClient(app)
+        
+        request_data = {
+            "name": "Integration Test Calendar",
+            "allow_overlapping_appointments": False
+        }
+        
+        # Act
+        response = await client.post("/api/v1/calendars", json=request_data)
+        
+        # Assert
+        assert response.status_code == 201
+        
+        envelope = response.json()
+        assert envelope["value"]["name"] == "Integration Test Calendar"
+        assert envelope["error"] is None
+        
+        # Verify persistence
+        calendar_id = envelope["value"]["id"]
+        stored_calendar = await db.get(CalendarModel, calendar_id)
+        assert stored_calendar.name == "Integration Test Calendar"
+
+@pytest.mark.asyncio
+async def test_calendar_mapper_round_trip():
+    """Test domain ↔ database conversion preserves data."""
+    # Arrange
+    calendar = Calendar.create("Test Calendar").value()
+    appointment = calendar.schedule_appointment(
+        "Test Meeting",
+        datetime(2024, 1, 15, 10, 0),
+        datetime(2024, 1, 15, 11, 0)
+    ).value()
+    
+    # Act - Convert to database model and back
+    db_model = CalendarMapper.to_database(calendar)
+    converted_calendar = CalendarMapper.to_domain(db_model)
+    
+    # Assert
+    assert converted_calendar.name.value == calendar.name.value
+    assert converted_calendar.configuration.allow_overlapping_appointments == calendar.configuration.allow_overlapping_appointments
+    assert len(converted_calendar.appointments) == len(calendar.appointments)
+```
+
+### 3. Testing Patterns Rules
+
+- **MUST**: Use pytest for test framework
+- **MUST**: Use factory pattern for test data creation
+- **MUST**: Use mocks for external dependencies
+- **MUST**: Test error paths and exception handling
+- **FORBIDDEN**: Testing private methods directly
+- **FORBIDDEN**: Tests with non-deterministic behavior
+
+```python
+# ✅ CORRECT - Test factory pattern
+class CalendarFactory:
+    """Factory for creating test calendars."""
+    
+    @staticmethod
+    def create_basic_calendar(name: str = "Test Calendar") -> Calendar:
+        """Create a basic calendar for testing."""
+        return Calendar.create(name).value()
+    
+    @staticmethod
+    def create_calendar_with_appointments(
+        name: str = "Test Calendar",
+        appointment_count: int = 3
+    ) -> Calendar:
+        """Create calendar with predefined appointments."""
+        calendar = CalendarFactory.create_basic_calendar(name)
+        
+        for i in range(appointment_count):
+            start_time = datetime(2024, 1, 15, 10 + i, 0)
+            end_time = datetime(2024, 1, 15, 11 + i, 0)
+            calendar.schedule_appointment(f"Meeting {i+1}", start_time, end_time)
+        
+        return calendar
+
+# ✅ CORRECT - Mock usage
+@pytest.mark.asyncio
+async def test_create_calendar_handler_with_database_error():
+    """Should handle database errors gracefully."""
+    # Arrange
+    mock_session = AsyncMock()
+    mock_session.commit.side_effect = OperationalError("Connection lost", None, None)
+    
+    handler = CreateCalendarCommandHandler(mock_session)
+    command = CreateCalendarCommand("Test Calendar", False)
+    
+    # Act
+    result = await handler.handle(command)
+    
+    # Assert
+    assert result.is_failure
+    assert result.error().status_code == 500
+    assert "connection" in result.error().message.lower()
+    mock_session.rollback.assert_called_once()
+```
+
+## Performance and Scalability Rules
+
+### 1. Performance Testing Rules
+
+- **MUST**: Write performance tests for critical operations
+- **MUST**: Test database query performance
+- **MUST**: Monitor memory usage in long-running tests
+- **MUST**: Test concurrent access scenarios
+- **FORBIDDEN**: Performance tests in unit test suite
+- **FORBIDDEN**: Tests without performance assertions
+
+```python
+# ✅ CORRECT - Performance test
+@pytest.mark.performance
+@pytest.mark.asyncio
+async def test_calendar_creation_performance():
+    """Calendar creation should complete within acceptable time."""
+    # Arrange
+    async with TestDatabase() as db:
+        handler = CreateCalendarCommandHandler(db.session)
+        commands = [
+            CreateCalendarCommand(f"Calendar {i}", False)
+            for i in range(100)
+        ]
+        
+        # Act
+        start_time = time.time()
+        results = await asyncio.gather(*[
+            handler.handle(command) for command in commands
+        ])
+        end_time = time.time()
+        
+        # Assert
+        assert all(result.is_success for result in results)
+        assert end_time - start_time < 5.0  # Should complete in less than 5 seconds
+        
+        # Verify all calendars were created
+        calendar_count = await db.scalar(select(func.count(CalendarModel.id)))
+        assert calendar_count == 100
+```
+
+### 2. Load Testing Rules
+
+- **MUST**: Test system under expected load
+- **MUST**: Test graceful degradation under high load
+- **MUST**: Monitor resource usage during load tests
+- **MUST**: Test auto-scaling behavior
+- **FORBIDDEN**: Load tests that affect production systems
+- **FORBIDDEN**: Load tests without resource monitoring
+
+## Continuous Integration Rules
+
+### 1. CI/CD Pipeline Rules
+
+- **MUST**: Run all tests on every commit
+- **MUST**: Enforce code coverage thresholds
+- **MUST**: Run linting and type checking
+- **MUST**: Generate build-time optimized code
+- **MUST**: Run security scanning
+- **FORBIDDEN**: Deploying without passing tests
+- **FORBIDDEN**: Skipping any quality gates
+
+```yaml
+# ✅ CORRECT - CI/CD pipeline example
+name: CI/CD Pipeline
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: 3.12
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          
+      - name: Run linting
+        run: |
+          ruff check .
+          mypy .
+          
+      - name: Run tests
+        run: |
+          pytest --cov=. --cov-report=xml --cov-fail-under=90
+          
+      - name: Generate build-time code
+        run: |
+          python scripts.py generate-routers
+          python scripts.py generate-types
+          
+      - name: Security scan
+        run: |
+          bandit -r . -f json
+```
+
+### 2. Code Quality Gates
+
+- **MUST**: Maintain minimum 90% test coverage
+- **MUST**: Pass all linting checks (ruff, mypy)
+- **MUST**: Have zero critical security vulnerabilities
+- **MUST**: Pass all integration tests
+- **FORBIDDEN**: Reducing quality thresholds to pass builds
+- **FORBIDDEN**: Disabling quality checks without justification
+
+## Dependency Management Rules
+
+### 1. Dependency Rules
+
+- **MUST**: Pin dependency versions in production
+- **MUST**: Regularly update dependencies for security
+- **MUST**: Use virtual environments for development
+- **MUST**: Document dependency rationale for major packages
+- **FORBIDDEN**: Using deprecated or unmaintained packages
+- **FORBIDDEN**: Circular dependencies between layers
+
+### 2. Package Structure Rules
+
+- **MUST**: Follow Python package conventions
+- **MUST**: Use `__init__.py` files for package exports
+- **MUST**: Keep package dependencies minimal and focused
+- **MUST**: Export public APIs through package `__all__`
+- **FORBIDDEN**: Importing private modules across packages
+- **FORBIDDEN**: Deep import hierarchies
+
+```python
+# ✅ CORRECT - Package structure
+# domain/__init__.py
+from .entities import Calendar, Appointment
+from .common import Entity, AggregateRoot, ValueObject, Result
+
+__all__ = [
+    "Calendar",
+    "Appointment", 
+    "Entity",
+    "AggregateRoot",
+    "ValueObject",
+    "Result"
+]
+```
+
+## Security Rules
+
+### 1. Code Security Rules
+
+- **MUST**: Validate all input data at API boundaries
+- **MUST**: Use parameterized queries for database access
+- **MUST**: Sanitize output data before rendering
+- **MUST**: Implement proper authentication and authorization
+- **FORBIDDEN**: SQL injection vulnerabilities
+- **FORBIDDEN**: Storing sensitive data in plain text
+
+### 2. Configuration Security Rules
+
+- **MUST**: Use environment variables for secrets
+- **MUST**: Validate configuration values on startup
+- **MUST**: Use secure defaults for all configuration
+- **MUST**: Rotate secrets regularly
+- **FORBIDDEN**: Hardcoded secrets in source code
+- **FORBIDDEN**: Logging sensitive information
+
+## File Creation Rules
+
+### 1. Documentation and Example Files
+
+- **FORBIDDEN**: Creating example files unless explicitly requested by the user
+- **FORBIDDEN**: Creating documentation files (\*.md, README files) unless explicitly requested by the user
+- **MUST**: Focus on implementing the requested functionality without additional demonstration files
+- **MUST**: Include usage examples within code comments or docstrings when helpful
+- **FORBIDDEN**: Proactively creating tutorial or example scripts
+
+### 2. Implementation Files Only
+
+- **MUST**: Create only the necessary implementation files for the requested feature
+- **MUST**: Prioritize core functionality over supplementary examples
+- **MUST**: Ask the user if they want examples or documentation before creating them
+- **FORBIDDEN**: Assuming the user wants example files or tutorials
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Code Quality & Testing Rules
+
+## Code Quality Rules for Audio/Transcription
+
+### 1. Naming Convention Rules for Audio Domain
+
+- **MUST**: Use descriptive names that reflect audio/ML domain concepts
+- **MUST**: Use PascalCase for classes (AudioSession, TranscriptionResult)
+- **MUST**: Use snake_case for functions and variables (start_recording, audio_config)
+- **MUST**: Use SCREAMING_SNAKE_CASE for constants (DEFAULT_SAMPLE_RATE, MODEL_CACHE_SIZE)
+- **MUST**: Prefix private members with underscore (\_audio_stream, \_model_cache)
+- **FORBIDDEN**: Generic names without domain context (data, info, manager)
+- **FORBIDDEN**: Abbreviations that obscure meaning (aud, xscr, cfg)
+
+```python
+# ✅ CORRECT - Audio domain naming
+class AudioRecordingSession:
+    def __init__(self, session_id: str, microphone_config: MicrophoneConfiguration):
+        self._session_id = session_id
+        self._microphone_config = microphone_config
+        self._recording_state = RecordingState.IDLE
+        self._audio_buffer: List[bytes] = []
+    
+    def start_microphone_capture(self) -> Result[None]:
+        """Start capturing audio from the configured microphone."""
+        pass
+    
+    def get_transcription_confidence_score(self) -> ConfidenceScore:
+        """Get the confidence score for the current transcription."""
+        pass
+
+# ❌ INCORRECT - Generic naming
+class Manager:
+    def __init__(self, id: str, cfg: Config):
+        self.id = id
+        self.cfg = cfg
+        self.state = 0
+        self.data = []
+```
+
+### 2. Type Annotation Rules for Audio/ML
+
+- **MUST**: Use type hints for all public methods
+- **MUST**: Use generic types for containers (List[AudioFrame], Dict[str, ModelInstance])
+- **MUST**: Use Union types for multiple possible types
+- **MUST**: Use Optional for nullable values
+- **MUST**: Import types from typing module
+- **FORBIDDEN**: Any type without justification
+- **FORBIDDEN**: Missing return type annotations
+
+```python
+# ✅ CORRECT - Audio type annotations
+from typing import List, Dict, Optional, Union, Callable
+import numpy as np
+from numpy.typing import NDArray
+
+class TranscriptionEngine:
+    def __init__(self, model_path: Path, device_type: DeviceType) -> None:
+        self._model_path = model_path
+        self._device_type = device_type
+        self._audio_preprocessors: List[Callable[[NDArray], NDArray]] = []
+    
+    def transcribe_audio_frames(
+        self, 
+        audio_frames: List[NDArray[np.float32]], 
+        language_hint: Optional[str] = None
+    ) -> Result[TranscriptionResult]:
+        """Transcribe a sequence of audio frames to text.
+        
+        Args:
+            audio_frames: List of audio frame arrays (float32 format)
+            language_hint: Optional language code for improved accuracy
+            
+        Returns:
+            Result containing transcription with confidence scores
+        """
+        pass
+```
+
+````
+
+### 4. Code Organization Rules
+- **MUST**: Organize imports in groups: standard library, third-party, local
+- **MUST**: Keep functions small and focused (max 20 lines)
+- **MUST**: Use early returns to reduce nesting
+- **MUST**: Group related functionality into cohesive modules
+- **FORBIDDEN**: Deep nesting (max 3 levels)
+- **FORBIDDEN**: Functions with more than 5 parameters
+
+```python
+# ✅ CORRECT - Import organization
+import os
+from datetime import datetime
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api.common.models import ApplicationResult, Envelope
+from domain.entities import Calendar
+from infrastructure.discovery.type_registry import register_type
+
+# ✅ CORRECT - Function organization
+def validate_appointment_time(start_time: datetime, end_time: datetime) -> Result[None]:
+    """Validate appointment time constraints."""
+    if start_time >= end_time:
+        return Result.failure("Start time must be before end time")
+    
+    if start_time < datetime.now():
+        return Result.failure("Cannot schedule appointments in the past")
+    
+    return Result.success(None)
+
+def schedule_appointment(self, title: str, start_time: datetime, end_time: datetime) -> Result[Appointment]:
+    """Schedule appointment with validation."""
+    # Early validation
+    time_validation = validate_appointment_time(start_time, end_time)
+    if not time_validation.is_success:
+        return Result.failure(time_validation.error())
+    
+    # Create appointment
+    appointment_result = Appointment.create(title, start_time, end_time, self.id)
+    if not appointment_result.is_success:
+        return Result.failure(appointment_result.error())
+    
+    # Business rule validation
+    appointment = appointment_result.value()
+    if not self._can_schedule_appointment(appointment):
+        return Result.failure("Cannot schedule overlapping appointments")
+    
+    # Success path
+    self.appointments.append(appointment)
+    self.add_domain_event(AppointmentScheduled(self.id, appointment.id, title, start_time, end_time))
+    self.mark_as_updated()
+    
+    return Result.success(appointment)
+````
+
+## 🧪 Testing & Quality Workflow Steps
+
+### Testing Strategy for DDD Features
+
+**When implementing new features, follow this testing approach:**
+
+#### 1. Domain Layer Testing (Unit Tests)
+
+**Test all domain entities, value objects, and business logic:**
+
+```python
+# tests/unit/domain/entities/test_task.py
+import pytest
+from datetime import datetime, timedelta
+from domain.entities.task import Task
+from domain.entities.task_value_objects import TaskTitle, TaskStatus
+from domain.common.result import Result
+
+class TestTask:
+    """Unit tests for Task entity."""
+    
+    def test_create_task_with_valid_data_should_succeed(self):
+        # Arrange
+        title = "Complete project documentation"
+        description = "Write comprehensive docs for the new feature"
+        calendar_id = 1
+        due_date = datetime.now() + timedelta(days=7)
+        
+        # Act
+        result = Task.create(
+            title=title,
+            description=description,
+            calendar_id=calendar_id,
+            due_date=due_date
+        )
+        
+        # Assert
+        assert result.is_success
+        task = result.value
+        assert task.title.value == title
+        assert task.description == description
+        assert task.calendar_id == calendar_id
+        assert task.status == TaskStatus.PENDING
+        assert task.due_date == due_date
+        assert len(task.domain_events) == 1  # TaskCreated event
+    
+    def test_create_task_with_empty_title_should_fail(self):
+        # Arrange
+        empty_title = ""
+        calendar_id = 1
+        
+        # Act
+        result = Task.create(title=empty_title, calendar_id=calendar_id)
+        
+        # Assert
+        assert result.is_failure
+        assert "Title cannot be empty" in result.error
+    
+    def test_complete_task_should_update_status_and_completion_date(self):
+        # Arrange
+        task_result = Task.create(title="Test task", calendar_id=1)
+        task = task_result.value
+        
+        # Act
+        result = task.complete()
+        
+        # Assert
+        assert result.is_success
+        assert task.status == TaskStatus.COMPLETED
+        assert task.completed_at is not None
+        assert len(task.domain_events) == 2  # TaskCreated + TaskCompleted
+    
+    def test_complete_already_completed_task_should_fail(self):
+        # Arrange
+        task_result = Task.create(title="Test task", calendar_id=1)
+        task = task_result.value
+        task.complete()  # Complete first time
+        
+        # Act
+        result = task.complete()  # Try to complete again
+        
+        # Assert
+        assert result.is_failure
+        assert "Task is already completed" in result.error
+    
+    def test_update_priority_should_change_priority_and_add_event(self):
+        # Arrange
+        task_result = Task.create(title="Test task", calendar_id=1)
+        task = task_result.value
+        new_priority = "high"
+        
+        # Act
+        result = task.update_priority(new_priority)
+        
+        # Assert
+        assert result.is_success
+        assert task.priority == new_priority
+        assert any(event.__class__.__name__ == "TaskPriorityChanged" 
+                  for event in task.domain_events)
+
+# tests/unit/domain/value_objects/test_task_value_objects.py
+class TestTaskTitle:
+    """Unit tests for TaskTitle value object."""
+    
+    def test_create_valid_title_should_succeed(self):
+        # Arrange
+        valid_title = "Valid task title"
+        
+        # Act
+        result = TaskTitle.create(valid_title)
+        
+        # Assert
+        assert result.is_success
+        assert result.value.value == valid_title
+    
+    def test_create_empty_title_should_fail(self):
+        # Arrange
+        empty_title = ""
+        
+        # Act
+        result = TaskTitle.create(empty_title)
+        
+        # Assert
+        assert result.is_failure
+        assert "Title cannot be empty" in result.error
+    
+    def test_create_too_long_title_should_fail(self):
+        # Arrange
+        long_title = "x" * 201  # Assuming max length is 200
+        
+        # Act
+        result = TaskTitle.create(long_title)
+        
+        # Assert
+        assert result.is_failure
+        assert "Title too long" in result.error
+    
+    def test_title_equality_should_work_correctly(self):
+        # Arrange
+        title1 = TaskTitle.create("Same title").value
+        title2 = TaskTitle.create("Same title").value
+        title3 = TaskTitle.create("Different title").value
+        
+        # Act & Assert
+        assert title1 == title2
+        assert title1 != title3
+        assert hash(title1) == hash(title2)
+        assert hash(title1) != hash(title3)
+```
+
+#### 2. Application Layer Testing (Integration Tests)
+
+**Test command/query handlers with mocked dependencies:**
+
+```python
+# tests/integration/application/handlers/test_create_task_handler.py
+import pytest
+from unittest.mock import Mock, AsyncMock
+from datetime import datetime, timedelta
+
+from application.task.commands.create_task_command import CreateTaskCommand
+from application.task.handlers.create_task_handler import CreateTaskHandler
+from domain.entities.task import Task
+from domain.contracts.task_repository import TaskRepository
+from domain.contracts.calendar_repository import CalendarRepository
+from domain.common.result import Result
+
+class TestCreateTaskHandler:
+    """Integration tests for CreateTaskHandler."""
+    
+    @pytest.fixture
+    def mock_task_repository(self):
+        return Mock(spec=TaskRepository)
+    
+    @pytest.fixture
+    def mock_calendar_repository(self):
+        return Mock(spec=CalendarRepository)
+    
+    @pytest.fixture
+    def handler(self, mock_task_repository, mock_calendar_repository):
+        return CreateTaskHandler(
+            task_repository=mock_task_repository,
+            calendar_repository=mock_calendar_repository
+        )
+    
+    @pytest.mark.asyncio
+    async def test_handle_valid_command_should_create_task(
+        self, 
+        handler, 
+        mock_task_repository, 
+        mock_calendar_repository
+    ):
+        # Arrange
+        command = CreateTaskCommand(
+            title="Test task",
+            description="Test description",
+            calendar_id=1,
+            due_date=datetime.now() + timedelta(days=7),
+            user_id=1
+        )
+        
+        # Mock calendar exists
+        mock_calendar_repository.get_by_id_and_user.return_value = Result.success(
+            Mock(id=1, user_id=1)
+        )
+        
+        # Mock task save
+        created_task = Mock(id=1, title="Test task")
+        mock_task_repository.save.return_value = Result.success(created_task)
+        
+        # Act
+        result = await handler.handle(command)
+        
+        # Assert
+        assert result.is_success
+        mock_calendar_repository.get_by_id_and_user.assert_called_once_with(1, 1)
+        mock_task_repository.save.assert_called_once()
+        
+        # Verify the task was created with correct data
+        saved_task_call = mock_task_repository.save.call_args[0][0]
+        assert saved_task_call.title.value == "Test task"
+        assert saved_task_call.description == "Test description"
+        assert saved_task_call.calendar_id == 1
+    
+    @pytest.mark.asyncio
+    async def test_handle_nonexistent_calendar_should_fail(
+        self, 
+        handler, 
+        mock_calendar_repository
+    ):
+        # Arrange
+        command = CreateTaskCommand(
+            title="Test task",
+            calendar_id=999,  # Non-existent calendar
+            user_id=1
+        )
+        
+        # Mock calendar not found
+        mock_calendar_repository.get_by_id_and_user.return_value = Result.success(None)
+        
+        # Act
+        result = await handler.handle(command)
+        
+        # Assert
+        assert result.is_failure
+        assert "Calendar not found" in result.error
+    
+    @pytest.mark.asyncio
+    async def test_handle_unauthorized_calendar_access_should_fail(
+        self, 
+        handler, 
+        mock_calendar_repository
+    ):
+        # Arrange
+        command = CreateTaskCommand(
+            title="Test task",
+            calendar_id=1,
+            user_id=2  # Different user
+        )
+        
+        # Mock calendar belongs to different user
+        mock_calendar_repository.get_by_id_and_user.return_value = Result.success(None)
+        
+        # Act
+        result = await handler.handle(command)
+        
+        # Assert
+        assert result.is_failure
+        assert "Calendar not found" in result.error
+```
+
+#### 3. API Layer Testing (End-to-End Tests)
+
+**Test complete API endpoints with real database:**
+
+```python
+# tests/e2e/api/test_task_endpoints.py
+import pytest
+from httpx import AsyncClient
+from datetime import datetime, timedelta
+from tests.conftest import TestDatabase
+
+class TestTaskEndpoints:
+    """End-to-end tests for task API endpoints."""
+    
+    @pytest.mark.asyncio
+    async def test_create_task_endpoint_should_return_created_task(
+        self, 
+        client: AsyncClient, 
+        test_db: TestDatabase,
+        authenticated_user_headers
+    ):
+        # Arrange
+        # Create a calendar first
+        calendar_data = {
+            "name": "Test Calendar",
+            "description": "Test calendar for tasks",
+            "timezone": "UTC"
+        }
+        calendar_response = await client.post(
+            "/api/v1/calendars", 
+            json=calendar_data,
+            headers=authenticated_user_headers
+        )
+        calendar_id = calendar_response.json()["data"]["id"]
+        
+        # Prepare task data
+        task_data = {
+            "title": "Complete project documentation",
+            "description": "Write comprehensive docs",
+            "calendar_id": calendar_id,
+            "due_date": (datetime.now() + timedelta(days=7)).isoformat(),
+            "priority": "high"
+        }
+        
+        # Act
+        response = await client.post(
+            "/api/v1/tasks", 
+            json=task_data,
+            headers=authenticated_user_headers
+        )
+        
+        # Assert
+        assert response.status_code == 201
+        response_data = response.json()
+        
+        assert response_data["success"] is True
+        assert response_data["data"]["title"] == task_data["title"]
+        assert response_data["data"]["description"] == task_data["description"]
+        assert response_data["data"]["calendar_id"] == calendar_id
+        assert response_data["data"]["status"] == "pending"
+        assert response_data["data"]["priority"] == "high"
+        assert "id" in response_data["data"]
+        assert "created_at" in response_data["data"]
+    
+    @pytest.mark.asyncio
+    async def test_create_task_with_invalid_data_should_return_validation_error(
+        self, 
+        client: AsyncClient,
+        authenticated_user_headers
+    ):
+        # Arrange
+        invalid_task_data = {
+            "title": "",  # Empty title
+            "calendar_id": 999,  # Non-existent calendar
+        }
+        
+        # Act
+        response = await client.post(
+            "/api/v1/tasks", 
+            json=invalid_task_data,
+            headers=authenticated_user_headers
+        )
+        
+        # Assert
+        assert response.status_code == 400
+        response_data = response.json()
+        assert response_data["success"] is False
+        assert "error" in response_data
+    
+    @pytest.mark.asyncio
+    async def test_get_tasks_should_return_paginated_results(
+        self, 
+        client: AsyncClient,
+        test_db: TestDatabase,
+        authenticated_user_headers
+    ):
+        # Arrange
+        # Create calendar and multiple tasks
+        calendar_id = await self._create_test_calendar(client, authenticated_user_headers)
+        task_ids = []
+        
+        for i in range(5):
+            task_data = {
+                "title": f"Task {i+1}",
+                "calendar_id": calendar_id
+            }
+            response = await client.post(
+                "/api/v1/tasks", 
+                json=task_data,
+                headers=authenticated_user_headers
+            )
+            task_ids.append(response.json()["data"]["id"])
+        
+        # Act
+        response = await client.get(
+            "/api/v1/tasks?limit=3&offset=0",
+            headers=authenticated_user_headers
+        )
+        
+        # Assert
+        assert response.status_code == 200
+        response_data = response.json()
+        
+        assert response_data["success"] is True
+        assert len(response_data["data"]) == 3
+        assert "pagination" in response_data
+        assert response_data["pagination"]["total"] == 5
+        assert response_data["pagination"]["limit"] == 3
+        assert response_data["pagination"]["offset"] == 0
+    
+    async def _create_test_calendar(self, client: AsyncClient, headers) -> int:
+        """Helper method to create a test calendar."""
+        calendar_data = {
+            "name": "Test Calendar",
+            "timezone": "UTC"
+        }
+        response = await client.post(
+            "/api/v1/calendars", 
+            json=calendar_data,
+            headers=headers
+        )
+        return response.json()["data"]["id"]
+```
+
+#### 4. Repository Testing (Database Integration)
+
+**Test repository implementations with real database:**
+
+```python
+# tests/integration/persistence/test_task_repository.py
+import pytest
+from datetime import datetime, timedelta
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from domain.entities.task import Task
+from persistence.repositories.task_repository import TaskRepository
+from tests.conftest import TestDatabase
+
+class TestTaskRepository:
+    """Integration tests for TaskRepository."""
+    
+    @pytest.fixture
+    async def repository(self, db_session: AsyncSession):
+        return TaskRepository(db_session)
+    
+    @pytest.mark.asyncio
+    async def test_save_new_task_should_persist_and_return_with_id(
+        self, 
+        repository: TaskRepository,
+        test_db: TestDatabase
+    ):
+        # Arrange
+        task_result = Task.create(
+            title="Test task",
+            description="Test description",
+            calendar_id=1
+        )
+        task = task_result.value
+        
+        # Act
+        result = await repository.save(task)
+        
+        # Assert
+        assert result.is_success
+        saved_task = result.value
+        assert saved_task.id is not None
+        assert saved_task.title.value == "Test task"
+        assert saved_task.description == "Test description"
+        assert saved_task.calendar_id == 1
+        assert saved_task.created_at is not None
+    
+    @pytest.mark.asyncio
+    async def test_get_by_id_existing_task_should_return_task(
+        self, 
+        repository: TaskRepository,
+        test_db: TestDatabase
+    ):
+        # Arrange
+        # Create and save a task first
+        task_result = Task.create(title="Test task", calendar_id=1)
+        task = task_result.value
+        save_result = await repository.save(task)
+        task_id = save_result.value.id
+        
+        # Act
+        result = await repository.get_by_id(task_id)
+        
+        # Assert
+        assert result.is_success
+        retrieved_task = result.value
+        assert retrieved_task is not None
+        assert retrieved_task.id == task_id
+        assert retrieved_task.title.value == "Test task"
+    
+    @pytest.mark.asyncio
+    async def test_get_by_id_nonexistent_task_should_return_none(
+        self, 
+        repository: TaskRepository
+    ):
+        # Arrange
+        nonexistent_id = 99999
+        
+        # Act
+        result = await repository.get_by_id(nonexistent_id)
+        
+        # Assert
+        assert result.is_success
+        assert result.value is None
+    
+    @pytest.mark.asyncio
+    async def test_find_by_criteria_should_filter_correctly(
+        self, 
+        repository: TaskRepository,
+        test_db: TestDatabase
+    ):
+        # Arrange
+        # Create tasks with different statuses
+        pending_task = Task.create(title="Pending task", calendar_id=1).value
+        completed_task = Task.create(title="Completed task", calendar_id=1).value
+        completed_task.complete()
+        
+        await repository.save(pending_task)
+        await repository.save(completed_task)
+        
+        # Act
+        result = await repository.find_by_criteria({
+            "calendar_id": 1,
+            "status": "pending"
+        })
+        
+        # Assert
+        assert result.is_success
+        tasks = result.value
+        assert len(tasks) == 1
+        assert tasks[0].title.value == "Pending task"
+        assert tasks[0].status.value == "pending"
+```
+
+### Testing Best Practices
+
+1. **Test Naming**: Use descriptive test names that explain the scenario and expected outcome
+1. **AAA Pattern**: Structure tests with clear Arrange, Act, Assert sections
+1. **Test Independence**: Each test should be independent and not rely on other tests
+1. **Mock External Dependencies**: Mock external services, databases in unit tests
+1. **Test Data Builders**: Use factory patterns for creating test data
+1. **Parameterized Tests**: Use pytest.mark.parametrize for testing multiple scenarios
+1. **Async Testing**: Use pytest-asyncio for testing async code
+1. **Database Cleanup**: Ensure test database is cleaned between tests
+1. **Error Testing**: Test both success and failure scenarios
+1. **Performance Testing**: Include performance tests for critical paths
+
+### Test Configuration
+
+```python
+# tests/conftest.py
+import pytest
+import asyncio
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+
+from api.app import create_app
+from persistence.db_models.base import BaseModel
+from infrastructure.database import get_db_session
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create an instance of the default event loop for the test session."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+
+@pytest.fixture(scope="session")
+async def test_engine():
+    """Create test database engine."""
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///./test.db",
+        echo=False
+    )
+    
+    # Create all tables
+    async with engine.begin() as conn:
+        await conn.run_sync(BaseModel.metadata.create_all)
+    
+    yield engine
+    
+    # Cleanup
+    async with engine.begin() as conn:
+        await conn.run_sync(BaseModel.metadata.drop_all)
+    await engine.dispose()
+
+@pytest.fixture
+async def db_session(test_engine):
+    """Create a database session for testing."""
+    async_session = sessionmaker(
+        test_engine, 
+        class_=AsyncSession, 
+        expire_on_commit=False
+    )
+    
+    async with async_session() as session:
+        yield session
+        await session.rollback()
+
+@pytest.fixture
+async def client(db_session):
+    """Create test client with dependency overrides."""
+    app = create_app()
+    
+    # Override database dependency
+    app.dependency_overrides[get_db_session] = lambda: db_session
+    
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
+
+@pytest.fixture
+def authenticated_user_headers():
+    """Provide authentication headers for testing."""
+    return {
+        "Authorization": "Bearer test-token",
+        "Content-Type": "application/json"
+    }
+```
+
+## Testing Strategy
+
+### 1. Unit Testing Rules
+
+- **MUST**: Write unit tests for all domain entities and value objects
+- **MUST**: Test business rules and invariant validation
+- **MUST**: Use AAA pattern (Arrange, Act, Assert)
+- **MUST**: Use descriptive test names that explain behavior
+- **MUST**: Achieve >90% code coverage for domain and application layers
+- **FORBIDDEN**: Tests that depend on external resources
+- **FORBIDDEN**: Tests that test implementation details instead of behavior
+
+```python
+# ✅ CORRECT - Unit test examples
+class TestCalendar:
+    """Test cases for Calendar aggregate."""
+    
+    def test_create_calendar_with_valid_name_succeeds(self):
+        """Should create calendar when name is valid."""
+        # Arrange
+        name = "My Calendar"
+        
+        # Act
+        result = Calendar.create(name)
+        
+        # Assert
+        assert result.is_success
+        calendar = result.value()
+        assert calendar.name.value == name
+        assert len(calendar.appointments) == 0
+    
+    def test_create_calendar_with_empty_name_fails(self):
+        """Should fail to create calendar when name is empty."""
+        # Arrange
+        name = ""
+        
+        # Act
+        result = Calendar.create(name)
+        
+        # Assert
+        assert result.is_failure
+        assert "empty" in result.error().lower()
+    
+    def test_schedule_appointment_adds_domain_event(self):
+        """Should raise domain event when appointment is scheduled."""
+        # Arrange
+        calendar = Calendar.create("Test Calendar").value()
+        start_time = datetime(2024, 1, 15, 10, 0)
+        end_time = datetime(2024, 1, 15, 11, 0)
+        
+        # Act
+        result = calendar.schedule_appointment("Meeting", start_time, end_time)
+        
+        # Assert
+        assert result.is_success
+        assert len(calendar.domain_events) == 1
+        event = calendar.domain_events[0]
+        assert isinstance(event, AppointmentScheduled)
+        assert event.aggregate_id == calendar.id
+    
+    def test_schedule_overlapping_appointment_when_not_allowed_fails(self):
+        """Should fail to schedule overlapping appointment when not allowed."""
+        # Arrange
+        config = CalendarConfiguration(allow_overlapping_appointments=False)
+        calendar = Calendar.create("Test Calendar", config).value()
+        
+        start_time = datetime(2024, 1, 15, 10, 0)
+        end_time = datetime(2024, 1, 15, 11, 0)
+        
+        # Schedule first appointment
+        calendar.schedule_appointment("Meeting 1", start_time, end_time)
+        
+        # Act - try to schedule overlapping appointment
+        overlapping_start = datetime(2024, 1, 15, 10, 30)
+        overlapping_end = datetime(2024, 1, 15, 11, 30)
+        result = calendar.schedule_appointment("Meeting 2", overlapping_start, overlapping_end)
+        
+        # Assert
+        assert result.is_failure
+        assert "overlap" in result.error().lower()
+```
+
+### 2. Integration Testing Rules
+
+- **MUST**: Test complete vertical slices from endpoint to database
+- **MUST**: Use test containers for database testing
+- **MUST**: Test mapper conversions in both directions
+- **MUST**: Test error scenarios and edge cases
+- **MUST**: Use realistic test data and scenarios
+- **FORBIDDEN**: Tests that depend on production data
+- **FORBIDDEN**: Tests that modify shared test state
+
+```python
+# ✅ CORRECT - Integration test
+@pytest.mark.asyncio
+async def test_create_calendar_integration():
+    """Integration test for calendar creation through complete stack."""
+    # Arrange
+    async with TestDatabase() as db:
+        app = create_test_app()
+        client = AsyncTestClient(app)
+        
+        request_data = {
+            "name": "Integration Test Calendar",
+            "allow_overlapping_appointments": False
+        }
+        
+        # Act
+        response = await client.post("/api/v1/calendars", json=request_data)
+        
+        # Assert
+        assert response.status_code == 201
+        
+        envelope = response.json()
+        assert envelope["value"]["name"] == "Integration Test Calendar"
+        assert envelope["error"] is None
+        
+        # Verify persistence
+        calendar_id = envelope["value"]["id"]
+        stored_calendar = await db.get(CalendarModel, calendar_id)
+        assert stored_calendar.name == "Integration Test Calendar"
+
+@pytest.mark.asyncio
+async def test_calendar_mapper_round_trip():
+    """Test domain ↔ database conversion preserves data."""
+    # Arrange
+    calendar = Calendar.create("Test Calendar").value()
+    appointment = calendar.schedule_appointment(
+        "Test Meeting",
+        datetime(2024, 1, 15, 10, 0),
+        datetime(2024, 1, 15, 11, 0)
+    ).value()
+    
+    # Act - Convert to database model and back
+    db_model = CalendarMapper.to_database(calendar)
+    converted_calendar = CalendarMapper.to_domain(db_model)
+    
+    # Assert
+    assert converted_calendar.name.value == calendar.name.value
+    assert converted_calendar.configuration.allow_overlapping_appointments == calendar.configuration.allow_overlapping_appointments
+    assert len(converted_calendar.appointments) == len(calendar.appointments)
+```
+
+### 3. Testing Patterns Rules
+
+- **MUST**: Use pytest for test framework
+- **MUST**: Use factory pattern for test data creation
+- **MUST**: Use mocks for external dependencies
+- **MUST**: Test error paths and exception handling
+- **FORBIDDEN**: Testing private methods directly
+- **FORBIDDEN**: Tests with non-deterministic behavior
+
+```python
+# ✅ CORRECT - Test factory pattern
+class CalendarFactory:
+    """Factory for creating test calendars."""
+    
+    @staticmethod
+    def create_basic_calendar(name: str = "Test Calendar") -> Calendar:
+        """Create a basic calendar for testing."""
+        return Calendar.create(name).value()
+    
+    @staticmethod
+    def create_calendar_with_appointments(
+        name: str = "Test Calendar",
+        appointment_count: int = 3
+    ) -> Calendar:
+        """Create calendar with predefined appointments."""
+        calendar = CalendarFactory.create_basic_calendar(name)
+        
+        for i in range(appointment_count):
+            start_time = datetime(2024, 1, 15, 10 + i, 0)
+            end_time = datetime(2024, 1, 15, 11 + i, 0)
+            calendar.schedule_appointment(f"Meeting {i+1}", start_time, end_time)
+        
+        return calendar
+
+# ✅ CORRECT - Mock usage
+@pytest.mark.asyncio
+async def test_create_calendar_handler_with_database_error():
+    """Should handle database errors gracefully."""
+    # Arrange
+    mock_session = AsyncMock()
+    mock_session.commit.side_effect = OperationalError("Connection lost", None, None)
+    
+    handler = CreateCalendarCommandHandler(mock_session)
+    command = CreateCalendarCommand("Test Calendar", False)
+    
+    # Act
+    result = await handler.handle(command)
+    
+    # Assert
+    assert result.is_failure
+    assert result.error().status_code == 500
+    assert "connection" in result.error().message.lower()
+    mock_session.rollback.assert_called_once()
+```
+
+## Performance and Scalability Rules
+
+### 1. Performance Testing Rules
+
+- **MUST**: Write performance tests for critical operations
+- **MUST**: Test database query performance
+- **MUST**: Monitor memory usage in long-running tests
+- **MUST**: Test concurrent access scenarios
+- **FORBIDDEN**: Performance tests in unit test suite
+- **FORBIDDEN**: Tests without performance assertions
+
+```python
+# ✅ CORRECT - Performance test
+@pytest.mark.performance
+@pytest.mark.asyncio
+async def test_calendar_creation_performance():
+    """Calendar creation should complete within acceptable time."""
+    # Arrange
+    async with TestDatabase() as db:
+        handler = CreateCalendarCommandHandler(db.session)
+        commands = [
+            CreateCalendarCommand(f"Calendar {i}", False)
+            for i in range(100)
+        ]
+        
+        # Act
+        start_time = time.time()
+        results = await asyncio.gather(*[
+            handler.handle(command) for command in commands
+        ])
+        end_time = time.time()
+        
+        # Assert
+        assert all(result.is_success for result in results)
+        assert end_time - start_time < 5.0  # Should complete in less than 5 seconds
+        
+        # Verify all calendars were created
+        calendar_count = await db.scalar(select(func.count(CalendarModel.id)))
+        assert calendar_count == 100
+```
+
+### 2. Load Testing Rules
+
+- **MUST**: Test system under expected load
+- **MUST**: Test graceful degradation under high load
+- **MUST**: Monitor resource usage during load tests
+- **MUST**: Test auto-scaling behavior
+- **FORBIDDEN**: Load tests that affect production systems
+- **FORBIDDEN**: Load tests without resource monitoring
+
+## Continuous Integration Rules
+
+### 1. CI/CD Pipeline Rules
+
+- **MUST**: Run all tests on every commit
+- **MUST**: Enforce code coverage thresholds
+- **MUST**: Run linting and type checking
+- **MUST**: Generate build-time optimized code
+- **MUST**: Run security scanning
+- **FORBIDDEN**: Deploying without passing tests
+- **FORBIDDEN**: Skipping any quality gates
+
+```yaml
+# ✅ CORRECT - CI/CD pipeline example
+name: CI/CD Pipeline
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: 3.12
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          
+      - name: Run linting
+        run: |
+          ruff check .
+          mypy .
+          
+      - name: Run tests
+        run: |
+          pytest --cov=. --cov-report=xml --cov-fail-under=90
+          
+      - name: Generate build-time code
+        run: |
+          python scripts.py generate-routers
+          python scripts.py generate-types
+          
+      - name: Security scan
+        run: |
+          bandit -r . -f json
+```
+
+### 2. Code Quality Gates
+
+- **MUST**: Maintain minimum 90% test coverage
+- **MUST**: Pass all linting checks (ruff, mypy)
+- **MUST**: Have zero critical security vulnerabilities
+- **MUST**: Pass all integration tests
+- **FORBIDDEN**: Reducing quality thresholds to pass builds
+- **FORBIDDEN**: Disabling quality checks without justification
+
+## Dependency Management Rules
+
+### 1. Dependency Rules
+
+- **MUST**: Pin dependency versions in production
+- **MUST**: Regularly update dependencies for security
+- **MUST**: Use virtual environments for development
+- **MUST**: Document dependency rationale for major packages
+- **FORBIDDEN**: Using deprecated or unmaintained packages
+- **FORBIDDEN**: Circular dependencies between layers
+
+### 2. Package Structure Rules
+
+- **MUST**: Follow Python package conventions
+- **MUST**: Use `__init__.py` files for package exports
+- **MUST**: Keep package dependencies minimal and focused
+- **MUST**: Export public APIs through package `__all__`
+- **FORBIDDEN**: Importing private modules across packages
+- **FORBIDDEN**: Deep import hierarchies
+
+```python
+# ✅ CORRECT - Package structure
+# domain/__init__.py
+from .entities import Calendar, Appointment
+from .common import Entity, AggregateRoot, ValueObject, Result
+
+__all__ = [
+    "Calendar",
+    "Appointment", 
+    "Entity",
+    "AggregateRoot",
+    "ValueObject",
+    "Result"
+]
+```
+
+## Security Rules
+
+### 1. Code Security Rules
+
+- **MUST**: Validate all input data at API boundaries
+- **MUST**: Use parameterized queries for database access
+- **MUST**: Sanitize output data before rendering
+- **MUST**: Implement proper authentication and authorization
+- **FORBIDDEN**: SQL injection vulnerabilities
+- **FORBIDDEN**: Storing sensitive data in plain text
+
+### 2. Configuration Security Rules
+
+- **MUST**: Use environment variables for secrets
+- **MUST**: Validate configuration values on startup
+- **MUST**: Use secure defaults for all configuration
+- **MUST**: Rotate secrets regularly
+- **FORBIDDEN**: Hardcoded secrets in source code
+- **FORBIDDEN**: Logging sensitive information
+
+## File Creation Rules
+
+### 1. Documentation and Example Files
+
+- **FORBIDDEN**: Creating example files unless explicitly requested by the user
+- **FORBIDDEN**: Creating documentation files (\*.md, README files) unless explicitly requested by the user
+- **MUST**: Focus on implementing the requested functionality without additional demonstration files
+- **MUST**: Include usage examples within code comments or docstrings when helpful
+- **FORBIDDEN**: Proactively creating tutorial or example scripts
+
+### 2. Implementation Files Only
+
+- **MUST**: Create only the necessary implementation files for the requested feature
+- **MUST**: Prioritize core functionality over supplementary examples
+- **MUST**: Ask the user if they want examples or documentation before creating them
+- **FORBIDDEN**: Assuming the user wants example files or tutorials

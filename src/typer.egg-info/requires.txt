@@ -10,7 +10,9 @@ pvporcupine==1.9.5
 pywin32==310
 pyqtgraph==0.13.7
 pyaudio==0.2.14
-numpy>=2.0.2
+numpy<2.3,>=2.0.0
+numba>=0.60.0
+onnxruntime>=1.20.0
 transformers>=4.46.1
 flatbuffers
 packaging
@@ -23,7 +25,7 @@ mdformat>=0.7.22
 pyinstaller>=6.14.2
 aiofiles>=24.1.0
 psutil>=7.0.0
-librosa>=0.10.0.post2
+librosa>=0.10.2
 
 [build]
 setuptools>=45
@@ -45,7 +47,7 @@ typer[dev]
 typer[build]
 
 [gpu]
-librosa==0.10.0.post2
+librosa>=0.10.2
 transformers>=4.46.1
 torch>=2.7.1
 openai-whisper>=20250625

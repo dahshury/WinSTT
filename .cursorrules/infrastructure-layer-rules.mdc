@@ -1,0 +1,4829 @@
+---
+alwaysApply: true
+---
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Infrastructure Layer Rules
+
+This document outlines the rules and patterns for implementing the Infrastructure Layer for the WinSTT desktop application, including file-based persistence, audio device management, model loading, and desktop integration.
+
+## 🏗️ Infrastructure Layer Workflow Steps for Desktop
+
+### Step 4: Create Persistence Models
+
+**File-based persistence models mirror domain entities for JSON storage:**
+
+#### JSON Model Rules:
+
+- Models MUST inherit from `BaseJsonModel`
+- Models MUST use appropriate field types and validation
+- Models MUST support serialization/deserialization
+- Models MUST follow naming conventions
+- Models SHOULD include audit fields (created_at, updated_at)
+
+#### JSON Model Implementation:
+
+```python
+# src/infrastructure/persistence/models/audio_session_model.py
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from typing import Optional, Dict, Any
+from enum import Enum
+from pathlib import Path
+import json
+
+@dataclass
+class AudioConfigurationModel:
+    """JSON model for audio configuration."""
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str]
+    format_type: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AudioConfigurationModel":
+        return cls(**data)
+
+@dataclass
+class AudioSessionModel:
+    """JSON model for AudioSession entity persistence."""
+    id: str
+    audio_config: AudioConfigurationModel
+    state: str
+    created_at: str
+    started_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    audio_file_path: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        data['audio_config'] = self.audio_config.to_dict()
+        return data
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AudioSessionModel":
+        audio_config_data = data.pop('audio_config')
+        audio_config = AudioConfigurationModel.from_dict(audio_config_data)
+        return cls(audio_config=audio_config, **data)
+    
+    def save_to_file(self, file_path: Path) -> None:
+        """Save model to JSON file."""
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+    
+    @classmethod
+    def load_from_file(cls, file_path: Path) -> "AudioSessionModel":
+        """Load model from JSON file."""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+
+@dataclass
+class TranscriptionResultModel:
+    """JSON model for transcription results."""
+    id: str
+    session_id: str
+    text: str
+    confidence_score: float
+    language: str
+    model_name: str
+    created_at: str
+    segments: Optional[list] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TranscriptionResultModel":
+        return cls(**data)
+
+@dataclass
+class UserPreferencesModel:
+    """JSON model for user preferences."""
+    hotkey_combination: str
+    default_model: str
+    auto_transcribe: bool
+    save_audio_files: bool
+    output_format: str
+    theme: str
+    language: str
+    created_at: str
+    updated_at: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserPreferencesModel":
+        return cls(**data)
+```
+
+### Step 5: Create Mappers for Desktop
+
+**Mappers convert between domain entities and JSON models:**
+
+#### Mapper Rules for Desktop:
+
+- Mappers MUST be stateless
+- Mappers MUST handle datetime serialization correctly
+- Mappers MUST preserve entity state correctly
+- Mappers MUST handle None values gracefully
+- Mappers SHOULD be optimized for file I/O
+
+#### Mapper Implementation:
+
+```python
+# src/infrastructure/persistence/mappers/audio_session_mapper.py
+from typing import Optional
+from datetime import datetime
+from pathlib import Path
+
+from src.domain.audio.entities.audio_session import AudioSession
+from src.domain.audio.value_objects.audio_config import AudioConfiguration, AudioFormat
+from src.domain.audio.value_objects.recording_state import RecordingState
+from src.infrastructure.persistence.models.audio_session_model import AudioSessionModel, AudioConfigurationModel
+
+class AudioSessionMapper:
+    """Maps between AudioSession domain entity and AudioSessionModel JSON model."""
+    
+    @staticmethod
+    def to_domain(json_model: AudioSessionModel) -> AudioSession:
+        """Convert JSON model to domain entity."""
+        if json_model is None:
+            return None
+        
+        # Convert audio configuration
+        audio_config = AudioConfiguration(
+            sample_rate=json_model.audio_config.sample_rate,
+            channels=json_model.audio_config.channels,
+            chunk_size=json_model.audio_config.chunk_size,
+            device_id=json_model.audio_config.device_id,
+            format_type=AudioFormat(json_model.audio_config.format_type)
+        )
+        
+        # Reconstruct entity bypassing __init__ to avoid validation
+        session = AudioSession.__new__(AudioSession)
+        
+        # Set private attributes directly
+        session._id = json_model.id
+        session._audio_config = audio_config
+        session._state = RecordingState(json_model.state)
+        session._created_at = datetime.fromisoformat(json_model.created_at)
+        session._started_at = datetime.fromisoformat(json_model.started_at) if json_model.started_at else None
+        session._stopped_at = datetime.fromisoformat(json_model.stopped_at) if json_model.stopped_at else None
+        session._updated_at = datetime.fromisoformat(json_model.updated_at) if json_model.updated_at else None
+        session._audio_file_path = Path(json_model.audio_file_path) if json_model.audio_file_path else None
+        
+        # Initialize domain events (empty for reconstructed entities)
+        session._domain_events = []
+        
+        return session
+    
+    @staticmethod
+    def to_persistence(domain_entity: AudioSession) -> AudioSessionModel:
+        """Convert domain entity to JSON model."""
+        if domain_entity is None:
+            return None
+        
+        # Convert audio configuration
+        audio_config_model = AudioConfigurationModel(
+            sample_rate=domain_entity.audio_config.sample_rate,
+            channels=domain_entity.audio_config.channels,
+            chunk_size=domain_entity.audio_config.chunk_size,
+            device_id=domain_entity.audio_config.device_id,
+            format_type=domain_entity.audio_config.format_type.value
+        )
+        
+        return AudioSessionModel(
+            id=domain_entity.id,
+            audio_config=audio_config_model,
+            state=domain_entity.state.value,
+            created_at=domain_entity.created_at.isoformat(),
+            started_at=domain_entity.started_at.isoformat() if domain_entity.started_at else None,
+            stopped_at=domain_entity.stopped_at.isoformat() if domain_entity.stopped_at else None,
+            updated_at=domain_entity.updated_at.isoformat() if domain_entity.updated_at else None,
+            audio_file_path=str(domain_entity.audio_file_path) if domain_entity.audio_file_path else None
+        )
+
+class TranscriptionResultMapper:
+    """Maps between TranscriptionResult domain entity and TranscriptionResultModel."""
+    
+    @staticmethod
+    def to_domain(json_model: TranscriptionResultModel) -> TranscriptionResult:
+        """Convert JSON model to domain entity."""
+        if json_model is None:
+            return None
+        
+        result = TranscriptionResult.__new__(TranscriptionResult)
+        result._id = json_model.id
+        result._session_id = json_model.session_id
+        result._text = json_model.text
+        result._confidence_score = ConfidenceScore(json_model.confidence_score)
+        result._language = json_model.language
+        result._model_name = json_model.model_name
+        result._created_at = datetime.fromisoformat(json_model.created_at)
+        result._segments = json_model.segments or []
+        result._domain_events = []
+        
+        return result
+    
+    @staticmethod
+    def to_persistence(domain_entity: TranscriptionResult) -> TranscriptionResultModel:
+        """Convert domain entity to JSON model."""
+        if domain_entity is None:
+            return None
+        
+        return TranscriptionResultModel(
+            id=domain_entity.id,
+            session_id=domain_entity.session_id,
+            text=domain_entity.text,
+            confidence_score=domain_entity.confidence_score.value,
+            language=domain_entity.language,
+            model_name=domain_entity.model_name,
+            created_at=domain_entity.created_at.isoformat(),
+            segments=domain_entity.segments
+        )
+```
+
+### Repository Implementation for File System
+
+**Repositories provide data access abstraction for file-based storage:**
+
+#### Repository Rules for Desktop:
+
+- Repositories MUST implement domain contracts
+- Repositories MUST return `Result<T>` for all operations
+- Repositories MUST handle file system exceptions
+- Repositories MUST use mappers for entity conversion
+- Repositories SHOULD implement caching when appropriate
+
+#### Repository Implementation:
+
+```python
+# src/infrastructure/persistence/repositories/file_audio_repository.py
+from typing import List, Optional, Dict, Any
+from pathlib import Path
+import json
+import asyncio
+from datetime import datetime
+
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.domain.common.result import Result
+from src.domain.audio.entities.audio_session import AudioSession
+from src.infrastructure.persistence.models.audio_session_model import AudioSessionModel
+from src.infrastructure.persistence.mappers.audio_session_mapper import AudioSessionMapper
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class FileAudioRepository(IAudioRepository):
+    """File-based implementation of IAudioRepository."""
+    
+    def __init__(self, data_directory: Path):
+        self._data_dir = data_directory
+        self._sessions_dir = self._data_dir / "sessions"
+        self._audio_files_dir = self._data_dir / "audio_files"
+        
+        # Create directories if they don't exist
+        self._sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._audio_files_dir.mkdir(parents=True, exist_ok=True)
+        
+        # In-memory cache for active sessions
+        self._session_cache: Dict[str, AudioSession] = {}
+    
+    async def get_by_id(self, session_id: str) -> Result[Optional[AudioSession]]:
+        """Get audio session by ID."""
+        try:
+            # Check cache first
+            if session_id in self._session_cache:
+                return Result.success(self._session_cache[session_id])
+            
+            # Load from file
+            session_file = self._sessions_dir / f"{session_id}.json"
+            if not session_file.exists():
+                return Result.success(None)
+            
+            json_model = AudioSessionModel.load_from_file(session_file)
+            domain_entity = AudioSessionMapper.to_domain(json_model)
+            
+            # Cache if active
+            if domain_entity.state != RecordingState.COMPLETED:
+                self._session_cache[session_id] = domain_entity
+            
+            return Result.success(domain_entity)
+            
+        except FileNotFoundError:
+            return Result.success(None)
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Error loading session {session_id}: {str(e)}")
+            return Result.failure(f"Failed to load session: corrupted data")
+        except Exception as e:
+            logger.error(f"Error getting session by ID {session_id}: {str(e)}")
+            return Result.failure(f"Failed to retrieve session: {str(e)}")
+    
+    async def get_active_session(self) -> Result[Optional[AudioSession]]:
+        """Get currently active recording session."""
+        try:
+            # Check cache for active sessions
+            for session in self._session_cache.values():
+                if session.state == RecordingState.RECORDING:
+                    return Result.success(session)
+            
+            # Scan files for active sessions (fallback)
+            for session_file in self._sessions_dir.glob("*.json"):
+                try:
+                    json_model = AudioSessionModel.load_from_file(session_file)
+                    if json_model.state == RecordingState.RECORDING.value:
+                        domain_entity = AudioSessionMapper.to_domain(json_model)
+                        self._session_cache[domain_entity.id] = domain_entity
+                        return Result.success(domain_entity)
+                except Exception:
+                    continue  # Skip corrupted files
+            
+            return Result.success(None)
+            
+        except Exception as e:
+            logger.error(f"Error getting active session: {str(e)}")
+            return Result.failure(f"Failed to find active session: {str(e)}")
+    
+    async def save_session(self, session: AudioSession) -> Result[AudioSession]:
+        """Save or update an audio session."""
+        try:
+            # Convert to JSON model
+            json_model = AudioSessionMapper.to_persistence(session)
+            json_model.updated_at = datetime.utcnow().isoformat()
+            
+            # Save to file
+            session_file = self._sessions_dir / f"{session.id}.json"
+            await asyncio.get_event_loop().run_in_executor(
+                None, json_model.save_to_file, session_file
+            )
+            
+            # Update cache
+            if session.state != RecordingState.COMPLETED:
+                self._session_cache[session.id] = session
+            else:
+                # Remove from cache when completed
+                self._session_cache.pop(session.id, None)
+            
+            return Result.success(session)
+            
+        except PermissionError:
+            return Result.failure("Permission denied saving session data")
+        except OSError as e:
+            logger.error(f"OS error saving session: {str(e)}")
+            return Result.failure("Failed to save session: disk error")
+        except Exception as e:
+            logger.error(f"Error saving session: {str(e)}")
+            return Result.failure(f"Failed to save session: {str(e)}")
+    
+    async def delete_session(self, session_id: str) -> Result[None]:
+        """Delete a session and its associated files."""
+        try:
+            # Remove from cache
+            self._session_cache.pop(session_id, None)
+            
+            # Delete session file
+            session_file = self._sessions_dir / f"{session_id}.json"
+            if session_file.exists():
+                await asyncio.get_event_loop().run_in_executor(
+                    None, session_file.unlink
+                )
+            
+            # Delete associated audio file
+            audio_file = self._audio_files_dir / f"{session_id}.wav"
+            if audio_file.exists():
+                await asyncio.get_event_loop().run_in_executor(
+                    None, audio_file.unlink
+                )
+            
+            return Result.success()
+            
+        except PermissionError:
+            return Result.failure("Permission denied deleting session files")
+        except Exception as e:
+            logger.error(f"Error deleting session {session_id}: {str(e)}")
+            return Result.failure(f"Failed to delete session: {str(e)}")
+    
+    async def find_recent_sessions(self, limit: int = 10) -> Result[List[AudioSession]]:
+        """Find recent sessions ordered by created date."""
+        try:
+            sessions = []
+            session_files = sorted(
+                self._sessions_dir.glob("*.json"), 
+                key=lambda f: f.stat().st_mtime, 
+                reverse=True
+            )
+            
+            for session_file in session_files[:limit]:
+                try:
+                    json_model = AudioSessionModel.load_from_file(session_file)
+                    domain_entity = AudioSessionMapper.to_domain(json_model)
+                    sessions.append(domain_entity)
+                except Exception as e:
+                    logger.warning(f"Skipping corrupted session file {session_file}: {e}")
+                    continue
+            
+            return Result.success(sessions)
+            
+        except Exception as e:
+            logger.error(f"Error finding recent sessions: {str(e)}")
+            return Result.failure(f"Failed to find sessions: {str(e)}")
+    
+    async def cleanup_old_sessions(self, days_old: int = 30) -> Result[int]:
+        """Clean up sessions older than specified days."""
+        try:
+            cutoff_date = datetime.utcnow().timestamp() - (days_old * 24 * 60 * 60)
+            cleaned_count = 0
+            
+            for session_file in self._sessions_dir.glob("*.json"):
+                if session_file.stat().st_mtime < cutoff_date:
+                    try:
+                        # Extract session ID and delete
+                        session_id = session_file.stem
+                        await self.delete_session(session_id)
+                        cleaned_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old session {session_file}: {e}")
+            
+            return Result.success(cleaned_count)
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up old sessions: {str(e)}")
+            return Result.failure(f"Failed to cleanup sessions: {str(e)}")
+```
+
+### Audio Service Implementation
+
+**Audio services handle hardware integration:**
+
+```python
+# src/infrastructure/audio/pyaudio_service.py
+import pyaudio
+import wave
+import asyncio
+from typing import List, Optional, Dict, Any
+from pathlib import Path
+from threading import Thread, Event
+import queue
+
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.value_objects.audio_config import AudioConfiguration
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class PyAudioService(IAudioService):
+    """PyAudio-based implementation of audio service."""
+    
+    def __init__(self):
+        self._pyaudio: Optional[pyaudio.PyAudio] = None
+        self._recording_streams: Dict[str, 'RecordingStream'] = {}
+        self._audio_queues: Dict[str, queue.Queue] = {}
+        
+    async def initialize(self) -> Result[None]:
+        """Initialize PyAudio."""
+        try:
+            self._pyaudio = pyaudio.PyAudio()
+            return Result.success()
+        except Exception as e:
+            logger.error(f"Failed to initialize PyAudio: {e}")
+            return Result.failure(f"Audio system initialization failed: {str(e)}")
+    
+    async def get_available_devices(self) -> Result[List[Dict[str, Any]]]:
+        """Get list of available audio input devices."""
+        try:
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            devices = []
+            device_count = self._pyaudio.get_device_count()
+            
+            for i in range(device_count):
+                device_info = self._pyaudio.get_device_info_by_index(i)
+                
+                # Only include input devices
+                if device_info['maxInputChannels'] > 0:
+                    devices.append({
+                        'id': str(i),
+                        'name': device_info['name'],
+                        'channels': device_info['maxInputChannels'],
+                        'sample_rate': device_info['defaultSampleRate'],
+                        'is_default': i == self._pyaudio.get_default_input_device_info()['index']
+                    })
+            
+            return Result.success(devices)
+            
+        except Exception as e:
+            logger.error(f"Error getting audio devices: {e}")
+            return Result.failure(f"Failed to enumerate audio devices: {str(e)}")
+    
+    async def check_audio_device(self, device_id: Optional[str]) -> Result[bool]:
+        """Check if audio device is available."""
+        try:
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            if device_id is None:
+                # Check default device
+                try:
+                    default_device = self._pyaudio.get_default_input_device_info()
+                    return Result.success(True)
+                except Exception:
+                    return Result.failure("No default audio input device")
+            
+            # Check specific device
+            try:
+                device_index = int(device_id)
+                device_info = self._pyaudio.get_device_info_by_index(device_index)
+                if device_info['maxInputChannels'] == 0:
+                    return Result.failure("Device has no input channels")
+                return Result.success(True)
+            except (ValueError, OSError):
+                return Result.failure(f"Audio device {device_id} not found")
+            
+        except Exception as e:
+            logger.error(f"Error checking audio device: {e}")
+            return Result.failure(f"Failed to check device: {str(e)}")
+    
+    async def start_recording(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording audio."""
+        try:
+            if session_id in self._recording_streams:
+                return Result.failure("Recording already active for this session")
+            
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            # Determine device index
+            device_index = None
+            if audio_config.device_id:
+                try:
+                    device_index = int(audio_config.device_id)
+                except ValueError:
+                    return Result.failure(f"Invalid device ID: {audio_config.device_id}")
+            
+            # Create recording stream
+            stream = RecordingStream(
+                pyaudio_instance=self._pyaudio,
+                session_id=session_id,
+                audio_config=audio_config,
+                device_index=device_index
+            )
+            
+            start_result = await stream.start()
+            if not start_result.is_success:
+                return Result.failure(start_result.error)
+            
+            self._recording_streams[session_id] = stream
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error starting recording: {e}")
+            return Result.failure(f"Failed to start recording: {str(e)}")
+    
+    async def stop_recording(self, session_id: str) -> Result[bytes]:
+        """Stop recording and return audio data."""
+        try:
+            stream = self._recording_streams.get(session_id)
+            if not stream:
+                return Result.failure(f"No recording found for session {session_id}")
+            
+            audio_data_result = await stream.stop()
+            if not audio_data_result.is_success:
+                return Result.failure(audio_data_result.error)
+            
+            # Cleanup
+            del self._recording_streams[session_id]
+            
+            return Result.success(audio_data_result.value)
+            
+        except Exception as e:
+            logger.error(f"Error stopping recording: {e}")
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+    
+    def __del__(self):
+        """Cleanup PyAudio on destruction."""
+        try:
+            if self._pyaudio:
+                self._pyaudio.terminate()
+        except Exception as e:
+            logger.error(f"Error terminating PyAudio: {e}")
+
+class RecordingStream:
+    """Manages a single audio recording stream."""
+    
+    def __init__(self, pyaudio_instance: pyaudio.PyAudio, session_id: str, 
+                 audio_config: AudioConfiguration, device_index: Optional[int]):
+        self._pyaudio = pyaudio_instance
+        self._session_id = session_id
+        self._audio_config = audio_config
+        self._device_index = device_index
+        self._stream: Optional[pyaudio.Stream] = None
+        self._recording_thread: Optional[Thread] = None
+        self._stop_event = Event()
+        self._audio_queue = queue.Queue()
+        
+    async def start(self) -> Result[None]:
+        """Start the recording stream."""
+        try:
+            # Open stream
+            self._stream = self._pyaudio.open(
+                format=self._get_pyaudio_format(),
+                channels=self._audio_config.channels,
+                rate=self._audio_config.sample_rate,
+                input=True,
+                input_device_index=self._device_index,
+                frames_per_buffer=self._audio_config.chunk_size,
+                stream_callback=self._audio_callback
+            )
+            
+            # Start recording thread
+            self._recording_thread = Thread(target=self._recording_loop, daemon=True)
+            self._recording_thread.start()
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error starting recording stream: {e}")
+            return Result.failure(f"Failed to start audio stream: {str(e)}")
+    
+    async def stop(self) -> Result[bytes]:
+        """Stop recording and return audio data."""
+        try:
+            # Signal stop
+            self._stop_event.set()
+            
+            # Wait for recording thread to finish
+            if self._recording_thread:
+                self._recording_thread.join(timeout=5.0)
+            
+            # Close stream
+            if self._stream:
+                self._stream.stop_stream()
+                self._stream.close()
+            
+            # Collect audio data
+            audio_frames = []
+            while not self._audio_queue.empty():
+                try:
+                    frame = self._audio_queue.get_nowait()
+                    audio_frames.append(frame)
+                except queue.Empty:
+                    break
+            
+            audio_data = b''.join(audio_frames)
+            return Result.success(audio_data)
+            
+        except Exception as e:
+            logger.error(f"Error stopping recording stream: {e}")
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+    
+    def _audio_callback(self, in_data, frame_count, time_info, status):
+        """PyAudio callback for handling audio data."""
+        if status:
+            logger.warning(f"Audio callback status: {status}")
+        
+        if not self._stop_event.is_set():
+            self._audio_queue.put(in_data)
+        
+        return (None, pyaudio.paContinue if not self._stop_event.is_set() else pyaudio.paComplete)
+    
+    def _recording_loop(self):
+        """Recording thread loop."""
+        try:
+            self._stream.start_stream()
+            
+            while not self._stop_event.is_set():
+                time.sleep(0.01)  # Small delay to prevent busy waiting
+                
+        except Exception as e:
+            logger.error(f"Error in recording loop: {e}")
+    
+    def _get_pyaudio_format(self):
+        """Get PyAudio format from domain format."""
+        format_map = {
+            AudioFormat.PCM_16: pyaudio.paInt16,
+            AudioFormat.PCM_24: pyaudio.paInt24,
+            AudioFormat.FLOAT_32: pyaudio.paFloat32
+        }
+        return format_map.get(self._audio_config.format_type, pyaudio.paInt16)
+```
+
+### Model Management Infrastructure
+
+**ONNX model loading and management:**
+
+```python
+# src/infrastructure/models/onnx_model_service.py
+import onnxruntime as ort
+import numpy as np
+from pathlib import Path
+from typing import Dict, Any, Optional
+import hashlib
+import requests
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+
+from src.domain.transcription.contracts.model_service import IModelService
+from src.domain.transcription.value_objects.model_config import ModelConfiguration
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class OnnxModelService(IModelService):
+    """ONNX Runtime-based model service."""
+    
+    def __init__(self, models_directory: Path, cache_size_mb: int = 2048):
+        self._models_dir = models_directory
+        self._cache_size_mb = cache_size_mb
+        self._loaded_models: Dict[str, ort.InferenceSession] = {}
+        self._model_metadata: Dict[str, Dict[str, Any]] = {}
+        self._thread_pool = ThreadPoolExecutor(max_workers=2)
+        
+        # Ensure models directory exists
+        self._models_dir.mkdir(parents=True, exist_ok=True)
+    
+    async def load_model(self, model_config: ModelConfiguration) -> Result[None]:
+        """Load model into memory."""
+        try:
+            model_name = model_config.model_name
+            
+            # Check if already loaded
+            if model_name in self._loaded_models:
+                return Result.success()
+            
+            # Check memory constraints
+            memory_check = await self._check_memory_availability(model_config)
+            if not memory_check.is_success:
+                return Result.failure(memory_check.error)
+            
+            # Get model file path
+            model_path = self._get_model_path(model_name)
+            if not model_path.exists():
+                download_result = await self._download_model(model_config)
+                if not download_result.is_success:
+                    return Result.failure(download_result.error)
+            
+            # Load model in thread pool to avoid blocking
+            session = await asyncio.get_event_loop().run_in_executor(
+                self._thread_pool, 
+                self._load_onnx_model, 
+                model_path, 
+                model_config
+            )
+            
+            if session is None:
+                return Result.failure(f"Failed to create ONNX session for {model_name}")
+            
+            self._loaded_models[model_name] = session
+            self._model_metadata[model_name] = {
+                'config': model_config,
+                'loaded_at': datetime.utcnow(),
+                'memory_usage_mb': self._estimate_model_memory(session)
+            }
+            
+            logger.info(f"Successfully loaded model: {model_name}")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error loading model {model_config.model_name}: {e}")
+            return Result.failure(f"Model loading failed: {str(e)}")
+    
+    async def unload_model(self, model_name: str) -> Result[None]:
+        """Unload model from memory."""
+        try:
+            if model_name in self._loaded_models:
+                # Clean up ONNX session
+                session = self._loaded_models[model_name]
+                del session  # Let garbage collector handle cleanup
+                
+                del self._loaded_models[model_name]
+                del self._model_metadata[model_name]
+                
+                logger.info(f"Unloaded model: {model_name}")
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error unloading model {model_name}: {e}")
+            return Result.failure(f"Failed to unload model: {str(e)}")
+    
+    async def is_model_loaded(self, model_name: str) -> bool:
+        """Check if model is loaded."""
+        return model_name in self._loaded_models
+    
+    async def run_inference(self, model_name: str, input_data: np.ndarray) -> Result[Dict[str, Any]]:
+        """Run inference on loaded model."""
+        try:
+            if model_name not in self._loaded_models:
+                return Result.failure(f"Model {model_name} not loaded")
+            
+            session = self._loaded_models[model_name]
+            
+            # Prepare input
+            input_name = session.get_inputs()[0].name
+            input_dict = {input_name: input_data}
+            
+            # Run inference in thread pool
+            outputs = await asyncio.get_event_loop().run_in_executor(
+                self._thread_pool,
+                session.run,
+                None,
+                input_dict
+            )
+            
+            # Convert outputs to dictionary
+            output_names = [output.name for output in session.get_outputs()]
+            result_dict = dict(zip(output_names, outputs))
+            
+            return Result.success(result_dict)
+            
+        except Exception as e:
+            logger.error(f"Error running inference with {model_name}: {e}")
+            return Result.failure(f"Inference failed: {str(e)}")
+    
+    def _load_onnx_model(self, model_path: Path, model_config: ModelConfiguration) -> Optional[ort.InferenceSession]:
+        """Load ONNX model (runs in thread pool)."""
+        try:
+            # Set providers based on availability
+            providers = ['CPUExecutionProvider']
+            if ort.get_available_providers():
+                available = ort.get_available_providers()
+                if 'CUDAExecutionProvider' in available:
+                    providers.insert(0, 'CUDAExecutionProvider')
+                elif 'DmlExecutionProvider' in available:  # DirectML for Windows
+                    providers.insert(0, 'DmlExecutionProvider')
+            
+            # Create session with appropriate providers
+            session = ort.InferenceSession(
+                str(model_path),
+                providers=providers
+            )
+            
+            return session
+            
+        except Exception as e:
+            logger.error(f"Error creating ONNX session: {e}")
+            return None
+    
+    async def _download_model(self, model_config: ModelConfiguration) -> Result[Path]:
+        """Download model file."""
+        try:
+            model_name = model_config.model_name
+            model_url = self._get_model_download_url(model_name)
+            model_path = self._get_model_path(model_name)
+            
+            logger.info(f"Downloading model {model_name} from {model_url}")
+            
+            # Download in chunks to show progress
+            async with aiohttp.ClientSession() as session:
+                async with session.get(model_url) as response:
+                    if response.status != 200:
+                        return Result.failure(f"Failed to download model: HTTP {response.status}")
+                    
+                    total_size = int(response.headers.get('content-length', 0))
+                    downloaded = 0
+                    
+                    with open(model_path, 'wb') as f:
+                        async for chunk in response.content.iter_chunked(8192):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            
+                            # Emit progress signal if available
+                            if hasattr(self, 'download_progress'):
+                                progress = int((downloaded / total_size) * 100) if total_size > 0 else 0
+                                self.download_progress.emit(model_name, progress)
+            
+            # Verify download
+            if not model_path.exists() or model_path.stat().st_size == 0:
+                return Result.failure("Downloaded file is empty or missing")
+            
+            logger.info(f"Successfully downloaded model {model_name}")
+            return Result.success(model_path)
+            
+        except Exception as e:
+            logger.error(f"Error downloading model {model_config.model_name}: {e}")
+            return Result.failure(f"Download failed: {str(e)}")
+    
+    def _get_model_path(self, model_name: str) -> Path:
+        """Get file path for model."""
+        return self._models_dir / f"{model_name}.onnx"
+    
+    def _get_model_download_url(self, model_name: str) -> str:
+        """Get download URL for model."""
+        # This would be configured based on model repository
+        base_url = "https://huggingface.co/onnx-community"
+        return f"{base_url}/{model_name}/resolve/main/model.onnx"
+    
+    async def _check_memory_availability(self, model_config: ModelConfiguration) -> Result[None]:
+        """Check if there's enough memory for the model."""
+        try:
+            required_mb = model_config.model_type.memory_requirements_mb
+            available_mb = self._get_available_memory_mb()
+            
+            if available_mb < required_mb:
+                # Try to free up space by unloading least recently used models
+                freed_mb = await self._free_memory_for_model(required_mb)
+                if freed_mb < required_mb:
+                    return Result.failure(
+                        f"Insufficient memory: need {required_mb}MB, have {available_mb}MB"
+                    )
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error checking memory: {e}")
+            return Result.failure("Failed to check memory availability")
+```
+
+### Desktop Integration Infrastructure
+
+**System tray, hotkeys, and OS integration:**
+
+```python
+# src/infrastructure/desktop/system_integration.py
+from PyQt5.QtWidgets import QSystemTrayIcon, QMenu, QAction
+from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtGui import QIcon, QKeySequence
+import pynput
+from pynput import keyboard
+from typing import Optional, Callable
+import threading
+
+from src.domain.settings.value_objects.key_combination import KeyCombination
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class SystemTrayManager(QObject):
+    """Manages system tray integration."""
+    
+    show_main_window = pyqtSignal()
+    start_recording = pyqtSignal()
+    stop_recording = pyqtSignal()
+    quit_application = pyqtSignal()
+    
+    def __init__(self, icon_path: str, parent=None):
+        super().__init__(parent)
+        self._tray_icon: Optional[QSystemTrayIcon] = None
+        self._icon_path = icon_path
+        
+    def setup_tray(self) -> Result[None]:
+        """Setup system tray icon and menu."""
+        try:
+            if not QSystemTrayIcon.isSystemTrayAvailable():
+                return Result.failure("System tray is not available")
+            
+            # Create tray icon
+            icon = QIcon(self._icon_path)
+            self._tray_icon = QSystemTrayIcon(icon)
+            
+            # Create context menu
+            menu = QMenu()
+            
+            # Show/Hide main window
+            show_action = QAction("Show WinSTT", menu)
+            show_action.triggered.connect(self.show_main_window.emit)
+            menu.addAction(show_action)
+            
+            menu.addSeparator()
+            
+            # Recording actions
+            start_action = QAction("Start Recording", menu)
+            start_action.triggered.connect(self.start_recording.emit)
+            menu.addAction(start_action)
+            
+            stop_action = QAction("Stop Recording", menu)
+            stop_action.triggered.connect(self.stop_recording.emit)
+            menu.addAction(stop_action)
+            
+            menu.addSeparator()
+            
+            # Quit action
+            quit_action = QAction("Quit", menu)
+            quit_action.triggered.connect(self.quit_application.emit)
+            menu.addAction(quit_action)
+            
+            self._tray_icon.setContextMenu(menu)
+            self._tray_icon.activated.connect(self._on_tray_activated)
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error setting up system tray: {e}")
+            return Result.failure(f"Failed to setup system tray: {str(e)}")
+    
+    def show_tray(self) -> None:
+        """Show the system tray icon."""
+        if self._tray_icon:
+            self._tray_icon.show()
+    
+    def hide_tray(self) -> None:
+        """Hide the system tray icon."""
+        if self._tray_icon:
+            self._tray_icon.hide()
+    
+    def show_message(self, title: str, message: str, duration: int = 3000) -> None:
+        """Show tray notification."""
+        if self._tray_icon:
+            self._tray_icon.showMessage(title, message, QSystemTrayIcon.Information, duration)
+    
+    def _on_tray_activated(self, reason):
+        """Handle tray icon activation."""
+        if reason == QSystemTrayIcon.DoubleClick:
+            self.show_main_window.emit()
+
+class GlobalHotkeyManager(QObject):
+    """Manages global hotkey registration."""
+    
+    hotkey_triggered = pyqtSignal(str)  # hotkey_name
+    
+    def __init__(self):
+        super().__init__()
+        self._listener: Optional[keyboard.GlobalHotKeys] = None
+        self._registered_hotkeys: Dict[str, KeyCombination] = {}
+        self._hotkey_callbacks: Dict[str, Callable] = {}
+        
+    def register_hotkey(self, name: str, key_combination: KeyCombination) -> Result[None]:
+        """Register a global hotkey."""
+        try:
+            # Convert to pynput format
+            pynput_combination = self._convert_to_pynput_format(key_combination)
+            if not pynput_combination:
+                return Result.failure(f"Invalid key combination: {key_combination}")
+            
+            # Create callback
+            def callback():
+                self.hotkey_triggered.emit(name)
+            
+            self._hotkey_callbacks[pynput_combination] = callback
+            self._registered_hotkeys[name] = key_combination
+            
+            # Restart listener with new hotkeys
+            self._restart_listener()
+            
+            logger.info(f"Registered hotkey '{name}': {key_combination}")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error registering hotkey {name}: {e}")
+            return Result.failure(f"Failed to register hotkey: {str(e)}")
+    
+    def unregister_hotkey(self, name: str) -> Result[None]:
+        """Unregister a global hotkey."""
+        try:
+            if name not in self._registered_hotkeys:
+                return Result.failure(f"Hotkey '{name}' not registered")
+            
+            key_combination = self._registered_hotkeys[name]
+            pynput_combination = self._convert_to_pynput_format(key_combination)
+            
+            # Remove from tracking
+            del self._registered_hotkeys[name]
+            if pynput_combination in self._hotkey_callbacks:
+                del self._hotkey_callbacks[pynput_combination]
+            
+            # Restart listener
+            self._restart_listener()
+            
+            logger.info(f"Unregistered hotkey '{name}'")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error unregistering hotkey {name}: {e}")
+            return Result.failure(f"Failed to unregister hotkey: {str(e)}")
+    
+    def _restart_listener(self):
+        """Restart the global hotkey listener."""
+        try:
+            # Stop existing listener
+            if self._listener:
+                self._listener.stop()
+            
+            # Start new listener if we have hotkeys
+            if self._hotkey_callbacks:
+                self._listener = keyboard.GlobalHotKeys(self._hotkey_callbacks)
+                self._listener.start()
+            
+        except Exception as e:
+            logger.error(f"Error restarting hotkey listener: {e}")
+    
+    def _convert_to_pynput_format(self, key_combination: KeyCombination) -> Optional[str]:
+        """Convert domain key combination to pynput format."""
+        try:
+            # Map modifier keys
+            modifiers = []
+            if key_combination.ctrl:
+                modifiers.append('<ctrl>')
+            if key_combination.alt:
+                modifiers.append('<alt>')
+            if key_combination.shift:
+                modifiers.append('<shift>')
+            if key_combination.windows:
+                modifiers.append('<cmd>')
+            
+            # Add main key
+            main_key = key_combination.key.lower()
+            
+            # Combine modifiers and main key
+            if modifiers:
+                return '+'.join(modifiers + [main_key])
+            else:
+                return main_key
+                
+        except Exception as e:
+            logger.error(f"Error converting key combination: {e}")
+            return None
+    
+    def __del__(self):
+        """Cleanup hotkey listener."""
+        try:
+            if self._listener:
+                self._listener.stop()
+        except Exception as e:
+            logger.error(f"Error cleaning up hotkey listener: {e}")
+```
+
+## Configuration and Dependency Injection Rules
+
+### 1. Configuration Rules for Desktop
+
+- **MUST**: Use JSON files for configuration storage
+- **MUST**: Support user-specific and system-wide configurations
+- **MUST**: Validate configuration on startup
+- **MUST**: Use typed configuration objects
+- **FORBIDDEN**: Hardcoded configuration values
+- **FORBIDDEN**: Storing sensitive data in plain text
+
+### 2. Dependency Injection Rules for Desktop
+
+- **MUST**: Use dependency injection container for desktop services
+- **MUST**: Register Qt application services as singletons
+- **MUST**: Use factory patterns for hardware-dependent services
+- **MUST**: Support service discovery and auto-wiring
+- **FORBIDDEN**: Direct instantiation of infrastructure services
+- **FORBIDDEN**: Circular dependencies between desktop services
+
+## Performance Rules for Desktop
+
+### 1. Memory Management Rules
+
+- **MUST**: Monitor memory usage for loaded models
+- **MUST**: Implement LRU cache for model management
+- **MUST**: Use background threads for heavy operations
+- **MUST**: Clean up resources properly on exit
+- **FORBIDDEN**: Memory leaks from Qt objects
+- **FORBIDDEN**: Blocking the UI thread with heavy operations
+
+### 2. File I/O Performance Rules
+
+- **MUST**: Use async I/O for file operations
+
+- **MUST**: Batch file operations when possible
+
+- **MUST**: Implement proper error recovery for disk operations
+
+- **MUST**: Monitor disk space usage
+
+- **FORBIDDEN**: Synchronous file operations on UI thread
+
+- **FORBIDDEN**: Unbounded file growth without cleanup
+
+- **FORBIDDEN**: N+1 query problems
+
+- **FORBIDDEN**: Unbounded result sets
+
+# WinSTT Infrastructure Layer Rules
+
+This document outlines the rules and patterns for implementing the Infrastructure Layer for the WinSTT desktop application, including file-based persistence, audio device management, model loading, and desktop integration.
+
+## 🏗️ Infrastructure Layer Workflow Steps for Desktop
+
+### Step 4: Create Persistence Models
+
+**File-based persistence models mirror domain entities for JSON storage:**
+
+#### JSON Model Rules:
+
+- Models MUST inherit from `BaseJsonModel`
+- Models MUST use appropriate field types and validation
+- Models MUST support serialization/deserialization
+- Models MUST follow naming conventions
+- Models SHOULD include audit fields (created_at, updated_at)
+
+#### JSON Model Implementation:
+
+```python
+# src/infrastructure/persistence/models/audio_session_model.py
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from typing import Optional, Dict, Any
+from enum import Enum
+from pathlib import Path
+import json
+
+@dataclass
+class AudioConfigurationModel:
+    """JSON model for audio configuration."""
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str]
+    format_type: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AudioConfigurationModel":
+        return cls(**data)
+
+@dataclass
+class AudioSessionModel:
+    """JSON model for AudioSession entity persistence."""
+    id: str
+    audio_config: AudioConfigurationModel
+    state: str
+    created_at: str
+    started_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    audio_file_path: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        data['audio_config'] = self.audio_config.to_dict()
+        return data
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AudioSessionModel":
+        audio_config_data = data.pop('audio_config')
+        audio_config = AudioConfigurationModel.from_dict(audio_config_data)
+        return cls(audio_config=audio_config, **data)
+    
+    def save_to_file(self, file_path: Path) -> None:
+        """Save model to JSON file."""
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+    
+    @classmethod
+    def load_from_file(cls, file_path: Path) -> "AudioSessionModel":
+        """Load model from JSON file."""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+
+@dataclass
+class TranscriptionResultModel:
+    """JSON model for transcription results."""
+    id: str
+    session_id: str
+    text: str
+    confidence_score: float
+    language: str
+    model_name: str
+    created_at: str
+    segments: Optional[list] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TranscriptionResultModel":
+        return cls(**data)
+
+@dataclass
+class UserPreferencesModel:
+    """JSON model for user preferences."""
+    hotkey_combination: str
+    default_model: str
+    auto_transcribe: bool
+    save_audio_files: bool
+    output_format: str
+    theme: str
+    language: str
+    created_at: str
+    updated_at: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserPreferencesModel":
+        return cls(**data)
+```
+
+### Step 5: Create Mappers for Desktop
+
+**Mappers convert between domain entities and JSON models:**
+
+#### Mapper Rules for Desktop:
+
+- Mappers MUST be stateless
+- Mappers MUST handle datetime serialization correctly
+- Mappers MUST preserve entity state correctly
+- Mappers MUST handle None values gracefully
+- Mappers SHOULD be optimized for file I/O
+
+#### Mapper Implementation:
+
+```python
+# src/infrastructure/persistence/mappers/audio_session_mapper.py
+from typing import Optional
+from datetime import datetime
+from pathlib import Path
+
+from src.domain.audio.entities.audio_session import AudioSession
+from src.domain.audio.value_objects.audio_config import AudioConfiguration, AudioFormat
+from src.domain.audio.value_objects.recording_state import RecordingState
+from src.infrastructure.persistence.models.audio_session_model import AudioSessionModel, AudioConfigurationModel
+
+class AudioSessionMapper:
+    """Maps between AudioSession domain entity and AudioSessionModel JSON model."""
+    
+    @staticmethod
+    def to_domain(json_model: AudioSessionModel) -> AudioSession:
+        """Convert JSON model to domain entity."""
+        if json_model is None:
+            return None
+        
+        # Convert audio configuration
+        audio_config = AudioConfiguration(
+            sample_rate=json_model.audio_config.sample_rate,
+            channels=json_model.audio_config.channels,
+            chunk_size=json_model.audio_config.chunk_size,
+            device_id=json_model.audio_config.device_id,
+            format_type=AudioFormat(json_model.audio_config.format_type)
+        )
+        
+        # Reconstruct entity bypassing __init__ to avoid validation
+        session = AudioSession.__new__(AudioSession)
+        
+        # Set private attributes directly
+        session._id = json_model.id
+        session._audio_config = audio_config
+        session._state = RecordingState(json_model.state)
+        session._created_at = datetime.fromisoformat(json_model.created_at)
+        session._started_at = datetime.fromisoformat(json_model.started_at) if json_model.started_at else None
+        session._stopped_at = datetime.fromisoformat(json_model.stopped_at) if json_model.stopped_at else None
+        session._updated_at = datetime.fromisoformat(json_model.updated_at) if json_model.updated_at else None
+        session._audio_file_path = Path(json_model.audio_file_path) if json_model.audio_file_path else None
+        
+        # Initialize domain events (empty for reconstructed entities)
+        session._domain_events = []
+        
+        return session
+    
+    @staticmethod
+    def to_persistence(domain_entity: AudioSession) -> AudioSessionModel:
+        """Convert domain entity to JSON model."""
+        if domain_entity is None:
+            return None
+        
+        # Convert audio configuration
+        audio_config_model = AudioConfigurationModel(
+            sample_rate=domain_entity.audio_config.sample_rate,
+            channels=domain_entity.audio_config.channels,
+            chunk_size=domain_entity.audio_config.chunk_size,
+            device_id=domain_entity.audio_config.device_id,
+            format_type=domain_entity.audio_config.format_type.value
+        )
+        
+        return AudioSessionModel(
+            id=domain_entity.id,
+            audio_config=audio_config_model,
+            state=domain_entity.state.value,
+            created_at=domain_entity.created_at.isoformat(),
+            started_at=domain_entity.started_at.isoformat() if domain_entity.started_at else None,
+            stopped_at=domain_entity.stopped_at.isoformat() if domain_entity.stopped_at else None,
+            updated_at=domain_entity.updated_at.isoformat() if domain_entity.updated_at else None,
+            audio_file_path=str(domain_entity.audio_file_path) if domain_entity.audio_file_path else None
+        )
+
+class TranscriptionResultMapper:
+    """Maps between TranscriptionResult domain entity and TranscriptionResultModel."""
+    
+    @staticmethod
+    def to_domain(json_model: TranscriptionResultModel) -> TranscriptionResult:
+        """Convert JSON model to domain entity."""
+        if json_model is None:
+            return None
+        
+        result = TranscriptionResult.__new__(TranscriptionResult)
+        result._id = json_model.id
+        result._session_id = json_model.session_id
+        result._text = json_model.text
+        result._confidence_score = ConfidenceScore(json_model.confidence_score)
+        result._language = json_model.language
+        result._model_name = json_model.model_name
+        result._created_at = datetime.fromisoformat(json_model.created_at)
+        result._segments = json_model.segments or []
+        result._domain_events = []
+        
+        return result
+    
+    @staticmethod
+    def to_persistence(domain_entity: TranscriptionResult) -> TranscriptionResultModel:
+        """Convert domain entity to JSON model."""
+        if domain_entity is None:
+            return None
+        
+        return TranscriptionResultModel(
+            id=domain_entity.id,
+            session_id=domain_entity.session_id,
+            text=domain_entity.text,
+            confidence_score=domain_entity.confidence_score.value,
+            language=domain_entity.language,
+            model_name=domain_entity.model_name,
+            created_at=domain_entity.created_at.isoformat(),
+            segments=domain_entity.segments
+        )
+```
+
+### Repository Implementation for File System
+
+**Repositories provide data access abstraction for file-based storage:**
+
+#### Repository Rules for Desktop:
+
+- Repositories MUST implement domain contracts
+- Repositories MUST return `Result<T>` for all operations
+- Repositories MUST handle file system exceptions
+- Repositories MUST use mappers for entity conversion
+- Repositories SHOULD implement caching when appropriate
+
+#### Repository Implementation:
+
+```python
+# src/infrastructure/persistence/repositories/file_audio_repository.py
+from typing import List, Optional, Dict, Any
+from pathlib import Path
+import json
+import asyncio
+from datetime import datetime
+
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.domain.common.result import Result
+from src.domain.audio.entities.audio_session import AudioSession
+from src.infrastructure.persistence.models.audio_session_model import AudioSessionModel
+from src.infrastructure.persistence.mappers.audio_session_mapper import AudioSessionMapper
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class FileAudioRepository(IAudioRepository):
+    """File-based implementation of IAudioRepository."""
+    
+    def __init__(self, data_directory: Path):
+        self._data_dir = data_directory
+        self._sessions_dir = self._data_dir / "sessions"
+        self._audio_files_dir = self._data_dir / "audio_files"
+        
+        # Create directories if they don't exist
+        self._sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._audio_files_dir.mkdir(parents=True, exist_ok=True)
+        
+        # In-memory cache for active sessions
+        self._session_cache: Dict[str, AudioSession] = {}
+    
+    async def get_by_id(self, session_id: str) -> Result[Optional[AudioSession]]:
+        """Get audio session by ID."""
+        try:
+            # Check cache first
+            if session_id in self._session_cache:
+                return Result.success(self._session_cache[session_id])
+            
+            # Load from file
+            session_file = self._sessions_dir / f"{session_id}.json"
+            if not session_file.exists():
+                return Result.success(None)
+            
+            json_model = AudioSessionModel.load_from_file(session_file)
+            domain_entity = AudioSessionMapper.to_domain(json_model)
+            
+            # Cache if active
+            if domain_entity.state != RecordingState.COMPLETED:
+                self._session_cache[session_id] = domain_entity
+            
+            return Result.success(domain_entity)
+            
+        except FileNotFoundError:
+            return Result.success(None)
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Error loading session {session_id}: {str(e)}")
+            return Result.failure(f"Failed to load session: corrupted data")
+        except Exception as e:
+            logger.error(f"Error getting session by ID {session_id}: {str(e)}")
+            return Result.failure(f"Failed to retrieve session: {str(e)}")
+    
+    async def get_active_session(self) -> Result[Optional[AudioSession]]:
+        """Get currently active recording session."""
+        try:
+            # Check cache for active sessions
+            for session in self._session_cache.values():
+                if session.state == RecordingState.RECORDING:
+                    return Result.success(session)
+            
+            # Scan files for active sessions (fallback)
+            for session_file in self._sessions_dir.glob("*.json"):
+                try:
+                    json_model = AudioSessionModel.load_from_file(session_file)
+                    if json_model.state == RecordingState.RECORDING.value:
+                        domain_entity = AudioSessionMapper.to_domain(json_model)
+                        self._session_cache[domain_entity.id] = domain_entity
+                        return Result.success(domain_entity)
+                except Exception:
+                    continue  # Skip corrupted files
+            
+            return Result.success(None)
+            
+        except Exception as e:
+            logger.error(f"Error getting active session: {str(e)}")
+            return Result.failure(f"Failed to find active session: {str(e)}")
+    
+    async def save_session(self, session: AudioSession) -> Result[AudioSession]:
+        """Save or update an audio session."""
+        try:
+            # Convert to JSON model
+            json_model = AudioSessionMapper.to_persistence(session)
+            json_model.updated_at = datetime.utcnow().isoformat()
+            
+            # Save to file
+            session_file = self._sessions_dir / f"{session.id}.json"
+            await asyncio.get_event_loop().run_in_executor(
+                None, json_model.save_to_file, session_file
+            )
+            
+            # Update cache
+            if session.state != RecordingState.COMPLETED:
+                self._session_cache[session.id] = session
+            else:
+                # Remove from cache when completed
+                self._session_cache.pop(session.id, None)
+            
+            return Result.success(session)
+            
+        except PermissionError:
+            return Result.failure("Permission denied saving session data")
+        except OSError as e:
+            logger.error(f"OS error saving session: {str(e)}")
+            return Result.failure("Failed to save session: disk error")
+        except Exception as e:
+            logger.error(f"Error saving session: {str(e)}")
+            return Result.failure(f"Failed to save session: {str(e)}")
+    
+    async def delete_session(self, session_id: str) -> Result[None]:
+        """Delete a session and its associated files."""
+        try:
+            # Remove from cache
+            self._session_cache.pop(session_id, None)
+            
+            # Delete session file
+            session_file = self._sessions_dir / f"{session_id}.json"
+            if session_file.exists():
+                await asyncio.get_event_loop().run_in_executor(
+                    None, session_file.unlink
+                )
+            
+            # Delete associated audio file
+            audio_file = self._audio_files_dir / f"{session_id}.wav"
+            if audio_file.exists():
+                await asyncio.get_event_loop().run_in_executor(
+                    None, audio_file.unlink
+                )
+            
+            return Result.success()
+            
+        except PermissionError:
+            return Result.failure("Permission denied deleting session files")
+        except Exception as e:
+            logger.error(f"Error deleting session {session_id}: {str(e)}")
+            return Result.failure(f"Failed to delete session: {str(e)}")
+    
+    async def find_recent_sessions(self, limit: int = 10) -> Result[List[AudioSession]]:
+        """Find recent sessions ordered by created date."""
+        try:
+            sessions = []
+            session_files = sorted(
+                self._sessions_dir.glob("*.json"), 
+                key=lambda f: f.stat().st_mtime, 
+                reverse=True
+            )
+            
+            for session_file in session_files[:limit]:
+                try:
+                    json_model = AudioSessionModel.load_from_file(session_file)
+                    domain_entity = AudioSessionMapper.to_domain(json_model)
+                    sessions.append(domain_entity)
+                except Exception as e:
+                    logger.warning(f"Skipping corrupted session file {session_file}: {e}")
+                    continue
+            
+            return Result.success(sessions)
+            
+        except Exception as e:
+            logger.error(f"Error finding recent sessions: {str(e)}")
+            return Result.failure(f"Failed to find sessions: {str(e)}")
+    
+    async def cleanup_old_sessions(self, days_old: int = 30) -> Result[int]:
+        """Clean up sessions older than specified days."""
+        try:
+            cutoff_date = datetime.utcnow().timestamp() - (days_old * 24 * 60 * 60)
+            cleaned_count = 0
+            
+            for session_file in self._sessions_dir.glob("*.json"):
+                if session_file.stat().st_mtime < cutoff_date:
+                    try:
+                        # Extract session ID and delete
+                        session_id = session_file.stem
+                        await self.delete_session(session_id)
+                        cleaned_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old session {session_file}: {e}")
+            
+            return Result.success(cleaned_count)
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up old sessions: {str(e)}")
+            return Result.failure(f"Failed to cleanup sessions: {str(e)}")
+```
+
+### Audio Service Implementation
+
+**Audio services handle hardware integration:**
+
+```python
+# src/infrastructure/audio/pyaudio_service.py
+import pyaudio
+import wave
+import asyncio
+from typing import List, Optional, Dict, Any
+from pathlib import Path
+from threading import Thread, Event
+import queue
+
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.value_objects.audio_config import AudioConfiguration
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class PyAudioService(IAudioService):
+    """PyAudio-based implementation of audio service."""
+    
+    def __init__(self):
+        self._pyaudio: Optional[pyaudio.PyAudio] = None
+        self._recording_streams: Dict[str, 'RecordingStream'] = {}
+        self._audio_queues: Dict[str, queue.Queue] = {}
+        
+    async def initialize(self) -> Result[None]:
+        """Initialize PyAudio."""
+        try:
+            self._pyaudio = pyaudio.PyAudio()
+            return Result.success()
+        except Exception as e:
+            logger.error(f"Failed to initialize PyAudio: {e}")
+            return Result.failure(f"Audio system initialization failed: {str(e)}")
+    
+    async def get_available_devices(self) -> Result[List[Dict[str, Any]]]:
+        """Get list of available audio input devices."""
+        try:
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            devices = []
+            device_count = self._pyaudio.get_device_count()
+            
+            for i in range(device_count):
+                device_info = self._pyaudio.get_device_info_by_index(i)
+                
+                # Only include input devices
+                if device_info['maxInputChannels'] > 0:
+                    devices.append({
+                        'id': str(i),
+                        'name': device_info['name'],
+                        'channels': device_info['maxInputChannels'],
+                        'sample_rate': device_info['defaultSampleRate'],
+                        'is_default': i == self._pyaudio.get_default_input_device_info()['index']
+                    })
+            
+            return Result.success(devices)
+            
+        except Exception as e:
+            logger.error(f"Error getting audio devices: {e}")
+            return Result.failure(f"Failed to enumerate audio devices: {str(e)}")
+    
+    async def check_audio_device(self, device_id: Optional[str]) -> Result[bool]:
+        """Check if audio device is available."""
+        try:
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            if device_id is None:
+                # Check default device
+                try:
+                    default_device = self._pyaudio.get_default_input_device_info()
+                    return Result.success(True)
+                except Exception:
+                    return Result.failure("No default audio input device")
+            
+            # Check specific device
+            try:
+                device_index = int(device_id)
+                device_info = self._pyaudio.get_device_info_by_index(device_index)
+                if device_info['maxInputChannels'] == 0:
+                    return Result.failure("Device has no input channels")
+                return Result.success(True)
+            except (ValueError, OSError):
+                return Result.failure(f"Audio device {device_id} not found")
+            
+        except Exception as e:
+            logger.error(f"Error checking audio device: {e}")
+            return Result.failure(f"Failed to check device: {str(e)}")
+    
+    async def start_recording(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording audio."""
+        try:
+            if session_id in self._recording_streams:
+                return Result.failure("Recording already active for this session")
+            
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            # Determine device index
+            device_index = None
+            if audio_config.device_id:
+                try:
+                    device_index = int(audio_config.device_id)
+                except ValueError:
+                    return Result.failure(f"Invalid device ID: {audio_config.device_id}")
+            
+            # Create recording stream
+            stream = RecordingStream(
+                pyaudio_instance=self._pyaudio,
+                session_id=session_id,
+                audio_config=audio_config,
+                device_index=device_index
+            )
+            
+            start_result = await stream.start()
+            if not start_result.is_success:
+                return Result.failure(start_result.error)
+            
+            self._recording_streams[session_id] = stream
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error starting recording: {e}")
+            return Result.failure(f"Failed to start recording: {str(e)}")
+    
+    async def stop_recording(self, session_id: str) -> Result[bytes]:
+        """Stop recording and return audio data."""
+        try:
+            stream = self._recording_streams.get(session_id)
+            if not stream:
+                return Result.failure(f"No recording found for session {session_id}")
+            
+            audio_data_result = await stream.stop()
+            if not audio_data_result.is_success:
+                return Result.failure(audio_data_result.error)
+            
+            # Cleanup
+            del self._recording_streams[session_id]
+            
+            return Result.success(audio_data_result.value)
+            
+        except Exception as e:
+            logger.error(f"Error stopping recording: {e}")
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+    
+    def __del__(self):
+        """Cleanup PyAudio on destruction."""
+        try:
+            if self._pyaudio:
+                self._pyaudio.terminate()
+        except Exception as e:
+            logger.error(f"Error terminating PyAudio: {e}")
+
+class RecordingStream:
+    """Manages a single audio recording stream."""
+    
+    def __init__(self, pyaudio_instance: pyaudio.PyAudio, session_id: str, 
+                 audio_config: AudioConfiguration, device_index: Optional[int]):
+        self._pyaudio = pyaudio_instance
+        self._session_id = session_id
+        self._audio_config = audio_config
+        self._device_index = device_index
+        self._stream: Optional[pyaudio.Stream] = None
+        self._recording_thread: Optional[Thread] = None
+        self._stop_event = Event()
+        self._audio_queue = queue.Queue()
+        
+    async def start(self) -> Result[None]:
+        """Start the recording stream."""
+        try:
+            # Open stream
+            self._stream = self._pyaudio.open(
+                format=self._get_pyaudio_format(),
+                channels=self._audio_config.channels,
+                rate=self._audio_config.sample_rate,
+                input=True,
+                input_device_index=self._device_index,
+                frames_per_buffer=self._audio_config.chunk_size,
+                stream_callback=self._audio_callback
+            )
+            
+            # Start recording thread
+            self._recording_thread = Thread(target=self._recording_loop, daemon=True)
+            self._recording_thread.start()
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error starting recording stream: {e}")
+            return Result.failure(f"Failed to start audio stream: {str(e)}")
+    
+    async def stop(self) -> Result[bytes]:
+        """Stop recording and return audio data."""
+        try:
+            # Signal stop
+            self._stop_event.set()
+            
+            # Wait for recording thread to finish
+            if self._recording_thread:
+                self._recording_thread.join(timeout=5.0)
+            
+            # Close stream
+            if self._stream:
+                self._stream.stop_stream()
+                self._stream.close()
+            
+            # Collect audio data
+            audio_frames = []
+            while not self._audio_queue.empty():
+                try:
+                    frame = self._audio_queue.get_nowait()
+                    audio_frames.append(frame)
+                except queue.Empty:
+                    break
+            
+            audio_data = b''.join(audio_frames)
+            return Result.success(audio_data)
+            
+        except Exception as e:
+            logger.error(f"Error stopping recording stream: {e}")
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+    
+    def _audio_callback(self, in_data, frame_count, time_info, status):
+        """PyAudio callback for handling audio data."""
+        if status:
+            logger.warning(f"Audio callback status: {status}")
+        
+        if not self._stop_event.is_set():
+            self._audio_queue.put(in_data)
+        
+        return (None, pyaudio.paContinue if not self._stop_event.is_set() else pyaudio.paComplete)
+    
+    def _recording_loop(self):
+        """Recording thread loop."""
+        try:
+            self._stream.start_stream()
+            
+            while not self._stop_event.is_set():
+                time.sleep(0.01)  # Small delay to prevent busy waiting
+                
+        except Exception as e:
+            logger.error(f"Error in recording loop: {e}")
+    
+    def _get_pyaudio_format(self):
+        """Get PyAudio format from domain format."""
+        format_map = {
+            AudioFormat.PCM_16: pyaudio.paInt16,
+            AudioFormat.PCM_24: pyaudio.paInt24,
+            AudioFormat.FLOAT_32: pyaudio.paFloat32
+        }
+        return format_map.get(self._audio_config.format_type, pyaudio.paInt16)
+```
+
+### Model Management Infrastructure
+
+**ONNX model loading and management:**
+
+```python
+# src/infrastructure/models/onnx_model_service.py
+import onnxruntime as ort
+import numpy as np
+from pathlib import Path
+from typing import Dict, Any, Optional
+import hashlib
+import requests
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+
+from src.domain.transcription.contracts.model_service import IModelService
+from src.domain.transcription.value_objects.model_config import ModelConfiguration
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class OnnxModelService(IModelService):
+    """ONNX Runtime-based model service."""
+    
+    def __init__(self, models_directory: Path, cache_size_mb: int = 2048):
+        self._models_dir = models_directory
+        self._cache_size_mb = cache_size_mb
+        self._loaded_models: Dict[str, ort.InferenceSession] = {}
+        self._model_metadata: Dict[str, Dict[str, Any]] = {}
+        self._thread_pool = ThreadPoolExecutor(max_workers=2)
+        
+        # Ensure models directory exists
+        self._models_dir.mkdir(parents=True, exist_ok=True)
+    
+    async def load_model(self, model_config: ModelConfiguration) -> Result[None]:
+        """Load model into memory."""
+        try:
+            model_name = model_config.model_name
+            
+            # Check if already loaded
+            if model_name in self._loaded_models:
+                return Result.success()
+            
+            # Check memory constraints
+            memory_check = await self._check_memory_availability(model_config)
+            if not memory_check.is_success:
+                return Result.failure(memory_check.error)
+            
+            # Get model file path
+            model_path = self._get_model_path(model_name)
+            if not model_path.exists():
+                download_result = await self._download_model(model_config)
+                if not download_result.is_success:
+                    return Result.failure(download_result.error)
+            
+            # Load model in thread pool to avoid blocking
+            session = await asyncio.get_event_loop().run_in_executor(
+                self._thread_pool, 
+                self._load_onnx_model, 
+                model_path, 
+                model_config
+            )
+            
+            if session is None:
+                return Result.failure(f"Failed to create ONNX session for {model_name}")
+            
+            self._loaded_models[model_name] = session
+            self._model_metadata[model_name] = {
+                'config': model_config,
+                'loaded_at': datetime.utcnow(),
+                'memory_usage_mb': self._estimate_model_memory(session)
+            }
+            
+            logger.info(f"Successfully loaded model: {model_name}")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error loading model {model_config.model_name}: {e}")
+            return Result.failure(f"Model loading failed: {str(e)}")
+    
+    async def unload_model(self, model_name: str) -> Result[None]:
+        """Unload model from memory."""
+        try:
+            if model_name in self._loaded_models:
+                # Clean up ONNX session
+                session = self._loaded_models[model_name]
+                del session  # Let garbage collector handle cleanup
+                
+                del self._loaded_models[model_name]
+                del self._model_metadata[model_name]
+                
+                logger.info(f"Unloaded model: {model_name}")
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error unloading model {model_name}: {e}")
+            return Result.failure(f"Failed to unload model: {str(e)}")
+    
+    async def is_model_loaded(self, model_name: str) -> bool:
+        """Check if model is loaded."""
+        return model_name in self._loaded_models
+    
+    async def run_inference(self, model_name: str, input_data: np.ndarray) -> Result[Dict[str, Any]]:
+        """Run inference on loaded model."""
+        try:
+            if model_name not in self._loaded_models:
+                return Result.failure(f"Model {model_name} not loaded")
+            
+            session = self._loaded_models[model_name]
+            
+            # Prepare input
+            input_name = session.get_inputs()[0].name
+            input_dict = {input_name: input_data}
+            
+            # Run inference in thread pool
+            outputs = await asyncio.get_event_loop().run_in_executor(
+                self._thread_pool,
+                session.run,
+                None,
+                input_dict
+            )
+            
+            # Convert outputs to dictionary
+            output_names = [output.name for output in session.get_outputs()]
+            result_dict = dict(zip(output_names, outputs))
+            
+            return Result.success(result_dict)
+            
+        except Exception as e:
+            logger.error(f"Error running inference with {model_name}: {e}")
+            return Result.failure(f"Inference failed: {str(e)}")
+    
+    def _load_onnx_model(self, model_path: Path, model_config: ModelConfiguration) -> Optional[ort.InferenceSession]:
+        """Load ONNX model (runs in thread pool)."""
+        try:
+            # Set providers based on availability
+            providers = ['CPUExecutionProvider']
+            if ort.get_available_providers():
+                available = ort.get_available_providers()
+                if 'CUDAExecutionProvider' in available:
+                    providers.insert(0, 'CUDAExecutionProvider')
+                elif 'DmlExecutionProvider' in available:  # DirectML for Windows
+                    providers.insert(0, 'DmlExecutionProvider')
+            
+            # Create session with appropriate providers
+            session = ort.InferenceSession(
+                str(model_path),
+                providers=providers
+            )
+            
+            return session
+            
+        except Exception as e:
+            logger.error(f"Error creating ONNX session: {e}")
+            return None
+    
+    async def _download_model(self, model_config: ModelConfiguration) -> Result[Path]:
+        """Download model file."""
+        try:
+            model_name = model_config.model_name
+            model_url = self._get_model_download_url(model_name)
+            model_path = self._get_model_path(model_name)
+            
+            logger.info(f"Downloading model {model_name} from {model_url}")
+            
+            # Download in chunks to show progress
+            async with aiohttp.ClientSession() as session:
+                async with session.get(model_url) as response:
+                    if response.status != 200:
+                        return Result.failure(f"Failed to download model: HTTP {response.status}")
+                    
+                    total_size = int(response.headers.get('content-length', 0))
+                    downloaded = 0
+                    
+                    with open(model_path, 'wb') as f:
+                        async for chunk in response.content.iter_chunked(8192):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            
+                            # Emit progress signal if available
+                            if hasattr(self, 'download_progress'):
+                                progress = int((downloaded / total_size) * 100) if total_size > 0 else 0
+                                self.download_progress.emit(model_name, progress)
+            
+            # Verify download
+            if not model_path.exists() or model_path.stat().st_size == 0:
+                return Result.failure("Downloaded file is empty or missing")
+            
+            logger.info(f"Successfully downloaded model {model_name}")
+            return Result.success(model_path)
+            
+        except Exception as e:
+            logger.error(f"Error downloading model {model_config.model_name}: {e}")
+            return Result.failure(f"Download failed: {str(e)}")
+    
+    def _get_model_path(self, model_name: str) -> Path:
+        """Get file path for model."""
+        return self._models_dir / f"{model_name}.onnx"
+    
+    def _get_model_download_url(self, model_name: str) -> str:
+        """Get download URL for model."""
+        # This would be configured based on model repository
+        base_url = "https://huggingface.co/onnx-community"
+        return f"{base_url}/{model_name}/resolve/main/model.onnx"
+    
+    async def _check_memory_availability(self, model_config: ModelConfiguration) -> Result[None]:
+        """Check if there's enough memory for the model."""
+        try:
+            required_mb = model_config.model_type.memory_requirements_mb
+            available_mb = self._get_available_memory_mb()
+            
+            if available_mb < required_mb:
+                # Try to free up space by unloading least recently used models
+                freed_mb = await self._free_memory_for_model(required_mb)
+                if freed_mb < required_mb:
+                    return Result.failure(
+                        f"Insufficient memory: need {required_mb}MB, have {available_mb}MB"
+                    )
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error checking memory: {e}")
+            return Result.failure("Failed to check memory availability")
+```
+
+### Desktop Integration Infrastructure
+
+**System tray, hotkeys, and OS integration:**
+
+```python
+# src/infrastructure/desktop/system_integration.py
+from PyQt5.QtWidgets import QSystemTrayIcon, QMenu, QAction
+from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtGui import QIcon, QKeySequence
+import pynput
+from pynput import keyboard
+from typing import Optional, Callable
+import threading
+
+from src.domain.settings.value_objects.key_combination import KeyCombination
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class SystemTrayManager(QObject):
+    """Manages system tray integration."""
+    
+    show_main_window = pyqtSignal()
+    start_recording = pyqtSignal()
+    stop_recording = pyqtSignal()
+    quit_application = pyqtSignal()
+    
+    def __init__(self, icon_path: str, parent=None):
+        super().__init__(parent)
+        self._tray_icon: Optional[QSystemTrayIcon] = None
+        self._icon_path = icon_path
+        
+    def setup_tray(self) -> Result[None]:
+        """Setup system tray icon and menu."""
+        try:
+            if not QSystemTrayIcon.isSystemTrayAvailable():
+                return Result.failure("System tray is not available")
+            
+            # Create tray icon
+            icon = QIcon(self._icon_path)
+            self._tray_icon = QSystemTrayIcon(icon)
+            
+            # Create context menu
+            menu = QMenu()
+            
+            # Show/Hide main window
+            show_action = QAction("Show WinSTT", menu)
+            show_action.triggered.connect(self.show_main_window.emit)
+            menu.addAction(show_action)
+            
+            menu.addSeparator()
+            
+            # Recording actions
+            start_action = QAction("Start Recording", menu)
+            start_action.triggered.connect(self.start_recording.emit)
+            menu.addAction(start_action)
+            
+            stop_action = QAction("Stop Recording", menu)
+            stop_action.triggered.connect(self.stop_recording.emit)
+            menu.addAction(stop_action)
+            
+            menu.addSeparator()
+            
+            # Quit action
+            quit_action = QAction("Quit", menu)
+            quit_action.triggered.connect(self.quit_application.emit)
+            menu.addAction(quit_action)
+            
+            self._tray_icon.setContextMenu(menu)
+            self._tray_icon.activated.connect(self._on_tray_activated)
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error setting up system tray: {e}")
+            return Result.failure(f"Failed to setup system tray: {str(e)}")
+    
+    def show_tray(self) -> None:
+        """Show the system tray icon."""
+        if self._tray_icon:
+            self._tray_icon.show()
+    
+    def hide_tray(self) -> None:
+        """Hide the system tray icon."""
+        if self._tray_icon:
+            self._tray_icon.hide()
+    
+    def show_message(self, title: str, message: str, duration: int = 3000) -> None:
+        """Show tray notification."""
+        if self._tray_icon:
+            self._tray_icon.showMessage(title, message, QSystemTrayIcon.Information, duration)
+    
+    def _on_tray_activated(self, reason):
+        """Handle tray icon activation."""
+        if reason == QSystemTrayIcon.DoubleClick:
+            self.show_main_window.emit()
+
+class GlobalHotkeyManager(QObject):
+    """Manages global hotkey registration."""
+    
+    hotkey_triggered = pyqtSignal(str)  # hotkey_name
+    
+    def __init__(self):
+        super().__init__()
+        self._listener: Optional[keyboard.GlobalHotKeys] = None
+        self._registered_hotkeys: Dict[str, KeyCombination] = {}
+        self._hotkey_callbacks: Dict[str, Callable] = {}
+        
+    def register_hotkey(self, name: str, key_combination: KeyCombination) -> Result[None]:
+        """Register a global hotkey."""
+        try:
+            # Convert to pynput format
+            pynput_combination = self._convert_to_pynput_format(key_combination)
+            if not pynput_combination:
+                return Result.failure(f"Invalid key combination: {key_combination}")
+            
+            # Create callback
+            def callback():
+                self.hotkey_triggered.emit(name)
+            
+            self._hotkey_callbacks[pynput_combination] = callback
+            self._registered_hotkeys[name] = key_combination
+            
+            # Restart listener with new hotkeys
+            self._restart_listener()
+            
+            logger.info(f"Registered hotkey '{name}': {key_combination}")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error registering hotkey {name}: {e}")
+            return Result.failure(f"Failed to register hotkey: {str(e)}")
+    
+    def unregister_hotkey(self, name: str) -> Result[None]:
+        """Unregister a global hotkey."""
+        try:
+            if name not in self._registered_hotkeys:
+                return Result.failure(f"Hotkey '{name}' not registered")
+            
+            key_combination = self._registered_hotkeys[name]
+            pynput_combination = self._convert_to_pynput_format(key_combination)
+            
+            # Remove from tracking
+            del self._registered_hotkeys[name]
+            if pynput_combination in self._hotkey_callbacks:
+                del self._hotkey_callbacks[pynput_combination]
+            
+            # Restart listener
+            self._restart_listener()
+            
+            logger.info(f"Unregistered hotkey '{name}'")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error unregistering hotkey {name}: {e}")
+            return Result.failure(f"Failed to unregister hotkey: {str(e)}")
+    
+    def _restart_listener(self):
+        """Restart the global hotkey listener."""
+        try:
+            # Stop existing listener
+            if self._listener:
+                self._listener.stop()
+            
+            # Start new listener if we have hotkeys
+            if self._hotkey_callbacks:
+                self._listener = keyboard.GlobalHotKeys(self._hotkey_callbacks)
+                self._listener.start()
+            
+        except Exception as e:
+            logger.error(f"Error restarting hotkey listener: {e}")
+    
+    def _convert_to_pynput_format(self, key_combination: KeyCombination) -> Optional[str]:
+        """Convert domain key combination to pynput format."""
+        try:
+            # Map modifier keys
+            modifiers = []
+            if key_combination.ctrl:
+                modifiers.append('<ctrl>')
+            if key_combination.alt:
+                modifiers.append('<alt>')
+            if key_combination.shift:
+                modifiers.append('<shift>')
+            if key_combination.windows:
+                modifiers.append('<cmd>')
+            
+            # Add main key
+            main_key = key_combination.key.lower()
+            
+            # Combine modifiers and main key
+            if modifiers:
+                return '+'.join(modifiers + [main_key])
+            else:
+                return main_key
+                
+        except Exception as e:
+            logger.error(f"Error converting key combination: {e}")
+            return None
+    
+    def __del__(self):
+        """Cleanup hotkey listener."""
+        try:
+            if self._listener:
+                self._listener.stop()
+        except Exception as e:
+            logger.error(f"Error cleaning up hotkey listener: {e}")
+```
+
+## Configuration and Dependency Injection Rules
+
+### 1. Configuration Rules for Desktop
+
+- **MUST**: Use JSON files for configuration storage
+- **MUST**: Support user-specific and system-wide configurations
+- **MUST**: Validate configuration on startup
+- **MUST**: Use typed configuration objects
+- **FORBIDDEN**: Hardcoded configuration values
+- **FORBIDDEN**: Storing sensitive data in plain text
+
+### 2. Dependency Injection Rules for Desktop
+
+- **MUST**: Use dependency injection container for desktop services
+- **MUST**: Register Qt application services as singletons
+- **MUST**: Use factory patterns for hardware-dependent services
+- **MUST**: Support service discovery and auto-wiring
+- **FORBIDDEN**: Direct instantiation of infrastructure services
+- **FORBIDDEN**: Circular dependencies between desktop services
+
+## Performance Rules for Desktop
+
+### 1. Memory Management Rules
+
+- **MUST**: Monitor memory usage for loaded models
+- **MUST**: Implement LRU cache for model management
+- **MUST**: Use background threads for heavy operations
+- **MUST**: Clean up resources properly on exit
+- **FORBIDDEN**: Memory leaks from Qt objects
+- **FORBIDDEN**: Blocking the UI thread with heavy operations
+
+### 2. File I/O Performance Rules
+
+- **MUST**: Use async I/O for file operations
+
+- **MUST**: Batch file operations when possible
+
+- **MUST**: Implement proper error recovery for disk operations
+
+- **MUST**: Monitor disk space usage
+
+- **FORBIDDEN**: Synchronous file operations on UI thread
+
+- **FORBIDDEN**: Unbounded file growth without cleanup
+
+- **FORBIDDEN**: N+1 query problems
+
+- **FORBIDDEN**: Unbounded result sets
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Infrastructure Layer Rules
+
+This document outlines the rules and patterns for implementing the Infrastructure Layer for the WinSTT desktop application, including file-based persistence, audio device management, model loading, and desktop integration.
+
+## 🏗️ Infrastructure Layer Workflow Steps for Desktop
+
+### Step 4: Create Persistence Models
+
+**File-based persistence models mirror domain entities for JSON storage:**
+
+#### JSON Model Rules:
+
+- Models MUST inherit from `BaseJsonModel`
+- Models MUST use appropriate field types and validation
+- Models MUST support serialization/deserialization
+- Models MUST follow naming conventions
+- Models SHOULD include audit fields (created_at, updated_at)
+
+#### JSON Model Implementation:
+
+```python
+# src/infrastructure/persistence/models/audio_session_model.py
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from typing import Optional, Dict, Any
+from enum import Enum
+from pathlib import Path
+import json
+
+@dataclass
+class AudioConfigurationModel:
+    """JSON model for audio configuration."""
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str]
+    format_type: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AudioConfigurationModel":
+        return cls(**data)
+
+@dataclass
+class AudioSessionModel:
+    """JSON model for AudioSession entity persistence."""
+    id: str
+    audio_config: AudioConfigurationModel
+    state: str
+    created_at: str
+    started_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    audio_file_path: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        data['audio_config'] = self.audio_config.to_dict()
+        return data
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AudioSessionModel":
+        audio_config_data = data.pop('audio_config')
+        audio_config = AudioConfigurationModel.from_dict(audio_config_data)
+        return cls(audio_config=audio_config, **data)
+    
+    def save_to_file(self, file_path: Path) -> None:
+        """Save model to JSON file."""
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+    
+    @classmethod
+    def load_from_file(cls, file_path: Path) -> "AudioSessionModel":
+        """Load model from JSON file."""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+
+@dataclass
+class TranscriptionResultModel:
+    """JSON model for transcription results."""
+    id: str
+    session_id: str
+    text: str
+    confidence_score: float
+    language: str
+    model_name: str
+    created_at: str
+    segments: Optional[list] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TranscriptionResultModel":
+        return cls(**data)
+
+@dataclass
+class UserPreferencesModel:
+    """JSON model for user preferences."""
+    hotkey_combination: str
+    default_model: str
+    auto_transcribe: bool
+    save_audio_files: bool
+    output_format: str
+    theme: str
+    language: str
+    created_at: str
+    updated_at: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserPreferencesModel":
+        return cls(**data)
+```
+
+### Step 5: Create Mappers for Desktop
+
+**Mappers convert between domain entities and JSON models:**
+
+#### Mapper Rules for Desktop:
+
+- Mappers MUST be stateless
+- Mappers MUST handle datetime serialization correctly
+- Mappers MUST preserve entity state correctly
+- Mappers MUST handle None values gracefully
+- Mappers SHOULD be optimized for file I/O
+
+#### Mapper Implementation:
+
+```python
+# src/infrastructure/persistence/mappers/audio_session_mapper.py
+from typing import Optional
+from datetime import datetime
+from pathlib import Path
+
+from src.domain.audio.entities.audio_session import AudioSession
+from src.domain.audio.value_objects.audio_config import AudioConfiguration, AudioFormat
+from src.domain.audio.value_objects.recording_state import RecordingState
+from src.infrastructure.persistence.models.audio_session_model import AudioSessionModel, AudioConfigurationModel
+
+class AudioSessionMapper:
+    """Maps between AudioSession domain entity and AudioSessionModel JSON model."""
+    
+    @staticmethod
+    def to_domain(json_model: AudioSessionModel) -> AudioSession:
+        """Convert JSON model to domain entity."""
+        if json_model is None:
+            return None
+        
+        # Convert audio configuration
+        audio_config = AudioConfiguration(
+            sample_rate=json_model.audio_config.sample_rate,
+            channels=json_model.audio_config.channels,
+            chunk_size=json_model.audio_config.chunk_size,
+            device_id=json_model.audio_config.device_id,
+            format_type=AudioFormat(json_model.audio_config.format_type)
+        )
+        
+        # Reconstruct entity bypassing __init__ to avoid validation
+        session = AudioSession.__new__(AudioSession)
+        
+        # Set private attributes directly
+        session._id = json_model.id
+        session._audio_config = audio_config
+        session._state = RecordingState(json_model.state)
+        session._created_at = datetime.fromisoformat(json_model.created_at)
+        session._started_at = datetime.fromisoformat(json_model.started_at) if json_model.started_at else None
+        session._stopped_at = datetime.fromisoformat(json_model.stopped_at) if json_model.stopped_at else None
+        session._updated_at = datetime.fromisoformat(json_model.updated_at) if json_model.updated_at else None
+        session._audio_file_path = Path(json_model.audio_file_path) if json_model.audio_file_path else None
+        
+        # Initialize domain events (empty for reconstructed entities)
+        session._domain_events = []
+        
+        return session
+    
+    @staticmethod
+    def to_persistence(domain_entity: AudioSession) -> AudioSessionModel:
+        """Convert domain entity to JSON model."""
+        if domain_entity is None:
+            return None
+        
+        # Convert audio configuration
+        audio_config_model = AudioConfigurationModel(
+            sample_rate=domain_entity.audio_config.sample_rate,
+            channels=domain_entity.audio_config.channels,
+            chunk_size=domain_entity.audio_config.chunk_size,
+            device_id=domain_entity.audio_config.device_id,
+            format_type=domain_entity.audio_config.format_type.value
+        )
+        
+        return AudioSessionModel(
+            id=domain_entity.id,
+            audio_config=audio_config_model,
+            state=domain_entity.state.value,
+            created_at=domain_entity.created_at.isoformat(),
+            started_at=domain_entity.started_at.isoformat() if domain_entity.started_at else None,
+            stopped_at=domain_entity.stopped_at.isoformat() if domain_entity.stopped_at else None,
+            updated_at=domain_entity.updated_at.isoformat() if domain_entity.updated_at else None,
+            audio_file_path=str(domain_entity.audio_file_path) if domain_entity.audio_file_path else None
+        )
+
+class TranscriptionResultMapper:
+    """Maps between TranscriptionResult domain entity and TranscriptionResultModel."""
+    
+    @staticmethod
+    def to_domain(json_model: TranscriptionResultModel) -> TranscriptionResult:
+        """Convert JSON model to domain entity."""
+        if json_model is None:
+            return None
+        
+        result = TranscriptionResult.__new__(TranscriptionResult)
+        result._id = json_model.id
+        result._session_id = json_model.session_id
+        result._text = json_model.text
+        result._confidence_score = ConfidenceScore(json_model.confidence_score)
+        result._language = json_model.language
+        result._model_name = json_model.model_name
+        result._created_at = datetime.fromisoformat(json_model.created_at)
+        result._segments = json_model.segments or []
+        result._domain_events = []
+        
+        return result
+    
+    @staticmethod
+    def to_persistence(domain_entity: TranscriptionResult) -> TranscriptionResultModel:
+        """Convert domain entity to JSON model."""
+        if domain_entity is None:
+            return None
+        
+        return TranscriptionResultModel(
+            id=domain_entity.id,
+            session_id=domain_entity.session_id,
+            text=domain_entity.text,
+            confidence_score=domain_entity.confidence_score.value,
+            language=domain_entity.language,
+            model_name=domain_entity.model_name,
+            created_at=domain_entity.created_at.isoformat(),
+            segments=domain_entity.segments
+        )
+```
+
+### Repository Implementation for File System
+
+**Repositories provide data access abstraction for file-based storage:**
+
+#### Repository Rules for Desktop:
+
+- Repositories MUST implement domain contracts
+- Repositories MUST return `Result<T>` for all operations
+- Repositories MUST handle file system exceptions
+- Repositories MUST use mappers for entity conversion
+- Repositories SHOULD implement caching when appropriate
+
+#### Repository Implementation:
+
+```python
+# src/infrastructure/persistence/repositories/file_audio_repository.py
+from typing import List, Optional, Dict, Any
+from pathlib import Path
+import json
+import asyncio
+from datetime import datetime
+
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.domain.common.result import Result
+from src.domain.audio.entities.audio_session import AudioSession
+from src.infrastructure.persistence.models.audio_session_model import AudioSessionModel
+from src.infrastructure.persistence.mappers.audio_session_mapper import AudioSessionMapper
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class FileAudioRepository(IAudioRepository):
+    """File-based implementation of IAudioRepository."""
+    
+    def __init__(self, data_directory: Path):
+        self._data_dir = data_directory
+        self._sessions_dir = self._data_dir / "sessions"
+        self._audio_files_dir = self._data_dir / "audio_files"
+        
+        # Create directories if they don't exist
+        self._sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._audio_files_dir.mkdir(parents=True, exist_ok=True)
+        
+        # In-memory cache for active sessions
+        self._session_cache: Dict[str, AudioSession] = {}
+    
+    async def get_by_id(self, session_id: str) -> Result[Optional[AudioSession]]:
+        """Get audio session by ID."""
+        try:
+            # Check cache first
+            if session_id in self._session_cache:
+                return Result.success(self._session_cache[session_id])
+            
+            # Load from file
+            session_file = self._sessions_dir / f"{session_id}.json"
+            if not session_file.exists():
+                return Result.success(None)
+            
+            json_model = AudioSessionModel.load_from_file(session_file)
+            domain_entity = AudioSessionMapper.to_domain(json_model)
+            
+            # Cache if active
+            if domain_entity.state != RecordingState.COMPLETED:
+                self._session_cache[session_id] = domain_entity
+            
+            return Result.success(domain_entity)
+            
+        except FileNotFoundError:
+            return Result.success(None)
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Error loading session {session_id}: {str(e)}")
+            return Result.failure(f"Failed to load session: corrupted data")
+        except Exception as e:
+            logger.error(f"Error getting session by ID {session_id}: {str(e)}")
+            return Result.failure(f"Failed to retrieve session: {str(e)}")
+    
+    async def get_active_session(self) -> Result[Optional[AudioSession]]:
+        """Get currently active recording session."""
+        try:
+            # Check cache for active sessions
+            for session in self._session_cache.values():
+                if session.state == RecordingState.RECORDING:
+                    return Result.success(session)
+            
+            # Scan files for active sessions (fallback)
+            for session_file in self._sessions_dir.glob("*.json"):
+                try:
+                    json_model = AudioSessionModel.load_from_file(session_file)
+                    if json_model.state == RecordingState.RECORDING.value:
+                        domain_entity = AudioSessionMapper.to_domain(json_model)
+                        self._session_cache[domain_entity.id] = domain_entity
+                        return Result.success(domain_entity)
+                except Exception:
+                    continue  # Skip corrupted files
+            
+            return Result.success(None)
+            
+        except Exception as e:
+            logger.error(f"Error getting active session: {str(e)}")
+            return Result.failure(f"Failed to find active session: {str(e)}")
+    
+    async def save_session(self, session: AudioSession) -> Result[AudioSession]:
+        """Save or update an audio session."""
+        try:
+            # Convert to JSON model
+            json_model = AudioSessionMapper.to_persistence(session)
+            json_model.updated_at = datetime.utcnow().isoformat()
+            
+            # Save to file
+            session_file = self._sessions_dir / f"{session.id}.json"
+            await asyncio.get_event_loop().run_in_executor(
+                None, json_model.save_to_file, session_file
+            )
+            
+            # Update cache
+            if session.state != RecordingState.COMPLETED:
+                self._session_cache[session.id] = session
+            else:
+                # Remove from cache when completed
+                self._session_cache.pop(session.id, None)
+            
+            return Result.success(session)
+            
+        except PermissionError:
+            return Result.failure("Permission denied saving session data")
+        except OSError as e:
+            logger.error(f"OS error saving session: {str(e)}")
+            return Result.failure("Failed to save session: disk error")
+        except Exception as e:
+            logger.error(f"Error saving session: {str(e)}")
+            return Result.failure(f"Failed to save session: {str(e)}")
+    
+    async def delete_session(self, session_id: str) -> Result[None]:
+        """Delete a session and its associated files."""
+        try:
+            # Remove from cache
+            self._session_cache.pop(session_id, None)
+            
+            # Delete session file
+            session_file = self._sessions_dir / f"{session_id}.json"
+            if session_file.exists():
+                await asyncio.get_event_loop().run_in_executor(
+                    None, session_file.unlink
+                )
+            
+            # Delete associated audio file
+            audio_file = self._audio_files_dir / f"{session_id}.wav"
+            if audio_file.exists():
+                await asyncio.get_event_loop().run_in_executor(
+                    None, audio_file.unlink
+                )
+            
+            return Result.success()
+            
+        except PermissionError:
+            return Result.failure("Permission denied deleting session files")
+        except Exception as e:
+            logger.error(f"Error deleting session {session_id}: {str(e)}")
+            return Result.failure(f"Failed to delete session: {str(e)}")
+    
+    async def find_recent_sessions(self, limit: int = 10) -> Result[List[AudioSession]]:
+        """Find recent sessions ordered by created date."""
+        try:
+            sessions = []
+            session_files = sorted(
+                self._sessions_dir.glob("*.json"), 
+                key=lambda f: f.stat().st_mtime, 
+                reverse=True
+            )
+            
+            for session_file in session_files[:limit]:
+                try:
+                    json_model = AudioSessionModel.load_from_file(session_file)
+                    domain_entity = AudioSessionMapper.to_domain(json_model)
+                    sessions.append(domain_entity)
+                except Exception as e:
+                    logger.warning(f"Skipping corrupted session file {session_file}: {e}")
+                    continue
+            
+            return Result.success(sessions)
+            
+        except Exception as e:
+            logger.error(f"Error finding recent sessions: {str(e)}")
+            return Result.failure(f"Failed to find sessions: {str(e)}")
+    
+    async def cleanup_old_sessions(self, days_old: int = 30) -> Result[int]:
+        """Clean up sessions older than specified days."""
+        try:
+            cutoff_date = datetime.utcnow().timestamp() - (days_old * 24 * 60 * 60)
+            cleaned_count = 0
+            
+            for session_file in self._sessions_dir.glob("*.json"):
+                if session_file.stat().st_mtime < cutoff_date:
+                    try:
+                        # Extract session ID and delete
+                        session_id = session_file.stem
+                        await self.delete_session(session_id)
+                        cleaned_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old session {session_file}: {e}")
+            
+            return Result.success(cleaned_count)
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up old sessions: {str(e)}")
+            return Result.failure(f"Failed to cleanup sessions: {str(e)}")
+```
+
+### Audio Service Implementation
+
+**Audio services handle hardware integration:**
+
+```python
+# src/infrastructure/audio/pyaudio_service.py
+import pyaudio
+import wave
+import asyncio
+from typing import List, Optional, Dict, Any
+from pathlib import Path
+from threading import Thread, Event
+import queue
+
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.value_objects.audio_config import AudioConfiguration
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class PyAudioService(IAudioService):
+    """PyAudio-based implementation of audio service."""
+    
+    def __init__(self):
+        self._pyaudio: Optional[pyaudio.PyAudio] = None
+        self._recording_streams: Dict[str, 'RecordingStream'] = {}
+        self._audio_queues: Dict[str, queue.Queue] = {}
+        
+    async def initialize(self) -> Result[None]:
+        """Initialize PyAudio."""
+        try:
+            self._pyaudio = pyaudio.PyAudio()
+            return Result.success()
+        except Exception as e:
+            logger.error(f"Failed to initialize PyAudio: {e}")
+            return Result.failure(f"Audio system initialization failed: {str(e)}")
+    
+    async def get_available_devices(self) -> Result[List[Dict[str, Any]]]:
+        """Get list of available audio input devices."""
+        try:
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            devices = []
+            device_count = self._pyaudio.get_device_count()
+            
+            for i in range(device_count):
+                device_info = self._pyaudio.get_device_info_by_index(i)
+                
+                # Only include input devices
+                if device_info['maxInputChannels'] > 0:
+                    devices.append({
+                        'id': str(i),
+                        'name': device_info['name'],
+                        'channels': device_info['maxInputChannels'],
+                        'sample_rate': device_info['defaultSampleRate'],
+                        'is_default': i == self._pyaudio.get_default_input_device_info()['index']
+                    })
+            
+            return Result.success(devices)
+            
+        except Exception as e:
+            logger.error(f"Error getting audio devices: {e}")
+            return Result.failure(f"Failed to enumerate audio devices: {str(e)}")
+    
+    async def check_audio_device(self, device_id: Optional[str]) -> Result[bool]:
+        """Check if audio device is available."""
+        try:
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            if device_id is None:
+                # Check default device
+                try:
+                    default_device = self._pyaudio.get_default_input_device_info()
+                    return Result.success(True)
+                except Exception:
+                    return Result.failure("No default audio input device")
+            
+            # Check specific device
+            try:
+                device_index = int(device_id)
+                device_info = self._pyaudio.get_device_info_by_index(device_index)
+                if device_info['maxInputChannels'] == 0:
+                    return Result.failure("Device has no input channels")
+                return Result.success(True)
+            except (ValueError, OSError):
+                return Result.failure(f"Audio device {device_id} not found")
+            
+        except Exception as e:
+            logger.error(f"Error checking audio device: {e}")
+            return Result.failure(f"Failed to check device: {str(e)}")
+    
+    async def start_recording(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording audio."""
+        try:
+            if session_id in self._recording_streams:
+                return Result.failure("Recording already active for this session")
+            
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            # Determine device index
+            device_index = None
+            if audio_config.device_id:
+                try:
+                    device_index = int(audio_config.device_id)
+                except ValueError:
+                    return Result.failure(f"Invalid device ID: {audio_config.device_id}")
+            
+            # Create recording stream
+            stream = RecordingStream(
+                pyaudio_instance=self._pyaudio,
+                session_id=session_id,
+                audio_config=audio_config,
+                device_index=device_index
+            )
+            
+            start_result = await stream.start()
+            if not start_result.is_success:
+                return Result.failure(start_result.error)
+            
+            self._recording_streams[session_id] = stream
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error starting recording: {e}")
+            return Result.failure(f"Failed to start recording: {str(e)}")
+    
+    async def stop_recording(self, session_id: str) -> Result[bytes]:
+        """Stop recording and return audio data."""
+        try:
+            stream = self._recording_streams.get(session_id)
+            if not stream:
+                return Result.failure(f"No recording found for session {session_id}")
+            
+            audio_data_result = await stream.stop()
+            if not audio_data_result.is_success:
+                return Result.failure(audio_data_result.error)
+            
+            # Cleanup
+            del self._recording_streams[session_id]
+            
+            return Result.success(audio_data_result.value)
+            
+        except Exception as e:
+            logger.error(f"Error stopping recording: {e}")
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+    
+    def __del__(self):
+        """Cleanup PyAudio on destruction."""
+        try:
+            if self._pyaudio:
+                self._pyaudio.terminate()
+        except Exception as e:
+            logger.error(f"Error terminating PyAudio: {e}")
+
+class RecordingStream:
+    """Manages a single audio recording stream."""
+    
+    def __init__(self, pyaudio_instance: pyaudio.PyAudio, session_id: str, 
+                 audio_config: AudioConfiguration, device_index: Optional[int]):
+        self._pyaudio = pyaudio_instance
+        self._session_id = session_id
+        self._audio_config = audio_config
+        self._device_index = device_index
+        self._stream: Optional[pyaudio.Stream] = None
+        self._recording_thread: Optional[Thread] = None
+        self._stop_event = Event()
+        self._audio_queue = queue.Queue()
+        
+    async def start(self) -> Result[None]:
+        """Start the recording stream."""
+        try:
+            # Open stream
+            self._stream = self._pyaudio.open(
+                format=self._get_pyaudio_format(),
+                channels=self._audio_config.channels,
+                rate=self._audio_config.sample_rate,
+                input=True,
+                input_device_index=self._device_index,
+                frames_per_buffer=self._audio_config.chunk_size,
+                stream_callback=self._audio_callback
+            )
+            
+            # Start recording thread
+            self._recording_thread = Thread(target=self._recording_loop, daemon=True)
+            self._recording_thread.start()
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error starting recording stream: {e}")
+            return Result.failure(f"Failed to start audio stream: {str(e)}")
+    
+    async def stop(self) -> Result[bytes]:
+        """Stop recording and return audio data."""
+        try:
+            # Signal stop
+            self._stop_event.set()
+            
+            # Wait for recording thread to finish
+            if self._recording_thread:
+                self._recording_thread.join(timeout=5.0)
+            
+            # Close stream
+            if self._stream:
+                self._stream.stop_stream()
+                self._stream.close()
+            
+            # Collect audio data
+            audio_frames = []
+            while not self._audio_queue.empty():
+                try:
+                    frame = self._audio_queue.get_nowait()
+                    audio_frames.append(frame)
+                except queue.Empty:
+                    break
+            
+            audio_data = b''.join(audio_frames)
+            return Result.success(audio_data)
+            
+        except Exception as e:
+            logger.error(f"Error stopping recording stream: {e}")
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+    
+    def _audio_callback(self, in_data, frame_count, time_info, status):
+        """PyAudio callback for handling audio data."""
+        if status:
+            logger.warning(f"Audio callback status: {status}")
+        
+        if not self._stop_event.is_set():
+            self._audio_queue.put(in_data)
+        
+        return (None, pyaudio.paContinue if not self._stop_event.is_set() else pyaudio.paComplete)
+    
+    def _recording_loop(self):
+        """Recording thread loop."""
+        try:
+            self._stream.start_stream()
+            
+            while not self._stop_event.is_set():
+                time.sleep(0.01)  # Small delay to prevent busy waiting
+                
+        except Exception as e:
+            logger.error(f"Error in recording loop: {e}")
+    
+    def _get_pyaudio_format(self):
+        """Get PyAudio format from domain format."""
+        format_map = {
+            AudioFormat.PCM_16: pyaudio.paInt16,
+            AudioFormat.PCM_24: pyaudio.paInt24,
+            AudioFormat.FLOAT_32: pyaudio.paFloat32
+        }
+        return format_map.get(self._audio_config.format_type, pyaudio.paInt16)
+```
+
+### Model Management Infrastructure
+
+**ONNX model loading and management:**
+
+```python
+# src/infrastructure/models/onnx_model_service.py
+import onnxruntime as ort
+import numpy as np
+from pathlib import Path
+from typing import Dict, Any, Optional
+import hashlib
+import requests
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+
+from src.domain.transcription.contracts.model_service import IModelService
+from src.domain.transcription.value_objects.model_config import ModelConfiguration
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class OnnxModelService(IModelService):
+    """ONNX Runtime-based model service."""
+    
+    def __init__(self, models_directory: Path, cache_size_mb: int = 2048):
+        self._models_dir = models_directory
+        self._cache_size_mb = cache_size_mb
+        self._loaded_models: Dict[str, ort.InferenceSession] = {}
+        self._model_metadata: Dict[str, Dict[str, Any]] = {}
+        self._thread_pool = ThreadPoolExecutor(max_workers=2)
+        
+        # Ensure models directory exists
+        self._models_dir.mkdir(parents=True, exist_ok=True)
+    
+    async def load_model(self, model_config: ModelConfiguration) -> Result[None]:
+        """Load model into memory."""
+        try:
+            model_name = model_config.model_name
+            
+            # Check if already loaded
+            if model_name in self._loaded_models:
+                return Result.success()
+            
+            # Check memory constraints
+            memory_check = await self._check_memory_availability(model_config)
+            if not memory_check.is_success:
+                return Result.failure(memory_check.error)
+            
+            # Get model file path
+            model_path = self._get_model_path(model_name)
+            if not model_path.exists():
+                download_result = await self._download_model(model_config)
+                if not download_result.is_success:
+                    return Result.failure(download_result.error)
+            
+            # Load model in thread pool to avoid blocking
+            session = await asyncio.get_event_loop().run_in_executor(
+                self._thread_pool, 
+                self._load_onnx_model, 
+                model_path, 
+                model_config
+            )
+            
+            if session is None:
+                return Result.failure(f"Failed to create ONNX session for {model_name}")
+            
+            self._loaded_models[model_name] = session
+            self._model_metadata[model_name] = {
+                'config': model_config,
+                'loaded_at': datetime.utcnow(),
+                'memory_usage_mb': self._estimate_model_memory(session)
+            }
+            
+            logger.info(f"Successfully loaded model: {model_name}")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error loading model {model_config.model_name}: {e}")
+            return Result.failure(f"Model loading failed: {str(e)}")
+    
+    async def unload_model(self, model_name: str) -> Result[None]:
+        """Unload model from memory."""
+        try:
+            if model_name in self._loaded_models:
+                # Clean up ONNX session
+                session = self._loaded_models[model_name]
+                del session  # Let garbage collector handle cleanup
+                
+                del self._loaded_models[model_name]
+                del self._model_metadata[model_name]
+                
+                logger.info(f"Unloaded model: {model_name}")
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error unloading model {model_name}: {e}")
+            return Result.failure(f"Failed to unload model: {str(e)}")
+    
+    async def is_model_loaded(self, model_name: str) -> bool:
+        """Check if model is loaded."""
+        return model_name in self._loaded_models
+    
+    async def run_inference(self, model_name: str, input_data: np.ndarray) -> Result[Dict[str, Any]]:
+        """Run inference on loaded model."""
+        try:
+            if model_name not in self._loaded_models:
+                return Result.failure(f"Model {model_name} not loaded")
+            
+            session = self._loaded_models[model_name]
+            
+            # Prepare input
+            input_name = session.get_inputs()[0].name
+            input_dict = {input_name: input_data}
+            
+            # Run inference in thread pool
+            outputs = await asyncio.get_event_loop().run_in_executor(
+                self._thread_pool,
+                session.run,
+                None,
+                input_dict
+            )
+            
+            # Convert outputs to dictionary
+            output_names = [output.name for output in session.get_outputs()]
+            result_dict = dict(zip(output_names, outputs))
+            
+            return Result.success(result_dict)
+            
+        except Exception as e:
+            logger.error(f"Error running inference with {model_name}: {e}")
+            return Result.failure(f"Inference failed: {str(e)}")
+    
+    def _load_onnx_model(self, model_path: Path, model_config: ModelConfiguration) -> Optional[ort.InferenceSession]:
+        """Load ONNX model (runs in thread pool)."""
+        try:
+            # Set providers based on availability
+            providers = ['CPUExecutionProvider']
+            if ort.get_available_providers():
+                available = ort.get_available_providers()
+                if 'CUDAExecutionProvider' in available:
+                    providers.insert(0, 'CUDAExecutionProvider')
+                elif 'DmlExecutionProvider' in available:  # DirectML for Windows
+                    providers.insert(0, 'DmlExecutionProvider')
+            
+            # Create session with appropriate providers
+            session = ort.InferenceSession(
+                str(model_path),
+                providers=providers
+            )
+            
+            return session
+            
+        except Exception as e:
+            logger.error(f"Error creating ONNX session: {e}")
+            return None
+    
+    async def _download_model(self, model_config: ModelConfiguration) -> Result[Path]:
+        """Download model file."""
+        try:
+            model_name = model_config.model_name
+            model_url = self._get_model_download_url(model_name)
+            model_path = self._get_model_path(model_name)
+            
+            logger.info(f"Downloading model {model_name} from {model_url}")
+            
+            # Download in chunks to show progress
+            async with aiohttp.ClientSession() as session:
+                async with session.get(model_url) as response:
+                    if response.status != 200:
+                        return Result.failure(f"Failed to download model: HTTP {response.status}")
+                    
+                    total_size = int(response.headers.get('content-length', 0))
+                    downloaded = 0
+                    
+                    with open(model_path, 'wb') as f:
+                        async for chunk in response.content.iter_chunked(8192):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            
+                            # Emit progress signal if available
+                            if hasattr(self, 'download_progress'):
+                                progress = int((downloaded / total_size) * 100) if total_size > 0 else 0
+                                self.download_progress.emit(model_name, progress)
+            
+            # Verify download
+            if not model_path.exists() or model_path.stat().st_size == 0:
+                return Result.failure("Downloaded file is empty or missing")
+            
+            logger.info(f"Successfully downloaded model {model_name}")
+            return Result.success(model_path)
+            
+        except Exception as e:
+            logger.error(f"Error downloading model {model_config.model_name}: {e}")
+            return Result.failure(f"Download failed: {str(e)}")
+    
+    def _get_model_path(self, model_name: str) -> Path:
+        """Get file path for model."""
+        return self._models_dir / f"{model_name}.onnx"
+    
+    def _get_model_download_url(self, model_name: str) -> str:
+        """Get download URL for model."""
+        # This would be configured based on model repository
+        base_url = "https://huggingface.co/onnx-community"
+        return f"{base_url}/{model_name}/resolve/main/model.onnx"
+    
+    async def _check_memory_availability(self, model_config: ModelConfiguration) -> Result[None]:
+        """Check if there's enough memory for the model."""
+        try:
+            required_mb = model_config.model_type.memory_requirements_mb
+            available_mb = self._get_available_memory_mb()
+            
+            if available_mb < required_mb:
+                # Try to free up space by unloading least recently used models
+                freed_mb = await self._free_memory_for_model(required_mb)
+                if freed_mb < required_mb:
+                    return Result.failure(
+                        f"Insufficient memory: need {required_mb}MB, have {available_mb}MB"
+                    )
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error checking memory: {e}")
+            return Result.failure("Failed to check memory availability")
+```
+
+### Desktop Integration Infrastructure
+
+**System tray, hotkeys, and OS integration:**
+
+```python
+# src/infrastructure/desktop/system_integration.py
+from PyQt5.QtWidgets import QSystemTrayIcon, QMenu, QAction
+from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtGui import QIcon, QKeySequence
+import pynput
+from pynput import keyboard
+from typing import Optional, Callable
+import threading
+
+from src.domain.settings.value_objects.key_combination import KeyCombination
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class SystemTrayManager(QObject):
+    """Manages system tray integration."""
+    
+    show_main_window = pyqtSignal()
+    start_recording = pyqtSignal()
+    stop_recording = pyqtSignal()
+    quit_application = pyqtSignal()
+    
+    def __init__(self, icon_path: str, parent=None):
+        super().__init__(parent)
+        self._tray_icon: Optional[QSystemTrayIcon] = None
+        self._icon_path = icon_path
+        
+    def setup_tray(self) -> Result[None]:
+        """Setup system tray icon and menu."""
+        try:
+            if not QSystemTrayIcon.isSystemTrayAvailable():
+                return Result.failure("System tray is not available")
+            
+            # Create tray icon
+            icon = QIcon(self._icon_path)
+            self._tray_icon = QSystemTrayIcon(icon)
+            
+            # Create context menu
+            menu = QMenu()
+            
+            # Show/Hide main window
+            show_action = QAction("Show WinSTT", menu)
+            show_action.triggered.connect(self.show_main_window.emit)
+            menu.addAction(show_action)
+            
+            menu.addSeparator()
+            
+            # Recording actions
+            start_action = QAction("Start Recording", menu)
+            start_action.triggered.connect(self.start_recording.emit)
+            menu.addAction(start_action)
+            
+            stop_action = QAction("Stop Recording", menu)
+            stop_action.triggered.connect(self.stop_recording.emit)
+            menu.addAction(stop_action)
+            
+            menu.addSeparator()
+            
+            # Quit action
+            quit_action = QAction("Quit", menu)
+            quit_action.triggered.connect(self.quit_application.emit)
+            menu.addAction(quit_action)
+            
+            self._tray_icon.setContextMenu(menu)
+            self._tray_icon.activated.connect(self._on_tray_activated)
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error setting up system tray: {e}")
+            return Result.failure(f"Failed to setup system tray: {str(e)}")
+    
+    def show_tray(self) -> None:
+        """Show the system tray icon."""
+        if self._tray_icon:
+            self._tray_icon.show()
+    
+    def hide_tray(self) -> None:
+        """Hide the system tray icon."""
+        if self._tray_icon:
+            self._tray_icon.hide()
+    
+    def show_message(self, title: str, message: str, duration: int = 3000) -> None:
+        """Show tray notification."""
+        if self._tray_icon:
+            self._tray_icon.showMessage(title, message, QSystemTrayIcon.Information, duration)
+    
+    def _on_tray_activated(self, reason):
+        """Handle tray icon activation."""
+        if reason == QSystemTrayIcon.DoubleClick:
+            self.show_main_window.emit()
+
+class GlobalHotkeyManager(QObject):
+    """Manages global hotkey registration."""
+    
+    hotkey_triggered = pyqtSignal(str)  # hotkey_name
+    
+    def __init__(self):
+        super().__init__()
+        self._listener: Optional[keyboard.GlobalHotKeys] = None
+        self._registered_hotkeys: Dict[str, KeyCombination] = {}
+        self._hotkey_callbacks: Dict[str, Callable] = {}
+        
+    def register_hotkey(self, name: str, key_combination: KeyCombination) -> Result[None]:
+        """Register a global hotkey."""
+        try:
+            # Convert to pynput format
+            pynput_combination = self._convert_to_pynput_format(key_combination)
+            if not pynput_combination:
+                return Result.failure(f"Invalid key combination: {key_combination}")
+            
+            # Create callback
+            def callback():
+                self.hotkey_triggered.emit(name)
+            
+            self._hotkey_callbacks[pynput_combination] = callback
+            self._registered_hotkeys[name] = key_combination
+            
+            # Restart listener with new hotkeys
+            self._restart_listener()
+            
+            logger.info(f"Registered hotkey '{name}': {key_combination}")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error registering hotkey {name}: {e}")
+            return Result.failure(f"Failed to register hotkey: {str(e)}")
+    
+    def unregister_hotkey(self, name: str) -> Result[None]:
+        """Unregister a global hotkey."""
+        try:
+            if name not in self._registered_hotkeys:
+                return Result.failure(f"Hotkey '{name}' not registered")
+            
+            key_combination = self._registered_hotkeys[name]
+            pynput_combination = self._convert_to_pynput_format(key_combination)
+            
+            # Remove from tracking
+            del self._registered_hotkeys[name]
+            if pynput_combination in self._hotkey_callbacks:
+                del self._hotkey_callbacks[pynput_combination]
+            
+            # Restart listener
+            self._restart_listener()
+            
+            logger.info(f"Unregistered hotkey '{name}'")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error unregistering hotkey {name}: {e}")
+            return Result.failure(f"Failed to unregister hotkey: {str(e)}")
+    
+    def _restart_listener(self):
+        """Restart the global hotkey listener."""
+        try:
+            # Stop existing listener
+            if self._listener:
+                self._listener.stop()
+            
+            # Start new listener if we have hotkeys
+            if self._hotkey_callbacks:
+                self._listener = keyboard.GlobalHotKeys(self._hotkey_callbacks)
+                self._listener.start()
+            
+        except Exception as e:
+            logger.error(f"Error restarting hotkey listener: {e}")
+    
+    def _convert_to_pynput_format(self, key_combination: KeyCombination) -> Optional[str]:
+        """Convert domain key combination to pynput format."""
+        try:
+            # Map modifier keys
+            modifiers = []
+            if key_combination.ctrl:
+                modifiers.append('<ctrl>')
+            if key_combination.alt:
+                modifiers.append('<alt>')
+            if key_combination.shift:
+                modifiers.append('<shift>')
+            if key_combination.windows:
+                modifiers.append('<cmd>')
+            
+            # Add main key
+            main_key = key_combination.key.lower()
+            
+            # Combine modifiers and main key
+            if modifiers:
+                return '+'.join(modifiers + [main_key])
+            else:
+                return main_key
+                
+        except Exception as e:
+            logger.error(f"Error converting key combination: {e}")
+            return None
+    
+    def __del__(self):
+        """Cleanup hotkey listener."""
+        try:
+            if self._listener:
+                self._listener.stop()
+        except Exception as e:
+            logger.error(f"Error cleaning up hotkey listener: {e}")
+```
+
+## Configuration and Dependency Injection Rules
+
+### 1. Configuration Rules for Desktop
+
+- **MUST**: Use JSON files for configuration storage
+- **MUST**: Support user-specific and system-wide configurations
+- **MUST**: Validate configuration on startup
+- **MUST**: Use typed configuration objects
+- **FORBIDDEN**: Hardcoded configuration values
+- **FORBIDDEN**: Storing sensitive data in plain text
+
+### 2. Dependency Injection Rules for Desktop
+
+- **MUST**: Use dependency injection container for desktop services
+- **MUST**: Register Qt application services as singletons
+- **MUST**: Use factory patterns for hardware-dependent services
+- **MUST**: Support service discovery and auto-wiring
+- **FORBIDDEN**: Direct instantiation of infrastructure services
+- **FORBIDDEN**: Circular dependencies between desktop services
+
+## Performance Rules for Desktop
+
+### 1. Memory Management Rules
+
+- **MUST**: Monitor memory usage for loaded models
+- **MUST**: Implement LRU cache for model management
+- **MUST**: Use background threads for heavy operations
+- **MUST**: Clean up resources properly on exit
+- **FORBIDDEN**: Memory leaks from Qt objects
+- **FORBIDDEN**: Blocking the UI thread with heavy operations
+
+### 2. File I/O Performance Rules
+
+- **MUST**: Use async I/O for file operations
+
+- **MUST**: Batch file operations when possible
+
+- **MUST**: Implement proper error recovery for disk operations
+
+- **MUST**: Monitor disk space usage
+
+- **FORBIDDEN**: Synchronous file operations on UI thread
+
+- **FORBIDDEN**: Unbounded file growth without cleanup
+
+- **FORBIDDEN**: N+1 query problems
+
+- **FORBIDDEN**: Unbounded result sets
+
+# WinSTT Infrastructure Layer Rules
+
+This document outlines the rules and patterns for implementing the Infrastructure Layer for the WinSTT desktop application, including file-based persistence, audio device management, model loading, and desktop integration.
+
+## 🏗️ Infrastructure Layer Workflow Steps for Desktop
+
+### Step 4: Create Persistence Models
+
+**File-based persistence models mirror domain entities for JSON storage:**
+
+#### JSON Model Rules:
+
+- Models MUST inherit from `BaseJsonModel`
+- Models MUST use appropriate field types and validation
+- Models MUST support serialization/deserialization
+- Models MUST follow naming conventions
+- Models SHOULD include audit fields (created_at, updated_at)
+
+#### JSON Model Implementation:
+
+```python
+# src/infrastructure/persistence/models/audio_session_model.py
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from typing import Optional, Dict, Any
+from enum import Enum
+from pathlib import Path
+import json
+
+@dataclass
+class AudioConfigurationModel:
+    """JSON model for audio configuration."""
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str]
+    format_type: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AudioConfigurationModel":
+        return cls(**data)
+
+@dataclass
+class AudioSessionModel:
+    """JSON model for AudioSession entity persistence."""
+    id: str
+    audio_config: AudioConfigurationModel
+    state: str
+    created_at: str
+    started_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    audio_file_path: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        data['audio_config'] = self.audio_config.to_dict()
+        return data
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AudioSessionModel":
+        audio_config_data = data.pop('audio_config')
+        audio_config = AudioConfigurationModel.from_dict(audio_config_data)
+        return cls(audio_config=audio_config, **data)
+    
+    def save_to_file(self, file_path: Path) -> None:
+        """Save model to JSON file."""
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+    
+    @classmethod
+    def load_from_file(cls, file_path: Path) -> "AudioSessionModel":
+        """Load model from JSON file."""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+
+@dataclass
+class TranscriptionResultModel:
+    """JSON model for transcription results."""
+    id: str
+    session_id: str
+    text: str
+    confidence_score: float
+    language: str
+    model_name: str
+    created_at: str
+    segments: Optional[list] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TranscriptionResultModel":
+        return cls(**data)
+
+@dataclass
+class UserPreferencesModel:
+    """JSON model for user preferences."""
+    hotkey_combination: str
+    default_model: str
+    auto_transcribe: bool
+    save_audio_files: bool
+    output_format: str
+    theme: str
+    language: str
+    created_at: str
+    updated_at: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserPreferencesModel":
+        return cls(**data)
+```
+
+### Step 5: Create Mappers for Desktop
+
+**Mappers convert between domain entities and JSON models:**
+
+#### Mapper Rules for Desktop:
+
+- Mappers MUST be stateless
+- Mappers MUST handle datetime serialization correctly
+- Mappers MUST preserve entity state correctly
+- Mappers MUST handle None values gracefully
+- Mappers SHOULD be optimized for file I/O
+
+#### Mapper Implementation:
+
+```python
+# src/infrastructure/persistence/mappers/audio_session_mapper.py
+from typing import Optional
+from datetime import datetime
+from pathlib import Path
+
+from src.domain.audio.entities.audio_session import AudioSession
+from src.domain.audio.value_objects.audio_config import AudioConfiguration, AudioFormat
+from src.domain.audio.value_objects.recording_state import RecordingState
+from src.infrastructure.persistence.models.audio_session_model import AudioSessionModel, AudioConfigurationModel
+
+class AudioSessionMapper:
+    """Maps between AudioSession domain entity and AudioSessionModel JSON model."""
+    
+    @staticmethod
+    def to_domain(json_model: AudioSessionModel) -> AudioSession:
+        """Convert JSON model to domain entity."""
+        if json_model is None:
+            return None
+        
+        # Convert audio configuration
+        audio_config = AudioConfiguration(
+            sample_rate=json_model.audio_config.sample_rate,
+            channels=json_model.audio_config.channels,
+            chunk_size=json_model.audio_config.chunk_size,
+            device_id=json_model.audio_config.device_id,
+            format_type=AudioFormat(json_model.audio_config.format_type)
+        )
+        
+        # Reconstruct entity bypassing __init__ to avoid validation
+        session = AudioSession.__new__(AudioSession)
+        
+        # Set private attributes directly
+        session._id = json_model.id
+        session._audio_config = audio_config
+        session._state = RecordingState(json_model.state)
+        session._created_at = datetime.fromisoformat(json_model.created_at)
+        session._started_at = datetime.fromisoformat(json_model.started_at) if json_model.started_at else None
+        session._stopped_at = datetime.fromisoformat(json_model.stopped_at) if json_model.stopped_at else None
+        session._updated_at = datetime.fromisoformat(json_model.updated_at) if json_model.updated_at else None
+        session._audio_file_path = Path(json_model.audio_file_path) if json_model.audio_file_path else None
+        
+        # Initialize domain events (empty for reconstructed entities)
+        session._domain_events = []
+        
+        return session
+    
+    @staticmethod
+    def to_persistence(domain_entity: AudioSession) -> AudioSessionModel:
+        """Convert domain entity to JSON model."""
+        if domain_entity is None:
+            return None
+        
+        # Convert audio configuration
+        audio_config_model = AudioConfigurationModel(
+            sample_rate=domain_entity.audio_config.sample_rate,
+            channels=domain_entity.audio_config.channels,
+            chunk_size=domain_entity.audio_config.chunk_size,
+            device_id=domain_entity.audio_config.device_id,
+            format_type=domain_entity.audio_config.format_type.value
+        )
+        
+        return AudioSessionModel(
+            id=domain_entity.id,
+            audio_config=audio_config_model,
+            state=domain_entity.state.value,
+            created_at=domain_entity.created_at.isoformat(),
+            started_at=domain_entity.started_at.isoformat() if domain_entity.started_at else None,
+            stopped_at=domain_entity.stopped_at.isoformat() if domain_entity.stopped_at else None,
+            updated_at=domain_entity.updated_at.isoformat() if domain_entity.updated_at else None,
+            audio_file_path=str(domain_entity.audio_file_path) if domain_entity.audio_file_path else None
+        )
+
+class TranscriptionResultMapper:
+    """Maps between TranscriptionResult domain entity and TranscriptionResultModel."""
+    
+    @staticmethod
+    def to_domain(json_model: TranscriptionResultModel) -> TranscriptionResult:
+        """Convert JSON model to domain entity."""
+        if json_model is None:
+            return None
+        
+        result = TranscriptionResult.__new__(TranscriptionResult)
+        result._id = json_model.id
+        result._session_id = json_model.session_id
+        result._text = json_model.text
+        result._confidence_score = ConfidenceScore(json_model.confidence_score)
+        result._language = json_model.language
+        result._model_name = json_model.model_name
+        result._created_at = datetime.fromisoformat(json_model.created_at)
+        result._segments = json_model.segments or []
+        result._domain_events = []
+        
+        return result
+    
+    @staticmethod
+    def to_persistence(domain_entity: TranscriptionResult) -> TranscriptionResultModel:
+        """Convert domain entity to JSON model."""
+        if domain_entity is None:
+            return None
+        
+        return TranscriptionResultModel(
+            id=domain_entity.id,
+            session_id=domain_entity.session_id,
+            text=domain_entity.text,
+            confidence_score=domain_entity.confidence_score.value,
+            language=domain_entity.language,
+            model_name=domain_entity.model_name,
+            created_at=domain_entity.created_at.isoformat(),
+            segments=domain_entity.segments
+        )
+```
+
+### Repository Implementation for File System
+
+**Repositories provide data access abstraction for file-based storage:**
+
+#### Repository Rules for Desktop:
+
+- Repositories MUST implement domain contracts
+- Repositories MUST return `Result<T>` for all operations
+- Repositories MUST handle file system exceptions
+- Repositories MUST use mappers for entity conversion
+- Repositories SHOULD implement caching when appropriate
+
+#### Repository Implementation:
+
+```python
+# src/infrastructure/persistence/repositories/file_audio_repository.py
+from typing import List, Optional, Dict, Any
+from pathlib import Path
+import json
+import asyncio
+from datetime import datetime
+
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.domain.common.result import Result
+from src.domain.audio.entities.audio_session import AudioSession
+from src.infrastructure.persistence.models.audio_session_model import AudioSessionModel
+from src.infrastructure.persistence.mappers.audio_session_mapper import AudioSessionMapper
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class FileAudioRepository(IAudioRepository):
+    """File-based implementation of IAudioRepository."""
+    
+    def __init__(self, data_directory: Path):
+        self._data_dir = data_directory
+        self._sessions_dir = self._data_dir / "sessions"
+        self._audio_files_dir = self._data_dir / "audio_files"
+        
+        # Create directories if they don't exist
+        self._sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._audio_files_dir.mkdir(parents=True, exist_ok=True)
+        
+        # In-memory cache for active sessions
+        self._session_cache: Dict[str, AudioSession] = {}
+    
+    async def get_by_id(self, session_id: str) -> Result[Optional[AudioSession]]:
+        """Get audio session by ID."""
+        try:
+            # Check cache first
+            if session_id in self._session_cache:
+                return Result.success(self._session_cache[session_id])
+            
+            # Load from file
+            session_file = self._sessions_dir / f"{session_id}.json"
+            if not session_file.exists():
+                return Result.success(None)
+            
+            json_model = AudioSessionModel.load_from_file(session_file)
+            domain_entity = AudioSessionMapper.to_domain(json_model)
+            
+            # Cache if active
+            if domain_entity.state != RecordingState.COMPLETED:
+                self._session_cache[session_id] = domain_entity
+            
+            return Result.success(domain_entity)
+            
+        except FileNotFoundError:
+            return Result.success(None)
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Error loading session {session_id}: {str(e)}")
+            return Result.failure(f"Failed to load session: corrupted data")
+        except Exception as e:
+            logger.error(f"Error getting session by ID {session_id}: {str(e)}")
+            return Result.failure(f"Failed to retrieve session: {str(e)}")
+    
+    async def get_active_session(self) -> Result[Optional[AudioSession]]:
+        """Get currently active recording session."""
+        try:
+            # Check cache for active sessions
+            for session in self._session_cache.values():
+                if session.state == RecordingState.RECORDING:
+                    return Result.success(session)
+            
+            # Scan files for active sessions (fallback)
+            for session_file in self._sessions_dir.glob("*.json"):
+                try:
+                    json_model = AudioSessionModel.load_from_file(session_file)
+                    if json_model.state == RecordingState.RECORDING.value:
+                        domain_entity = AudioSessionMapper.to_domain(json_model)
+                        self._session_cache[domain_entity.id] = domain_entity
+                        return Result.success(domain_entity)
+                except Exception:
+                    continue  # Skip corrupted files
+            
+            return Result.success(None)
+            
+        except Exception as e:
+            logger.error(f"Error getting active session: {str(e)}")
+            return Result.failure(f"Failed to find active session: {str(e)}")
+    
+    async def save_session(self, session: AudioSession) -> Result[AudioSession]:
+        """Save or update an audio session."""
+        try:
+            # Convert to JSON model
+            json_model = AudioSessionMapper.to_persistence(session)
+            json_model.updated_at = datetime.utcnow().isoformat()
+            
+            # Save to file
+            session_file = self._sessions_dir / f"{session.id}.json"
+            await asyncio.get_event_loop().run_in_executor(
+                None, json_model.save_to_file, session_file
+            )
+            
+            # Update cache
+            if session.state != RecordingState.COMPLETED:
+                self._session_cache[session.id] = session
+            else:
+                # Remove from cache when completed
+                self._session_cache.pop(session.id, None)
+            
+            return Result.success(session)
+            
+        except PermissionError:
+            return Result.failure("Permission denied saving session data")
+        except OSError as e:
+            logger.error(f"OS error saving session: {str(e)}")
+            return Result.failure("Failed to save session: disk error")
+        except Exception as e:
+            logger.error(f"Error saving session: {str(e)}")
+            return Result.failure(f"Failed to save session: {str(e)}")
+    
+    async def delete_session(self, session_id: str) -> Result[None]:
+        """Delete a session and its associated files."""
+        try:
+            # Remove from cache
+            self._session_cache.pop(session_id, None)
+            
+            # Delete session file
+            session_file = self._sessions_dir / f"{session_id}.json"
+            if session_file.exists():
+                await asyncio.get_event_loop().run_in_executor(
+                    None, session_file.unlink
+                )
+            
+            # Delete associated audio file
+            audio_file = self._audio_files_dir / f"{session_id}.wav"
+            if audio_file.exists():
+                await asyncio.get_event_loop().run_in_executor(
+                    None, audio_file.unlink
+                )
+            
+            return Result.success()
+            
+        except PermissionError:
+            return Result.failure("Permission denied deleting session files")
+        except Exception as e:
+            logger.error(f"Error deleting session {session_id}: {str(e)}")
+            return Result.failure(f"Failed to delete session: {str(e)}")
+    
+    async def find_recent_sessions(self, limit: int = 10) -> Result[List[AudioSession]]:
+        """Find recent sessions ordered by created date."""
+        try:
+            sessions = []
+            session_files = sorted(
+                self._sessions_dir.glob("*.json"), 
+                key=lambda f: f.stat().st_mtime, 
+                reverse=True
+            )
+            
+            for session_file in session_files[:limit]:
+                try:
+                    json_model = AudioSessionModel.load_from_file(session_file)
+                    domain_entity = AudioSessionMapper.to_domain(json_model)
+                    sessions.append(domain_entity)
+                except Exception as e:
+                    logger.warning(f"Skipping corrupted session file {session_file}: {e}")
+                    continue
+            
+            return Result.success(sessions)
+            
+        except Exception as e:
+            logger.error(f"Error finding recent sessions: {str(e)}")
+            return Result.failure(f"Failed to find sessions: {str(e)}")
+    
+    async def cleanup_old_sessions(self, days_old: int = 30) -> Result[int]:
+        """Clean up sessions older than specified days."""
+        try:
+            cutoff_date = datetime.utcnow().timestamp() - (days_old * 24 * 60 * 60)
+            cleaned_count = 0
+            
+            for session_file in self._sessions_dir.glob("*.json"):
+                if session_file.stat().st_mtime < cutoff_date:
+                    try:
+                        # Extract session ID and delete
+                        session_id = session_file.stem
+                        await self.delete_session(session_id)
+                        cleaned_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old session {session_file}: {e}")
+            
+            return Result.success(cleaned_count)
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up old sessions: {str(e)}")
+            return Result.failure(f"Failed to cleanup sessions: {str(e)}")
+```
+
+### Audio Service Implementation
+
+**Audio services handle hardware integration:**
+
+```python
+# src/infrastructure/audio/pyaudio_service.py
+import pyaudio
+import wave
+import asyncio
+from typing import List, Optional, Dict, Any
+from pathlib import Path
+from threading import Thread, Event
+import queue
+
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.value_objects.audio_config import AudioConfiguration
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class PyAudioService(IAudioService):
+    """PyAudio-based implementation of audio service."""
+    
+    def __init__(self):
+        self._pyaudio: Optional[pyaudio.PyAudio] = None
+        self._recording_streams: Dict[str, 'RecordingStream'] = {}
+        self._audio_queues: Dict[str, queue.Queue] = {}
+        
+    async def initialize(self) -> Result[None]:
+        """Initialize PyAudio."""
+        try:
+            self._pyaudio = pyaudio.PyAudio()
+            return Result.success()
+        except Exception as e:
+            logger.error(f"Failed to initialize PyAudio: {e}")
+            return Result.failure(f"Audio system initialization failed: {str(e)}")
+    
+    async def get_available_devices(self) -> Result[List[Dict[str, Any]]]:
+        """Get list of available audio input devices."""
+        try:
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            devices = []
+            device_count = self._pyaudio.get_device_count()
+            
+            for i in range(device_count):
+                device_info = self._pyaudio.get_device_info_by_index(i)
+                
+                # Only include input devices
+                if device_info['maxInputChannels'] > 0:
+                    devices.append({
+                        'id': str(i),
+                        'name': device_info['name'],
+                        'channels': device_info['maxInputChannels'],
+                        'sample_rate': device_info['defaultSampleRate'],
+                        'is_default': i == self._pyaudio.get_default_input_device_info()['index']
+                    })
+            
+            return Result.success(devices)
+            
+        except Exception as e:
+            logger.error(f"Error getting audio devices: {e}")
+            return Result.failure(f"Failed to enumerate audio devices: {str(e)}")
+    
+    async def check_audio_device(self, device_id: Optional[str]) -> Result[bool]:
+        """Check if audio device is available."""
+        try:
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            if device_id is None:
+                # Check default device
+                try:
+                    default_device = self._pyaudio.get_default_input_device_info()
+                    return Result.success(True)
+                except Exception:
+                    return Result.failure("No default audio input device")
+            
+            # Check specific device
+            try:
+                device_index = int(device_id)
+                device_info = self._pyaudio.get_device_info_by_index(device_index)
+                if device_info['maxInputChannels'] == 0:
+                    return Result.failure("Device has no input channels")
+                return Result.success(True)
+            except (ValueError, OSError):
+                return Result.failure(f"Audio device {device_id} not found")
+            
+        except Exception as e:
+            logger.error(f"Error checking audio device: {e}")
+            return Result.failure(f"Failed to check device: {str(e)}")
+    
+    async def start_recording(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording audio."""
+        try:
+            if session_id in self._recording_streams:
+                return Result.failure("Recording already active for this session")
+            
+            if not self._pyaudio:
+                init_result = await self.initialize()
+                if not init_result.is_success:
+                    return Result.failure(init_result.error)
+            
+            # Determine device index
+            device_index = None
+            if audio_config.device_id:
+                try:
+                    device_index = int(audio_config.device_id)
+                except ValueError:
+                    return Result.failure(f"Invalid device ID: {audio_config.device_id}")
+            
+            # Create recording stream
+            stream = RecordingStream(
+                pyaudio_instance=self._pyaudio,
+                session_id=session_id,
+                audio_config=audio_config,
+                device_index=device_index
+            )
+            
+            start_result = await stream.start()
+            if not start_result.is_success:
+                return Result.failure(start_result.error)
+            
+            self._recording_streams[session_id] = stream
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error starting recording: {e}")
+            return Result.failure(f"Failed to start recording: {str(e)}")
+    
+    async def stop_recording(self, session_id: str) -> Result[bytes]:
+        """Stop recording and return audio data."""
+        try:
+            stream = self._recording_streams.get(session_id)
+            if not stream:
+                return Result.failure(f"No recording found for session {session_id}")
+            
+            audio_data_result = await stream.stop()
+            if not audio_data_result.is_success:
+                return Result.failure(audio_data_result.error)
+            
+            # Cleanup
+            del self._recording_streams[session_id]
+            
+            return Result.success(audio_data_result.value)
+            
+        except Exception as e:
+            logger.error(f"Error stopping recording: {e}")
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+    
+    def __del__(self):
+        """Cleanup PyAudio on destruction."""
+        try:
+            if self._pyaudio:
+                self._pyaudio.terminate()
+        except Exception as e:
+            logger.error(f"Error terminating PyAudio: {e}")
+
+class RecordingStream:
+    """Manages a single audio recording stream."""
+    
+    def __init__(self, pyaudio_instance: pyaudio.PyAudio, session_id: str, 
+                 audio_config: AudioConfiguration, device_index: Optional[int]):
+        self._pyaudio = pyaudio_instance
+        self._session_id = session_id
+        self._audio_config = audio_config
+        self._device_index = device_index
+        self._stream: Optional[pyaudio.Stream] = None
+        self._recording_thread: Optional[Thread] = None
+        self._stop_event = Event()
+        self._audio_queue = queue.Queue()
+        
+    async def start(self) -> Result[None]:
+        """Start the recording stream."""
+        try:
+            # Open stream
+            self._stream = self._pyaudio.open(
+                format=self._get_pyaudio_format(),
+                channels=self._audio_config.channels,
+                rate=self._audio_config.sample_rate,
+                input=True,
+                input_device_index=self._device_index,
+                frames_per_buffer=self._audio_config.chunk_size,
+                stream_callback=self._audio_callback
+            )
+            
+            # Start recording thread
+            self._recording_thread = Thread(target=self._recording_loop, daemon=True)
+            self._recording_thread.start()
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error starting recording stream: {e}")
+            return Result.failure(f"Failed to start audio stream: {str(e)}")
+    
+    async def stop(self) -> Result[bytes]:
+        """Stop recording and return audio data."""
+        try:
+            # Signal stop
+            self._stop_event.set()
+            
+            # Wait for recording thread to finish
+            if self._recording_thread:
+                self._recording_thread.join(timeout=5.0)
+            
+            # Close stream
+            if self._stream:
+                self._stream.stop_stream()
+                self._stream.close()
+            
+            # Collect audio data
+            audio_frames = []
+            while not self._audio_queue.empty():
+                try:
+                    frame = self._audio_queue.get_nowait()
+                    audio_frames.append(frame)
+                except queue.Empty:
+                    break
+            
+            audio_data = b''.join(audio_frames)
+            return Result.success(audio_data)
+            
+        except Exception as e:
+            logger.error(f"Error stopping recording stream: {e}")
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+    
+    def _audio_callback(self, in_data, frame_count, time_info, status):
+        """PyAudio callback for handling audio data."""
+        if status:
+            logger.warning(f"Audio callback status: {status}")
+        
+        if not self._stop_event.is_set():
+            self._audio_queue.put(in_data)
+        
+        return (None, pyaudio.paContinue if not self._stop_event.is_set() else pyaudio.paComplete)
+    
+    def _recording_loop(self):
+        """Recording thread loop."""
+        try:
+            self._stream.start_stream()
+            
+            while not self._stop_event.is_set():
+                time.sleep(0.01)  # Small delay to prevent busy waiting
+                
+        except Exception as e:
+            logger.error(f"Error in recording loop: {e}")
+    
+    def _get_pyaudio_format(self):
+        """Get PyAudio format from domain format."""
+        format_map = {
+            AudioFormat.PCM_16: pyaudio.paInt16,
+            AudioFormat.PCM_24: pyaudio.paInt24,
+            AudioFormat.FLOAT_32: pyaudio.paFloat32
+        }
+        return format_map.get(self._audio_config.format_type, pyaudio.paInt16)
+```
+
+### Model Management Infrastructure
+
+**ONNX model loading and management:**
+
+```python
+# src/infrastructure/models/onnx_model_service.py
+import onnxruntime as ort
+import numpy as np
+from pathlib import Path
+from typing import Dict, Any, Optional
+import hashlib
+import requests
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+
+from src.domain.transcription.contracts.model_service import IModelService
+from src.domain.transcription.value_objects.model_config import ModelConfiguration
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class OnnxModelService(IModelService):
+    """ONNX Runtime-based model service."""
+    
+    def __init__(self, models_directory: Path, cache_size_mb: int = 2048):
+        self._models_dir = models_directory
+        self._cache_size_mb = cache_size_mb
+        self._loaded_models: Dict[str, ort.InferenceSession] = {}
+        self._model_metadata: Dict[str, Dict[str, Any]] = {}
+        self._thread_pool = ThreadPoolExecutor(max_workers=2)
+        
+        # Ensure models directory exists
+        self._models_dir.mkdir(parents=True, exist_ok=True)
+    
+    async def load_model(self, model_config: ModelConfiguration) -> Result[None]:
+        """Load model into memory."""
+        try:
+            model_name = model_config.model_name
+            
+            # Check if already loaded
+            if model_name in self._loaded_models:
+                return Result.success()
+            
+            # Check memory constraints
+            memory_check = await self._check_memory_availability(model_config)
+            if not memory_check.is_success:
+                return Result.failure(memory_check.error)
+            
+            # Get model file path
+            model_path = self._get_model_path(model_name)
+            if not model_path.exists():
+                download_result = await self._download_model(model_config)
+                if not download_result.is_success:
+                    return Result.failure(download_result.error)
+            
+            # Load model in thread pool to avoid blocking
+            session = await asyncio.get_event_loop().run_in_executor(
+                self._thread_pool, 
+                self._load_onnx_model, 
+                model_path, 
+                model_config
+            )
+            
+            if session is None:
+                return Result.failure(f"Failed to create ONNX session for {model_name}")
+            
+            self._loaded_models[model_name] = session
+            self._model_metadata[model_name] = {
+                'config': model_config,
+                'loaded_at': datetime.utcnow(),
+                'memory_usage_mb': self._estimate_model_memory(session)
+            }
+            
+            logger.info(f"Successfully loaded model: {model_name}")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error loading model {model_config.model_name}: {e}")
+            return Result.failure(f"Model loading failed: {str(e)}")
+    
+    async def unload_model(self, model_name: str) -> Result[None]:
+        """Unload model from memory."""
+        try:
+            if model_name in self._loaded_models:
+                # Clean up ONNX session
+                session = self._loaded_models[model_name]
+                del session  # Let garbage collector handle cleanup
+                
+                del self._loaded_models[model_name]
+                del self._model_metadata[model_name]
+                
+                logger.info(f"Unloaded model: {model_name}")
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error unloading model {model_name}: {e}")
+            return Result.failure(f"Failed to unload model: {str(e)}")
+    
+    async def is_model_loaded(self, model_name: str) -> bool:
+        """Check if model is loaded."""
+        return model_name in self._loaded_models
+    
+    async def run_inference(self, model_name: str, input_data: np.ndarray) -> Result[Dict[str, Any]]:
+        """Run inference on loaded model."""
+        try:
+            if model_name not in self._loaded_models:
+                return Result.failure(f"Model {model_name} not loaded")
+            
+            session = self._loaded_models[model_name]
+            
+            # Prepare input
+            input_name = session.get_inputs()[0].name
+            input_dict = {input_name: input_data}
+            
+            # Run inference in thread pool
+            outputs = await asyncio.get_event_loop().run_in_executor(
+                self._thread_pool,
+                session.run,
+                None,
+                input_dict
+            )
+            
+            # Convert outputs to dictionary
+            output_names = [output.name for output in session.get_outputs()]
+            result_dict = dict(zip(output_names, outputs))
+            
+            return Result.success(result_dict)
+            
+        except Exception as e:
+            logger.error(f"Error running inference with {model_name}: {e}")
+            return Result.failure(f"Inference failed: {str(e)}")
+    
+    def _load_onnx_model(self, model_path: Path, model_config: ModelConfiguration) -> Optional[ort.InferenceSession]:
+        """Load ONNX model (runs in thread pool)."""
+        try:
+            # Set providers based on availability
+            providers = ['CPUExecutionProvider']
+            if ort.get_available_providers():
+                available = ort.get_available_providers()
+                if 'CUDAExecutionProvider' in available:
+                    providers.insert(0, 'CUDAExecutionProvider')
+                elif 'DmlExecutionProvider' in available:  # DirectML for Windows
+                    providers.insert(0, 'DmlExecutionProvider')
+            
+            # Create session with appropriate providers
+            session = ort.InferenceSession(
+                str(model_path),
+                providers=providers
+            )
+            
+            return session
+            
+        except Exception as e:
+            logger.error(f"Error creating ONNX session: {e}")
+            return None
+    
+    async def _download_model(self, model_config: ModelConfiguration) -> Result[Path]:
+        """Download model file."""
+        try:
+            model_name = model_config.model_name
+            model_url = self._get_model_download_url(model_name)
+            model_path = self._get_model_path(model_name)
+            
+            logger.info(f"Downloading model {model_name} from {model_url}")
+            
+            # Download in chunks to show progress
+            async with aiohttp.ClientSession() as session:
+                async with session.get(model_url) as response:
+                    if response.status != 200:
+                        return Result.failure(f"Failed to download model: HTTP {response.status}")
+                    
+                    total_size = int(response.headers.get('content-length', 0))
+                    downloaded = 0
+                    
+                    with open(model_path, 'wb') as f:
+                        async for chunk in response.content.iter_chunked(8192):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            
+                            # Emit progress signal if available
+                            if hasattr(self, 'download_progress'):
+                                progress = int((downloaded / total_size) * 100) if total_size > 0 else 0
+                                self.download_progress.emit(model_name, progress)
+            
+            # Verify download
+            if not model_path.exists() or model_path.stat().st_size == 0:
+                return Result.failure("Downloaded file is empty or missing")
+            
+            logger.info(f"Successfully downloaded model {model_name}")
+            return Result.success(model_path)
+            
+        except Exception as e:
+            logger.error(f"Error downloading model {model_config.model_name}: {e}")
+            return Result.failure(f"Download failed: {str(e)}")
+    
+    def _get_model_path(self, model_name: str) -> Path:
+        """Get file path for model."""
+        return self._models_dir / f"{model_name}.onnx"
+    
+    def _get_model_download_url(self, model_name: str) -> str:
+        """Get download URL for model."""
+        # This would be configured based on model repository
+        base_url = "https://huggingface.co/onnx-community"
+        return f"{base_url}/{model_name}/resolve/main/model.onnx"
+    
+    async def _check_memory_availability(self, model_config: ModelConfiguration) -> Result[None]:
+        """Check if there's enough memory for the model."""
+        try:
+            required_mb = model_config.model_type.memory_requirements_mb
+            available_mb = self._get_available_memory_mb()
+            
+            if available_mb < required_mb:
+                # Try to free up space by unloading least recently used models
+                freed_mb = await self._free_memory_for_model(required_mb)
+                if freed_mb < required_mb:
+                    return Result.failure(
+                        f"Insufficient memory: need {required_mb}MB, have {available_mb}MB"
+                    )
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error checking memory: {e}")
+            return Result.failure("Failed to check memory availability")
+```
+
+### Desktop Integration Infrastructure
+
+**System tray, hotkeys, and OS integration:**
+
+```python
+# src/infrastructure/desktop/system_integration.py
+from PyQt5.QtWidgets import QSystemTrayIcon, QMenu, QAction
+from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtGui import QIcon, QKeySequence
+import pynput
+from pynput import keyboard
+from typing import Optional, Callable
+import threading
+
+from src.domain.settings.value_objects.key_combination import KeyCombination
+from src.domain.common.result import Result
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
+class SystemTrayManager(QObject):
+    """Manages system tray integration."""
+    
+    show_main_window = pyqtSignal()
+    start_recording = pyqtSignal()
+    stop_recording = pyqtSignal()
+    quit_application = pyqtSignal()
+    
+    def __init__(self, icon_path: str, parent=None):
+        super().__init__(parent)
+        self._tray_icon: Optional[QSystemTrayIcon] = None
+        self._icon_path = icon_path
+        
+    def setup_tray(self) -> Result[None]:
+        """Setup system tray icon and menu."""
+        try:
+            if not QSystemTrayIcon.isSystemTrayAvailable():
+                return Result.failure("System tray is not available")
+            
+            # Create tray icon
+            icon = QIcon(self._icon_path)
+            self._tray_icon = QSystemTrayIcon(icon)
+            
+            # Create context menu
+            menu = QMenu()
+            
+            # Show/Hide main window
+            show_action = QAction("Show WinSTT", menu)
+            show_action.triggered.connect(self.show_main_window.emit)
+            menu.addAction(show_action)
+            
+            menu.addSeparator()
+            
+            # Recording actions
+            start_action = QAction("Start Recording", menu)
+            start_action.triggered.connect(self.start_recording.emit)
+            menu.addAction(start_action)
+            
+            stop_action = QAction("Stop Recording", menu)
+            stop_action.triggered.connect(self.stop_recording.emit)
+            menu.addAction(stop_action)
+            
+            menu.addSeparator()
+            
+            # Quit action
+            quit_action = QAction("Quit", menu)
+            quit_action.triggered.connect(self.quit_application.emit)
+            menu.addAction(quit_action)
+            
+            self._tray_icon.setContextMenu(menu)
+            self._tray_icon.activated.connect(self._on_tray_activated)
+            
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error setting up system tray: {e}")
+            return Result.failure(f"Failed to setup system tray: {str(e)}")
+    
+    def show_tray(self) -> None:
+        """Show the system tray icon."""
+        if self._tray_icon:
+            self._tray_icon.show()
+    
+    def hide_tray(self) -> None:
+        """Hide the system tray icon."""
+        if self._tray_icon:
+            self._tray_icon.hide()
+    
+    def show_message(self, title: str, message: str, duration: int = 3000) -> None:
+        """Show tray notification."""
+        if self._tray_icon:
+            self._tray_icon.showMessage(title, message, QSystemTrayIcon.Information, duration)
+    
+    def _on_tray_activated(self, reason):
+        """Handle tray icon activation."""
+        if reason == QSystemTrayIcon.DoubleClick:
+            self.show_main_window.emit()
+
+class GlobalHotkeyManager(QObject):
+    """Manages global hotkey registration."""
+    
+    hotkey_triggered = pyqtSignal(str)  # hotkey_name
+    
+    def __init__(self):
+        super().__init__()
+        self._listener: Optional[keyboard.GlobalHotKeys] = None
+        self._registered_hotkeys: Dict[str, KeyCombination] = {}
+        self._hotkey_callbacks: Dict[str, Callable] = {}
+        
+    def register_hotkey(self, name: str, key_combination: KeyCombination) -> Result[None]:
+        """Register a global hotkey."""
+        try:
+            # Convert to pynput format
+            pynput_combination = self._convert_to_pynput_format(key_combination)
+            if not pynput_combination:
+                return Result.failure(f"Invalid key combination: {key_combination}")
+            
+            # Create callback
+            def callback():
+                self.hotkey_triggered.emit(name)
+            
+            self._hotkey_callbacks[pynput_combination] = callback
+            self._registered_hotkeys[name] = key_combination
+            
+            # Restart listener with new hotkeys
+            self._restart_listener()
+            
+            logger.info(f"Registered hotkey '{name}': {key_combination}")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error registering hotkey {name}: {e}")
+            return Result.failure(f"Failed to register hotkey: {str(e)}")
+    
+    def unregister_hotkey(self, name: str) -> Result[None]:
+        """Unregister a global hotkey."""
+        try:
+            if name not in self._registered_hotkeys:
+                return Result.failure(f"Hotkey '{name}' not registered")
+            
+            key_combination = self._registered_hotkeys[name]
+            pynput_combination = self._convert_to_pynput_format(key_combination)
+            
+            # Remove from tracking
+            del self._registered_hotkeys[name]
+            if pynput_combination in self._hotkey_callbacks:
+                del self._hotkey_callbacks[pynput_combination]
+            
+            # Restart listener
+            self._restart_listener()
+            
+            logger.info(f"Unregistered hotkey '{name}'")
+            return Result.success()
+            
+        except Exception as e:
+            logger.error(f"Error unregistering hotkey {name}: {e}")
+            return Result.failure(f"Failed to unregister hotkey: {str(e)}")
+    
+    def _restart_listener(self):
+        """Restart the global hotkey listener."""
+        try:
+            # Stop existing listener
+            if self._listener:
+                self._listener.stop()
+            
+            # Start new listener if we have hotkeys
+            if self._hotkey_callbacks:
+                self._listener = keyboard.GlobalHotKeys(self._hotkey_callbacks)
+                self._listener.start()
+            
+        except Exception as e:
+            logger.error(f"Error restarting hotkey listener: {e}")
+    
+    def _convert_to_pynput_format(self, key_combination: KeyCombination) -> Optional[str]:
+        """Convert domain key combination to pynput format."""
+        try:
+            # Map modifier keys
+            modifiers = []
+            if key_combination.ctrl:
+                modifiers.append('<ctrl>')
+            if key_combination.alt:
+                modifiers.append('<alt>')
+            if key_combination.shift:
+                modifiers.append('<shift>')
+            if key_combination.windows:
+                modifiers.append('<cmd>')
+            
+            # Add main key
+            main_key = key_combination.key.lower()
+            
+            # Combine modifiers and main key
+            if modifiers:
+                return '+'.join(modifiers + [main_key])
+            else:
+                return main_key
+                
+        except Exception as e:
+            logger.error(f"Error converting key combination: {e}")
+            return None
+    
+    def __del__(self):
+        """Cleanup hotkey listener."""
+        try:
+            if self._listener:
+                self._listener.stop()
+        except Exception as e:
+            logger.error(f"Error cleaning up hotkey listener: {e}")
+```
+
+## Configuration and Dependency Injection Rules
+
+### 1. Configuration Rules for Desktop
+
+- **MUST**: Use JSON files for configuration storage
+- **MUST**: Support user-specific and system-wide configurations
+- **MUST**: Validate configuration on startup
+- **MUST**: Use typed configuration objects
+- **FORBIDDEN**: Hardcoded configuration values
+- **FORBIDDEN**: Storing sensitive data in plain text
+
+### 2. Dependency Injection Rules for Desktop
+
+- **MUST**: Use dependency injection container for desktop services
+- **MUST**: Register Qt application services as singletons
+- **MUST**: Use factory patterns for hardware-dependent services
+- **MUST**: Support service discovery and auto-wiring
+- **FORBIDDEN**: Direct instantiation of infrastructure services
+- **FORBIDDEN**: Circular dependencies between desktop services
+
+## Performance Rules for Desktop
+
+### 1. Memory Management Rules
+
+- **MUST**: Monitor memory usage for loaded models
+- **MUST**: Implement LRU cache for model management
+- **MUST**: Use background threads for heavy operations
+- **MUST**: Clean up resources properly on exit
+- **FORBIDDEN**: Memory leaks from Qt objects
+- **FORBIDDEN**: Blocking the UI thread with heavy operations
+
+### 2. File I/O Performance Rules
+
+- **MUST**: Use async I/O for file operations
+
+- **MUST**: Batch file operations when possible
+
+- **MUST**: Implement proper error recovery for disk operations
+
+- **MUST**: Monitor disk space usage
+
+- **FORBIDDEN**: Synchronous file operations on UI thread
+
+- **FORBIDDEN**: Unbounded file growth without cleanup
+
+- **FORBIDDEN**: N+1 query problems
+
+- **FORBIDDEN**: Unbounded result sets

@@ -14,6 +14,13 @@ import atexit
 # Suppress pygame welcome message and warnings
 import os
 
+# Suppress transformers warnings using environment variable
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+
+# Suppress transformers warnings before any imports
+import logging
+logging.getLogger("transformers").setLevel(logging.ERROR)
+
 # Add socket for single-instance check
 import socket
 import subprocess

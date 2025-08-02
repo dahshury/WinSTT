@@ -12,18 +12,18 @@ def setup_logger():
 
     # Create a custom logger
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)  # Set the logger level to DEBUG
+    logger.setLevel(logging.INFO)  # Set to INFO to reduce verbosity
 
     # Check if handlers already exist to avoid duplicates
     if not logger.handlers:
         # Configure the file handler
         file_handler = logging.FileHandler(log_file_path)
-        file_handler.setFormatter(logging.Formatter("[%(asctime)s] %(name)s - %(levelname)s - %(message)s"))
+        file_handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s - %(message)s"))
         file_handler.setLevel(logging.INFO)
 
-        # Create a stream handler and set its level to DEBUG
+        # Create a stream handler and set its level to WARNING
         stream_handler = StreamHandler()
-        stream_handler.setLevel(logging.DEBUG)  # Set the level to the lowest severity level
+        stream_handler.setLevel(logging.WARNING)  # Only show warnings and errors in console
 
         # Add both handlers to the custom logger
         logger.addHandler(file_handler)

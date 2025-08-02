@@ -1,0 +1,2326 @@
+---
+alwaysApply: true
+---
+
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Architecture Overview
+
+## System Architecture Principles
+
+This desktop application implements **Domain-Driven Design (DDD)** with **Vertical Slice Architecture**, utilizing **MediatR patterns** for clean separation of concerns and maintainable code organization in a PyQt-based desktop environment.
+
+### Core Architectural Patterns
+
+1. **Domain-Driven Design (DDD)**
+
+   - Rich domain models with business logic
+   - Aggregate roots for consistency boundaries
+   - Value objects for type safety
+   - Domain events for decoupling
+   - Result pattern for explicit error handling
+
+1. **Vertical Slice Architecture**
+
+   - Features organized as self-contained slices
+   - Each slice contains all layers (UI → Domain → Infrastructure)
+   - Minimal cross-slice dependencies
+   - Business capability-focused organization
+
+1. **MediatR Pattern**
+
+   - Commands and queries for all business operations
+   - Handlers registered via dependency injection
+   - Centralized request/response processing
+   - Clean separation of concerns
+
+## Layer Structure and Responsibilities
+
+### Domain Layer (`src/domain/`)
+
+**Purpose**: Contains business logic, rules, and domain concepts for audio transcription
+**Key Files**:
+
+- [`src/domain/common/`](mdc:src/domain/common/) - DDD base classes and patterns
+- [`src/domain/audio/entities/`](mdc:src/domain/audio/entities/) - Audio session and recording entities
+- [`src/domain/transcription/entities/`](mdc:src/domain/transcription/entities/) - Transcription result entities
+- [`src/domain/contracts/`](mdc:src/domain/contracts/) - Domain service interfaces
+
+**Rules**: [Domain Layer Rules](mdc:.cursor/rules/domain-layer-rules.mdc)
+
+```python
+# Domain entities with business logic
+class AudioSession(AggregateRoot[str]):
+    def start_recording(self, audio_config: AudioConfiguration) -> Result[None]:
+        # Business rules and validation
+        if self.state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        # VAD validation
+        if not audio_config.vad_enabled and audio_config.min_duration < 0.5:
+            return Result.failure("Minimum duration must be at least 0.5 seconds without VAD")
+        
+        # Domain event for decoupling
+        self.add_domain_event(RecordingStarted(self.id, audio_config, datetime.utcnow()))
+        self._state = RecordingState.RECORDING
+        return Result.success()
+```
+
+### Feature Layer (`src/features/`)
+
+**Purpose**: Self-contained vertical slices that handle complete business capabilities
+**Key Files**:
+
+- [`src/features/audio_recording/`](mdc:src/features/audio_recording/) - Complete audio recording functionality
+- [`src/features/transcription/`](mdc:src/features/transcription/) - Complete transcription functionality
+- [`src/features/settings_management/`](mdc:src/features/settings_management/) - Settings and preferences
+- [`src/features/application_shell/`](mdc:src/features/application_shell/) - Main window and app lifecycle
+
+**Rules**: [Feature Layer Rules](mdc:.cursor/rules/feature-layer-rules.mdc)
+
+```python
+# Vertical slice with complete feature implementation
+# src/features/audio_recording/commands/start_recording.py contains:
+# - Command definition
+# - Handler implementation
+# - Domain coordination
+# - Infrastructure usage
+
+@dataclass
+class StartRecordingCommand:
+    def __init__(self, audio_config: AudioConfiguration, session_id: Optional[str] = None):
+        self.audio_config = audio_config
+        self.session_id = session_id or str(uuid.uuid4())
+
+class StartRecordingHandler:
+    def __init__(self, audio_service: IAudioService, session_repository: IAudioSessionRepository):
+        self._audio_service = audio_service
+        self._session_repository = session_repository
+
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        # Delegate to domain for business logic
+        session_result = AudioSession.create(command.session_id, command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        # Use infrastructure for technical implementation
+        session = session_result.value
+        start_result = session.start_recording(command.audio_config)
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # Persist session state
+        await self._session_repository.save(session)
+        
+        # Start actual recording via infrastructure
+        recording_result = await self._audio_service.start_recording(session.id, command.audio_config)
+        
+        return Result.success(session.id)
+```
+
+### Infrastructure Layer (`src/infrastructure/`)
+
+**Purpose**: Handles technical concerns and external dependencies (PyQt, PyAudio, ONNX, file system)
+**Key Files**:
+
+- [`src/infrastructure/audio/`](mdc:src/infrastructure/audio/) - PyAudio integration and device management
+- [`src/infrastructure/ml/`](mdc:src/infrastructure/ml/) - ONNX runtime and model management
+- [`src/infrastructure/persistence/`](mdc:src/infrastructure/persistence/) - JSON file persistence
+- [`src/infrastructure/ui/`](mdc:src/infrastructure/ui/) - PyQt framework integration
+
+**Rules**: [Infrastructure Layer Rules](mdc:.cursor/rules/infrastructure-layer-rules.mdc)
+
+```python
+# Adapter pattern for domain ↔ infrastructure conversion
+class AudioSessionMapper:
+    @staticmethod
+    def to_domain(file_data: Dict[str, Any]) -> AudioSession:
+        """Convert JSON file data to domain entity."""
+        config = AudioConfiguration(
+            sample_rate=file_data['sample_rate'],
+            channels=file_data['channels'],
+            chunk_size=file_data['chunk_size']
+        )
+        session = AudioSession(
+            session_id=file_data['id'],
+            config=config,
+            state=RecordingState(file_data['state'])
+        )
+        return session
+    
+    @staticmethod
+    def to_persistence(session: AudioSession) -> Dict[str, Any]:
+        """Convert domain entity to JSON file format."""
+        return {
+            'id': session.id,
+            'state': session.state.value,
+            'sample_rate': session.config.sample_rate,
+            'channels': session.config.channels,
+            'chunk_size': session.config.chunk_size,
+            'created_at': session.created_at.isoformat()
+        }
+```
+
+## Key Architectural Patterns
+
+### 1. Result Pattern for Error Handling
+
+**Purpose**: Explicit error handling without exceptions in audio/ML operations
+**Implementation**: Domain uses `Result[T]`, Features use `Result[T]` consistently
+**Rules**: [Error Handling Rules](mdc:.cursor/rules/error-handling-rules.mdc)
+
+```python
+# Domain layer - business logic errors
+def create_audio_session(config: AudioConfiguration) -> Result[AudioSession]:
+    if config.sample_rate not in [16000, 22050, 44100, 48000]:
+        return Result.failure("Unsupported sample rate")
+    if config.channels not in [1, 2]:
+        return Result.failure("Only mono and stereo audio supported")
+    return Result.success(AudioSession(config))
+
+# Feature layer - coordinated operations
+async def handle(self, command: TranscribeAudioCommand) -> Result[TranscriptionResult]:
+    model_result = await self._model_service.load_model(command.model_config)
+    if not model_result.is_success:
+        return Result.failure(f"Failed to load model: {model_result.error}")
+    
+    transcription_result = await self._transcription_service.transcribe(
+        command.audio_data, model_result.value
+    )
+    return transcription_result
+
+# UI layer - user-friendly error presentation
+async def on_start_recording_clicked(self):
+    result = await self._mediator.send(StartRecordingCommand(self._audio_config))
+    if not result.is_success:
+        self._show_error_dialog("Recording Error", result.error)
+    else:
+        self._update_recording_status("Recording started")
+```
+
+### 2. Dependency Injection Pattern
+
+**Purpose**: Loose coupling and testability in desktop environment
+**Implementation**: Custom lightweight container for desktop services
+**Key Files**: [`src/shared/di/container.py`](mdc:src/shared/di/container.py)
+
+```python
+# DI Container configuration for desktop services
+class ApplicationContainer:
+    def __init__(self):
+        self._services = {}
+        self._singletons = {}
+    
+    def register_singleton(self, interface: Type[T], implementation: Type[T]):
+        self._services[interface] = (implementation, 'singleton')
+    
+    def configure_services(self):
+        # Audio services
+        self.register_singleton(IAudioService, PyAudioService)
+        self.register_singleton(IAudioRepository, JsonAudioRepository)
+        
+        # Transcription services  
+        self.register_singleton(ITranscriptionService, ONNXTranscriptionService)
+        self.register_singleton(IModelRepository, FileSystemModelRepository)
+        
+        # UI services
+        self.register_singleton(INotificationService, QtNotificationService)
+        self.register_singleton(ITrayService, QtSystemTrayService)
+
+# Handler with injected dependencies
+class TranscribeAudioHandler:
+    def __init__(self, 
+                 transcription_service: ITranscriptionService,
+                 model_repository: IModelRepository,
+                 notification_service: INotificationService):
+        self._transcription_service = transcription_service
+        self._model_repository = model_repository
+        self._notification_service = notification_service
+```
+
+### 3. Feature Discovery and Registration
+
+**Purpose**: Automatic registration of feature slices for maintainable architecture
+**Implementation**: Runtime discovery of commands, queries, and handlers
+**Key Files**: [`src/shared/discovery/`](mdc:src/shared/discovery/)
+
+```python
+# Feature discovery for desktop application
+def discover_features(features_package: str = "src.features") -> List[FeatureInfo]:
+    feature_modules = discover_modules(features_package)
+    features = []
+    
+    for module in feature_modules:
+        commands = find_commands_in_module(module)
+        queries = find_queries_in_module(module)
+        handlers = find_handlers_in_module(module)
+        ui_components = find_ui_components_in_module(module)
+        
+        features.append(FeatureInfo(
+            name=module.__name__.split('.')[-1],
+            commands=commands,
+            queries=queries,
+            handlers=handlers,
+            ui_components=ui_components
+        ))
+    
+    return features
+
+# Registration in main application
+def configure_application() -> Application:
+    container = ApplicationContainer()
+    container.configure_services()
+    
+    mediator = Mediator(container)
+    
+    # Auto-register all feature handlers
+    features = discover_features()
+    for feature in features:
+        for handler in feature.handlers:
+            mediator.register_handler(handler)
+    
+    return Application(container, mediator)
+```
+
+### 4. Event Bus for Desktop Inter-Component Communication
+
+**Purpose**: Decoupled communication between UI components and background services
+**Implementation**: Qt signals/slots integration with domain events
+**Key Files**: [`src/shared/events/`](mdc:src/shared/events/)
+
+```python
+# Desktop event bus using Qt signals
+class DesktopEventBus(QObject):
+    # Qt signals for UI updates
+    recording_started = pyqtSignal(str)  # session_id
+    transcription_completed = pyqtSignal(str, str)  # session_id, text
+    model_loaded = pyqtSignal(str)  # model_name
+    error_occurred = pyqtSignal(str, str)  # operation, error_message
+    
+    def __init__(self):
+        super().__init__()
+        self._handlers = {}
+    
+    def publish(self, event: DomainEvent):
+        """Publish domain event and emit corresponding Qt signal"""
+        # Handle domain events
+        if isinstance(event, RecordingStarted):
+            self.recording_started.emit(event.session_id)
+        elif isinstance(event, TranscriptionCompleted):
+            self.transcription_completed.emit(event.session_id, event.text)
+        elif isinstance(event, ModelLoaded):
+            self.model_loaded.emit(event.model_name)
+        
+        # Call registered handlers
+        event_type = type(event)
+        if event_type in self._handlers:
+            for handler in self._handlers[event_type]:
+                handler.handle(event)
+
+# Usage in UI components
+class MainWindow(QMainWindow):
+    def __init__(self, event_bus: DesktopEventBus):
+        super().__init__()
+        self._event_bus = event_bus
+        
+        # Connect Qt signals to UI updates
+        self._event_bus.recording_started.connect(self._on_recording_started)
+        self._event_bus.transcription_completed.connect(self._on_transcription_completed)
+        self._event_bus.error_occurred.connect(self._show_error_message)
+    
+    def _on_recording_started(self, session_id: str):
+        self.status_label.setText(f"Recording session {session_id[:8]}...")
+        self.record_button.setText("Stop Recording")
+```
+
+## Desktop-Specific Development Workflow
+
+### 1. Adding New Features (Vertical Slices)
+
+1. Create feature directory in `src/features/[feature_name]/`
+1. Define commands and queries with `@dataclass`
+1. Implement handlers with dependency injection
+1. Create UI components inheriting from Qt widgets
+1. Define feature API for cross-feature communication
+1. Register with auto-discovery system
+
+### 2. Domain Modeling for Audio/Transcription
+
+1. Create entities in `src/domain/[domain]/entities/` (AudioSession, TranscriptionResult)
+1. Create value objects for audio parameters (AudioConfiguration, Language, ModelType)
+1. Define domain events for async operations (RecordingStarted, ModelLoaded)
+1. Implement business rules using Result pattern
+1. Add validation for audio/ML constraints
+
+### 3. Desktop Infrastructure Integration
+
+1. Create Qt-based adapters in `src/infrastructure/ui/`
+1. Implement PyAudio services in `src/infrastructure/audio/`
+1. Handle ONNX models in `src/infrastructure/ml/`
+1. Use JSON file persistence in `src/infrastructure/persistence/`
+
+### 4. Testing Strategy for Desktop Applications
+
+1. **Unit Tests**: Test domain logic without Qt dependencies
+1. **Integration Tests**: Test complete feature workflows
+1. **UI Tests**: Test PyQt components with QTest
+1. **Hardware Tests**: Mock audio devices and file operations
+
+**Rules**: [Code Quality and Testing Rules](mdc:.cursor/rules/code-quality-testing-rules.mdc)
+
+## Desktop Application Lifecycle
+
+### Development Mode
+
+- Runtime feature discovery for fast development cycles
+- Verbose logging for debugging audio/ML operations
+- Hot-reload for UI components (where possible)
+- Mock audio devices for testing
+
+### Production Mode
+
+- Static feature registration for fast startup
+- Optimized model loading and caching
+- Single instance enforcement
+- System tray integration
+- Error reporting and crash handling
+
+```python
+# Application startup configuration
+def main():
+    app = QApplication(sys.argv)
+    
+    # Configure application
+    container = ApplicationContainer()
+    container.configure_services()
+    
+    # Setup features
+    features = discover_features() if DEBUG else load_static_features()
+    mediator = configure_mediator(container, features)
+    
+    # Create main window
+    main_window = MainWindow(mediator, container.resolve(IEventBus))
+    
+    # System integration
+    if not DEBUG:
+        setup_single_instance()
+        setup_system_tray(main_window)
+        setup_crash_reporting()
+    
+    main_window.show()
+    sys.exit(app.exec_())
+```
+
+## Architectural Benefits for Desktop Applications
+
+### 1. Maintainability
+
+- **Feature isolation**: Audio, transcription, and settings are independent
+- **Qt abstraction**: UI framework details isolated from business logic
+- **Clear boundaries**: Domain, feature, and infrastructure layers well-defined
+- **Rich domain models**: Audio and transcription logic centralized
+
+### 2. Testability
+
+- **Domain isolation**: Business logic testable without Qt or PyAudio
+- **Dependency injection**: Easy mocking of audio devices and ML models
+- **Result pattern**: Explicit error testing for audio/ML operations
+- **Feature slices**: Complete audio workflows testable in isolation
+
+### 3. Performance
+
+- **Async operations**: Background transcription and model loading
+- **Efficient caching**: Models cached between sessions
+- **Resource management**: Properly dispose of audio resources
+- **Responsive UI**: Long operations don't block Qt event loop
+
+### 4. Developer Experience
+
+- **Feature discovery**: Minimal boilerplate for new features
+- **Type safety**: Comprehensive type hints for audio/ML operations
+- **Consistent patterns**: Same patterns across all features
+- **Desktop tooling**: Integrated with desktop development workflow
+
+## Key Files Reference
+
+- **Domain Rules**: [domain-layer-rules.mdc](mdc:.cursor/rules/domain-layer-rules.mdc)
+- **Feature Rules**: [feature-layer-rules.mdc](mdc:.cursor/rules/feature-layer-rules.mdc)
+- **Infrastructure Rules**: [infrastructure-layer-rules.mdc](mdc:.cursor/rules/infrastructure-layer-rules.mdc)
+- **Error Handling**: [error-handling-rules.mdc](mdc:.cursor/rules/error-handling-rules.mdc)
+- **Code Quality**: [code-quality-testing-rules.mdc](mdc:.cursor/rules/code-quality-testing-rules.mdc)
+- **Domain Common**: [src/domain/common/](mdc:src/domain/common/)
+- **Audio Recording Feature**: [src/features/audio_recording/](mdc:src/features/audio_recording/)
+- **Transcription Feature**: [src/features/transcription/](mdc:src/features/transcription/)
+- **Main Application**: [src/main.py](mdc:src/main.py)
+- **DI Container**: [src/shared/di/container.py](mdc:src/shared/di/container.py)
+- **Feature Discovery**: [src/shared/discovery/](mdc:src/shared/discovery/)
+
+This architecture provides a solid foundation for building maintainable, scalable, and testable desktop applications while enforcing consistent patterns and best practices across the entire audio transcription codebase.
+
+## 🏗️ DDD Feature Development Workflow for WinSTT
+
+When adding new features to the audio transcription application, follow this systematic approach:
+
+### 1. Identify Business Entity Type
+
+**Determine if your business concept is:**
+
+- **Entity**: Has identity and lifecycle (e.g., AudioSession, TranscriptionJob, ModelInstance)
+- **Aggregate Root**: Entity that serves as consistency boundary (e.g., AudioSession, UserPreferences)
+- **Value Object**: Immutable object defined by its values (e.g., AudioConfiguration, Language, ModelType)
+
+### 2. Create Aggregate Root / Entity
+
+**Create your domain model in `src/domain/[domain]/entities/`:**
+
+- Use factory methods for creation with validation
+- Implement business logic as methods (start_recording, validate_audio_format)
+- Add domain events for important state changes (RecordingStarted, ModelLoaded)
+- Follow audio/ML-specific invariant validation patterns
+
+### 3. Create Value Objects
+
+**Encapsulate validation rules in `src/domain/[domain]/value_objects/`:**
+
+- Audio parameters (sample rate, channels, bit depth)
+- Model configurations (quantization, context length)
+- File paths and formats
+- Use `@dataclass(frozen=True)` for immutability
+
+### 4. Create Infrastructure Adapters
+
+**Mirror domain needs in `src/infrastructure/[type]/`:**
+
+- PyAudio adapters for audio device management
+- ONNX runtime adapters for model inference
+- JSON file adapters for persistence
+- Qt widget adapters for UI components
+
+### 5. Create Mappers
+
+**Map between domain and infrastructure in appropriate adapters:**
+
+- Implement `to_domain()` and `to_infrastructure()` methods
+- Handle audio format conversions carefully
+- Preserve model state and session information
+- Convert between Qt widgets and domain events
+
+### 6. Identify Feature Type
+
+**Determine if your feature is:**
+
+- **Command**: Changes system state (StartRecording, LoadModel, UpdateSettings)
+- **Query**: Retrieves data without side effects (GetRecordingStatus, GetAvailableModels)
+
+### 7. Create Command or Query
+
+**For Commands (`src/features/[feature]/commands/`):**
+
+- Audio operations (recording, processing, format conversion)
+- Model operations (loading, downloading, switching)
+- Settings operations (updating preferences, hotkeys)
+
+**For Queries (`src/features/[feature]/queries/`):**
+
+- Status information (recording state, model status)
+- Available resources (audio devices, installed models)
+- Historical data (transcription history, usage statistics)
+
+### 8. Create Handlers
+
+**Orchestrate domain and infrastructure in `src/features/[feature]/handlers/`:**
+
+- Use dependency injection for audio/ML services
+- Implement proper error handling for hardware failures
+- Coordinate async operations (model loading, transcription)
+- Handle Qt thread safety for UI updates
+
+### 9. Create UI Components
+
+**Build PyQt interfaces in `src/features/[feature]/ui/`:**
+
+- Recording controls with real-time feedback
+- Progress indicators for long-running operations
+- Settings dialogs with validation
+- System tray integration for background operations
+
+### Desktop-Specific Service Contracts
+
+**For external services:**
+
+- Define contracts in `src/domain/contracts/`
+- Implement in `src/infrastructure/`
+- Handle Qt signals/slots integration
+- Manage audio device lifecycle
+
+### Feature Integration and Registration
+
+1. **Create feature API**: Define public interface in `api.py`
+1. **Register with container**: Add to `src/shared/di/container.py`
+1. **Connect Qt signals**: Integrate with event bus
+1. **Update main window**: Add UI integration points
+
+### Best Practices for Audio/Transcription Applications
+
+1. **Hardware First**: Always validate audio devices and capabilities
+1. **Rich Audio Models**: Encapsulate audio processing logic in entities
+1. **Async by Default**: Use async/await for ML and audio operations
+1. **Result Pattern**: Use Result<T> for all audio/ML operations that can fail
+1. **Event-Driven UI**: Publish domain events for UI state updates
+1. **Resource Management**: Properly dispose of audio streams and models
+1. **Format Validation**: Validate audio formats in value objects
+1. **Thread Safety**: Ensure Qt operations happen on main thread
+
+### Common Pitfalls to Avoid in Desktop Audio Applications
+
+- ❌ **Blocking UI Thread**: Never perform audio/ML operations on Qt main thread
+- ❌ **Resource Leaks**: Always dispose of PyAudio streams and ONNX sessions
+- ❌ **Direct Hardware Access**: Use audio service abstractions, not direct PyAudio calls
+- ❌ **Synchronous ML**: Never block UI for model loading or transcription
+- ❌ **Ignoring Audio Constraints**: Always validate sample rates, channels, and formats
+- ❌ **Missing Error Handling**: Audio devices can fail at any time
+- ❌ **Thread Unsafe Operations**: Qt widgets must be updated from main thread only
+
+This architecture provides a solid foundation for building maintainable, scalable, and testable applications while enforcing consistent patterns and best practices across the entire codebase.
+
+# WinSTT Architecture Overview
+
+## System Architecture Principles
+
+This desktop application implements **Domain-Driven Design (DDD)** with **Vertical Slice Architecture**, utilizing **MediatR patterns** for clean separation of concerns and maintainable code organization in a PyQt-based desktop environment.
+
+### Core Architectural Patterns
+
+1. **Domain-Driven Design (DDD)**
+
+   - Rich domain models with business logic
+   - Aggregate roots for consistency boundaries
+   - Value objects for type safety
+   - Domain events for decoupling
+   - Result pattern for explicit error handling
+
+1. **Vertical Slice Architecture**
+
+   - Features organized as self-contained slices
+   - Each slice contains all layers (UI → Domain → Infrastructure)
+   - Minimal cross-slice dependencies
+   - Business capability-focused organization
+
+1. **MediatR Pattern**
+
+   - Commands and queries for all business operations
+   - Handlers registered via dependency injection
+   - Centralized request/response processing
+   - Clean separation of concerns
+
+## Layer Structure and Responsibilities
+
+### Domain Layer (`src/domain/`)
+
+**Purpose**: Contains business logic, rules, and domain concepts for audio transcription
+**Key Files**:
+
+- [`src/domain/common/`](mdc:src/domain/common/) - DDD base classes and patterns
+- [`src/domain/audio/entities/`](mdc:src/domain/audio/entities/) - Audio session and recording entities
+- [`src/domain/transcription/entities/`](mdc:src/domain/transcription/entities/) - Transcription result entities
+- [`src/domain/contracts/`](mdc:src/domain/contracts/) - Domain service interfaces
+
+**Rules**: [Domain Layer Rules](mdc:.cursor/rules/domain-layer-rules.mdc)
+
+```python
+# Domain entities with business logic
+class AudioSession(AggregateRoot[str]):
+    def start_recording(self, audio_config: AudioConfiguration) -> Result[None]:
+        # Business rules and validation
+        if self.state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        # VAD validation
+        if not audio_config.vad_enabled and audio_config.min_duration < 0.5:
+            return Result.failure("Minimum duration must be at least 0.5 seconds without VAD")
+        
+        # Domain event for decoupling
+        self.add_domain_event(RecordingStarted(self.id, audio_config, datetime.utcnow()))
+        self._state = RecordingState.RECORDING
+        return Result.success()
+```
+
+### Feature Layer (`src/features/`)
+
+**Purpose**: Self-contained vertical slices that handle complete business capabilities
+**Key Files**:
+
+- [`src/features/audio_recording/`](mdc:src/features/audio_recording/) - Complete audio recording functionality
+- [`src/features/transcription/`](mdc:src/features/transcription/) - Complete transcription functionality
+- [`src/features/settings_management/`](mdc:src/features/settings_management/) - Settings and preferences
+- [`src/features/application_shell/`](mdc:src/features/application_shell/) - Main window and app lifecycle
+
+**Rules**: [Feature Layer Rules](mdc:.cursor/rules/feature-layer-rules.mdc)
+
+```python
+# Vertical slice with complete feature implementation
+# src/features/audio_recording/commands/start_recording.py contains:
+# - Command definition
+# - Handler implementation
+# - Domain coordination
+# - Infrastructure usage
+
+@dataclass
+class StartRecordingCommand:
+    def __init__(self, audio_config: AudioConfiguration, session_id: Optional[str] = None):
+        self.audio_config = audio_config
+        self.session_id = session_id or str(uuid.uuid4())
+
+class StartRecordingHandler:
+    def __init__(self, audio_service: IAudioService, session_repository: IAudioSessionRepository):
+        self._audio_service = audio_service
+        self._session_repository = session_repository
+
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        # Delegate to domain for business logic
+        session_result = AudioSession.create(command.session_id, command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        # Use infrastructure for technical implementation
+        session = session_result.value
+        start_result = session.start_recording(command.audio_config)
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # Persist session state
+        await self._session_repository.save(session)
+        
+        # Start actual recording via infrastructure
+        recording_result = await self._audio_service.start_recording(session.id, command.audio_config)
+        
+        return Result.success(session.id)
+```
+
+### Infrastructure Layer (`src/infrastructure/`)
+
+**Purpose**: Handles technical concerns and external dependencies (PyQt, PyAudio, ONNX, file system)
+**Key Files**:
+
+- [`src/infrastructure/audio/`](mdc:src/infrastructure/audio/) - PyAudio integration and device management
+- [`src/infrastructure/ml/`](mdc:src/infrastructure/ml/) - ONNX runtime and model management
+- [`src/infrastructure/persistence/`](mdc:src/infrastructure/persistence/) - JSON file persistence
+- [`src/infrastructure/ui/`](mdc:src/infrastructure/ui/) - PyQt framework integration
+
+**Rules**: [Infrastructure Layer Rules](mdc:.cursor/rules/infrastructure-layer-rules.mdc)
+
+```python
+# Adapter pattern for domain ↔ infrastructure conversion
+class AudioSessionMapper:
+    @staticmethod
+    def to_domain(file_data: Dict[str, Any]) -> AudioSession:
+        """Convert JSON file data to domain entity."""
+        config = AudioConfiguration(
+            sample_rate=file_data['sample_rate'],
+            channels=file_data['channels'],
+            chunk_size=file_data['chunk_size']
+        )
+        session = AudioSession(
+            session_id=file_data['id'],
+            config=config,
+            state=RecordingState(file_data['state'])
+        )
+        return session
+    
+    @staticmethod
+    def to_persistence(session: AudioSession) -> Dict[str, Any]:
+        """Convert domain entity to JSON file format."""
+        return {
+            'id': session.id,
+            'state': session.state.value,
+            'sample_rate': session.config.sample_rate,
+            'channels': session.config.channels,
+            'chunk_size': session.config.chunk_size,
+            'created_at': session.created_at.isoformat()
+        }
+```
+
+## Key Architectural Patterns
+
+### 1. Result Pattern for Error Handling
+
+**Purpose**: Explicit error handling without exceptions in audio/ML operations
+**Implementation**: Domain uses `Result[T]`, Features use `Result[T]` consistently
+**Rules**: [Error Handling Rules](mdc:.cursor/rules/error-handling-rules.mdc)
+
+```python
+# Domain layer - business logic errors
+def create_audio_session(config: AudioConfiguration) -> Result[AudioSession]:
+    if config.sample_rate not in [16000, 22050, 44100, 48000]:
+        return Result.failure("Unsupported sample rate")
+    if config.channels not in [1, 2]:
+        return Result.failure("Only mono and stereo audio supported")
+    return Result.success(AudioSession(config))
+
+# Feature layer - coordinated operations
+async def handle(self, command: TranscribeAudioCommand) -> Result[TranscriptionResult]:
+    model_result = await self._model_service.load_model(command.model_config)
+    if not model_result.is_success:
+        return Result.failure(f"Failed to load model: {model_result.error}")
+    
+    transcription_result = await self._transcription_service.transcribe(
+        command.audio_data, model_result.value
+    )
+    return transcription_result
+
+# UI layer - user-friendly error presentation
+async def on_start_recording_clicked(self):
+    result = await self._mediator.send(StartRecordingCommand(self._audio_config))
+    if not result.is_success:
+        self._show_error_dialog("Recording Error", result.error)
+    else:
+        self._update_recording_status("Recording started")
+```
+
+### 2. Dependency Injection Pattern
+
+**Purpose**: Loose coupling and testability in desktop environment
+**Implementation**: Custom lightweight container for desktop services
+**Key Files**: [`src/shared/di/container.py`](mdc:src/shared/di/container.py)
+
+```python
+# DI Container configuration for desktop services
+class ApplicationContainer:
+    def __init__(self):
+        self._services = {}
+        self._singletons = {}
+    
+    def register_singleton(self, interface: Type[T], implementation: Type[T]):
+        self._services[interface] = (implementation, 'singleton')
+    
+    def configure_services(self):
+        # Audio services
+        self.register_singleton(IAudioService, PyAudioService)
+        self.register_singleton(IAudioRepository, JsonAudioRepository)
+        
+        # Transcription services  
+        self.register_singleton(ITranscriptionService, ONNXTranscriptionService)
+        self.register_singleton(IModelRepository, FileSystemModelRepository)
+        
+        # UI services
+        self.register_singleton(INotificationService, QtNotificationService)
+        self.register_singleton(ITrayService, QtSystemTrayService)
+
+# Handler with injected dependencies
+class TranscribeAudioHandler:
+    def __init__(self, 
+                 transcription_service: ITranscriptionService,
+                 model_repository: IModelRepository,
+                 notification_service: INotificationService):
+        self._transcription_service = transcription_service
+        self._model_repository = model_repository
+        self._notification_service = notification_service
+```
+
+### 3. Feature Discovery and Registration
+
+**Purpose**: Automatic registration of feature slices for maintainable architecture
+**Implementation**: Runtime discovery of commands, queries, and handlers
+**Key Files**: [`src/shared/discovery/`](mdc:src/shared/discovery/)
+
+```python
+# Feature discovery for desktop application
+def discover_features(features_package: str = "src.features") -> List[FeatureInfo]:
+    feature_modules = discover_modules(features_package)
+    features = []
+    
+    for module in feature_modules:
+        commands = find_commands_in_module(module)
+        queries = find_queries_in_module(module)
+        handlers = find_handlers_in_module(module)
+        ui_components = find_ui_components_in_module(module)
+        
+        features.append(FeatureInfo(
+            name=module.__name__.split('.')[-1],
+            commands=commands,
+            queries=queries,
+            handlers=handlers,
+            ui_components=ui_components
+        ))
+    
+    return features
+
+# Registration in main application
+def configure_application() -> Application:
+    container = ApplicationContainer()
+    container.configure_services()
+    
+    mediator = Mediator(container)
+    
+    # Auto-register all feature handlers
+    features = discover_features()
+    for feature in features:
+        for handler in feature.handlers:
+            mediator.register_handler(handler)
+    
+    return Application(container, mediator)
+```
+
+### 4. Event Bus for Desktop Inter-Component Communication
+
+**Purpose**: Decoupled communication between UI components and background services
+**Implementation**: Qt signals/slots integration with domain events
+**Key Files**: [`src/shared/events/`](mdc:src/shared/events/)
+
+```python
+# Desktop event bus using Qt signals
+class DesktopEventBus(QObject):
+    # Qt signals for UI updates
+    recording_started = pyqtSignal(str)  # session_id
+    transcription_completed = pyqtSignal(str, str)  # session_id, text
+    model_loaded = pyqtSignal(str)  # model_name
+    error_occurred = pyqtSignal(str, str)  # operation, error_message
+    
+    def __init__(self):
+        super().__init__()
+        self._handlers = {}
+    
+    def publish(self, event: DomainEvent):
+        """Publish domain event and emit corresponding Qt signal"""
+        # Handle domain events
+        if isinstance(event, RecordingStarted):
+            self.recording_started.emit(event.session_id)
+        elif isinstance(event, TranscriptionCompleted):
+            self.transcription_completed.emit(event.session_id, event.text)
+        elif isinstance(event, ModelLoaded):
+            self.model_loaded.emit(event.model_name)
+        
+        # Call registered handlers
+        event_type = type(event)
+        if event_type in self._handlers:
+            for handler in self._handlers[event_type]:
+                handler.handle(event)
+
+# Usage in UI components
+class MainWindow(QMainWindow):
+    def __init__(self, event_bus: DesktopEventBus):
+        super().__init__()
+        self._event_bus = event_bus
+        
+        # Connect Qt signals to UI updates
+        self._event_bus.recording_started.connect(self._on_recording_started)
+        self._event_bus.transcription_completed.connect(self._on_transcription_completed)
+        self._event_bus.error_occurred.connect(self._show_error_message)
+    
+    def _on_recording_started(self, session_id: str):
+        self.status_label.setText(f"Recording session {session_id[:8]}...")
+        self.record_button.setText("Stop Recording")
+```
+
+## Desktop-Specific Development Workflow
+
+### 1. Adding New Features (Vertical Slices)
+
+1. Create feature directory in `src/features/[feature_name]/`
+1. Define commands and queries with `@dataclass`
+1. Implement handlers with dependency injection
+1. Create UI components inheriting from Qt widgets
+1. Define feature API for cross-feature communication
+1. Register with auto-discovery system
+
+### 2. Domain Modeling for Audio/Transcription
+
+1. Create entities in `src/domain/[domain]/entities/` (AudioSession, TranscriptionResult)
+1. Create value objects for audio parameters (AudioConfiguration, Language, ModelType)
+1. Define domain events for async operations (RecordingStarted, ModelLoaded)
+1. Implement business rules using Result pattern
+1. Add validation for audio/ML constraints
+
+### 3. Desktop Infrastructure Integration
+
+1. Create Qt-based adapters in `src/infrastructure/ui/`
+1. Implement PyAudio services in `src/infrastructure/audio/`
+1. Handle ONNX models in `src/infrastructure/ml/`
+1. Use JSON file persistence in `src/infrastructure/persistence/`
+
+### 4. Testing Strategy for Desktop Applications
+
+1. **Unit Tests**: Test domain logic without Qt dependencies
+1. **Integration Tests**: Test complete feature workflows
+1. **UI Tests**: Test PyQt components with QTest
+1. **Hardware Tests**: Mock audio devices and file operations
+
+**Rules**: [Code Quality and Testing Rules](mdc:.cursor/rules/code-quality-testing-rules.mdc)
+
+## Desktop Application Lifecycle
+
+### Development Mode
+
+- Runtime feature discovery for fast development cycles
+- Verbose logging for debugging audio/ML operations
+- Hot-reload for UI components (where possible)
+- Mock audio devices for testing
+
+### Production Mode
+
+- Static feature registration for fast startup
+- Optimized model loading and caching
+- Single instance enforcement
+- System tray integration
+- Error reporting and crash handling
+
+```python
+# Application startup configuration
+def main():
+    app = QApplication(sys.argv)
+    
+    # Configure application
+    container = ApplicationContainer()
+    container.configure_services()
+    
+    # Setup features
+    features = discover_features() if DEBUG else load_static_features()
+    mediator = configure_mediator(container, features)
+    
+    # Create main window
+    main_window = MainWindow(mediator, container.resolve(IEventBus))
+    
+    # System integration
+    if not DEBUG:
+        setup_single_instance()
+        setup_system_tray(main_window)
+        setup_crash_reporting()
+    
+    main_window.show()
+    sys.exit(app.exec_())
+```
+
+## Architectural Benefits for Desktop Applications
+
+### 1. Maintainability
+
+- **Feature isolation**: Audio, transcription, and settings are independent
+- **Qt abstraction**: UI framework details isolated from business logic
+- **Clear boundaries**: Domain, feature, and infrastructure layers well-defined
+- **Rich domain models**: Audio and transcription logic centralized
+
+### 2. Testability
+
+- **Domain isolation**: Business logic testable without Qt or PyAudio
+- **Dependency injection**: Easy mocking of audio devices and ML models
+- **Result pattern**: Explicit error testing for audio/ML operations
+- **Feature slices**: Complete audio workflows testable in isolation
+
+### 3. Performance
+
+- **Async operations**: Background transcription and model loading
+- **Efficient caching**: Models cached between sessions
+- **Resource management**: Properly dispose of audio resources
+- **Responsive UI**: Long operations don't block Qt event loop
+
+### 4. Developer Experience
+
+- **Feature discovery**: Minimal boilerplate for new features
+- **Type safety**: Comprehensive type hints for audio/ML operations
+- **Consistent patterns**: Same patterns across all features
+- **Desktop tooling**: Integrated with desktop development workflow
+
+## Key Files Reference
+
+- **Domain Rules**: [domain-layer-rules.mdc](mdc:.cursor/rules/domain-layer-rules.mdc)
+- **Feature Rules**: [feature-layer-rules.mdc](mdc:.cursor/rules/feature-layer-rules.mdc)
+- **Infrastructure Rules**: [infrastructure-layer-rules.mdc](mdc:.cursor/rules/infrastructure-layer-rules.mdc)
+- **Error Handling**: [error-handling-rules.mdc](mdc:.cursor/rules/error-handling-rules.mdc)
+- **Code Quality**: [code-quality-testing-rules.mdc](mdc:.cursor/rules/code-quality-testing-rules.mdc)
+- **Domain Common**: [src/domain/common/](mdc:src/domain/common/)
+- **Audio Recording Feature**: [src/features/audio_recording/](mdc:src/features/audio_recording/)
+- **Transcription Feature**: [src/features/transcription/](mdc:src/features/transcription/)
+- **Main Application**: [src/main.py](mdc:src/main.py)
+- **DI Container**: [src/shared/di/container.py](mdc:src/shared/di/container.py)
+- **Feature Discovery**: [src/shared/discovery/](mdc:src/shared/discovery/)
+
+This architecture provides a solid foundation for building maintainable, scalable, and testable desktop applications while enforcing consistent patterns and best practices across the entire audio transcription codebase.
+
+## 🏗️ DDD Feature Development Workflow for WinSTT
+
+When adding new features to the audio transcription application, follow this systematic approach:
+
+### 1. Identify Business Entity Type
+
+**Determine if your business concept is:**
+
+- **Entity**: Has identity and lifecycle (e.g., AudioSession, TranscriptionJob, ModelInstance)
+- **Aggregate Root**: Entity that serves as consistency boundary (e.g., AudioSession, UserPreferences)
+- **Value Object**: Immutable object defined by its values (e.g., AudioConfiguration, Language, ModelType)
+
+### 2. Create Aggregate Root / Entity
+
+**Create your domain model in `src/domain/[domain]/entities/`:**
+
+- Use factory methods for creation with validation
+- Implement business logic as methods (start_recording, validate_audio_format)
+- Add domain events for important state changes (RecordingStarted, ModelLoaded)
+- Follow audio/ML-specific invariant validation patterns
+
+### 3. Create Value Objects
+
+**Encapsulate validation rules in `src/domain/[domain]/value_objects/`:**
+
+- Audio parameters (sample rate, channels, bit depth)
+- Model configurations (quantization, context length)
+- File paths and formats
+- Use `@dataclass(frozen=True)` for immutability
+
+### 4. Create Infrastructure Adapters
+
+**Mirror domain needs in `src/infrastructure/[type]/`:**
+
+- PyAudio adapters for audio device management
+- ONNX runtime adapters for model inference
+- JSON file adapters for persistence
+- Qt widget adapters for UI components
+
+### 5. Create Mappers
+
+**Map between domain and infrastructure in appropriate adapters:**
+
+- Implement `to_domain()` and `to_infrastructure()` methods
+- Handle audio format conversions carefully
+- Preserve model state and session information
+- Convert between Qt widgets and domain events
+
+### 6. Identify Feature Type
+
+**Determine if your feature is:**
+
+- **Command**: Changes system state (StartRecording, LoadModel, UpdateSettings)
+- **Query**: Retrieves data without side effects (GetRecordingStatus, GetAvailableModels)
+
+### 7. Create Command or Query
+
+**For Commands (`src/features/[feature]/commands/`):**
+
+- Audio operations (recording, processing, format conversion)
+- Model operations (loading, downloading, switching)
+- Settings operations (updating preferences, hotkeys)
+
+**For Queries (`src/features/[feature]/queries/`):**
+
+- Status information (recording state, model status)
+- Available resources (audio devices, installed models)
+- Historical data (transcription history, usage statistics)
+
+### 8. Create Handlers
+
+**Orchestrate domain and infrastructure in `src/features/[feature]/handlers/`:**
+
+- Use dependency injection for audio/ML services
+- Implement proper error handling for hardware failures
+- Coordinate async operations (model loading, transcription)
+- Handle Qt thread safety for UI updates
+
+### 9. Create UI Components
+
+**Build PyQt interfaces in `src/features/[feature]/ui/`:**
+
+- Recording controls with real-time feedback
+- Progress indicators for long-running operations
+- Settings dialogs with validation
+- System tray integration for background operations
+
+### Desktop-Specific Service Contracts
+
+**For external services:**
+
+- Define contracts in `src/domain/contracts/`
+- Implement in `src/infrastructure/`
+- Handle Qt signals/slots integration
+- Manage audio device lifecycle
+
+### Feature Integration and Registration
+
+1. **Create feature API**: Define public interface in `api.py`
+1. **Register with container**: Add to `src/shared/di/container.py`
+1. **Connect Qt signals**: Integrate with event bus
+1. **Update main window**: Add UI integration points
+
+### Best Practices for Audio/Transcription Applications
+
+1. **Hardware First**: Always validate audio devices and capabilities
+1. **Rich Audio Models**: Encapsulate audio processing logic in entities
+1. **Async by Default**: Use async/await for ML and audio operations
+1. **Result Pattern**: Use Result<T> for all audio/ML operations that can fail
+1. **Event-Driven UI**: Publish domain events for UI state updates
+1. **Resource Management**: Properly dispose of audio streams and models
+1. **Format Validation**: Validate audio formats in value objects
+1. **Thread Safety**: Ensure Qt operations happen on main thread
+
+### Common Pitfalls to Avoid in Desktop Audio Applications
+
+- ❌ **Blocking UI Thread**: Never perform audio/ML operations on Qt main thread
+- ❌ **Resource Leaks**: Always dispose of PyAudio streams and ONNX sessions
+- ❌ **Direct Hardware Access**: Use audio service abstractions, not direct PyAudio calls
+- ❌ **Synchronous ML**: Never block UI for model loading or transcription
+- ❌ **Ignoring Audio Constraints**: Always validate sample rates, channels, and formats
+- ❌ **Missing Error Handling**: Audio devices can fail at any time
+- ❌ **Thread Unsafe Operations**: Qt widgets must be updated from main thread only
+
+This architecture provides a solid foundation for building maintainable, scalable, and testable applications while enforcing consistent patterns and best practices across the entire codebase.
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Architecture Overview
+
+## System Architecture Principles
+
+This desktop application implements **Domain-Driven Design (DDD)** with **Vertical Slice Architecture**, utilizing **MediatR patterns** for clean separation of concerns and maintainable code organization in a PyQt-based desktop environment.
+
+### Core Architectural Patterns
+
+1. **Domain-Driven Design (DDD)**
+
+   - Rich domain models with business logic
+   - Aggregate roots for consistency boundaries
+   - Value objects for type safety
+   - Domain events for decoupling
+   - Result pattern for explicit error handling
+
+1. **Vertical Slice Architecture**
+
+   - Features organized as self-contained slices
+   - Each slice contains all layers (UI → Domain → Infrastructure)
+   - Minimal cross-slice dependencies
+   - Business capability-focused organization
+
+1. **MediatR Pattern**
+
+   - Commands and queries for all business operations
+   - Handlers registered via dependency injection
+   - Centralized request/response processing
+   - Clean separation of concerns
+
+## Layer Structure and Responsibilities
+
+### Domain Layer (`src/domain/`)
+
+**Purpose**: Contains business logic, rules, and domain concepts for audio transcription
+**Key Files**:
+
+- [`src/domain/common/`](mdc:src/domain/common/) - DDD base classes and patterns
+- [`src/domain/audio/entities/`](mdc:src/domain/audio/entities/) - Audio session and recording entities
+- [`src/domain/transcription/entities/`](mdc:src/domain/transcription/entities/) - Transcription result entities
+- [`src/domain/contracts/`](mdc:src/domain/contracts/) - Domain service interfaces
+
+**Rules**: [Domain Layer Rules](mdc:.cursor/rules/domain-layer-rules.mdc)
+
+```python
+# Domain entities with business logic
+class AudioSession(AggregateRoot[str]):
+    def start_recording(self, audio_config: AudioConfiguration) -> Result[None]:
+        # Business rules and validation
+        if self.state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        # VAD validation
+        if not audio_config.vad_enabled and audio_config.min_duration < 0.5:
+            return Result.failure("Minimum duration must be at least 0.5 seconds without VAD")
+        
+        # Domain event for decoupling
+        self.add_domain_event(RecordingStarted(self.id, audio_config, datetime.utcnow()))
+        self._state = RecordingState.RECORDING
+        return Result.success()
+```
+
+### Feature Layer (`src/features/`)
+
+**Purpose**: Self-contained vertical slices that handle complete business capabilities
+**Key Files**:
+
+- [`src/features/audio_recording/`](mdc:src/features/audio_recording/) - Complete audio recording functionality
+- [`src/features/transcription/`](mdc:src/features/transcription/) - Complete transcription functionality
+- [`src/features/settings_management/`](mdc:src/features/settings_management/) - Settings and preferences
+- [`src/features/application_shell/`](mdc:src/features/application_shell/) - Main window and app lifecycle
+
+**Rules**: [Feature Layer Rules](mdc:.cursor/rules/feature-layer-rules.mdc)
+
+```python
+# Vertical slice with complete feature implementation
+# src/features/audio_recording/commands/start_recording.py contains:
+# - Command definition
+# - Handler implementation
+# - Domain coordination
+# - Infrastructure usage
+
+@dataclass
+class StartRecordingCommand:
+    def __init__(self, audio_config: AudioConfiguration, session_id: Optional[str] = None):
+        self.audio_config = audio_config
+        self.session_id = session_id or str(uuid.uuid4())
+
+class StartRecordingHandler:
+    def __init__(self, audio_service: IAudioService, session_repository: IAudioSessionRepository):
+        self._audio_service = audio_service
+        self._session_repository = session_repository
+
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        # Delegate to domain for business logic
+        session_result = AudioSession.create(command.session_id, command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        # Use infrastructure for technical implementation
+        session = session_result.value
+        start_result = session.start_recording(command.audio_config)
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # Persist session state
+        await self._session_repository.save(session)
+        
+        # Start actual recording via infrastructure
+        recording_result = await self._audio_service.start_recording(session.id, command.audio_config)
+        
+        return Result.success(session.id)
+```
+
+### Infrastructure Layer (`src/infrastructure/`)
+
+**Purpose**: Handles technical concerns and external dependencies (PyQt, PyAudio, ONNX, file system)
+**Key Files**:
+
+- [`src/infrastructure/audio/`](mdc:src/infrastructure/audio/) - PyAudio integration and device management
+- [`src/infrastructure/ml/`](mdc:src/infrastructure/ml/) - ONNX runtime and model management
+- [`src/infrastructure/persistence/`](mdc:src/infrastructure/persistence/) - JSON file persistence
+- [`src/infrastructure/ui/`](mdc:src/infrastructure/ui/) - PyQt framework integration
+
+**Rules**: [Infrastructure Layer Rules](mdc:.cursor/rules/infrastructure-layer-rules.mdc)
+
+```python
+# Adapter pattern for domain ↔ infrastructure conversion
+class AudioSessionMapper:
+    @staticmethod
+    def to_domain(file_data: Dict[str, Any]) -> AudioSession:
+        """Convert JSON file data to domain entity."""
+        config = AudioConfiguration(
+            sample_rate=file_data['sample_rate'],
+            channels=file_data['channels'],
+            chunk_size=file_data['chunk_size']
+        )
+        session = AudioSession(
+            session_id=file_data['id'],
+            config=config,
+            state=RecordingState(file_data['state'])
+        )
+        return session
+    
+    @staticmethod
+    def to_persistence(session: AudioSession) -> Dict[str, Any]:
+        """Convert domain entity to JSON file format."""
+        return {
+            'id': session.id,
+            'state': session.state.value,
+            'sample_rate': session.config.sample_rate,
+            'channels': session.config.channels,
+            'chunk_size': session.config.chunk_size,
+            'created_at': session.created_at.isoformat()
+        }
+```
+
+## Key Architectural Patterns
+
+### 1. Result Pattern for Error Handling
+
+**Purpose**: Explicit error handling without exceptions in audio/ML operations
+**Implementation**: Domain uses `Result[T]`, Features use `Result[T]` consistently
+**Rules**: [Error Handling Rules](mdc:.cursor/rules/error-handling-rules.mdc)
+
+```python
+# Domain layer - business logic errors
+def create_audio_session(config: AudioConfiguration) -> Result[AudioSession]:
+    if config.sample_rate not in [16000, 22050, 44100, 48000]:
+        return Result.failure("Unsupported sample rate")
+    if config.channels not in [1, 2]:
+        return Result.failure("Only mono and stereo audio supported")
+    return Result.success(AudioSession(config))
+
+# Feature layer - coordinated operations
+async def handle(self, command: TranscribeAudioCommand) -> Result[TranscriptionResult]:
+    model_result = await self._model_service.load_model(command.model_config)
+    if not model_result.is_success:
+        return Result.failure(f"Failed to load model: {model_result.error}")
+    
+    transcription_result = await self._transcription_service.transcribe(
+        command.audio_data, model_result.value
+    )
+    return transcription_result
+
+# UI layer - user-friendly error presentation
+async def on_start_recording_clicked(self):
+    result = await self._mediator.send(StartRecordingCommand(self._audio_config))
+    if not result.is_success:
+        self._show_error_dialog("Recording Error", result.error)
+    else:
+        self._update_recording_status("Recording started")
+```
+
+### 2. Dependency Injection Pattern
+
+**Purpose**: Loose coupling and testability in desktop environment
+**Implementation**: Custom lightweight container for desktop services
+**Key Files**: [`src/shared/di/container.py`](mdc:src/shared/di/container.py)
+
+```python
+# DI Container configuration for desktop services
+class ApplicationContainer:
+    def __init__(self):
+        self._services = {}
+        self._singletons = {}
+    
+    def register_singleton(self, interface: Type[T], implementation: Type[T]):
+        self._services[interface] = (implementation, 'singleton')
+    
+    def configure_services(self):
+        # Audio services
+        self.register_singleton(IAudioService, PyAudioService)
+        self.register_singleton(IAudioRepository, JsonAudioRepository)
+        
+        # Transcription services  
+        self.register_singleton(ITranscriptionService, ONNXTranscriptionService)
+        self.register_singleton(IModelRepository, FileSystemModelRepository)
+        
+        # UI services
+        self.register_singleton(INotificationService, QtNotificationService)
+        self.register_singleton(ITrayService, QtSystemTrayService)
+
+# Handler with injected dependencies
+class TranscribeAudioHandler:
+    def __init__(self, 
+                 transcription_service: ITranscriptionService,
+                 model_repository: IModelRepository,
+                 notification_service: INotificationService):
+        self._transcription_service = transcription_service
+        self._model_repository = model_repository
+        self._notification_service = notification_service
+```
+
+### 3. Feature Discovery and Registration
+
+**Purpose**: Automatic registration of feature slices for maintainable architecture
+**Implementation**: Runtime discovery of commands, queries, and handlers
+**Key Files**: [`src/shared/discovery/`](mdc:src/shared/discovery/)
+
+```python
+# Feature discovery for desktop application
+def discover_features(features_package: str = "src.features") -> List[FeatureInfo]:
+    feature_modules = discover_modules(features_package)
+    features = []
+    
+    for module in feature_modules:
+        commands = find_commands_in_module(module)
+        queries = find_queries_in_module(module)
+        handlers = find_handlers_in_module(module)
+        ui_components = find_ui_components_in_module(module)
+        
+        features.append(FeatureInfo(
+            name=module.__name__.split('.')[-1],
+            commands=commands,
+            queries=queries,
+            handlers=handlers,
+            ui_components=ui_components
+        ))
+    
+    return features
+
+# Registration in main application
+def configure_application() -> Application:
+    container = ApplicationContainer()
+    container.configure_services()
+    
+    mediator = Mediator(container)
+    
+    # Auto-register all feature handlers
+    features = discover_features()
+    for feature in features:
+        for handler in feature.handlers:
+            mediator.register_handler(handler)
+    
+    return Application(container, mediator)
+```
+
+### 4. Event Bus for Desktop Inter-Component Communication
+
+**Purpose**: Decoupled communication between UI components and background services
+**Implementation**: Qt signals/slots integration with domain events
+**Key Files**: [`src/shared/events/`](mdc:src/shared/events/)
+
+```python
+# Desktop event bus using Qt signals
+class DesktopEventBus(QObject):
+    # Qt signals for UI updates
+    recording_started = pyqtSignal(str)  # session_id
+    transcription_completed = pyqtSignal(str, str)  # session_id, text
+    model_loaded = pyqtSignal(str)  # model_name
+    error_occurred = pyqtSignal(str, str)  # operation, error_message
+    
+    def __init__(self):
+        super().__init__()
+        self._handlers = {}
+    
+    def publish(self, event: DomainEvent):
+        """Publish domain event and emit corresponding Qt signal"""
+        # Handle domain events
+        if isinstance(event, RecordingStarted):
+            self.recording_started.emit(event.session_id)
+        elif isinstance(event, TranscriptionCompleted):
+            self.transcription_completed.emit(event.session_id, event.text)
+        elif isinstance(event, ModelLoaded):
+            self.model_loaded.emit(event.model_name)
+        
+        # Call registered handlers
+        event_type = type(event)
+        if event_type in self._handlers:
+            for handler in self._handlers[event_type]:
+                handler.handle(event)
+
+# Usage in UI components
+class MainWindow(QMainWindow):
+    def __init__(self, event_bus: DesktopEventBus):
+        super().__init__()
+        self._event_bus = event_bus
+        
+        # Connect Qt signals to UI updates
+        self._event_bus.recording_started.connect(self._on_recording_started)
+        self._event_bus.transcription_completed.connect(self._on_transcription_completed)
+        self._event_bus.error_occurred.connect(self._show_error_message)
+    
+    def _on_recording_started(self, session_id: str):
+        self.status_label.setText(f"Recording session {session_id[:8]}...")
+        self.record_button.setText("Stop Recording")
+```
+
+## Desktop-Specific Development Workflow
+
+### 1. Adding New Features (Vertical Slices)
+
+1. Create feature directory in `src/features/[feature_name]/`
+1. Define commands and queries with `@dataclass`
+1. Implement handlers with dependency injection
+1. Create UI components inheriting from Qt widgets
+1. Define feature API for cross-feature communication
+1. Register with auto-discovery system
+
+### 2. Domain Modeling for Audio/Transcription
+
+1. Create entities in `src/domain/[domain]/entities/` (AudioSession, TranscriptionResult)
+1. Create value objects for audio parameters (AudioConfiguration, Language, ModelType)
+1. Define domain events for async operations (RecordingStarted, ModelLoaded)
+1. Implement business rules using Result pattern
+1. Add validation for audio/ML constraints
+
+### 3. Desktop Infrastructure Integration
+
+1. Create Qt-based adapters in `src/infrastructure/ui/`
+1. Implement PyAudio services in `src/infrastructure/audio/`
+1. Handle ONNX models in `src/infrastructure/ml/`
+1. Use JSON file persistence in `src/infrastructure/persistence/`
+
+### 4. Testing Strategy for Desktop Applications
+
+1. **Unit Tests**: Test domain logic without Qt dependencies
+1. **Integration Tests**: Test complete feature workflows
+1. **UI Tests**: Test PyQt components with QTest
+1. **Hardware Tests**: Mock audio devices and file operations
+
+**Rules**: [Code Quality and Testing Rules](mdc:.cursor/rules/code-quality-testing-rules.mdc)
+
+## Desktop Application Lifecycle
+
+### Development Mode
+
+- Runtime feature discovery for fast development cycles
+- Verbose logging for debugging audio/ML operations
+- Hot-reload for UI components (where possible)
+- Mock audio devices for testing
+
+### Production Mode
+
+- Static feature registration for fast startup
+- Optimized model loading and caching
+- Single instance enforcement
+- System tray integration
+- Error reporting and crash handling
+
+```python
+# Application startup configuration
+def main():
+    app = QApplication(sys.argv)
+    
+    # Configure application
+    container = ApplicationContainer()
+    container.configure_services()
+    
+    # Setup features
+    features = discover_features() if DEBUG else load_static_features()
+    mediator = configure_mediator(container, features)
+    
+    # Create main window
+    main_window = MainWindow(mediator, container.resolve(IEventBus))
+    
+    # System integration
+    if not DEBUG:
+        setup_single_instance()
+        setup_system_tray(main_window)
+        setup_crash_reporting()
+    
+    main_window.show()
+    sys.exit(app.exec_())
+```
+
+## Architectural Benefits for Desktop Applications
+
+### 1. Maintainability
+
+- **Feature isolation**: Audio, transcription, and settings are independent
+- **Qt abstraction**: UI framework details isolated from business logic
+- **Clear boundaries**: Domain, feature, and infrastructure layers well-defined
+- **Rich domain models**: Audio and transcription logic centralized
+
+### 2. Testability
+
+- **Domain isolation**: Business logic testable without Qt or PyAudio
+- **Dependency injection**: Easy mocking of audio devices and ML models
+- **Result pattern**: Explicit error testing for audio/ML operations
+- **Feature slices**: Complete audio workflows testable in isolation
+
+### 3. Performance
+
+- **Async operations**: Background transcription and model loading
+- **Efficient caching**: Models cached between sessions
+- **Resource management**: Properly dispose of audio resources
+- **Responsive UI**: Long operations don't block Qt event loop
+
+### 4. Developer Experience
+
+- **Feature discovery**: Minimal boilerplate for new features
+- **Type safety**: Comprehensive type hints for audio/ML operations
+- **Consistent patterns**: Same patterns across all features
+- **Desktop tooling**: Integrated with desktop development workflow
+
+## Key Files Reference
+
+- **Domain Rules**: [domain-layer-rules.mdc](mdc:.cursor/rules/domain-layer-rules.mdc)
+- **Feature Rules**: [feature-layer-rules.mdc](mdc:.cursor/rules/feature-layer-rules.mdc)
+- **Infrastructure Rules**: [infrastructure-layer-rules.mdc](mdc:.cursor/rules/infrastructure-layer-rules.mdc)
+- **Error Handling**: [error-handling-rules.mdc](mdc:.cursor/rules/error-handling-rules.mdc)
+- **Code Quality**: [code-quality-testing-rules.mdc](mdc:.cursor/rules/code-quality-testing-rules.mdc)
+- **Domain Common**: [src/domain/common/](mdc:src/domain/common/)
+- **Audio Recording Feature**: [src/features/audio_recording/](mdc:src/features/audio_recording/)
+- **Transcription Feature**: [src/features/transcription/](mdc:src/features/transcription/)
+- **Main Application**: [src/main.py](mdc:src/main.py)
+- **DI Container**: [src/shared/di/container.py](mdc:src/shared/di/container.py)
+- **Feature Discovery**: [src/shared/discovery/](mdc:src/shared/discovery/)
+
+This architecture provides a solid foundation for building maintainable, scalable, and testable desktop applications while enforcing consistent patterns and best practices across the entire audio transcription codebase.
+
+## 🏗️ DDD Feature Development Workflow for WinSTT
+
+When adding new features to the audio transcription application, follow this systematic approach:
+
+### 1. Identify Business Entity Type
+
+**Determine if your business concept is:**
+
+- **Entity**: Has identity and lifecycle (e.g., AudioSession, TranscriptionJob, ModelInstance)
+- **Aggregate Root**: Entity that serves as consistency boundary (e.g., AudioSession, UserPreferences)
+- **Value Object**: Immutable object defined by its values (e.g., AudioConfiguration, Language, ModelType)
+
+### 2. Create Aggregate Root / Entity
+
+**Create your domain model in `src/domain/[domain]/entities/`:**
+
+- Use factory methods for creation with validation
+- Implement business logic as methods (start_recording, validate_audio_format)
+- Add domain events for important state changes (RecordingStarted, ModelLoaded)
+- Follow audio/ML-specific invariant validation patterns
+
+### 3. Create Value Objects
+
+**Encapsulate validation rules in `src/domain/[domain]/value_objects/`:**
+
+- Audio parameters (sample rate, channels, bit depth)
+- Model configurations (quantization, context length)
+- File paths and formats
+- Use `@dataclass(frozen=True)` for immutability
+
+### 4. Create Infrastructure Adapters
+
+**Mirror domain needs in `src/infrastructure/[type]/`:**
+
+- PyAudio adapters for audio device management
+- ONNX runtime adapters for model inference
+- JSON file adapters for persistence
+- Qt widget adapters for UI components
+
+### 5. Create Mappers
+
+**Map between domain and infrastructure in appropriate adapters:**
+
+- Implement `to_domain()` and `to_infrastructure()` methods
+- Handle audio format conversions carefully
+- Preserve model state and session information
+- Convert between Qt widgets and domain events
+
+### 6. Identify Feature Type
+
+**Determine if your feature is:**
+
+- **Command**: Changes system state (StartRecording, LoadModel, UpdateSettings)
+- **Query**: Retrieves data without side effects (GetRecordingStatus, GetAvailableModels)
+
+### 7. Create Command or Query
+
+**For Commands (`src/features/[feature]/commands/`):**
+
+- Audio operations (recording, processing, format conversion)
+- Model operations (loading, downloading, switching)
+- Settings operations (updating preferences, hotkeys)
+
+**For Queries (`src/features/[feature]/queries/`):**
+
+- Status information (recording state, model status)
+- Available resources (audio devices, installed models)
+- Historical data (transcription history, usage statistics)
+
+### 8. Create Handlers
+
+**Orchestrate domain and infrastructure in `src/features/[feature]/handlers/`:**
+
+- Use dependency injection for audio/ML services
+- Implement proper error handling for hardware failures
+- Coordinate async operations (model loading, transcription)
+- Handle Qt thread safety for UI updates
+
+### 9. Create UI Components
+
+**Build PyQt interfaces in `src/features/[feature]/ui/`:**
+
+- Recording controls with real-time feedback
+- Progress indicators for long-running operations
+- Settings dialogs with validation
+- System tray integration for background operations
+
+### Desktop-Specific Service Contracts
+
+**For external services:**
+
+- Define contracts in `src/domain/contracts/`
+- Implement in `src/infrastructure/`
+- Handle Qt signals/slots integration
+- Manage audio device lifecycle
+
+### Feature Integration and Registration
+
+1. **Create feature API**: Define public interface in `api.py`
+1. **Register with container**: Add to `src/shared/di/container.py`
+1. **Connect Qt signals**: Integrate with event bus
+1. **Update main window**: Add UI integration points
+
+### Best Practices for Audio/Transcription Applications
+
+1. **Hardware First**: Always validate audio devices and capabilities
+1. **Rich Audio Models**: Encapsulate audio processing logic in entities
+1. **Async by Default**: Use async/await for ML and audio operations
+1. **Result Pattern**: Use Result<T> for all audio/ML operations that can fail
+1. **Event-Driven UI**: Publish domain events for UI state updates
+1. **Resource Management**: Properly dispose of audio streams and models
+1. **Format Validation**: Validate audio formats in value objects
+1. **Thread Safety**: Ensure Qt operations happen on main thread
+
+### Common Pitfalls to Avoid in Desktop Audio Applications
+
+- ❌ **Blocking UI Thread**: Never perform audio/ML operations on Qt main thread
+- ❌ **Resource Leaks**: Always dispose of PyAudio streams and ONNX sessions
+- ❌ **Direct Hardware Access**: Use audio service abstractions, not direct PyAudio calls
+- ❌ **Synchronous ML**: Never block UI for model loading or transcription
+- ❌ **Ignoring Audio Constraints**: Always validate sample rates, channels, and formats
+- ❌ **Missing Error Handling**: Audio devices can fail at any time
+- ❌ **Thread Unsafe Operations**: Qt widgets must be updated from main thread only
+
+This architecture provides a solid foundation for building maintainable, scalable, and testable applications while enforcing consistent patterns and best practices across the entire codebase.
+
+# WinSTT Architecture Overview
+
+## System Architecture Principles
+
+This desktop application implements **Domain-Driven Design (DDD)** with **Vertical Slice Architecture**, utilizing **MediatR patterns** for clean separation of concerns and maintainable code organization in a PyQt-based desktop environment.
+
+### Core Architectural Patterns
+
+1. **Domain-Driven Design (DDD)**
+
+   - Rich domain models with business logic
+   - Aggregate roots for consistency boundaries
+   - Value objects for type safety
+   - Domain events for decoupling
+   - Result pattern for explicit error handling
+
+1. **Vertical Slice Architecture**
+
+   - Features organized as self-contained slices
+   - Each slice contains all layers (UI → Domain → Infrastructure)
+   - Minimal cross-slice dependencies
+   - Business capability-focused organization
+
+1. **MediatR Pattern**
+
+   - Commands and queries for all business operations
+   - Handlers registered via dependency injection
+   - Centralized request/response processing
+   - Clean separation of concerns
+
+## Layer Structure and Responsibilities
+
+### Domain Layer (`src/domain/`)
+
+**Purpose**: Contains business logic, rules, and domain concepts for audio transcription
+**Key Files**:
+
+- [`src/domain/common/`](mdc:src/domain/common/) - DDD base classes and patterns
+- [`src/domain/audio/entities/`](mdc:src/domain/audio/entities/) - Audio session and recording entities
+- [`src/domain/transcription/entities/`](mdc:src/domain/transcription/entities/) - Transcription result entities
+- [`src/domain/contracts/`](mdc:src/domain/contracts/) - Domain service interfaces
+
+**Rules**: [Domain Layer Rules](mdc:.cursor/rules/domain-layer-rules.mdc)
+
+```python
+# Domain entities with business logic
+class AudioSession(AggregateRoot[str]):
+    def start_recording(self, audio_config: AudioConfiguration) -> Result[None]:
+        # Business rules and validation
+        if self.state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        # VAD validation
+        if not audio_config.vad_enabled and audio_config.min_duration < 0.5:
+            return Result.failure("Minimum duration must be at least 0.5 seconds without VAD")
+        
+        # Domain event for decoupling
+        self.add_domain_event(RecordingStarted(self.id, audio_config, datetime.utcnow()))
+        self._state = RecordingState.RECORDING
+        return Result.success()
+```
+
+### Feature Layer (`src/features/`)
+
+**Purpose**: Self-contained vertical slices that handle complete business capabilities
+**Key Files**:
+
+- [`src/features/audio_recording/`](mdc:src/features/audio_recording/) - Complete audio recording functionality
+- [`src/features/transcription/`](mdc:src/features/transcription/) - Complete transcription functionality
+- [`src/features/settings_management/`](mdc:src/features/settings_management/) - Settings and preferences
+- [`src/features/application_shell/`](mdc:src/features/application_shell/) - Main window and app lifecycle
+
+**Rules**: [Feature Layer Rules](mdc:.cursor/rules/feature-layer-rules.mdc)
+
+```python
+# Vertical slice with complete feature implementation
+# src/features/audio_recording/commands/start_recording.py contains:
+# - Command definition
+# - Handler implementation
+# - Domain coordination
+# - Infrastructure usage
+
+@dataclass
+class StartRecordingCommand:
+    def __init__(self, audio_config: AudioConfiguration, session_id: Optional[str] = None):
+        self.audio_config = audio_config
+        self.session_id = session_id or str(uuid.uuid4())
+
+class StartRecordingHandler:
+    def __init__(self, audio_service: IAudioService, session_repository: IAudioSessionRepository):
+        self._audio_service = audio_service
+        self._session_repository = session_repository
+
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        # Delegate to domain for business logic
+        session_result = AudioSession.create(command.session_id, command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        # Use infrastructure for technical implementation
+        session = session_result.value
+        start_result = session.start_recording(command.audio_config)
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # Persist session state
+        await self._session_repository.save(session)
+        
+        # Start actual recording via infrastructure
+        recording_result = await self._audio_service.start_recording(session.id, command.audio_config)
+        
+        return Result.success(session.id)
+```
+
+### Infrastructure Layer (`src/infrastructure/`)
+
+**Purpose**: Handles technical concerns and external dependencies (PyQt, PyAudio, ONNX, file system)
+**Key Files**:
+
+- [`src/infrastructure/audio/`](mdc:src/infrastructure/audio/) - PyAudio integration and device management
+- [`src/infrastructure/ml/`](mdc:src/infrastructure/ml/) - ONNX runtime and model management
+- [`src/infrastructure/persistence/`](mdc:src/infrastructure/persistence/) - JSON file persistence
+- [`src/infrastructure/ui/`](mdc:src/infrastructure/ui/) - PyQt framework integration
+
+**Rules**: [Infrastructure Layer Rules](mdc:.cursor/rules/infrastructure-layer-rules.mdc)
+
+```python
+# Adapter pattern for domain ↔ infrastructure conversion
+class AudioSessionMapper:
+    @staticmethod
+    def to_domain(file_data: Dict[str, Any]) -> AudioSession:
+        """Convert JSON file data to domain entity."""
+        config = AudioConfiguration(
+            sample_rate=file_data['sample_rate'],
+            channels=file_data['channels'],
+            chunk_size=file_data['chunk_size']
+        )
+        session = AudioSession(
+            session_id=file_data['id'],
+            config=config,
+            state=RecordingState(file_data['state'])
+        )
+        return session
+    
+    @staticmethod
+    def to_persistence(session: AudioSession) -> Dict[str, Any]:
+        """Convert domain entity to JSON file format."""
+        return {
+            'id': session.id,
+            'state': session.state.value,
+            'sample_rate': session.config.sample_rate,
+            'channels': session.config.channels,
+            'chunk_size': session.config.chunk_size,
+            'created_at': session.created_at.isoformat()
+        }
+```
+
+## Key Architectural Patterns
+
+### 1. Result Pattern for Error Handling
+
+**Purpose**: Explicit error handling without exceptions in audio/ML operations
+**Implementation**: Domain uses `Result[T]`, Features use `Result[T]` consistently
+**Rules**: [Error Handling Rules](mdc:.cursor/rules/error-handling-rules.mdc)
+
+```python
+# Domain layer - business logic errors
+def create_audio_session(config: AudioConfiguration) -> Result[AudioSession]:
+    if config.sample_rate not in [16000, 22050, 44100, 48000]:
+        return Result.failure("Unsupported sample rate")
+    if config.channels not in [1, 2]:
+        return Result.failure("Only mono and stereo audio supported")
+    return Result.success(AudioSession(config))
+
+# Feature layer - coordinated operations
+async def handle(self, command: TranscribeAudioCommand) -> Result[TranscriptionResult]:
+    model_result = await self._model_service.load_model(command.model_config)
+    if not model_result.is_success:
+        return Result.failure(f"Failed to load model: {model_result.error}")
+    
+    transcription_result = await self._transcription_service.transcribe(
+        command.audio_data, model_result.value
+    )
+    return transcription_result
+
+# UI layer - user-friendly error presentation
+async def on_start_recording_clicked(self):
+    result = await self._mediator.send(StartRecordingCommand(self._audio_config))
+    if not result.is_success:
+        self._show_error_dialog("Recording Error", result.error)
+    else:
+        self._update_recording_status("Recording started")
+```
+
+### 2. Dependency Injection Pattern
+
+**Purpose**: Loose coupling and testability in desktop environment
+**Implementation**: Custom lightweight container for desktop services
+**Key Files**: [`src/shared/di/container.py`](mdc:src/shared/di/container.py)
+
+```python
+# DI Container configuration for desktop services
+class ApplicationContainer:
+    def __init__(self):
+        self._services = {}
+        self._singletons = {}
+    
+    def register_singleton(self, interface: Type[T], implementation: Type[T]):
+        self._services[interface] = (implementation, 'singleton')
+    
+    def configure_services(self):
+        # Audio services
+        self.register_singleton(IAudioService, PyAudioService)
+        self.register_singleton(IAudioRepository, JsonAudioRepository)
+        
+        # Transcription services  
+        self.register_singleton(ITranscriptionService, ONNXTranscriptionService)
+        self.register_singleton(IModelRepository, FileSystemModelRepository)
+        
+        # UI services
+        self.register_singleton(INotificationService, QtNotificationService)
+        self.register_singleton(ITrayService, QtSystemTrayService)
+
+# Handler with injected dependencies
+class TranscribeAudioHandler:
+    def __init__(self, 
+                 transcription_service: ITranscriptionService,
+                 model_repository: IModelRepository,
+                 notification_service: INotificationService):
+        self._transcription_service = transcription_service
+        self._model_repository = model_repository
+        self._notification_service = notification_service
+```
+
+### 3. Feature Discovery and Registration
+
+**Purpose**: Automatic registration of feature slices for maintainable architecture
+**Implementation**: Runtime discovery of commands, queries, and handlers
+**Key Files**: [`src/shared/discovery/`](mdc:src/shared/discovery/)
+
+```python
+# Feature discovery for desktop application
+def discover_features(features_package: str = "src.features") -> List[FeatureInfo]:
+    feature_modules = discover_modules(features_package)
+    features = []
+    
+    for module in feature_modules:
+        commands = find_commands_in_module(module)
+        queries = find_queries_in_module(module)
+        handlers = find_handlers_in_module(module)
+        ui_components = find_ui_components_in_module(module)
+        
+        features.append(FeatureInfo(
+            name=module.__name__.split('.')[-1],
+            commands=commands,
+            queries=queries,
+            handlers=handlers,
+            ui_components=ui_components
+        ))
+    
+    return features
+
+# Registration in main application
+def configure_application() -> Application:
+    container = ApplicationContainer()
+    container.configure_services()
+    
+    mediator = Mediator(container)
+    
+    # Auto-register all feature handlers
+    features = discover_features()
+    for feature in features:
+        for handler in feature.handlers:
+            mediator.register_handler(handler)
+    
+    return Application(container, mediator)
+```
+
+### 4. Event Bus for Desktop Inter-Component Communication
+
+**Purpose**: Decoupled communication between UI components and background services
+**Implementation**: Qt signals/slots integration with domain events
+**Key Files**: [`src/shared/events/`](mdc:src/shared/events/)
+
+```python
+# Desktop event bus using Qt signals
+class DesktopEventBus(QObject):
+    # Qt signals for UI updates
+    recording_started = pyqtSignal(str)  # session_id
+    transcription_completed = pyqtSignal(str, str)  # session_id, text
+    model_loaded = pyqtSignal(str)  # model_name
+    error_occurred = pyqtSignal(str, str)  # operation, error_message
+    
+    def __init__(self):
+        super().__init__()
+        self._handlers = {}
+    
+    def publish(self, event: DomainEvent):
+        """Publish domain event and emit corresponding Qt signal"""
+        # Handle domain events
+        if isinstance(event, RecordingStarted):
+            self.recording_started.emit(event.session_id)
+        elif isinstance(event, TranscriptionCompleted):
+            self.transcription_completed.emit(event.session_id, event.text)
+        elif isinstance(event, ModelLoaded):
+            self.model_loaded.emit(event.model_name)
+        
+        # Call registered handlers
+        event_type = type(event)
+        if event_type in self._handlers:
+            for handler in self._handlers[event_type]:
+                handler.handle(event)
+
+# Usage in UI components
+class MainWindow(QMainWindow):
+    def __init__(self, event_bus: DesktopEventBus):
+        super().__init__()
+        self._event_bus = event_bus
+        
+        # Connect Qt signals to UI updates
+        self._event_bus.recording_started.connect(self._on_recording_started)
+        self._event_bus.transcription_completed.connect(self._on_transcription_completed)
+        self._event_bus.error_occurred.connect(self._show_error_message)
+    
+    def _on_recording_started(self, session_id: str):
+        self.status_label.setText(f"Recording session {session_id[:8]}...")
+        self.record_button.setText("Stop Recording")
+```
+
+## Desktop-Specific Development Workflow
+
+### 1. Adding New Features (Vertical Slices)
+
+1. Create feature directory in `src/features/[feature_name]/`
+1. Define commands and queries with `@dataclass`
+1. Implement handlers with dependency injection
+1. Create UI components inheriting from Qt widgets
+1. Define feature API for cross-feature communication
+1. Register with auto-discovery system
+
+### 2. Domain Modeling for Audio/Transcription
+
+1. Create entities in `src/domain/[domain]/entities/` (AudioSession, TranscriptionResult)
+1. Create value objects for audio parameters (AudioConfiguration, Language, ModelType)
+1. Define domain events for async operations (RecordingStarted, ModelLoaded)
+1. Implement business rules using Result pattern
+1. Add validation for audio/ML constraints
+
+### 3. Desktop Infrastructure Integration
+
+1. Create Qt-based adapters in `src/infrastructure/ui/`
+1. Implement PyAudio services in `src/infrastructure/audio/`
+1. Handle ONNX models in `src/infrastructure/ml/`
+1. Use JSON file persistence in `src/infrastructure/persistence/`
+
+### 4. Testing Strategy for Desktop Applications
+
+1. **Unit Tests**: Test domain logic without Qt dependencies
+1. **Integration Tests**: Test complete feature workflows
+1. **UI Tests**: Test PyQt components with QTest
+1. **Hardware Tests**: Mock audio devices and file operations
+
+**Rules**: [Code Quality and Testing Rules](mdc:.cursor/rules/code-quality-testing-rules.mdc)
+
+## Desktop Application Lifecycle
+
+### Development Mode
+
+- Runtime feature discovery for fast development cycles
+- Verbose logging for debugging audio/ML operations
+- Hot-reload for UI components (where possible)
+- Mock audio devices for testing
+
+### Production Mode
+
+- Static feature registration for fast startup
+- Optimized model loading and caching
+- Single instance enforcement
+- System tray integration
+- Error reporting and crash handling
+
+```python
+# Application startup configuration
+def main():
+    app = QApplication(sys.argv)
+    
+    # Configure application
+    container = ApplicationContainer()
+    container.configure_services()
+    
+    # Setup features
+    features = discover_features() if DEBUG else load_static_features()
+    mediator = configure_mediator(container, features)
+    
+    # Create main window
+    main_window = MainWindow(mediator, container.resolve(IEventBus))
+    
+    # System integration
+    if not DEBUG:
+        setup_single_instance()
+        setup_system_tray(main_window)
+        setup_crash_reporting()
+    
+    main_window.show()
+    sys.exit(app.exec_())
+```
+
+## Architectural Benefits for Desktop Applications
+
+### 1. Maintainability
+
+- **Feature isolation**: Audio, transcription, and settings are independent
+- **Qt abstraction**: UI framework details isolated from business logic
+- **Clear boundaries**: Domain, feature, and infrastructure layers well-defined
+- **Rich domain models**: Audio and transcription logic centralized
+
+### 2. Testability
+
+- **Domain isolation**: Business logic testable without Qt or PyAudio
+- **Dependency injection**: Easy mocking of audio devices and ML models
+- **Result pattern**: Explicit error testing for audio/ML operations
+- **Feature slices**: Complete audio workflows testable in isolation
+
+### 3. Performance
+
+- **Async operations**: Background transcription and model loading
+- **Efficient caching**: Models cached between sessions
+- **Resource management**: Properly dispose of audio resources
+- **Responsive UI**: Long operations don't block Qt event loop
+
+### 4. Developer Experience
+
+- **Feature discovery**: Minimal boilerplate for new features
+- **Type safety**: Comprehensive type hints for audio/ML operations
+- **Consistent patterns**: Same patterns across all features
+- **Desktop tooling**: Integrated with desktop development workflow
+
+## Key Files Reference
+
+- **Domain Rules**: [domain-layer-rules.mdc](mdc:.cursor/rules/domain-layer-rules.mdc)
+- **Feature Rules**: [feature-layer-rules.mdc](mdc:.cursor/rules/feature-layer-rules.mdc)
+- **Infrastructure Rules**: [infrastructure-layer-rules.mdc](mdc:.cursor/rules/infrastructure-layer-rules.mdc)
+- **Error Handling**: [error-handling-rules.mdc](mdc:.cursor/rules/error-handling-rules.mdc)
+- **Code Quality**: [code-quality-testing-rules.mdc](mdc:.cursor/rules/code-quality-testing-rules.mdc)
+- **Domain Common**: [src/domain/common/](mdc:src/domain/common/)
+- **Audio Recording Feature**: [src/features/audio_recording/](mdc:src/features/audio_recording/)
+- **Transcription Feature**: [src/features/transcription/](mdc:src/features/transcription/)
+- **Main Application**: [src/main.py](mdc:src/main.py)
+- **DI Container**: [src/shared/di/container.py](mdc:src/shared/di/container.py)
+- **Feature Discovery**: [src/shared/discovery/](mdc:src/shared/discovery/)
+
+This architecture provides a solid foundation for building maintainable, scalable, and testable desktop applications while enforcing consistent patterns and best practices across the entire audio transcription codebase.
+
+## 🏗️ DDD Feature Development Workflow for WinSTT
+
+When adding new features to the audio transcription application, follow this systematic approach:
+
+### 1. Identify Business Entity Type
+
+**Determine if your business concept is:**
+
+- **Entity**: Has identity and lifecycle (e.g., AudioSession, TranscriptionJob, ModelInstance)
+- **Aggregate Root**: Entity that serves as consistency boundary (e.g., AudioSession, UserPreferences)
+- **Value Object**: Immutable object defined by its values (e.g., AudioConfiguration, Language, ModelType)
+
+### 2. Create Aggregate Root / Entity
+
+**Create your domain model in `src/domain/[domain]/entities/`:**
+
+- Use factory methods for creation with validation
+- Implement business logic as methods (start_recording, validate_audio_format)
+- Add domain events for important state changes (RecordingStarted, ModelLoaded)
+- Follow audio/ML-specific invariant validation patterns
+
+### 3. Create Value Objects
+
+**Encapsulate validation rules in `src/domain/[domain]/value_objects/`:**
+
+- Audio parameters (sample rate, channels, bit depth)
+- Model configurations (quantization, context length)
+- File paths and formats
+- Use `@dataclass(frozen=True)` for immutability
+
+### 4. Create Infrastructure Adapters
+
+**Mirror domain needs in `src/infrastructure/[type]/`:**
+
+- PyAudio adapters for audio device management
+- ONNX runtime adapters for model inference
+- JSON file adapters for persistence
+- Qt widget adapters for UI components
+
+### 5. Create Mappers
+
+**Map between domain and infrastructure in appropriate adapters:**
+
+- Implement `to_domain()` and `to_infrastructure()` methods
+- Handle audio format conversions carefully
+- Preserve model state and session information
+- Convert between Qt widgets and domain events
+
+### 6. Identify Feature Type
+
+**Determine if your feature is:**
+
+- **Command**: Changes system state (StartRecording, LoadModel, UpdateSettings)
+- **Query**: Retrieves data without side effects (GetRecordingStatus, GetAvailableModels)
+
+### 7. Create Command or Query
+
+**For Commands (`src/features/[feature]/commands/`):**
+
+- Audio operations (recording, processing, format conversion)
+- Model operations (loading, downloading, switching)
+- Settings operations (updating preferences, hotkeys)
+
+**For Queries (`src/features/[feature]/queries/`):**
+
+- Status information (recording state, model status)
+- Available resources (audio devices, installed models)
+- Historical data (transcription history, usage statistics)
+
+### 8. Create Handlers
+
+**Orchestrate domain and infrastructure in `src/features/[feature]/handlers/`:**
+
+- Use dependency injection for audio/ML services
+- Implement proper error handling for hardware failures
+- Coordinate async operations (model loading, transcription)
+- Handle Qt thread safety for UI updates
+
+### 9. Create UI Components
+
+**Build PyQt interfaces in `src/features/[feature]/ui/`:**
+
+- Recording controls with real-time feedback
+- Progress indicators for long-running operations
+- Settings dialogs with validation
+- System tray integration for background operations
+
+### Desktop-Specific Service Contracts
+
+**For external services:**
+
+- Define contracts in `src/domain/contracts/`
+- Implement in `src/infrastructure/`
+- Handle Qt signals/slots integration
+- Manage audio device lifecycle
+
+### Feature Integration and Registration
+
+1. **Create feature API**: Define public interface in `api.py`
+1. **Register with container**: Add to `src/shared/di/container.py`
+1. **Connect Qt signals**: Integrate with event bus
+1. **Update main window**: Add UI integration points
+
+### Best Practices for Audio/Transcription Applications
+
+1. **Hardware First**: Always validate audio devices and capabilities
+1. **Rich Audio Models**: Encapsulate audio processing logic in entities
+1. **Async by Default**: Use async/await for ML and audio operations
+1. **Result Pattern**: Use Result<T> for all audio/ML operations that can fail
+1. **Event-Driven UI**: Publish domain events for UI state updates
+1. **Resource Management**: Properly dispose of audio streams and models
+1. **Format Validation**: Validate audio formats in value objects
+1. **Thread Safety**: Ensure Qt operations happen on main thread
+
+### Common Pitfalls to Avoid in Desktop Audio Applications
+
+- ❌ **Blocking UI Thread**: Never perform audio/ML operations on Qt main thread
+- ❌ **Resource Leaks**: Always dispose of PyAudio streams and ONNX sessions
+- ❌ **Direct Hardware Access**: Use audio service abstractions, not direct PyAudio calls
+- ❌ **Synchronous ML**: Never block UI for model loading or transcription
+- ❌ **Ignoring Audio Constraints**: Always validate sample rates, channels, and formats
+- ❌ **Missing Error Handling**: Audio devices can fail at any time
+- ❌ **Thread Unsafe Operations**: Qt widgets must be updated from main thread only
+
+This architecture provides a solid foundation for building maintainable, scalable, and testable applications while enforcing consistent patterns and best practices across the entire codebase.

@@ -6,6 +6,10 @@ import sys
 import tempfile
 from unittest.mock import patch
 
+# Suppress transformers warning about PyTorch/TensorFlow/Flax
+import logging
+logging.getLogger("transformers").setLevel(logging.ERROR)
+
 # Add the root directory to Python path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -13,8 +17,8 @@ from src.core.utils import resource_path
 
 # Suppress pygame welcome message and warnings
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "hide"
-os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning:pygame"
-os.environ["QT_LOGGING_RULES"] = "qt.gui.imageio=false"
+os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning,ignore::SyntaxWarning,ignore::UserWarning"
+os.environ["QT_LOGGING_RULES"] = "qt.gui.imageio=false;*.debug=false;qt.qpa.*=false"
 
 # Import win32gui for handling existing window activation (Windows only)
 HAS_WIN32GUI = False
@@ -73,6 +77,13 @@ def main():
     """Main entry point for the application"""
     # Set up logger
     logger = setup_logger()
+    
+    # Suppress specific warnings
+    import warnings
+    warnings.filterwarnings("ignore", category=SyntaxWarning)
+    warnings.filterwarnings("ignore", category=UserWarning, module="pygame")
+    warnings.filterwarnings("ignore", category=UserWarning, module="pydub")
+    warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
     
     # Import the UI components
     with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
