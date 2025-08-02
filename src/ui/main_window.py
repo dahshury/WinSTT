@@ -268,7 +268,11 @@ class Ui_MainWindow:
         self.WinSTT.setText(_translate("MainWindow", "STT"))
         # Get the current rec_key from the MainWindow if available, otherwise use the default
         rec_key = MainWindow.rec_key if hasattr(MainWindow, "rec_key") else "CTRL+ALT+A"
-        self.instruction_label.setText(_translate("MainWindow", f"Hold {rec_key} to record or drag & drop to transcribe"))
+        # Only show instruction if not downloading models
+        if not getattr(MainWindow, 'is_downloading_model', False):
+            self.instruction_label.setText(_translate("MainWindow", f"Hold {rec_key} to record or drag & drop to transcribe"))
+        else:
+            self.instruction_label.setText(_translate("MainWindow", ""))
         self.label_3.setText(_translate("MainWindow", ""))
 
 class Window(QMainWindow, Ui_MainWindow):
@@ -394,6 +398,7 @@ class Window(QMainWindow, Ui_MainWindow):
     keyPressEvent = window_methods.keyPressEvent
     keyReleaseEvent = window_methods.keyReleaseEvent
     eventFilter = window_methods.eventFilter
+    showEvent = window_methods.showEvent
     changeEvent = window_methods.changeEvent
     resizeEvent = window_methods.resizeEvent
     dragEnterEvent = window_methods.dragEnterEvent

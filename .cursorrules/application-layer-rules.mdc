@@ -1,0 +1,3434 @@
+---
+alwaysApply: true
+---
+
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Feature Layer Rules
+
+## 🏗️ Feature Development Workflow Steps
+
+### Step 6: Identify Feature Type
+
+**Before creating commands/queries, determine the operation type:**
+
+#### Command Identification Checklist:
+
+- ✅ **Changes system state** (StartRecording, LoadModel, UpdateSettings)
+- ✅ **Has side effects** (audio processing, model loading, file operations)
+- ✅ **Represents business intention** (StartRecording, TranscribeAudio, ConfigureHotkey)
+- ✅ **Should be idempotent** when possible
+- ✅ **May trigger domain events** for cross-feature communication
+
+#### Query Identification Checklist:
+
+- ✅ **Retrieves data** without side effects
+- ✅ **Read-only operations** (GetRecordingStatus, GetAvailableModels, GetSettings)
+- ✅ **Can be cached** safely
+- ✅ **Should be optimized** for performance
+- ✅ **May include filtering** and status information
+
+**Example Decision Process:**
+
+```python
+# ✅ COMMAND: Changes state (starts audio recording)
+@dataclass
+class StartRecordingCommand:
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    vad_enabled: bool = True
+
+# ✅ QUERY: Retrieves data (gets recording status)
+@dataclass
+class GetRecordingStatusQuery:
+    session_id: Optional[str] = None
+    include_audio_levels: bool = False
+    include_device_info: bool = False
+```
+
+### Step 7: Create Command or Query Implementation
+
+**Follow these patterns for commands and queries:**
+
+#### Command Implementation:
+
+```python
+# src/features/audio_recording/commands/start_recording_command.py
+from dataclasses import dataclass
+from typing import Optional
+from datetime import datetime
+from src.domain.audio.value_objects.audio_config import AudioConfiguration
+
+@dataclass
+class StartRecordingCommand:
+    """Command to start audio recording session."""
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    user_preferences: Optional[dict] = None
+    
+    def __post_init__(self):
+        """Validate command data."""
+        if not self.audio_config:
+            raise ValueError("Audio configuration is required")
+        if self.session_id and len(self.session_id) < 1:
+            raise ValueError("Session ID cannot be empty")
+
+@dataclass
+class StopRecordingCommand:
+    """Command to stop audio recording session."""
+    session_id: str
+    save_audio: bool = False
+    immediate_transcription: bool = True
+    
+    def __post_init__(self):
+        if not self.session_id:
+            raise ValueError("Session ID is required")
+
+@dataclass
+class TranscribeAudioCommand:
+    """Command to transcribe recorded audio."""
+    audio_data: bytes
+    model_config: ModelConfiguration
+    session_id: str
+    language: Optional[str] = None
+    
+    def __post_init__(self):
+        if not self.audio_data:
+            raise ValueError("Audio data is required")
+        if not self.model_config:
+            raise ValueError("Model configuration is required")
+```
+
+#### Query Implementation:
+
+```python
+# src/features/audio_recording/queries/get_recording_status_query.py
+from dataclasses import dataclass
+from typing import Optional, List
+from datetime import datetime
+
+@dataclass
+class GetRecordingStatusQuery:
+    """Query to retrieve current recording status."""
+    session_id: Optional[str] = None
+    include_audio_levels: bool = False
+    include_device_info: bool = False
+    include_vad_status: bool = False
+    
+    def __post_init__(self):
+        """Validate query parameters."""
+        # All parameters are optional for this query
+        pass
+
+@dataclass
+class GetAudioDevicesQuery:
+    """Query to retrieve available audio devices."""
+    device_type: Optional[str] = None  # "input", "output", or None for both
+    include_device_details: bool = True
+
+@dataclass
+class GetTranscriptionHistoryQuery:
+    """Query to retrieve transcription history."""
+    limit: int = 50
+    offset: int = 0
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
+    search_term: Optional[str] = None
+    
+    def __post_init__(self):
+        """Validate query parameters."""
+        if self.limit > 200:
+            raise ValueError("Limit cannot exceed 200")
+        if self.limit < 1:
+            raise ValueError("Limit must be at least 1")
+        if self.offset < 0:
+            raise ValueError("Offset cannot be negative")
+```
+
+### Step 8: Create Handler Implementation
+
+**Handlers orchestrate domain and infrastructure layers:**
+
+#### Command Handler Pattern:
+
+```python
+# src/features/audio_recording/handlers/start_recording_handler.py
+from typing import Optional
+from src.shared.mediator.handler import ICommandHandler
+from src.shared.di.container import inject
+from src.domain.common.result import Result
+from src.domain.audio.entities.audio_session import AudioSession
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.features.audio_recording.commands.start_recording_command import StartRecordingCommand
+
+class StartRecordingHandler(ICommandHandler[StartRecordingCommand, str]):
+    @inject
+    def __init__(
+        self,
+        audio_service: IAudioService,
+        audio_repository: IAudioRepository,
+        notification_service: INotificationService
+    ):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+        self._notification_service = notification_service
+
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        """Handle audio recording start with full validation and error handling."""
+        
+        # 1. Validate audio device availability
+        device_check = await self._audio_service.check_audio_device(
+            command.audio_config.device_id
+        )
+        if not device_check.is_success:
+            return Result.failure(f"Audio device not available: {device_check.error}")
+        
+        # 2. Check if another recording is active
+        active_session = await self._audio_repository.get_active_session()
+        if active_session.is_success and active_session.value:
+            return Result.failure("Another recording session is already active")
+        
+        # 3. Create domain entity using factory method
+        session_result = AudioSession.create(
+            session_id=command.session_id,
+            audio_config=command.audio_config
+        )
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        session = session_result.value
+        
+        # 4. Start recording business logic
+        start_result = session.start_recording(command.audio_config)
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # 5. Persist session state
+        save_result = await self._audio_repository.save_session(session)
+        if not save_result.is_success:
+            return Result.failure("Failed to save recording session")
+        
+        # 6. Start actual audio capture
+        recording_result = await self._audio_service.start_recording(
+            session.id, 
+            command.audio_config
+        )
+        if not recording_result.is_success:
+            # Rollback session state
+            await self._audio_repository.delete_session(session.id)
+            return Result.failure(f"Failed to start audio recording: {recording_result.error}")
+        
+        # 7. Notify UI of successful start
+        await self._notification_service.notify_recording_started(session.id)
+        
+        return Result.success(session.id)
+```
+
+#### Query Handler Pattern:
+
+```python
+# src/features/audio_recording/handlers/get_recording_status_handler.py
+from typing import Dict, Any
+from src.shared.mediator.handler import IQueryHandler
+from src.shared.di.container import inject
+from src.domain.common.result import Result
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.features.audio_recording.queries.get_recording_status_query import GetRecordingStatusQuery
+
+class GetRecordingStatusHandler(IQueryHandler[GetRecordingStatusQuery, Dict[str, Any]]):
+    @inject
+    def __init__(
+        self,
+        audio_service: IAudioService,
+        audio_repository: IAudioRepository
+    ):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+
+    async def handle(self, query: GetRecordingStatusQuery) -> Result[Dict[str, Any]]:
+        """Handle recording status retrieval."""
+        
+        status_data = {}
+        
+        # 1. Get active session info
+        if query.session_id:
+            session_result = await self._audio_repository.get_session(query.session_id)
+            if not session_result.is_success:
+                return Result.failure(f"Session {query.session_id} not found")
+            
+            session = session_result.value
+            status_data.update({
+                "session_id": session.id,
+                "state": session.state.value,
+                "duration": session.get_duration_seconds(),
+                "created_at": session.created_at.isoformat()
+            })
+        else:
+            # Get any active session
+            active_session = await self._audio_repository.get_active_session()
+            if active_session.is_success and active_session.value:
+                session = active_session.value
+                status_data.update({
+                    "session_id": session.id,
+                    "state": session.state.value,
+                    "duration": session.get_duration_seconds()
+                })
+            else:
+                status_data["state"] = "idle"
+        
+        # 2. Include audio levels if requested
+        if query.include_audio_levels:
+            levels_result = await self._audio_service.get_current_audio_levels()
+            if levels_result.is_success:
+                status_data["audio_levels"] = levels_result.value
+        
+        # 3. Include device info if requested
+        if query.include_device_info:
+            device_result = await self._audio_service.get_current_device_info()
+            if device_result.is_success:
+                status_data["device_info"] = device_result.value
+        
+        # 4. Include VAD status if requested
+        if query.include_vad_status:
+            vad_result = await self._audio_service.get_vad_status()
+            if vad_result.is_success:
+                status_data["vad_status"] = vad_result.value
+        
+        return Result.success(status_data)
+```
+
+### Step 9: Create UI Component Implementation
+
+**UI components expose functionality with proper Qt integration:**
+
+#### UI Component Implementation:
+
+```python
+# src/features/audio_recording/ui/recording_controls.py
+from PyQt5.QtWidgets import QWidget, QPushButton, QLabel, QVBoxLayout, QHBoxLayout
+from PyQt5.QtCore import pyqtSignal, QTimer
+from typing import Optional
+from src.shared.mediator.mediator import IMediator
+from src.shared.di.container import inject
+from src.features.audio_recording.commands.start_recording_command import StartRecordingCommand
+from src.features.audio_recording.commands.stop_recording_command import StopRecordingCommand
+from src.features.audio_recording.queries.get_recording_status_query import GetRecordingStatusQuery
+
+class RecordingControlsWidget(QWidget):
+    # Qt signals for UI events
+    recording_started = pyqtSignal(str)  # session_id
+    recording_stopped = pyqtSignal(str)  # session_id
+    error_occurred = pyqtSignal(str)     # error_message
+    
+    @inject
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._current_session_id: Optional[str] = None
+        self._is_recording = False
+        
+        self._setup_ui()
+        self._setup_timer()
+        
+    def _setup_ui(self):
+        """Setup the UI components."""
+        layout = QVBoxLayout()
+        
+        # Recording button
+        self._record_button = QPushButton("Start Recording")
+        self._record_button.clicked.connect(self._on_record_button_clicked)
+        
+        # Status label
+        self._status_label = QLabel("Ready to record")
+        
+        # Duration label
+        self._duration_label = QLabel("00:00")
+        
+        # Button layout
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self._record_button)
+        
+        layout.addWidget(self._status_label)
+        layout.addWidget(self._duration_label)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+    def _setup_timer(self):
+        """Setup timer for status updates."""
+        self._status_timer = QTimer()
+        self._status_timer.timeout.connect(self._update_status)
+        self._status_timer.start(100)  # Update every 100ms
+        
+    async def _on_record_button_clicked(self):
+        """Handle record button click."""
+        try:
+            if not self._is_recording:
+                await self._start_recording()
+            else:
+                await self._stop_recording()
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+            
+    async def _start_recording(self):
+        """Start recording session."""
+        # Get audio configuration from settings or defaults
+        audio_config = self._get_audio_configuration()
+        
+        command = StartRecordingCommand(
+            audio_config=audio_config,
+            vad_enabled=True
+        )
+        
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._current_session_id = result.value
+            self._is_recording = True
+            self._record_button.setText("Stop Recording")
+            self._status_label.setText("Recording...")
+            self.recording_started.emit(self._current_session_id)
+        else:
+            self.error_occurred.emit(result.error)
+            
+    async def _stop_recording(self):
+        """Stop recording session."""
+        if not self._current_session_id:
+            return
+            
+        command = StopRecordingCommand(
+            session_id=self._current_session_id,
+            immediate_transcription=True
+        )
+        
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._is_recording = False
+            self._record_button.setText("Start Recording")
+            self._status_label.setText("Processing...")
+            self.recording_stopped.emit(self._current_session_id)
+            self._current_session_id = None
+        else:
+            self.error_occurred.emit(result.error)
+            
+    async def _update_status(self):
+        """Update recording status display."""
+        if not self._is_recording or not self._current_session_id:
+            return
+            
+        query = GetRecordingStatusQuery(
+            session_id=self._current_session_id,
+            include_audio_levels=True
+        )
+        
+        result = await self._mediator.send(query)
+        
+        if result.is_success:
+            status = result.value
+            duration = status.get("duration", 0)
+            self._duration_label.setText(self._format_duration(duration))
+            
+            # Update audio levels if available
+            if "audio_levels" in status:
+                # Update audio level indicators
+                pass
+                
+    def _get_audio_configuration(self) -> AudioConfiguration:
+        """Get current audio configuration."""
+        # This would typically come from user settings
+        return AudioConfiguration(
+            sample_rate=44100,
+            channels=1,
+            chunk_size=1024,
+            device_id=None  # Use default device
+        )
+        
+    def _format_duration(self, seconds: float) -> str:
+        """Format duration as MM:SS."""
+        minutes = int(seconds // 60)
+        seconds = int(seconds % 60)
+        return f"{minutes:02d}:{seconds:02d}"
+```
+
+### Feature Layer Best Practices
+
+1. **Feature Isolation**: Keep features self-contained with minimal dependencies
+1. **Rich Handlers**: Implement business orchestration and validation
+1. **Explicit Error Handling**: Use Result pattern consistently
+1. **Dependency Injection**: Inject all external dependencies
+1. **Thread Safety**: Ensure Qt operations happen on main thread
+1. **Resource Management**: Properly dispose of audio/ML resources
+1. **Async Operations**: Use async/await for I/O and ML operations
+1. **Event-Driven UI**: Use Qt signals for UI updates
+1. **Validation**: Validate inputs at command/query level
+1. **Testing**: Write comprehensive tests for handlers and UI components
+
+## Vertical Slice Architecture for Desktop
+
+### 1. Feature Organization Rules
+
+- **MUST**: Each feature is a self-contained vertical slice in `src/features/`
+- **MUST**: Each feature contains all related code: commands, queries, handlers, UI components, infrastructure
+- **MUST**: Features are organized by business capability (audio_recording, transcription, settings)
+- **MUST**: Each feature has a public API interface
+- **FORBIDDEN**: Cross-feature dependencies (except through domain events)
+- **FORBIDDEN**: Shared business logic between features
+
+```
+# ✅ CORRECT - Feature structure
+src/features/audio_recording/
+├── __init__.py                # Feature exports
+├── commands/                  # Commands for this feature
+│   ├── start_recording.py
+│   └── stop_recording.py
+├── queries/                   # Queries for this feature
+│   ├── get_recording_status.py
+│   └── get_audio_devices.py
+├── handlers/                  # Command/Query handlers
+│   ├── start_recording_handler.py
+│   └── recording_status_handler.py
+├── ui/                        # UI components
+│   ├── recording_controls.py
+│   └── audio_visualizer.py
+├── infrastructure/            # Technical implementations
+│   ├── pyaudio_service.py
+│   └── audio_repository.py
+└── api.py                     # Public feature API
+```
+
+### 2. MediatR Pattern Rules for Desktop
+
+- **MUST**: All business operations use MediatR commands/queries
+- **MUST**: Commands/queries use `@dataclass` for simplicity
+- **MUST**: Handlers implement appropriate interfaces (`ICommandHandler`, `IQueryHandler`)
+- **MUST**: Commands represent state changes, queries represent data retrieval
+- **MUST**: Commands/queries return `Result[T]` for consistent error handling
+- **FORBIDDEN**: Direct business logic in UI components
+- **FORBIDDEN**: Handlers calling other handlers directly
+
+```python
+# ✅ CORRECT - MediatR command implementation for desktop
+@dataclass
+class StartRecordingCommand:
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    vad_enabled: bool = True
+
+class StartRecordingHandler(ICommandHandler[StartRecordingCommand, str]):
+    def __init__(self, audio_service: IAudioService, audio_repository: IAudioRepository):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+    
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        # Create domain entity
+        session_result = AudioSession.create(command.session_id, command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        # Start recording via infrastructure
+        recording_result = await self._audio_service.start_recording(
+            session_result.value.id, 
+            command.audio_config
+        )
+        
+        return recording_result
+```
+
+### 3. Data Transfer Object Rules
+
+- **MUST**: Use dataclasses for simple DTOs
+- **MUST**: DTOs are immutable and validate input
+- **MUST**: Separate DTOs from domain entities
+- **FORBIDDEN**: Domain entities as DTOs
+- **FORBIDDEN**: Mutable DTOs
+
+```python
+# ✅ CORRECT - DTO models for desktop
+@dataclass(frozen=True)
+class AudioDeviceInfo:
+    device_id: str
+    name: str
+    channels: int
+    sample_rate: int
+    is_default: bool
+
+@dataclass(frozen=True)
+class RecordingStatusDto:
+    session_id: str
+    state: str
+    duration_seconds: float
+    audio_levels: Optional[Dict[str, float]] = None
+    device_info: Optional[AudioDeviceInfo] = None
+```
+
+### 4. Handler Rules for Desktop
+
+- **MUST**: Handlers use dependency injection
+- **MUST**: Handle method returns `Result[T]`
+- **MUST**: Handlers are stateless and thread-safe
+- **MUST**: Use domain entities for business logic
+- **MUST**: Handle Qt thread safety for UI updates
+- **FORBIDDEN**: Direct hardware access (use services)
+- **FORBIDDEN**: Blocking operations on UI thread
+
+```python
+# ✅ CORRECT - Handler implementation for desktop
+class TranscribeAudioHandler(ICommandHandler[TranscribeAudioCommand, TranscriptionResult]):
+    def __init__(self, 
+                 transcription_service: ITranscriptionService,
+                 model_repository: IModelRepository,
+                 notification_service: INotificationService):
+        self._transcription_service = transcription_service
+        self._model_repository = model_repository
+        self._notification_service = notification_service
+    
+    async def handle(self, command: TranscribeAudioCommand) -> Result[TranscriptionResult]:
+        # 1. Load model if not already loaded
+        model_result = await self._model_repository.get_loaded_model(command.model_config.model_name)
+        if not model_result.is_success:
+            load_result = await self._transcription_service.load_model(command.model_config)
+            if not load_result.is_success:
+                return Result.failure(f"Failed to load model: {load_result.error}")
+        
+        # 2. Create transcription request domain entity
+        request_result = TranscriptionRequest.create(
+            audio_data=command.audio_data,
+            model_config=command.model_config,
+            language=command.language
+        )
+        if not request_result.is_success:
+            return Result.failure(request_result.error)
+        
+        # 3. Execute transcription
+        transcription_result = await self._transcription_service.transcribe(request_result.value)
+        if not transcription_result.is_success:
+            return Result.failure(transcription_result.error)
+        
+        # 4. Notify UI (thread-safe)
+        await self._notification_service.notify_transcription_completed(
+            command.session_id, 
+            transcription_result.value
+        )
+        
+        return transcription_result
+```
+
+### 5. UI Component Rules
+
+- **MUST**: UI components are thin and delegate to MediatR
+- **MUST**: Use Qt signals for event communication
+- **MUST**: Handle errors gracefully with user-friendly messages
+- **MUST**: Use async/await for long-running operations
+- **MUST**: Ensure all Qt operations happen on main thread
+- **FORBIDDEN**: Business logic in UI components
+- **FORBIDDEN**: Direct infrastructure access from UI
+
+```python
+# ✅ CORRECT - UI component implementation
+class TranscriptionProgressWidget(QWidget):
+    transcription_completed = pyqtSignal(str, str)  # session_id, text
+    error_occurred = pyqtSignal(str)  # error_message
+    
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._setup_ui()
+    
+    async def start_transcription(self, audio_data: bytes, model_config: ModelConfiguration):
+        """Start transcription process."""
+        self._progress_bar.setVisible(True)
+        self._status_label.setText("Transcribing audio...")
+        
+        command = TranscribeAudioCommand(
+            audio_data=audio_data,
+            model_config=model_config,
+            session_id=self._current_session_id
+        )
+        
+        try:
+            result = await self._mediator.send(command)
+            
+            if result.is_success:
+                transcription = result.value
+                self.transcription_completed.emit(self._current_session_id, transcription.text)
+                self._status_label.setText("Transcription completed")
+            else:
+                self.error_occurred.emit(result.error)
+                self._status_label.setText("Transcription failed")
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+        finally:
+            self._progress_bar.setVisible(False)
+```
+
+## Feature Integration Rules
+
+### 1. Feature API Rules
+
+- **MUST**: Each feature exports a public API interface
+- **MUST**: APIs use Result pattern for error handling
+- **MUST**: APIs are async-first for long-running operations
+- **MUST**: APIs handle their own error scenarios
+- **FORBIDDEN**: Direct access to feature internals
+- **FORBIDDEN**: Synchronous APIs for I/O operations
+
+```python
+# ✅ CORRECT - Feature API
+class AudioRecordingAPI:
+    def __init__(self, mediator: IMediator):
+        self._mediator = mediator
+    
+    async def start_recording(self, audio_config: AudioConfiguration) -> Result[str]:
+        """Start a new recording session."""
+        command = StartRecordingCommand(audio_config=audio_config)
+        return await self._mediator.send(command)
+    
+    async def stop_recording(self, session_id: str) -> Result[Dict[str, Any]]:
+        """Stop recording session."""
+        command = StopRecordingCommand(session_id=session_id)
+        return await self._mediator.send(command)
+    
+    async def get_status(self, session_id: Optional[str] = None) -> Result[Dict[str, Any]]:
+        """Get recording status."""
+        query = GetRecordingStatusQuery(session_id=session_id)
+        return await self._mediator.send(query)
+```
+
+### 2. Event Handling Rules
+
+- **MUST**: Domain event handlers are separate from command handlers
+- **MUST**: Event handlers use Qt signals for UI updates
+- **MUST**: Event handlers are idempotent
+- **MUST**: Event handlers can trigger cross-feature communication
+- **FORBIDDEN**: Event handlers modifying the same aggregate that raised the event
+- **FORBIDDEN**: Synchronous processing for heavy operations
+
+```python
+# ✅ CORRECT - Event handler for desktop
+class RecordingCompletedHandler(IEventHandler[RecordingCompleted]):
+    def __init__(self, transcription_api: TranscriptionAPI, notification_service: INotificationService):
+        self._transcription_api = transcription_api
+        self._notification_service = notification_service
+    
+    async def handle(self, event: RecordingCompleted) -> None:
+        """Handle recording completion - trigger transcription."""
+        # Auto-start transcription if enabled
+        if event.auto_transcribe:
+            result = await self._transcription_api.transcribe_audio(
+                audio_data=event.audio_data,
+                model_config=event.preferred_model_config,
+                session_id=event.session_id
+            )
+            
+            if not result.is_success:
+                await self._notification_service.notify_error(
+                    f"Auto-transcription failed: {result.error}"
+                )
+        
+        # Notify UI of completion
+        await self._notification_service.notify_recording_completed(
+            event.session_id,
+            event.duration_seconds
+        )
+```
+
+## File Organization Rules
+
+### Feature Layer Structure
+
+```
+src/features/
+├── audio_recording/           # Audio recording feature
+│   ├── __init__.py           # Feature exports
+│   ├── commands/             # Recording commands
+│   ├── queries/              # Recording queries  
+│   ├── handlers/             # Command/Query handlers
+│   ├── ui/                   # Recording UI components
+│   ├── infrastructure/       # PyAudio services
+│   └── api.py               # Public feature API
+├── transcription/            # Transcription feature
+│   ├── __init__.py
+│   ├── commands/             # Transcription commands
+│   ├── queries/              # Model/result queries
+│   ├── handlers/             # ONNX handlers
+│   ├── ui/                   # Progress/result UI
+│   ├── infrastructure/       # ONNX services
+│   └── api.py
+├── settings_management/      # Settings feature
+│   ├── __init__.py
+│   ├── commands/             # Settings commands
+│   ├── queries/              # Settings queries
+│   ├── handlers/             # Settings handlers
+│   ├── ui/                   # Settings UI
+│   ├── infrastructure/       # JSON persistence
+│   └── api.py
+└── application_shell/        # App shell feature
+    ├── __init__.py
+    ├── commands/             # App lifecycle commands
+    ├── queries/              # App status queries
+    ├── handlers/             # Lifecycle handlers
+    ├── ui/                   # Main window, tray
+    ├── infrastructure/       # System integration
+    └── api.py
+```
+
+### Naming Conventions
+
+- **Commands**: PascalCase, imperative verbs (StartRecordingCommand, LoadModelCommand)
+- **Queries**: PascalCase, descriptive nouns (GetRecordingStatusQuery, GetAvailableModelsQuery)
+- **Handlers**: PascalCase, [CommandName]Handler (StartRecordingHandler)
+- **UI Components**: PascalCase, [Purpose]Widget (RecordingControlsWidget)
+- **APIs**: PascalCase, [Feature]API (AudioRecordingAPI)
+
+## Error Handling Rules
+
+### 1. Result Usage in Features
+
+- **MUST**: Use `Result[T]` for all handler return values
+- **MUST**: Use descriptive error messages with context
+- **MUST**: Map domain Result failures to appropriate UI feedback
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Generic error messages without context
+
+```python
+# ✅ CORRECT - Error handling in features
+if not audio_device_available:
+    return Result.failure(f"Audio device '{device_name}' is not available or in use")
+
+if model_loading_failed:
+    return Result.failure(f"Failed to load model '{model_name}': {detailed_error}")
+```
+
+### 2. UI Error Handling
+
+- **MUST**: All UI errors shown to user in friendly dialogs
+- **MUST**: Use Qt signals for error communication
+- **MUST**: Log detailed errors while showing simple messages to user
+- **FORBIDDEN**: Showing technical error details to user
+- **FORBIDDEN**: Ignoring or swallowing errors
+
+## Testing Rules
+
+### Feature Layer Testing
+
+- **MUST**: Test handlers with mocked dependencies
+- **MUST**: Test command/query validation
+- **MUST**: Test error scenarios and hardware failures
+- **MUST**: Test domain event publishing
+- **MUST**: Use integration tests for complete features
+
+```python
+# ✅ CORRECT - Feature handler testing
+@pytest.mark.asyncio
+async def test_start_recording_handler():
+    # Arrange
+    mock_audio_service = AsyncMock()
+    mock_repository = AsyncMock()
+    handler = StartRecordingHandler(mock_audio_service, mock_repository)
+    
+    command = StartRecordingCommand(
+        audio_config=AudioConfiguration(sample_rate=44100, channels=1)
+    )
+    
+    # Act
+    result = await handler.handle(command)
+    
+    # Assert
+    assert result.is_success
+    mock_audio_service.start_recording.assert_called_once()
+    mock_repository.save_session.assert_called_once()
+```
+
+## Performance Rules for Desktop
+
+- **MUST**: Use async/await for all I/O and ML operations
+
+- **MUST**: Implement proper resource disposal (audio streams, models)
+
+- **MUST**: Use background threads for heavy operations
+
+- **MUST**: Cache loaded models between sessions
+
+- **FORBIDDEN**: Blocking synchronous operations on UI thread
+
+- **FORBIDDEN**: Memory leaks from undisposed resources
+
+- **FORBIDDEN**: Blocking synchronous operations in handlers
+
+- **FORBIDDEN**: N+1 query problems in data access
+
+# WinSTT Feature Layer Rules
+
+## 🏗️ Feature Development Workflow Steps
+
+### Step 6: Identify Feature Type
+
+**Before creating commands/queries, determine the operation type:**
+
+#### Command Identification Checklist:
+
+- ✅ **Changes system state** (StartRecording, LoadModel, UpdateSettings)
+- ✅ **Has side effects** (audio processing, model loading, file operations)
+- ✅ **Represents business intention** (StartRecording, TranscribeAudio, ConfigureHotkey)
+- ✅ **Should be idempotent** when possible
+- ✅ **May trigger domain events** for cross-feature communication
+
+#### Query Identification Checklist:
+
+- ✅ **Retrieves data** without side effects
+- ✅ **Read-only operations** (GetRecordingStatus, GetAvailableModels, GetSettings)
+- ✅ **Can be cached** safely
+- ✅ **Should be optimized** for performance
+- ✅ **May include filtering** and status information
+
+**Example Decision Process:**
+
+```python
+# ✅ COMMAND: Changes state (starts audio recording)
+@dataclass
+class StartRecordingCommand:
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    vad_enabled: bool = True
+
+# ✅ QUERY: Retrieves data (gets recording status)
+@dataclass
+class GetRecordingStatusQuery:
+    session_id: Optional[str] = None
+    include_audio_levels: bool = False
+    include_device_info: bool = False
+```
+
+### Step 7: Create Command or Query Implementation
+
+**Follow these patterns for commands and queries:**
+
+#### Command Implementation:
+
+```python
+# src/features/audio_recording/commands/start_recording_command.py
+from dataclasses import dataclass
+from typing import Optional
+from datetime import datetime
+from src.domain.audio.value_objects.audio_config import AudioConfiguration
+
+@dataclass
+class StartRecordingCommand:
+    """Command to start audio recording session."""
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    user_preferences: Optional[dict] = None
+    
+    def __post_init__(self):
+        """Validate command data."""
+        if not self.audio_config:
+            raise ValueError("Audio configuration is required")
+        if self.session_id and len(self.session_id) < 1:
+            raise ValueError("Session ID cannot be empty")
+
+@dataclass
+class StopRecordingCommand:
+    """Command to stop audio recording session."""
+    session_id: str
+    save_audio: bool = False
+    immediate_transcription: bool = True
+    
+    def __post_init__(self):
+        if not self.session_id:
+            raise ValueError("Session ID is required")
+
+@dataclass
+class TranscribeAudioCommand:
+    """Command to transcribe recorded audio."""
+    audio_data: bytes
+    model_config: ModelConfiguration
+    session_id: str
+    language: Optional[str] = None
+    
+    def __post_init__(self):
+        if not self.audio_data:
+            raise ValueError("Audio data is required")
+        if not self.model_config:
+            raise ValueError("Model configuration is required")
+```
+
+#### Query Implementation:
+
+```python
+# src/features/audio_recording/queries/get_recording_status_query.py
+from dataclasses import dataclass
+from typing import Optional, List
+from datetime import datetime
+
+@dataclass
+class GetRecordingStatusQuery:
+    """Query to retrieve current recording status."""
+    session_id: Optional[str] = None
+    include_audio_levels: bool = False
+    include_device_info: bool = False
+    include_vad_status: bool = False
+    
+    def __post_init__(self):
+        """Validate query parameters."""
+        # All parameters are optional for this query
+        pass
+
+@dataclass
+class GetAudioDevicesQuery:
+    """Query to retrieve available audio devices."""
+    device_type: Optional[str] = None  # "input", "output", or None for both
+    include_device_details: bool = True
+
+@dataclass
+class GetTranscriptionHistoryQuery:
+    """Query to retrieve transcription history."""
+    limit: int = 50
+    offset: int = 0
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
+    search_term: Optional[str] = None
+    
+    def __post_init__(self):
+        """Validate query parameters."""
+        if self.limit > 200:
+            raise ValueError("Limit cannot exceed 200")
+        if self.limit < 1:
+            raise ValueError("Limit must be at least 1")
+        if self.offset < 0:
+            raise ValueError("Offset cannot be negative")
+```
+
+### Step 8: Create Handler Implementation
+
+**Handlers orchestrate domain and infrastructure layers:**
+
+#### Command Handler Pattern:
+
+```python
+# src/features/audio_recording/handlers/start_recording_handler.py
+from typing import Optional
+from src.shared.mediator.handler import ICommandHandler
+from src.shared.di.container import inject
+from src.domain.common.result import Result
+from src.domain.audio.entities.audio_session import AudioSession
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.features.audio_recording.commands.start_recording_command import StartRecordingCommand
+
+class StartRecordingHandler(ICommandHandler[StartRecordingCommand, str]):
+    @inject
+    def __init__(
+        self,
+        audio_service: IAudioService,
+        audio_repository: IAudioRepository,
+        notification_service: INotificationService
+    ):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+        self._notification_service = notification_service
+
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        """Handle audio recording start with full validation and error handling."""
+        
+        # 1. Validate audio device availability
+        device_check = await self._audio_service.check_audio_device(
+            command.audio_config.device_id
+        )
+        if not device_check.is_success:
+            return Result.failure(f"Audio device not available: {device_check.error}")
+        
+        # 2. Check if another recording is active
+        active_session = await self._audio_repository.get_active_session()
+        if active_session.is_success and active_session.value:
+            return Result.failure("Another recording session is already active")
+        
+        # 3. Create domain entity using factory method
+        session_result = AudioSession.create(
+            session_id=command.session_id,
+            audio_config=command.audio_config
+        )
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        session = session_result.value
+        
+        # 4. Start recording business logic
+        start_result = session.start_recording(command.audio_config)
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # 5. Persist session state
+        save_result = await self._audio_repository.save_session(session)
+        if not save_result.is_success:
+            return Result.failure("Failed to save recording session")
+        
+        # 6. Start actual audio capture
+        recording_result = await self._audio_service.start_recording(
+            session.id, 
+            command.audio_config
+        )
+        if not recording_result.is_success:
+            # Rollback session state
+            await self._audio_repository.delete_session(session.id)
+            return Result.failure(f"Failed to start audio recording: {recording_result.error}")
+        
+        # 7. Notify UI of successful start
+        await self._notification_service.notify_recording_started(session.id)
+        
+        return Result.success(session.id)
+```
+
+#### Query Handler Pattern:
+
+```python
+# src/features/audio_recording/handlers/get_recording_status_handler.py
+from typing import Dict, Any
+from src.shared.mediator.handler import IQueryHandler
+from src.shared.di.container import inject
+from src.domain.common.result import Result
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.features.audio_recording.queries.get_recording_status_query import GetRecordingStatusQuery
+
+class GetRecordingStatusHandler(IQueryHandler[GetRecordingStatusQuery, Dict[str, Any]]):
+    @inject
+    def __init__(
+        self,
+        audio_service: IAudioService,
+        audio_repository: IAudioRepository
+    ):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+
+    async def handle(self, query: GetRecordingStatusQuery) -> Result[Dict[str, Any]]:
+        """Handle recording status retrieval."""
+        
+        status_data = {}
+        
+        # 1. Get active session info
+        if query.session_id:
+            session_result = await self._audio_repository.get_session(query.session_id)
+            if not session_result.is_success:
+                return Result.failure(f"Session {query.session_id} not found")
+            
+            session = session_result.value
+            status_data.update({
+                "session_id": session.id,
+                "state": session.state.value,
+                "duration": session.get_duration_seconds(),
+                "created_at": session.created_at.isoformat()
+            })
+        else:
+            # Get any active session
+            active_session = await self._audio_repository.get_active_session()
+            if active_session.is_success and active_session.value:
+                session = active_session.value
+                status_data.update({
+                    "session_id": session.id,
+                    "state": session.state.value,
+                    "duration": session.get_duration_seconds()
+                })
+            else:
+                status_data["state"] = "idle"
+        
+        # 2. Include audio levels if requested
+        if query.include_audio_levels:
+            levels_result = await self._audio_service.get_current_audio_levels()
+            if levels_result.is_success:
+                status_data["audio_levels"] = levels_result.value
+        
+        # 3. Include device info if requested
+        if query.include_device_info:
+            device_result = await self._audio_service.get_current_device_info()
+            if device_result.is_success:
+                status_data["device_info"] = device_result.value
+        
+        # 4. Include VAD status if requested
+        if query.include_vad_status:
+            vad_result = await self._audio_service.get_vad_status()
+            if vad_result.is_success:
+                status_data["vad_status"] = vad_result.value
+        
+        return Result.success(status_data)
+```
+
+### Step 9: Create UI Component Implementation
+
+**UI components expose functionality with proper Qt integration:**
+
+#### UI Component Implementation:
+
+```python
+# src/features/audio_recording/ui/recording_controls.py
+from PyQt5.QtWidgets import QWidget, QPushButton, QLabel, QVBoxLayout, QHBoxLayout
+from PyQt5.QtCore import pyqtSignal, QTimer
+from typing import Optional
+from src.shared.mediator.mediator import IMediator
+from src.shared.di.container import inject
+from src.features.audio_recording.commands.start_recording_command import StartRecordingCommand
+from src.features.audio_recording.commands.stop_recording_command import StopRecordingCommand
+from src.features.audio_recording.queries.get_recording_status_query import GetRecordingStatusQuery
+
+class RecordingControlsWidget(QWidget):
+    # Qt signals for UI events
+    recording_started = pyqtSignal(str)  # session_id
+    recording_stopped = pyqtSignal(str)  # session_id
+    error_occurred = pyqtSignal(str)     # error_message
+    
+    @inject
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._current_session_id: Optional[str] = None
+        self._is_recording = False
+        
+        self._setup_ui()
+        self._setup_timer()
+        
+    def _setup_ui(self):
+        """Setup the UI components."""
+        layout = QVBoxLayout()
+        
+        # Recording button
+        self._record_button = QPushButton("Start Recording")
+        self._record_button.clicked.connect(self._on_record_button_clicked)
+        
+        # Status label
+        self._status_label = QLabel("Ready to record")
+        
+        # Duration label
+        self._duration_label = QLabel("00:00")
+        
+        # Button layout
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self._record_button)
+        
+        layout.addWidget(self._status_label)
+        layout.addWidget(self._duration_label)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+    def _setup_timer(self):
+        """Setup timer for status updates."""
+        self._status_timer = QTimer()
+        self._status_timer.timeout.connect(self._update_status)
+        self._status_timer.start(100)  # Update every 100ms
+        
+    async def _on_record_button_clicked(self):
+        """Handle record button click."""
+        try:
+            if not self._is_recording:
+                await self._start_recording()
+            else:
+                await self._stop_recording()
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+            
+    async def _start_recording(self):
+        """Start recording session."""
+        # Get audio configuration from settings or defaults
+        audio_config = self._get_audio_configuration()
+        
+        command = StartRecordingCommand(
+            audio_config=audio_config,
+            vad_enabled=True
+        )
+        
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._current_session_id = result.value
+            self._is_recording = True
+            self._record_button.setText("Stop Recording")
+            self._status_label.setText("Recording...")
+            self.recording_started.emit(self._current_session_id)
+        else:
+            self.error_occurred.emit(result.error)
+            
+    async def _stop_recording(self):
+        """Stop recording session."""
+        if not self._current_session_id:
+            return
+            
+        command = StopRecordingCommand(
+            session_id=self._current_session_id,
+            immediate_transcription=True
+        )
+        
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._is_recording = False
+            self._record_button.setText("Start Recording")
+            self._status_label.setText("Processing...")
+            self.recording_stopped.emit(self._current_session_id)
+            self._current_session_id = None
+        else:
+            self.error_occurred.emit(result.error)
+            
+    async def _update_status(self):
+        """Update recording status display."""
+        if not self._is_recording or not self._current_session_id:
+            return
+            
+        query = GetRecordingStatusQuery(
+            session_id=self._current_session_id,
+            include_audio_levels=True
+        )
+        
+        result = await self._mediator.send(query)
+        
+        if result.is_success:
+            status = result.value
+            duration = status.get("duration", 0)
+            self._duration_label.setText(self._format_duration(duration))
+            
+            # Update audio levels if available
+            if "audio_levels" in status:
+                # Update audio level indicators
+                pass
+                
+    def _get_audio_configuration(self) -> AudioConfiguration:
+        """Get current audio configuration."""
+        # This would typically come from user settings
+        return AudioConfiguration(
+            sample_rate=44100,
+            channels=1,
+            chunk_size=1024,
+            device_id=None  # Use default device
+        )
+        
+    def _format_duration(self, seconds: float) -> str:
+        """Format duration as MM:SS."""
+        minutes = int(seconds // 60)
+        seconds = int(seconds % 60)
+        return f"{minutes:02d}:{seconds:02d}"
+```
+
+### Feature Layer Best Practices
+
+1. **Feature Isolation**: Keep features self-contained with minimal dependencies
+1. **Rich Handlers**: Implement business orchestration and validation
+1. **Explicit Error Handling**: Use Result pattern consistently
+1. **Dependency Injection**: Inject all external dependencies
+1. **Thread Safety**: Ensure Qt operations happen on main thread
+1. **Resource Management**: Properly dispose of audio/ML resources
+1. **Async Operations**: Use async/await for I/O and ML operations
+1. **Event-Driven UI**: Use Qt signals for UI updates
+1. **Validation**: Validate inputs at command/query level
+1. **Testing**: Write comprehensive tests for handlers and UI components
+
+## Vertical Slice Architecture for Desktop
+
+### 1. Feature Organization Rules
+
+- **MUST**: Each feature is a self-contained vertical slice in `src/features/`
+- **MUST**: Each feature contains all related code: commands, queries, handlers, UI components, infrastructure
+- **MUST**: Features are organized by business capability (audio_recording, transcription, settings)
+- **MUST**: Each feature has a public API interface
+- **FORBIDDEN**: Cross-feature dependencies (except through domain events)
+- **FORBIDDEN**: Shared business logic between features
+
+```
+# ✅ CORRECT - Feature structure
+src/features/audio_recording/
+├── __init__.py                # Feature exports
+├── commands/                  # Commands for this feature
+│   ├── start_recording.py
+│   └── stop_recording.py
+├── queries/                   # Queries for this feature
+│   ├── get_recording_status.py
+│   └── get_audio_devices.py
+├── handlers/                  # Command/Query handlers
+│   ├── start_recording_handler.py
+│   └── recording_status_handler.py
+├── ui/                        # UI components
+│   ├── recording_controls.py
+│   └── audio_visualizer.py
+├── infrastructure/            # Technical implementations
+│   ├── pyaudio_service.py
+│   └── audio_repository.py
+└── api.py                     # Public feature API
+```
+
+### 2. MediatR Pattern Rules for Desktop
+
+- **MUST**: All business operations use MediatR commands/queries
+- **MUST**: Commands/queries use `@dataclass` for simplicity
+- **MUST**: Handlers implement appropriate interfaces (`ICommandHandler`, `IQueryHandler`)
+- **MUST**: Commands represent state changes, queries represent data retrieval
+- **MUST**: Commands/queries return `Result[T]` for consistent error handling
+- **FORBIDDEN**: Direct business logic in UI components
+- **FORBIDDEN**: Handlers calling other handlers directly
+
+```python
+# ✅ CORRECT - MediatR command implementation for desktop
+@dataclass
+class StartRecordingCommand:
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    vad_enabled: bool = True
+
+class StartRecordingHandler(ICommandHandler[StartRecordingCommand, str]):
+    def __init__(self, audio_service: IAudioService, audio_repository: IAudioRepository):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+    
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        # Create domain entity
+        session_result = AudioSession.create(command.session_id, command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        # Start recording via infrastructure
+        recording_result = await self._audio_service.start_recording(
+            session_result.value.id, 
+            command.audio_config
+        )
+        
+        return recording_result
+```
+
+### 3. Data Transfer Object Rules
+
+- **MUST**: Use dataclasses for simple DTOs
+- **MUST**: DTOs are immutable and validate input
+- **MUST**: Separate DTOs from domain entities
+- **FORBIDDEN**: Domain entities as DTOs
+- **FORBIDDEN**: Mutable DTOs
+
+```python
+# ✅ CORRECT - DTO models for desktop
+@dataclass(frozen=True)
+class AudioDeviceInfo:
+    device_id: str
+    name: str
+    channels: int
+    sample_rate: int
+    is_default: bool
+
+@dataclass(frozen=True)
+class RecordingStatusDto:
+    session_id: str
+    state: str
+    duration_seconds: float
+    audio_levels: Optional[Dict[str, float]] = None
+    device_info: Optional[AudioDeviceInfo] = None
+```
+
+### 4. Handler Rules for Desktop
+
+- **MUST**: Handlers use dependency injection
+- **MUST**: Handle method returns `Result[T]`
+- **MUST**: Handlers are stateless and thread-safe
+- **MUST**: Use domain entities for business logic
+- **MUST**: Handle Qt thread safety for UI updates
+- **FORBIDDEN**: Direct hardware access (use services)
+- **FORBIDDEN**: Blocking operations on UI thread
+
+```python
+# ✅ CORRECT - Handler implementation for desktop
+class TranscribeAudioHandler(ICommandHandler[TranscribeAudioCommand, TranscriptionResult]):
+    def __init__(self, 
+                 transcription_service: ITranscriptionService,
+                 model_repository: IModelRepository,
+                 notification_service: INotificationService):
+        self._transcription_service = transcription_service
+        self._model_repository = model_repository
+        self._notification_service = notification_service
+    
+    async def handle(self, command: TranscribeAudioCommand) -> Result[TranscriptionResult]:
+        # 1. Load model if not already loaded
+        model_result = await self._model_repository.get_loaded_model(command.model_config.model_name)
+        if not model_result.is_success:
+            load_result = await self._transcription_service.load_model(command.model_config)
+            if not load_result.is_success:
+                return Result.failure(f"Failed to load model: {load_result.error}")
+        
+        # 2. Create transcription request domain entity
+        request_result = TranscriptionRequest.create(
+            audio_data=command.audio_data,
+            model_config=command.model_config,
+            language=command.language
+        )
+        if not request_result.is_success:
+            return Result.failure(request_result.error)
+        
+        # 3. Execute transcription
+        transcription_result = await self._transcription_service.transcribe(request_result.value)
+        if not transcription_result.is_success:
+            return Result.failure(transcription_result.error)
+        
+        # 4. Notify UI (thread-safe)
+        await self._notification_service.notify_transcription_completed(
+            command.session_id, 
+            transcription_result.value
+        )
+        
+        return transcription_result
+```
+
+### 5. UI Component Rules
+
+- **MUST**: UI components are thin and delegate to MediatR
+- **MUST**: Use Qt signals for event communication
+- **MUST**: Handle errors gracefully with user-friendly messages
+- **MUST**: Use async/await for long-running operations
+- **MUST**: Ensure all Qt operations happen on main thread
+- **FORBIDDEN**: Business logic in UI components
+- **FORBIDDEN**: Direct infrastructure access from UI
+
+```python
+# ✅ CORRECT - UI component implementation
+class TranscriptionProgressWidget(QWidget):
+    transcription_completed = pyqtSignal(str, str)  # session_id, text
+    error_occurred = pyqtSignal(str)  # error_message
+    
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._setup_ui()
+    
+    async def start_transcription(self, audio_data: bytes, model_config: ModelConfiguration):
+        """Start transcription process."""
+        self._progress_bar.setVisible(True)
+        self._status_label.setText("Transcribing audio...")
+        
+        command = TranscribeAudioCommand(
+            audio_data=audio_data,
+            model_config=model_config,
+            session_id=self._current_session_id
+        )
+        
+        try:
+            result = await self._mediator.send(command)
+            
+            if result.is_success:
+                transcription = result.value
+                self.transcription_completed.emit(self._current_session_id, transcription.text)
+                self._status_label.setText("Transcription completed")
+            else:
+                self.error_occurred.emit(result.error)
+                self._status_label.setText("Transcription failed")
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+        finally:
+            self._progress_bar.setVisible(False)
+```
+
+## Feature Integration Rules
+
+### 1. Feature API Rules
+
+- **MUST**: Each feature exports a public API interface
+- **MUST**: APIs use Result pattern for error handling
+- **MUST**: APIs are async-first for long-running operations
+- **MUST**: APIs handle their own error scenarios
+- **FORBIDDEN**: Direct access to feature internals
+- **FORBIDDEN**: Synchronous APIs for I/O operations
+
+```python
+# ✅ CORRECT - Feature API
+class AudioRecordingAPI:
+    def __init__(self, mediator: IMediator):
+        self._mediator = mediator
+    
+    async def start_recording(self, audio_config: AudioConfiguration) -> Result[str]:
+        """Start a new recording session."""
+        command = StartRecordingCommand(audio_config=audio_config)
+        return await self._mediator.send(command)
+    
+    async def stop_recording(self, session_id: str) -> Result[Dict[str, Any]]:
+        """Stop recording session."""
+        command = StopRecordingCommand(session_id=session_id)
+        return await self._mediator.send(command)
+    
+    async def get_status(self, session_id: Optional[str] = None) -> Result[Dict[str, Any]]:
+        """Get recording status."""
+        query = GetRecordingStatusQuery(session_id=session_id)
+        return await self._mediator.send(query)
+```
+
+### 2. Event Handling Rules
+
+- **MUST**: Domain event handlers are separate from command handlers
+- **MUST**: Event handlers use Qt signals for UI updates
+- **MUST**: Event handlers are idempotent
+- **MUST**: Event handlers can trigger cross-feature communication
+- **FORBIDDEN**: Event handlers modifying the same aggregate that raised the event
+- **FORBIDDEN**: Synchronous processing for heavy operations
+
+```python
+# ✅ CORRECT - Event handler for desktop
+class RecordingCompletedHandler(IEventHandler[RecordingCompleted]):
+    def __init__(self, transcription_api: TranscriptionAPI, notification_service: INotificationService):
+        self._transcription_api = transcription_api
+        self._notification_service = notification_service
+    
+    async def handle(self, event: RecordingCompleted) -> None:
+        """Handle recording completion - trigger transcription."""
+        # Auto-start transcription if enabled
+        if event.auto_transcribe:
+            result = await self._transcription_api.transcribe_audio(
+                audio_data=event.audio_data,
+                model_config=event.preferred_model_config,
+                session_id=event.session_id
+            )
+            
+            if not result.is_success:
+                await self._notification_service.notify_error(
+                    f"Auto-transcription failed: {result.error}"
+                )
+        
+        # Notify UI of completion
+        await self._notification_service.notify_recording_completed(
+            event.session_id,
+            event.duration_seconds
+        )
+```
+
+## File Organization Rules
+
+### Feature Layer Structure
+
+```
+src/features/
+├── audio_recording/           # Audio recording feature
+│   ├── __init__.py           # Feature exports
+│   ├── commands/             # Recording commands
+│   ├── queries/              # Recording queries  
+│   ├── handlers/             # Command/Query handlers
+│   ├── ui/                   # Recording UI components
+│   ├── infrastructure/       # PyAudio services
+│   └── api.py               # Public feature API
+├── transcription/            # Transcription feature
+│   ├── __init__.py
+│   ├── commands/             # Transcription commands
+│   ├── queries/              # Model/result queries
+│   ├── handlers/             # ONNX handlers
+│   ├── ui/                   # Progress/result UI
+│   ├── infrastructure/       # ONNX services
+│   └── api.py
+├── settings_management/      # Settings feature
+│   ├── __init__.py
+│   ├── commands/             # Settings commands
+│   ├── queries/              # Settings queries
+│   ├── handlers/             # Settings handlers
+│   ├── ui/                   # Settings UI
+│   ├── infrastructure/       # JSON persistence
+│   └── api.py
+└── application_shell/        # App shell feature
+    ├── __init__.py
+    ├── commands/             # App lifecycle commands
+    ├── queries/              # App status queries
+    ├── handlers/             # Lifecycle handlers
+    ├── ui/                   # Main window, tray
+    ├── infrastructure/       # System integration
+    └── api.py
+```
+
+### Naming Conventions
+
+- **Commands**: PascalCase, imperative verbs (StartRecordingCommand, LoadModelCommand)
+- **Queries**: PascalCase, descriptive nouns (GetRecordingStatusQuery, GetAvailableModelsQuery)
+- **Handlers**: PascalCase, [CommandName]Handler (StartRecordingHandler)
+- **UI Components**: PascalCase, [Purpose]Widget (RecordingControlsWidget)
+- **APIs**: PascalCase, [Feature]API (AudioRecordingAPI)
+
+## Error Handling Rules
+
+### 1. Result Usage in Features
+
+- **MUST**: Use `Result[T]` for all handler return values
+- **MUST**: Use descriptive error messages with context
+- **MUST**: Map domain Result failures to appropriate UI feedback
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Generic error messages without context
+
+```python
+# ✅ CORRECT - Error handling in features
+if not audio_device_available:
+    return Result.failure(f"Audio device '{device_name}' is not available or in use")
+
+if model_loading_failed:
+    return Result.failure(f"Failed to load model '{model_name}': {detailed_error}")
+```
+
+### 2. UI Error Handling
+
+- **MUST**: All UI errors shown to user in friendly dialogs
+- **MUST**: Use Qt signals for error communication
+- **MUST**: Log detailed errors while showing simple messages to user
+- **FORBIDDEN**: Showing technical error details to user
+- **FORBIDDEN**: Ignoring or swallowing errors
+
+## Testing Rules
+
+### Feature Layer Testing
+
+- **MUST**: Test handlers with mocked dependencies
+- **MUST**: Test command/query validation
+- **MUST**: Test error scenarios and hardware failures
+- **MUST**: Test domain event publishing
+- **MUST**: Use integration tests for complete features
+
+```python
+# ✅ CORRECT - Feature handler testing
+@pytest.mark.asyncio
+async def test_start_recording_handler():
+    # Arrange
+    mock_audio_service = AsyncMock()
+    mock_repository = AsyncMock()
+    handler = StartRecordingHandler(mock_audio_service, mock_repository)
+    
+    command = StartRecordingCommand(
+        audio_config=AudioConfiguration(sample_rate=44100, channels=1)
+    )
+    
+    # Act
+    result = await handler.handle(command)
+    
+    # Assert
+    assert result.is_success
+    mock_audio_service.start_recording.assert_called_once()
+    mock_repository.save_session.assert_called_once()
+```
+
+## Performance Rules for Desktop
+
+- **MUST**: Use async/await for all I/O and ML operations
+
+- **MUST**: Implement proper resource disposal (audio streams, models)
+
+- **MUST**: Use background threads for heavy operations
+
+- **MUST**: Cache loaded models between sessions
+
+- **FORBIDDEN**: Blocking synchronous operations on UI thread
+
+- **FORBIDDEN**: Memory leaks from undisposed resources
+
+- **FORBIDDEN**: Blocking synchronous operations in handlers
+
+- **FORBIDDEN**: N+1 query problems in data access
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Feature Layer Rules
+
+## 🏗️ Feature Development Workflow Steps
+
+### Step 6: Identify Feature Type
+
+**Before creating commands/queries, determine the operation type:**
+
+#### Command Identification Checklist:
+
+- ✅ **Changes system state** (StartRecording, LoadModel, UpdateSettings)
+- ✅ **Has side effects** (audio processing, model loading, file operations)
+- ✅ **Represents business intention** (StartRecording, TranscribeAudio, ConfigureHotkey)
+- ✅ **Should be idempotent** when possible
+- ✅ **May trigger domain events** for cross-feature communication
+
+#### Query Identification Checklist:
+
+- ✅ **Retrieves data** without side effects
+- ✅ **Read-only operations** (GetRecordingStatus, GetAvailableModels, GetSettings)
+- ✅ **Can be cached** safely
+- ✅ **Should be optimized** for performance
+- ✅ **May include filtering** and status information
+
+**Example Decision Process:**
+
+```python
+# ✅ COMMAND: Changes state (starts audio recording)
+@dataclass
+class StartRecordingCommand:
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    vad_enabled: bool = True
+
+# ✅ QUERY: Retrieves data (gets recording status)
+@dataclass
+class GetRecordingStatusQuery:
+    session_id: Optional[str] = None
+    include_audio_levels: bool = False
+    include_device_info: bool = False
+```
+
+### Step 7: Create Command or Query Implementation
+
+**Follow these patterns for commands and queries:**
+
+#### Command Implementation:
+
+```python
+# src/features/audio_recording/commands/start_recording_command.py
+from dataclasses import dataclass
+from typing import Optional
+from datetime import datetime
+from src.domain.audio.value_objects.audio_config import AudioConfiguration
+
+@dataclass
+class StartRecordingCommand:
+    """Command to start audio recording session."""
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    user_preferences: Optional[dict] = None
+    
+    def __post_init__(self):
+        """Validate command data."""
+        if not self.audio_config:
+            raise ValueError("Audio configuration is required")
+        if self.session_id and len(self.session_id) < 1:
+            raise ValueError("Session ID cannot be empty")
+
+@dataclass
+class StopRecordingCommand:
+    """Command to stop audio recording session."""
+    session_id: str
+    save_audio: bool = False
+    immediate_transcription: bool = True
+    
+    def __post_init__(self):
+        if not self.session_id:
+            raise ValueError("Session ID is required")
+
+@dataclass
+class TranscribeAudioCommand:
+    """Command to transcribe recorded audio."""
+    audio_data: bytes
+    model_config: ModelConfiguration
+    session_id: str
+    language: Optional[str] = None
+    
+    def __post_init__(self):
+        if not self.audio_data:
+            raise ValueError("Audio data is required")
+        if not self.model_config:
+            raise ValueError("Model configuration is required")
+```
+
+#### Query Implementation:
+
+```python
+# src/features/audio_recording/queries/get_recording_status_query.py
+from dataclasses import dataclass
+from typing import Optional, List
+from datetime import datetime
+
+@dataclass
+class GetRecordingStatusQuery:
+    """Query to retrieve current recording status."""
+    session_id: Optional[str] = None
+    include_audio_levels: bool = False
+    include_device_info: bool = False
+    include_vad_status: bool = False
+    
+    def __post_init__(self):
+        """Validate query parameters."""
+        # All parameters are optional for this query
+        pass
+
+@dataclass
+class GetAudioDevicesQuery:
+    """Query to retrieve available audio devices."""
+    device_type: Optional[str] = None  # "input", "output", or None for both
+    include_device_details: bool = True
+
+@dataclass
+class GetTranscriptionHistoryQuery:
+    """Query to retrieve transcription history."""
+    limit: int = 50
+    offset: int = 0
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
+    search_term: Optional[str] = None
+    
+    def __post_init__(self):
+        """Validate query parameters."""
+        if self.limit > 200:
+            raise ValueError("Limit cannot exceed 200")
+        if self.limit < 1:
+            raise ValueError("Limit must be at least 1")
+        if self.offset < 0:
+            raise ValueError("Offset cannot be negative")
+```
+
+### Step 8: Create Handler Implementation
+
+**Handlers orchestrate domain and infrastructure layers:**
+
+#### Command Handler Pattern:
+
+```python
+# src/features/audio_recording/handlers/start_recording_handler.py
+from typing import Optional
+from src.shared.mediator.handler import ICommandHandler
+from src.shared.di.container import inject
+from src.domain.common.result import Result
+from src.domain.audio.entities.audio_session import AudioSession
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.features.audio_recording.commands.start_recording_command import StartRecordingCommand
+
+class StartRecordingHandler(ICommandHandler[StartRecordingCommand, str]):
+    @inject
+    def __init__(
+        self,
+        audio_service: IAudioService,
+        audio_repository: IAudioRepository,
+        notification_service: INotificationService
+    ):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+        self._notification_service = notification_service
+
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        """Handle audio recording start with full validation and error handling."""
+        
+        # 1. Validate audio device availability
+        device_check = await self._audio_service.check_audio_device(
+            command.audio_config.device_id
+        )
+        if not device_check.is_success:
+            return Result.failure(f"Audio device not available: {device_check.error}")
+        
+        # 2. Check if another recording is active
+        active_session = await self._audio_repository.get_active_session()
+        if active_session.is_success and active_session.value:
+            return Result.failure("Another recording session is already active")
+        
+        # 3. Create domain entity using factory method
+        session_result = AudioSession.create(
+            session_id=command.session_id,
+            audio_config=command.audio_config
+        )
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        session = session_result.value
+        
+        # 4. Start recording business logic
+        start_result = session.start_recording(command.audio_config)
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # 5. Persist session state
+        save_result = await self._audio_repository.save_session(session)
+        if not save_result.is_success:
+            return Result.failure("Failed to save recording session")
+        
+        # 6. Start actual audio capture
+        recording_result = await self._audio_service.start_recording(
+            session.id, 
+            command.audio_config
+        )
+        if not recording_result.is_success:
+            # Rollback session state
+            await self._audio_repository.delete_session(session.id)
+            return Result.failure(f"Failed to start audio recording: {recording_result.error}")
+        
+        # 7. Notify UI of successful start
+        await self._notification_service.notify_recording_started(session.id)
+        
+        return Result.success(session.id)
+```
+
+#### Query Handler Pattern:
+
+```python
+# src/features/audio_recording/handlers/get_recording_status_handler.py
+from typing import Dict, Any
+from src.shared.mediator.handler import IQueryHandler
+from src.shared.di.container import inject
+from src.domain.common.result import Result
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.features.audio_recording.queries.get_recording_status_query import GetRecordingStatusQuery
+
+class GetRecordingStatusHandler(IQueryHandler[GetRecordingStatusQuery, Dict[str, Any]]):
+    @inject
+    def __init__(
+        self,
+        audio_service: IAudioService,
+        audio_repository: IAudioRepository
+    ):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+
+    async def handle(self, query: GetRecordingStatusQuery) -> Result[Dict[str, Any]]:
+        """Handle recording status retrieval."""
+        
+        status_data = {}
+        
+        # 1. Get active session info
+        if query.session_id:
+            session_result = await self._audio_repository.get_session(query.session_id)
+            if not session_result.is_success:
+                return Result.failure(f"Session {query.session_id} not found")
+            
+            session = session_result.value
+            status_data.update({
+                "session_id": session.id,
+                "state": session.state.value,
+                "duration": session.get_duration_seconds(),
+                "created_at": session.created_at.isoformat()
+            })
+        else:
+            # Get any active session
+            active_session = await self._audio_repository.get_active_session()
+            if active_session.is_success and active_session.value:
+                session = active_session.value
+                status_data.update({
+                    "session_id": session.id,
+                    "state": session.state.value,
+                    "duration": session.get_duration_seconds()
+                })
+            else:
+                status_data["state"] = "idle"
+        
+        # 2. Include audio levels if requested
+        if query.include_audio_levels:
+            levels_result = await self._audio_service.get_current_audio_levels()
+            if levels_result.is_success:
+                status_data["audio_levels"] = levels_result.value
+        
+        # 3. Include device info if requested
+        if query.include_device_info:
+            device_result = await self._audio_service.get_current_device_info()
+            if device_result.is_success:
+                status_data["device_info"] = device_result.value
+        
+        # 4. Include VAD status if requested
+        if query.include_vad_status:
+            vad_result = await self._audio_service.get_vad_status()
+            if vad_result.is_success:
+                status_data["vad_status"] = vad_result.value
+        
+        return Result.success(status_data)
+```
+
+### Step 9: Create UI Component Implementation
+
+**UI components expose functionality with proper Qt integration:**
+
+#### UI Component Implementation:
+
+```python
+# src/features/audio_recording/ui/recording_controls.py
+from PyQt5.QtWidgets import QWidget, QPushButton, QLabel, QVBoxLayout, QHBoxLayout
+from PyQt5.QtCore import pyqtSignal, QTimer
+from typing import Optional
+from src.shared.mediator.mediator import IMediator
+from src.shared.di.container import inject
+from src.features.audio_recording.commands.start_recording_command import StartRecordingCommand
+from src.features.audio_recording.commands.stop_recording_command import StopRecordingCommand
+from src.features.audio_recording.queries.get_recording_status_query import GetRecordingStatusQuery
+
+class RecordingControlsWidget(QWidget):
+    # Qt signals for UI events
+    recording_started = pyqtSignal(str)  # session_id
+    recording_stopped = pyqtSignal(str)  # session_id
+    error_occurred = pyqtSignal(str)     # error_message
+    
+    @inject
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._current_session_id: Optional[str] = None
+        self._is_recording = False
+        
+        self._setup_ui()
+        self._setup_timer()
+        
+    def _setup_ui(self):
+        """Setup the UI components."""
+        layout = QVBoxLayout()
+        
+        # Recording button
+        self._record_button = QPushButton("Start Recording")
+        self._record_button.clicked.connect(self._on_record_button_clicked)
+        
+        # Status label
+        self._status_label = QLabel("Ready to record")
+        
+        # Duration label
+        self._duration_label = QLabel("00:00")
+        
+        # Button layout
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self._record_button)
+        
+        layout.addWidget(self._status_label)
+        layout.addWidget(self._duration_label)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+    def _setup_timer(self):
+        """Setup timer for status updates."""
+        self._status_timer = QTimer()
+        self._status_timer.timeout.connect(self._update_status)
+        self._status_timer.start(100)  # Update every 100ms
+        
+    async def _on_record_button_clicked(self):
+        """Handle record button click."""
+        try:
+            if not self._is_recording:
+                await self._start_recording()
+            else:
+                await self._stop_recording()
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+            
+    async def _start_recording(self):
+        """Start recording session."""
+        # Get audio configuration from settings or defaults
+        audio_config = self._get_audio_configuration()
+        
+        command = StartRecordingCommand(
+            audio_config=audio_config,
+            vad_enabled=True
+        )
+        
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._current_session_id = result.value
+            self._is_recording = True
+            self._record_button.setText("Stop Recording")
+            self._status_label.setText("Recording...")
+            self.recording_started.emit(self._current_session_id)
+        else:
+            self.error_occurred.emit(result.error)
+            
+    async def _stop_recording(self):
+        """Stop recording session."""
+        if not self._current_session_id:
+            return
+            
+        command = StopRecordingCommand(
+            session_id=self._current_session_id,
+            immediate_transcription=True
+        )
+        
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._is_recording = False
+            self._record_button.setText("Start Recording")
+            self._status_label.setText("Processing...")
+            self.recording_stopped.emit(self._current_session_id)
+            self._current_session_id = None
+        else:
+            self.error_occurred.emit(result.error)
+            
+    async def _update_status(self):
+        """Update recording status display."""
+        if not self._is_recording or not self._current_session_id:
+            return
+            
+        query = GetRecordingStatusQuery(
+            session_id=self._current_session_id,
+            include_audio_levels=True
+        )
+        
+        result = await self._mediator.send(query)
+        
+        if result.is_success:
+            status = result.value
+            duration = status.get("duration", 0)
+            self._duration_label.setText(self._format_duration(duration))
+            
+            # Update audio levels if available
+            if "audio_levels" in status:
+                # Update audio level indicators
+                pass
+                
+    def _get_audio_configuration(self) -> AudioConfiguration:
+        """Get current audio configuration."""
+        # This would typically come from user settings
+        return AudioConfiguration(
+            sample_rate=44100,
+            channels=1,
+            chunk_size=1024,
+            device_id=None  # Use default device
+        )
+        
+    def _format_duration(self, seconds: float) -> str:
+        """Format duration as MM:SS."""
+        minutes = int(seconds // 60)
+        seconds = int(seconds % 60)
+        return f"{minutes:02d}:{seconds:02d}"
+```
+
+### Feature Layer Best Practices
+
+1. **Feature Isolation**: Keep features self-contained with minimal dependencies
+1. **Rich Handlers**: Implement business orchestration and validation
+1. **Explicit Error Handling**: Use Result pattern consistently
+1. **Dependency Injection**: Inject all external dependencies
+1. **Thread Safety**: Ensure Qt operations happen on main thread
+1. **Resource Management**: Properly dispose of audio/ML resources
+1. **Async Operations**: Use async/await for I/O and ML operations
+1. **Event-Driven UI**: Use Qt signals for UI updates
+1. **Validation**: Validate inputs at command/query level
+1. **Testing**: Write comprehensive tests for handlers and UI components
+
+## Vertical Slice Architecture for Desktop
+
+### 1. Feature Organization Rules
+
+- **MUST**: Each feature is a self-contained vertical slice in `src/features/`
+- **MUST**: Each feature contains all related code: commands, queries, handlers, UI components, infrastructure
+- **MUST**: Features are organized by business capability (audio_recording, transcription, settings)
+- **MUST**: Each feature has a public API interface
+- **FORBIDDEN**: Cross-feature dependencies (except through domain events)
+- **FORBIDDEN**: Shared business logic between features
+
+```
+# ✅ CORRECT - Feature structure
+src/features/audio_recording/
+├── __init__.py                # Feature exports
+├── commands/                  # Commands for this feature
+│   ├── start_recording.py
+│   └── stop_recording.py
+├── queries/                   # Queries for this feature
+│   ├── get_recording_status.py
+│   └── get_audio_devices.py
+├── handlers/                  # Command/Query handlers
+│   ├── start_recording_handler.py
+│   └── recording_status_handler.py
+├── ui/                        # UI components
+│   ├── recording_controls.py
+│   └── audio_visualizer.py
+├── infrastructure/            # Technical implementations
+│   ├── pyaudio_service.py
+│   └── audio_repository.py
+└── api.py                     # Public feature API
+```
+
+### 2. MediatR Pattern Rules for Desktop
+
+- **MUST**: All business operations use MediatR commands/queries
+- **MUST**: Commands/queries use `@dataclass` for simplicity
+- **MUST**: Handlers implement appropriate interfaces (`ICommandHandler`, `IQueryHandler`)
+- **MUST**: Commands represent state changes, queries represent data retrieval
+- **MUST**: Commands/queries return `Result[T]` for consistent error handling
+- **FORBIDDEN**: Direct business logic in UI components
+- **FORBIDDEN**: Handlers calling other handlers directly
+
+```python
+# ✅ CORRECT - MediatR command implementation for desktop
+@dataclass
+class StartRecordingCommand:
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    vad_enabled: bool = True
+
+class StartRecordingHandler(ICommandHandler[StartRecordingCommand, str]):
+    def __init__(self, audio_service: IAudioService, audio_repository: IAudioRepository):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+    
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        # Create domain entity
+        session_result = AudioSession.create(command.session_id, command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        # Start recording via infrastructure
+        recording_result = await self._audio_service.start_recording(
+            session_result.value.id, 
+            command.audio_config
+        )
+        
+        return recording_result
+```
+
+### 3. Data Transfer Object Rules
+
+- **MUST**: Use dataclasses for simple DTOs
+- **MUST**: DTOs are immutable and validate input
+- **MUST**: Separate DTOs from domain entities
+- **FORBIDDEN**: Domain entities as DTOs
+- **FORBIDDEN**: Mutable DTOs
+
+```python
+# ✅ CORRECT - DTO models for desktop
+@dataclass(frozen=True)
+class AudioDeviceInfo:
+    device_id: str
+    name: str
+    channels: int
+    sample_rate: int
+    is_default: bool
+
+@dataclass(frozen=True)
+class RecordingStatusDto:
+    session_id: str
+    state: str
+    duration_seconds: float
+    audio_levels: Optional[Dict[str, float]] = None
+    device_info: Optional[AudioDeviceInfo] = None
+```
+
+### 4. Handler Rules for Desktop
+
+- **MUST**: Handlers use dependency injection
+- **MUST**: Handle method returns `Result[T]`
+- **MUST**: Handlers are stateless and thread-safe
+- **MUST**: Use domain entities for business logic
+- **MUST**: Handle Qt thread safety for UI updates
+- **FORBIDDEN**: Direct hardware access (use services)
+- **FORBIDDEN**: Blocking operations on UI thread
+
+```python
+# ✅ CORRECT - Handler implementation for desktop
+class TranscribeAudioHandler(ICommandHandler[TranscribeAudioCommand, TranscriptionResult]):
+    def __init__(self, 
+                 transcription_service: ITranscriptionService,
+                 model_repository: IModelRepository,
+                 notification_service: INotificationService):
+        self._transcription_service = transcription_service
+        self._model_repository = model_repository
+        self._notification_service = notification_service
+    
+    async def handle(self, command: TranscribeAudioCommand) -> Result[TranscriptionResult]:
+        # 1. Load model if not already loaded
+        model_result = await self._model_repository.get_loaded_model(command.model_config.model_name)
+        if not model_result.is_success:
+            load_result = await self._transcription_service.load_model(command.model_config)
+            if not load_result.is_success:
+                return Result.failure(f"Failed to load model: {load_result.error}")
+        
+        # 2. Create transcription request domain entity
+        request_result = TranscriptionRequest.create(
+            audio_data=command.audio_data,
+            model_config=command.model_config,
+            language=command.language
+        )
+        if not request_result.is_success:
+            return Result.failure(request_result.error)
+        
+        # 3. Execute transcription
+        transcription_result = await self._transcription_service.transcribe(request_result.value)
+        if not transcription_result.is_success:
+            return Result.failure(transcription_result.error)
+        
+        # 4. Notify UI (thread-safe)
+        await self._notification_service.notify_transcription_completed(
+            command.session_id, 
+            transcription_result.value
+        )
+        
+        return transcription_result
+```
+
+### 5. UI Component Rules
+
+- **MUST**: UI components are thin and delegate to MediatR
+- **MUST**: Use Qt signals for event communication
+- **MUST**: Handle errors gracefully with user-friendly messages
+- **MUST**: Use async/await for long-running operations
+- **MUST**: Ensure all Qt operations happen on main thread
+- **FORBIDDEN**: Business logic in UI components
+- **FORBIDDEN**: Direct infrastructure access from UI
+
+```python
+# ✅ CORRECT - UI component implementation
+class TranscriptionProgressWidget(QWidget):
+    transcription_completed = pyqtSignal(str, str)  # session_id, text
+    error_occurred = pyqtSignal(str)  # error_message
+    
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._setup_ui()
+    
+    async def start_transcription(self, audio_data: bytes, model_config: ModelConfiguration):
+        """Start transcription process."""
+        self._progress_bar.setVisible(True)
+        self._status_label.setText("Transcribing audio...")
+        
+        command = TranscribeAudioCommand(
+            audio_data=audio_data,
+            model_config=model_config,
+            session_id=self._current_session_id
+        )
+        
+        try:
+            result = await self._mediator.send(command)
+            
+            if result.is_success:
+                transcription = result.value
+                self.transcription_completed.emit(self._current_session_id, transcription.text)
+                self._status_label.setText("Transcription completed")
+            else:
+                self.error_occurred.emit(result.error)
+                self._status_label.setText("Transcription failed")
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+        finally:
+            self._progress_bar.setVisible(False)
+```
+
+## Feature Integration Rules
+
+### 1. Feature API Rules
+
+- **MUST**: Each feature exports a public API interface
+- **MUST**: APIs use Result pattern for error handling
+- **MUST**: APIs are async-first for long-running operations
+- **MUST**: APIs handle their own error scenarios
+- **FORBIDDEN**: Direct access to feature internals
+- **FORBIDDEN**: Synchronous APIs for I/O operations
+
+```python
+# ✅ CORRECT - Feature API
+class AudioRecordingAPI:
+    def __init__(self, mediator: IMediator):
+        self._mediator = mediator
+    
+    async def start_recording(self, audio_config: AudioConfiguration) -> Result[str]:
+        """Start a new recording session."""
+        command = StartRecordingCommand(audio_config=audio_config)
+        return await self._mediator.send(command)
+    
+    async def stop_recording(self, session_id: str) -> Result[Dict[str, Any]]:
+        """Stop recording session."""
+        command = StopRecordingCommand(session_id=session_id)
+        return await self._mediator.send(command)
+    
+    async def get_status(self, session_id: Optional[str] = None) -> Result[Dict[str, Any]]:
+        """Get recording status."""
+        query = GetRecordingStatusQuery(session_id=session_id)
+        return await self._mediator.send(query)
+```
+
+### 2. Event Handling Rules
+
+- **MUST**: Domain event handlers are separate from command handlers
+- **MUST**: Event handlers use Qt signals for UI updates
+- **MUST**: Event handlers are idempotent
+- **MUST**: Event handlers can trigger cross-feature communication
+- **FORBIDDEN**: Event handlers modifying the same aggregate that raised the event
+- **FORBIDDEN**: Synchronous processing for heavy operations
+
+```python
+# ✅ CORRECT - Event handler for desktop
+class RecordingCompletedHandler(IEventHandler[RecordingCompleted]):
+    def __init__(self, transcription_api: TranscriptionAPI, notification_service: INotificationService):
+        self._transcription_api = transcription_api
+        self._notification_service = notification_service
+    
+    async def handle(self, event: RecordingCompleted) -> None:
+        """Handle recording completion - trigger transcription."""
+        # Auto-start transcription if enabled
+        if event.auto_transcribe:
+            result = await self._transcription_api.transcribe_audio(
+                audio_data=event.audio_data,
+                model_config=event.preferred_model_config,
+                session_id=event.session_id
+            )
+            
+            if not result.is_success:
+                await self._notification_service.notify_error(
+                    f"Auto-transcription failed: {result.error}"
+                )
+        
+        # Notify UI of completion
+        await self._notification_service.notify_recording_completed(
+            event.session_id,
+            event.duration_seconds
+        )
+```
+
+## File Organization Rules
+
+### Feature Layer Structure
+
+```
+src/features/
+├── audio_recording/           # Audio recording feature
+│   ├── __init__.py           # Feature exports
+│   ├── commands/             # Recording commands
+│   ├── queries/              # Recording queries  
+│   ├── handlers/             # Command/Query handlers
+│   ├── ui/                   # Recording UI components
+│   ├── infrastructure/       # PyAudio services
+│   └── api.py               # Public feature API
+├── transcription/            # Transcription feature
+│   ├── __init__.py
+│   ├── commands/             # Transcription commands
+│   ├── queries/              # Model/result queries
+│   ├── handlers/             # ONNX handlers
+│   ├── ui/                   # Progress/result UI
+│   ├── infrastructure/       # ONNX services
+│   └── api.py
+├── settings_management/      # Settings feature
+│   ├── __init__.py
+│   ├── commands/             # Settings commands
+│   ├── queries/              # Settings queries
+│   ├── handlers/             # Settings handlers
+│   ├── ui/                   # Settings UI
+│   ├── infrastructure/       # JSON persistence
+│   └── api.py
+└── application_shell/        # App shell feature
+    ├── __init__.py
+    ├── commands/             # App lifecycle commands
+    ├── queries/              # App status queries
+    ├── handlers/             # Lifecycle handlers
+    ├── ui/                   # Main window, tray
+    ├── infrastructure/       # System integration
+    └── api.py
+```
+
+### Naming Conventions
+
+- **Commands**: PascalCase, imperative verbs (StartRecordingCommand, LoadModelCommand)
+- **Queries**: PascalCase, descriptive nouns (GetRecordingStatusQuery, GetAvailableModelsQuery)
+- **Handlers**: PascalCase, [CommandName]Handler (StartRecordingHandler)
+- **UI Components**: PascalCase, [Purpose]Widget (RecordingControlsWidget)
+- **APIs**: PascalCase, [Feature]API (AudioRecordingAPI)
+
+## Error Handling Rules
+
+### 1. Result Usage in Features
+
+- **MUST**: Use `Result[T]` for all handler return values
+- **MUST**: Use descriptive error messages with context
+- **MUST**: Map domain Result failures to appropriate UI feedback
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Generic error messages without context
+
+```python
+# ✅ CORRECT - Error handling in features
+if not audio_device_available:
+    return Result.failure(f"Audio device '{device_name}' is not available or in use")
+
+if model_loading_failed:
+    return Result.failure(f"Failed to load model '{model_name}': {detailed_error}")
+```
+
+### 2. UI Error Handling
+
+- **MUST**: All UI errors shown to user in friendly dialogs
+- **MUST**: Use Qt signals for error communication
+- **MUST**: Log detailed errors while showing simple messages to user
+- **FORBIDDEN**: Showing technical error details to user
+- **FORBIDDEN**: Ignoring or swallowing errors
+
+## Testing Rules
+
+### Feature Layer Testing
+
+- **MUST**: Test handlers with mocked dependencies
+- **MUST**: Test command/query validation
+- **MUST**: Test error scenarios and hardware failures
+- **MUST**: Test domain event publishing
+- **MUST**: Use integration tests for complete features
+
+```python
+# ✅ CORRECT - Feature handler testing
+@pytest.mark.asyncio
+async def test_start_recording_handler():
+    # Arrange
+    mock_audio_service = AsyncMock()
+    mock_repository = AsyncMock()
+    handler = StartRecordingHandler(mock_audio_service, mock_repository)
+    
+    command = StartRecordingCommand(
+        audio_config=AudioConfiguration(sample_rate=44100, channels=1)
+    )
+    
+    # Act
+    result = await handler.handle(command)
+    
+    # Assert
+    assert result.is_success
+    mock_audio_service.start_recording.assert_called_once()
+    mock_repository.save_session.assert_called_once()
+```
+
+## Performance Rules for Desktop
+
+- **MUST**: Use async/await for all I/O and ML operations
+
+- **MUST**: Implement proper resource disposal (audio streams, models)
+
+- **MUST**: Use background threads for heavy operations
+
+- **MUST**: Cache loaded models between sessions
+
+- **FORBIDDEN**: Blocking synchronous operations on UI thread
+
+- **FORBIDDEN**: Memory leaks from undisposed resources
+
+- **FORBIDDEN**: Blocking synchronous operations in handlers
+
+- **FORBIDDEN**: N+1 query problems in data access
+
+# WinSTT Feature Layer Rules
+
+## 🏗️ Feature Development Workflow Steps
+
+### Step 6: Identify Feature Type
+
+**Before creating commands/queries, determine the operation type:**
+
+#### Command Identification Checklist:
+
+- ✅ **Changes system state** (StartRecording, LoadModel, UpdateSettings)
+- ✅ **Has side effects** (audio processing, model loading, file operations)
+- ✅ **Represents business intention** (StartRecording, TranscribeAudio, ConfigureHotkey)
+- ✅ **Should be idempotent** when possible
+- ✅ **May trigger domain events** for cross-feature communication
+
+#### Query Identification Checklist:
+
+- ✅ **Retrieves data** without side effects
+- ✅ **Read-only operations** (GetRecordingStatus, GetAvailableModels, GetSettings)
+- ✅ **Can be cached** safely
+- ✅ **Should be optimized** for performance
+- ✅ **May include filtering** and status information
+
+**Example Decision Process:**
+
+```python
+# ✅ COMMAND: Changes state (starts audio recording)
+@dataclass
+class StartRecordingCommand:
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    vad_enabled: bool = True
+
+# ✅ QUERY: Retrieves data (gets recording status)
+@dataclass
+class GetRecordingStatusQuery:
+    session_id: Optional[str] = None
+    include_audio_levels: bool = False
+    include_device_info: bool = False
+```
+
+### Step 7: Create Command or Query Implementation
+
+**Follow these patterns for commands and queries:**
+
+#### Command Implementation:
+
+```python
+# src/features/audio_recording/commands/start_recording_command.py
+from dataclasses import dataclass
+from typing import Optional
+from datetime import datetime
+from src.domain.audio.value_objects.audio_config import AudioConfiguration
+
+@dataclass
+class StartRecordingCommand:
+    """Command to start audio recording session."""
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    user_preferences: Optional[dict] = None
+    
+    def __post_init__(self):
+        """Validate command data."""
+        if not self.audio_config:
+            raise ValueError("Audio configuration is required")
+        if self.session_id and len(self.session_id) < 1:
+            raise ValueError("Session ID cannot be empty")
+
+@dataclass
+class StopRecordingCommand:
+    """Command to stop audio recording session."""
+    session_id: str
+    save_audio: bool = False
+    immediate_transcription: bool = True
+    
+    def __post_init__(self):
+        if not self.session_id:
+            raise ValueError("Session ID is required")
+
+@dataclass
+class TranscribeAudioCommand:
+    """Command to transcribe recorded audio."""
+    audio_data: bytes
+    model_config: ModelConfiguration
+    session_id: str
+    language: Optional[str] = None
+    
+    def __post_init__(self):
+        if not self.audio_data:
+            raise ValueError("Audio data is required")
+        if not self.model_config:
+            raise ValueError("Model configuration is required")
+```
+
+#### Query Implementation:
+
+```python
+# src/features/audio_recording/queries/get_recording_status_query.py
+from dataclasses import dataclass
+from typing import Optional, List
+from datetime import datetime
+
+@dataclass
+class GetRecordingStatusQuery:
+    """Query to retrieve current recording status."""
+    session_id: Optional[str] = None
+    include_audio_levels: bool = False
+    include_device_info: bool = False
+    include_vad_status: bool = False
+    
+    def __post_init__(self):
+        """Validate query parameters."""
+        # All parameters are optional for this query
+        pass
+
+@dataclass
+class GetAudioDevicesQuery:
+    """Query to retrieve available audio devices."""
+    device_type: Optional[str] = None  # "input", "output", or None for both
+    include_device_details: bool = True
+
+@dataclass
+class GetTranscriptionHistoryQuery:
+    """Query to retrieve transcription history."""
+    limit: int = 50
+    offset: int = 0
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
+    search_term: Optional[str] = None
+    
+    def __post_init__(self):
+        """Validate query parameters."""
+        if self.limit > 200:
+            raise ValueError("Limit cannot exceed 200")
+        if self.limit < 1:
+            raise ValueError("Limit must be at least 1")
+        if self.offset < 0:
+            raise ValueError("Offset cannot be negative")
+```
+
+### Step 8: Create Handler Implementation
+
+**Handlers orchestrate domain and infrastructure layers:**
+
+#### Command Handler Pattern:
+
+```python
+# src/features/audio_recording/handlers/start_recording_handler.py
+from typing import Optional
+from src.shared.mediator.handler import ICommandHandler
+from src.shared.di.container import inject
+from src.domain.common.result import Result
+from src.domain.audio.entities.audio_session import AudioSession
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.features.audio_recording.commands.start_recording_command import StartRecordingCommand
+
+class StartRecordingHandler(ICommandHandler[StartRecordingCommand, str]):
+    @inject
+    def __init__(
+        self,
+        audio_service: IAudioService,
+        audio_repository: IAudioRepository,
+        notification_service: INotificationService
+    ):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+        self._notification_service = notification_service
+
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        """Handle audio recording start with full validation and error handling."""
+        
+        # 1. Validate audio device availability
+        device_check = await self._audio_service.check_audio_device(
+            command.audio_config.device_id
+        )
+        if not device_check.is_success:
+            return Result.failure(f"Audio device not available: {device_check.error}")
+        
+        # 2. Check if another recording is active
+        active_session = await self._audio_repository.get_active_session()
+        if active_session.is_success and active_session.value:
+            return Result.failure("Another recording session is already active")
+        
+        # 3. Create domain entity using factory method
+        session_result = AudioSession.create(
+            session_id=command.session_id,
+            audio_config=command.audio_config
+        )
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        session = session_result.value
+        
+        # 4. Start recording business logic
+        start_result = session.start_recording(command.audio_config)
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # 5. Persist session state
+        save_result = await self._audio_repository.save_session(session)
+        if not save_result.is_success:
+            return Result.failure("Failed to save recording session")
+        
+        # 6. Start actual audio capture
+        recording_result = await self._audio_service.start_recording(
+            session.id, 
+            command.audio_config
+        )
+        if not recording_result.is_success:
+            # Rollback session state
+            await self._audio_repository.delete_session(session.id)
+            return Result.failure(f"Failed to start audio recording: {recording_result.error}")
+        
+        # 7. Notify UI of successful start
+        await self._notification_service.notify_recording_started(session.id)
+        
+        return Result.success(session.id)
+```
+
+#### Query Handler Pattern:
+
+```python
+# src/features/audio_recording/handlers/get_recording_status_handler.py
+from typing import Dict, Any
+from src.shared.mediator.handler import IQueryHandler
+from src.shared.di.container import inject
+from src.domain.common.result import Result
+from src.domain.audio.contracts.audio_service import IAudioService
+from src.domain.audio.contracts.audio_repository import IAudioRepository
+from src.features.audio_recording.queries.get_recording_status_query import GetRecordingStatusQuery
+
+class GetRecordingStatusHandler(IQueryHandler[GetRecordingStatusQuery, Dict[str, Any]]):
+    @inject
+    def __init__(
+        self,
+        audio_service: IAudioService,
+        audio_repository: IAudioRepository
+    ):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+
+    async def handle(self, query: GetRecordingStatusQuery) -> Result[Dict[str, Any]]:
+        """Handle recording status retrieval."""
+        
+        status_data = {}
+        
+        # 1. Get active session info
+        if query.session_id:
+            session_result = await self._audio_repository.get_session(query.session_id)
+            if not session_result.is_success:
+                return Result.failure(f"Session {query.session_id} not found")
+            
+            session = session_result.value
+            status_data.update({
+                "session_id": session.id,
+                "state": session.state.value,
+                "duration": session.get_duration_seconds(),
+                "created_at": session.created_at.isoformat()
+            })
+        else:
+            # Get any active session
+            active_session = await self._audio_repository.get_active_session()
+            if active_session.is_success and active_session.value:
+                session = active_session.value
+                status_data.update({
+                    "session_id": session.id,
+                    "state": session.state.value,
+                    "duration": session.get_duration_seconds()
+                })
+            else:
+                status_data["state"] = "idle"
+        
+        # 2. Include audio levels if requested
+        if query.include_audio_levels:
+            levels_result = await self._audio_service.get_current_audio_levels()
+            if levels_result.is_success:
+                status_data["audio_levels"] = levels_result.value
+        
+        # 3. Include device info if requested
+        if query.include_device_info:
+            device_result = await self._audio_service.get_current_device_info()
+            if device_result.is_success:
+                status_data["device_info"] = device_result.value
+        
+        # 4. Include VAD status if requested
+        if query.include_vad_status:
+            vad_result = await self._audio_service.get_vad_status()
+            if vad_result.is_success:
+                status_data["vad_status"] = vad_result.value
+        
+        return Result.success(status_data)
+```
+
+### Step 9: Create UI Component Implementation
+
+**UI components expose functionality with proper Qt integration:**
+
+#### UI Component Implementation:
+
+```python
+# src/features/audio_recording/ui/recording_controls.py
+from PyQt5.QtWidgets import QWidget, QPushButton, QLabel, QVBoxLayout, QHBoxLayout
+from PyQt5.QtCore import pyqtSignal, QTimer
+from typing import Optional
+from src.shared.mediator.mediator import IMediator
+from src.shared.di.container import inject
+from src.features.audio_recording.commands.start_recording_command import StartRecordingCommand
+from src.features.audio_recording.commands.stop_recording_command import StopRecordingCommand
+from src.features.audio_recording.queries.get_recording_status_query import GetRecordingStatusQuery
+
+class RecordingControlsWidget(QWidget):
+    # Qt signals for UI events
+    recording_started = pyqtSignal(str)  # session_id
+    recording_stopped = pyqtSignal(str)  # session_id
+    error_occurred = pyqtSignal(str)     # error_message
+    
+    @inject
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._current_session_id: Optional[str] = None
+        self._is_recording = False
+        
+        self._setup_ui()
+        self._setup_timer()
+        
+    def _setup_ui(self):
+        """Setup the UI components."""
+        layout = QVBoxLayout()
+        
+        # Recording button
+        self._record_button = QPushButton("Start Recording")
+        self._record_button.clicked.connect(self._on_record_button_clicked)
+        
+        # Status label
+        self._status_label = QLabel("Ready to record")
+        
+        # Duration label
+        self._duration_label = QLabel("00:00")
+        
+        # Button layout
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self._record_button)
+        
+        layout.addWidget(self._status_label)
+        layout.addWidget(self._duration_label)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+    def _setup_timer(self):
+        """Setup timer for status updates."""
+        self._status_timer = QTimer()
+        self._status_timer.timeout.connect(self._update_status)
+        self._status_timer.start(100)  # Update every 100ms
+        
+    async def _on_record_button_clicked(self):
+        """Handle record button click."""
+        try:
+            if not self._is_recording:
+                await self._start_recording()
+            else:
+                await self._stop_recording()
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+            
+    async def _start_recording(self):
+        """Start recording session."""
+        # Get audio configuration from settings or defaults
+        audio_config = self._get_audio_configuration()
+        
+        command = StartRecordingCommand(
+            audio_config=audio_config,
+            vad_enabled=True
+        )
+        
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._current_session_id = result.value
+            self._is_recording = True
+            self._record_button.setText("Stop Recording")
+            self._status_label.setText("Recording...")
+            self.recording_started.emit(self._current_session_id)
+        else:
+            self.error_occurred.emit(result.error)
+            
+    async def _stop_recording(self):
+        """Stop recording session."""
+        if not self._current_session_id:
+            return
+            
+        command = StopRecordingCommand(
+            session_id=self._current_session_id,
+            immediate_transcription=True
+        )
+        
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._is_recording = False
+            self._record_button.setText("Start Recording")
+            self._status_label.setText("Processing...")
+            self.recording_stopped.emit(self._current_session_id)
+            self._current_session_id = None
+        else:
+            self.error_occurred.emit(result.error)
+            
+    async def _update_status(self):
+        """Update recording status display."""
+        if not self._is_recording or not self._current_session_id:
+            return
+            
+        query = GetRecordingStatusQuery(
+            session_id=self._current_session_id,
+            include_audio_levels=True
+        )
+        
+        result = await self._mediator.send(query)
+        
+        if result.is_success:
+            status = result.value
+            duration = status.get("duration", 0)
+            self._duration_label.setText(self._format_duration(duration))
+            
+            # Update audio levels if available
+            if "audio_levels" in status:
+                # Update audio level indicators
+                pass
+                
+    def _get_audio_configuration(self) -> AudioConfiguration:
+        """Get current audio configuration."""
+        # This would typically come from user settings
+        return AudioConfiguration(
+            sample_rate=44100,
+            channels=1,
+            chunk_size=1024,
+            device_id=None  # Use default device
+        )
+        
+    def _format_duration(self, seconds: float) -> str:
+        """Format duration as MM:SS."""
+        minutes = int(seconds // 60)
+        seconds = int(seconds % 60)
+        return f"{minutes:02d}:{seconds:02d}"
+```
+
+### Feature Layer Best Practices
+
+1. **Feature Isolation**: Keep features self-contained with minimal dependencies
+1. **Rich Handlers**: Implement business orchestration and validation
+1. **Explicit Error Handling**: Use Result pattern consistently
+1. **Dependency Injection**: Inject all external dependencies
+1. **Thread Safety**: Ensure Qt operations happen on main thread
+1. **Resource Management**: Properly dispose of audio/ML resources
+1. **Async Operations**: Use async/await for I/O and ML operations
+1. **Event-Driven UI**: Use Qt signals for UI updates
+1. **Validation**: Validate inputs at command/query level
+1. **Testing**: Write comprehensive tests for handlers and UI components
+
+## Vertical Slice Architecture for Desktop
+
+### 1. Feature Organization Rules
+
+- **MUST**: Each feature is a self-contained vertical slice in `src/features/`
+- **MUST**: Each feature contains all related code: commands, queries, handlers, UI components, infrastructure
+- **MUST**: Features are organized by business capability (audio_recording, transcription, settings)
+- **MUST**: Each feature has a public API interface
+- **FORBIDDEN**: Cross-feature dependencies (except through domain events)
+- **FORBIDDEN**: Shared business logic between features
+
+```
+# ✅ CORRECT - Feature structure
+src/features/audio_recording/
+├── __init__.py                # Feature exports
+├── commands/                  # Commands for this feature
+│   ├── start_recording.py
+│   └── stop_recording.py
+├── queries/                   # Queries for this feature
+│   ├── get_recording_status.py
+│   └── get_audio_devices.py
+├── handlers/                  # Command/Query handlers
+│   ├── start_recording_handler.py
+│   └── recording_status_handler.py
+├── ui/                        # UI components
+│   ├── recording_controls.py
+│   └── audio_visualizer.py
+├── infrastructure/            # Technical implementations
+│   ├── pyaudio_service.py
+│   └── audio_repository.py
+└── api.py                     # Public feature API
+```
+
+### 2. MediatR Pattern Rules for Desktop
+
+- **MUST**: All business operations use MediatR commands/queries
+- **MUST**: Commands/queries use `@dataclass` for simplicity
+- **MUST**: Handlers implement appropriate interfaces (`ICommandHandler`, `IQueryHandler`)
+- **MUST**: Commands represent state changes, queries represent data retrieval
+- **MUST**: Commands/queries return `Result[T]` for consistent error handling
+- **FORBIDDEN**: Direct business logic in UI components
+- **FORBIDDEN**: Handlers calling other handlers directly
+
+```python
+# ✅ CORRECT - MediatR command implementation for desktop
+@dataclass
+class StartRecordingCommand:
+    audio_config: AudioConfiguration
+    session_id: Optional[str] = None
+    vad_enabled: bool = True
+
+class StartRecordingHandler(ICommandHandler[StartRecordingCommand, str]):
+    def __init__(self, audio_service: IAudioService, audio_repository: IAudioRepository):
+        self._audio_service = audio_service
+        self._audio_repository = audio_repository
+    
+    async def handle(self, command: StartRecordingCommand) -> Result[str]:
+        # Create domain entity
+        session_result = AudioSession.create(command.session_id, command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(session_result.error)
+        
+        # Start recording via infrastructure
+        recording_result = await self._audio_service.start_recording(
+            session_result.value.id, 
+            command.audio_config
+        )
+        
+        return recording_result
+```
+
+### 3. Data Transfer Object Rules
+
+- **MUST**: Use dataclasses for simple DTOs
+- **MUST**: DTOs are immutable and validate input
+- **MUST**: Separate DTOs from domain entities
+- **FORBIDDEN**: Domain entities as DTOs
+- **FORBIDDEN**: Mutable DTOs
+
+```python
+# ✅ CORRECT - DTO models for desktop
+@dataclass(frozen=True)
+class AudioDeviceInfo:
+    device_id: str
+    name: str
+    channels: int
+    sample_rate: int
+    is_default: bool
+
+@dataclass(frozen=True)
+class RecordingStatusDto:
+    session_id: str
+    state: str
+    duration_seconds: float
+    audio_levels: Optional[Dict[str, float]] = None
+    device_info: Optional[AudioDeviceInfo] = None
+```
+
+### 4. Handler Rules for Desktop
+
+- **MUST**: Handlers use dependency injection
+- **MUST**: Handle method returns `Result[T]`
+- **MUST**: Handlers are stateless and thread-safe
+- **MUST**: Use domain entities for business logic
+- **MUST**: Handle Qt thread safety for UI updates
+- **FORBIDDEN**: Direct hardware access (use services)
+- **FORBIDDEN**: Blocking operations on UI thread
+
+```python
+# ✅ CORRECT - Handler implementation for desktop
+class TranscribeAudioHandler(ICommandHandler[TranscribeAudioCommand, TranscriptionResult]):
+    def __init__(self, 
+                 transcription_service: ITranscriptionService,
+                 model_repository: IModelRepository,
+                 notification_service: INotificationService):
+        self._transcription_service = transcription_service
+        self._model_repository = model_repository
+        self._notification_service = notification_service
+    
+    async def handle(self, command: TranscribeAudioCommand) -> Result[TranscriptionResult]:
+        # 1. Load model if not already loaded
+        model_result = await self._model_repository.get_loaded_model(command.model_config.model_name)
+        if not model_result.is_success:
+            load_result = await self._transcription_service.load_model(command.model_config)
+            if not load_result.is_success:
+                return Result.failure(f"Failed to load model: {load_result.error}")
+        
+        # 2. Create transcription request domain entity
+        request_result = TranscriptionRequest.create(
+            audio_data=command.audio_data,
+            model_config=command.model_config,
+            language=command.language
+        )
+        if not request_result.is_success:
+            return Result.failure(request_result.error)
+        
+        # 3. Execute transcription
+        transcription_result = await self._transcription_service.transcribe(request_result.value)
+        if not transcription_result.is_success:
+            return Result.failure(transcription_result.error)
+        
+        # 4. Notify UI (thread-safe)
+        await self._notification_service.notify_transcription_completed(
+            command.session_id, 
+            transcription_result.value
+        )
+        
+        return transcription_result
+```
+
+### 5. UI Component Rules
+
+- **MUST**: UI components are thin and delegate to MediatR
+- **MUST**: Use Qt signals for event communication
+- **MUST**: Handle errors gracefully with user-friendly messages
+- **MUST**: Use async/await for long-running operations
+- **MUST**: Ensure all Qt operations happen on main thread
+- **FORBIDDEN**: Business logic in UI components
+- **FORBIDDEN**: Direct infrastructure access from UI
+
+```python
+# ✅ CORRECT - UI component implementation
+class TranscriptionProgressWidget(QWidget):
+    transcription_completed = pyqtSignal(str, str)  # session_id, text
+    error_occurred = pyqtSignal(str)  # error_message
+    
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._setup_ui()
+    
+    async def start_transcription(self, audio_data: bytes, model_config: ModelConfiguration):
+        """Start transcription process."""
+        self._progress_bar.setVisible(True)
+        self._status_label.setText("Transcribing audio...")
+        
+        command = TranscribeAudioCommand(
+            audio_data=audio_data,
+            model_config=model_config,
+            session_id=self._current_session_id
+        )
+        
+        try:
+            result = await self._mediator.send(command)
+            
+            if result.is_success:
+                transcription = result.value
+                self.transcription_completed.emit(self._current_session_id, transcription.text)
+                self._status_label.setText("Transcription completed")
+            else:
+                self.error_occurred.emit(result.error)
+                self._status_label.setText("Transcription failed")
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+        finally:
+            self._progress_bar.setVisible(False)
+```
+
+## Feature Integration Rules
+
+### 1. Feature API Rules
+
+- **MUST**: Each feature exports a public API interface
+- **MUST**: APIs use Result pattern for error handling
+- **MUST**: APIs are async-first for long-running operations
+- **MUST**: APIs handle their own error scenarios
+- **FORBIDDEN**: Direct access to feature internals
+- **FORBIDDEN**: Synchronous APIs for I/O operations
+
+```python
+# ✅ CORRECT - Feature API
+class AudioRecordingAPI:
+    def __init__(self, mediator: IMediator):
+        self._mediator = mediator
+    
+    async def start_recording(self, audio_config: AudioConfiguration) -> Result[str]:
+        """Start a new recording session."""
+        command = StartRecordingCommand(audio_config=audio_config)
+        return await self._mediator.send(command)
+    
+    async def stop_recording(self, session_id: str) -> Result[Dict[str, Any]]:
+        """Stop recording session."""
+        command = StopRecordingCommand(session_id=session_id)
+        return await self._mediator.send(command)
+    
+    async def get_status(self, session_id: Optional[str] = None) -> Result[Dict[str, Any]]:
+        """Get recording status."""
+        query = GetRecordingStatusQuery(session_id=session_id)
+        return await self._mediator.send(query)
+```
+
+### 2. Event Handling Rules
+
+- **MUST**: Domain event handlers are separate from command handlers
+- **MUST**: Event handlers use Qt signals for UI updates
+- **MUST**: Event handlers are idempotent
+- **MUST**: Event handlers can trigger cross-feature communication
+- **FORBIDDEN**: Event handlers modifying the same aggregate that raised the event
+- **FORBIDDEN**: Synchronous processing for heavy operations
+
+```python
+# ✅ CORRECT - Event handler for desktop
+class RecordingCompletedHandler(IEventHandler[RecordingCompleted]):
+    def __init__(self, transcription_api: TranscriptionAPI, notification_service: INotificationService):
+        self._transcription_api = transcription_api
+        self._notification_service = notification_service
+    
+    async def handle(self, event: RecordingCompleted) -> None:
+        """Handle recording completion - trigger transcription."""
+        # Auto-start transcription if enabled
+        if event.auto_transcribe:
+            result = await self._transcription_api.transcribe_audio(
+                audio_data=event.audio_data,
+                model_config=event.preferred_model_config,
+                session_id=event.session_id
+            )
+            
+            if not result.is_success:
+                await self._notification_service.notify_error(
+                    f"Auto-transcription failed: {result.error}"
+                )
+        
+        # Notify UI of completion
+        await self._notification_service.notify_recording_completed(
+            event.session_id,
+            event.duration_seconds
+        )
+```
+
+## File Organization Rules
+
+### Feature Layer Structure
+
+```
+src/features/
+├── audio_recording/           # Audio recording feature
+│   ├── __init__.py           # Feature exports
+│   ├── commands/             # Recording commands
+│   ├── queries/              # Recording queries  
+│   ├── handlers/             # Command/Query handlers
+│   ├── ui/                   # Recording UI components
+│   ├── infrastructure/       # PyAudio services
+│   └── api.py               # Public feature API
+├── transcription/            # Transcription feature
+│   ├── __init__.py
+│   ├── commands/             # Transcription commands
+│   ├── queries/              # Model/result queries
+│   ├── handlers/             # ONNX handlers
+│   ├── ui/                   # Progress/result UI
+│   ├── infrastructure/       # ONNX services
+│   └── api.py
+├── settings_management/      # Settings feature
+│   ├── __init__.py
+│   ├── commands/             # Settings commands
+│   ├── queries/              # Settings queries
+│   ├── handlers/             # Settings handlers
+│   ├── ui/                   # Settings UI
+│   ├── infrastructure/       # JSON persistence
+│   └── api.py
+└── application_shell/        # App shell feature
+    ├── __init__.py
+    ├── commands/             # App lifecycle commands
+    ├── queries/              # App status queries
+    ├── handlers/             # Lifecycle handlers
+    ├── ui/                   # Main window, tray
+    ├── infrastructure/       # System integration
+    └── api.py
+```
+
+### Naming Conventions
+
+- **Commands**: PascalCase, imperative verbs (StartRecordingCommand, LoadModelCommand)
+- **Queries**: PascalCase, descriptive nouns (GetRecordingStatusQuery, GetAvailableModelsQuery)
+- **Handlers**: PascalCase, [CommandName]Handler (StartRecordingHandler)
+- **UI Components**: PascalCase, [Purpose]Widget (RecordingControlsWidget)
+- **APIs**: PascalCase, [Feature]API (AudioRecordingAPI)
+
+## Error Handling Rules
+
+### 1. Result Usage in Features
+
+- **MUST**: Use `Result[T]` for all handler return values
+- **MUST**: Use descriptive error messages with context
+- **MUST**: Map domain Result failures to appropriate UI feedback
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Generic error messages without context
+
+```python
+# ✅ CORRECT - Error handling in features
+if not audio_device_available:
+    return Result.failure(f"Audio device '{device_name}' is not available or in use")
+
+if model_loading_failed:
+    return Result.failure(f"Failed to load model '{model_name}': {detailed_error}")
+```
+
+### 2. UI Error Handling
+
+- **MUST**: All UI errors shown to user in friendly dialogs
+- **MUST**: Use Qt signals for error communication
+- **MUST**: Log detailed errors while showing simple messages to user
+- **FORBIDDEN**: Showing technical error details to user
+- **FORBIDDEN**: Ignoring or swallowing errors
+
+## Testing Rules
+
+### Feature Layer Testing
+
+- **MUST**: Test handlers with mocked dependencies
+- **MUST**: Test command/query validation
+- **MUST**: Test error scenarios and hardware failures
+- **MUST**: Test domain event publishing
+- **MUST**: Use integration tests for complete features
+
+```python
+# ✅ CORRECT - Feature handler testing
+@pytest.mark.asyncio
+async def test_start_recording_handler():
+    # Arrange
+    mock_audio_service = AsyncMock()
+    mock_repository = AsyncMock()
+    handler = StartRecordingHandler(mock_audio_service, mock_repository)
+    
+    command = StartRecordingCommand(
+        audio_config=AudioConfiguration(sample_rate=44100, channels=1)
+    )
+    
+    # Act
+    result = await handler.handle(command)
+    
+    # Assert
+    assert result.is_success
+    mock_audio_service.start_recording.assert_called_once()
+    mock_repository.save_session.assert_called_once()
+```
+
+## Performance Rules for Desktop
+
+- **MUST**: Use async/await for all I/O and ML operations
+
+- **MUST**: Implement proper resource disposal (audio streams, models)
+
+- **MUST**: Use background threads for heavy operations
+
+- **MUST**: Cache loaded models between sessions
+
+- **FORBIDDEN**: Blocking synchronous operations on UI thread
+
+- **FORBIDDEN**: Memory leaks from undisposed resources
+
+- **FORBIDDEN**: Blocking synchronous operations in handlers
+
+- **FORBIDDEN**: N+1 query problems in data access

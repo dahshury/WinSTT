@@ -24,7 +24,7 @@ License: MIT License
         LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
         OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
         SOFTWARE.
-Requires-Python: >=3.12
+Requires-Python: <3.13,>=3.12
 Description-Content-Type: text/markdown
 License-File: license
 Requires-Dist: requests==2.31.0
@@ -39,7 +39,9 @@ Requires-Dist: pvporcupine==1.9.5
 Requires-Dist: pywin32==310
 Requires-Dist: pyqtgraph==0.13.7
 Requires-Dist: pyaudio==0.2.14
-Requires-Dist: numpy>=2.0.2
+Requires-Dist: numpy<2.3,>=2.0.0
+Requires-Dist: numba>=0.60.0
+Requires-Dist: onnxruntime>=1.20.0
 Requires-Dist: transformers>=4.46.1
 Requires-Dist: flatbuffers
 Requires-Dist: packaging
@@ -52,12 +54,12 @@ Requires-Dist: mdformat>=0.7.22
 Requires-Dist: pyinstaller>=6.14.2
 Requires-Dist: aiofiles>=24.1.0
 Requires-Dist: psutil>=7.0.0
-Requires-Dist: librosa>=0.10.0.post2
+Requires-Dist: librosa>=0.10.2
 Provides-Extra: cpu
 Requires-Dist: faster-whisper>=0.10.0; extra == "cpu"
 Requires-Dist: onnxruntime==1.20.0; extra == "cpu"
 Provides-Extra: gpu
-Requires-Dist: librosa==0.10.0.post2; extra == "gpu"
+Requires-Dist: librosa>=0.10.2; extra == "gpu"
 Requires-Dist: transformers>=4.46.1; extra == "gpu"
 Requires-Dist: torch>=2.7.1; extra == "gpu"
 Requires-Dist: openai-whisper>=20250625; extra == "gpu"

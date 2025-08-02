@@ -1,0 +1,3006 @@
+---
+alwaysApply: true
+---
+
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Error Handling Rules
+
+## Result Pattern Rules
+
+### 1. Domain Layer Error Handling for Audio/Transcription
+
+- **MUST**: Use `Result[T]` for all domain operations that can fail
+- **MUST**: Return specific error messages that describe the business rule violation
+- **MUST**: Chain Result operations using `map()`, `bind()`, `on_success()`, and `on_failure()`
+- **MUST**: Handle both success and failure cases explicitly
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Generic error messages without context
+
+```python
+# ✅ CORRECT - Audio Domain Result usage
+def start_recording(self, audio_config: AudioConfiguration) -> Result[None]:
+    """Start recording with audio business validation."""
+    # Validate recording state
+    if self._state != RecordingState.IDLE:
+        return Result.failure("Cannot start recording: session is not idle")
+    
+    # Validate audio configuration
+    if audio_config.sample_rate < 8000:
+        return Result.failure("Sample rate too low for quality audio (minimum 8kHz)")
+    
+    if not self._is_audio_device_available(audio_config.device_id):
+        return Result.failure(f"Audio device '{audio_config.device_id}' is not available")
+    
+    # State change
+    self._state = RecordingState.RECORDING
+    self._started_at = datetime.utcnow()
+    self.add_domain_event(RecordingStarted(self.id, audio_config))
+    self.mark_as_updated()
+    
+    return Result.success()
+
+def transcribe_audio(self, audio_data: bytes, model_config: ModelConfiguration) -> Result[TranscriptionResult]:
+    """Transcribe audio with business validation."""
+    # Validate audio data
+    if len(audio_data) < 1024:
+        return Result.failure("Audio data too short for transcription (minimum 1KB)")
+    
+    # Check model requirements
+    if model_config.memory_requirements_mb > self._available_memory_mb:
+        return Result.failure(f"Insufficient memory for model '{model_config.model_name}' (requires {model_config.memory_requirements_mb}MB)")
+    
+    # Business logic
+    transcription_result = self._process_transcription(audio_data, model_config)
+    if not transcription_result.is_success:
+        return Result.failure(transcription_result.error)
+    
+    return Result.success(transcription_result.value)
+
+# Chain operations for audio processing
+result = (
+    AudioSession.create(audio_config)
+    .bind(lambda session: session.start_recording())
+    .bind(lambda _: self._capture_audio())
+    .bind(lambda audio_data: self._transcribe_audio(audio_data, model_config))
+    .on_success(lambda result: self._display_transcription(result.text))
+    .on_failure(lambda error: self._show_error_dialog(error))
+)
+```
+
+### 2. Feature Layer Error Handling
+
+- **MUST**: Use `Result[T]` for all handler return values
+- **MUST**: Convert domain Result failures to appropriate UI feedback
+- **MUST**: Use descriptive error messages for desktop users
+- **MUST**: Provide contextual error messages for UI components
+- **FORBIDDEN**: Exposing internal implementation details in error messages
+- **FORBIDDEN**: Returning different error formats within the same feature
+
+```python
+# ✅ CORRECT - Feature Result usage for desktop
+async def handle(self, command: StartRecordingCommand) -> Result[str]:
+    """Handle audio recording start with comprehensive error handling."""
+    try:
+        # Validate audio device availability
+        device_check = await self._audio_service.check_audio_device(command.audio_config.device_id)
+        if not device_check.is_success:
+            return Result.failure(f"Microphone not available: {device_check.error}")
+        
+        # Check for existing active session
+        active_session = await self._audio_repository.get_active_session()
+        if active_session.is_success and active_session.value:
+            return Result.failure("Another recording is already in progress. Please stop it first.")
+        
+        # Create and start recording session
+        session_result = AudioSession.create(command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(f"Invalid audio settings: {session_result.error}")
+        
+        session = session_result.value
+        start_result = session.start_recording()
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # Persist session
+        save_result = await self._audio_repository.save_session(session)
+        if not save_result.is_success:
+            return Result.failure("Failed to initialize recording session")
+        
+        # Start actual hardware recording
+        recording_result = await self._audio_service.start_recording(session.id, command.audio_config)
+        if not recording_result.is_success:
+            # Cleanup on failure
+            await self._audio_repository.delete_session(session.id)
+            return Result.failure(f"Failed to start microphone: {recording_result.error}")
+        
+        return Result.success(session.id)
+        
+    except OSError as e:
+        return Result.failure(f"System error accessing audio device: {str(e)}")
+    except MemoryError:
+        return Result.failure("Insufficient memory to start recording")
+    except Exception as e:
+        self._logger.error(f"Unexpected error in StartRecordingHandler: {e}", exc_info=True)
+        return Result.failure("An unexpected error occurred. Please try again.")
+```
+
+## Error Models and User Feedback
+
+### 1. Error Model Rules for Desktop
+
+- **MUST**: Use structured error types for different categories
+- **MUST**: Provide user-friendly error messages
+- **MUST**: Include technical details for logging but not user display
+- **MUST**: Support error recovery suggestions
+- **FORBIDDEN**: Technical jargon in user-facing messages
+- **FORBIDDEN**: Exposing file paths or system details to users
+
+```python
+# ✅ CORRECT - Desktop error model
+from enum import Enum
+from dataclasses import dataclass
+from typing import Optional
+
+class ErrorCategory(Enum):
+    AUDIO_DEVICE = "audio_device"
+    MODEL_LOADING = "model_loading"
+    TRANSCRIPTION = "transcription"
+    SYSTEM_RESOURCE = "system_resource"
+    USER_INPUT = "user_input"
+    CONFIGURATION = "configuration"
+
+@dataclass
+class DesktopError:
+    category: ErrorCategory
+    user_message: str
+    technical_details: str
+    recovery_suggestion: Optional[str] = None
+    
+    @classmethod
+    def audio_device_not_available(cls, device_name: str) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.AUDIO_DEVICE,
+            user_message=f"Microphone '{device_name}' is not available or being used by another application",
+            technical_details=f"Audio device '{device_name}' failed to open",
+            recovery_suggestion="Try selecting a different microphone or close other audio applications"
+        )
+    
+    @classmethod
+    def insufficient_memory(cls, required_mb: int, available_mb: int) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.SYSTEM_RESOURCE,
+            user_message=f"Not enough memory to load the model (need {required_mb}MB, have {available_mb}MB)",
+            technical_details=f"Model requires {required_mb}MB but only {available_mb}MB available",
+            recovery_suggestion="Try using a smaller model or close other applications"
+        )
+    
+    @classmethod
+    def model_download_failed(cls, model_name: str, http_error: str) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.MODEL_LOADING,
+            user_message=f"Failed to download model '{model_name}'. Please check your internet connection",
+            technical_details=f"HTTP error downloading {model_name}: {http_error}",
+            recovery_suggestion="Check internet connection and try again, or use a different model"
+        )
+```
+
+### 2. Qt Error Dialog Rules
+
+- **MUST**: All user errors shown through Qt dialogs with appropriate icons
+- **MUST**: Use Qt signals for error communication between components
+- **MUST**: Provide actionable error messages with recovery options
+- **MUST**: Log detailed errors while showing simple messages to user
+- **FORBIDDEN**: Showing technical error details to user
+- **FORBIDDEN**: Blocking the UI with error handling
+
+```python
+# ✅ CORRECT - Qt error handling
+from PyQt5.QtWidgets import QMessageBox, QWidget
+from PyQt5.QtCore import pyqtSignal, QObject
+from PyQt5.QtGui import QIcon
+
+class ErrorHandler(QObject):
+    """Centralized error handling for the application."""
+    
+    error_occurred = pyqtSignal(DesktopError)
+    
+    def __init__(self, parent: QWidget = None):
+        super().__init__()
+        self._parent = parent
+        self.error_occurred.connect(self._show_error_dialog)
+    
+    def handle_result_error(self, result: Result) -> None:
+        """Handle a failed Result by showing appropriate error dialog."""
+        if result.is_success:
+            return
+        
+        error = self._categorize_error(result.error)
+        self.error_occurred.emit(error)
+    
+    def _categorize_error(self, error_message: str) -> DesktopError:
+        """Categorize error message and create appropriate DesktopError."""
+        if "audio device" in error_message.lower() or "microphone" in error_message.lower():
+            return DesktopError.audio_device_not_available("Unknown Device")
+        elif "memory" in error_message.lower():
+            return DesktopError.insufficient_memory(0, 0)  # Will be filled by system info
+        elif "model" in error_message.lower() and "download" in error_message.lower():
+            return DesktopError.model_download_failed("Unknown Model", error_message)
+        else:
+            return DesktopError(
+                category=ErrorCategory.USER_INPUT,
+                user_message=error_message,
+                technical_details=error_message
+            )
+    
+    def _show_error_dialog(self, error: DesktopError) -> None:
+        """Show error dialog with appropriate icon and recovery options."""
+        msg_box = QMessageBox(self._parent)
+        msg_box.setWindowTitle("WinSTT Error")
+        msg_box.setText(error.user_message)
+        
+        # Set appropriate icon based on error category
+        if error.category == ErrorCategory.AUDIO_DEVICE:
+            msg_box.setIcon(QMessageBox.Warning)
+        elif error.category == ErrorCategory.SYSTEM_RESOURCE:
+            msg_box.setIcon(QMessageBox.Critical)
+        else:
+            msg_box.setIcon(QMessageBox.Information)
+        
+        # Add recovery suggestion if available
+        if error.recovery_suggestion:
+            msg_box.setInformativeText(error.recovery_suggestion)
+        
+        # Add buttons based on error type
+        if error.category == ErrorCategory.AUDIO_DEVICE:
+            msg_box.addButton("Select Different Microphone", QMessageBox.ActionRole)
+            msg_box.addButton("Retry", QMessageBox.AcceptRole)
+        elif error.category == ErrorCategory.MODEL_LOADING:
+            msg_box.addButton("Download Again", QMessageBox.ActionRole)
+            msg_box.addButton("Use Different Model", QMessageBox.ActionRole)
+        
+        msg_box.addButton(QMessageBox.Ok)
+        msg_box.exec_()
+
+# Usage in UI components
+class RecordingControlsWidget(QWidget):
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._error_handler = ErrorHandler(self)
+    
+    async def _start_recording(self):
+        """Start recording with proper error handling."""
+        command = StartRecordingCommand(audio_config=self._get_audio_config())
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._on_recording_started(result.value)
+        else:
+            self._error_handler.handle_result_error(result)
+```
+
+## Hardware/System Error Handling
+
+### 1. Audio Device Error Rules
+
+- **MUST**: Handle audio device disconnection gracefully
+- **MUST**: Monitor audio device availability continuously
+- **MUST**: Provide fallback to default device when possible
+- **MUST**: Notify user of device changes during recording
+- **FORBIDDEN**: Crashing when audio devices are unplugged
+- **FORBIDDEN**: Continuing recording with no audio input
+
+```python
+# ✅ CORRECT - Audio device error handling
+class AudioDeviceMonitor(QObject):
+    """Monitor audio device status and handle device changes."""
+    
+    device_disconnected = pyqtSignal(str)  # device_id
+    device_reconnected = pyqtSignal(str)   # device_id
+    default_device_changed = pyqtSignal(str)  # new_default_device_id
+    
+    def __init__(self):
+        super().__init__()
+        self._available_devices = set()
+        self._monitor_timer = QTimer()
+        self._monitor_timer.timeout.connect(self._check_devices)
+        self._monitor_timer.start(1000)  # Check every second
+    
+    def _check_devices(self):
+        """Check for audio device changes."""
+        try:
+            current_devices = set(self._get_available_devices())
+            
+            # Check for disconnected devices
+            disconnected = self._available_devices - current_devices
+            for device_id in disconnected:
+                self.device_disconnected.emit(device_id)
+            
+            # Check for newly connected devices
+            connected = current_devices - self._available_devices
+            for device_id in connected:
+                self.device_reconnected.emit(device_id)
+            
+            self._available_devices = current_devices
+            
+        except Exception as e:
+            # Log error but don't crash
+            logger.error(f"Error monitoring audio devices: {e}")
+
+class AudioRecordingService:
+    """Audio recording service with robust error handling."""
+    
+    def __init__(self):
+        self._device_monitor = AudioDeviceMonitor()
+        self._device_monitor.device_disconnected.connect(self._handle_device_disconnected)
+        self._current_device_id = None
+        self._recording_session_id = None
+    
+    async def start_recording(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording with device error handling."""
+        try:
+            # Check device availability
+            if not self._is_device_available(audio_config.device_id):
+                # Try to fallback to default device
+                default_device = self._get_default_device()
+                if default_device and default_device != audio_config.device_id:
+                    logger.warning(f"Device {audio_config.device_id} not available, using default {default_device}")
+                    audio_config = audio_config.with_device(default_device)
+                else:
+                    return Result.failure("No audio input devices available")
+            
+            # Start recording
+            self._recording_session_id = session_id
+            self._current_device_id = audio_config.device_id
+            
+            # Platform-specific recording initialization
+            recording_result = await self._start_platform_recording(audio_config)
+            if not recording_result.is_success:
+                return Result.failure(f"Failed to initialize audio recording: {recording_result.error}")
+            
+            return Result.success()
+            
+        except OSError as e:
+            return Result.failure(f"Audio system error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error starting recording: {e}", exc_info=True)
+            return Result.failure("Failed to start recording due to system error")
+    
+    def _handle_device_disconnected(self, device_id: str):
+        """Handle audio device disconnection during recording."""
+        if device_id == self._current_device_id and self._recording_session_id:
+            # Try to switch to default device
+            default_device = self._get_default_device()
+            if default_device and default_device != device_id:
+                self._attempt_device_switch(default_device)
+            else:
+                self._emergency_stop_recording("Audio device disconnected")
+    
+    def _attempt_device_switch(self, new_device_id: str):
+        """Attempt to switch to a different audio device during recording."""
+        try:
+            # Notify user about device switch
+            self.device_switch_attempted.emit(self._current_device_id, new_device_id)
+            
+            # Attempt switch
+            if self._switch_recording_device(new_device_id):
+                self._current_device_id = new_device_id
+                self.device_switch_successful.emit(new_device_id)
+            else:
+                self._emergency_stop_recording("Failed to switch audio device")
+                
+        except Exception as e:
+            logger.error(f"Error switching audio device: {e}")
+            self._emergency_stop_recording("Audio device switch failed")
+```
+
+### 2. Model Loading Error Rules
+
+- **MUST**: Handle model download failures gracefully
+- **MUST**: Validate model file integrity before loading
+- **MUST**: Provide progress feedback for long operations
+- **MUST**: Support retry mechanisms for failed operations
+- **FORBIDDEN**: Blocking UI during model operations
+- **FORBIDDEN**: Loading corrupted or incompatible models
+
+```python
+# ✅ CORRECT - Model loading error handling
+class ModelLoadingService:
+    """Service for loading transcription models with error handling."""
+    
+    model_download_progress = pyqtSignal(str, int)  # model_name, percentage
+    model_loading_progress = pyqtSignal(str, int)   # model_name, percentage
+    model_load_completed = pyqtSignal(str)          # model_name
+    model_load_failed = pyqtSignal(str, str)        # model_name, error_message
+    
+    async def load_model(self, model_config: ModelConfiguration) -> Result[ModelInstance]:
+        """Load model with comprehensive error handling."""
+        try:
+            # Check if model is already loaded
+            if self._is_model_loaded(model_config.model_name):
+                return Result.success(self._get_loaded_model(model_config.model_name))
+            
+            # Check system requirements
+            memory_check = self._check_memory_requirements(model_config)
+            if not memory_check.is_success:
+                return Result.failure(memory_check.error)
+            
+            # Check if model file exists locally
+            model_path = self._get_model_path(model_config.model_name)
+            if not model_path.exists():
+                # Download model
+                download_result = await self._download_model(model_config)
+                if not download_result.is_success:
+                    return Result.failure(f"Failed to download model: {download_result.error}")
+                model_path = download_result.value
+            
+            # Validate model file
+            validation_result = self._validate_model_file(model_path)
+            if not validation_result.is_success:
+                # Delete corrupted file and retry download
+                model_path.unlink(missing_ok=True)
+                return Result.failure(f"Model file corrupted: {validation_result.error}")
+            
+            # Load model into memory
+            load_result = await self._load_model_into_memory(model_path, model_config)
+            if not load_result.is_success:
+                return Result.failure(f"Failed to load model: {load_result.error}")
+            
+            model_instance = load_result.value
+            self._register_loaded_model(model_config.model_name, model_instance)
+            self.model_load_completed.emit(model_config.model_name)
+            
+            return Result.success(model_instance)
+            
+        except MemoryError:
+            return Result.failure(f"Insufficient memory to load model '{model_config.model_name}'")
+        except FileNotFoundError:
+            return Result.failure(f"Model file not found for '{model_config.model_name}'")
+        except PermissionError:
+            return Result.failure("Permission denied accessing model files")
+        except Exception as e:
+            logger.error(f"Unexpected error loading model {model_config.model_name}: {e}", exc_info=True)
+            return Result.failure("Failed to load model due to system error")
+    
+    async def _download_model(self, model_config: ModelConfiguration) -> Result[Path]:
+        """Download model with progress tracking and retry logic."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                download_result = await self._attempt_download(model_config)
+                if download_result.is_success:
+                    return download_result
+                
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                    
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    return Result.failure(f"Download failed after {max_retries} attempts: {str(e)}")
+        
+        return Result.failure("Download failed after all retry attempts")
+    
+    def _check_memory_requirements(self, model_config: ModelConfiguration) -> Result[None]:
+        """Check if system has enough memory for the model."""
+        required_mb = model_config.model_type.memory_requirements_mb
+        available_mb = self._get_available_memory_mb()
+        
+        if available_mb < required_mb:
+            return Result.failure(
+                f"Insufficient memory: need {required_mb}MB, have {available_mb}MB available"
+            )
+        
+        return Result.success()
+```
+
+## Threading and Async Error Handling
+
+### 1. Qt Thread Safety Rules
+
+- **MUST**: Handle errors from background threads properly
+- **MUST**: Use Qt signals to communicate errors to main thread
+- **MUST**: Never update UI directly from background threads
+- **MUST**: Handle thread cancellation gracefully
+- **FORBIDDEN**: Direct UI updates from worker threads
+- **FORBIDDEN**: Blocking the main thread with error handling
+
+```python
+# ✅ CORRECT - Thread-safe error handling
+class TranscriptionWorker(QObject):
+    """Worker for background transcription with proper error handling."""
+    
+    transcription_completed = pyqtSignal(str, str)  # session_id, result_text
+    transcription_failed = pyqtSignal(str, str)     # session_id, error_message
+    progress_updated = pyqtSignal(str, int)         # session_id, percentage
+    
+    def __init__(self):
+        super().__init__()
+        self._cancelled = False
+    
+    @pyqtSlot(str, bytes, ModelConfiguration)
+    def transcribe_audio(self, session_id: str, audio_data: bytes, model_config: ModelConfiguration):
+        """Transcribe audio in background thread with error handling."""
+        try:
+            # Check if operation was cancelled
+            if self._cancelled:
+                return
+            
+            # Validate inputs
+            if len(audio_data) < 1024:
+                self.transcription_failed.emit(session_id, "Audio data too short for transcription")
+                return
+            
+            # Emit initial progress
+            self.progress_updated.emit(session_id, 10)
+            
+            # Load model if needed
+            model_result = self._ensure_model_loaded(model_config)
+            if not model_result.is_success:
+                self.transcription_failed.emit(session_id, f"Model loading failed: {model_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 30)
+            
+            # Preprocess audio
+            preprocessing_result = self._preprocess_audio(audio_data)
+            if not preprocessing_result.is_success:
+                self.transcription_failed.emit(session_id, f"Audio preprocessing failed: {preprocessing_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 60)
+            
+            # Run transcription
+            transcription_result = self._run_transcription(preprocessing_result.value, model_config)
+            if not transcription_result.is_success:
+                self.transcription_failed.emit(session_id, f"Transcription failed: {transcription_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 100)
+            self.transcription_completed.emit(session_id, transcription_result.value.text)
+            
+        except Exception as e:
+            # Always emit error signal, never let exceptions escape
+            logger.error(f"Unexpected error in transcription worker: {e}", exc_info=True)
+            self.transcription_failed.emit(session_id, "An unexpected error occurred during transcription")
+    
+    def cancel(self):
+        """Cancel the current transcription operation."""
+        self._cancelled = True
+
+# Main UI class using the worker
+class TranscriptionManager(QObject):
+    """Manages transcription operations with proper error handling."""
+    
+    def __init__(self):
+        super().__init__()
+        self._worker = TranscriptionWorker()
+        self._worker_thread = QThread()
+        self._worker.moveToThread(self._worker_thread)
+        
+        # Connect signals for error handling
+        self._worker.transcription_completed.connect(self._on_transcription_completed)
+        self._worker.transcription_failed.connect(self._on_transcription_failed)
+        self._worker.progress_updated.connect(self._on_progress_updated)
+        
+        self._worker_thread.start()
+    
+    @pyqtSlot(str, str)
+    def _on_transcription_failed(self, session_id: str, error_message: str):
+        """Handle transcription failure in main thread."""
+        # Create appropriate error based on error message
+        if "memory" in error_message.lower():
+            error = DesktopError.insufficient_memory(0, 0)
+        elif "model" in error_message.lower():
+            error = DesktopError.model_download_failed("Unknown", error_message)
+        else:
+            error = DesktopError(
+                category=ErrorCategory.TRANSCRIPTION,
+                user_message=f"Transcription failed: {error_message}",
+                technical_details=error_message,
+                recovery_suggestion="Try again with a different audio file or model"
+            )
+        
+        # Show error to user
+        self._error_handler.handle_error(error)
+        
+        # Clean up session
+        self._cleanup_session(session_id)
+```
+
+### 2. Resource Cleanup Rules
+
+- **MUST**: Clean up resources properly on errors
+- **MUST**: Close files, connections, and handles in finally blocks
+- **MUST**: Release audio devices when operations fail
+- **MUST**: Free model memory on loading failures
+- **FORBIDDEN**: Resource leaks on error paths
+- **FORBIDDEN**: Leaving system in inconsistent state after errors
+
+```python
+# ✅ CORRECT - Resource cleanup on errors
+class AudioResourceManager:
+    """Manages audio resources with proper cleanup on errors."""
+    
+    def __init__(self):
+        self._active_streams = {}
+        self._loaded_models = {}
+        self._temp_files = set()
+    
+    async def start_recording_session(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording session with resource tracking."""
+        audio_stream = None
+        temp_file = None
+        
+        try:
+            # Create temporary file for audio data
+            temp_file = self._create_temp_audio_file(session_id)
+            self._temp_files.add(temp_file)
+            
+            # Open audio stream
+            stream_result = await self._open_audio_stream(audio_config)
+            if not stream_result.is_success:
+                return Result.failure(stream_result.error)
+            
+            audio_stream = stream_result.value
+            self._active_streams[session_id] = audio_stream
+            
+            # Start recording
+            start_result = await audio_stream.start_recording()
+            if not start_result.is_success:
+                return Result.failure(start_result.error)
+            
+            return Result.success()
+            
+        except Exception as e:
+            # Clean up resources on error
+            if audio_stream:
+                await self._cleanup_audio_stream(audio_stream)
+                self._active_streams.pop(session_id, None)
+            
+            if temp_file:
+                self._cleanup_temp_file(temp_file)
+                self._temp_files.discard(temp_file)
+            
+            return Result.failure(f"Failed to start recording session: {str(e)}")
+    
+    async def stop_recording_session(self, session_id: str) -> Result[bytes]:
+        """Stop recording session with proper cleanup."""
+        try:
+            audio_stream = self._active_streams.get(session_id)
+            if not audio_stream:
+                return Result.failure(f"No active recording session: {session_id}")
+            
+            # Stop recording and get audio data
+            audio_data_result = await audio_stream.stop_and_get_data()
+            if not audio_data_result.is_success:
+                return Result.failure(audio_data_result.error)
+            
+            return Result.success(audio_data_result.value)
+            
+        except Exception as e:
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+        finally:
+            # Always clean up resources
+            await self._cleanup_session_resources(session_id)
+    
+    async def _cleanup_session_resources(self, session_id: str):
+        """Clean up all resources associated with a session."""
+        try:
+            # Clean up audio stream
+            if session_id in self._active_streams:
+                await self._cleanup_audio_stream(self._active_streams[session_id])
+                del self._active_streams[session_id]
+            
+            # Clean up temporary files
+            temp_files_to_remove = [f for f in self._temp_files if session_id in str(f)]
+            for temp_file in temp_files_to_remove:
+                self._cleanup_temp_file(temp_file)
+                self._temp_files.discard(temp_file)
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up session {session_id}: {e}")
+    
+    def __del__(self):
+        """Ensure cleanup on object destruction."""
+        try:
+            # Clean up any remaining resources
+            for session_id in list(self._active_streams.keys()):
+                asyncio.create_task(self._cleanup_session_resources(session_id))
+            
+            for temp_file in list(self._temp_files):
+                self._cleanup_temp_file(temp_file)
+                
+        except Exception as e:
+            logger.error(f"Error in AudioResourceManager destructor: {e}")
+```
+
+## Performance Error Handling
+
+### 1. Performance Monitoring Rules
+
+- **MUST**: Monitor operation timeouts and cancel long-running tasks
+- **MUST**: Track memory usage and handle memory pressure
+- **MUST**: Implement circuit breakers for failing operations
+- **MUST**: Provide user feedback for slow operations
+- **FORBIDDEN**: Infinite loops or blocking operations
+- **FORBIDDEN**: Memory leaks in error paths
+
+### 2. Graceful Degradation Rules
+
+- **MUST**: Degrade gracefully when system resources are low
+
+- **MUST**: Use smaller models when memory is limited
+
+- **MUST**: Reduce audio quality when processing is slow
+
+- **MUST**: Skip non-essential features under load
+
+- **FORBIDDEN**: Complete application failure due to resource constraints
+
+- **FORBIDDEN**: Data loss during degraded operation
+
+- **FORBIDDEN**: Complex business logic in error handling paths
+
+- **FORBIDDEN**: Database operations in error recovery
+
+# WinSTT Error Handling Rules
+
+## Result Pattern Rules
+
+### 1. Domain Layer Error Handling for Audio/Transcription
+
+- **MUST**: Use `Result[T]` for all domain operations that can fail
+- **MUST**: Return specific error messages that describe the business rule violation
+- **MUST**: Chain Result operations using `map()`, `bind()`, `on_success()`, and `on_failure()`
+- **MUST**: Handle both success and failure cases explicitly
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Generic error messages without context
+
+```python
+# ✅ CORRECT - Audio Domain Result usage
+def start_recording(self, audio_config: AudioConfiguration) -> Result[None]:
+    """Start recording with audio business validation."""
+    # Validate recording state
+    if self._state != RecordingState.IDLE:
+        return Result.failure("Cannot start recording: session is not idle")
+    
+    # Validate audio configuration
+    if audio_config.sample_rate < 8000:
+        return Result.failure("Sample rate too low for quality audio (minimum 8kHz)")
+    
+    if not self._is_audio_device_available(audio_config.device_id):
+        return Result.failure(f"Audio device '{audio_config.device_id}' is not available")
+    
+    # State change
+    self._state = RecordingState.RECORDING
+    self._started_at = datetime.utcnow()
+    self.add_domain_event(RecordingStarted(self.id, audio_config))
+    self.mark_as_updated()
+    
+    return Result.success()
+
+def transcribe_audio(self, audio_data: bytes, model_config: ModelConfiguration) -> Result[TranscriptionResult]:
+    """Transcribe audio with business validation."""
+    # Validate audio data
+    if len(audio_data) < 1024:
+        return Result.failure("Audio data too short for transcription (minimum 1KB)")
+    
+    # Check model requirements
+    if model_config.memory_requirements_mb > self._available_memory_mb:
+        return Result.failure(f"Insufficient memory for model '{model_config.model_name}' (requires {model_config.memory_requirements_mb}MB)")
+    
+    # Business logic
+    transcription_result = self._process_transcription(audio_data, model_config)
+    if not transcription_result.is_success:
+        return Result.failure(transcription_result.error)
+    
+    return Result.success(transcription_result.value)
+
+# Chain operations for audio processing
+result = (
+    AudioSession.create(audio_config)
+    .bind(lambda session: session.start_recording())
+    .bind(lambda _: self._capture_audio())
+    .bind(lambda audio_data: self._transcribe_audio(audio_data, model_config))
+    .on_success(lambda result: self._display_transcription(result.text))
+    .on_failure(lambda error: self._show_error_dialog(error))
+)
+```
+
+### 2. Feature Layer Error Handling
+
+- **MUST**: Use `Result[T]` for all handler return values
+- **MUST**: Convert domain Result failures to appropriate UI feedback
+- **MUST**: Use descriptive error messages for desktop users
+- **MUST**: Provide contextual error messages for UI components
+- **FORBIDDEN**: Exposing internal implementation details in error messages
+- **FORBIDDEN**: Returning different error formats within the same feature
+
+```python
+# ✅ CORRECT - Feature Result usage for desktop
+async def handle(self, command: StartRecordingCommand) -> Result[str]:
+    """Handle audio recording start with comprehensive error handling."""
+    try:
+        # Validate audio device availability
+        device_check = await self._audio_service.check_audio_device(command.audio_config.device_id)
+        if not device_check.is_success:
+            return Result.failure(f"Microphone not available: {device_check.error}")
+        
+        # Check for existing active session
+        active_session = await self._audio_repository.get_active_session()
+        if active_session.is_success and active_session.value:
+            return Result.failure("Another recording is already in progress. Please stop it first.")
+        
+        # Create and start recording session
+        session_result = AudioSession.create(command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(f"Invalid audio settings: {session_result.error}")
+        
+        session = session_result.value
+        start_result = session.start_recording()
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # Persist session
+        save_result = await self._audio_repository.save_session(session)
+        if not save_result.is_success:
+            return Result.failure("Failed to initialize recording session")
+        
+        # Start actual hardware recording
+        recording_result = await self._audio_service.start_recording(session.id, command.audio_config)
+        if not recording_result.is_success:
+            # Cleanup on failure
+            await self._audio_repository.delete_session(session.id)
+            return Result.failure(f"Failed to start microphone: {recording_result.error}")
+        
+        return Result.success(session.id)
+        
+    except OSError as e:
+        return Result.failure(f"System error accessing audio device: {str(e)}")
+    except MemoryError:
+        return Result.failure("Insufficient memory to start recording")
+    except Exception as e:
+        self._logger.error(f"Unexpected error in StartRecordingHandler: {e}", exc_info=True)
+        return Result.failure("An unexpected error occurred. Please try again.")
+```
+
+## Error Models and User Feedback
+
+### 1. Error Model Rules for Desktop
+
+- **MUST**: Use structured error types for different categories
+- **MUST**: Provide user-friendly error messages
+- **MUST**: Include technical details for logging but not user display
+- **MUST**: Support error recovery suggestions
+- **FORBIDDEN**: Technical jargon in user-facing messages
+- **FORBIDDEN**: Exposing file paths or system details to users
+
+```python
+# ✅ CORRECT - Desktop error model
+from enum import Enum
+from dataclasses import dataclass
+from typing import Optional
+
+class ErrorCategory(Enum):
+    AUDIO_DEVICE = "audio_device"
+    MODEL_LOADING = "model_loading"
+    TRANSCRIPTION = "transcription"
+    SYSTEM_RESOURCE = "system_resource"
+    USER_INPUT = "user_input"
+    CONFIGURATION = "configuration"
+
+@dataclass
+class DesktopError:
+    category: ErrorCategory
+    user_message: str
+    technical_details: str
+    recovery_suggestion: Optional[str] = None
+    
+    @classmethod
+    def audio_device_not_available(cls, device_name: str) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.AUDIO_DEVICE,
+            user_message=f"Microphone '{device_name}' is not available or being used by another application",
+            technical_details=f"Audio device '{device_name}' failed to open",
+            recovery_suggestion="Try selecting a different microphone or close other audio applications"
+        )
+    
+    @classmethod
+    def insufficient_memory(cls, required_mb: int, available_mb: int) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.SYSTEM_RESOURCE,
+            user_message=f"Not enough memory to load the model (need {required_mb}MB, have {available_mb}MB)",
+            technical_details=f"Model requires {required_mb}MB but only {available_mb}MB available",
+            recovery_suggestion="Try using a smaller model or close other applications"
+        )
+    
+    @classmethod
+    def model_download_failed(cls, model_name: str, http_error: str) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.MODEL_LOADING,
+            user_message=f"Failed to download model '{model_name}'. Please check your internet connection",
+            technical_details=f"HTTP error downloading {model_name}: {http_error}",
+            recovery_suggestion="Check internet connection and try again, or use a different model"
+        )
+```
+
+### 2. Qt Error Dialog Rules
+
+- **MUST**: All user errors shown through Qt dialogs with appropriate icons
+- **MUST**: Use Qt signals for error communication between components
+- **MUST**: Provide actionable error messages with recovery options
+- **MUST**: Log detailed errors while showing simple messages to user
+- **FORBIDDEN**: Showing technical error details to user
+- **FORBIDDEN**: Blocking the UI with error handling
+
+```python
+# ✅ CORRECT - Qt error handling
+from PyQt5.QtWidgets import QMessageBox, QWidget
+from PyQt5.QtCore import pyqtSignal, QObject
+from PyQt5.QtGui import QIcon
+
+class ErrorHandler(QObject):
+    """Centralized error handling for the application."""
+    
+    error_occurred = pyqtSignal(DesktopError)
+    
+    def __init__(self, parent: QWidget = None):
+        super().__init__()
+        self._parent = parent
+        self.error_occurred.connect(self._show_error_dialog)
+    
+    def handle_result_error(self, result: Result) -> None:
+        """Handle a failed Result by showing appropriate error dialog."""
+        if result.is_success:
+            return
+        
+        error = self._categorize_error(result.error)
+        self.error_occurred.emit(error)
+    
+    def _categorize_error(self, error_message: str) -> DesktopError:
+        """Categorize error message and create appropriate DesktopError."""
+        if "audio device" in error_message.lower() or "microphone" in error_message.lower():
+            return DesktopError.audio_device_not_available("Unknown Device")
+        elif "memory" in error_message.lower():
+            return DesktopError.insufficient_memory(0, 0)  # Will be filled by system info
+        elif "model" in error_message.lower() and "download" in error_message.lower():
+            return DesktopError.model_download_failed("Unknown Model", error_message)
+        else:
+            return DesktopError(
+                category=ErrorCategory.USER_INPUT,
+                user_message=error_message,
+                technical_details=error_message
+            )
+    
+    def _show_error_dialog(self, error: DesktopError) -> None:
+        """Show error dialog with appropriate icon and recovery options."""
+        msg_box = QMessageBox(self._parent)
+        msg_box.setWindowTitle("WinSTT Error")
+        msg_box.setText(error.user_message)
+        
+        # Set appropriate icon based on error category
+        if error.category == ErrorCategory.AUDIO_DEVICE:
+            msg_box.setIcon(QMessageBox.Warning)
+        elif error.category == ErrorCategory.SYSTEM_RESOURCE:
+            msg_box.setIcon(QMessageBox.Critical)
+        else:
+            msg_box.setIcon(QMessageBox.Information)
+        
+        # Add recovery suggestion if available
+        if error.recovery_suggestion:
+            msg_box.setInformativeText(error.recovery_suggestion)
+        
+        # Add buttons based on error type
+        if error.category == ErrorCategory.AUDIO_DEVICE:
+            msg_box.addButton("Select Different Microphone", QMessageBox.ActionRole)
+            msg_box.addButton("Retry", QMessageBox.AcceptRole)
+        elif error.category == ErrorCategory.MODEL_LOADING:
+            msg_box.addButton("Download Again", QMessageBox.ActionRole)
+            msg_box.addButton("Use Different Model", QMessageBox.ActionRole)
+        
+        msg_box.addButton(QMessageBox.Ok)
+        msg_box.exec_()
+
+# Usage in UI components
+class RecordingControlsWidget(QWidget):
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._error_handler = ErrorHandler(self)
+    
+    async def _start_recording(self):
+        """Start recording with proper error handling."""
+        command = StartRecordingCommand(audio_config=self._get_audio_config())
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._on_recording_started(result.value)
+        else:
+            self._error_handler.handle_result_error(result)
+```
+
+## Hardware/System Error Handling
+
+### 1. Audio Device Error Rules
+
+- **MUST**: Handle audio device disconnection gracefully
+- **MUST**: Monitor audio device availability continuously
+- **MUST**: Provide fallback to default device when possible
+- **MUST**: Notify user of device changes during recording
+- **FORBIDDEN**: Crashing when audio devices are unplugged
+- **FORBIDDEN**: Continuing recording with no audio input
+
+```python
+# ✅ CORRECT - Audio device error handling
+class AudioDeviceMonitor(QObject):
+    """Monitor audio device status and handle device changes."""
+    
+    device_disconnected = pyqtSignal(str)  # device_id
+    device_reconnected = pyqtSignal(str)   # device_id
+    default_device_changed = pyqtSignal(str)  # new_default_device_id
+    
+    def __init__(self):
+        super().__init__()
+        self._available_devices = set()
+        self._monitor_timer = QTimer()
+        self._monitor_timer.timeout.connect(self._check_devices)
+        self._monitor_timer.start(1000)  # Check every second
+    
+    def _check_devices(self):
+        """Check for audio device changes."""
+        try:
+            current_devices = set(self._get_available_devices())
+            
+            # Check for disconnected devices
+            disconnected = self._available_devices - current_devices
+            for device_id in disconnected:
+                self.device_disconnected.emit(device_id)
+            
+            # Check for newly connected devices
+            connected = current_devices - self._available_devices
+            for device_id in connected:
+                self.device_reconnected.emit(device_id)
+            
+            self._available_devices = current_devices
+            
+        except Exception as e:
+            # Log error but don't crash
+            logger.error(f"Error monitoring audio devices: {e}")
+
+class AudioRecordingService:
+    """Audio recording service with robust error handling."""
+    
+    def __init__(self):
+        self._device_monitor = AudioDeviceMonitor()
+        self._device_monitor.device_disconnected.connect(self._handle_device_disconnected)
+        self._current_device_id = None
+        self._recording_session_id = None
+    
+    async def start_recording(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording with device error handling."""
+        try:
+            # Check device availability
+            if not self._is_device_available(audio_config.device_id):
+                # Try to fallback to default device
+                default_device = self._get_default_device()
+                if default_device and default_device != audio_config.device_id:
+                    logger.warning(f"Device {audio_config.device_id} not available, using default {default_device}")
+                    audio_config = audio_config.with_device(default_device)
+                else:
+                    return Result.failure("No audio input devices available")
+            
+            # Start recording
+            self._recording_session_id = session_id
+            self._current_device_id = audio_config.device_id
+            
+            # Platform-specific recording initialization
+            recording_result = await self._start_platform_recording(audio_config)
+            if not recording_result.is_success:
+                return Result.failure(f"Failed to initialize audio recording: {recording_result.error}")
+            
+            return Result.success()
+            
+        except OSError as e:
+            return Result.failure(f"Audio system error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error starting recording: {e}", exc_info=True)
+            return Result.failure("Failed to start recording due to system error")
+    
+    def _handle_device_disconnected(self, device_id: str):
+        """Handle audio device disconnection during recording."""
+        if device_id == self._current_device_id and self._recording_session_id:
+            # Try to switch to default device
+            default_device = self._get_default_device()
+            if default_device and default_device != device_id:
+                self._attempt_device_switch(default_device)
+            else:
+                self._emergency_stop_recording("Audio device disconnected")
+    
+    def _attempt_device_switch(self, new_device_id: str):
+        """Attempt to switch to a different audio device during recording."""
+        try:
+            # Notify user about device switch
+            self.device_switch_attempted.emit(self._current_device_id, new_device_id)
+            
+            # Attempt switch
+            if self._switch_recording_device(new_device_id):
+                self._current_device_id = new_device_id
+                self.device_switch_successful.emit(new_device_id)
+            else:
+                self._emergency_stop_recording("Failed to switch audio device")
+                
+        except Exception as e:
+            logger.error(f"Error switching audio device: {e}")
+            self._emergency_stop_recording("Audio device switch failed")
+```
+
+### 2. Model Loading Error Rules
+
+- **MUST**: Handle model download failures gracefully
+- **MUST**: Validate model file integrity before loading
+- **MUST**: Provide progress feedback for long operations
+- **MUST**: Support retry mechanisms for failed operations
+- **FORBIDDEN**: Blocking UI during model operations
+- **FORBIDDEN**: Loading corrupted or incompatible models
+
+```python
+# ✅ CORRECT - Model loading error handling
+class ModelLoadingService:
+    """Service for loading transcription models with error handling."""
+    
+    model_download_progress = pyqtSignal(str, int)  # model_name, percentage
+    model_loading_progress = pyqtSignal(str, int)   # model_name, percentage
+    model_load_completed = pyqtSignal(str)          # model_name
+    model_load_failed = pyqtSignal(str, str)        # model_name, error_message
+    
+    async def load_model(self, model_config: ModelConfiguration) -> Result[ModelInstance]:
+        """Load model with comprehensive error handling."""
+        try:
+            # Check if model is already loaded
+            if self._is_model_loaded(model_config.model_name):
+                return Result.success(self._get_loaded_model(model_config.model_name))
+            
+            # Check system requirements
+            memory_check = self._check_memory_requirements(model_config)
+            if not memory_check.is_success:
+                return Result.failure(memory_check.error)
+            
+            # Check if model file exists locally
+            model_path = self._get_model_path(model_config.model_name)
+            if not model_path.exists():
+                # Download model
+                download_result = await self._download_model(model_config)
+                if not download_result.is_success:
+                    return Result.failure(f"Failed to download model: {download_result.error}")
+                model_path = download_result.value
+            
+            # Validate model file
+            validation_result = self._validate_model_file(model_path)
+            if not validation_result.is_success:
+                # Delete corrupted file and retry download
+                model_path.unlink(missing_ok=True)
+                return Result.failure(f"Model file corrupted: {validation_result.error}")
+            
+            # Load model into memory
+            load_result = await self._load_model_into_memory(model_path, model_config)
+            if not load_result.is_success:
+                return Result.failure(f"Failed to load model: {load_result.error}")
+            
+            model_instance = load_result.value
+            self._register_loaded_model(model_config.model_name, model_instance)
+            self.model_load_completed.emit(model_config.model_name)
+            
+            return Result.success(model_instance)
+            
+        except MemoryError:
+            return Result.failure(f"Insufficient memory to load model '{model_config.model_name}'")
+        except FileNotFoundError:
+            return Result.failure(f"Model file not found for '{model_config.model_name}'")
+        except PermissionError:
+            return Result.failure("Permission denied accessing model files")
+        except Exception as e:
+            logger.error(f"Unexpected error loading model {model_config.model_name}: {e}", exc_info=True)
+            return Result.failure("Failed to load model due to system error")
+    
+    async def _download_model(self, model_config: ModelConfiguration) -> Result[Path]:
+        """Download model with progress tracking and retry logic."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                download_result = await self._attempt_download(model_config)
+                if download_result.is_success:
+                    return download_result
+                
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                    
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    return Result.failure(f"Download failed after {max_retries} attempts: {str(e)}")
+        
+        return Result.failure("Download failed after all retry attempts")
+    
+    def _check_memory_requirements(self, model_config: ModelConfiguration) -> Result[None]:
+        """Check if system has enough memory for the model."""
+        required_mb = model_config.model_type.memory_requirements_mb
+        available_mb = self._get_available_memory_mb()
+        
+        if available_mb < required_mb:
+            return Result.failure(
+                f"Insufficient memory: need {required_mb}MB, have {available_mb}MB available"
+            )
+        
+        return Result.success()
+```
+
+## Threading and Async Error Handling
+
+### 1. Qt Thread Safety Rules
+
+- **MUST**: Handle errors from background threads properly
+- **MUST**: Use Qt signals to communicate errors to main thread
+- **MUST**: Never update UI directly from background threads
+- **MUST**: Handle thread cancellation gracefully
+- **FORBIDDEN**: Direct UI updates from worker threads
+- **FORBIDDEN**: Blocking the main thread with error handling
+
+```python
+# ✅ CORRECT - Thread-safe error handling
+class TranscriptionWorker(QObject):
+    """Worker for background transcription with proper error handling."""
+    
+    transcription_completed = pyqtSignal(str, str)  # session_id, result_text
+    transcription_failed = pyqtSignal(str, str)     # session_id, error_message
+    progress_updated = pyqtSignal(str, int)         # session_id, percentage
+    
+    def __init__(self):
+        super().__init__()
+        self._cancelled = False
+    
+    @pyqtSlot(str, bytes, ModelConfiguration)
+    def transcribe_audio(self, session_id: str, audio_data: bytes, model_config: ModelConfiguration):
+        """Transcribe audio in background thread with error handling."""
+        try:
+            # Check if operation was cancelled
+            if self._cancelled:
+                return
+            
+            # Validate inputs
+            if len(audio_data) < 1024:
+                self.transcription_failed.emit(session_id, "Audio data too short for transcription")
+                return
+            
+            # Emit initial progress
+            self.progress_updated.emit(session_id, 10)
+            
+            # Load model if needed
+            model_result = self._ensure_model_loaded(model_config)
+            if not model_result.is_success:
+                self.transcription_failed.emit(session_id, f"Model loading failed: {model_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 30)
+            
+            # Preprocess audio
+            preprocessing_result = self._preprocess_audio(audio_data)
+            if not preprocessing_result.is_success:
+                self.transcription_failed.emit(session_id, f"Audio preprocessing failed: {preprocessing_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 60)
+            
+            # Run transcription
+            transcription_result = self._run_transcription(preprocessing_result.value, model_config)
+            if not transcription_result.is_success:
+                self.transcription_failed.emit(session_id, f"Transcription failed: {transcription_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 100)
+            self.transcription_completed.emit(session_id, transcription_result.value.text)
+            
+        except Exception as e:
+            # Always emit error signal, never let exceptions escape
+            logger.error(f"Unexpected error in transcription worker: {e}", exc_info=True)
+            self.transcription_failed.emit(session_id, "An unexpected error occurred during transcription")
+    
+    def cancel(self):
+        """Cancel the current transcription operation."""
+        self._cancelled = True
+
+# Main UI class using the worker
+class TranscriptionManager(QObject):
+    """Manages transcription operations with proper error handling."""
+    
+    def __init__(self):
+        super().__init__()
+        self._worker = TranscriptionWorker()
+        self._worker_thread = QThread()
+        self._worker.moveToThread(self._worker_thread)
+        
+        # Connect signals for error handling
+        self._worker.transcription_completed.connect(self._on_transcription_completed)
+        self._worker.transcription_failed.connect(self._on_transcription_failed)
+        self._worker.progress_updated.connect(self._on_progress_updated)
+        
+        self._worker_thread.start()
+    
+    @pyqtSlot(str, str)
+    def _on_transcription_failed(self, session_id: str, error_message: str):
+        """Handle transcription failure in main thread."""
+        # Create appropriate error based on error message
+        if "memory" in error_message.lower():
+            error = DesktopError.insufficient_memory(0, 0)
+        elif "model" in error_message.lower():
+            error = DesktopError.model_download_failed("Unknown", error_message)
+        else:
+            error = DesktopError(
+                category=ErrorCategory.TRANSCRIPTION,
+                user_message=f"Transcription failed: {error_message}",
+                technical_details=error_message,
+                recovery_suggestion="Try again with a different audio file or model"
+            )
+        
+        # Show error to user
+        self._error_handler.handle_error(error)
+        
+        # Clean up session
+        self._cleanup_session(session_id)
+```
+
+### 2. Resource Cleanup Rules
+
+- **MUST**: Clean up resources properly on errors
+- **MUST**: Close files, connections, and handles in finally blocks
+- **MUST**: Release audio devices when operations fail
+- **MUST**: Free model memory on loading failures
+- **FORBIDDEN**: Resource leaks on error paths
+- **FORBIDDEN**: Leaving system in inconsistent state after errors
+
+```python
+# ✅ CORRECT - Resource cleanup on errors
+class AudioResourceManager:
+    """Manages audio resources with proper cleanup on errors."""
+    
+    def __init__(self):
+        self._active_streams = {}
+        self._loaded_models = {}
+        self._temp_files = set()
+    
+    async def start_recording_session(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording session with resource tracking."""
+        audio_stream = None
+        temp_file = None
+        
+        try:
+            # Create temporary file for audio data
+            temp_file = self._create_temp_audio_file(session_id)
+            self._temp_files.add(temp_file)
+            
+            # Open audio stream
+            stream_result = await self._open_audio_stream(audio_config)
+            if not stream_result.is_success:
+                return Result.failure(stream_result.error)
+            
+            audio_stream = stream_result.value
+            self._active_streams[session_id] = audio_stream
+            
+            # Start recording
+            start_result = await audio_stream.start_recording()
+            if not start_result.is_success:
+                return Result.failure(start_result.error)
+            
+            return Result.success()
+            
+        except Exception as e:
+            # Clean up resources on error
+            if audio_stream:
+                await self._cleanup_audio_stream(audio_stream)
+                self._active_streams.pop(session_id, None)
+            
+            if temp_file:
+                self._cleanup_temp_file(temp_file)
+                self._temp_files.discard(temp_file)
+            
+            return Result.failure(f"Failed to start recording session: {str(e)}")
+    
+    async def stop_recording_session(self, session_id: str) -> Result[bytes]:
+        """Stop recording session with proper cleanup."""
+        try:
+            audio_stream = self._active_streams.get(session_id)
+            if not audio_stream:
+                return Result.failure(f"No active recording session: {session_id}")
+            
+            # Stop recording and get audio data
+            audio_data_result = await audio_stream.stop_and_get_data()
+            if not audio_data_result.is_success:
+                return Result.failure(audio_data_result.error)
+            
+            return Result.success(audio_data_result.value)
+            
+        except Exception as e:
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+        finally:
+            # Always clean up resources
+            await self._cleanup_session_resources(session_id)
+    
+    async def _cleanup_session_resources(self, session_id: str):
+        """Clean up all resources associated with a session."""
+        try:
+            # Clean up audio stream
+            if session_id in self._active_streams:
+                await self._cleanup_audio_stream(self._active_streams[session_id])
+                del self._active_streams[session_id]
+            
+            # Clean up temporary files
+            temp_files_to_remove = [f for f in self._temp_files if session_id in str(f)]
+            for temp_file in temp_files_to_remove:
+                self._cleanup_temp_file(temp_file)
+                self._temp_files.discard(temp_file)
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up session {session_id}: {e}")
+    
+    def __del__(self):
+        """Ensure cleanup on object destruction."""
+        try:
+            # Clean up any remaining resources
+            for session_id in list(self._active_streams.keys()):
+                asyncio.create_task(self._cleanup_session_resources(session_id))
+            
+            for temp_file in list(self._temp_files):
+                self._cleanup_temp_file(temp_file)
+                
+        except Exception as e:
+            logger.error(f"Error in AudioResourceManager destructor: {e}")
+```
+
+## Performance Error Handling
+
+### 1. Performance Monitoring Rules
+
+- **MUST**: Monitor operation timeouts and cancel long-running tasks
+- **MUST**: Track memory usage and handle memory pressure
+- **MUST**: Implement circuit breakers for failing operations
+- **MUST**: Provide user feedback for slow operations
+- **FORBIDDEN**: Infinite loops or blocking operations
+- **FORBIDDEN**: Memory leaks in error paths
+
+### 2. Graceful Degradation Rules
+
+- **MUST**: Degrade gracefully when system resources are low
+
+- **MUST**: Use smaller models when memory is limited
+
+- **MUST**: Reduce audio quality when processing is slow
+
+- **MUST**: Skip non-essential features under load
+
+- **FORBIDDEN**: Complete application failure due to resource constraints
+
+- **FORBIDDEN**: Data loss during degraded operation
+
+- **FORBIDDEN**: Complex business logic in error handling paths
+
+- **FORBIDDEN**: Database operations in error recovery
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Error Handling Rules
+
+## Result Pattern Rules
+
+### 1. Domain Layer Error Handling for Audio/Transcription
+
+- **MUST**: Use `Result[T]` for all domain operations that can fail
+- **MUST**: Return specific error messages that describe the business rule violation
+- **MUST**: Chain Result operations using `map()`, `bind()`, `on_success()`, and `on_failure()`
+- **MUST**: Handle both success and failure cases explicitly
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Generic error messages without context
+
+```python
+# ✅ CORRECT - Audio Domain Result usage
+def start_recording(self, audio_config: AudioConfiguration) -> Result[None]:
+    """Start recording with audio business validation."""
+    # Validate recording state
+    if self._state != RecordingState.IDLE:
+        return Result.failure("Cannot start recording: session is not idle")
+    
+    # Validate audio configuration
+    if audio_config.sample_rate < 8000:
+        return Result.failure("Sample rate too low for quality audio (minimum 8kHz)")
+    
+    if not self._is_audio_device_available(audio_config.device_id):
+        return Result.failure(f"Audio device '{audio_config.device_id}' is not available")
+    
+    # State change
+    self._state = RecordingState.RECORDING
+    self._started_at = datetime.utcnow()
+    self.add_domain_event(RecordingStarted(self.id, audio_config))
+    self.mark_as_updated()
+    
+    return Result.success()
+
+def transcribe_audio(self, audio_data: bytes, model_config: ModelConfiguration) -> Result[TranscriptionResult]:
+    """Transcribe audio with business validation."""
+    # Validate audio data
+    if len(audio_data) < 1024:
+        return Result.failure("Audio data too short for transcription (minimum 1KB)")
+    
+    # Check model requirements
+    if model_config.memory_requirements_mb > self._available_memory_mb:
+        return Result.failure(f"Insufficient memory for model '{model_config.model_name}' (requires {model_config.memory_requirements_mb}MB)")
+    
+    # Business logic
+    transcription_result = self._process_transcription(audio_data, model_config)
+    if not transcription_result.is_success:
+        return Result.failure(transcription_result.error)
+    
+    return Result.success(transcription_result.value)
+
+# Chain operations for audio processing
+result = (
+    AudioSession.create(audio_config)
+    .bind(lambda session: session.start_recording())
+    .bind(lambda _: self._capture_audio())
+    .bind(lambda audio_data: self._transcribe_audio(audio_data, model_config))
+    .on_success(lambda result: self._display_transcription(result.text))
+    .on_failure(lambda error: self._show_error_dialog(error))
+)
+```
+
+### 2. Feature Layer Error Handling
+
+- **MUST**: Use `Result[T]` for all handler return values
+- **MUST**: Convert domain Result failures to appropriate UI feedback
+- **MUST**: Use descriptive error messages for desktop users
+- **MUST**: Provide contextual error messages for UI components
+- **FORBIDDEN**: Exposing internal implementation details in error messages
+- **FORBIDDEN**: Returning different error formats within the same feature
+
+```python
+# ✅ CORRECT - Feature Result usage for desktop
+async def handle(self, command: StartRecordingCommand) -> Result[str]:
+    """Handle audio recording start with comprehensive error handling."""
+    try:
+        # Validate audio device availability
+        device_check = await self._audio_service.check_audio_device(command.audio_config.device_id)
+        if not device_check.is_success:
+            return Result.failure(f"Microphone not available: {device_check.error}")
+        
+        # Check for existing active session
+        active_session = await self._audio_repository.get_active_session()
+        if active_session.is_success and active_session.value:
+            return Result.failure("Another recording is already in progress. Please stop it first.")
+        
+        # Create and start recording session
+        session_result = AudioSession.create(command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(f"Invalid audio settings: {session_result.error}")
+        
+        session = session_result.value
+        start_result = session.start_recording()
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # Persist session
+        save_result = await self._audio_repository.save_session(session)
+        if not save_result.is_success:
+            return Result.failure("Failed to initialize recording session")
+        
+        # Start actual hardware recording
+        recording_result = await self._audio_service.start_recording(session.id, command.audio_config)
+        if not recording_result.is_success:
+            # Cleanup on failure
+            await self._audio_repository.delete_session(session.id)
+            return Result.failure(f"Failed to start microphone: {recording_result.error}")
+        
+        return Result.success(session.id)
+        
+    except OSError as e:
+        return Result.failure(f"System error accessing audio device: {str(e)}")
+    except MemoryError:
+        return Result.failure("Insufficient memory to start recording")
+    except Exception as e:
+        self._logger.error(f"Unexpected error in StartRecordingHandler: {e}", exc_info=True)
+        return Result.failure("An unexpected error occurred. Please try again.")
+```
+
+## Error Models and User Feedback
+
+### 1. Error Model Rules for Desktop
+
+- **MUST**: Use structured error types for different categories
+- **MUST**: Provide user-friendly error messages
+- **MUST**: Include technical details for logging but not user display
+- **MUST**: Support error recovery suggestions
+- **FORBIDDEN**: Technical jargon in user-facing messages
+- **FORBIDDEN**: Exposing file paths or system details to users
+
+```python
+# ✅ CORRECT - Desktop error model
+from enum import Enum
+from dataclasses import dataclass
+from typing import Optional
+
+class ErrorCategory(Enum):
+    AUDIO_DEVICE = "audio_device"
+    MODEL_LOADING = "model_loading"
+    TRANSCRIPTION = "transcription"
+    SYSTEM_RESOURCE = "system_resource"
+    USER_INPUT = "user_input"
+    CONFIGURATION = "configuration"
+
+@dataclass
+class DesktopError:
+    category: ErrorCategory
+    user_message: str
+    technical_details: str
+    recovery_suggestion: Optional[str] = None
+    
+    @classmethod
+    def audio_device_not_available(cls, device_name: str) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.AUDIO_DEVICE,
+            user_message=f"Microphone '{device_name}' is not available or being used by another application",
+            technical_details=f"Audio device '{device_name}' failed to open",
+            recovery_suggestion="Try selecting a different microphone or close other audio applications"
+        )
+    
+    @classmethod
+    def insufficient_memory(cls, required_mb: int, available_mb: int) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.SYSTEM_RESOURCE,
+            user_message=f"Not enough memory to load the model (need {required_mb}MB, have {available_mb}MB)",
+            technical_details=f"Model requires {required_mb}MB but only {available_mb}MB available",
+            recovery_suggestion="Try using a smaller model or close other applications"
+        )
+    
+    @classmethod
+    def model_download_failed(cls, model_name: str, http_error: str) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.MODEL_LOADING,
+            user_message=f"Failed to download model '{model_name}'. Please check your internet connection",
+            technical_details=f"HTTP error downloading {model_name}: {http_error}",
+            recovery_suggestion="Check internet connection and try again, or use a different model"
+        )
+```
+
+### 2. Qt Error Dialog Rules
+
+- **MUST**: All user errors shown through Qt dialogs with appropriate icons
+- **MUST**: Use Qt signals for error communication between components
+- **MUST**: Provide actionable error messages with recovery options
+- **MUST**: Log detailed errors while showing simple messages to user
+- **FORBIDDEN**: Showing technical error details to user
+- **FORBIDDEN**: Blocking the UI with error handling
+
+```python
+# ✅ CORRECT - Qt error handling
+from PyQt5.QtWidgets import QMessageBox, QWidget
+from PyQt5.QtCore import pyqtSignal, QObject
+from PyQt5.QtGui import QIcon
+
+class ErrorHandler(QObject):
+    """Centralized error handling for the application."""
+    
+    error_occurred = pyqtSignal(DesktopError)
+    
+    def __init__(self, parent: QWidget = None):
+        super().__init__()
+        self._parent = parent
+        self.error_occurred.connect(self._show_error_dialog)
+    
+    def handle_result_error(self, result: Result) -> None:
+        """Handle a failed Result by showing appropriate error dialog."""
+        if result.is_success:
+            return
+        
+        error = self._categorize_error(result.error)
+        self.error_occurred.emit(error)
+    
+    def _categorize_error(self, error_message: str) -> DesktopError:
+        """Categorize error message and create appropriate DesktopError."""
+        if "audio device" in error_message.lower() or "microphone" in error_message.lower():
+            return DesktopError.audio_device_not_available("Unknown Device")
+        elif "memory" in error_message.lower():
+            return DesktopError.insufficient_memory(0, 0)  # Will be filled by system info
+        elif "model" in error_message.lower() and "download" in error_message.lower():
+            return DesktopError.model_download_failed("Unknown Model", error_message)
+        else:
+            return DesktopError(
+                category=ErrorCategory.USER_INPUT,
+                user_message=error_message,
+                technical_details=error_message
+            )
+    
+    def _show_error_dialog(self, error: DesktopError) -> None:
+        """Show error dialog with appropriate icon and recovery options."""
+        msg_box = QMessageBox(self._parent)
+        msg_box.setWindowTitle("WinSTT Error")
+        msg_box.setText(error.user_message)
+        
+        # Set appropriate icon based on error category
+        if error.category == ErrorCategory.AUDIO_DEVICE:
+            msg_box.setIcon(QMessageBox.Warning)
+        elif error.category == ErrorCategory.SYSTEM_RESOURCE:
+            msg_box.setIcon(QMessageBox.Critical)
+        else:
+            msg_box.setIcon(QMessageBox.Information)
+        
+        # Add recovery suggestion if available
+        if error.recovery_suggestion:
+            msg_box.setInformativeText(error.recovery_suggestion)
+        
+        # Add buttons based on error type
+        if error.category == ErrorCategory.AUDIO_DEVICE:
+            msg_box.addButton("Select Different Microphone", QMessageBox.ActionRole)
+            msg_box.addButton("Retry", QMessageBox.AcceptRole)
+        elif error.category == ErrorCategory.MODEL_LOADING:
+            msg_box.addButton("Download Again", QMessageBox.ActionRole)
+            msg_box.addButton("Use Different Model", QMessageBox.ActionRole)
+        
+        msg_box.addButton(QMessageBox.Ok)
+        msg_box.exec_()
+
+# Usage in UI components
+class RecordingControlsWidget(QWidget):
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._error_handler = ErrorHandler(self)
+    
+    async def _start_recording(self):
+        """Start recording with proper error handling."""
+        command = StartRecordingCommand(audio_config=self._get_audio_config())
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._on_recording_started(result.value)
+        else:
+            self._error_handler.handle_result_error(result)
+```
+
+## Hardware/System Error Handling
+
+### 1. Audio Device Error Rules
+
+- **MUST**: Handle audio device disconnection gracefully
+- **MUST**: Monitor audio device availability continuously
+- **MUST**: Provide fallback to default device when possible
+- **MUST**: Notify user of device changes during recording
+- **FORBIDDEN**: Crashing when audio devices are unplugged
+- **FORBIDDEN**: Continuing recording with no audio input
+
+```python
+# ✅ CORRECT - Audio device error handling
+class AudioDeviceMonitor(QObject):
+    """Monitor audio device status and handle device changes."""
+    
+    device_disconnected = pyqtSignal(str)  # device_id
+    device_reconnected = pyqtSignal(str)   # device_id
+    default_device_changed = pyqtSignal(str)  # new_default_device_id
+    
+    def __init__(self):
+        super().__init__()
+        self._available_devices = set()
+        self._monitor_timer = QTimer()
+        self._monitor_timer.timeout.connect(self._check_devices)
+        self._monitor_timer.start(1000)  # Check every second
+    
+    def _check_devices(self):
+        """Check for audio device changes."""
+        try:
+            current_devices = set(self._get_available_devices())
+            
+            # Check for disconnected devices
+            disconnected = self._available_devices - current_devices
+            for device_id in disconnected:
+                self.device_disconnected.emit(device_id)
+            
+            # Check for newly connected devices
+            connected = current_devices - self._available_devices
+            for device_id in connected:
+                self.device_reconnected.emit(device_id)
+            
+            self._available_devices = current_devices
+            
+        except Exception as e:
+            # Log error but don't crash
+            logger.error(f"Error monitoring audio devices: {e}")
+
+class AudioRecordingService:
+    """Audio recording service with robust error handling."""
+    
+    def __init__(self):
+        self._device_monitor = AudioDeviceMonitor()
+        self._device_monitor.device_disconnected.connect(self._handle_device_disconnected)
+        self._current_device_id = None
+        self._recording_session_id = None
+    
+    async def start_recording(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording with device error handling."""
+        try:
+            # Check device availability
+            if not self._is_device_available(audio_config.device_id):
+                # Try to fallback to default device
+                default_device = self._get_default_device()
+                if default_device and default_device != audio_config.device_id:
+                    logger.warning(f"Device {audio_config.device_id} not available, using default {default_device}")
+                    audio_config = audio_config.with_device(default_device)
+                else:
+                    return Result.failure("No audio input devices available")
+            
+            # Start recording
+            self._recording_session_id = session_id
+            self._current_device_id = audio_config.device_id
+            
+            # Platform-specific recording initialization
+            recording_result = await self._start_platform_recording(audio_config)
+            if not recording_result.is_success:
+                return Result.failure(f"Failed to initialize audio recording: {recording_result.error}")
+            
+            return Result.success()
+            
+        except OSError as e:
+            return Result.failure(f"Audio system error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error starting recording: {e}", exc_info=True)
+            return Result.failure("Failed to start recording due to system error")
+    
+    def _handle_device_disconnected(self, device_id: str):
+        """Handle audio device disconnection during recording."""
+        if device_id == self._current_device_id and self._recording_session_id:
+            # Try to switch to default device
+            default_device = self._get_default_device()
+            if default_device and default_device != device_id:
+                self._attempt_device_switch(default_device)
+            else:
+                self._emergency_stop_recording("Audio device disconnected")
+    
+    def _attempt_device_switch(self, new_device_id: str):
+        """Attempt to switch to a different audio device during recording."""
+        try:
+            # Notify user about device switch
+            self.device_switch_attempted.emit(self._current_device_id, new_device_id)
+            
+            # Attempt switch
+            if self._switch_recording_device(new_device_id):
+                self._current_device_id = new_device_id
+                self.device_switch_successful.emit(new_device_id)
+            else:
+                self._emergency_stop_recording("Failed to switch audio device")
+                
+        except Exception as e:
+            logger.error(f"Error switching audio device: {e}")
+            self._emergency_stop_recording("Audio device switch failed")
+```
+
+### 2. Model Loading Error Rules
+
+- **MUST**: Handle model download failures gracefully
+- **MUST**: Validate model file integrity before loading
+- **MUST**: Provide progress feedback for long operations
+- **MUST**: Support retry mechanisms for failed operations
+- **FORBIDDEN**: Blocking UI during model operations
+- **FORBIDDEN**: Loading corrupted or incompatible models
+
+```python
+# ✅ CORRECT - Model loading error handling
+class ModelLoadingService:
+    """Service for loading transcription models with error handling."""
+    
+    model_download_progress = pyqtSignal(str, int)  # model_name, percentage
+    model_loading_progress = pyqtSignal(str, int)   # model_name, percentage
+    model_load_completed = pyqtSignal(str)          # model_name
+    model_load_failed = pyqtSignal(str, str)        # model_name, error_message
+    
+    async def load_model(self, model_config: ModelConfiguration) -> Result[ModelInstance]:
+        """Load model with comprehensive error handling."""
+        try:
+            # Check if model is already loaded
+            if self._is_model_loaded(model_config.model_name):
+                return Result.success(self._get_loaded_model(model_config.model_name))
+            
+            # Check system requirements
+            memory_check = self._check_memory_requirements(model_config)
+            if not memory_check.is_success:
+                return Result.failure(memory_check.error)
+            
+            # Check if model file exists locally
+            model_path = self._get_model_path(model_config.model_name)
+            if not model_path.exists():
+                # Download model
+                download_result = await self._download_model(model_config)
+                if not download_result.is_success:
+                    return Result.failure(f"Failed to download model: {download_result.error}")
+                model_path = download_result.value
+            
+            # Validate model file
+            validation_result = self._validate_model_file(model_path)
+            if not validation_result.is_success:
+                # Delete corrupted file and retry download
+                model_path.unlink(missing_ok=True)
+                return Result.failure(f"Model file corrupted: {validation_result.error}")
+            
+            # Load model into memory
+            load_result = await self._load_model_into_memory(model_path, model_config)
+            if not load_result.is_success:
+                return Result.failure(f"Failed to load model: {load_result.error}")
+            
+            model_instance = load_result.value
+            self._register_loaded_model(model_config.model_name, model_instance)
+            self.model_load_completed.emit(model_config.model_name)
+            
+            return Result.success(model_instance)
+            
+        except MemoryError:
+            return Result.failure(f"Insufficient memory to load model '{model_config.model_name}'")
+        except FileNotFoundError:
+            return Result.failure(f"Model file not found for '{model_config.model_name}'")
+        except PermissionError:
+            return Result.failure("Permission denied accessing model files")
+        except Exception as e:
+            logger.error(f"Unexpected error loading model {model_config.model_name}: {e}", exc_info=True)
+            return Result.failure("Failed to load model due to system error")
+    
+    async def _download_model(self, model_config: ModelConfiguration) -> Result[Path]:
+        """Download model with progress tracking and retry logic."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                download_result = await self._attempt_download(model_config)
+                if download_result.is_success:
+                    return download_result
+                
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                    
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    return Result.failure(f"Download failed after {max_retries} attempts: {str(e)}")
+        
+        return Result.failure("Download failed after all retry attempts")
+    
+    def _check_memory_requirements(self, model_config: ModelConfiguration) -> Result[None]:
+        """Check if system has enough memory for the model."""
+        required_mb = model_config.model_type.memory_requirements_mb
+        available_mb = self._get_available_memory_mb()
+        
+        if available_mb < required_mb:
+            return Result.failure(
+                f"Insufficient memory: need {required_mb}MB, have {available_mb}MB available"
+            )
+        
+        return Result.success()
+```
+
+## Threading and Async Error Handling
+
+### 1. Qt Thread Safety Rules
+
+- **MUST**: Handle errors from background threads properly
+- **MUST**: Use Qt signals to communicate errors to main thread
+- **MUST**: Never update UI directly from background threads
+- **MUST**: Handle thread cancellation gracefully
+- **FORBIDDEN**: Direct UI updates from worker threads
+- **FORBIDDEN**: Blocking the main thread with error handling
+
+```python
+# ✅ CORRECT - Thread-safe error handling
+class TranscriptionWorker(QObject):
+    """Worker for background transcription with proper error handling."""
+    
+    transcription_completed = pyqtSignal(str, str)  # session_id, result_text
+    transcription_failed = pyqtSignal(str, str)     # session_id, error_message
+    progress_updated = pyqtSignal(str, int)         # session_id, percentage
+    
+    def __init__(self):
+        super().__init__()
+        self._cancelled = False
+    
+    @pyqtSlot(str, bytes, ModelConfiguration)
+    def transcribe_audio(self, session_id: str, audio_data: bytes, model_config: ModelConfiguration):
+        """Transcribe audio in background thread with error handling."""
+        try:
+            # Check if operation was cancelled
+            if self._cancelled:
+                return
+            
+            # Validate inputs
+            if len(audio_data) < 1024:
+                self.transcription_failed.emit(session_id, "Audio data too short for transcription")
+                return
+            
+            # Emit initial progress
+            self.progress_updated.emit(session_id, 10)
+            
+            # Load model if needed
+            model_result = self._ensure_model_loaded(model_config)
+            if not model_result.is_success:
+                self.transcription_failed.emit(session_id, f"Model loading failed: {model_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 30)
+            
+            # Preprocess audio
+            preprocessing_result = self._preprocess_audio(audio_data)
+            if not preprocessing_result.is_success:
+                self.transcription_failed.emit(session_id, f"Audio preprocessing failed: {preprocessing_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 60)
+            
+            # Run transcription
+            transcription_result = self._run_transcription(preprocessing_result.value, model_config)
+            if not transcription_result.is_success:
+                self.transcription_failed.emit(session_id, f"Transcription failed: {transcription_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 100)
+            self.transcription_completed.emit(session_id, transcription_result.value.text)
+            
+        except Exception as e:
+            # Always emit error signal, never let exceptions escape
+            logger.error(f"Unexpected error in transcription worker: {e}", exc_info=True)
+            self.transcription_failed.emit(session_id, "An unexpected error occurred during transcription")
+    
+    def cancel(self):
+        """Cancel the current transcription operation."""
+        self._cancelled = True
+
+# Main UI class using the worker
+class TranscriptionManager(QObject):
+    """Manages transcription operations with proper error handling."""
+    
+    def __init__(self):
+        super().__init__()
+        self._worker = TranscriptionWorker()
+        self._worker_thread = QThread()
+        self._worker.moveToThread(self._worker_thread)
+        
+        # Connect signals for error handling
+        self._worker.transcription_completed.connect(self._on_transcription_completed)
+        self._worker.transcription_failed.connect(self._on_transcription_failed)
+        self._worker.progress_updated.connect(self._on_progress_updated)
+        
+        self._worker_thread.start()
+    
+    @pyqtSlot(str, str)
+    def _on_transcription_failed(self, session_id: str, error_message: str):
+        """Handle transcription failure in main thread."""
+        # Create appropriate error based on error message
+        if "memory" in error_message.lower():
+            error = DesktopError.insufficient_memory(0, 0)
+        elif "model" in error_message.lower():
+            error = DesktopError.model_download_failed("Unknown", error_message)
+        else:
+            error = DesktopError(
+                category=ErrorCategory.TRANSCRIPTION,
+                user_message=f"Transcription failed: {error_message}",
+                technical_details=error_message,
+                recovery_suggestion="Try again with a different audio file or model"
+            )
+        
+        # Show error to user
+        self._error_handler.handle_error(error)
+        
+        # Clean up session
+        self._cleanup_session(session_id)
+```
+
+### 2. Resource Cleanup Rules
+
+- **MUST**: Clean up resources properly on errors
+- **MUST**: Close files, connections, and handles in finally blocks
+- **MUST**: Release audio devices when operations fail
+- **MUST**: Free model memory on loading failures
+- **FORBIDDEN**: Resource leaks on error paths
+- **FORBIDDEN**: Leaving system in inconsistent state after errors
+
+```python
+# ✅ CORRECT - Resource cleanup on errors
+class AudioResourceManager:
+    """Manages audio resources with proper cleanup on errors."""
+    
+    def __init__(self):
+        self._active_streams = {}
+        self._loaded_models = {}
+        self._temp_files = set()
+    
+    async def start_recording_session(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording session with resource tracking."""
+        audio_stream = None
+        temp_file = None
+        
+        try:
+            # Create temporary file for audio data
+            temp_file = self._create_temp_audio_file(session_id)
+            self._temp_files.add(temp_file)
+            
+            # Open audio stream
+            stream_result = await self._open_audio_stream(audio_config)
+            if not stream_result.is_success:
+                return Result.failure(stream_result.error)
+            
+            audio_stream = stream_result.value
+            self._active_streams[session_id] = audio_stream
+            
+            # Start recording
+            start_result = await audio_stream.start_recording()
+            if not start_result.is_success:
+                return Result.failure(start_result.error)
+            
+            return Result.success()
+            
+        except Exception as e:
+            # Clean up resources on error
+            if audio_stream:
+                await self._cleanup_audio_stream(audio_stream)
+                self._active_streams.pop(session_id, None)
+            
+            if temp_file:
+                self._cleanup_temp_file(temp_file)
+                self._temp_files.discard(temp_file)
+            
+            return Result.failure(f"Failed to start recording session: {str(e)}")
+    
+    async def stop_recording_session(self, session_id: str) -> Result[bytes]:
+        """Stop recording session with proper cleanup."""
+        try:
+            audio_stream = self._active_streams.get(session_id)
+            if not audio_stream:
+                return Result.failure(f"No active recording session: {session_id}")
+            
+            # Stop recording and get audio data
+            audio_data_result = await audio_stream.stop_and_get_data()
+            if not audio_data_result.is_success:
+                return Result.failure(audio_data_result.error)
+            
+            return Result.success(audio_data_result.value)
+            
+        except Exception as e:
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+        finally:
+            # Always clean up resources
+            await self._cleanup_session_resources(session_id)
+    
+    async def _cleanup_session_resources(self, session_id: str):
+        """Clean up all resources associated with a session."""
+        try:
+            # Clean up audio stream
+            if session_id in self._active_streams:
+                await self._cleanup_audio_stream(self._active_streams[session_id])
+                del self._active_streams[session_id]
+            
+            # Clean up temporary files
+            temp_files_to_remove = [f for f in self._temp_files if session_id in str(f)]
+            for temp_file in temp_files_to_remove:
+                self._cleanup_temp_file(temp_file)
+                self._temp_files.discard(temp_file)
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up session {session_id}: {e}")
+    
+    def __del__(self):
+        """Ensure cleanup on object destruction."""
+        try:
+            # Clean up any remaining resources
+            for session_id in list(self._active_streams.keys()):
+                asyncio.create_task(self._cleanup_session_resources(session_id))
+            
+            for temp_file in list(self._temp_files):
+                self._cleanup_temp_file(temp_file)
+                
+        except Exception as e:
+            logger.error(f"Error in AudioResourceManager destructor: {e}")
+```
+
+## Performance Error Handling
+
+### 1. Performance Monitoring Rules
+
+- **MUST**: Monitor operation timeouts and cancel long-running tasks
+- **MUST**: Track memory usage and handle memory pressure
+- **MUST**: Implement circuit breakers for failing operations
+- **MUST**: Provide user feedback for slow operations
+- **FORBIDDEN**: Infinite loops or blocking operations
+- **FORBIDDEN**: Memory leaks in error paths
+
+### 2. Graceful Degradation Rules
+
+- **MUST**: Degrade gracefully when system resources are low
+
+- **MUST**: Use smaller models when memory is limited
+
+- **MUST**: Reduce audio quality when processing is slow
+
+- **MUST**: Skip non-essential features under load
+
+- **FORBIDDEN**: Complete application failure due to resource constraints
+
+- **FORBIDDEN**: Data loss during degraded operation
+
+- **FORBIDDEN**: Complex business logic in error handling paths
+
+- **FORBIDDEN**: Database operations in error recovery
+
+# WinSTT Error Handling Rules
+
+## Result Pattern Rules
+
+### 1. Domain Layer Error Handling for Audio/Transcription
+
+- **MUST**: Use `Result[T]` for all domain operations that can fail
+- **MUST**: Return specific error messages that describe the business rule violation
+- **MUST**: Chain Result operations using `map()`, `bind()`, `on_success()`, and `on_failure()`
+- **MUST**: Handle both success and failure cases explicitly
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Generic error messages without context
+
+```python
+# ✅ CORRECT - Audio Domain Result usage
+def start_recording(self, audio_config: AudioConfiguration) -> Result[None]:
+    """Start recording with audio business validation."""
+    # Validate recording state
+    if self._state != RecordingState.IDLE:
+        return Result.failure("Cannot start recording: session is not idle")
+    
+    # Validate audio configuration
+    if audio_config.sample_rate < 8000:
+        return Result.failure("Sample rate too low for quality audio (minimum 8kHz)")
+    
+    if not self._is_audio_device_available(audio_config.device_id):
+        return Result.failure(f"Audio device '{audio_config.device_id}' is not available")
+    
+    # State change
+    self._state = RecordingState.RECORDING
+    self._started_at = datetime.utcnow()
+    self.add_domain_event(RecordingStarted(self.id, audio_config))
+    self.mark_as_updated()
+    
+    return Result.success()
+
+def transcribe_audio(self, audio_data: bytes, model_config: ModelConfiguration) -> Result[TranscriptionResult]:
+    """Transcribe audio with business validation."""
+    # Validate audio data
+    if len(audio_data) < 1024:
+        return Result.failure("Audio data too short for transcription (minimum 1KB)")
+    
+    # Check model requirements
+    if model_config.memory_requirements_mb > self._available_memory_mb:
+        return Result.failure(f"Insufficient memory for model '{model_config.model_name}' (requires {model_config.memory_requirements_mb}MB)")
+    
+    # Business logic
+    transcription_result = self._process_transcription(audio_data, model_config)
+    if not transcription_result.is_success:
+        return Result.failure(transcription_result.error)
+    
+    return Result.success(transcription_result.value)
+
+# Chain operations for audio processing
+result = (
+    AudioSession.create(audio_config)
+    .bind(lambda session: session.start_recording())
+    .bind(lambda _: self._capture_audio())
+    .bind(lambda audio_data: self._transcribe_audio(audio_data, model_config))
+    .on_success(lambda result: self._display_transcription(result.text))
+    .on_failure(lambda error: self._show_error_dialog(error))
+)
+```
+
+### 2. Feature Layer Error Handling
+
+- **MUST**: Use `Result[T]` for all handler return values
+- **MUST**: Convert domain Result failures to appropriate UI feedback
+- **MUST**: Use descriptive error messages for desktop users
+- **MUST**: Provide contextual error messages for UI components
+- **FORBIDDEN**: Exposing internal implementation details in error messages
+- **FORBIDDEN**: Returning different error formats within the same feature
+
+```python
+# ✅ CORRECT - Feature Result usage for desktop
+async def handle(self, command: StartRecordingCommand) -> Result[str]:
+    """Handle audio recording start with comprehensive error handling."""
+    try:
+        # Validate audio device availability
+        device_check = await self._audio_service.check_audio_device(command.audio_config.device_id)
+        if not device_check.is_success:
+            return Result.failure(f"Microphone not available: {device_check.error}")
+        
+        # Check for existing active session
+        active_session = await self._audio_repository.get_active_session()
+        if active_session.is_success and active_session.value:
+            return Result.failure("Another recording is already in progress. Please stop it first.")
+        
+        # Create and start recording session
+        session_result = AudioSession.create(command.audio_config)
+        if not session_result.is_success:
+            return Result.failure(f"Invalid audio settings: {session_result.error}")
+        
+        session = session_result.value
+        start_result = session.start_recording()
+        if not start_result.is_success:
+            return Result.failure(start_result.error)
+        
+        # Persist session
+        save_result = await self._audio_repository.save_session(session)
+        if not save_result.is_success:
+            return Result.failure("Failed to initialize recording session")
+        
+        # Start actual hardware recording
+        recording_result = await self._audio_service.start_recording(session.id, command.audio_config)
+        if not recording_result.is_success:
+            # Cleanup on failure
+            await self._audio_repository.delete_session(session.id)
+            return Result.failure(f"Failed to start microphone: {recording_result.error}")
+        
+        return Result.success(session.id)
+        
+    except OSError as e:
+        return Result.failure(f"System error accessing audio device: {str(e)}")
+    except MemoryError:
+        return Result.failure("Insufficient memory to start recording")
+    except Exception as e:
+        self._logger.error(f"Unexpected error in StartRecordingHandler: {e}", exc_info=True)
+        return Result.failure("An unexpected error occurred. Please try again.")
+```
+
+## Error Models and User Feedback
+
+### 1. Error Model Rules for Desktop
+
+- **MUST**: Use structured error types for different categories
+- **MUST**: Provide user-friendly error messages
+- **MUST**: Include technical details for logging but not user display
+- **MUST**: Support error recovery suggestions
+- **FORBIDDEN**: Technical jargon in user-facing messages
+- **FORBIDDEN**: Exposing file paths or system details to users
+
+```python
+# ✅ CORRECT - Desktop error model
+from enum import Enum
+from dataclasses import dataclass
+from typing import Optional
+
+class ErrorCategory(Enum):
+    AUDIO_DEVICE = "audio_device"
+    MODEL_LOADING = "model_loading"
+    TRANSCRIPTION = "transcription"
+    SYSTEM_RESOURCE = "system_resource"
+    USER_INPUT = "user_input"
+    CONFIGURATION = "configuration"
+
+@dataclass
+class DesktopError:
+    category: ErrorCategory
+    user_message: str
+    technical_details: str
+    recovery_suggestion: Optional[str] = None
+    
+    @classmethod
+    def audio_device_not_available(cls, device_name: str) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.AUDIO_DEVICE,
+            user_message=f"Microphone '{device_name}' is not available or being used by another application",
+            technical_details=f"Audio device '{device_name}' failed to open",
+            recovery_suggestion="Try selecting a different microphone or close other audio applications"
+        )
+    
+    @classmethod
+    def insufficient_memory(cls, required_mb: int, available_mb: int) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.SYSTEM_RESOURCE,
+            user_message=f"Not enough memory to load the model (need {required_mb}MB, have {available_mb}MB)",
+            technical_details=f"Model requires {required_mb}MB but only {available_mb}MB available",
+            recovery_suggestion="Try using a smaller model or close other applications"
+        )
+    
+    @classmethod
+    def model_download_failed(cls, model_name: str, http_error: str) -> "DesktopError":
+        return cls(
+            category=ErrorCategory.MODEL_LOADING,
+            user_message=f"Failed to download model '{model_name}'. Please check your internet connection",
+            technical_details=f"HTTP error downloading {model_name}: {http_error}",
+            recovery_suggestion="Check internet connection and try again, or use a different model"
+        )
+```
+
+### 2. Qt Error Dialog Rules
+
+- **MUST**: All user errors shown through Qt dialogs with appropriate icons
+- **MUST**: Use Qt signals for error communication between components
+- **MUST**: Provide actionable error messages with recovery options
+- **MUST**: Log detailed errors while showing simple messages to user
+- **FORBIDDEN**: Showing technical error details to user
+- **FORBIDDEN**: Blocking the UI with error handling
+
+```python
+# ✅ CORRECT - Qt error handling
+from PyQt5.QtWidgets import QMessageBox, QWidget
+from PyQt5.QtCore import pyqtSignal, QObject
+from PyQt5.QtGui import QIcon
+
+class ErrorHandler(QObject):
+    """Centralized error handling for the application."""
+    
+    error_occurred = pyqtSignal(DesktopError)
+    
+    def __init__(self, parent: QWidget = None):
+        super().__init__()
+        self._parent = parent
+        self.error_occurred.connect(self._show_error_dialog)
+    
+    def handle_result_error(self, result: Result) -> None:
+        """Handle a failed Result by showing appropriate error dialog."""
+        if result.is_success:
+            return
+        
+        error = self._categorize_error(result.error)
+        self.error_occurred.emit(error)
+    
+    def _categorize_error(self, error_message: str) -> DesktopError:
+        """Categorize error message and create appropriate DesktopError."""
+        if "audio device" in error_message.lower() or "microphone" in error_message.lower():
+            return DesktopError.audio_device_not_available("Unknown Device")
+        elif "memory" in error_message.lower():
+            return DesktopError.insufficient_memory(0, 0)  # Will be filled by system info
+        elif "model" in error_message.lower() and "download" in error_message.lower():
+            return DesktopError.model_download_failed("Unknown Model", error_message)
+        else:
+            return DesktopError(
+                category=ErrorCategory.USER_INPUT,
+                user_message=error_message,
+                technical_details=error_message
+            )
+    
+    def _show_error_dialog(self, error: DesktopError) -> None:
+        """Show error dialog with appropriate icon and recovery options."""
+        msg_box = QMessageBox(self._parent)
+        msg_box.setWindowTitle("WinSTT Error")
+        msg_box.setText(error.user_message)
+        
+        # Set appropriate icon based on error category
+        if error.category == ErrorCategory.AUDIO_DEVICE:
+            msg_box.setIcon(QMessageBox.Warning)
+        elif error.category == ErrorCategory.SYSTEM_RESOURCE:
+            msg_box.setIcon(QMessageBox.Critical)
+        else:
+            msg_box.setIcon(QMessageBox.Information)
+        
+        # Add recovery suggestion if available
+        if error.recovery_suggestion:
+            msg_box.setInformativeText(error.recovery_suggestion)
+        
+        # Add buttons based on error type
+        if error.category == ErrorCategory.AUDIO_DEVICE:
+            msg_box.addButton("Select Different Microphone", QMessageBox.ActionRole)
+            msg_box.addButton("Retry", QMessageBox.AcceptRole)
+        elif error.category == ErrorCategory.MODEL_LOADING:
+            msg_box.addButton("Download Again", QMessageBox.ActionRole)
+            msg_box.addButton("Use Different Model", QMessageBox.ActionRole)
+        
+        msg_box.addButton(QMessageBox.Ok)
+        msg_box.exec_()
+
+# Usage in UI components
+class RecordingControlsWidget(QWidget):
+    def __init__(self, mediator: IMediator, parent=None):
+        super().__init__(parent)
+        self._mediator = mediator
+        self._error_handler = ErrorHandler(self)
+    
+    async def _start_recording(self):
+        """Start recording with proper error handling."""
+        command = StartRecordingCommand(audio_config=self._get_audio_config())
+        result = await self._mediator.send(command)
+        
+        if result.is_success:
+            self._on_recording_started(result.value)
+        else:
+            self._error_handler.handle_result_error(result)
+```
+
+## Hardware/System Error Handling
+
+### 1. Audio Device Error Rules
+
+- **MUST**: Handle audio device disconnection gracefully
+- **MUST**: Monitor audio device availability continuously
+- **MUST**: Provide fallback to default device when possible
+- **MUST**: Notify user of device changes during recording
+- **FORBIDDEN**: Crashing when audio devices are unplugged
+- **FORBIDDEN**: Continuing recording with no audio input
+
+```python
+# ✅ CORRECT - Audio device error handling
+class AudioDeviceMonitor(QObject):
+    """Monitor audio device status and handle device changes."""
+    
+    device_disconnected = pyqtSignal(str)  # device_id
+    device_reconnected = pyqtSignal(str)   # device_id
+    default_device_changed = pyqtSignal(str)  # new_default_device_id
+    
+    def __init__(self):
+        super().__init__()
+        self._available_devices = set()
+        self._monitor_timer = QTimer()
+        self._monitor_timer.timeout.connect(self._check_devices)
+        self._monitor_timer.start(1000)  # Check every second
+    
+    def _check_devices(self):
+        """Check for audio device changes."""
+        try:
+            current_devices = set(self._get_available_devices())
+            
+            # Check for disconnected devices
+            disconnected = self._available_devices - current_devices
+            for device_id in disconnected:
+                self.device_disconnected.emit(device_id)
+            
+            # Check for newly connected devices
+            connected = current_devices - self._available_devices
+            for device_id in connected:
+                self.device_reconnected.emit(device_id)
+            
+            self._available_devices = current_devices
+            
+        except Exception as e:
+            # Log error but don't crash
+            logger.error(f"Error monitoring audio devices: {e}")
+
+class AudioRecordingService:
+    """Audio recording service with robust error handling."""
+    
+    def __init__(self):
+        self._device_monitor = AudioDeviceMonitor()
+        self._device_monitor.device_disconnected.connect(self._handle_device_disconnected)
+        self._current_device_id = None
+        self._recording_session_id = None
+    
+    async def start_recording(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording with device error handling."""
+        try:
+            # Check device availability
+            if not self._is_device_available(audio_config.device_id):
+                # Try to fallback to default device
+                default_device = self._get_default_device()
+                if default_device and default_device != audio_config.device_id:
+                    logger.warning(f"Device {audio_config.device_id} not available, using default {default_device}")
+                    audio_config = audio_config.with_device(default_device)
+                else:
+                    return Result.failure("No audio input devices available")
+            
+            # Start recording
+            self._recording_session_id = session_id
+            self._current_device_id = audio_config.device_id
+            
+            # Platform-specific recording initialization
+            recording_result = await self._start_platform_recording(audio_config)
+            if not recording_result.is_success:
+                return Result.failure(f"Failed to initialize audio recording: {recording_result.error}")
+            
+            return Result.success()
+            
+        except OSError as e:
+            return Result.failure(f"Audio system error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error starting recording: {e}", exc_info=True)
+            return Result.failure("Failed to start recording due to system error")
+    
+    def _handle_device_disconnected(self, device_id: str):
+        """Handle audio device disconnection during recording."""
+        if device_id == self._current_device_id and self._recording_session_id:
+            # Try to switch to default device
+            default_device = self._get_default_device()
+            if default_device and default_device != device_id:
+                self._attempt_device_switch(default_device)
+            else:
+                self._emergency_stop_recording("Audio device disconnected")
+    
+    def _attempt_device_switch(self, new_device_id: str):
+        """Attempt to switch to a different audio device during recording."""
+        try:
+            # Notify user about device switch
+            self.device_switch_attempted.emit(self._current_device_id, new_device_id)
+            
+            # Attempt switch
+            if self._switch_recording_device(new_device_id):
+                self._current_device_id = new_device_id
+                self.device_switch_successful.emit(new_device_id)
+            else:
+                self._emergency_stop_recording("Failed to switch audio device")
+                
+        except Exception as e:
+            logger.error(f"Error switching audio device: {e}")
+            self._emergency_stop_recording("Audio device switch failed")
+```
+
+### 2. Model Loading Error Rules
+
+- **MUST**: Handle model download failures gracefully
+- **MUST**: Validate model file integrity before loading
+- **MUST**: Provide progress feedback for long operations
+- **MUST**: Support retry mechanisms for failed operations
+- **FORBIDDEN**: Blocking UI during model operations
+- **FORBIDDEN**: Loading corrupted or incompatible models
+
+```python
+# ✅ CORRECT - Model loading error handling
+class ModelLoadingService:
+    """Service for loading transcription models with error handling."""
+    
+    model_download_progress = pyqtSignal(str, int)  # model_name, percentage
+    model_loading_progress = pyqtSignal(str, int)   # model_name, percentage
+    model_load_completed = pyqtSignal(str)          # model_name
+    model_load_failed = pyqtSignal(str, str)        # model_name, error_message
+    
+    async def load_model(self, model_config: ModelConfiguration) -> Result[ModelInstance]:
+        """Load model with comprehensive error handling."""
+        try:
+            # Check if model is already loaded
+            if self._is_model_loaded(model_config.model_name):
+                return Result.success(self._get_loaded_model(model_config.model_name))
+            
+            # Check system requirements
+            memory_check = self._check_memory_requirements(model_config)
+            if not memory_check.is_success:
+                return Result.failure(memory_check.error)
+            
+            # Check if model file exists locally
+            model_path = self._get_model_path(model_config.model_name)
+            if not model_path.exists():
+                # Download model
+                download_result = await self._download_model(model_config)
+                if not download_result.is_success:
+                    return Result.failure(f"Failed to download model: {download_result.error}")
+                model_path = download_result.value
+            
+            # Validate model file
+            validation_result = self._validate_model_file(model_path)
+            if not validation_result.is_success:
+                # Delete corrupted file and retry download
+                model_path.unlink(missing_ok=True)
+                return Result.failure(f"Model file corrupted: {validation_result.error}")
+            
+            # Load model into memory
+            load_result = await self._load_model_into_memory(model_path, model_config)
+            if not load_result.is_success:
+                return Result.failure(f"Failed to load model: {load_result.error}")
+            
+            model_instance = load_result.value
+            self._register_loaded_model(model_config.model_name, model_instance)
+            self.model_load_completed.emit(model_config.model_name)
+            
+            return Result.success(model_instance)
+            
+        except MemoryError:
+            return Result.failure(f"Insufficient memory to load model '{model_config.model_name}'")
+        except FileNotFoundError:
+            return Result.failure(f"Model file not found for '{model_config.model_name}'")
+        except PermissionError:
+            return Result.failure("Permission denied accessing model files")
+        except Exception as e:
+            logger.error(f"Unexpected error loading model {model_config.model_name}: {e}", exc_info=True)
+            return Result.failure("Failed to load model due to system error")
+    
+    async def _download_model(self, model_config: ModelConfiguration) -> Result[Path]:
+        """Download model with progress tracking and retry logic."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                download_result = await self._attempt_download(model_config)
+                if download_result.is_success:
+                    return download_result
+                
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                    
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    return Result.failure(f"Download failed after {max_retries} attempts: {str(e)}")
+        
+        return Result.failure("Download failed after all retry attempts")
+    
+    def _check_memory_requirements(self, model_config: ModelConfiguration) -> Result[None]:
+        """Check if system has enough memory for the model."""
+        required_mb = model_config.model_type.memory_requirements_mb
+        available_mb = self._get_available_memory_mb()
+        
+        if available_mb < required_mb:
+            return Result.failure(
+                f"Insufficient memory: need {required_mb}MB, have {available_mb}MB available"
+            )
+        
+        return Result.success()
+```
+
+## Threading and Async Error Handling
+
+### 1. Qt Thread Safety Rules
+
+- **MUST**: Handle errors from background threads properly
+- **MUST**: Use Qt signals to communicate errors to main thread
+- **MUST**: Never update UI directly from background threads
+- **MUST**: Handle thread cancellation gracefully
+- **FORBIDDEN**: Direct UI updates from worker threads
+- **FORBIDDEN**: Blocking the main thread with error handling
+
+```python
+# ✅ CORRECT - Thread-safe error handling
+class TranscriptionWorker(QObject):
+    """Worker for background transcription with proper error handling."""
+    
+    transcription_completed = pyqtSignal(str, str)  # session_id, result_text
+    transcription_failed = pyqtSignal(str, str)     # session_id, error_message
+    progress_updated = pyqtSignal(str, int)         # session_id, percentage
+    
+    def __init__(self):
+        super().__init__()
+        self._cancelled = False
+    
+    @pyqtSlot(str, bytes, ModelConfiguration)
+    def transcribe_audio(self, session_id: str, audio_data: bytes, model_config: ModelConfiguration):
+        """Transcribe audio in background thread with error handling."""
+        try:
+            # Check if operation was cancelled
+            if self._cancelled:
+                return
+            
+            # Validate inputs
+            if len(audio_data) < 1024:
+                self.transcription_failed.emit(session_id, "Audio data too short for transcription")
+                return
+            
+            # Emit initial progress
+            self.progress_updated.emit(session_id, 10)
+            
+            # Load model if needed
+            model_result = self._ensure_model_loaded(model_config)
+            if not model_result.is_success:
+                self.transcription_failed.emit(session_id, f"Model loading failed: {model_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 30)
+            
+            # Preprocess audio
+            preprocessing_result = self._preprocess_audio(audio_data)
+            if not preprocessing_result.is_success:
+                self.transcription_failed.emit(session_id, f"Audio preprocessing failed: {preprocessing_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 60)
+            
+            # Run transcription
+            transcription_result = self._run_transcription(preprocessing_result.value, model_config)
+            if not transcription_result.is_success:
+                self.transcription_failed.emit(session_id, f"Transcription failed: {transcription_result.error}")
+                return
+            
+            if self._cancelled:
+                return
+            
+            self.progress_updated.emit(session_id, 100)
+            self.transcription_completed.emit(session_id, transcription_result.value.text)
+            
+        except Exception as e:
+            # Always emit error signal, never let exceptions escape
+            logger.error(f"Unexpected error in transcription worker: {e}", exc_info=True)
+            self.transcription_failed.emit(session_id, "An unexpected error occurred during transcription")
+    
+    def cancel(self):
+        """Cancel the current transcription operation."""
+        self._cancelled = True
+
+# Main UI class using the worker
+class TranscriptionManager(QObject):
+    """Manages transcription operations with proper error handling."""
+    
+    def __init__(self):
+        super().__init__()
+        self._worker = TranscriptionWorker()
+        self._worker_thread = QThread()
+        self._worker.moveToThread(self._worker_thread)
+        
+        # Connect signals for error handling
+        self._worker.transcription_completed.connect(self._on_transcription_completed)
+        self._worker.transcription_failed.connect(self._on_transcription_failed)
+        self._worker.progress_updated.connect(self._on_progress_updated)
+        
+        self._worker_thread.start()
+    
+    @pyqtSlot(str, str)
+    def _on_transcription_failed(self, session_id: str, error_message: str):
+        """Handle transcription failure in main thread."""
+        # Create appropriate error based on error message
+        if "memory" in error_message.lower():
+            error = DesktopError.insufficient_memory(0, 0)
+        elif "model" in error_message.lower():
+            error = DesktopError.model_download_failed("Unknown", error_message)
+        else:
+            error = DesktopError(
+                category=ErrorCategory.TRANSCRIPTION,
+                user_message=f"Transcription failed: {error_message}",
+                technical_details=error_message,
+                recovery_suggestion="Try again with a different audio file or model"
+            )
+        
+        # Show error to user
+        self._error_handler.handle_error(error)
+        
+        # Clean up session
+        self._cleanup_session(session_id)
+```
+
+### 2. Resource Cleanup Rules
+
+- **MUST**: Clean up resources properly on errors
+- **MUST**: Close files, connections, and handles in finally blocks
+- **MUST**: Release audio devices when operations fail
+- **MUST**: Free model memory on loading failures
+- **FORBIDDEN**: Resource leaks on error paths
+- **FORBIDDEN**: Leaving system in inconsistent state after errors
+
+```python
+# ✅ CORRECT - Resource cleanup on errors
+class AudioResourceManager:
+    """Manages audio resources with proper cleanup on errors."""
+    
+    def __init__(self):
+        self._active_streams = {}
+        self._loaded_models = {}
+        self._temp_files = set()
+    
+    async def start_recording_session(self, session_id: str, audio_config: AudioConfiguration) -> Result[None]:
+        """Start recording session with resource tracking."""
+        audio_stream = None
+        temp_file = None
+        
+        try:
+            # Create temporary file for audio data
+            temp_file = self._create_temp_audio_file(session_id)
+            self._temp_files.add(temp_file)
+            
+            # Open audio stream
+            stream_result = await self._open_audio_stream(audio_config)
+            if not stream_result.is_success:
+                return Result.failure(stream_result.error)
+            
+            audio_stream = stream_result.value
+            self._active_streams[session_id] = audio_stream
+            
+            # Start recording
+            start_result = await audio_stream.start_recording()
+            if not start_result.is_success:
+                return Result.failure(start_result.error)
+            
+            return Result.success()
+            
+        except Exception as e:
+            # Clean up resources on error
+            if audio_stream:
+                await self._cleanup_audio_stream(audio_stream)
+                self._active_streams.pop(session_id, None)
+            
+            if temp_file:
+                self._cleanup_temp_file(temp_file)
+                self._temp_files.discard(temp_file)
+            
+            return Result.failure(f"Failed to start recording session: {str(e)}")
+    
+    async def stop_recording_session(self, session_id: str) -> Result[bytes]:
+        """Stop recording session with proper cleanup."""
+        try:
+            audio_stream = self._active_streams.get(session_id)
+            if not audio_stream:
+                return Result.failure(f"No active recording session: {session_id}")
+            
+            # Stop recording and get audio data
+            audio_data_result = await audio_stream.stop_and_get_data()
+            if not audio_data_result.is_success:
+                return Result.failure(audio_data_result.error)
+            
+            return Result.success(audio_data_result.value)
+            
+        except Exception as e:
+            return Result.failure(f"Failed to stop recording: {str(e)}")
+        finally:
+            # Always clean up resources
+            await self._cleanup_session_resources(session_id)
+    
+    async def _cleanup_session_resources(self, session_id: str):
+        """Clean up all resources associated with a session."""
+        try:
+            # Clean up audio stream
+            if session_id in self._active_streams:
+                await self._cleanup_audio_stream(self._active_streams[session_id])
+                del self._active_streams[session_id]
+            
+            # Clean up temporary files
+            temp_files_to_remove = [f for f in self._temp_files if session_id in str(f)]
+            for temp_file in temp_files_to_remove:
+                self._cleanup_temp_file(temp_file)
+                self._temp_files.discard(temp_file)
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up session {session_id}: {e}")
+    
+    def __del__(self):
+        """Ensure cleanup on object destruction."""
+        try:
+            # Clean up any remaining resources
+            for session_id in list(self._active_streams.keys()):
+                asyncio.create_task(self._cleanup_session_resources(session_id))
+            
+            for temp_file in list(self._temp_files):
+                self._cleanup_temp_file(temp_file)
+                
+        except Exception as e:
+            logger.error(f"Error in AudioResourceManager destructor: {e}")
+```
+
+## Performance Error Handling
+
+### 1. Performance Monitoring Rules
+
+- **MUST**: Monitor operation timeouts and cancel long-running tasks
+- **MUST**: Track memory usage and handle memory pressure
+- **MUST**: Implement circuit breakers for failing operations
+- **MUST**: Provide user feedback for slow operations
+- **FORBIDDEN**: Infinite loops or blocking operations
+- **FORBIDDEN**: Memory leaks in error paths
+
+### 2. Graceful Degradation Rules
+
+- **MUST**: Degrade gracefully when system resources are low
+
+- **MUST**: Use smaller models when memory is limited
+
+- **MUST**: Reduce audio quality when processing is slow
+
+- **MUST**: Skip non-essential features under load
+
+- **FORBIDDEN**: Complete application failure due to resource constraints
+
+- **FORBIDDEN**: Data loss during degraded operation
+
+- **FORBIDDEN**: Complex business logic in error handling paths
+
+- **FORBIDDEN**: Database operations in error recovery

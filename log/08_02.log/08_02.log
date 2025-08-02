@@ -1,0 +1,173 @@
+[2025-08-02 07:27:45,641] logger.logger - INFO - WinSTT application started successfully
+[2025-08-02 07:29:23,084] INFO - WinSTT application started successfully
+[2025-08-02 07:29:53,744] INFO - WinSTT application started successfully
+[2025-08-02 07:37:38,314] INFO - WinSTT application started successfully
+[2025-08-02 07:43:51,869] INFO - WinSTT application started successfully
+[2025-08-02 07:44:46,304] INFO - WinSTT application started successfully
+[2025-08-02 07:45:11,596] WARNING - Sound file ../media/splash.mp3 not found.
+[2025-08-02 07:45:44,851] INFO - WinSTT application started successfully
+[2025-08-02 07:47:37,126] INFO - WinSTT application started successfully
+[2025-08-02 07:52:39,164] INFO - WinSTT application started successfully
+[2025-08-02 16:28:10,980] INFO - WinSTT application started successfully
+[2025-08-02 16:35:09,393] INFO - WinSTT application started successfully
+[2025-08-02 17:24:45,864] INFO - WinSTT application started successfully
+[2025-08-02 17:25:09,920] INFO - WinSTT application started successfully
+[2025-08-02 17:25:19,455] INFO - An instance of WinSTT is already running. Exiting.
+[2025-08-02 17:26:13,854] INFO - WinSTT application started successfully
+[2025-08-02 17:26:36,621] INFO - WinSTT application started successfully
+[2025-08-02 17:29:01,687] INFO - WinSTT application started successfully
+[2025-08-02 17:29:38,051] WARNING - Sound file ../media/splash.mp3 not found.
+[2025-08-02 17:38:19,214] INFO - WinSTT application started successfully
+[2025-08-02 17:41:27,598] INFO - An instance of WinSTT is already running. Exiting.
+[2025-08-02 17:41:45,577] INFO - An instance of WinSTT is already running. Exiting.
+[2025-08-02 17:42:11,019] WARNING - Sound file ../media/splash.mp3 not found.
+[2025-08-02 18:51:57,532] INFO - Window shown for first time, initializing workers...
+[2025-08-02 18:51:57,542] INFO - WinSTT application started successfully
+[2025-08-02 18:51:57,768] INFO - Downloading ONNX model to E:\DL\Projects\WinSTT\src\cache/vad\silero_vad_16k.onnx...
+[2025-08-02 18:51:59,919] INFO - File downloaded successfully: E:\DL\Projects\WinSTT\src\cache/vad\silero_vad_16k.onnx
+[2025-08-02 19:08:15,745] WARNING - Sound file ../media/splash.mp3 not found.
+[2025-08-02 19:15:31,649] WARNING - No recording device detected. Please connect a microphone.
+[2025-08-02 19:15:35,344] WARNING - No recording device detected. Please connect a microphone.
+[2025-08-02 19:17:55,244] INFO - Window shown for first time, initializing workers...
+[2025-08-02 19:17:55,256] INFO - WinSTT application started successfully
+[2025-08-02 19:18:00,184] WARNING - Sound file ../media/splash.mp3 not found.
+[2025-08-02 19:18:17,644] ERROR - Error in transcription pipeline: Numba needs NumPy 2.2 or less. Got NumPy 2.3.
+Traceback (most recent call last):
+  File "E:\DL\Projects\WinSTT\utils\transcribe.py", line 498, in transcribe
+    input_features = self.preprocess_audio(audio_path)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\utils\transcribe.py", line 377, in preprocess_audio
+    audio, sr = librosa.load(audio_path, sr=None)  # sr=None to keep original sampling rate
+                ^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\lazy_loader\__init__.py", line 83, in __getattr__
+    attr = getattr(submod, name)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\lazy_loader\__init__.py", line 82, in __getattr__
+    submod = importlib.import_module(submod_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\MASTER\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\librosa\core\audio.py", line 17, in <module>
+    from numba import jit, stencil, guvectorize
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\numba\__init__.py", line 59, in <module>
+    _ensure_critical_deps()
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\numba\__init__.py", line 45, in _ensure_critical_deps
+    raise ImportError(msg)
+ImportError: Numba needs NumPy 2.2 or less. Got NumPy 2.3.
+[2025-08-02 19:18:17,657] ERROR - Error during transcription: Numba needs NumPy 2.2 or less. Got NumPy 2.3.
+Traceback (most recent call last):
+  File "E:\DL\Projects\WinSTT\utils\listener.py", line 278, in transcribe_and_paste
+    outputs = self.model.transcribe(wav_buffer)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\utils\transcribe.py", line 498, in transcribe
+    input_features = self.preprocess_audio(audio_path)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\utils\transcribe.py", line 377, in preprocess_audio
+    audio, sr = librosa.load(audio_path, sr=None)  # sr=None to keep original sampling rate
+                ^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\lazy_loader\__init__.py", line 83, in __getattr__
+    attr = getattr(submod, name)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\lazy_loader\__init__.py", line 82, in __getattr__
+    submod = importlib.import_module(submod_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\MASTER\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\librosa\core\audio.py", line 17, in <module>
+    from numba import jit, stencil, guvectorize
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\numba\__init__.py", line 59, in <module>
+    _ensure_critical_deps()
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\numba\__init__.py", line 45, in _ensure_critical_deps
+    raise ImportError(msg)
+ImportError: Numba needs NumPy 2.2 or less. Got NumPy 2.3.
+[2025-08-02 19:18:48,554] INFO - Window shown for first time, initializing workers...
+[2025-08-02 19:18:48,566] INFO - WinSTT application started successfully
+[2025-08-02 19:18:53,058] WARNING - Sound file ../media/splash.mp3 not found.
+[2025-08-02 19:19:58,550] INFO - Window shown for first time, initializing workers...
+[2025-08-02 19:19:58,560] INFO - WinSTT application started successfully
+[2025-08-02 19:20:03,603] WARNING - Sound file ../media/splash.mp3 not found.
+[2025-08-02 19:20:25,958] INFO - Window shown for first time, initializing workers...
+[2025-08-02 19:20:25,966] INFO - WinSTT application started successfully
+[2025-08-02 19:20:30,677] WARNING - Sound file ../media/splash.mp3 not found.
+[2025-08-02 19:20:44,551] ERROR - Error in transcription pipeline: Numba needs NumPy 2.2 or less. Got NumPy 2.3.
+Traceback (most recent call last):
+  File "E:\DL\Projects\WinSTT\utils\transcribe.py", line 498, in transcribe
+    input_features = self.preprocess_audio(audio_path)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\utils\transcribe.py", line 377, in preprocess_audio
+    audio, sr = librosa.load(audio_path, sr=None)  # sr=None to keep original sampling rate
+                ^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\lazy_loader\__init__.py", line 83, in __getattr__
+    attr = getattr(submod, name)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\lazy_loader\__init__.py", line 82, in __getattr__
+    submod = importlib.import_module(submod_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\MASTER\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\librosa\core\audio.py", line 17, in <module>
+    from numba import jit, stencil, guvectorize
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\numba\__init__.py", line 59, in <module>
+    _ensure_critical_deps()
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\numba\__init__.py", line 45, in _ensure_critical_deps
+    raise ImportError(msg)
+ImportError: Numba needs NumPy 2.2 or less. Got NumPy 2.3.
+[2025-08-02 19:20:44,552] ERROR - Error during transcription: Numba needs NumPy 2.2 or less. Got NumPy 2.3.
+Traceback (most recent call last):
+  File "E:\DL\Projects\WinSTT\utils\listener.py", line 278, in transcribe_and_paste
+    outputs = self.model.transcribe(wav_buffer)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\utils\transcribe.py", line 498, in transcribe
+    input_features = self.preprocess_audio(audio_path)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\utils\transcribe.py", line 377, in preprocess_audio
+    audio, sr = librosa.load(audio_path, sr=None)  # sr=None to keep original sampling rate
+                ^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\lazy_loader\__init__.py", line 83, in __getattr__
+    attr = getattr(submod, name)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\lazy_loader\__init__.py", line 82, in __getattr__
+    submod = importlib.import_module(submod_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\MASTER\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\librosa\core\audio.py", line 17, in <module>
+    from numba import jit, stencil, guvectorize
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\numba\__init__.py", line 59, in <module>
+    _ensure_critical_deps()
+  File "E:\DL\Projects\WinSTT\.venv\Lib\site-packages\numba\__init__.py", line 45, in _ensure_critical_deps
+    raise ImportError(msg)
+ImportError: Numba needs NumPy 2.2 or less. Got NumPy 2.3.
+[2025-08-02 19:22:37,728] INFO - Window shown for first time, initializing workers...
+[2025-08-02 19:22:37,742] INFO - WinSTT application started successfully
+[2025-08-02 19:22:43,311] WARNING - Sound file ../media/splash.mp3 not found.
+[2025-08-02 19:23:17,337] INFO - Window shown for first time, initializing workers...
+[2025-08-02 19:23:17,349] INFO - WinSTT application started successfully

@@ -131,7 +131,7 @@ class AudioToText:
         rec_key: str = "Ctrl+Alt+A",
         channels: int = 1,
         rate: int = 16000,
-        start_sound_file: str = "../media/splash.mp3",
+        start_sound_file: str = "media/splash.mp3",
         error_callback = None,
     ):
         self.scriptdir = os.path.dirname(os.path.abspath(__file__))
@@ -221,14 +221,37 @@ class AudioToText:
     def _key_event_handler(self, event):
         if event.event_type == "down":
             self.keys_down.add(event.name)  # Add pressed key to the set
-            if set(self.rec_key.split("+")).issubset(self.keys_down) and not self.is_recording:
+            # Convert config key names to keyboard library key names for comparison
+            config_keys = set(self._normalize_key_names(self.rec_key.split("+")))
+            if config_keys.issubset(self.keys_down) and not self.is_recording:
                 self.is_recording = True
                 self.start_recording()
         elif event.event_type == "up":
             self.keys_down.discard(event.name)  # Remove released key from the set
-            if self.is_recording and not set(self.rec_key.split("+")).issubset(self.keys_down):
+            # Convert config key names to keyboard library key names for comparison
+            config_keys = set(self._normalize_key_names(self.rec_key.split("+")))
+            if self.is_recording and not config_keys.issubset(self.keys_down):
                 self.is_recording = False
                 self.stop_recording()
+    
+    def _normalize_key_names(self, key_list):
+        """Convert configuration key names to keyboard library key names."""
+        key_mapping = {
+            "CTRL": "ctrl",
+            "ALT": "alt",
+            "SHIFT": "shift",
+            "WIN": "windows",
+            "CMD": "cmd",
+        }
+        normalized_keys = []
+        for key in key_list:
+            key = key.strip().upper()
+            if key in key_mapping:
+                normalized_keys.append(key_mapping[key])
+            else:
+                # For regular keys, convert to lowercase
+                normalized_keys.append(key.lower())
+        return normalized_keys
 
     def paste_transcription(self, transcript_text):
         transcript_text = transcript_text.replace("New paragraph.", "\n\n")

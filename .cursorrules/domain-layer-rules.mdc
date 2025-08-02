@@ -1,0 +1,3022 @@
+---
+alwaysApply: true
+---
+
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Domain Layer Rules
+
+## 🏗️ Audio/Transcription Domain Modeling Workflow Steps
+
+### Step 1: Identify Business Entity Type
+
+**Before creating any domain objects, determine the correct DDD pattern for audio transcription:**
+
+#### Entity Identification Checklist:
+
+- ✅ **Has unique identity** that persists over time
+- ✅ **Has lifecycle** (created, modified, deleted)
+- ✅ **State can change** while maintaining identity
+- ✅ **Business operations** can be performed on it
+
+#### Aggregate Root Identification Checklist:
+
+- ✅ **Is an Entity** (meets all entity criteria)
+- ✅ **Serves as consistency boundary** for related entities
+- ✅ **Controls access** to internal entities
+- ✅ **Publishes domain events** for external communication
+- ✅ **Has clear business boundaries** and responsibilities
+
+#### Value Object Identification Checklist:
+
+- ✅ **Defined by its values** rather than identity
+- ✅ **Immutable** once created
+- ✅ **No side effects** when used
+- ✅ **Encapsulates validation** rules
+- ✅ **Can be shared** across entities
+
+**Example Decision Process for Audio Transcription:**
+
+```python
+# ✅ ENTITY: AudioSession has identity and lifecycle
+class AudioSession(Entity[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._created_at = datetime.utcnow()
+
+# ✅ AGGREGATE ROOT: AudioSession controls recording consistency
+class AudioSession(AggregateRoot[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._audio_data: Optional[bytes] = None
+    
+    def start_recording(self, config: AudioConfiguration) -> Result[None]:
+        """Start recording with validation."""
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.add_domain_event(RecordingStarted(self.id, config, self._started_at))
+        return Result.success()
+
+# ✅ VALUE OBJECT: AudioConfiguration is defined by its values
+@dataclass(frozen=True)
+class AudioConfiguration(ValueObject):
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str] = None
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.sample_rate, self.channels, self.chunk_size, self.device_id)
+    
+    def __invariants__(self) -> None:
+        if self.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError(f"Unsupported sample rate: {self.sample_rate}")
+        if self.channels not in [1, 2]:
+            raise ValueError(f"Only mono and stereo supported: {self.channels} channels")
+        if self.chunk_size <= 0:
+            raise ValueError("Chunk size must be positive")
+```
+
+### Step 2: Create Aggregate Root / Entity Implementation
+
+**Follow these patterns when implementing audio/transcription domain entities:**
+
+#### Factory Method Pattern for Audio Domain:
+
+```python
+class TranscriptionRequest(AggregateRoot[str]):
+    @classmethod
+    def create(cls, audio_data: bytes, model_config: ModelConfiguration, language: Optional[str] = None) -> Result['TranscriptionRequest']:
+        """Factory method for creating transcription requests."""
+        # Validate audio data
+        if len(audio_data) == 0:
+            return Result.failure("Audio data cannot be empty")
+        
+        if len(audio_data) < 1024:  # Minimum audio size
+            return Result.failure("Audio data too short for transcription")
+        
+        # Create entity
+        request_id = str(uuid.uuid4())
+        request = cls(request_id, audio_data, model_config, language)
+        
+        # Publish domain event
+        request.add_domain_event(TranscriptionRequested(request.id, len(audio_data), model_config.model_name))
+        
+        return Result.success(request)
+```
+
+#### Business Logic Encapsulation for Audio:
+
+```python
+def process_transcription(self, result_text: str, confidence: float) -> Result[None]:
+    """Process transcription result with business validation."""
+    # Guard clauses for business rules
+    if self._state != TranscriptionState.PROCESSING:
+        return Result.failure("Cannot process result: transcription is not in processing state")
+    
+    if confidence < 0.0 or confidence > 1.0:
+        return Result.failure("Confidence score must be between 0.0 and 1.0")
+    
+    if not result_text.strip():
+        return Result.failure("Transcription result cannot be empty")
+    
+    # State change
+    self._state = TranscriptionState.COMPLETED
+    self._result_text = result_text
+    self._confidence = confidence
+    self._completed_at = datetime.utcnow()
+    
+    # Domain event
+    self.add_domain_event(TranscriptionCompleted(
+        self.id, 
+        result_text, 
+        confidence, 
+        self._completed_at
+    ))
+    
+    # Mark for persistence
+    self.mark_as_updated()
+    return Result.success()
+```
+
+#### Property Access Pattern for Audio Entities:
+
+```python
+@property
+def audio_config(self) -> AudioConfiguration:
+    """Read-only access to audio configuration."""
+    return self._audio_config
+
+@property
+def state(self) -> RecordingState:
+    """Read-only access to recording state."""
+    return self._state
+
+@property
+def duration_seconds(self) -> float:
+    """Calculate recording duration."""
+    if self._started_at is None:
+        return 0.0
+    
+    end_time = self._stopped_at or datetime.utcnow()
+    return (end_time - self._started_at).total_seconds()
+
+def update_audio_config(self, new_config: AudioConfiguration) -> Result[None]:
+    """Controlled mutation with validation."""
+    if self._state == RecordingState.RECORDING:
+        return Result.failure("Cannot change audio config while recording")
+    
+    old_config = self._audio_config
+    self._audio_config = new_config
+    
+    if old_config != new_config:
+        self.add_domain_event(AudioConfigurationChanged(
+            self.id, 
+            old_config, 
+            new_config
+        ))
+        self.mark_as_updated()
+    
+    return Result.success()
+```
+
+### Step 3: Create Value Objects Implementation for Audio Domain
+
+**Value objects MUST follow these patterns for audio/ML concepts:**
+
+#### Audio-Specific Value Objects:
+
+```python
+@dataclass(frozen=True)
+class ModelConfiguration(ValueObject):
+    model_name: str
+    model_type: ModelType
+    quantization: QuantizationType
+    context_length: int
+    language: Optional[str] = None
+    
+    def _get_equality_components(self) -> tuple:
+        return (
+            self.model_name, 
+            self.model_type, 
+            self.quantization, 
+            self.context_length, 
+            self.language
+        )
+    
+    def __invariants__(self) -> None:
+        if not self.model_name or not self.model_name.strip():
+            raise ValueError("Model name cannot be empty")
+        if self.context_length <= 0:
+            raise ValueError("Context length must be positive")
+        if self.language and len(self.language) != 2:
+            raise ValueError("Language code must be 2 characters (ISO 639-1)")
+
+@dataclass(frozen=True)
+class ConfidenceScore(ValueObject):
+    value: float
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.value,)
+    
+    def __invariants__(self) -> None:
+        if self.value < 0.0 or self.value > 1.0:
+            raise ValueError("Confidence score must be between 0.0 and 1.0")
+    
+    @property
+    def is_high_confidence(self) -> bool:
+        """Business rule: high confidence is >= 0.8."""
+        return self.value >= 0.8
+    
+    @property
+    def quality_level(self) -> str:
+        """Convert confidence to quality description."""
+        if self.value >= 0.9:
+            return "excellent"
+        elif self.value >= 0.8:
+            return "good"
+        elif self.value >= 0.6:
+            return "fair"
+        else:
+            return "poor"
+```
+
+#### Enum Value Objects for Audio Domain:
+
+```python
+class RecordingState(Enum):
+    IDLE = "idle"
+    RECORDING = "recording"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    
+    def can_transition_to(self, new_state: 'RecordingState') -> bool:
+        """Business rules for recording state transitions."""
+        valid_transitions = {
+            RecordingState.IDLE: [RecordingState.RECORDING],
+            RecordingState.RECORDING: [RecordingState.PROCESSING, RecordingState.FAILED],
+            RecordingState.PROCESSING: [RecordingState.COMPLETED, RecordingState.FAILED],
+            RecordingState.COMPLETED: [RecordingState.IDLE],  # Can start new recording
+            RecordingState.FAILED: [RecordingState.IDLE]      # Can recover and retry
+        }
+        return new_state in valid_transitions.get(self, [])
+
+class ModelType(Enum):
+    WHISPER_TINY = "whisper-tiny"
+    WHISPER_BASE = "whisper-base"
+    WHISPER_SMALL = "whisper-small"
+    WHISPER_MEDIUM = "whisper-medium"
+    WHISPER_LARGE = "whisper-large"
+    WHISPER_TURBO = "whisper-turbo"
+    
+    @property
+    def memory_requirements_mb(self) -> int:
+        """Business rule: memory requirements per model."""
+        memory_map = {
+            ModelType.WHISPER_TINY: 150,
+            ModelType.WHISPER_BASE: 300,
+            ModelType.WHISPER_SMALL: 600,
+            ModelType.WHISPER_MEDIUM: 1200,
+            ModelType.WHISPER_LARGE: 2400,
+            ModelType.WHISPER_TURBO: 800
+        }
+        return memory_map[self]
+    
+    @property
+    def relative_accuracy(self) -> float:
+        """Business rule: relative accuracy expectation."""
+        accuracy_map = {
+            ModelType.WHISPER_TINY: 0.7,
+            ModelType.WHISPER_BASE: 0.8,
+            ModelType.WHISPER_SMALL: 0.85,
+            ModelType.WHISPER_MEDIUM: 0.9,
+            ModelType.WHISPER_LARGE: 0.95,
+            ModelType.WHISPER_TURBO: 0.88
+        }
+        return accuracy_map[self]
+```
+
+### Domain Entity File Organization for Audio
+
+**Follow this structure for audio/transcription domain entities:**
+
+```
+src/domain/
+├── common/                    # Shared DDD patterns
+│   ├── entity.py             # Entity base classes
+│   ├── aggregate_root.py     # Aggregate root base classes
+│   ├── value_object.py       # Value object base classes
+│   ├── domain_event.py       # Domain event base classes
+│   └── result.py             # Result pattern implementation
+├── audio/                    # Audio recording domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── audio_session.py      # AudioSession aggregate root
+│   │   └── recording_state.py    # Recording state entity
+│   ├── value_objects/
+│   │   ├── audio_config.py       # Audio configuration
+│   │   ├── duration.py           # Duration value object
+│   │   └── audio_quality.py      # Quality metrics
+│   ├── events/
+│   │   ├── recording_started.py  # Recording started event
+│   │   ├── recording_stopped.py  # Recording stopped event
+│   │   └── audio_processed.py    # Audio processed event
+│   └── contracts/
+│       ├── audio_repository.py   # Audio repository interface
+│       └── audio_service.py      # Audio service interface
+├── transcription/            # Transcription domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── transcription_request.py # TranscriptionRequest aggregate
+│   │   ├── transcription_result.py  # TranscriptionResult entity
+│   │   └── model_instance.py       # Model instance entity
+│   ├── value_objects/
+│   │   ├── model_config.py         # Model configuration
+│   │   ├── language.py             # Language specification
+│   │   ├── confidence_score.py     # Confidence scoring
+│   │   └── text_segment.py         # Text segment with timing
+│   ├── events/
+│   │   ├── transcription_requested.py # Transcription requested
+│   │   ├── transcription_completed.py # Transcription completed
+│   │   ├── model_loaded.py           # Model loaded event
+│   │   └── model_download_progress.py # Download progress
+│   └── contracts/
+│       ├── model_repository.py       # Model repository interface
+│       └── transcription_service.py  # Transcription service interface
+├── llm/                      # LLM processing domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── llm_request.py          # LLM request aggregate
+│   │   └── processing_result.py     # Processing result entity
+│   ├── value_objects/
+│   │   ├── prompt_template.py       # Prompt templates
+│   │   ├── model_type.py           # LLM model types
+│   │   └── processing_options.py    # Processing options
+│   ├── events/
+│   │   ├── text_processed.py        # Text processed event
+│   │   └── llm_model_changed.py     # Model changed event
+│   └── contracts/
+│       └── llm_service.py           # LLM service interface
+└── settings/                 # Settings domain
+    ├── __init__.py
+    ├── entities/
+    │   ├── user_preferences.py     # User preferences aggregate
+    │   └── hotkey_binding.py       # Hotkey binding entity
+    ├── value_objects/
+    │   ├── key_combination.py      # Key combination
+    │   ├── file_path.py            # File path handling
+    │   └── theme_settings.py       # UI theme settings
+    ├── events/
+    │   ├── settings_changed.py     # Settings changed event
+    │   └── hotkey_updated.py       # Hotkey updated event
+    └── contracts/
+        └── settings_repository.py  # Settings repository interface
+```
+
+### Audio/Transcription Domain Best Practices
+
+1. **Audio-First Language**: Use audio/ML domain expert terminology
+1. **Model Hardware Constraints**: Encapsulate GPU/CPU requirements in domain logic
+1. **Protect Audio Invariants**: Validate sample rates, channels, and formats
+1. **Use Factory Methods**: For complex audio/model creation and validation
+1. **Publish Domain Events**: For transcription progress and completion
+1. **Keep Aggregates Audio-Focused**: Focus on recording/transcription boundaries
+1. **Avoid Primitive Obsession**: Wrap audio parameters in value objects
+1. **Make Invalid Audio States Unrepresentable**: Use types to enforce constraints
+
+## Core DDD Patterns for Audio Domain
+
+### 1. Entity Rules for Audio/Transcription
+
+- **MUST**: All entities inherit from `Entity[TId]` or `AuditableEntity[TId]`
+- **MUST**: Implement `__invariants__()` method for audio/ML business rules validation
+- **MUST**: Call `super().__init__()` with entity ID in constructor
+- **MUST**: Use `mark_as_updated()` when modifying entity state
+- **MUST**: Entity equality is based on ID and type, not attributes
+- **FORBIDDEN**: Direct property setting without validation
+- **FORBIDDEN**: Entity creation without using factory methods
+
+```python
+# ✅ CORRECT - Audio entity implementation
+class AudioSession(Entity[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._created_at = datetime.utcnow()
+        self.validate()  # Calls __invariants__()
+    
+    def start_recording(self) -> Result[None]:
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session not idle")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.mark_as_updated()
+        return Result.success()
+    
+    def __invariants__(self) -> None:
+        if not self._audio_config:
+            raise ValueError("Audio configuration is required")
+        if self._audio_config.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError("Invalid sample rate for transcription")
+
+# ❌ INCORRECT - Missing invariants and proper inheritance
+class AudioSession:
+    def __init__(self, session_id: str, sample_rate: int):
+        self.id = session_id
+        self.sample_rate = sample_rate
+```
+
+### 2. Aggregate Root Rules for Audio Domain
+
+- **MUST**: All aggregates inherit from `AggregateRoot[TId]`
+- **MUST**: Use `add_domain_event()` for significant audio/transcription state changes
+- **MUST**: Call `mark_as_updated()` after state modifications
+- **MUST**: Implement factory methods that return `Result[T]`
+- **MUST**: Maintain consistency boundaries within the audio/transcription aggregate
+- **MUST**: Reference other aggregates by ID only, never by direct reference
+- **FORBIDDEN**: Public setters that bypass audio business rules
+- **FORBIDDEN**: Direct domain event list manipulation
+
+```python
+# ✅ CORRECT - Audio Aggregate Root implementation
+class AudioSession(AggregateRoot[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._audio_data: Optional[bytes] = None
+    
+    @classmethod
+    def create(cls, audio_config: AudioConfiguration, session_id: Optional[str] = None) -> Result["AudioSession"]:
+        # Validate audio configuration
+        if audio_config.sample_rate not in [16000, 22050, 44100, 48000]:
+            return Result.failure(f"Unsupported sample rate: {audio_config.sample_rate}")
+        
+        session_id = session_id or str(uuid.uuid4())
+        session = cls(session_id, audio_config)
+        session.add_domain_event(AudioSessionCreated(session_id, audio_config))
+        return Result.success(session)
+    
+    def start_recording(self, vad_enabled: bool = True) -> Result[None]:
+        # Business logic with validation
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        # VAD business rule
+        if not vad_enabled and self._audio_config.channels > 1:
+            return Result.failure("Stereo recording requires VAD to be enabled")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.add_domain_event(RecordingStarted(self.id, self._audio_config, vad_enabled))
+        self.mark_as_updated()
+        return Result.success()
+```
+
+### 3. Value Object Rules for Audio/ML Domain
+
+- **MUST**: All value objects inherit from `ValueObject` or `SingleValueObject[T]`
+- **MUST**: Implement `_get_equality_components()` for equality comparison
+- **MUST**: Implement `__invariants__()` for audio/ML validation
+- **MUST**: Use `@dataclass(frozen=True)` for immutability
+- **MUST**: Call `validate()` in `__post_init__()` for dataclasses
+- **MUST**: Provide factory methods that return `Result[T]`
+- **FORBIDDEN**: Mutable value objects
+- **FORBIDDEN**: Value objects with identity
+
+```python
+# ✅ CORRECT - Audio Value Object implementation
+@dataclass(frozen=True)
+class AudioConfiguration(ValueObject):
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str] = None
+    format_type: AudioFormat = AudioFormat.PCM_16
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.sample_rate, self.channels, self.chunk_size, self.device_id, self.format_type)
+    
+    def __invariants__(self) -> None:
+        if self.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError(f"Unsupported sample rate: {self.sample_rate}")
+        if self.channels not in [1, 2]:
+            raise ValueError(f"Only mono and stereo supported: {self.channels} channels")
+        if self.chunk_size <= 0 or self.chunk_size > 8192:
+            raise ValueError("Chunk size must be between 1 and 8192")
+    
+    @classmethod
+    def create_for_transcription(cls, sample_rate: int = 16000, device_id: Optional[str] = None) -> Result["AudioConfiguration"]:
+        """Factory method optimized for transcription."""
+        try:
+            return Result.success(cls(
+                sample_rate=sample_rate,
+                channels=1,  # Mono for best transcription results
+                chunk_size=1024,  # Optimal for real-time processing
+                device_id=device_id,
+                format_type=AudioFormat.PCM_16
+            ))
+        except ValueError as e:
+            return Result.failure(str(e))
+    
+    @property
+    def is_suitable_for_transcription(self) -> bool:
+        """Business rule: check if config is good for transcription."""
+        return (
+            self.sample_rate >= 16000 and 
+            self.channels <= 2 and 
+            self.format_type in [AudioFormat.PCM_16, AudioFormat.FLOAT_32]
+        )
+```
+
+### 4. Domain Event Rules for Audio Domain
+
+- **MUST**: All domain events inherit from `DomainEvent`
+- **MUST**: Domain events are immutable
+- **MUST**: Use past tense for event names ("RecordingStarted", not "StartRecording")
+- **MUST**: Include all necessary data to understand what happened
+- **MUST**: Implement `event_type` property
+- **MUST**: Implement `to_dict()` and `from_dict()` for serialization
+- **FORBIDDEN**: References to other aggregates (use IDs instead)
+- **FORBIDDEN**: Mutable event data
+- **FORBIDDEN**: Events with side effects
+
+```python
+# ✅ CORRECT - Audio Domain Event implementation
+class RecordingStarted(DomainEvent):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration, vad_enabled: bool):
+        super().__init__(session_id)
+        self.audio_config = audio_config
+        self.vad_enabled = vad_enabled
+    
+    @property
+    def event_type(self) -> str:
+        return "RecordingStarted"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "aggregate_id": self.aggregate_id,
+            "session_id": self.aggregate_id,
+            "sample_rate": self.audio_config.sample_rate,
+            "channels": self.audio_config.channels,
+            "chunk_size": self.audio_config.chunk_size,
+            "device_id": self.audio_config.device_id,
+            "vad_enabled": self.vad_enabled,
+            "occurred_at": self.occurred_at.isoformat()
+        }
+
+class TranscriptionCompleted(DomainEvent):
+    def __init__(self, request_id: str, result_text: str, confidence_score: float, language: str):
+        super().__init__(request_id)
+        self.result_text = result_text
+        self.confidence_score = confidence_score
+        self.language = language
+    
+    @property
+    def event_type(self) -> str:
+        return "TranscriptionCompleted"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "aggregate_id": self.aggregate_id,
+            "request_id": self.aggregate_id,
+            "result_text": self.result_text,
+            "confidence_score": self.confidence_score,
+            "language": self.language,
+            "occurred_at": self.occurred_at.isoformat()
+        }
+```
+
+### 5. Result Pattern Rules for Audio/ML Operations
+
+- **MUST**: Use `Result[T]` for all operations that can fail
+- **MUST**: Chain operations using `map()`, `bind()`, and `on_success()`
+- **MUST**: Handle both success and failure cases explicitly
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Using `Result` for programming errors (use exceptions)
+
+```python
+# ✅ CORRECT - Result pattern usage for audio operations
+def create_audio_session(audio_config: AudioConfiguration) -> Result[AudioSession]:
+    if audio_config.sample_rate < 8000:
+        return Result.failure("Sample rate too low for quality audio")
+    if audio_config.channels > 2:
+        return Result.failure("Only mono and stereo audio supported")
+    
+    session = AudioSession.create(audio_config)
+    return Result.success(session)
+
+def transcribe_audio(audio_data: bytes, model_config: ModelConfiguration) -> Result[TranscriptionResult]:
+    if len(audio_data) < 1024:
+        return Result.failure("Audio data too short for transcription")
+    
+    # Chain operations for audio processing
+    return (
+        validate_audio_format(audio_data)
+        .bind(lambda data: preprocess_audio(data))
+        .bind(lambda processed: run_transcription(processed, model_config))
+        .map(lambda result: TranscriptionResult(result.text, result.confidence))
+    )
+
+# Usage with proper error handling
+result = (
+    create_audio_session(audio_config)
+    .bind(lambda session: session.start_recording())
+    .on_success(lambda: print("Recording started successfully"))
+    .on_failure(lambda error: print(f"Failed to start recording: {error}"))
+)
+```
+
+## File Organization Rules
+
+### Domain Layer Structure for Audio
+
+```
+src/domain/
+├── common/                    # Shared DDD patterns
+│   ├── entity.py             # Entity base classes
+│   ├── aggregate_root.py     # Aggregate root base classes
+│   ├── value_object.py       # Value object base classes
+│   ├── domain_event.py       # Domain event base classes
+│   └── result.py             # Result pattern implementation
+├── audio/                    # Audio recording domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+├── transcription/            # Transcription domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+├── llm/                      # LLM processing domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+└── settings/                 # Settings domain
+    ├── entities/
+    ├── value_objects/
+    ├── events/
+    └── contracts/
+```
+
+### Naming Conventions for Audio Domain
+
+- **Entities**: PascalCase, audio/ML nouns (AudioSession, TranscriptionRequest, ModelInstance)
+- **Value Objects**: PascalCase, audio concepts (AudioConfiguration, ModelConfiguration, ConfidenceScore)
+- **Aggregates**: PascalCase, match entity names (AudioSession, TranscriptionRequest)
+- **Domain Events**: PascalCase, past tense (RecordingStarted, TranscriptionCompleted, ModelLoaded)
+- **Methods**: snake_case, audio verb phrases (start_recording, process_transcription, load_model)
+
+### Import Rules for Audio Domain
+
+- **MUST**: Domain layer imports only from common and same layer
+- **FORBIDDEN**: Imports from features, infrastructure, or shared layers
+- **FORBIDDEN**: External framework dependencies (except typing, abc, datetime, uuid, enum)
+- **FORBIDDEN**: PyQt, PyAudio, ONNX, or any external library imports
+
+## Testing Rules
+
+### Unit Testing Audio Domain Objects
+
+- **MUST**: Test audio/ML invariants enforcement
+- **MUST**: Test entity equality based on ID
+- **MUST**: Test aggregate domain event generation
+- **MUST**: Test value object immutability
+- **MUST**: Test Result pattern success/failure paths
+- **MUST**: Test audio configuration validation
+- **MUST**: Test recording state transitions
+
+```python
+# ✅ CORRECT - Audio domain testing
+def test_audio_session_start_recording():
+    # Arrange
+    audio_config = AudioConfiguration(sample_rate=44100, channels=1, chunk_size=1024)
+    session = AudioSession.create(audio_config).value
+    
+    # Act
+    result = session.start_recording(vad_enabled=True)
+    
+    # Assert
+    assert result.is_success
+    assert session.state == RecordingState.RECORDING
+    assert len(session.domain_events) == 2  # Creation + Start events
+    assert isinstance(session.domain_events[1], RecordingStarted)
+
+def test_audio_configuration_validation():
+    # Test invalid sample rate
+    with pytest.raises(ValueError) as exc_info:
+        AudioConfiguration(sample_rate=1000, channels=1, chunk_size=1024)
+    assert "Unsupported sample rate" in str(exc_info.value)
+    
+    # Test invalid channels
+    with pytest.raises(ValueError) as exc_info:
+        AudioConfiguration(sample_rate=44100, channels=5, chunk_size=1024)
+    assert "Only mono and stereo supported" in str(exc_info.value)
+
+def test_transcription_result_confidence_scoring():
+    # Arrange
+    high_confidence = ConfidenceScore(0.95)
+    low_confidence = ConfidenceScore(0.3)
+    
+    # Assert
+    assert high_confidence.is_high_confidence
+    assert not low_confidence.is_high_confidence
+    assert high_confidence.quality_level == "excellent"
+    assert low_confidence.quality_level == "poor"
+```
+
+## Performance Rules for Audio Domain
+
+- **MUST**: Keep audio aggregates small and focused
+
+- **MUST**: Use lazy loading for large audio data collections
+
+- **MUST**: Implement efficient audio format validation
+
+- **MUST**: Cache model configurations for repeated use
+
+- **FORBIDDEN**: Loading entire audio files into memory unnecessarily
+
+- **FORBIDDEN**: Complex audio processing in domain layer (belongs in infrastructure)
+
+- **MUST**: Implement snapshots for event-sourced aggregates with long histories
+
+- **FORBIDDEN**: Loading entire aggregate hierarchies unnecessarily
+
+# WinSTT Domain Layer Rules
+
+## 🏗️ Audio/Transcription Domain Modeling Workflow Steps
+
+### Step 1: Identify Business Entity Type
+
+**Before creating any domain objects, determine the correct DDD pattern for audio transcription:**
+
+#### Entity Identification Checklist:
+
+- ✅ **Has unique identity** that persists over time
+- ✅ **Has lifecycle** (created, modified, deleted)
+- ✅ **State can change** while maintaining identity
+- ✅ **Business operations** can be performed on it
+
+#### Aggregate Root Identification Checklist:
+
+- ✅ **Is an Entity** (meets all entity criteria)
+- ✅ **Serves as consistency boundary** for related entities
+- ✅ **Controls access** to internal entities
+- ✅ **Publishes domain events** for external communication
+- ✅ **Has clear business boundaries** and responsibilities
+
+#### Value Object Identification Checklist:
+
+- ✅ **Defined by its values** rather than identity
+- ✅ **Immutable** once created
+- ✅ **No side effects** when used
+- ✅ **Encapsulates validation** rules
+- ✅ **Can be shared** across entities
+
+**Example Decision Process for Audio Transcription:**
+
+```python
+# ✅ ENTITY: AudioSession has identity and lifecycle
+class AudioSession(Entity[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._created_at = datetime.utcnow()
+
+# ✅ AGGREGATE ROOT: AudioSession controls recording consistency
+class AudioSession(AggregateRoot[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._audio_data: Optional[bytes] = None
+    
+    def start_recording(self, config: AudioConfiguration) -> Result[None]:
+        """Start recording with validation."""
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.add_domain_event(RecordingStarted(self.id, config, self._started_at))
+        return Result.success()
+
+# ✅ VALUE OBJECT: AudioConfiguration is defined by its values
+@dataclass(frozen=True)
+class AudioConfiguration(ValueObject):
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str] = None
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.sample_rate, self.channels, self.chunk_size, self.device_id)
+    
+    def __invariants__(self) -> None:
+        if self.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError(f"Unsupported sample rate: {self.sample_rate}")
+        if self.channels not in [1, 2]:
+            raise ValueError(f"Only mono and stereo supported: {self.channels} channels")
+        if self.chunk_size <= 0:
+            raise ValueError("Chunk size must be positive")
+```
+
+### Step 2: Create Aggregate Root / Entity Implementation
+
+**Follow these patterns when implementing audio/transcription domain entities:**
+
+#### Factory Method Pattern for Audio Domain:
+
+```python
+class TranscriptionRequest(AggregateRoot[str]):
+    @classmethod
+    def create(cls, audio_data: bytes, model_config: ModelConfiguration, language: Optional[str] = None) -> Result['TranscriptionRequest']:
+        """Factory method for creating transcription requests."""
+        # Validate audio data
+        if len(audio_data) == 0:
+            return Result.failure("Audio data cannot be empty")
+        
+        if len(audio_data) < 1024:  # Minimum audio size
+            return Result.failure("Audio data too short for transcription")
+        
+        # Create entity
+        request_id = str(uuid.uuid4())
+        request = cls(request_id, audio_data, model_config, language)
+        
+        # Publish domain event
+        request.add_domain_event(TranscriptionRequested(request.id, len(audio_data), model_config.model_name))
+        
+        return Result.success(request)
+```
+
+#### Business Logic Encapsulation for Audio:
+
+```python
+def process_transcription(self, result_text: str, confidence: float) -> Result[None]:
+    """Process transcription result with business validation."""
+    # Guard clauses for business rules
+    if self._state != TranscriptionState.PROCESSING:
+        return Result.failure("Cannot process result: transcription is not in processing state")
+    
+    if confidence < 0.0 or confidence > 1.0:
+        return Result.failure("Confidence score must be between 0.0 and 1.0")
+    
+    if not result_text.strip():
+        return Result.failure("Transcription result cannot be empty")
+    
+    # State change
+    self._state = TranscriptionState.COMPLETED
+    self._result_text = result_text
+    self._confidence = confidence
+    self._completed_at = datetime.utcnow()
+    
+    # Domain event
+    self.add_domain_event(TranscriptionCompleted(
+        self.id, 
+        result_text, 
+        confidence, 
+        self._completed_at
+    ))
+    
+    # Mark for persistence
+    self.mark_as_updated()
+    return Result.success()
+```
+
+#### Property Access Pattern for Audio Entities:
+
+```python
+@property
+def audio_config(self) -> AudioConfiguration:
+    """Read-only access to audio configuration."""
+    return self._audio_config
+
+@property
+def state(self) -> RecordingState:
+    """Read-only access to recording state."""
+    return self._state
+
+@property
+def duration_seconds(self) -> float:
+    """Calculate recording duration."""
+    if self._started_at is None:
+        return 0.0
+    
+    end_time = self._stopped_at or datetime.utcnow()
+    return (end_time - self._started_at).total_seconds()
+
+def update_audio_config(self, new_config: AudioConfiguration) -> Result[None]:
+    """Controlled mutation with validation."""
+    if self._state == RecordingState.RECORDING:
+        return Result.failure("Cannot change audio config while recording")
+    
+    old_config = self._audio_config
+    self._audio_config = new_config
+    
+    if old_config != new_config:
+        self.add_domain_event(AudioConfigurationChanged(
+            self.id, 
+            old_config, 
+            new_config
+        ))
+        self.mark_as_updated()
+    
+    return Result.success()
+```
+
+### Step 3: Create Value Objects Implementation for Audio Domain
+
+**Value objects MUST follow these patterns for audio/ML concepts:**
+
+#### Audio-Specific Value Objects:
+
+```python
+@dataclass(frozen=True)
+class ModelConfiguration(ValueObject):
+    model_name: str
+    model_type: ModelType
+    quantization: QuantizationType
+    context_length: int
+    language: Optional[str] = None
+    
+    def _get_equality_components(self) -> tuple:
+        return (
+            self.model_name, 
+            self.model_type, 
+            self.quantization, 
+            self.context_length, 
+            self.language
+        )
+    
+    def __invariants__(self) -> None:
+        if not self.model_name or not self.model_name.strip():
+            raise ValueError("Model name cannot be empty")
+        if self.context_length <= 0:
+            raise ValueError("Context length must be positive")
+        if self.language and len(self.language) != 2:
+            raise ValueError("Language code must be 2 characters (ISO 639-1)")
+
+@dataclass(frozen=True)
+class ConfidenceScore(ValueObject):
+    value: float
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.value,)
+    
+    def __invariants__(self) -> None:
+        if self.value < 0.0 or self.value > 1.0:
+            raise ValueError("Confidence score must be between 0.0 and 1.0")
+    
+    @property
+    def is_high_confidence(self) -> bool:
+        """Business rule: high confidence is >= 0.8."""
+        return self.value >= 0.8
+    
+    @property
+    def quality_level(self) -> str:
+        """Convert confidence to quality description."""
+        if self.value >= 0.9:
+            return "excellent"
+        elif self.value >= 0.8:
+            return "good"
+        elif self.value >= 0.6:
+            return "fair"
+        else:
+            return "poor"
+```
+
+#### Enum Value Objects for Audio Domain:
+
+```python
+class RecordingState(Enum):
+    IDLE = "idle"
+    RECORDING = "recording"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    
+    def can_transition_to(self, new_state: 'RecordingState') -> bool:
+        """Business rules for recording state transitions."""
+        valid_transitions = {
+            RecordingState.IDLE: [RecordingState.RECORDING],
+            RecordingState.RECORDING: [RecordingState.PROCESSING, RecordingState.FAILED],
+            RecordingState.PROCESSING: [RecordingState.COMPLETED, RecordingState.FAILED],
+            RecordingState.COMPLETED: [RecordingState.IDLE],  # Can start new recording
+            RecordingState.FAILED: [RecordingState.IDLE]      # Can recover and retry
+        }
+        return new_state in valid_transitions.get(self, [])
+
+class ModelType(Enum):
+    WHISPER_TINY = "whisper-tiny"
+    WHISPER_BASE = "whisper-base"
+    WHISPER_SMALL = "whisper-small"
+    WHISPER_MEDIUM = "whisper-medium"
+    WHISPER_LARGE = "whisper-large"
+    WHISPER_TURBO = "whisper-turbo"
+    
+    @property
+    def memory_requirements_mb(self) -> int:
+        """Business rule: memory requirements per model."""
+        memory_map = {
+            ModelType.WHISPER_TINY: 150,
+            ModelType.WHISPER_BASE: 300,
+            ModelType.WHISPER_SMALL: 600,
+            ModelType.WHISPER_MEDIUM: 1200,
+            ModelType.WHISPER_LARGE: 2400,
+            ModelType.WHISPER_TURBO: 800
+        }
+        return memory_map[self]
+    
+    @property
+    def relative_accuracy(self) -> float:
+        """Business rule: relative accuracy expectation."""
+        accuracy_map = {
+            ModelType.WHISPER_TINY: 0.7,
+            ModelType.WHISPER_BASE: 0.8,
+            ModelType.WHISPER_SMALL: 0.85,
+            ModelType.WHISPER_MEDIUM: 0.9,
+            ModelType.WHISPER_LARGE: 0.95,
+            ModelType.WHISPER_TURBO: 0.88
+        }
+        return accuracy_map[self]
+```
+
+### Domain Entity File Organization for Audio
+
+**Follow this structure for audio/transcription domain entities:**
+
+```
+src/domain/
+├── common/                    # Shared DDD patterns
+│   ├── entity.py             # Entity base classes
+│   ├── aggregate_root.py     # Aggregate root base classes
+│   ├── value_object.py       # Value object base classes
+│   ├── domain_event.py       # Domain event base classes
+│   └── result.py             # Result pattern implementation
+├── audio/                    # Audio recording domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── audio_session.py      # AudioSession aggregate root
+│   │   └── recording_state.py    # Recording state entity
+│   ├── value_objects/
+│   │   ├── audio_config.py       # Audio configuration
+│   │   ├── duration.py           # Duration value object
+│   │   └── audio_quality.py      # Quality metrics
+│   ├── events/
+│   │   ├── recording_started.py  # Recording started event
+│   │   ├── recording_stopped.py  # Recording stopped event
+│   │   └── audio_processed.py    # Audio processed event
+│   └── contracts/
+│       ├── audio_repository.py   # Audio repository interface
+│       └── audio_service.py      # Audio service interface
+├── transcription/            # Transcription domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── transcription_request.py # TranscriptionRequest aggregate
+│   │   ├── transcription_result.py  # TranscriptionResult entity
+│   │   └── model_instance.py       # Model instance entity
+│   ├── value_objects/
+│   │   ├── model_config.py         # Model configuration
+│   │   ├── language.py             # Language specification
+│   │   ├── confidence_score.py     # Confidence scoring
+│   │   └── text_segment.py         # Text segment with timing
+│   ├── events/
+│   │   ├── transcription_requested.py # Transcription requested
+│   │   ├── transcription_completed.py # Transcription completed
+│   │   ├── model_loaded.py           # Model loaded event
+│   │   └── model_download_progress.py # Download progress
+│   └── contracts/
+│       ├── model_repository.py       # Model repository interface
+│       └── transcription_service.py  # Transcription service interface
+├── llm/                      # LLM processing domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── llm_request.py          # LLM request aggregate
+│   │   └── processing_result.py     # Processing result entity
+│   ├── value_objects/
+│   │   ├── prompt_template.py       # Prompt templates
+│   │   ├── model_type.py           # LLM model types
+│   │   └── processing_options.py    # Processing options
+│   ├── events/
+│   │   ├── text_processed.py        # Text processed event
+│   │   └── llm_model_changed.py     # Model changed event
+│   └── contracts/
+│       └── llm_service.py           # LLM service interface
+└── settings/                 # Settings domain
+    ├── __init__.py
+    ├── entities/
+    │   ├── user_preferences.py     # User preferences aggregate
+    │   └── hotkey_binding.py       # Hotkey binding entity
+    ├── value_objects/
+    │   ├── key_combination.py      # Key combination
+    │   ├── file_path.py            # File path handling
+    │   └── theme_settings.py       # UI theme settings
+    ├── events/
+    │   ├── settings_changed.py     # Settings changed event
+    │   └── hotkey_updated.py       # Hotkey updated event
+    └── contracts/
+        └── settings_repository.py  # Settings repository interface
+```
+
+### Audio/Transcription Domain Best Practices
+
+1. **Audio-First Language**: Use audio/ML domain expert terminology
+1. **Model Hardware Constraints**: Encapsulate GPU/CPU requirements in domain logic
+1. **Protect Audio Invariants**: Validate sample rates, channels, and formats
+1. **Use Factory Methods**: For complex audio/model creation and validation
+1. **Publish Domain Events**: For transcription progress and completion
+1. **Keep Aggregates Audio-Focused**: Focus on recording/transcription boundaries
+1. **Avoid Primitive Obsession**: Wrap audio parameters in value objects
+1. **Make Invalid Audio States Unrepresentable**: Use types to enforce constraints
+
+## Core DDD Patterns for Audio Domain
+
+### 1. Entity Rules for Audio/Transcription
+
+- **MUST**: All entities inherit from `Entity[TId]` or `AuditableEntity[TId]`
+- **MUST**: Implement `__invariants__()` method for audio/ML business rules validation
+- **MUST**: Call `super().__init__()` with entity ID in constructor
+- **MUST**: Use `mark_as_updated()` when modifying entity state
+- **MUST**: Entity equality is based on ID and type, not attributes
+- **FORBIDDEN**: Direct property setting without validation
+- **FORBIDDEN**: Entity creation without using factory methods
+
+```python
+# ✅ CORRECT - Audio entity implementation
+class AudioSession(Entity[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._created_at = datetime.utcnow()
+        self.validate()  # Calls __invariants__()
+    
+    def start_recording(self) -> Result[None]:
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session not idle")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.mark_as_updated()
+        return Result.success()
+    
+    def __invariants__(self) -> None:
+        if not self._audio_config:
+            raise ValueError("Audio configuration is required")
+        if self._audio_config.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError("Invalid sample rate for transcription")
+
+# ❌ INCORRECT - Missing invariants and proper inheritance
+class AudioSession:
+    def __init__(self, session_id: str, sample_rate: int):
+        self.id = session_id
+        self.sample_rate = sample_rate
+```
+
+### 2. Aggregate Root Rules for Audio Domain
+
+- **MUST**: All aggregates inherit from `AggregateRoot[TId]`
+- **MUST**: Use `add_domain_event()` for significant audio/transcription state changes
+- **MUST**: Call `mark_as_updated()` after state modifications
+- **MUST**: Implement factory methods that return `Result[T]`
+- **MUST**: Maintain consistency boundaries within the audio/transcription aggregate
+- **MUST**: Reference other aggregates by ID only, never by direct reference
+- **FORBIDDEN**: Public setters that bypass audio business rules
+- **FORBIDDEN**: Direct domain event list manipulation
+
+```python
+# ✅ CORRECT - Audio Aggregate Root implementation
+class AudioSession(AggregateRoot[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._audio_data: Optional[bytes] = None
+    
+    @classmethod
+    def create(cls, audio_config: AudioConfiguration, session_id: Optional[str] = None) -> Result["AudioSession"]:
+        # Validate audio configuration
+        if audio_config.sample_rate not in [16000, 22050, 44100, 48000]:
+            return Result.failure(f"Unsupported sample rate: {audio_config.sample_rate}")
+        
+        session_id = session_id or str(uuid.uuid4())
+        session = cls(session_id, audio_config)
+        session.add_domain_event(AudioSessionCreated(session_id, audio_config))
+        return Result.success(session)
+    
+    def start_recording(self, vad_enabled: bool = True) -> Result[None]:
+        # Business logic with validation
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        # VAD business rule
+        if not vad_enabled and self._audio_config.channels > 1:
+            return Result.failure("Stereo recording requires VAD to be enabled")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.add_domain_event(RecordingStarted(self.id, self._audio_config, vad_enabled))
+        self.mark_as_updated()
+        return Result.success()
+```
+
+### 3. Value Object Rules for Audio/ML Domain
+
+- **MUST**: All value objects inherit from `ValueObject` or `SingleValueObject[T]`
+- **MUST**: Implement `_get_equality_components()` for equality comparison
+- **MUST**: Implement `__invariants__()` for audio/ML validation
+- **MUST**: Use `@dataclass(frozen=True)` for immutability
+- **MUST**: Call `validate()` in `__post_init__()` for dataclasses
+- **MUST**: Provide factory methods that return `Result[T]`
+- **FORBIDDEN**: Mutable value objects
+- **FORBIDDEN**: Value objects with identity
+
+```python
+# ✅ CORRECT - Audio Value Object implementation
+@dataclass(frozen=True)
+class AudioConfiguration(ValueObject):
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str] = None
+    format_type: AudioFormat = AudioFormat.PCM_16
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.sample_rate, self.channels, self.chunk_size, self.device_id, self.format_type)
+    
+    def __invariants__(self) -> None:
+        if self.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError(f"Unsupported sample rate: {self.sample_rate}")
+        if self.channels not in [1, 2]:
+            raise ValueError(f"Only mono and stereo supported: {self.channels} channels")
+        if self.chunk_size <= 0 or self.chunk_size > 8192:
+            raise ValueError("Chunk size must be between 1 and 8192")
+    
+    @classmethod
+    def create_for_transcription(cls, sample_rate: int = 16000, device_id: Optional[str] = None) -> Result["AudioConfiguration"]:
+        """Factory method optimized for transcription."""
+        try:
+            return Result.success(cls(
+                sample_rate=sample_rate,
+                channels=1,  # Mono for best transcription results
+                chunk_size=1024,  # Optimal for real-time processing
+                device_id=device_id,
+                format_type=AudioFormat.PCM_16
+            ))
+        except ValueError as e:
+            return Result.failure(str(e))
+    
+    @property
+    def is_suitable_for_transcription(self) -> bool:
+        """Business rule: check if config is good for transcription."""
+        return (
+            self.sample_rate >= 16000 and 
+            self.channels <= 2 and 
+            self.format_type in [AudioFormat.PCM_16, AudioFormat.FLOAT_32]
+        )
+```
+
+### 4. Domain Event Rules for Audio Domain
+
+- **MUST**: All domain events inherit from `DomainEvent`
+- **MUST**: Domain events are immutable
+- **MUST**: Use past tense for event names ("RecordingStarted", not "StartRecording")
+- **MUST**: Include all necessary data to understand what happened
+- **MUST**: Implement `event_type` property
+- **MUST**: Implement `to_dict()` and `from_dict()` for serialization
+- **FORBIDDEN**: References to other aggregates (use IDs instead)
+- **FORBIDDEN**: Mutable event data
+- **FORBIDDEN**: Events with side effects
+
+```python
+# ✅ CORRECT - Audio Domain Event implementation
+class RecordingStarted(DomainEvent):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration, vad_enabled: bool):
+        super().__init__(session_id)
+        self.audio_config = audio_config
+        self.vad_enabled = vad_enabled
+    
+    @property
+    def event_type(self) -> str:
+        return "RecordingStarted"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "aggregate_id": self.aggregate_id,
+            "session_id": self.aggregate_id,
+            "sample_rate": self.audio_config.sample_rate,
+            "channels": self.audio_config.channels,
+            "chunk_size": self.audio_config.chunk_size,
+            "device_id": self.audio_config.device_id,
+            "vad_enabled": self.vad_enabled,
+            "occurred_at": self.occurred_at.isoformat()
+        }
+
+class TranscriptionCompleted(DomainEvent):
+    def __init__(self, request_id: str, result_text: str, confidence_score: float, language: str):
+        super().__init__(request_id)
+        self.result_text = result_text
+        self.confidence_score = confidence_score
+        self.language = language
+    
+    @property
+    def event_type(self) -> str:
+        return "TranscriptionCompleted"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "aggregate_id": self.aggregate_id,
+            "request_id": self.aggregate_id,
+            "result_text": self.result_text,
+            "confidence_score": self.confidence_score,
+            "language": self.language,
+            "occurred_at": self.occurred_at.isoformat()
+        }
+```
+
+### 5. Result Pattern Rules for Audio/ML Operations
+
+- **MUST**: Use `Result[T]` for all operations that can fail
+- **MUST**: Chain operations using `map()`, `bind()`, and `on_success()`
+- **MUST**: Handle both success and failure cases explicitly
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Using `Result` for programming errors (use exceptions)
+
+```python
+# ✅ CORRECT - Result pattern usage for audio operations
+def create_audio_session(audio_config: AudioConfiguration) -> Result[AudioSession]:
+    if audio_config.sample_rate < 8000:
+        return Result.failure("Sample rate too low for quality audio")
+    if audio_config.channels > 2:
+        return Result.failure("Only mono and stereo audio supported")
+    
+    session = AudioSession.create(audio_config)
+    return Result.success(session)
+
+def transcribe_audio(audio_data: bytes, model_config: ModelConfiguration) -> Result[TranscriptionResult]:
+    if len(audio_data) < 1024:
+        return Result.failure("Audio data too short for transcription")
+    
+    # Chain operations for audio processing
+    return (
+        validate_audio_format(audio_data)
+        .bind(lambda data: preprocess_audio(data))
+        .bind(lambda processed: run_transcription(processed, model_config))
+        .map(lambda result: TranscriptionResult(result.text, result.confidence))
+    )
+
+# Usage with proper error handling
+result = (
+    create_audio_session(audio_config)
+    .bind(lambda session: session.start_recording())
+    .on_success(lambda: print("Recording started successfully"))
+    .on_failure(lambda error: print(f"Failed to start recording: {error}"))
+)
+```
+
+## File Organization Rules
+
+### Domain Layer Structure for Audio
+
+```
+src/domain/
+├── common/                    # Shared DDD patterns
+│   ├── entity.py             # Entity base classes
+│   ├── aggregate_root.py     # Aggregate root base classes
+│   ├── value_object.py       # Value object base classes
+│   ├── domain_event.py       # Domain event base classes
+│   └── result.py             # Result pattern implementation
+├── audio/                    # Audio recording domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+├── transcription/            # Transcription domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+├── llm/                      # LLM processing domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+└── settings/                 # Settings domain
+    ├── entities/
+    ├── value_objects/
+    ├── events/
+    └── contracts/
+```
+
+### Naming Conventions for Audio Domain
+
+- **Entities**: PascalCase, audio/ML nouns (AudioSession, TranscriptionRequest, ModelInstance)
+- **Value Objects**: PascalCase, audio concepts (AudioConfiguration, ModelConfiguration, ConfidenceScore)
+- **Aggregates**: PascalCase, match entity names (AudioSession, TranscriptionRequest)
+- **Domain Events**: PascalCase, past tense (RecordingStarted, TranscriptionCompleted, ModelLoaded)
+- **Methods**: snake_case, audio verb phrases (start_recording, process_transcription, load_model)
+
+### Import Rules for Audio Domain
+
+- **MUST**: Domain layer imports only from common and same layer
+- **FORBIDDEN**: Imports from features, infrastructure, or shared layers
+- **FORBIDDEN**: External framework dependencies (except typing, abc, datetime, uuid, enum)
+- **FORBIDDEN**: PyQt, PyAudio, ONNX, or any external library imports
+
+## Testing Rules
+
+### Unit Testing Audio Domain Objects
+
+- **MUST**: Test audio/ML invariants enforcement
+- **MUST**: Test entity equality based on ID
+- **MUST**: Test aggregate domain event generation
+- **MUST**: Test value object immutability
+- **MUST**: Test Result pattern success/failure paths
+- **MUST**: Test audio configuration validation
+- **MUST**: Test recording state transitions
+
+```python
+# ✅ CORRECT - Audio domain testing
+def test_audio_session_start_recording():
+    # Arrange
+    audio_config = AudioConfiguration(sample_rate=44100, channels=1, chunk_size=1024)
+    session = AudioSession.create(audio_config).value
+    
+    # Act
+    result = session.start_recording(vad_enabled=True)
+    
+    # Assert
+    assert result.is_success
+    assert session.state == RecordingState.RECORDING
+    assert len(session.domain_events) == 2  # Creation + Start events
+    assert isinstance(session.domain_events[1], RecordingStarted)
+
+def test_audio_configuration_validation():
+    # Test invalid sample rate
+    with pytest.raises(ValueError) as exc_info:
+        AudioConfiguration(sample_rate=1000, channels=1, chunk_size=1024)
+    assert "Unsupported sample rate" in str(exc_info.value)
+    
+    # Test invalid channels
+    with pytest.raises(ValueError) as exc_info:
+        AudioConfiguration(sample_rate=44100, channels=5, chunk_size=1024)
+    assert "Only mono and stereo supported" in str(exc_info.value)
+
+def test_transcription_result_confidence_scoring():
+    # Arrange
+    high_confidence = ConfidenceScore(0.95)
+    low_confidence = ConfidenceScore(0.3)
+    
+    # Assert
+    assert high_confidence.is_high_confidence
+    assert not low_confidence.is_high_confidence
+    assert high_confidence.quality_level == "excellent"
+    assert low_confidence.quality_level == "poor"
+```
+
+## Performance Rules for Audio Domain
+
+- **MUST**: Keep audio aggregates small and focused
+
+- **MUST**: Use lazy loading for large audio data collections
+
+- **MUST**: Implement efficient audio format validation
+
+- **MUST**: Cache model configurations for repeated use
+
+- **FORBIDDEN**: Loading entire audio files into memory unnecessarily
+
+- **FORBIDDEN**: Complex audio processing in domain layer (belongs in infrastructure)
+
+- **MUST**: Implement snapshots for event-sourced aggregates with long histories
+
+- **FORBIDDEN**: Loading entire aggregate hierarchies unnecessarily
+______________________________________________________________________
+
+## alwaysApply: true
+
+# WinSTT Domain Layer Rules
+
+## 🏗️ Audio/Transcription Domain Modeling Workflow Steps
+
+### Step 1: Identify Business Entity Type
+
+**Before creating any domain objects, determine the correct DDD pattern for audio transcription:**
+
+#### Entity Identification Checklist:
+
+- ✅ **Has unique identity** that persists over time
+- ✅ **Has lifecycle** (created, modified, deleted)
+- ✅ **State can change** while maintaining identity
+- ✅ **Business operations** can be performed on it
+
+#### Aggregate Root Identification Checklist:
+
+- ✅ **Is an Entity** (meets all entity criteria)
+- ✅ **Serves as consistency boundary** for related entities
+- ✅ **Controls access** to internal entities
+- ✅ **Publishes domain events** for external communication
+- ✅ **Has clear business boundaries** and responsibilities
+
+#### Value Object Identification Checklist:
+
+- ✅ **Defined by its values** rather than identity
+- ✅ **Immutable** once created
+- ✅ **No side effects** when used
+- ✅ **Encapsulates validation** rules
+- ✅ **Can be shared** across entities
+
+**Example Decision Process for Audio Transcription:**
+
+```python
+# ✅ ENTITY: AudioSession has identity and lifecycle
+class AudioSession(Entity[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._created_at = datetime.utcnow()
+
+# ✅ AGGREGATE ROOT: AudioSession controls recording consistency
+class AudioSession(AggregateRoot[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._audio_data: Optional[bytes] = None
+    
+    def start_recording(self, config: AudioConfiguration) -> Result[None]:
+        """Start recording with validation."""
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.add_domain_event(RecordingStarted(self.id, config, self._started_at))
+        return Result.success()
+
+# ✅ VALUE OBJECT: AudioConfiguration is defined by its values
+@dataclass(frozen=True)
+class AudioConfiguration(ValueObject):
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str] = None
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.sample_rate, self.channels, self.chunk_size, self.device_id)
+    
+    def __invariants__(self) -> None:
+        if self.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError(f"Unsupported sample rate: {self.sample_rate}")
+        if self.channels not in [1, 2]:
+            raise ValueError(f"Only mono and stereo supported: {self.channels} channels")
+        if self.chunk_size <= 0:
+            raise ValueError("Chunk size must be positive")
+```
+
+### Step 2: Create Aggregate Root / Entity Implementation
+
+**Follow these patterns when implementing audio/transcription domain entities:**
+
+#### Factory Method Pattern for Audio Domain:
+
+```python
+class TranscriptionRequest(AggregateRoot[str]):
+    @classmethod
+    def create(cls, audio_data: bytes, model_config: ModelConfiguration, language: Optional[str] = None) -> Result['TranscriptionRequest']:
+        """Factory method for creating transcription requests."""
+        # Validate audio data
+        if len(audio_data) == 0:
+            return Result.failure("Audio data cannot be empty")
+        
+        if len(audio_data) < 1024:  # Minimum audio size
+            return Result.failure("Audio data too short for transcription")
+        
+        # Create entity
+        request_id = str(uuid.uuid4())
+        request = cls(request_id, audio_data, model_config, language)
+        
+        # Publish domain event
+        request.add_domain_event(TranscriptionRequested(request.id, len(audio_data), model_config.model_name))
+        
+        return Result.success(request)
+```
+
+#### Business Logic Encapsulation for Audio:
+
+```python
+def process_transcription(self, result_text: str, confidence: float) -> Result[None]:
+    """Process transcription result with business validation."""
+    # Guard clauses for business rules
+    if self._state != TranscriptionState.PROCESSING:
+        return Result.failure("Cannot process result: transcription is not in processing state")
+    
+    if confidence < 0.0 or confidence > 1.0:
+        return Result.failure("Confidence score must be between 0.0 and 1.0")
+    
+    if not result_text.strip():
+        return Result.failure("Transcription result cannot be empty")
+    
+    # State change
+    self._state = TranscriptionState.COMPLETED
+    self._result_text = result_text
+    self._confidence = confidence
+    self._completed_at = datetime.utcnow()
+    
+    # Domain event
+    self.add_domain_event(TranscriptionCompleted(
+        self.id, 
+        result_text, 
+        confidence, 
+        self._completed_at
+    ))
+    
+    # Mark for persistence
+    self.mark_as_updated()
+    return Result.success()
+```
+
+#### Property Access Pattern for Audio Entities:
+
+```python
+@property
+def audio_config(self) -> AudioConfiguration:
+    """Read-only access to audio configuration."""
+    return self._audio_config
+
+@property
+def state(self) -> RecordingState:
+    """Read-only access to recording state."""
+    return self._state
+
+@property
+def duration_seconds(self) -> float:
+    """Calculate recording duration."""
+    if self._started_at is None:
+        return 0.0
+    
+    end_time = self._stopped_at or datetime.utcnow()
+    return (end_time - self._started_at).total_seconds()
+
+def update_audio_config(self, new_config: AudioConfiguration) -> Result[None]:
+    """Controlled mutation with validation."""
+    if self._state == RecordingState.RECORDING:
+        return Result.failure("Cannot change audio config while recording")
+    
+    old_config = self._audio_config
+    self._audio_config = new_config
+    
+    if old_config != new_config:
+        self.add_domain_event(AudioConfigurationChanged(
+            self.id, 
+            old_config, 
+            new_config
+        ))
+        self.mark_as_updated()
+    
+    return Result.success()
+```
+
+### Step 3: Create Value Objects Implementation for Audio Domain
+
+**Value objects MUST follow these patterns for audio/ML concepts:**
+
+#### Audio-Specific Value Objects:
+
+```python
+@dataclass(frozen=True)
+class ModelConfiguration(ValueObject):
+    model_name: str
+    model_type: ModelType
+    quantization: QuantizationType
+    context_length: int
+    language: Optional[str] = None
+    
+    def _get_equality_components(self) -> tuple:
+        return (
+            self.model_name, 
+            self.model_type, 
+            self.quantization, 
+            self.context_length, 
+            self.language
+        )
+    
+    def __invariants__(self) -> None:
+        if not self.model_name or not self.model_name.strip():
+            raise ValueError("Model name cannot be empty")
+        if self.context_length <= 0:
+            raise ValueError("Context length must be positive")
+        if self.language and len(self.language) != 2:
+            raise ValueError("Language code must be 2 characters (ISO 639-1)")
+
+@dataclass(frozen=True)
+class ConfidenceScore(ValueObject):
+    value: float
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.value,)
+    
+    def __invariants__(self) -> None:
+        if self.value < 0.0 or self.value > 1.0:
+            raise ValueError("Confidence score must be between 0.0 and 1.0")
+    
+    @property
+    def is_high_confidence(self) -> bool:
+        """Business rule: high confidence is >= 0.8."""
+        return self.value >= 0.8
+    
+    @property
+    def quality_level(self) -> str:
+        """Convert confidence to quality description."""
+        if self.value >= 0.9:
+            return "excellent"
+        elif self.value >= 0.8:
+            return "good"
+        elif self.value >= 0.6:
+            return "fair"
+        else:
+            return "poor"
+```
+
+#### Enum Value Objects for Audio Domain:
+
+```python
+class RecordingState(Enum):
+    IDLE = "idle"
+    RECORDING = "recording"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    
+    def can_transition_to(self, new_state: 'RecordingState') -> bool:
+        """Business rules for recording state transitions."""
+        valid_transitions = {
+            RecordingState.IDLE: [RecordingState.RECORDING],
+            RecordingState.RECORDING: [RecordingState.PROCESSING, RecordingState.FAILED],
+            RecordingState.PROCESSING: [RecordingState.COMPLETED, RecordingState.FAILED],
+            RecordingState.COMPLETED: [RecordingState.IDLE],  # Can start new recording
+            RecordingState.FAILED: [RecordingState.IDLE]      # Can recover and retry
+        }
+        return new_state in valid_transitions.get(self, [])
+
+class ModelType(Enum):
+    WHISPER_TINY = "whisper-tiny"
+    WHISPER_BASE = "whisper-base"
+    WHISPER_SMALL = "whisper-small"
+    WHISPER_MEDIUM = "whisper-medium"
+    WHISPER_LARGE = "whisper-large"
+    WHISPER_TURBO = "whisper-turbo"
+    
+    @property
+    def memory_requirements_mb(self) -> int:
+        """Business rule: memory requirements per model."""
+        memory_map = {
+            ModelType.WHISPER_TINY: 150,
+            ModelType.WHISPER_BASE: 300,
+            ModelType.WHISPER_SMALL: 600,
+            ModelType.WHISPER_MEDIUM: 1200,
+            ModelType.WHISPER_LARGE: 2400,
+            ModelType.WHISPER_TURBO: 800
+        }
+        return memory_map[self]
+    
+    @property
+    def relative_accuracy(self) -> float:
+        """Business rule: relative accuracy expectation."""
+        accuracy_map = {
+            ModelType.WHISPER_TINY: 0.7,
+            ModelType.WHISPER_BASE: 0.8,
+            ModelType.WHISPER_SMALL: 0.85,
+            ModelType.WHISPER_MEDIUM: 0.9,
+            ModelType.WHISPER_LARGE: 0.95,
+            ModelType.WHISPER_TURBO: 0.88
+        }
+        return accuracy_map[self]
+```
+
+### Domain Entity File Organization for Audio
+
+**Follow this structure for audio/transcription domain entities:**
+
+```
+src/domain/
+├── common/                    # Shared DDD patterns
+│   ├── entity.py             # Entity base classes
+│   ├── aggregate_root.py     # Aggregate root base classes
+│   ├── value_object.py       # Value object base classes
+│   ├── domain_event.py       # Domain event base classes
+│   └── result.py             # Result pattern implementation
+├── audio/                    # Audio recording domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── audio_session.py      # AudioSession aggregate root
+│   │   └── recording_state.py    # Recording state entity
+│   ├── value_objects/
+│   │   ├── audio_config.py       # Audio configuration
+│   │   ├── duration.py           # Duration value object
+│   │   └── audio_quality.py      # Quality metrics
+│   ├── events/
+│   │   ├── recording_started.py  # Recording started event
+│   │   ├── recording_stopped.py  # Recording stopped event
+│   │   └── audio_processed.py    # Audio processed event
+│   └── contracts/
+│       ├── audio_repository.py   # Audio repository interface
+│       └── audio_service.py      # Audio service interface
+├── transcription/            # Transcription domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── transcription_request.py # TranscriptionRequest aggregate
+│   │   ├── transcription_result.py  # TranscriptionResult entity
+│   │   └── model_instance.py       # Model instance entity
+│   ├── value_objects/
+│   │   ├── model_config.py         # Model configuration
+│   │   ├── language.py             # Language specification
+│   │   ├── confidence_score.py     # Confidence scoring
+│   │   └── text_segment.py         # Text segment with timing
+│   ├── events/
+│   │   ├── transcription_requested.py # Transcription requested
+│   │   ├── transcription_completed.py # Transcription completed
+│   │   ├── model_loaded.py           # Model loaded event
+│   │   └── model_download_progress.py # Download progress
+│   └── contracts/
+│       ├── model_repository.py       # Model repository interface
+│       └── transcription_service.py  # Transcription service interface
+├── llm/                      # LLM processing domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── llm_request.py          # LLM request aggregate
+│   │   └── processing_result.py     # Processing result entity
+│   ├── value_objects/
+│   │   ├── prompt_template.py       # Prompt templates
+│   │   ├── model_type.py           # LLM model types
+│   │   └── processing_options.py    # Processing options
+│   ├── events/
+│   │   ├── text_processed.py        # Text processed event
+│   │   └── llm_model_changed.py     # Model changed event
+│   └── contracts/
+│       └── llm_service.py           # LLM service interface
+└── settings/                 # Settings domain
+    ├── __init__.py
+    ├── entities/
+    │   ├── user_preferences.py     # User preferences aggregate
+    │   └── hotkey_binding.py       # Hotkey binding entity
+    ├── value_objects/
+    │   ├── key_combination.py      # Key combination
+    │   ├── file_path.py            # File path handling
+    │   └── theme_settings.py       # UI theme settings
+    ├── events/
+    │   ├── settings_changed.py     # Settings changed event
+    │   └── hotkey_updated.py       # Hotkey updated event
+    └── contracts/
+        └── settings_repository.py  # Settings repository interface
+```
+
+### Audio/Transcription Domain Best Practices
+
+1. **Audio-First Language**: Use audio/ML domain expert terminology
+1. **Model Hardware Constraints**: Encapsulate GPU/CPU requirements in domain logic
+1. **Protect Audio Invariants**: Validate sample rates, channels, and formats
+1. **Use Factory Methods**: For complex audio/model creation and validation
+1. **Publish Domain Events**: For transcription progress and completion
+1. **Keep Aggregates Audio-Focused**: Focus on recording/transcription boundaries
+1. **Avoid Primitive Obsession**: Wrap audio parameters in value objects
+1. **Make Invalid Audio States Unrepresentable**: Use types to enforce constraints
+
+## Core DDD Patterns for Audio Domain
+
+### 1. Entity Rules for Audio/Transcription
+
+- **MUST**: All entities inherit from `Entity[TId]` or `AuditableEntity[TId]`
+- **MUST**: Implement `__invariants__()` method for audio/ML business rules validation
+- **MUST**: Call `super().__init__()` with entity ID in constructor
+- **MUST**: Use `mark_as_updated()` when modifying entity state
+- **MUST**: Entity equality is based on ID and type, not attributes
+- **FORBIDDEN**: Direct property setting without validation
+- **FORBIDDEN**: Entity creation without using factory methods
+
+```python
+# ✅ CORRECT - Audio entity implementation
+class AudioSession(Entity[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._created_at = datetime.utcnow()
+        self.validate()  # Calls __invariants__()
+    
+    def start_recording(self) -> Result[None]:
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session not idle")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.mark_as_updated()
+        return Result.success()
+    
+    def __invariants__(self) -> None:
+        if not self._audio_config:
+            raise ValueError("Audio configuration is required")
+        if self._audio_config.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError("Invalid sample rate for transcription")
+
+# ❌ INCORRECT - Missing invariants and proper inheritance
+class AudioSession:
+    def __init__(self, session_id: str, sample_rate: int):
+        self.id = session_id
+        self.sample_rate = sample_rate
+```
+
+### 2. Aggregate Root Rules for Audio Domain
+
+- **MUST**: All aggregates inherit from `AggregateRoot[TId]`
+- **MUST**: Use `add_domain_event()` for significant audio/transcription state changes
+- **MUST**: Call `mark_as_updated()` after state modifications
+- **MUST**: Implement factory methods that return `Result[T]`
+- **MUST**: Maintain consistency boundaries within the audio/transcription aggregate
+- **MUST**: Reference other aggregates by ID only, never by direct reference
+- **FORBIDDEN**: Public setters that bypass audio business rules
+- **FORBIDDEN**: Direct domain event list manipulation
+
+```python
+# ✅ CORRECT - Audio Aggregate Root implementation
+class AudioSession(AggregateRoot[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._audio_data: Optional[bytes] = None
+    
+    @classmethod
+    def create(cls, audio_config: AudioConfiguration, session_id: Optional[str] = None) -> Result["AudioSession"]:
+        # Validate audio configuration
+        if audio_config.sample_rate not in [16000, 22050, 44100, 48000]:
+            return Result.failure(f"Unsupported sample rate: {audio_config.sample_rate}")
+        
+        session_id = session_id or str(uuid.uuid4())
+        session = cls(session_id, audio_config)
+        session.add_domain_event(AudioSessionCreated(session_id, audio_config))
+        return Result.success(session)
+    
+    def start_recording(self, vad_enabled: bool = True) -> Result[None]:
+        # Business logic with validation
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        # VAD business rule
+        if not vad_enabled and self._audio_config.channels > 1:
+            return Result.failure("Stereo recording requires VAD to be enabled")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.add_domain_event(RecordingStarted(self.id, self._audio_config, vad_enabled))
+        self.mark_as_updated()
+        return Result.success()
+```
+
+### 3. Value Object Rules for Audio/ML Domain
+
+- **MUST**: All value objects inherit from `ValueObject` or `SingleValueObject[T]`
+- **MUST**: Implement `_get_equality_components()` for equality comparison
+- **MUST**: Implement `__invariants__()` for audio/ML validation
+- **MUST**: Use `@dataclass(frozen=True)` for immutability
+- **MUST**: Call `validate()` in `__post_init__()` for dataclasses
+- **MUST**: Provide factory methods that return `Result[T]`
+- **FORBIDDEN**: Mutable value objects
+- **FORBIDDEN**: Value objects with identity
+
+```python
+# ✅ CORRECT - Audio Value Object implementation
+@dataclass(frozen=True)
+class AudioConfiguration(ValueObject):
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str] = None
+    format_type: AudioFormat = AudioFormat.PCM_16
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.sample_rate, self.channels, self.chunk_size, self.device_id, self.format_type)
+    
+    def __invariants__(self) -> None:
+        if self.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError(f"Unsupported sample rate: {self.sample_rate}")
+        if self.channels not in [1, 2]:
+            raise ValueError(f"Only mono and stereo supported: {self.channels} channels")
+        if self.chunk_size <= 0 or self.chunk_size > 8192:
+            raise ValueError("Chunk size must be between 1 and 8192")
+    
+    @classmethod
+    def create_for_transcription(cls, sample_rate: int = 16000, device_id: Optional[str] = None) -> Result["AudioConfiguration"]:
+        """Factory method optimized for transcription."""
+        try:
+            return Result.success(cls(
+                sample_rate=sample_rate,
+                channels=1,  # Mono for best transcription results
+                chunk_size=1024,  # Optimal for real-time processing
+                device_id=device_id,
+                format_type=AudioFormat.PCM_16
+            ))
+        except ValueError as e:
+            return Result.failure(str(e))
+    
+    @property
+    def is_suitable_for_transcription(self) -> bool:
+        """Business rule: check if config is good for transcription."""
+        return (
+            self.sample_rate >= 16000 and 
+            self.channels <= 2 and 
+            self.format_type in [AudioFormat.PCM_16, AudioFormat.FLOAT_32]
+        )
+```
+
+### 4. Domain Event Rules for Audio Domain
+
+- **MUST**: All domain events inherit from `DomainEvent`
+- **MUST**: Domain events are immutable
+- **MUST**: Use past tense for event names ("RecordingStarted", not "StartRecording")
+- **MUST**: Include all necessary data to understand what happened
+- **MUST**: Implement `event_type` property
+- **MUST**: Implement `to_dict()` and `from_dict()` for serialization
+- **FORBIDDEN**: References to other aggregates (use IDs instead)
+- **FORBIDDEN**: Mutable event data
+- **FORBIDDEN**: Events with side effects
+
+```python
+# ✅ CORRECT - Audio Domain Event implementation
+class RecordingStarted(DomainEvent):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration, vad_enabled: bool):
+        super().__init__(session_id)
+        self.audio_config = audio_config
+        self.vad_enabled = vad_enabled
+    
+    @property
+    def event_type(self) -> str:
+        return "RecordingStarted"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "aggregate_id": self.aggregate_id,
+            "session_id": self.aggregate_id,
+            "sample_rate": self.audio_config.sample_rate,
+            "channels": self.audio_config.channels,
+            "chunk_size": self.audio_config.chunk_size,
+            "device_id": self.audio_config.device_id,
+            "vad_enabled": self.vad_enabled,
+            "occurred_at": self.occurred_at.isoformat()
+        }
+
+class TranscriptionCompleted(DomainEvent):
+    def __init__(self, request_id: str, result_text: str, confidence_score: float, language: str):
+        super().__init__(request_id)
+        self.result_text = result_text
+        self.confidence_score = confidence_score
+        self.language = language
+    
+    @property
+    def event_type(self) -> str:
+        return "TranscriptionCompleted"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "aggregate_id": self.aggregate_id,
+            "request_id": self.aggregate_id,
+            "result_text": self.result_text,
+            "confidence_score": self.confidence_score,
+            "language": self.language,
+            "occurred_at": self.occurred_at.isoformat()
+        }
+```
+
+### 5. Result Pattern Rules for Audio/ML Operations
+
+- **MUST**: Use `Result[T]` for all operations that can fail
+- **MUST**: Chain operations using `map()`, `bind()`, and `on_success()`
+- **MUST**: Handle both success and failure cases explicitly
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Using `Result` for programming errors (use exceptions)
+
+```python
+# ✅ CORRECT - Result pattern usage for audio operations
+def create_audio_session(audio_config: AudioConfiguration) -> Result[AudioSession]:
+    if audio_config.sample_rate < 8000:
+        return Result.failure("Sample rate too low for quality audio")
+    if audio_config.channels > 2:
+        return Result.failure("Only mono and stereo audio supported")
+    
+    session = AudioSession.create(audio_config)
+    return Result.success(session)
+
+def transcribe_audio(audio_data: bytes, model_config: ModelConfiguration) -> Result[TranscriptionResult]:
+    if len(audio_data) < 1024:
+        return Result.failure("Audio data too short for transcription")
+    
+    # Chain operations for audio processing
+    return (
+        validate_audio_format(audio_data)
+        .bind(lambda data: preprocess_audio(data))
+        .bind(lambda processed: run_transcription(processed, model_config))
+        .map(lambda result: TranscriptionResult(result.text, result.confidence))
+    )
+
+# Usage with proper error handling
+result = (
+    create_audio_session(audio_config)
+    .bind(lambda session: session.start_recording())
+    .on_success(lambda: print("Recording started successfully"))
+    .on_failure(lambda error: print(f"Failed to start recording: {error}"))
+)
+```
+
+## File Organization Rules
+
+### Domain Layer Structure for Audio
+
+```
+src/domain/
+├── common/                    # Shared DDD patterns
+│   ├── entity.py             # Entity base classes
+│   ├── aggregate_root.py     # Aggregate root base classes
+│   ├── value_object.py       # Value object base classes
+│   ├── domain_event.py       # Domain event base classes
+│   └── result.py             # Result pattern implementation
+├── audio/                    # Audio recording domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+├── transcription/            # Transcription domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+├── llm/                      # LLM processing domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+└── settings/                 # Settings domain
+    ├── entities/
+    ├── value_objects/
+    ├── events/
+    └── contracts/
+```
+
+### Naming Conventions for Audio Domain
+
+- **Entities**: PascalCase, audio/ML nouns (AudioSession, TranscriptionRequest, ModelInstance)
+- **Value Objects**: PascalCase, audio concepts (AudioConfiguration, ModelConfiguration, ConfidenceScore)
+- **Aggregates**: PascalCase, match entity names (AudioSession, TranscriptionRequest)
+- **Domain Events**: PascalCase, past tense (RecordingStarted, TranscriptionCompleted, ModelLoaded)
+- **Methods**: snake_case, audio verb phrases (start_recording, process_transcription, load_model)
+
+### Import Rules for Audio Domain
+
+- **MUST**: Domain layer imports only from common and same layer
+- **FORBIDDEN**: Imports from features, infrastructure, or shared layers
+- **FORBIDDEN**: External framework dependencies (except typing, abc, datetime, uuid, enum)
+- **FORBIDDEN**: PyQt, PyAudio, ONNX, or any external library imports
+
+## Testing Rules
+
+### Unit Testing Audio Domain Objects
+
+- **MUST**: Test audio/ML invariants enforcement
+- **MUST**: Test entity equality based on ID
+- **MUST**: Test aggregate domain event generation
+- **MUST**: Test value object immutability
+- **MUST**: Test Result pattern success/failure paths
+- **MUST**: Test audio configuration validation
+- **MUST**: Test recording state transitions
+
+```python
+# ✅ CORRECT - Audio domain testing
+def test_audio_session_start_recording():
+    # Arrange
+    audio_config = AudioConfiguration(sample_rate=44100, channels=1, chunk_size=1024)
+    session = AudioSession.create(audio_config).value
+    
+    # Act
+    result = session.start_recording(vad_enabled=True)
+    
+    # Assert
+    assert result.is_success
+    assert session.state == RecordingState.RECORDING
+    assert len(session.domain_events) == 2  # Creation + Start events
+    assert isinstance(session.domain_events[1], RecordingStarted)
+
+def test_audio_configuration_validation():
+    # Test invalid sample rate
+    with pytest.raises(ValueError) as exc_info:
+        AudioConfiguration(sample_rate=1000, channels=1, chunk_size=1024)
+    assert "Unsupported sample rate" in str(exc_info.value)
+    
+    # Test invalid channels
+    with pytest.raises(ValueError) as exc_info:
+        AudioConfiguration(sample_rate=44100, channels=5, chunk_size=1024)
+    assert "Only mono and stereo supported" in str(exc_info.value)
+
+def test_transcription_result_confidence_scoring():
+    # Arrange
+    high_confidence = ConfidenceScore(0.95)
+    low_confidence = ConfidenceScore(0.3)
+    
+    # Assert
+    assert high_confidence.is_high_confidence
+    assert not low_confidence.is_high_confidence
+    assert high_confidence.quality_level == "excellent"
+    assert low_confidence.quality_level == "poor"
+```
+
+## Performance Rules for Audio Domain
+
+- **MUST**: Keep audio aggregates small and focused
+
+- **MUST**: Use lazy loading for large audio data collections
+
+- **MUST**: Implement efficient audio format validation
+
+- **MUST**: Cache model configurations for repeated use
+
+- **FORBIDDEN**: Loading entire audio files into memory unnecessarily
+
+- **FORBIDDEN**: Complex audio processing in domain layer (belongs in infrastructure)
+
+- **MUST**: Implement snapshots for event-sourced aggregates with long histories
+
+- **FORBIDDEN**: Loading entire aggregate hierarchies unnecessarily
+
+# WinSTT Domain Layer Rules
+
+## 🏗️ Audio/Transcription Domain Modeling Workflow Steps
+
+### Step 1: Identify Business Entity Type
+
+**Before creating any domain objects, determine the correct DDD pattern for audio transcription:**
+
+#### Entity Identification Checklist:
+
+- ✅ **Has unique identity** that persists over time
+- ✅ **Has lifecycle** (created, modified, deleted)
+- ✅ **State can change** while maintaining identity
+- ✅ **Business operations** can be performed on it
+
+#### Aggregate Root Identification Checklist:
+
+- ✅ **Is an Entity** (meets all entity criteria)
+- ✅ **Serves as consistency boundary** for related entities
+- ✅ **Controls access** to internal entities
+- ✅ **Publishes domain events** for external communication
+- ✅ **Has clear business boundaries** and responsibilities
+
+#### Value Object Identification Checklist:
+
+- ✅ **Defined by its values** rather than identity
+- ✅ **Immutable** once created
+- ✅ **No side effects** when used
+- ✅ **Encapsulates validation** rules
+- ✅ **Can be shared** across entities
+
+**Example Decision Process for Audio Transcription:**
+
+```python
+# ✅ ENTITY: AudioSession has identity and lifecycle
+class AudioSession(Entity[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._created_at = datetime.utcnow()
+
+# ✅ AGGREGATE ROOT: AudioSession controls recording consistency
+class AudioSession(AggregateRoot[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._audio_data: Optional[bytes] = None
+    
+    def start_recording(self, config: AudioConfiguration) -> Result[None]:
+        """Start recording with validation."""
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.add_domain_event(RecordingStarted(self.id, config, self._started_at))
+        return Result.success()
+
+# ✅ VALUE OBJECT: AudioConfiguration is defined by its values
+@dataclass(frozen=True)
+class AudioConfiguration(ValueObject):
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str] = None
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.sample_rate, self.channels, self.chunk_size, self.device_id)
+    
+    def __invariants__(self) -> None:
+        if self.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError(f"Unsupported sample rate: {self.sample_rate}")
+        if self.channels not in [1, 2]:
+            raise ValueError(f"Only mono and stereo supported: {self.channels} channels")
+        if self.chunk_size <= 0:
+            raise ValueError("Chunk size must be positive")
+```
+
+### Step 2: Create Aggregate Root / Entity Implementation
+
+**Follow these patterns when implementing audio/transcription domain entities:**
+
+#### Factory Method Pattern for Audio Domain:
+
+```python
+class TranscriptionRequest(AggregateRoot[str]):
+    @classmethod
+    def create(cls, audio_data: bytes, model_config: ModelConfiguration, language: Optional[str] = None) -> Result['TranscriptionRequest']:
+        """Factory method for creating transcription requests."""
+        # Validate audio data
+        if len(audio_data) == 0:
+            return Result.failure("Audio data cannot be empty")
+        
+        if len(audio_data) < 1024:  # Minimum audio size
+            return Result.failure("Audio data too short for transcription")
+        
+        # Create entity
+        request_id = str(uuid.uuid4())
+        request = cls(request_id, audio_data, model_config, language)
+        
+        # Publish domain event
+        request.add_domain_event(TranscriptionRequested(request.id, len(audio_data), model_config.model_name))
+        
+        return Result.success(request)
+```
+
+#### Business Logic Encapsulation for Audio:
+
+```python
+def process_transcription(self, result_text: str, confidence: float) -> Result[None]:
+    """Process transcription result with business validation."""
+    # Guard clauses for business rules
+    if self._state != TranscriptionState.PROCESSING:
+        return Result.failure("Cannot process result: transcription is not in processing state")
+    
+    if confidence < 0.0 or confidence > 1.0:
+        return Result.failure("Confidence score must be between 0.0 and 1.0")
+    
+    if not result_text.strip():
+        return Result.failure("Transcription result cannot be empty")
+    
+    # State change
+    self._state = TranscriptionState.COMPLETED
+    self._result_text = result_text
+    self._confidence = confidence
+    self._completed_at = datetime.utcnow()
+    
+    # Domain event
+    self.add_domain_event(TranscriptionCompleted(
+        self.id, 
+        result_text, 
+        confidence, 
+        self._completed_at
+    ))
+    
+    # Mark for persistence
+    self.mark_as_updated()
+    return Result.success()
+```
+
+#### Property Access Pattern for Audio Entities:
+
+```python
+@property
+def audio_config(self) -> AudioConfiguration:
+    """Read-only access to audio configuration."""
+    return self._audio_config
+
+@property
+def state(self) -> RecordingState:
+    """Read-only access to recording state."""
+    return self._state
+
+@property
+def duration_seconds(self) -> float:
+    """Calculate recording duration."""
+    if self._started_at is None:
+        return 0.0
+    
+    end_time = self._stopped_at or datetime.utcnow()
+    return (end_time - self._started_at).total_seconds()
+
+def update_audio_config(self, new_config: AudioConfiguration) -> Result[None]:
+    """Controlled mutation with validation."""
+    if self._state == RecordingState.RECORDING:
+        return Result.failure("Cannot change audio config while recording")
+    
+    old_config = self._audio_config
+    self._audio_config = new_config
+    
+    if old_config != new_config:
+        self.add_domain_event(AudioConfigurationChanged(
+            self.id, 
+            old_config, 
+            new_config
+        ))
+        self.mark_as_updated()
+    
+    return Result.success()
+```
+
+### Step 3: Create Value Objects Implementation for Audio Domain
+
+**Value objects MUST follow these patterns for audio/ML concepts:**
+
+#### Audio-Specific Value Objects:
+
+```python
+@dataclass(frozen=True)
+class ModelConfiguration(ValueObject):
+    model_name: str
+    model_type: ModelType
+    quantization: QuantizationType
+    context_length: int
+    language: Optional[str] = None
+    
+    def _get_equality_components(self) -> tuple:
+        return (
+            self.model_name, 
+            self.model_type, 
+            self.quantization, 
+            self.context_length, 
+            self.language
+        )
+    
+    def __invariants__(self) -> None:
+        if not self.model_name or not self.model_name.strip():
+            raise ValueError("Model name cannot be empty")
+        if self.context_length <= 0:
+            raise ValueError("Context length must be positive")
+        if self.language and len(self.language) != 2:
+            raise ValueError("Language code must be 2 characters (ISO 639-1)")
+
+@dataclass(frozen=True)
+class ConfidenceScore(ValueObject):
+    value: float
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.value,)
+    
+    def __invariants__(self) -> None:
+        if self.value < 0.0 or self.value > 1.0:
+            raise ValueError("Confidence score must be between 0.0 and 1.0")
+    
+    @property
+    def is_high_confidence(self) -> bool:
+        """Business rule: high confidence is >= 0.8."""
+        return self.value >= 0.8
+    
+    @property
+    def quality_level(self) -> str:
+        """Convert confidence to quality description."""
+        if self.value >= 0.9:
+            return "excellent"
+        elif self.value >= 0.8:
+            return "good"
+        elif self.value >= 0.6:
+            return "fair"
+        else:
+            return "poor"
+```
+
+#### Enum Value Objects for Audio Domain:
+
+```python
+class RecordingState(Enum):
+    IDLE = "idle"
+    RECORDING = "recording"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    
+    def can_transition_to(self, new_state: 'RecordingState') -> bool:
+        """Business rules for recording state transitions."""
+        valid_transitions = {
+            RecordingState.IDLE: [RecordingState.RECORDING],
+            RecordingState.RECORDING: [RecordingState.PROCESSING, RecordingState.FAILED],
+            RecordingState.PROCESSING: [RecordingState.COMPLETED, RecordingState.FAILED],
+            RecordingState.COMPLETED: [RecordingState.IDLE],  # Can start new recording
+            RecordingState.FAILED: [RecordingState.IDLE]      # Can recover and retry
+        }
+        return new_state in valid_transitions.get(self, [])
+
+class ModelType(Enum):
+    WHISPER_TINY = "whisper-tiny"
+    WHISPER_BASE = "whisper-base"
+    WHISPER_SMALL = "whisper-small"
+    WHISPER_MEDIUM = "whisper-medium"
+    WHISPER_LARGE = "whisper-large"
+    WHISPER_TURBO = "whisper-turbo"
+    
+    @property
+    def memory_requirements_mb(self) -> int:
+        """Business rule: memory requirements per model."""
+        memory_map = {
+            ModelType.WHISPER_TINY: 150,
+            ModelType.WHISPER_BASE: 300,
+            ModelType.WHISPER_SMALL: 600,
+            ModelType.WHISPER_MEDIUM: 1200,
+            ModelType.WHISPER_LARGE: 2400,
+            ModelType.WHISPER_TURBO: 800
+        }
+        return memory_map[self]
+    
+    @property
+    def relative_accuracy(self) -> float:
+        """Business rule: relative accuracy expectation."""
+        accuracy_map = {
+            ModelType.WHISPER_TINY: 0.7,
+            ModelType.WHISPER_BASE: 0.8,
+            ModelType.WHISPER_SMALL: 0.85,
+            ModelType.WHISPER_MEDIUM: 0.9,
+            ModelType.WHISPER_LARGE: 0.95,
+            ModelType.WHISPER_TURBO: 0.88
+        }
+        return accuracy_map[self]
+```
+
+### Domain Entity File Organization for Audio
+
+**Follow this structure for audio/transcription domain entities:**
+
+```
+src/domain/
+├── common/                    # Shared DDD patterns
+│   ├── entity.py             # Entity base classes
+│   ├── aggregate_root.py     # Aggregate root base classes
+│   ├── value_object.py       # Value object base classes
+│   ├── domain_event.py       # Domain event base classes
+│   └── result.py             # Result pattern implementation
+├── audio/                    # Audio recording domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── audio_session.py      # AudioSession aggregate root
+│   │   └── recording_state.py    # Recording state entity
+│   ├── value_objects/
+│   │   ├── audio_config.py       # Audio configuration
+│   │   ├── duration.py           # Duration value object
+│   │   └── audio_quality.py      # Quality metrics
+│   ├── events/
+│   │   ├── recording_started.py  # Recording started event
+│   │   ├── recording_stopped.py  # Recording stopped event
+│   │   └── audio_processed.py    # Audio processed event
+│   └── contracts/
+│       ├── audio_repository.py   # Audio repository interface
+│       └── audio_service.py      # Audio service interface
+├── transcription/            # Transcription domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── transcription_request.py # TranscriptionRequest aggregate
+│   │   ├── transcription_result.py  # TranscriptionResult entity
+│   │   └── model_instance.py       # Model instance entity
+│   ├── value_objects/
+│   │   ├── model_config.py         # Model configuration
+│   │   ├── language.py             # Language specification
+│   │   ├── confidence_score.py     # Confidence scoring
+│   │   └── text_segment.py         # Text segment with timing
+│   ├── events/
+│   │   ├── transcription_requested.py # Transcription requested
+│   │   ├── transcription_completed.py # Transcription completed
+│   │   ├── model_loaded.py           # Model loaded event
+│   │   └── model_download_progress.py # Download progress
+│   └── contracts/
+│       ├── model_repository.py       # Model repository interface
+│       └── transcription_service.py  # Transcription service interface
+├── llm/                      # LLM processing domain
+│   ├── __init__.py
+│   ├── entities/
+│   │   ├── llm_request.py          # LLM request aggregate
+│   │   └── processing_result.py     # Processing result entity
+│   ├── value_objects/
+│   │   ├── prompt_template.py       # Prompt templates
+│   │   ├── model_type.py           # LLM model types
+│   │   └── processing_options.py    # Processing options
+│   ├── events/
+│   │   ├── text_processed.py        # Text processed event
+│   │   └── llm_model_changed.py     # Model changed event
+│   └── contracts/
+│       └── llm_service.py           # LLM service interface
+└── settings/                 # Settings domain
+    ├── __init__.py
+    ├── entities/
+    │   ├── user_preferences.py     # User preferences aggregate
+    │   └── hotkey_binding.py       # Hotkey binding entity
+    ├── value_objects/
+    │   ├── key_combination.py      # Key combination
+    │   ├── file_path.py            # File path handling
+    │   └── theme_settings.py       # UI theme settings
+    ├── events/
+    │   ├── settings_changed.py     # Settings changed event
+    │   └── hotkey_updated.py       # Hotkey updated event
+    └── contracts/
+        └── settings_repository.py  # Settings repository interface
+```
+
+### Audio/Transcription Domain Best Practices
+
+1. **Audio-First Language**: Use audio/ML domain expert terminology
+1. **Model Hardware Constraints**: Encapsulate GPU/CPU requirements in domain logic
+1. **Protect Audio Invariants**: Validate sample rates, channels, and formats
+1. **Use Factory Methods**: For complex audio/model creation and validation
+1. **Publish Domain Events**: For transcription progress and completion
+1. **Keep Aggregates Audio-Focused**: Focus on recording/transcription boundaries
+1. **Avoid Primitive Obsession**: Wrap audio parameters in value objects
+1. **Make Invalid Audio States Unrepresentable**: Use types to enforce constraints
+
+## Core DDD Patterns for Audio Domain
+
+### 1. Entity Rules for Audio/Transcription
+
+- **MUST**: All entities inherit from `Entity[TId]` or `AuditableEntity[TId]`
+- **MUST**: Implement `__invariants__()` method for audio/ML business rules validation
+- **MUST**: Call `super().__init__()` with entity ID in constructor
+- **MUST**: Use `mark_as_updated()` when modifying entity state
+- **MUST**: Entity equality is based on ID and type, not attributes
+- **FORBIDDEN**: Direct property setting without validation
+- **FORBIDDEN**: Entity creation without using factory methods
+
+```python
+# ✅ CORRECT - Audio entity implementation
+class AudioSession(Entity[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._created_at = datetime.utcnow()
+        self.validate()  # Calls __invariants__()
+    
+    def start_recording(self) -> Result[None]:
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session not idle")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.mark_as_updated()
+        return Result.success()
+    
+    def __invariants__(self) -> None:
+        if not self._audio_config:
+            raise ValueError("Audio configuration is required")
+        if self._audio_config.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError("Invalid sample rate for transcription")
+
+# ❌ INCORRECT - Missing invariants and proper inheritance
+class AudioSession:
+    def __init__(self, session_id: str, sample_rate: int):
+        self.id = session_id
+        self.sample_rate = sample_rate
+```
+
+### 2. Aggregate Root Rules for Audio Domain
+
+- **MUST**: All aggregates inherit from `AggregateRoot[TId]`
+- **MUST**: Use `add_domain_event()` for significant audio/transcription state changes
+- **MUST**: Call `mark_as_updated()` after state modifications
+- **MUST**: Implement factory methods that return `Result[T]`
+- **MUST**: Maintain consistency boundaries within the audio/transcription aggregate
+- **MUST**: Reference other aggregates by ID only, never by direct reference
+- **FORBIDDEN**: Public setters that bypass audio business rules
+- **FORBIDDEN**: Direct domain event list manipulation
+
+```python
+# ✅ CORRECT - Audio Aggregate Root implementation
+class AudioSession(AggregateRoot[str]):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration):
+        super().__init__(session_id)
+        self._audio_config = audio_config
+        self._state = RecordingState.IDLE
+        self._audio_data: Optional[bytes] = None
+    
+    @classmethod
+    def create(cls, audio_config: AudioConfiguration, session_id: Optional[str] = None) -> Result["AudioSession"]:
+        # Validate audio configuration
+        if audio_config.sample_rate not in [16000, 22050, 44100, 48000]:
+            return Result.failure(f"Unsupported sample rate: {audio_config.sample_rate}")
+        
+        session_id = session_id or str(uuid.uuid4())
+        session = cls(session_id, audio_config)
+        session.add_domain_event(AudioSessionCreated(session_id, audio_config))
+        return Result.success(session)
+    
+    def start_recording(self, vad_enabled: bool = True) -> Result[None]:
+        # Business logic with validation
+        if self._state != RecordingState.IDLE:
+            return Result.failure("Cannot start recording: session is not idle")
+        
+        # VAD business rule
+        if not vad_enabled and self._audio_config.channels > 1:
+            return Result.failure("Stereo recording requires VAD to be enabled")
+        
+        self._state = RecordingState.RECORDING
+        self._started_at = datetime.utcnow()
+        self.add_domain_event(RecordingStarted(self.id, self._audio_config, vad_enabled))
+        self.mark_as_updated()
+        return Result.success()
+```
+
+### 3. Value Object Rules for Audio/ML Domain
+
+- **MUST**: All value objects inherit from `ValueObject` or `SingleValueObject[T]`
+- **MUST**: Implement `_get_equality_components()` for equality comparison
+- **MUST**: Implement `__invariants__()` for audio/ML validation
+- **MUST**: Use `@dataclass(frozen=True)` for immutability
+- **MUST**: Call `validate()` in `__post_init__()` for dataclasses
+- **MUST**: Provide factory methods that return `Result[T]`
+- **FORBIDDEN**: Mutable value objects
+- **FORBIDDEN**: Value objects with identity
+
+```python
+# ✅ CORRECT - Audio Value Object implementation
+@dataclass(frozen=True)
+class AudioConfiguration(ValueObject):
+    sample_rate: int
+    channels: int
+    chunk_size: int
+    device_id: Optional[str] = None
+    format_type: AudioFormat = AudioFormat.PCM_16
+    
+    def _get_equality_components(self) -> tuple:
+        return (self.sample_rate, self.channels, self.chunk_size, self.device_id, self.format_type)
+    
+    def __invariants__(self) -> None:
+        if self.sample_rate not in [16000, 22050, 44100, 48000]:
+            raise ValueError(f"Unsupported sample rate: {self.sample_rate}")
+        if self.channels not in [1, 2]:
+            raise ValueError(f"Only mono and stereo supported: {self.channels} channels")
+        if self.chunk_size <= 0 or self.chunk_size > 8192:
+            raise ValueError("Chunk size must be between 1 and 8192")
+    
+    @classmethod
+    def create_for_transcription(cls, sample_rate: int = 16000, device_id: Optional[str] = None) -> Result["AudioConfiguration"]:
+        """Factory method optimized for transcription."""
+        try:
+            return Result.success(cls(
+                sample_rate=sample_rate,
+                channels=1,  # Mono for best transcription results
+                chunk_size=1024,  # Optimal for real-time processing
+                device_id=device_id,
+                format_type=AudioFormat.PCM_16
+            ))
+        except ValueError as e:
+            return Result.failure(str(e))
+    
+    @property
+    def is_suitable_for_transcription(self) -> bool:
+        """Business rule: check if config is good for transcription."""
+        return (
+            self.sample_rate >= 16000 and 
+            self.channels <= 2 and 
+            self.format_type in [AudioFormat.PCM_16, AudioFormat.FLOAT_32]
+        )
+```
+
+### 4. Domain Event Rules for Audio Domain
+
+- **MUST**: All domain events inherit from `DomainEvent`
+- **MUST**: Domain events are immutable
+- **MUST**: Use past tense for event names ("RecordingStarted", not "StartRecording")
+- **MUST**: Include all necessary data to understand what happened
+- **MUST**: Implement `event_type` property
+- **MUST**: Implement `to_dict()` and `from_dict()` for serialization
+- **FORBIDDEN**: References to other aggregates (use IDs instead)
+- **FORBIDDEN**: Mutable event data
+- **FORBIDDEN**: Events with side effects
+
+```python
+# ✅ CORRECT - Audio Domain Event implementation
+class RecordingStarted(DomainEvent):
+    def __init__(self, session_id: str, audio_config: AudioConfiguration, vad_enabled: bool):
+        super().__init__(session_id)
+        self.audio_config = audio_config
+        self.vad_enabled = vad_enabled
+    
+    @property
+    def event_type(self) -> str:
+        return "RecordingStarted"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "aggregate_id": self.aggregate_id,
+            "session_id": self.aggregate_id,
+            "sample_rate": self.audio_config.sample_rate,
+            "channels": self.audio_config.channels,
+            "chunk_size": self.audio_config.chunk_size,
+            "device_id": self.audio_config.device_id,
+            "vad_enabled": self.vad_enabled,
+            "occurred_at": self.occurred_at.isoformat()
+        }
+
+class TranscriptionCompleted(DomainEvent):
+    def __init__(self, request_id: str, result_text: str, confidence_score: float, language: str):
+        super().__init__(request_id)
+        self.result_text = result_text
+        self.confidence_score = confidence_score
+        self.language = language
+    
+    @property
+    def event_type(self) -> str:
+        return "TranscriptionCompleted"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "aggregate_id": self.aggregate_id,
+            "request_id": self.aggregate_id,
+            "result_text": self.result_text,
+            "confidence_score": self.confidence_score,
+            "language": self.language,
+            "occurred_at": self.occurred_at.isoformat()
+        }
+```
+
+### 5. Result Pattern Rules for Audio/ML Operations
+
+- **MUST**: Use `Result[T]` for all operations that can fail
+- **MUST**: Chain operations using `map()`, `bind()`, and `on_success()`
+- **MUST**: Handle both success and failure cases explicitly
+- **FORBIDDEN**: Throwing exceptions for business logic failures
+- **FORBIDDEN**: Using `Result` for programming errors (use exceptions)
+
+```python
+# ✅ CORRECT - Result pattern usage for audio operations
+def create_audio_session(audio_config: AudioConfiguration) -> Result[AudioSession]:
+    if audio_config.sample_rate < 8000:
+        return Result.failure("Sample rate too low for quality audio")
+    if audio_config.channels > 2:
+        return Result.failure("Only mono and stereo audio supported")
+    
+    session = AudioSession.create(audio_config)
+    return Result.success(session)
+
+def transcribe_audio(audio_data: bytes, model_config: ModelConfiguration) -> Result[TranscriptionResult]:
+    if len(audio_data) < 1024:
+        return Result.failure("Audio data too short for transcription")
+    
+    # Chain operations for audio processing
+    return (
+        validate_audio_format(audio_data)
+        .bind(lambda data: preprocess_audio(data))
+        .bind(lambda processed: run_transcription(processed, model_config))
+        .map(lambda result: TranscriptionResult(result.text, result.confidence))
+    )
+
+# Usage with proper error handling
+result = (
+    create_audio_session(audio_config)
+    .bind(lambda session: session.start_recording())
+    .on_success(lambda: print("Recording started successfully"))
+    .on_failure(lambda error: print(f"Failed to start recording: {error}"))
+)
+```
+
+## File Organization Rules
+
+### Domain Layer Structure for Audio
+
+```
+src/domain/
+├── common/                    # Shared DDD patterns
+│   ├── entity.py             # Entity base classes
+│   ├── aggregate_root.py     # Aggregate root base classes
+│   ├── value_object.py       # Value object base classes
+│   ├── domain_event.py       # Domain event base classes
+│   └── result.py             # Result pattern implementation
+├── audio/                    # Audio recording domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+├── transcription/            # Transcription domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+├── llm/                      # LLM processing domain
+│   ├── entities/
+│   ├── value_objects/
+│   ├── events/
+│   └── contracts/
+└── settings/                 # Settings domain
+    ├── entities/
+    ├── value_objects/
+    ├── events/
+    └── contracts/
+```
+
+### Naming Conventions for Audio Domain
+
+- **Entities**: PascalCase, audio/ML nouns (AudioSession, TranscriptionRequest, ModelInstance)
+- **Value Objects**: PascalCase, audio concepts (AudioConfiguration, ModelConfiguration, ConfidenceScore)
+- **Aggregates**: PascalCase, match entity names (AudioSession, TranscriptionRequest)
+- **Domain Events**: PascalCase, past tense (RecordingStarted, TranscriptionCompleted, ModelLoaded)
+- **Methods**: snake_case, audio verb phrases (start_recording, process_transcription, load_model)
+
+### Import Rules for Audio Domain
+
+- **MUST**: Domain layer imports only from common and same layer
+- **FORBIDDEN**: Imports from features, infrastructure, or shared layers
+- **FORBIDDEN**: External framework dependencies (except typing, abc, datetime, uuid, enum)
+- **FORBIDDEN**: PyQt, PyAudio, ONNX, or any external library imports
+
+## Testing Rules
+
+### Unit Testing Audio Domain Objects
+
+- **MUST**: Test audio/ML invariants enforcement
+- **MUST**: Test entity equality based on ID
+- **MUST**: Test aggregate domain event generation
+- **MUST**: Test value object immutability
+- **MUST**: Test Result pattern success/failure paths
+- **MUST**: Test audio configuration validation
+- **MUST**: Test recording state transitions
+
+```python
+# ✅ CORRECT - Audio domain testing
+def test_audio_session_start_recording():
+    # Arrange
+    audio_config = AudioConfiguration(sample_rate=44100, channels=1, chunk_size=1024)
+    session = AudioSession.create(audio_config).value
+    
+    # Act
+    result = session.start_recording(vad_enabled=True)
+    
+    # Assert
+    assert result.is_success
+    assert session.state == RecordingState.RECORDING
+    assert len(session.domain_events) == 2  # Creation + Start events
+    assert isinstance(session.domain_events[1], RecordingStarted)
+
+def test_audio_configuration_validation():
+    # Test invalid sample rate
+    with pytest.raises(ValueError) as exc_info:
+        AudioConfiguration(sample_rate=1000, channels=1, chunk_size=1024)
+    assert "Unsupported sample rate" in str(exc_info.value)
+    
+    # Test invalid channels
+    with pytest.raises(ValueError) as exc_info:
+        AudioConfiguration(sample_rate=44100, channels=5, chunk_size=1024)
+    assert "Only mono and stereo supported" in str(exc_info.value)
+
+def test_transcription_result_confidence_scoring():
+    # Arrange
+    high_confidence = ConfidenceScore(0.95)
+    low_confidence = ConfidenceScore(0.3)
+    
+    # Assert
+    assert high_confidence.is_high_confidence
+    assert not low_confidence.is_high_confidence
+    assert high_confidence.quality_level == "excellent"
+    assert low_confidence.quality_level == "poor"
+```
+
+## Performance Rules for Audio Domain
+
+- **MUST**: Keep audio aggregates small and focused
+
+- **MUST**: Use lazy loading for large audio data collections
+
+- **MUST**: Implement efficient audio format validation
+
+- **MUST**: Cache model configurations for repeated use
+
+- **FORBIDDEN**: Loading entire audio files into memory unnecessarily
+
+- **FORBIDDEN**: Complex audio processing in domain layer (belongs in infrastructure)
+
+- **MUST**: Implement snapshots for event-sourced aggregates with long histories
+
+- **FORBIDDEN**: Loading entire aggregate hierarchies unnecessarily

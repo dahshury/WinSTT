@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.core.utils import resource_path
+from src.core.utils import resource_path, get_config, save_config
 
 
 class ToggleSwitch(QSlider):
@@ -1266,32 +1266,30 @@ class SettingsDialog(QDialog):
     def load_settings_from_json(self):
         """Load settings from JSON if available"""
         try:
-            if os.path.exists("settings.json"):
-                with open("settings.json") as f:
-                    settings = json.load(f)
-                    # Populate default values from saved settings if available
-                    self.default_model = settings.get("model", self.default_model)
-                    self.default_quantization = settings.get("quantization", self.default_quantization)
-                    self.default_recording_sound = settings.get("enable_sound", self.default_recording_sound)
-                    self.default_sound_path = settings.get("sound_path", self.default_sound_path)
-                    self.default_output_srt = settings.get("output_srt", self.default_output_srt)
-                    self.default_rec_key = settings.get("rec_key", self.default_rec_key)
-                    
-                    # Set default LLM settings
-                    self.default_llm_enabled = settings.get("llm_enabled", False)
-                    self.default_llm_model = settings.get("llm_model", "gemma-3-1b-it")
-                    self.default_llm_quantization = settings.get("llm_quantization", "Full")
-                    self.default_llm_prompt = settings.get("llm_prompt", "You are a helpful assistant.")
-                    
-                    # Apply LLM settings to UI if controls exist
-                    if hasattr(self, "enable_llm_toggle"):
-                        self.enable_llm_toggle.setChecked(self.default_llm_enabled)
-                    if hasattr(self, "llm_model_combo"):
-                        self.llm_model_combo.setCurrentText(self.default_llm_model)
-                    if hasattr(self, "llm_quant_combo"):
-                        self.llm_quant_combo.setCurrentText(self.default_llm_quantization)
-                    if hasattr(self, "llm_prompt_textbox"):
-                        self.llm_prompt_textbox.setText(self.default_llm_prompt)
+            settings = get_config()
+            # Populate default values from saved settings if available
+            self.default_model = settings.get("model", self.default_model)
+            self.default_quantization = settings.get("quantization", self.default_quantization)
+            self.default_recording_sound = settings.get("recording_sound_enabled", self.default_recording_sound)
+            self.default_sound_path = settings.get("sound_file_path", self.default_sound_path)
+            self.default_output_srt = settings.get("output_srt", self.default_output_srt)
+            self.default_rec_key = settings.get("recording_key", self.default_rec_key)
+            
+            # Set default LLM settings
+            self.default_llm_enabled = settings.get("llm_enabled", False)
+            self.default_llm_model = settings.get("llm_model", "gemma-3-1b-it")
+            self.default_llm_quantization = settings.get("llm_quantization", "Full")
+            self.default_llm_prompt = settings.get("llm_prompt", "You are a helpful assistant.")
+            
+            # Apply LLM settings to UI if controls exist
+            if hasattr(self, "enable_llm_toggle"):
+                self.enable_llm_toggle.setChecked(self.default_llm_enabled)
+            if hasattr(self, "llm_model_combo"):
+                self.llm_model_combo.setCurrentText(self.default_llm_model)
+            if hasattr(self, "llm_quant_combo"):
+                self.llm_quant_combo.setCurrentText(self.default_llm_quantization)
+            if hasattr(self, "llm_prompt_textbox"):
+                self.llm_prompt_textbox.setText(self.default_llm_prompt)
         except Exception as e:
             print(f"Error loading settings: {e}")
 
@@ -1306,18 +1304,17 @@ class SettingsDialog(QDialog):
             settings = {
                 "model": self.get_selected_model(),
                 "quantization": self.get_selected_quantization(),
-                "enable_sound": self.is_recording_sound_enabled(),
-                "sound_path": self.get_sound_path(),
+                "recording_sound_enabled": self.is_recording_sound_enabled(),
+                "sound_file_path": self.get_sound_path(),
                 "output_srt": self.is_srt_output_enabled(),
-                "rec_key": self.current_rec_key,
+                "recording_key": self.current_rec_key,
                 "llm_enabled": self.is_llm_enabled(),
                 "llm_model": self.get_llm_model(),
                 "llm_quantization": self.get_llm_quantization(),
                 "llm_prompt": self.get_llm_prompt(),
             }
             
-            with open("settings.json", "w") as f:
-                json.dump(settings, f, indent=4)
+            save_config(settings)
         except Exception as e:
             print(f"Error saving settings: {e}")
     
@@ -1614,4 +1611,4 @@ class SettingsDialog(QDialog):
                 pass
             finally:
                 # Use a direct timer call rather than connecting to prevent memory leak
-                QTimer.singleShot(200, lambda: setattr(self, "is_progress_bar_moving", False)) 
+                QTimer.singleShot(200, lambda: setattr(self, "is_progress_bar_moving", False))

@@ -31,7 +31,11 @@ def resource_path(relative_path):
     return full_path
 
 def get_config():
-    config_path = resource_path("config/settings.json")
+    # Load from root settings.json instead of src/config/settings.json
+    current_file = os.path.abspath(__file__)
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file))))
+    config_path = os.path.join(project_root, "settings.json")
+    
     try:
         with open(config_path) as f:
             return json.load(f)
@@ -39,19 +43,31 @@ def get_config():
         print(f"⚠️  Config file not found: {config_path}")
         # Return default config
         return {
-            "recording_key": "F9",
-            "llm_api_key": "",
+            "rec_key": "F9",
             "llm_enabled": False,
             "llm_model": "llama-3.2-3b-instruct",
             "llm_quantization": "Quantized",
             "model": "whisper-turbo", 
             "quantization": "Quantized",
-            "sound_file": "",
-            "use_better_whisper": True,
+            "sound_path": "",
+            "enable_sound": True,
         }
     except json.JSONDecodeError as e:
         print(f"⚠️  Config file has invalid JSON: {e}")
         return {}
 
+def save_config(config):
+    """Save configuration to the config file."""
+    # Save to root settings.json instead of src/config/settings.json
+    current_file = os.path.abspath(__file__)
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file))))
+    config_path = os.path.join(project_root, "settings.json")
+    
+    try:
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=4)
+    except Exception as e:
+        print(f"⚠️  Error saving config: {e}")
 
-__all__ = ["get_config", "resource_path"]
+
+__all__ = ["get_config", "save_config", "resource_path"]

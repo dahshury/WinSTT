@@ -13,6 +13,11 @@ import onnxruntime as ort
 import requests
 from pydub import AudioSegment
 from tqdm import tqdm
+
+# Suppress transformers warning about PyTorch/TensorFlow/Flax
+import logging
+logging.getLogger("transformers").setLevel(logging.ERROR)
+
 from transformers import WhisperFeatureExtractor, WhisperTokenizerFast
 
 from logger import setup_logger

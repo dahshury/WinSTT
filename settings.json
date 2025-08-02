@@ -2,7 +2,7 @@
     "model": "lite-whisper-turbo",
     "quantization": "Full",
     "enable_sound": true,
-    "sound_path": "E:\\DL\\Projects\\typer\\src\\resources/splash.mp3",
+    "sound_path": "media/splash.mp3",
     "output_srt": false,
     "rec_key": "CTRL+ALT+A",
     "llm_enabled": false,

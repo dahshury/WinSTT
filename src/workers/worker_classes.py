@@ -1,6 +1,10 @@
 import gc
 import io
 
+# Suppress transformers warning about PyTorch/TensorFlow/Flax before any imports
+import logging
+logging.getLogger("transformers").setLevel(logging.ERROR)
+
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from logger import setup_logger
@@ -282,4 +286,4 @@ class LLMWorker(QObject):
             
         except Exception as e:
             logger.exception(f"Error generating LLM response: {e!s}")
-            return f"Error generating response: {e!s}" 
+            return f"Error generating response: {e!s}"

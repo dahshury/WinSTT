@@ -439,9 +439,11 @@ def display_message(self, txt=None, filename=None, percentage=None, hold=False, 
         if self.settingsButton.isEnabled():
             self.settingsButton.setEnabled(False)
             self.is_downloading_model = True
+            self.update_instruction_label()  # Hide instruction when download starts
         if percentage >= 100:
             self.settingsButton.setEnabled(True)
             self.is_downloading_model = False
+            self.update_instruction_label()  # Show instruction when download completes
             
         # Check if the progress bar still exists before accessing it
         if hasattr(self, "progressBar") and self.progressBar is not None:
@@ -575,6 +577,18 @@ def keyPressEvent(self, event):
 def keyReleaseEvent(self, event):
     # Use QMainWindow's keyReleaseEvent
     QMainWindow.keyReleaseEvent(self, event)
+
+def showEvent(self, event):
+    """Handle the first time the window is shown to initialize workers."""
+    # Call the parent class's showEvent method first
+    QMainWindow.showEvent(self, event)
+    
+    # Initialize workers only once when window is first shown
+    if not hasattr(self, '_workers_initialized'):
+        self._workers_initialized = True
+        logger.info("Window shown for first time, initializing workers...")
+        # Use a timer to initialize workers after the window is fully shown
+        QTimer.singleShot(100, self.init_workers_and_signals)
 
 def changeEvent(self, event):
     if event.type() == QEvent.Type.WindowStateChange:
@@ -1315,3 +1329,17 @@ def download_started(self):
             finally:
                 # Use a direct timer call rather than connecting to prevent memory leak
                 QTimer.singleShot(200, lambda: setattr(self, "is_progress_bar_moving", False))
+
+def update_instruction_label(self):
+    """Update the instruction label based on download status."""
+    if hasattr(self, 'instruction_label'):
+        from PyQt6.QtCore import QCoreApplication
+        _translate = QCoreApplication.translate
+        
+        if getattr(self, 'is_downloading_model', False):
+            # Hide instruction during download
+            self.instruction_label.setText("")
+        else:
+            # Show instruction when not downloading
+            rec_key = getattr(self, 'rec_key', 'CTRL+ALT+A')
+            self.instruction_label.setText(_translate("MainWindow", f"Hold {rec_key} to record or drag & drop to transcribe"))
