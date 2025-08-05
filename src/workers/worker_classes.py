@@ -3,6 +3,7 @@ import io
 
 # Suppress transformers warning about PyTorch/TensorFlow/Flax before any imports
 import logging
+
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal

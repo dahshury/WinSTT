@@ -1,4 +1,7 @@
 import atexit
+
+# Suppress transformers warning about PyTorch/TensorFlow/Flax
+import logging
 import os
 import socket
 import subprocess
@@ -6,8 +9,6 @@ import sys
 import tempfile
 from unittest.mock import patch
 
-# Suppress transformers warning about PyTorch/TensorFlow/Flax
-import logging
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
 # Add the root directory to Python path for imports

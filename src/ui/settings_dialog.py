@@ -1,4 +1,3 @@
-import json
 import os
 
 import onnxruntime as ort
@@ -22,7 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.core.utils import resource_path, get_config, save_config
+from src.core.utils import get_config, resource_path, save_config
 
 
 class ToggleSwitch(QSlider):
