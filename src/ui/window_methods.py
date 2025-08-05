@@ -584,7 +584,7 @@ def showEvent(self, event):
     QMainWindow.showEvent(self, event)
     
     # Initialize workers only once when window is first shown
-    if not hasattr(self, '_workers_initialized'):
+    if not hasattr(self, "_workers_initialized"):
         self._workers_initialized = True
         logger.info("Window shown for first time, initializing workers...")
         # Use a timer to initialize workers after the window is fully shown
@@ -1332,14 +1332,14 @@ def download_started(self):
 
 def update_instruction_label(self):
     """Update the instruction label based on download status."""
-    if hasattr(self, 'instruction_label'):
+    if hasattr(self, "instruction_label"):
         from PyQt6.QtCore import QCoreApplication
         _translate = QCoreApplication.translate
         
-        if getattr(self, 'is_downloading_model', False):
+        if getattr(self, "is_downloading_model", False):
             # Hide instruction during download
             self.instruction_label.setText("")
         else:
             # Show instruction when not downloading
-            rec_key = getattr(self, 'rec_key', 'CTRL+ALT+A')
+            rec_key = getattr(self, "rec_key", "CTRL+ALT+A")
             self.instruction_label.setText(_translate("MainWindow", f"Hold {rec_key} to record or drag & drop to transcribe"))

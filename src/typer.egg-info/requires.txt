@@ -26,6 +26,7 @@ pyinstaller>=6.14.2
 aiofiles>=24.1.0
 psutil>=7.0.0
 librosa>=0.10.2
+tree3>=0.2.0
 
 [build]
 setuptools>=45

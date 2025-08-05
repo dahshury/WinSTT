@@ -3947,6 +3947,15 @@ wheels = [
 ]
 
 [[package]]
+name = "tree3"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/28/2a/11a1493b32eba73b1c807f8e81e25f901de4a3fbf15faf5d184c6023ff3e/tree3-0.2.0.tar.gz", hash = "sha256:b00a65f65276a9ca1e8055db50df96d50e75f2b8fa1f794cb0f38ccd467702f7", size = 11265, upload-time = "2025-04-07T16:49:17.16Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/95/72c13798bcb4c291a0b6d812c847735f58f702ed8ca572dfa8a188c0c7c8/tree3-0.2.0-py3-none-any.whl", hash = "sha256:26361ebbb053e094fd8d42c910f17460726bf618af0f440c7ddf587d5dc4f3fa", size = 12266, upload-time = "2025-04-07T16:49:15.723Z" },
+]
+
+[[package]]
 name = "triton"
 version = "3.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4010,6 +4019,7 @@ dependencies = [
     { name = "sympy" },
     { name = "tqdm" },
     { name = "transformers" },
+    { name = "tree3" },
 ]
 
 [package.optional-dependencies]
@@ -4091,6 +4101,7 @@ requires-dist = [
     { name = "tqdm", specifier = "==4.67.0" },
     { name = "transformers", specifier = ">=4.46.1" },
     { name = "transformers", marker = "extra == 'gpu'", specifier = ">=4.46.1" },
+    { name = "tree3", specifier = ">=0.2.0" },
     { name = "twine", marker = "extra == 'build'", specifier = ">=4.0.0" },
     { name = "typer", extras = ["build"], marker = "extra == 'dev-all'" },
     { name = "typer", extras = ["dev"], marker = "extra == 'dev-all'" },

@@ -52,10 +52,9 @@ class Recorder:
                 self.logger.warning("No recording device detected. Please connect a microphone.")
                 msg = "No recording device detected. Please connect a microphone."
                 raise RuntimeError(msg)
-            else:
-                self.logger.exception("Failed to access audio device: %s", e)
-                msg = f"Failed to access audio device: {e}"
-                raise RuntimeError(msg)
+            self.logger.exception("Failed to access audio device: %s", e)
+            msg = f"Failed to access audio device: {e}"
+            raise RuntimeError(msg)
         except Exception as e:
             self.logger.exception("Failed to start recording: %s", e)
             msg = f"Failed to start recording: {e}"

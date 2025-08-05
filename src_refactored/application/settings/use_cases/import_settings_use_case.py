@@ -1,0 +1,439 @@
+"""Import Settings Use Case
+
+This module implements the ImportSettingsUseCase for importing application settings
+from various formats (JSON, XML, etc.) with progress tracking and validation.
+"""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Any, Protocol
+
+from src_refactored.domain.common.progress_callback import ProgressCallback
+from src_refactored.domain.common.result import Result
+from src_refactored.domain.settings.entities.user_preferences import UserPreferences
+from src_refactored.domain.settings.value_objects.file_path import FilePath
+from src_refactored.domain.settings.value_objects.settings_operations import (
+    ImportFormat,
+    ImportPhase,
+    ImportResult,
+)
+
+
+class ImportStrategy(Enum):
+    """Import strategies for handling conflicts"""
+    REPLACE_ALL = "replace_all"
+    MERGE_PRESERVE_EXISTING = "merge_preserve_existing"
+    MERGE_OVERWRITE_EXISTING = "merge_overwrite_existing"
+    SELECTIVE_IMPORT = "selective_import"
+
+
+@dataclass(frozen=True)
+class ImportConfiguration:
+    """Configuration for import operations"""
+    strategy: ImportStrategy = ImportStrategy.REPLACE_ALL
+    validate_before_apply: bool = True
+    backup_current_settings: bool = True
+    ignore_unknown_fields: bool = True
+    strict_validation: bool = False
+    auto_detect_format: bool = True
+    max_file_size_mb: int = 10
+    allowed_formats: list[ImportFormat] = field(default_factory=lambda: list(ImportFormat))
+
+
+@dataclass(frozen=True)
+class ImportSettingsRequest:
+    """Request for importing settings"""
+    import_path: FilePath
+    import_format: ImportFormat = ImportFormat.AUTO_DETECT
+    configuration: ImportConfiguration = field(default_factory=ImportConfiguration)
+    current_settings: UserPreferences | None = None
+    progress_callback: ProgressCallback | None = None
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class ImportSettingsResponse:
+    """Response from import settings operation"""
+    result: ImportResult
+    imported_settings: UserPreferences | None = None
+    imported_fields_count: int = 0
+    skipped_fields_count: int = 0
+    invalid_fields_count: int = 0
+    import_duration_ms: int = 0
+    backup_file_path: FilePath | None = None
+    detected_format: ImportFormat | None = None
+    error_message: str | None = None
+    warnings: list[str] = field(default_factory=list,
+    )
+    field_errors: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class FileSystemServiceProtocol(Protocol):
+    """Protocol for file system operations"""
+
+    def read_text_file(self, path: Path,
+    ) -> Result[str]:
+        """Read text content from file"""
+        ...
+
+    def backup_file(self, source_path: Path, backup_suffix: str = ".bak",
+    ) -> Result[Path]:
+        """Create backup of existing file"""
+        ...
+
+    def get_file_size(self, path: Path,
+    ) -> Result[int]:
+        """Get file size in bytes"""
+        ...
+
+    def file_exists(self, path: Path,
+    ) -> bool:
+        """Check if file exists"""
+        ...
+
+    def detect_file_format(self, path: Path,
+    ) -> Result[ImportFormat]:
+        """Detect file format based on content and extension"""
+        ...
+
+
+class DeserializationServiceProtocol(Protocol):
+    """Protocol for data deserialization"""
+
+    def deserialize_from_json(self, content: str,
+    ) -> Result[dict[str, Any]]:
+        """Deserialize data from JSON format"""
+        ...
+
+    def deserialize_from_xml(self, content: str,
+    ) -> Result[dict[str, Any]]:
+        """Deserialize data from XML format"""
+        ...
+
+    def deserialize_from_yaml(self, content: str,
+    ) -> Result[dict[str, Any]]:
+        """Deserialize data from YAML format"""
+        ...
+
+    def deserialize_from_ini(self, content: str,
+    ) -> Result[dict[str, Any]]:
+        """Deserialize data from INI format"""
+        ...
+
+
+class ValidationServiceProtocol(Protocol):
+    """Protocol for validation operations"""
+
+    def validate_import_path(self, path: FilePath,
+    ) -> Result[None]:
+        """Validate import file path"""
+        ...
+
+    def validate_imported_data(self, data: dict[str, Any], strict: bool = False,
+    ) -> Result[dict[str, str]]:
+        """Validate imported settings data, returns field errors"""
+        ...
+
+    def validate_settings_compatibility(self, settings: UserPreferences,
+    ) -> Result[None]:
+        """Validate settings compatibility with current system"""
+        ...
+
+
+class SettingsFactoryProtocol(Protocol):
+    """Protocol for creating settings objects"""
+
+    def create_user_preferences_from_data(self, data: dict[str, Any]) -> Result[UserPreferences]:
+        """Create UserPreferences from imported data"""
+        ...
+
+    def merge_settings(self,
+    current: UserPreferences, imported: UserPreferences, strategy: ImportStrategy,
+    ) -> Result[UserPreferences]:
+        """Merge current and imported settings based on strategy"""
+        ...
+
+
+class LoggerServiceProtocol(Protocol):
+    """Protocol for logging operations"""
+
+    def log_info(self, message: str, **kwargs) -> None:
+        """Log info message"""
+        ...
+
+    def log_warning(self, message: str, **kwargs) -> None:
+        """Log warning message"""
+        ...
+
+    def log_error(self, message: str, **kwargs) -> None:
+        """Log error message"""
+        ...
+
+
+class ImportSettingsUseCase:
+    """Use case for importing application settings"""
+
+    def __init__(
+        self,
+        file_system_service: FileSystemServiceProtocol,
+        deserialization_service: DeserializationServiceProtocol,
+        validation_service: ValidationServiceProtocol,
+        settings_factory: SettingsFactoryProtocol,
+        logger_service: LoggerServiceProtocol,
+    ):
+        self._file_system = file_system_service
+        self._deserialization = deserialization_service
+        self._validation = validation_service
+        self._settings_factory = settings_factory
+        self._logger = logger_service
+
+    def execute(self, request: ImportSettingsRequest,
+    ) -> ImportSettingsResponse:
+        """Execute the import settings operation"""
+        start_time = datetime.utcnow()
+        response = ImportSettingsResponse(result=ImportResult.FAILED)
+
+        try:
+            self._logger.log_info(
+                "Starting settings import",
+                import_path=str(request.import_path.value)
+                format=request.import_format.value,
+            )
+
+            # Phase 1: Initialize and validate
+            if not self._update_progress(request.progress_callback, ImportPhase.INITIALIZING, 0):
+                response.result = ImportResult.CANCELLED
+                return response
+
+            validation_result = self._validate_request(request)
+            if not validation_result.is_success:
+                response.error_message = validation_result.error_message
+                return response
+
+            # Phase 2: Read file
+            if not self._update_progress(request.progress_callback, ImportPhase.READING_FILE, 15):
+                response.result = ImportResult.CANCELLED
+                return response
+
+            file_content_result = self._read_import_file(request)
+            if not file_content_result.is_success:
+                response.error_message = file_content_result.error_message
+                response.result
+ = (
+    ImportResult.FILE_NOT_FOUND if "not found" in file_content_result.error_message.lower() else ImportResult.FAILED)
+                return response
+
+            file_content = file_content_result.value
+
+            # Detect format if auto-detect is enabled
+            import_format = request.import_format
+            if request.import_format == ImportFormat.AUTO_DETECT:
+format_result = (
+    self._file_system.detect_file_format(Path(request.import_path.value)))
+                if format_result.is_success:
+                    import_format = format_result.value
+                    response.detected_format = import_format
+                else:
+                    response.warnings.append(f"Could not auto-detect format: {format_result.error_message}",
+    )
+                    import_format = ImportFormat.JSON  # Default fallback
+
+            # Phase 3: Parse data
+            if not self._update_progress(request.progress_callback, ImportPhase.PARSING_DATA, 30):
+                response.result = ImportResult.CANCELLED
+                return response
+
+            parsed_data_result = self._parse_file_content(file_content, import_format)
+            if not parsed_data_result.is_success:
+                response.error_message
+ = (
+    f"Failed to parse {import_format.value} data: {parsed_data_result.error_message}")
+                response.result = ImportResult.INVALID_FORMAT
+                return response
+
+            parsed_data = parsed_data_result.value
+
+            # Phase 4: Validate settings
+            if not self._update_progress(request.progress_callback, ImportPhase.VALIDATING_SETTINGS, 50):
+                response.result = ImportResult.CANCELLED
+                return response
+
+            if request.configuration.validate_before_apply:
+                validation_result = self._validation.validate_imported_data(
+                    parsed_data,
+                    request.configuration.strict_validation,
+                )
+                if not validation_result.is_success:
+response.field_errors = (
+    validation_result.value if validation_result.value else {})
+                    if request.configuration.strict_validation and response.field_errors:
+response.error_message = (
+    f"Validation failed: {len(response.field_errors)} field errors")
+                        response.result = ImportResult.VALIDATION_FAILED
+                        return response
+                    if response.field_errors:
+                        response.warnings.append(f"Found {len(response.field_errors)} field validati\
+    on warnings")
+
+            # Phase 5: Create settings object
+            settings_result = self._create_settings_from_data(parsed_data, request.configuration)
+            if not settings_result.is_success:
+response.error_message = (
+    f"Failed to create settings: {settings_result.error_message}")
+                return response
+
+            imported_settings = settings_result.value
+            response.imported_fields_count = len([k for k in parsed_data if not k.startswith("_")])
+
+            # Phase 6: Apply settings (merge if needed)
+            if not self._update_progress(request.progress_callback, ImportPhase.APPLYING_SETTINGS, 70):
+                response.result = ImportResult.CANCELLED
+                return response
+
+            final_settings = imported_settings
+if request.current_settings and request.configuration.strategy ! = (
+    ImportStrategy.REPLACE_ALL:)
+                merge_result = self._settings_factory.merge_settings(
+                    request.current_settings,
+                    imported_settings,
+                    request.configuration.strategy,
+                )
+                if merge_result.is_success:
+                    final_settings = merge_result.value
+                else:
+                    response.warnings.append(f"Settings merge failed: {merge_result.error_message}",
+    )
+
+            # Phase 7: Verify import
+            if not self._update_progress(request.progress_callback, ImportPhase.VERIFYING_IMPORT, 85):
+                response.result = ImportResult.CANCELLED
+                return response
+
+            compatibility_result = self._validation.validate_settings_compatibility(final_settings)
+            if not compatibility_result.is_success:
+                response.warnings.append(f"Compatibility warning: {compatibility_result.error_messag\
+    e}")
+
+            # Phase 8: Complete
+            if not self._update_progress(request.progress_callback, ImportPhase.COMPLETED, 100):
+                response.result = ImportResult.CANCELLED
+                return response
+
+            # Set success response
+response.result = (
+    ImportResult.SUCCESS if not response.field_errors else ImportResult.PARTIAL_SUCCESS)
+            response.imported_settings = final_settings
+response.import_duration_ms = (
+    int((datetime.utcnow() - start_time).total_seconds() * 1000))
+            response.invalid_fields_count = len(response.field_errors)
+
+            # Add metadata
+            response.metadata = {
+                "import_timestamp": start_time.isoformat()
+                "detected_format": response.detected_format.value if response.detected_format else import_format.value,
+                "original_format": request.import_format.value,
+                "strategy_used": request.configuration.strategy.value,
+                "file_size_bytes": len(file_content)
+                "validation_strict": request.configuration.strict_validation,
+            }
+
+            self._logger.log_info(
+                "Settings import completed",
+                import_path=str(request.import_path.value)
+                result=response.result.value,
+                imported_fields=response.imported_fields_count,
+                invalid_fields=response.invalid_fields_count,
+                duration_ms=response.import_duration_ms,
+            )
+
+        except Exception as e:
+            self._logger.log_error(f"Unexpected error during settings import: {e!s}")
+            response.error_message = f"Unexpected error: {e!s}"
+            response.result = ImportResult.FAILED
+
+        return response
+
+    def _validate_request(self, request: ImportSettingsRequest,
+    ) -> Result[None]:
+        """Validate the import request"""
+        # Validate import path
+        path_validation = self._validation.validate_import_path(request.import_path)
+        if not path_validation.is_success:
+            return path_validation
+
+        # Check if file exists
+        if not self._file_system.file_exists(Path(request.import_path.value)):
+            return Result.failure(f"Import file not found: {request.import_path.value}")
+
+        # Check file size
+        size_result = self._file_system.get_file_size(Path(request.import_path.value))
+        if size_result.is_success:
+            size_mb = size_result.value / (1024 * 1024)
+            if size_mb > request.configuration.max_file_size_mb:
+                return Result.failure(f"File too large: {size_mb:.1f}MB (max: {request.configuration\
+    .max_file_size_mb}MB)")
+
+        return Result.success(None,
+    )
+
+    def _read_import_file(self, request: ImportSettingsRequest,
+    ) -> Result[str]:
+        """Read the import file content"""
+        try:
+            file_path = Path(request.import_path.value)
+            return self._file_system.read_text_file(file_path)
+        except Exception as e:
+            return Result.failure(f"Failed to read import file: {e!s}",
+    )
+
+    def _parse_file_content(self, content: str, format_type: ImportFormat,
+    ) -> Result[dict[str, Any]]:
+        """Parse file content based on format"""
+        try:
+            if format_type == ImportFormat.JSON:
+                return self._deserialization.deserialize_from_json(content)
+            if format_type == ImportFormat.XML:
+                return self._deserialization.deserialize_from_xml(content)
+            if format_type == ImportFormat.YAML:
+                return self._deserialization.deserialize_from_yaml(content)
+            if format_type == ImportFormat.INI:
+                return self._deserialization.deserialize_from_ini(content)
+            return Result.failure(f"Unsupported import format: {format_type}")
+        except Exception as e:
+            return Result.failure(f"Failed to parse {format_type.value} content: {e!s}")
+
+    def _create_settings_from_data(self, data: dict[str, Any], config: ImportConfiguration,
+    ) -> Result[UserPreferences]:
+        """Create UserPreferences object from parsed data"""
+        try:
+            # Filter unknown fields if configured
+            if config.ignore_unknown_fields:
+                known_fields = {
+                    "model", "quantization", "recording_sound_enabled", "sound_file_path",
+                    "output_srt", "recording_key", "llm_enabled", "llm_model",
+                    "llm_quantization", "llm_prompt", "_metadata",
+                }
+filtered_data = (
+    {k: v for k, v in data.items() if k in known_fields or k.startswith("_")})
+            else:
+                filtered_data = data
+
+            return self._settings_factory.create_user_preferences_from_data(filtered_data)
+
+        except Exception as e:
+            return Result.failure(f"Failed to create settings from data: {e!s}",
+    )
+
+    def _update_progress(self, callback: ProgressCallback | None, phase: ImportPhase, percentage: int,
+    ) -> bool:
+        """Update progress and check for cancellation"""
+        if callback:
+            return callback.update_progress(
+                percentage=percentage,
+                message=f"Import phase: {phase.value}",
+                phase=phase.value,
+            )
+        return True

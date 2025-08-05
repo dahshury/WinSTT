@@ -269,7 +269,7 @@ class Ui_MainWindow:
         # Get the current rec_key from the MainWindow if available, otherwise use the default
         rec_key = MainWindow.rec_key if hasattr(MainWindow, "rec_key") else "CTRL+ALT+A"
         # Only show instruction if not downloading models
-        if not getattr(MainWindow, 'is_downloading_model', False):
+        if not getattr(MainWindow, "is_downloading_model", False):
             self.instruction_label.setText(_translate("MainWindow", f"Hold {rec_key} to record or drag & drop to transcribe"))
         else:
             self.instruction_label.setText(_translate("MainWindow", ""))

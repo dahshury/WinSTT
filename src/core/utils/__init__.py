@@ -1,6 +1,10 @@
 import json
 import os
 import sys
+from pathlib import Path
+
+# Import gemma_inference for backward compatibility
+from . import gemma_inference
 
 
 def resource_path(relative_path):
@@ -70,4 +74,4 @@ def save_config(config):
         print(f"⚠️  Error saving config: {e}")
 
 
-__all__ = ["get_config", "save_config", "resource_path"]
+__all__ = ["gemma_inference", "get_config", "resource_path", "save_config"]
