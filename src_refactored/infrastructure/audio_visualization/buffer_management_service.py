@@ -13,7 +13,7 @@ import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from src_refactored.domain.audio_visualization.value_objects.audio_buffer import AudioBuffer
-from src_refactored.infrastructure.system.logging_service import LoggerService
+from src_refactored.infrastructure.system.logging_service import LoggingService
 
 
 @dataclass
@@ -74,7 +74,7 @@ class RollingAudioBuffer:
         self._buffer = np.zeros(self.total_size, dtype=np.float32)
         self._lock = threading.RLock()
         self._overflow_count = 0
-        self.logger = LoggerService().get_logger("RollingAudioBuffer")
+        self.logger = LoggingService().get_logger("RollingAudioBuffer")
 
     def update(self, new_data: np.ndarray) -> bool:
         """Update buffer with new audio data using rolling window.
@@ -136,8 +136,7 @@ class RollingAudioBuffer:
         """
         with self._lock:
             try:
-                old_data = self._buffer.copy(,
-    )
+                old_data = self._buffer.copy()
                 new_total_size = new_chunk_size * new_buffer_size
 
                 # Create new buffer
@@ -194,7 +193,7 @@ class BufferManager(QObject):
         super().__init__(parent)
         self._buffers: dict[str, RollingAudioBuffer] = {}
         self._buffer_configs: dict[str, BufferConfiguration] = {}
-        self.logger = LoggerService().get_logger("BufferManager")
+        self.logger = LoggingService().get_logger("BufferManager")
 
     def create_buffer(self, buffer_id: str, config: BufferConfiguration,
     ) -> bool:
@@ -220,8 +219,7 @@ class BufferManager(QObject):
             return True
 
         except Exception as e:
-            self.logger.exception(f"Error creating buffer {buffer_id}: {e}",
-    )
+            self.logger.exception(f"Error creating buffer {buffer_id}: {e}")
             return False
 
     def update_buffer(self, buffer_id: str, new_data: np.ndarray) -> bool:
@@ -389,13 +387,13 @@ class BufferManagementService:
     with domain entities and application use cases.
     """
 
-    def __init__(self, logger_service: LoggerService | None = None):
+    def __init__(self, logger_service: LoggingService | None = None):
         """Initialize the buffer management service.
         
         Args:
             logger_service: Optional logger service
         """
-        self.logger_service = logger_service or LoggerService()
+        self.logger_service = logger_service or LoggingService()
         self.logger = self.logger_service.get_logger("BufferManagementService")
         self.buffer_manager = BufferManager()
 
@@ -415,20 +413,20 @@ class BufferManagementService:
         success = self.buffer_manager.create_buffer(buffer_id, config)
         if not success:
             msg = f"Failed to create buffer: {buffer_id}"
-            raise RuntimeError(msg,
-    )
+            raise RuntimeError(msg)
 
         # Create domain entity
-        audio_buffer = AudioBuffer(
-            buffer_id=buffer_id,
-            capacity=config.chunk_size * config.buffer_size,
+        from src_refactored.domain.audio_visualization.value_objects.audio_buffer import AudioBuffer
+        audio_buffer = AudioBuffer.create_empty(
+            max_size=config.chunk_size * config.buffer_size,
             sample_rate=config.sample_rate,
+            chunk_size=config.chunk_size,
         )
 
         self.logger.info("Created audio buffer: {buffer_id}")
         return audio_buffer
 
-    def update_buffer(self, buffer: AudioBuffer, new_data: np.ndarray) -> bool:
+    def update_buffer(self, buffer: AudioBuffer, new_data: np.ndarray) -> AudioBuffer:
         """Update buffer with new audio data.
         
         Args:
@@ -436,12 +434,10 @@ class BufferManagementService:
             new_data: New audio data
             
         Returns:
-            True if updated successfully, False otherwise
+            Updated audio buffer
         """
-        success = self.buffer_manager.update_buffer(buffer.buffer_id, new_data)
-        if success:
-            buffer.update_data(new_data)
-        return success
+        # Add samples to the buffer using the domain method
+        return buffer.add_samples(new_data)
 
     def get_buffer_data(self, buffer: AudioBuffer,
     ) -> np.ndarray:
@@ -451,23 +447,29 @@ class BufferManagementService:
             buffer: Audio buffer entity
             
         Returns:
-            Current buffer data
+            Current buffer data as numpy array
         """
-        data = self.buffer_manager.get_buffer_data(buffer.buffer_id)
-        return data if data is not None else np.array([])
+        if buffer.is_empty():
+            return np.array([])
+        
+        # Concatenate all waveform data
+        concatenated = buffer.concatenate_all()
+        return concatenated.to_numpy_array() if concatenated else np.array([])
 
     def clear_buffer(self, buffer: AudioBuffer,
-    ) -> None:
+    ) -> AudioBuffer:
         """Clear buffer contents.
         
         Args:
             buffer: Audio buffer entity
+            
+        Returns:
+            Cleared audio buffer
         """
-        self.buffer_manager.clear_buffer(buffer.buffer_id)
-        buffer.clear()
+        return buffer.clear()
 
     def resize_buffer(self, buffer: AudioBuffer, new_size: int,
-    ) -> bool:
+    ) -> AudioBuffer:
         """Resize buffer capacity.
         
         Args:
@@ -475,21 +477,9 @@ class BufferManagementService:
             new_size: New buffer capacity
             
         Returns:
-            True if resized successfully, False otherwise
+            Resized audio buffer
         """
-        # Calculate new dimensions (assuming same chunk size)
-        current_info = self.buffer_manager.get_buffer_info(buffer.buffer_id)
-        if not current_info:
-            return False
-
-        chunk_size = current_info["chunk_size"]
-        new_buffer_size = new_size // chunk_size
-
-        success = self.buffer_manager.resize_buffer(buffer.buffer_id, chunk_size, new_buffer_size)
-        if success:
-            buffer.resize(new_size)
-
-        return success
+        return buffer.resize(new_size)
 
     def get_buffer_manager(self) -> BufferManager:
         """Get buffer manager for signal connections.
@@ -506,8 +496,8 @@ class BufferManagementService:
         Args:
             buffer: Audio buffer entity
         """
-        self.buffer_manager.remove_buffer(buffer.buffer_id)
-        self.logger.info("Cleaned up buffer: {buffer.buffer_id}")
+        # AudioBuffer is a value object, so no cleanup needed
+        self.logger.info("Cleaned up buffer")
 
     def cleanup_all(self) -> None:
         """Clean up all buffer resources."""

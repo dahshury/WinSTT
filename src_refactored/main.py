@@ -13,9 +13,9 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from logger import setup_logger
 from src_refactored.application.application_config import create_default_configuration
 from src_refactored.application.application_orchestrator import create_application_orchestrator
-from logger import setup_logger
 
 
 def main() -> int:
@@ -30,7 +30,7 @@ def main() -> int:
         logger.info("Starting WinSTT Refactored Application")
         
         # Initialize application configuration
-        config = create_default_configuration()
+        create_default_configuration()
         
         # Create application orchestrator with DI container
         orchestrator = create_application_orchestrator()
@@ -42,7 +42,7 @@ def main() -> int:
         return exit_code
         
     except Exception as e:
-        logger.error(f"Fatal error starting application: {e}")
+        logger.exception(f"Fatal error starting application: {e}")
         return 1
 
 

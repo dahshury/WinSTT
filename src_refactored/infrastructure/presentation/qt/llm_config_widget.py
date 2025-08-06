@@ -19,19 +19,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.core.utils import resource_path
-from src_refactored.application.use_cases.settings_management.reset_llm_settings_use_case import (
-    ResetLLMSettingsUseCase,
-)
-from src_refactored.application.use_cases.settings_management.update_llm_settings_use_case import (
-    UpdateLLMSettingsUseCase,
-)
-from src_refactored.domain.settings_management.value_objects.llm_configuration import (
-    LLMConfiguration,
-)
-from src_refactored.domain.settings_management.value_objects.quantization_type import (
-    QuantizationType,
-)
+from src_refactored.domain.settings.value_objects.llm_configuration import LLMConfiguration
+from src_refactored.domain.settings.value_objects.model_configuration import Quantization
+from src_refactored.infrastructure.common.resource_service import resource_path
 from src_refactored.infrastructure.presentation.qt.toggle_switch_widget import ToggleSwitch
 
 
@@ -56,10 +46,6 @@ class LLMConfigWidget(QGroupBox):
             parent: Parent widget
         """
         super().__init__("LLM Settings", parent)
-
-        # Initialize use cases (these would be injected via DI in full implementation)
-        self._update_llm_use_case = UpdateLLMSettingsUseCase()
-        self._reset_llm_use_case = ResetLLMSettingsUseCase()
 
         # Available LLM models
         self._available_models = [
@@ -523,7 +509,7 @@ class LLMConfigWidget(QGroupBox):
         return LLMConfiguration(
             enabled=self._current_enabled,
             model_name=self._current_model,
-            quantization=QuantizationType.from_string(self._current_quantization)
+            quantization=Quantization.from_string(self._current_quantization),
             system_prompt=self._current_prompt,
         )
 
@@ -603,5 +589,4 @@ class LLMConfigWidget(QGroupBox):
             if self.llm_model_combo:
                 index = self.llm_model_combo.findText(model)
                 if index >= 0:
-                    self.llm_model_combo.removeItem(index,
-    )
+                    self.llm_model_combo.removeItem(index)

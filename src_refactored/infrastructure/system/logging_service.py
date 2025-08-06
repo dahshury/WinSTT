@@ -296,8 +296,7 @@ class LoggingService:
         """
         log_dir = Path(directory) if directory else self._log_directory
         if log_dir is None:
-            log_dir = Path.cwd(,
-    ) / "logs"
+            log_dir = Path.cwd() / "logs"
 
         log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -431,8 +430,8 @@ class LoggingService:
         if not logger.handlers:
             # Configure the file handler
             file_handler = logging.FileHandler(log_file_path)
-            file_handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s -
-    %(message)s"))
+            file_handler.setFormatter(logging.Formatter
+                                      ("[%(asctime)s] %(levelname)s - %(message)s"))
             file_handler.setLevel(logging.INFO)
 
             # Create a stream handler and set its level to WARNING

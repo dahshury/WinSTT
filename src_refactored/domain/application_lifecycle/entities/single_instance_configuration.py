@@ -31,8 +31,7 @@ class SingleInstanceConfiguration(Entity[str]):
 
     def __post_init__(self):
         # Generate ID based on configuration
-config_id = (
-    f"{self.check_method.value}_{self.socket_port}_{self.activation_timeout_seconds}")
+        config_id = f"{self.check_method.value}_{self.socket_port}_{self.activation_timeout_seconds}"
         super().__init__(config_id)
 
     def is_socket_based(self) -> bool:
@@ -82,5 +81,4 @@ config_id = (
             raise ValueError(msg)
         if self.check_method == InstanceCheckMethod.NAMED_MUTEX and not self.mutex_name:
             msg = "Mutex name required for named mutex method"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)

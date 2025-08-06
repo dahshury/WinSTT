@@ -18,19 +18,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.core.utils import resource_path
-from src_refactored.application.use_cases.settings_management.reset_model_settings_use_case import (
-    ResetModelSettingsUseCase,
-)
-from src_refactored.application.use_cases.settings_management.update_model_settings_use_case import (
-    UpdateModelSettingsUseCase,
-)
-from src_refactored.domain.settings_management.value_objects.model_configuration import (
+from src_refactored.domain.settings.value_objects.model_configuration import (
     ModelConfiguration,
+    ModelType,
+    Quantization,
 )
-from src_refactored.domain.settings_management.value_objects.quantization_type import (
-    QuantizationType,
-)
+from src_refactored.infrastructure.common.resource_service import resource_path
 
 
 class ModelConfigWidget(QGroupBox):
@@ -54,10 +47,6 @@ class ModelConfigWidget(QGroupBox):
             parent: Parent widget
         """
         super().__init__("Model Settings", parent)
-
-        # Initialize use cases (these would be injected via DI in full implementation)
-        self._update_model_use_case = UpdateModelSettingsUseCase()
-        self._reset_model_use_case = ResetModelSettingsUseCase()
 
         # Available models and their configurations
         self._available_models = [
@@ -418,8 +407,9 @@ class ModelConfigWidget(QGroupBox):
             ModelConfiguration domain object
         """
         return ModelConfiguration(
-            model_name=self._current_model,
-            quantization=QuantizationType.from_string(self._current_quantization),
+            model_type=ModelType.from_string(self._current_model),
+            quantization=Quantization.from_string(self._current_quantization),
+            use_gpu=True,  # Default to GPU usage
         )
 
     def set_model_configuration(self, config: ModelConfiguration,
@@ -429,7 +419,7 @@ class ModelConfigWidget(QGroupBox):
         Args:
             config: ModelConfiguration domain object
         """
-        self.set_model(config.model_name)
+        self.set_model(config.model_type.value)
         self.set_quantization(config.quantization.value)
 
     def reset_to_defaults(self):

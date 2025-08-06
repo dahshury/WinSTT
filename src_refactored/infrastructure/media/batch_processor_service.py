@@ -125,8 +125,7 @@ class BatchProcessorService:
         if self.progress_callback:
             file_name = Path(self.current_item.file_path).name
             self.progress_callback(
-                f"Processing {file_name} ({self.processed_items}/{self.total_items},
-    )",
+                f"Processing {file_name} ({self.processed_items}/{self.total_items})",
                 progress,
             )
 
@@ -144,8 +143,7 @@ class BatchProcessorService:
         self.completed_items.append(item)
 
         if self.progress_callback:
-            file_name = Path(item.file_path,
-    ).name
+            file_name = Path(item.file_path).name
             self.progress_callback(f"Completed: {file_name}", 0)
 
     def mark_item_failed(self, item: ProcessingItem, error: str,
@@ -169,8 +167,7 @@ class BatchProcessorService:
             if self.progress_callback:
                 file_name = Path(item.file_path).name
                 self.progress_callback(
-                    f"Retrying {file_name} (attempt {item.attempts + 1}/{item.max_attempts},
-    )",
+                    f"Retrying {file_name} (attempt {item.attempts + 1}/{item.max_attempts})",
                     0,
                 )
             return True
@@ -180,8 +177,7 @@ class BatchProcessorService:
         self.failed_items.append(item)
 
         if self.progress_callback:
-            file_name = Path(item.file_path,
-    ).name
+            file_name = Path(item.file_path).name
             self.progress_callback(f"Failed permanently: {file_name} - {error}", 0)
         return False
 
@@ -195,9 +191,9 @@ class BatchProcessorService:
             "status": self.status.value,
             "total_items": self.total_items,
             "processed_items": self.processed_items,
-            "remaining_items": len(self.processing_queue)
-            "completed_items": len(self.completed_items)
-            "failed_items": len(self.failed_items)
+            "remaining_items": len(self.processing_queue),
+            "completed_items": len(self.completed_items),
+            "failed_items": len(self.failed_items),
             "current_item": self.current_item.file_path if self.current_item else None,
             "progress_percentage": (self.processed_items / self.total_items) * 100 if self.total_items > 0 else 0,
         }

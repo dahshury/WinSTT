@@ -182,8 +182,7 @@ class ProgressPercentage(ValueObject):
 
     def __float__(self) -> float:
         """Float representation of progress percentage."""
-        return self.to_float(,
-    )
+        return self.to_float()
 
     def __lt__(self, other: ProgressPercentage | float) -> bool:
         """Less than comparison."""

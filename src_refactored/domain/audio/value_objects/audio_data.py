@@ -155,7 +155,7 @@ class AudioBuffer(ValueObject):
     ) -> tuple:
         return (
             self.buffer_id,
-            tuple(self.data)
+            tuple(self.data),
             self.max_size,
             self.current_size,
             self.is_full,
@@ -276,5 +276,4 @@ class StreamMetrics(ValueObject):
             self.drop_rate_percent < 1.0 and  # Less than 1% drop rate
             self.average_latency_ms < 100.0 and  # Less than 100ms latency
             self.cpu_usage_percent < 80.0  # Less than 80% CPU usage
-        ,
-    )
+        )

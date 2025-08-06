@@ -4,9 +4,6 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import QDialog
 
 from logger import setup_logger
-from src_refactored.domain.services.memory_management_service import MemoryManagementService
-from src_refactored.domain.services.resource_management_service import ResourceManagementService
-from src_refactored.domain.services.worker_lifecycle_service import WorkerLifecycleService
 
 
 class ResourceManagementComponent(QObject):
@@ -28,11 +25,6 @@ class ResourceManagementComponent(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.logger = setup_logger()
-
-        # Services
-        self.resource_service = ResourceManagementService()
-        self.worker_lifecycle_service = WorkerLifecycleService()
-        self.memory_service = MemoryManagementService()
 
         # Resource tracking
         self._workers = {}
@@ -441,8 +433,7 @@ class ResourceManagementComponent(QObject):
         """
         try:
             # Force garbage collection
-            collected = gc.collect(,
-    )
+            gc.collect()
 
             self.logger.debug("Garbage collection completed, collected {collected} objects")
             self.memory_cleanup_completed.emit()

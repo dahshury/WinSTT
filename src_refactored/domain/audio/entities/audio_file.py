@@ -41,8 +41,7 @@ class FilePath(ValueObject):
         # Basic path validation
         try:
             path_obj = Path(self.path)
-            if path_obj.is_absolute() and not path_obj.parent.exists(,
-    ):
+            if path_obj.is_absolute() and not path_obj.parent.exists():
                 # Allow non-existent absolute paths for future creation
                 pass
         except (OSError, ValueError) as e:
@@ -154,8 +153,7 @@ class AudioFile(Entity,
     def update_access_time(self) -> None:
         """Update last accessed timestamp."""
         self.last_accessed = datetime.now()
-        self.update_timestamp(,
-    )
+        self.update_timestamp()
 
     def add_tag(self, tag: str,
     ) -> None:

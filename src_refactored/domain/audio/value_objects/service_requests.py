@@ -7,13 +7,24 @@ and responses in the domain.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from src_refactored.domain.common.value_object import ValueObject
 
-from .audio_configuration import AudioConfiguration, PlaybackConfiguration, RecordingConfiguration
+from .audio_configuration import (
+    AudioConfiguration,
+    PlaybackConfiguration,
+    RecordingConfiguration,
+    StreamConfiguration,
+)
+from .audio_data import AudioBuffer
 from .audio_format import AudioFormat
+from .audio_track import AudioTrack
+from .playback_operation import PlaybackOperation
+from .recording_operation import RecordingOperation
 from .sample_rate import SampleRate
+from .stream_operations import StreamOperation
 
 
 class RequestType(Enum):
@@ -71,36 +82,77 @@ class AudioServiceRequest(ValueObject):
 class AudioRecordingServiceRequest(AudioServiceRequest):
     """Audio recording service request."""
 
+    operation: RecordingOperation | None = None
     configuration: RecordingConfiguration | None = None
     device_id: int | None = None
+    recording_id: str | None = None
+    file_path: Path | None = None
+    enable_progress_tracking: bool = False
+    enable_logging: bool = False
+    enable_real_time_callback: bool = False
+    config: RecordingConfiguration | None = None  # Alias for configuration
 
     def _get_equality_components(self) -> tuple:
-        return (*super()._get_equality_components(,
-    ), self.configuration, self.device_id)
+        return (*super()._get_equality_components(), self.operation, self.configuration, self.device_id, self.recording_id, self.file_path, self.enable_progress_tracking, self.enable_logging, self.enable_real_time_callback, self.config)
+
+    def __invariants__(self) -> None:
+        super().__invariants__()
+        if self.operation is None:
+            msg = "Operation is required"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
 class AudioPlaybackServiceRequest(AudioServiceRequest):
     """Audio playback service request."""
 
+    operation: PlaybackOperation | None = None
     configuration: PlaybackConfiguration | None = None
     device_id: int | None = None
     audio_data: bytes | None = None
+    track: AudioTrack | None = None
+    file_path: Path | None = None
+    position: float | None = None
+    volume: float | None = None
+    speed: float | None = None
+    enable_progress_tracking: bool = False
+    enable_logging: bool = False
+    enable_real_time_callback: bool = False
+    config: PlaybackConfiguration | None = None
 
     def _get_equality_components(self) -> tuple:
-        return (*super()._get_equality_components(), self.configuration, self.device_id, self.audio_data)
+        return (*super()._get_equality_components(), self.operation, self.configuration, self.device_id, self.audio_data, self.track, self.file_path, self.position, self.volume, self.speed, self.enable_progress_tracking, self.enable_logging, self.enable_real_time_callback, self.config)
+
+    def __invariants__(self) -> None:
+        super().__invariants__()
+        if self.operation is None:
+            msg = "Operation is required"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
 class AudioStreamServiceRequest(AudioServiceRequest):
     """Audio stream service request."""
 
+    operation: StreamOperation | None = None
     configuration: AudioConfiguration | None = None
     device_id: int | None = None
     buffer_size: int | None = None
+    enable_progress_tracking: bool = False
+    enable_logging: bool = False
+    enable_metrics: bool = False
+    config: StreamConfiguration | None = None
+    buffer_data: AudioBuffer | None = None
+    timeout: float = 5.0
 
     def _get_equality_components(self) -> tuple:
-        return (*super()._get_equality_components(), self.configuration, self.device_id, self.buffer_size)
+        return (*super()._get_equality_components(), self.operation, self.configuration, self.device_id, self.buffer_size, self.enable_progress_tracking, self.enable_logging, self.enable_metrics, self.config, self.buffer_data, self.timeout)
+
+    def __invariants__(self) -> None:
+        super().__invariants__()
+        if self.operation is None:
+            msg = "Operation is required"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -113,9 +165,7 @@ class DeviceTestRequest(AudioServiceRequest):
     audio_format: AudioFormat | None = None
 
     def _get_equality_components(self) -> tuple:
-        return (*super()._get_equality_components(,
-    )
-        self.device_id, self.test_duration_seconds, self.sample_rate, self.audio_format)
+        return (*super()._get_equality_components(), self.device_id, self.test_duration_seconds, self.sample_rate, self.audio_format)
 
     def __invariants__(self) -> None:
         super().__invariants__()
@@ -182,8 +232,7 @@ class StreamOperationResult(ServiceOperationResult):
     latency_ms: float | None = None
 
     def _get_equality_components(self) -> tuple:
-        return (*super()._get_equality_components(,
-    ), self.stream_id, self.frames_processed, self.latency_ms)
+        return (*super()._get_equality_components(), self.stream_id, self.frames_processed, self.latency_ms)
 
 
 @dataclass(frozen=True)
@@ -196,7 +245,7 @@ class StreamStartResult(ServiceOperationResult):
     device_latency_ms: float | None = None
 
     def _get_equality_components(self) -> tuple:
-        return (*super()._get_equality_components()
+        return (*super()._get_equality_components(),
         self.stream_id, self.actual_sample_rate, self.actual_buffer_size, self.device_latency_ms)
 
 
@@ -210,9 +259,7 @@ class BufferOperationResult(ServiceOperationResult):
     buffer_utilization: float = 0.0
 
     def _get_equality_components(self) -> tuple:
-        return (*super()._get_equality_components(,
-    )
-        self.buffer_id, self.frames_written, self.frames_read, self.buffer_utilization)
+        return (*super()._get_equality_components(), self.buffer_id, self.frames_written, self.frames_read, self.buffer_utilization)
 
     def __invariants__(self) -> None:
         super().__invariants__()
@@ -236,9 +283,7 @@ class DeviceListResult(ServiceOperationResult):
     default_output_device: int | None = None
 
     def _get_equality_components(self) -> tuple:
-        return (*super()._get_equality_components(,
-    )
-        self.device_count, self.default_input_device, self.default_output_device)
+        return (*super()._get_equality_components(), self.device_count, self.default_input_device, self.default_output_device)
 
     def __invariants__(self) -> None:
         super().__invariants__()
@@ -258,9 +303,7 @@ class DeviceTestResult(ServiceOperationResult):
     supported_formats: list[AudioFormat] = field(default_factory=list)
 
     def _get_equality_components(self) -> tuple:
-        return (*super()._get_equality_components(,
-    )
-        self.device_id, self.test_passed, self.latency_ms, self.max_sample_rate, tuple(self.supported_formats))
+        return (*super()._get_equality_components(), self.device_id, self.test_passed, self.latency_ms, self.max_sample_rate, tuple(self.supported_formats))
 
     def __invariants__(self) -> None:
         super().__invariants__()
@@ -269,5 +312,6 @@ class DeviceTestResult(ServiceOperationResult):
             raise ValueError(msg)
         if self.latency_ms is not None and self.latency_ms < 0:
             msg = "Latency cannot be negative"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
+            raise ValueError(msg)
+            raise ValueError(msg)

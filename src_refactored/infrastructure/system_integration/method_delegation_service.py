@@ -13,7 +13,7 @@ from typing import Any, Protocol
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from logger import setup_logger
-from src.domain.common.result import Result
+from src_refactored.domain.common.result import Result
 from src_refactored.domain.system_integration.value_objects.method_delegation import (
     DelegationConfiguration,
     DelegationMode,
@@ -52,8 +52,7 @@ class MethodDelegationService(QObject):
     def __init__(self):
         super().__init__()
         self.logger = setup_logger()
-self._delegated_methods: dict[str, dict[str, MethodInfo]] = (
-    {}  # class_name -> {method_name -> MethodInfo})
+        self._delegated_methods: dict[str, dict[str, MethodInfo]] = {}  # class_name -> {method_name -> MethodInfo}
         self._source_modules: dict[str, Any] = {}  # module_path -> module_object
 
     def register_delegation_configuration(self, config: DelegationConfiguration,
@@ -70,18 +69,15 @@ self._delegated_methods: dict[str, dict[str, MethodInfo]] = (
             if config.auto_import:
                 import_result = self._import_source_module(config.source_module_path)
                 if not import_result.is_success:
-                    return Result.failure(f"Failed to import source module: {import_result.error()}"\
-    )
+                    return Result.failure(f"Failed to import source module: {import_result.error()}")
 
-            self.logger.debug("Registered delegation configuration for {config.target_class_name} wi\
-    th {len(config.methods)} methods")
+            self.logger.debug(f"Registered delegation configuration for {config.target_class_name} with {len(config.methods)} methods")
             return Result.success(None)
 
         except Exception as e:
             error_msg = f"Failed to register delegation configuration: {e!s}"
             self.logger.exception(error_msg)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def delegate_method(self, target_instance: Any, method_info: MethodInfo,
     ) -> Result[None]:
@@ -91,9 +87,7 @@ self._delegated_methods: dict[str, dict[str, MethodInfo]] = (
             if method_info.source_module not in self._source_modules:
                 import_result = self._import_source_module(method_info.source_module)
                 if not import_result.is_success:
-error_msg = (
-    f"Failed to import source module {method_info.source_module}: {import_result.error()}
-    )}"
+                    error_msg = f"Failed to import source module {method_info.source_module}: {import_result.error()}"
                     self.delegation_failed.emit(method_info.name, target_instance.__class__.__name__, error_msg)
                     return Result.failure(error_msg)
 
@@ -101,9 +95,7 @@ error_msg = (
 
             # Get source function
             if not hasattr(source_module, method_info.source_function):
-                error_msg
- = (
-    f"Source function {method_info.source_function} not found in module {method_info.source_module}")
+                error_msg = f"Source function {method_info.source_function} not found in module {method_info.source_module}"
                 self.delegation_failed.emit(method_info.name, target_instance.__class__.__name__, error_msg)
                 return Result.failure(error_msg)
 
@@ -127,14 +119,12 @@ error_msg = (
                 return Result.failure(error_msg)
 
             self.method_delegated.emit(method_info.name, target_instance.__class__.__name__)
-            self.logger.debug("Delegated method {method_info.name} to {target_instance.__class__.__n\
-    ame__}")
+            self.logger.debug(f"Delegated method {method_info.name} to {target_instance.__class__.__name__}")
             return Result.success(None)
 
         except Exception as e:
             error_msg = f"Failed to delegate method {method_info.name}: {e!s}"
-            self.logger.exception(error_msg,
-    )
+            self.logger.exception(error_msg)
             self.delegation_failed.emit(method_info.name, target_instance.__class__.__name__, error_msg)
             return Result.failure(error_msg)
 
@@ -160,15 +150,13 @@ error_msg = (
             if failed_delegations:
                 self.logger.warning("Some method delegations failed: {failed_delegations}")
 
-            self.logger.info("Successfully delegated {len(successful_delegations)} methods to {targe\
-    t_instance.__class__.__name__}")
+            self.logger.info(f"Successfully delegated {len(successful_delegations)} methods to {target_instance.__class__.__name__}")
             return Result.success(successful_delegations)
 
         except Exception as e:
             error_msg = f"Failed to delegate methods: {e!s}"
             self.logger.exception(error_msg)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def validate_delegation(self, target_instance: Any, method_name: str,
     ) -> Result[bool]:
@@ -188,8 +176,8 @@ error_msg = (
 
             # Additional validation based on method type
             class_name = target_instance.__class__.__name__
-            if class_name in self._delegated_methods and
-    method_name in self._delegated_methods[class_name]:
+            if class_name in self._delegated_methods and method_name in self._delegated_methods[class_name]:
+    
                 method_info = self._delegated_methods[class_name][method_name]
 
                 # Validate signature if required
@@ -205,8 +193,7 @@ error_msg = (
         except Exception as e:
             error_msg = f"Failed to validate delegation for {method_name}: {e!s}"
             self.logger.exception(error_msg)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def get_delegated_methods(self, target_class_name: str,
     ) -> Result[list[str]]:
@@ -230,16 +217,14 @@ error_msg = (
         try:
             if hasattr(target_instance, method_name):
                 delattr(target_instance, method_name)
-                self.logger.debug("Removed delegation for {method_name} from {target_instance.__clas\
-    s__.__name__}")
+                self.logger.debug(f"Removed delegation for {method_name} from {target_instance.__class__.__name__}")
 
             return Result.success(None)
 
         except Exception as e:
             error_msg = f"Failed to remove delegation for {method_name}: {e!s}"
             self.logger.exception(error_msg)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def _import_source_module(self, module_path: str,
     ) -> Result[Any]:
@@ -257,8 +242,7 @@ error_msg = (
         except ImportError as e:
             error_msg = f"Failed to import module {module_path}: {e!s}"
             self.logger.exception(error_msg)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def _create_wrapper_function(self, source_function: Callable, target_instance: Any,
     ) -> Callable:
@@ -267,13 +251,16 @@ error_msg = (
             # Inject target instance as first argument if needed
             if inspect.signature(source_function).parameters:
                 first_param = next(iter(inspect.signature(source_function).parameters.keys()),
-    )
+        )
                 if first_param == "self":
                     return source_function(target_instance, *args, **kwargs)
             return source_function(*args, **kwargs)
 
-        wrapper.__name__ = source_function.__name__
-        wrapper.__doc__ = source_function.__doc__
+        # Set function attributes safely
+        if hasattr(source_function, "__name__"):
+            wrapper.__name__ = str(source_function.__name__)
+        if hasattr(source_function, "__doc__"):
+            wrapper.__doc__ = source_function.__doc__
         return wrapper
 
     def _create_proxy_object(self, source_function: Callable, target_instance: Any,
@@ -300,37 +287,37 @@ error_msg = (
         # Define main window method delegation configuration
         main_window_methods = [
             MethodInfo("open_settings",
-            "src.ui.window_methods", "open_settings", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "open_settings", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("init_workers_and_signals",
-            "src.ui.window_methods", "init_workers_and_signals", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "init_workers_and_signals", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("init_listener",
-            "src.ui.window_methods", "init_listener", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "init_listener", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("init_llm_worker",
-            "src.ui.window_methods", "init_llm_worker", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "init_llm_worker", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("handle_llm_error",
-            "src.ui.window_methods", "handle_llm_error", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "handle_llm_error", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("handle_transcription",
-            "src.ui.window_methods", "handle_transcription", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "handle_transcription", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("display_message",
-            "src.ui.window_methods", "display_message", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "display_message", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("create_tray_icon",
-            "src.ui.window_methods", "create_tray_icon", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "create_tray_icon", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("show_window",
-            "src.ui.window_methods", "show_window", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "show_window", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("close_app",
-            "src.ui.window_methods", "close_app", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "close_app", MethodType.INSTANCE_METHOD, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("keyPressEvent",
-            "src.ui.window_methods", "keyPressEvent", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "keyPressEvent", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("keyReleaseEvent",
-            "src.ui.window_methods", "keyReleaseEvent", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "keyReleaseEvent", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("eventFilter",
-            "src.ui.window_methods", "eventFilter", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "eventFilter", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("resizeEvent",
-            "src.ui.window_methods", "resizeEvent", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "resizeEvent", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("dragEnterEvent",
-            "src.ui.window_methods", "dragEnterEvent", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "dragEnterEvent", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT),
             MethodInfo("dropEvent",
-            "src.ui.window_methods", "dropEvent", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT)
+            "src.ui.window_methods", "dropEvent", MethodType.EVENT_HANDLER, DelegationMode.DIRECT_ASSIGNMENT),
         ]
 
         config = DelegationConfiguration(

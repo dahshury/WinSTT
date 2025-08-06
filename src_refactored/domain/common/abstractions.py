@@ -1,8 +1,9 @@
-"""
-Domain Abstractions and Base Classes
+"""Domain Abstractions and Base Classes
 
 Mirrors the existing src/ui/core/abstractions.py with comprehensive architectural patterns.
 Following Domain-Driven Design principles and SOLID design patterns.
+
+Note: Result pattern is imported from separate module to avoid duplication.
 """
 
 from __future__ import annotations
@@ -12,7 +13,12 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
+
+# Import Result pattern from separate module
+
+if TYPE_CHECKING:
+    from .result import Result
 
 # Type Variables for Generic Patterns
 T = TypeVar("T")
@@ -21,47 +27,32 @@ TQuery = TypeVar("TQuery", bound="IQuery")
 TResult = TypeVar("TResult")
 TState = TypeVar("TState")
 TEvent = TypeVar("TEvent", bound="DomainEvent")
+TRequest = TypeVar("TRequest")
+TResponse = TypeVar("TResponse")
 
 # ============================================================================
-# RESULT PATTERN (Railway-Oriented Programming)
+# USE CASE PATTERN
 # ============================================================================
 
-@dataclass(frozen=True)
-class Result(Generic[T]):
+class UseCase(Generic[TRequest, TResponse], ABC):
+    """Base class for use cases in the application layer.
+    
+    Use cases represent application-specific business rules and orchestrate
+    domain objects to perform specific operations.
     """
-    Functional Result pattern for handling success/failure states.
-    Eliminates exception-driven control flow.
-    """
-    value: T | None = None
-    error: str | None = None
-    is_success: bool = True
+    
+    @abstractmethod
+    def execute(self, request: TRequest) -> TResponse:
+        """Execute the use case with the given request.
+        
+        Args:
+            request: The request object containing input parameters
+            
+        Returns:
+            The response object containing the result
+        """
 
-    @classmethod
-    def success(cls, value: T,
-    ) -> Result[T]:
-        """Create a successful result."""
-        return cls(value=value, is_success=True)
-
-    @classmethod
-    def failure(cls, error: str,
-    ) -> Result[T]:
-        """Create a failure result."""
-        return cls(error=error, is_success=False)
-
-    def map(self, func) -> Result:
-        """Transform the value if successful."""
-        if self.is_success and self.value is not None:
-            try:
-                return Result.success(func(self.value))
-            except Exception as e:
-                return Result.failure(str(e))
-        return self
-
-    def bind(self, func) -> Result:
-        """Monadic bind operation for chaining operations."""
-        if self.is_success and self.value is not None:
-            return func(self.value)
-        return self
+# Note: Result pattern is imported from .result module to avoid duplication
 
 # ============================================================================
 # DOMAIN EVENTS
@@ -271,8 +262,7 @@ class Entity:
         if not self.entity_id:
             object.__setattr__(self, "entity_id", str(uuid.uuid4()))
         if not self.created_at:
-            current_time = time.time(,
-    )
+            current_time = time.time()
             object.__setattr__(self, "created_at", current_time)
             object.__setattr__(self, "updated_at", current_time)
 

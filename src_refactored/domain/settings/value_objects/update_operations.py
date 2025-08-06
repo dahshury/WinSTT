@@ -6,10 +6,8 @@ including LLM and model update results, phases, and compatibility levels.
 
 from enum import Enum
 
-from src_refactored.domain.common.value_object import ValueObject
 
-
-class LLMUpdateResult(ValueObject, Enum):
+class LLMUpdateResult(Enum):
     """LLM configuration update results"""
     SUCCESS = "success"
     FAILED = "failed"
@@ -23,7 +21,7 @@ class LLMUpdateResult(ValueObject, Enum):
     LLM_DISABLED = "llm_disabled"
 
 
-class LLMUpdatePhase(ValueObject, Enum):
+class LLMUpdatePhase(Enum):
     """LLM configuration update phases"""
     INITIALIZING = "initializing"
     VALIDATING_MODEL = "validating_model"
@@ -37,7 +35,7 @@ class LLMUpdatePhase(ValueObject, Enum):
     COMPLETED = "completed"
 
 
-class LLMCompatibility(ValueObject, Enum):
+class LLMCompatibility(Enum):
     """LLM model compatibility levels"""
     FULLY_COMPATIBLE = "fully_compatible"
     PARTIALLY_COMPATIBLE = "partially_compatible"
@@ -45,7 +43,7 @@ class LLMCompatibility(ValueObject, Enum):
     UNKNOWN = "unknown"
 
 
-class UpdateResult(ValueObject, Enum):
+class UpdateResult(Enum):
     """Model configuration update results"""
     SUCCESS = "success"
     FAILED = "failed"
@@ -57,7 +55,7 @@ class UpdateResult(ValueObject, Enum):
     CONFIGURATION_SAVE_FAILED = "configuration_save_failed"
 
 
-class UpdatePhase(ValueObject, Enum):
+class UpdatePhase(Enum):
     """Model configuration update phases"""
     INITIALIZING = "initializing"
     VALIDATING_MODEL = "validating_model"
@@ -70,7 +68,7 @@ class UpdatePhase(ValueObject, Enum):
     COMPLETED = "completed"
 
 
-class ModelCompatibility(ValueObject, Enum):
+class ModelCompatibility(Enum):
     """Model compatibility levels"""
     FULLY_COMPATIBLE = "fully_compatible"
     PARTIALLY_COMPATIBLE = "partially_compatible"

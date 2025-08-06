@@ -14,24 +14,29 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from infrastructure.audio.audio_file_repository import (
-    AudioFileRepository,
-    AudioFileRepositoryConfiguration,
-    SaveAudioRequest,
-)
-from infrastructure.audio.audio_playback_service import AudioPlaybackService
-from infrastructure.audio.audio_recording_service import AudioRecordingService
-from infrastructure.audio.keyboard_service import KeyboardService
-from infrastructure.audio.pyaudio_service import PyAudioService
-from infrastructure.audio.vad_service import VADService
 from src_refactored.domain.audio.value_objects.audio_data import AudioData
-from src_refactored.domain.audio.value_objects.audio_format import AudioFormat
+from src_refactored.domain.audio.value_objects.audio_format import (
+    AudioFormat,
+    AudioFormatType,
+    BitDepth,
+)
 from src_refactored.domain.audio.value_objects.listener_operations import (
     ListenerEvent,
     ListenerEventData,
     ListenerState,
 )
 from src_refactored.domain.settings.value_objects.key_combination import KeyCombination
+
+from .audio_file_repository import (
+    AudioFileRepository,
+    AudioFileRepositoryConfiguration,
+    SaveAudioRequest,
+)
+from .audio_playback_service import AudioPlaybackService
+from .audio_recording_service import AudioRecordingService
+from .keyboard_service import KeyboardService
+from .pyaudio_service import PyAudioService
+from .vad_service import VADService
 
 # ListenerEventData is now imported from domain layer
 
@@ -121,11 +126,24 @@ class RecordingSession:
             return None
 
         combined_samples = np.concatenate(self.audio_data)
+        from src_refactored.domain.audio.value_objects.audio_format import (
+            AudioFormat,
+            AudioFormatType,
+            BitDepth,
+        )
+        from src_refactored.domain.audio.value_objects.sample_rate import SampleRate
+        
         return AudioData(
-            samples=combined_samples,
-            sample_rate=self.sample_rate,
-            duration_seconds=self.duration,
+            data=combined_samples,
+            sample_rate=SampleRate(self.sample_rate),
             channels=self.channels,
+            audio_format=AudioFormat(
+                format_type=AudioFormatType.WAV,
+                sample_rate=self.sample_rate,
+                bit_depth=BitDepth.BIT_16,
+                channels=self.channels,
+                chunk_size=256,
+            ),
         )
 
 
@@ -145,12 +163,14 @@ class ConsolidatedListenerService:
         """Initialize the consolidated listener service."""
         self._config = config or ConsolidatedListenerConfiguration()
 
-        # Initialize services
-        self._pyaudio_service = pyaudio_service or PyAudioService()
-        self._recording_service = recording_service or AudioRecordingService()
-        self._playback_service = playback_service or AudioPlaybackService()
+        # Initialize services using factory or provided services
+        from .service_factory import AudioServiceFactory
+        
+        self._pyaudio_service = pyaudio_service or AudioServiceFactory.create_pyaudio_service()
+        self._recording_service = recording_service or AudioServiceFactory.create_audio_recording_service()
+        self._playback_service = playback_service or AudioServiceFactory.create_audio_playback_service()
         self._keyboard_service = keyboard_service or KeyboardService()
-        self._vad_service = vad_service or VADService()
+        self._vad_service = vad_service or AudioServiceFactory.create_vad_service()
 
         # Initialize file repository
         file_config = AudioFileRepositoryConfiguration(
@@ -317,8 +337,7 @@ class ConsolidatedListenerService:
                 return
 
             # Handle hotkey press/release
-if hasattr(event_data, "key_combination") and event_data.key_combination = (
-    = self._current_hotkey:)
+            if hasattr(event_data, "key_combination") and event_data.key_combination == self._current_hotkey:
                 if hasattr(event_data, "is_pressed"):
                     if event_data.is_pressed and not self._is_hotkey_pressed:
                         self._is_hotkey_pressed = True
@@ -345,7 +364,7 @@ if hasattr(event_data, "key_combination") and event_data.key_combination = (
             with self._session_lock:
                 self._current_session = RecordingSession(
                     session_id=session_id,
-                    start_time=datetime.now()
+                    start_time=datetime.now(),
                     sample_rate=self._config.sample_rate,
                     channels=self._config.channels,
                 )
@@ -419,8 +438,7 @@ if hasattr(event_data, "key_combination") and event_data.key_combination = (
                             self._current_session.add_audio_chunk(audio_chunk)
 
                     # Check duration limits
-if self._current_session and self._current_session.duration > = (
-    self._config.max_recording_duration:)
+                    if self._current_session and self._current_session.duration >= self._config.max_recording_duration:
                         break
 
                 time.sleep(0.01)  # Small delay to prevent busy waiting
@@ -494,19 +512,22 @@ if self._current_session and self._current_session.duration > = (
 
             # Create save request
             audio_format = AudioFormat(
-                format_type="wav",
-                sample_rate=audio_data.sample_rate,
-                bit_depth=16,
+                format_type=AudioFormatType.WAV,
+                sample_rate=audio_data.sample_rate.value,
+                bit_depth=BitDepth.BIT_16,
                 channels=audio_data.channels,
+                chunk_size=256,
             )
 
+            from src_refactored.domain.audio.entities.audio_file import FilePath
+            
             save_request = SaveAudioRequest(
                 audio_data=audio_data,
-                file_path=file_path,
+                file_path=FilePath(file_path),
                 audio_format=audio_format,
                 metadata={
                     "session_id": self._current_session.session_id,
-                    "duration": audio_data.duration_seconds,
+                    "duration": audio_data.calculated_duration.total_seconds(),
                     "timestamp": timestamp,
                 },
             )
@@ -529,7 +550,7 @@ if self._current_session and self._current_session.duration > = (
             # Start transcription in a separate thread
             self._transcription_thread = threading.Thread(
                 target=self._transcription_worker,
-                args=(audio_data,)
+                args=(audio_data,),
                 daemon=True,
             )
             self._transcription_thread.start()
@@ -562,9 +583,9 @@ if self._current_session and self._current_session.duration > = (
             # Emit event
             event_data = ListenerEventData(
                 event_type=ListenerEvent.TRANSCRIPTION_COMPLETED,
-                timestamp=datetime.now()
-                session_id=session_id,
+                timestamp=datetime.now(),
                 transcription_text=transcription_text,
+                metadata={"session_id": session_id},
             )
             self._emit_event_data(event_data)
 
@@ -579,13 +600,12 @@ if self._current_session and self._current_session.duration > = (
     ) -> bytes:
         """Convert AudioData to bytes for processing."""
         # Convert samples to int16 if needed
-        if audio_data.samples.dtype != np.int16:
-            samples_int16 = (audio_data.samples * 32767).astype(np.int16)
+        if audio_data.data.dtype != np.int16:
+            samples_int16 = (audio_data.data * 32767).astype(np.int16)
         else:
-            samples_int16 = audio_data.samples
+            samples_int16 = audio_data.data
 
-        return samples_int16.tobytes(,
-    )
+        return samples_int16.tobytes()
 
     def _change_state(self, new_state: ListenerState,
     ) -> None:
@@ -598,8 +618,9 @@ if self._current_session and self._current_session.duration > = (
             if old_state != new_state:
                 event_data = ListenerEventData(
                     event_type=ListenerEvent.STATE_CHANGED,
-                    timestamp=datetime.now()
-                    state=new_state,
+                    timestamp=datetime.now(),
+                    state_before=old_state,
+                    state_after=new_state,
                     metadata={"previous_state": old_state.value},
                 )
                 self._emit_event_data(event_data)
@@ -609,8 +630,8 @@ if self._current_session and self._current_session.duration > = (
         """Emit a listener event."""
         event_data = ListenerEventData(
             event_type=event_type,
-            timestamp=datetime.now()
-            session_id=self._current_session.session_id if self._current_session else None,
+            timestamp=datetime.now(),
+            metadata={"session_id": self._current_session.session_id if self._current_session else None},
         )
         self._emit_event_data(event_data)
 
@@ -636,10 +657,9 @@ if self._current_session and self._current_session.duration > = (
         # Emit as event
         event_data = ListenerEventData(
             event_type=ListenerEvent.ERROR_OCCURRED,
-            timestamp=datetime.now()
-session_id = (
-    session_id or (self._current_session.session_id if self._current_session else None),)
+            timestamp=datetime.now(),
             error_message=error_message,
+            metadata={"session_id": session_id or (self._current_session.session_id if self._current_session else None)},
         )
         self._emit_event_data(event_data)
 

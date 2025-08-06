@@ -55,8 +55,7 @@ class ModelDownloadService(QObject):
             bool: True if all downloads successful, False otherwise
         """
         try:
-repo_url = (
-    "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/onnx/")
+            repo_url = "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/onnx/"
 
             # Determine model files based on quality
             encoder_name = f"encoder_model_{self.config.quality}.onnx"
@@ -85,8 +84,7 @@ repo_url = (
                 if file_name is not None:
                     file_path = self.onnx_folder / file_name
                     if not file_path.exists() or file_path.stat().st_size <= 2048:
-                        self.logger.info("Downloading model file: {file_name}",
-    )
+                        self.logger.info("Downloading model file: {file_name}")
                         file_url = repo_url + file_name
                         if not self._download_file_with_progress(file_url, file_path, file_name):
                             return False
@@ -94,11 +92,9 @@ repo_url = (
             # Download configuration files
             for config_file in config_files:
                 config_path = self.cache_path / config_file
-config_url = (
-    f"https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/{config_file}")
+                config_url = f"https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/{config_file}"
                 if not config_path.exists():
-                    self.logger.info("Downloading config file: {config_file}",
-    )
+                    self.logger.info("Downloading config file: {config_file}")
                     if not self._download_file_with_progress(config_url, config_path, config_file):
                         return False
 
@@ -124,11 +120,8 @@ config_url = (
                 self.logger.info("VAD model already exists: {model_path}")
                 return True
 
-            self.logger.info("Downloading VAD model to {model_path}",
-    )
-            url
- = (
-    "https://github.com/snakers4/silero-vad/blob/master/src/silero_vad/data/silero_vad_16k_op15.onnx?raw=true")
+            self.logger.info("Downloading VAD model to {model_path}")
+            url = "https://github.com/snakers4/silero-vad/blob/master/src/silero_vad/data/silero_vad_16k_op15.onnx?raw=true"
 
             return self._download_file_with_progress(url, model_path, filename)
 
@@ -209,8 +202,7 @@ config_url = (
 
         except requests.ConnectionError as e:
             error_msg = "Failed to connect to the internet. Please check your connection."
-            self.logger.exception(f"{error_msg} Error: {e}",
-    )
+            self.logger.exception(f"{error_msg} Error: {e}")
             self.download_failed.emit(filename, error_msg)
             self._cleanup_temp_file(temp_path)
             return False
@@ -220,24 +212,21 @@ config_url = (
                 error_msg = f"File not found (404): {filename}"
             else:
                 error_msg = f"HTTP error occurred: {e}"
-            self.logger.exception(error_msg,
-    )
+            self.logger.exception(error_msg)
             self.download_failed.emit(filename, error_msg)
             self._cleanup_temp_file(temp_path)
             return False
 
         except requests.Timeout as e:
             error_msg = "The request timed out. Please try again later."
-            self.logger.exception(f"{error_msg} Error: {e}",
-    )
+            self.logger.exception(f"{error_msg} Error: {e}")
             self.download_failed.emit(filename, error_msg)
             self._cleanup_temp_file(temp_path)
             return False
 
         except Exception as e:
             error_msg = f"An unexpected error occurred: {e}"
-            self.logger.exception(error_msg,
-    )
+            self.logger.exception(error_msg)
             self.download_failed.emit(filename, error_msg)
             self._cleanup_temp_file(temp_path)
             return False
@@ -267,8 +256,7 @@ config_url = (
             if final_path.suffix == ".json":
                 try:
                     with open(temp_path, encoding="utf-8") as f:
-                        content = f.read(,
-    )
+                        content = f.read()
                         # Check for HTML content in JSON file
                         if "<html" in content or "<!DOCTYPE" in content:
                             self.logger.error("Downloaded file contains HTML, not JSON: {final_path}")
@@ -284,8 +272,7 @@ config_url = (
                 if file_size < 1000:  # ONNX files should be larger
                     try:
                         with open(temp_path, encoding="utf-8", errors="ignore") as f:
-                            content_peek = f.read(512,
-    )
+                            content_peek = f.read(512)
                             if "<html" in content_peek or "<!DOCTYPE" in content_peek:
                                 self.logger.error("Downloaded file contains HTML, not ONNX: {final_path}")
                                 return False
@@ -304,7 +291,7 @@ config_url = (
         try:
             if temp_path.exists():
                 temp_path.unlink()
-        except Exception as e:
+        except Exception:
             self.logger.warning("Failed to cleanup temp file {temp_path}: {e}")
 
     def get_model_status(self) -> dict[str, bool]:
@@ -338,12 +325,11 @@ config_url = (
         return status
 
     def cleanup_incomplete_downloads(self) -> None:
-        """Clean up any incomplete download files (.tmp files,
-    )."""
+        """Clean up any incomplete download files (.tmp files)."""
         try:
             for folder in [self.cache_path, self.onnx_folder, self.vad_folder]:
                 for temp_file in folder.glob("*.tmp"):
                     temp_file.unlink()
                     self.logger.info("Cleaned up incomplete download: {temp_file}")
-        except Exception as e:
+        except Exception:
             self.logger.warning("Error during cleanup: {e}")

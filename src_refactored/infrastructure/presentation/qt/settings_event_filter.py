@@ -8,7 +8,7 @@ import os
 from collections.abc import Callable
 
 from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent
 from PyQt6.QtWidgets import (
     QGroupBox,
     QLabel,
@@ -17,14 +17,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src_refactored.application.use_cases.event_handling.process_drag_drop_use_case import (
-    ProcessDragDropUseCase,
-)
-from src_refactored.application.use_cases.event_handling.process_key_event_use_case import (
-    ProcessKeyEventUseCase,
-)
-from src_refactored.infrastructure.event_handling.event_filter_service import (
-    EventFilterService,
+from src_refactored.domain.system_integration.ports.event_processing_port import (
+    IDragDropProcessor,
+    IKeyEventProcessor,
 )
 
 
@@ -46,20 +41,24 @@ class SettingsEventFilter(QObject):
     key_released = pyqtSignal(object)  # QKeyEvent
     event_filtered = pyqtSignal(str, str)  # event_type, details
 
-    def __init__(self, parent=None):
+    def __init__(self, 
+                 drag_drop_processor: IDragDropProcessor,
+                 key_event_processor: IKeyEventProcessor,
+                 parent=None):
         """Initialize the event filter.
         
         Args:
+            drag_drop_processor: Drag and drop processor port
+            key_event_processor: Key event processor port
             parent: Parent object
         """
         super().__init__(parent)
 
-        # Initialize use cases (these would be injected via DI in full implementation)
-        self._process_drag_drop_use_case = ProcessDragDropUseCase()
-        self._process_key_event_use_case = ProcessKeyEventUseCase()
+        # Injected dependencies
+        self._process_drag_drop_use_case = drag_drop_processor
+        self._process_key_event_use_case = key_event_processor
 
-        # Initialize services
-        self._event_filter_service = EventFilterService()
+
 
         # Configuration
         self.supported_file_types = [".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac"]
@@ -200,6 +199,9 @@ class SettingsEventFilter(QObject):
         Returns:
             True if event was handled
         """
+        if not isinstance(event, QDragEnterEvent):
+            return False
+            
         mime_data = event.mimeData()
         if not mime_data.hasUrls():
             return False
@@ -209,7 +211,7 @@ class SettingsEventFilter(QObject):
             return False
 
         # Set cursor for supported widget types
-        if self._is_cursor_managed_widget(obj):
+        if self._is_cursor_managed_widget(obj) and isinstance(obj, QWidget):
             obj.setCursor(Qt.CursorShape.DragCopyCursor)
             event.acceptProposedAction()
 
@@ -236,7 +238,7 @@ class SettingsEventFilter(QObject):
             True if event was handled
         """
         # Reset cursor when drag leaves
-        if self._is_cursor_managed_widget(obj):
+        if self._is_cursor_managed_widget(obj) and isinstance(obj, QWidget):
             obj.unsetCursor()
 
             # Emit signal
@@ -261,6 +263,9 @@ class SettingsEventFilter(QObject):
         Returns:
             True if event was handled
         """
+        if not isinstance(event, QDropEvent):
+            return False
+            
         mime_data = event.mimeData()
         if not mime_data.hasUrls():
             return False
@@ -272,7 +277,7 @@ class SettingsEventFilter(QObject):
             return False
 
         # Reset cursor
-        if self._is_cursor_managed_widget(obj):
+        if self._is_cursor_managed_widget(obj) and isinstance(obj, QWidget):
             obj.unsetCursor()
 
         # Call custom handler if set

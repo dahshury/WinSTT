@@ -20,6 +20,7 @@ from .audio_operations import (
 )
 from .audio_quality import AudioQuality
 from .audio_track import AudioTrack, RecordingData, RecordingMetadata
+from .channel_count import ChannelCount
 from .duration import Duration
 from .playback_mode import PlaybackMode
 from .playback_operation import PlaybackOperation
@@ -101,6 +102,7 @@ __all__ = [
     "BufferMode",
     "BufferOperationResult",
     "CalibrationResult",
+    "ChannelCount",
     "DeviceListResult",
     "DeviceTestRequest",
     "DeviceTestResult",

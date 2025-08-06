@@ -12,6 +12,8 @@ class UIState(Enum):
     ENABLED = "enabled"
     DISABLED = "disabled"
     LOADING = "loading"
+    RECORDING = "recording"
+    PROCESSING = "processing"
     ERROR = "error"
     SUCCESS = "success"
 

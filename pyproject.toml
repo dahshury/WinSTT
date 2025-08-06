@@ -48,6 +48,7 @@ dependencies = [
   "psutil>=7.0.0",
   "librosa>=0.10.2",
   "tree3>=0.2.0",
+  "ty>=0.0.1a17",
 ]
 
 [project.optional-dependencies]
@@ -95,6 +96,7 @@ dev-all = [
 python_version = "3.12"
 ignore_missing_imports = true
 strict = false
+exclude = ["@output/"]
 
 [tool.ruff]
 line-length = 100

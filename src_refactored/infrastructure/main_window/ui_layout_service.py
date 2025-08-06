@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from logger import setup_logger
-from src.core.utils import resource_path
+from src_refactored.infrastructure.common.resource_service import resource_path
 
 
 @dataclass
@@ -62,24 +62,23 @@ class UILayoutService(QObject):
     def __init__(self):
         """Initialize the UI layout service."""
         super().__init__()
-        self.logger = setup_logger(,
-    )
+        self.logger = setup_logger()
         self.created_widgets: dict[str, QWidget] = {}
         self.opacity_effects: dict[str, QGraphicsOpacityEffect] = {}
 
         # Default geometries
         self.default_geometries = {
-            "central_widget": WidgetGeometry(0, 0, 400, 220)
-            "title_label": WidgetGeometry(150, 10, 131, 31)
-            "logo_label": WidgetGeometry(160, 10, 21, 21)
-            "settings_button": WidgetGeometry(360, 10, 24, 24)
-            "instruction_label": WidgetGeometry(17, 50, 370, 30)
-            "message_label": WidgetGeometry(17, 85, 370, 30)
-            "progress_bar": WidgetGeometry(60, 120, 290, 14)
-            "voice_visualizer": WidgetGeometry(0, -5, 400, 51)
-            "bottom_graphics_view": WidgetGeometry(0, 190, 411, 31)
-            "hw_accel_label": WidgetGeometry(262, 189, 161, 31)
-            "accel_switch_label": WidgetGeometry(360, 190, 31, 31)
+            "central_widget": WidgetGeometry(0, 0, 400, 220),
+            "title_label": WidgetGeometry(150, 10, 131, 31),
+            "logo_label": WidgetGeometry(160, 10, 21, 21),
+            "settings_button": WidgetGeometry(360, 10, 24, 24),
+            "instruction_label": WidgetGeometry(17, 50, 370, 30),
+            "message_label": WidgetGeometry(17, 85, 370, 30),
+            "progress_bar": WidgetGeometry(60, 120, 290, 14),
+            "voice_visualizer": WidgetGeometry(0, -5, 400, 51),
+            "bottom_graphics_view": WidgetGeometry(0, 190, 411, 31),
+            "hw_accel_label": WidgetGeometry(262, 189, 161, 31),
+            "accel_switch_label": WidgetGeometry(360, 190, 31, 31),
             "header_image_label": WidgetGeometry(0, -5, 401, 51),
         }
 
@@ -468,8 +467,7 @@ class UILayoutService(QObject):
             graphics_view.setGeometry(geometry.to_qrect())
 
             # Configure palette
-            palette = QPalette(,
-    )
+            palette = QPalette()
 
             # Active state
             brush = QBrush(QColor(8, 11, 14))
@@ -617,8 +615,7 @@ class UILayoutService(QObject):
     def arrange_widget_layers(self) -> None:
         """Arrange widget layers in proper z-order."""
         try:
-            # Raise widgets in proper order (bottom to top,
-    )
+            # Raise widgets in proper order (bottom to top)
             layer_order = [
                 "bottom_graphics_view",
                 "hw_accel_label",
@@ -643,8 +640,7 @@ class UILayoutService(QObject):
         except Exception as e:
             error_msg = f"Failed to arrange widget layers: {e}"
             self.logger.exception(error_msg)
-            self.layout_failed.emit(error_msg,
-    )
+            self.layout_failed.emit(error_msg)
 
     def update_widget_geometry(self, widget_name: str, geometry: WidgetGeometry,
     ) -> bool:
@@ -672,8 +668,7 @@ class UILayoutService(QObject):
         except Exception as e:
             error_msg = f"Failed to update widget geometry: {e}"
             self.logger.exception(error_msg)
-            self.layout_failed.emit(error_msg,
-    )
+            self.layout_failed.emit(error_msg)
             return False
 
     def get_widget(self, widget_name: str,
@@ -764,26 +759,17 @@ class UILayoutManager:
         # Create all widgets
         widgets = {}
         widgets["central_widget"] = self._service.create_central_widget(parent)
-widgets["header_image_label"] = (
-    self._service.create_header_image_label(widgets["central_widget"],)
-    )
-widgets["title_label"] = (
-    self._service.create_title_label(widgets["central_widget"], title_text))
+        widgets["header_image_label"] = self._service.create_header_image_label(widgets["central_widget"])
+        widgets["title_label"] = self._service.create_title_label(widgets["central_widget"], title_text)
         widgets["logo_label"] = self._service.create_logo_label(widgets["central_widget"])
         widgets["settings_button"] = self._service.create_settings_button(widgets["central_widget"])
-widgets["instruction_label"] = (
-    self._service.create_instruction_label(widgets["central_widget"],)
-        instruction_text)
+        widgets["instruction_label"] = self._service.create_instruction_label(widgets["central_widget"], instruction_text)
         widgets["message_label"] = self._service.create_message_label(widgets["central_widget"])
         widgets["progress_bar"] = self._service.create_progress_bar(widgets["central_widget"])
-widgets["voice_visualizer"] = (
-    self._service.create_voice_visualizer(widgets["central_widget"]))
-widgets["bottom_graphics_view"] = (
-    self._service.create_bottom_graphics_view(widgets["central_widget"]))
+        widgets["voice_visualizer"] = self._service.create_voice_visualizer(widgets["central_widget"])
+        widgets["bottom_graphics_view"] = self._service.create_bottom_graphics_view(widgets["central_widget"])
         widgets["hw_accel_label"] = self._service.create_hw_accel_label(widgets["central_widget"])
-widgets["accel_switch_label"] = (
-    self._service.create_accel_switch_label(widgets["central_widget"],)
-        hw_accel_enabled)
+        widgets["accel_switch_label"] = self._service.create_accel_switch_label(widgets["central_widget"], hw_accel_enabled)
 
         # Arrange layers
         self._service.arrange_widget_layers()

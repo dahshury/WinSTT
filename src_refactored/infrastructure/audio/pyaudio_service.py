@@ -88,9 +88,8 @@ class DeviceListResult:
 
     def __post_init__(self):
         self.total_devices = len(self.devices)
-        self.available_devices
-         =  len([d for d in self.devices if d.max_input_channels > 0 or d.max_output_channels > 0],
-    )
+        self.available_devices =  len([d for d in self.devices if d.max_input_channels > 0 or d.max_output_channels > 0])
+
 
 
 @dataclass
@@ -119,7 +118,7 @@ class DeviceTestResult:
 class PyAudioServiceState:
     """Current state of PyAudio service."""
     initialized: bool = False
-    active_streams: dict[str, Any] = None
+    active_streams: dict[str, Any] | None = None
     available_devices: DeviceListResult | None = None
     current_config: AudioConfiguration | None = None
     error_message: str | None = None
@@ -139,7 +138,7 @@ class PyAudioServiceResponse:
     device_test: DeviceTestResult | None = None
     audio_data: list[AudioData] | None = None
     error_message: str | None = None
-    warnings: list[str] = None
+    warnings: list[str] | None = None
     execution_time: float = 0.0
 
     def __post_init__(self):
@@ -291,8 +290,7 @@ class PyAudioRecorder:
         self._frames: list[bytes] = []
         self.p: pyaudio.PyAudio | None = None
         self.stream: pyaudio.Stream | None = None
-        self.logger = setup_logger(,
-    )
+        self.logger = setup_logger()
         self._error_callback: Callable[[str], None] | None = None
 
         # Initialize PyAudio
@@ -507,7 +505,7 @@ class PyAudioService:
             if request.enable_logging and self._logger_service:
                 self._logger_service.log_error(
                     "PyAudio operation failed",
-                    error=str(e)
+                    error=str(e),
                     operation=request.operation.value,
                     execution_time=time.time() - start_time,
                 )
@@ -528,18 +526,14 @@ class PyAudioService:
             self._state.initialized = True
 
             # Enumerate devices
-devices_success, devices, devices_error = (
-    self._device_management_service.enumerate_devices())
+            devices_success, devices, devices_error = self._device_management_service.enumerate_devices()
             if not devices_success:
                 warnings.append(f"Failed to enumerate devices: {devices_error}")
                 devices = []
 
             # Get default devices
-            default_input_success,
-            default_input, _ = self._device_management_service.get_default_device(DeviceType.INPUT)
-            default_output_success,
-default_output, _ = (
-    self._device_management_service.get_default_device(DeviceType.OUTPUT))
+            default_input_success, default_input, _ = self._device_management_service.get_default_device(DeviceType.INPUT)
+            default_output_success, default_output, _ = self._device_management_service.get_default_device(DeviceType.OUTPUT)
 
             device_list = DeviceListResult(
                 devices=devices,
@@ -555,7 +549,7 @@ default_output, _ = (
             if request.enable_logging and self._logger_service:
                 self._logger_service.log_info(
                     "PyAudio initialized successfully",
-                    devices_found=len(devices)
+                    devices_found=len(devices),
                     execution_time=time.time() - start_time,
                 )
 
@@ -583,8 +577,7 @@ default_output, _ = (
     request: PyAudioServiceRequest, start_time: float, warnings: list[str]) -> PyAudioServiceResponse:
         """Handle device listing."""
         try:
-devices_success, devices, devices_error = (
-    self._device_management_service.enumerate_devices())
+            devices_success, devices, devices_error = self._device_management_service.enumerate_devices()
             if not devices_success:
                 return PyAudioServiceResponse(
                     result=AudioResult.DEVICE_ERROR,
@@ -603,8 +596,7 @@ devices_success, devices, devices_error = (
             device_list = DeviceListResult(devices=devices)
 
             if request.enable_progress_tracking and self._progress_tracking_service:
-                self._progress_tracking_service.complete_progress(,
-    )
+                self._progress_tracking_service.complete_progress()
 
             return PyAudioServiceResponse(
                 result=AudioResult.SUCCESS,
@@ -626,7 +618,7 @@ devices_success, devices, devices_error = (
     def _handle_test_device(self,
     request: PyAudioServiceRequest, start_time: float, warnings: list[str]) -> PyAudioServiceResponse:
         """Handle device testing."""
-        if not request.stream_config or not request.stream_config.audio_config:
+        if not request.stream_config:
             return PyAudioServiceResponse(
                 result=AudioResult.FAILED,
                 state=self._state,
@@ -636,7 +628,7 @@ devices_success, devices, devices_error = (
 
         try:
             # Get device to test
-            device_index = request.stream_config.audio_config.device_index
+            device_index = request.stream_config.input_device_id
             if device_index is None:
                 return PyAudioServiceResponse(
                     result=AudioResult.FAILED,
@@ -645,8 +637,7 @@ devices_success, devices, devices_error = (
                     execution_time=time.time() - start_time,
                 )
 
-device_success, device, device_error = (
-    self._device_management_service.get_device_info(device_index))
+            device_success, device, device_error = self._device_management_service.get_device_info(device_index)
             if not device_success:
                 return PyAudioServiceResponse(
                     result=AudioResult.DEVICE_ERROR,
@@ -657,7 +648,7 @@ device_success, device, device_error = (
 
             # Test device
             test_result = self._device_management_service.test_device(
-                device, request.stream_config.audio_config, request.test_duration,
+                device, request.stream_config, request.test_duration,
             )
 
             if request.enable_progress_tracking and self._progress_tracking_service:
@@ -695,8 +686,7 @@ device_success, device, device_error = (
 
         try:
             # Validate configuration
-config_valid, config_error = (
-    self._validation_service.validate_stream_configuration(request.stream_config))
+            config_valid, config_error = self._validation_service.validate_stream_configuration(request.stream_config)
             if not config_valid:
                 return PyAudioServiceResponse(
                     result=AudioResult.FORMAT_ERROR,
@@ -706,8 +696,7 @@ config_valid, config_error = (
                 )
 
             # Create stream
-stream_created, stream, stream_error = (
-    self._stream_management_service.create_stream(request.stream_config))
+            stream_created, stream, stream_error = self._stream_management_service.create_stream(request.stream_config)
             if not stream_created:
                 return PyAudioServiceResponse(
                     result=AudioResult.STREAM_ERROR,
@@ -717,30 +706,26 @@ stream_created, stream, stream_error = (
                 )
 
             # Start stream
-            if request.stream_config.auto_start:
-                stream_started, start_error = self._stream_management_service.start_stream(stream)
-                if not stream_started:
-                    return PyAudioServiceResponse(
-                        result=AudioResult.STREAM_ERROR,
-                        state=self._state,
-                        error_message=f"Failed to start stream: {start_error}",
-                        execution_time=time.time() - start_time,
-                    )
-            else:
-                stream_started = False
+            stream_started, start_error = self._stream_management_service.start_stream(stream)
+            if not stream_started:
+                return PyAudioServiceResponse(
+                    result=AudioResult.STREAM_ERROR,
+                    state=self._state,
+                    error_message=f"Failed to start stream: {start_error}",
+                    execution_time=time.time() - start_time,
+                )
 
             # Store stream
-            stream_id = f"recording_{len(self._state.active_streams,
-    )}"
+            stream_id = f"recording_{len(self._state.active_streams)}"
             self._state.active_streams[stream_id] = stream
-            self._state.current_config = request.stream_config.audio_config
+            self._state.current_config = request.stream_config
 
             stream_result = StreamOperationResult(
                 stream_created=True,
                 stream_started=stream_started,
                 stream_active=stream_started,
                 stream_object=stream,
-                stream_info=self._stream_management_service.get_stream_info(stream)
+                stream_info=self._stream_management_service.get_stream_info(stream),
             )
 
             # Start data collection thread if non-blocking
@@ -777,8 +762,7 @@ stream_created, stream, stream_error = (
                 if "recording" in stream_id:
                     stop_success, stop_error = self._stream_management_service.stop_stream(stream)
                     if stop_success:
-close_success, close_error = (
-    self._stream_management_service.close_stream(stream))
+                        close_success, close_error = self._stream_management_service.close_stream(stream)
                         if close_success:
                             del self._state.active_streams[stream_id]
                             stopped_streams += 1
@@ -881,7 +865,7 @@ close_success, close_error = (
         self._stop_event.clear()
         self._worker_thread = threading.Thread(
             target=self._data_collection_worker,
-            args=(stream, config)
+            args=(stream, config),
             daemon=True,
         )
         self._worker_thread.start()

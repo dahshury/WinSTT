@@ -26,8 +26,7 @@ class ShutdownConfiguration(Entity[str]):
 
     def __post_init__(self):
         # Generate ID based on key configuration settings
-config_id = (
-    f"shutdown_{self.worker_timeout_seconds}_{self.graceful_timeout_seconds}_{self.save_state}")
+        config_id = f"shutdown_{self.worker_timeout_seconds}_{self.graceful_timeout_seconds}_{self.save_state}"
         super().__init__(config_id)
 
     def is_graceful_shutdown(self) -> bool:
@@ -60,5 +59,4 @@ config_id = (
             raise ValueError(msg)
         if self.worker_timeout_seconds == 0 and not self.force_worker_termination:
             msg = "Worker timeout cannot be zero without force termination"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)

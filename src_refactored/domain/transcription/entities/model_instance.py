@@ -11,9 +11,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from src_refactored.domain.common.abstractions import DomainEvent, Entity
-from src_refactored.domain.common.value_objects import ModelType, Quantization
+from src_refactored.domain.settings.value_objects.model_configuration import ModelType, Quantization
 
 
 class ModelState(Enum):
@@ -78,13 +79,12 @@ class ModelInstance(Entity):
     loaded_at: datetime | None = None
     last_used: datetime | None = None
     version: str = ""
-    config_parameters: dict[str, any] = field(default_factory=dict)
+    config_parameters: dict[str, Any] = field(default_factory=dict)
     download_progress: float = 0.0
     error_message: str | None = None
 
     def __post_init__(self):
-        super().__post_init__(,
-    )
+        super().__post_init__()
 
         # Validate task
         if self.task not in ["transcribe", "translate"]:
@@ -108,8 +108,7 @@ class ModelInstance(Entity):
         self.state = ModelState.DOWNLOADING
         self.download_progress = 0.0
         self.error_message = None
-        self.update_timestamp(,
-    )
+        self.update_timestamp()
 
     def update_download_progress(self,
     progress_percentage: float, downloaded_bytes: int, total_bytes: int | None = None) -> None:
@@ -119,8 +118,7 @@ class ModelInstance(Entity):
         """
         if self.state != ModelState.DOWNLOADING:
             msg = f"Cannot update download progress in state: {self.state}"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
         if not 0.0 <= progress_percentage <= 100.0:
             msg = f"Progress percentage must be 0-100, got: {progress_percentage}"
@@ -152,10 +150,9 @@ class ModelInstance(Entity):
 
         self.state = ModelState.INITIALIZING
         self.download_progress = 100.0
-        self.update_timestamp(,
-    )
+        self.update_timestamp()
 
-    def complete_initialization(self, version: str, config_params: dict[str, any]) -> None:
+    def complete_initialization(self, version: str, config_params: dict[str, Any]) -> None:
         """
         Complete model initialization.
         Business rule: Can only complete from INITIALIZING state.
@@ -172,8 +169,7 @@ class ModelInstance(Entity):
         self.update_timestamp()
 
         # Calculate load time
-        load_time = (datetime.now() - self.created_at).total_seconds(,
-    ) if hasattr(self, "created_at") else 0.0
+        load_time = (datetime.now() - self.created_at).total_seconds() if hasattr(self, "created_at") else 0.0
 
         # Raise domain event
         ModelLoadedEvent(
@@ -191,8 +187,7 @@ class ModelInstance(Entity):
         """Fail model loading with error."""
         self.state = ModelState.FAILED
         self.error_message = error_message
-        self.update_timestamp(,
-    )
+        self.update_timestamp()
 
         # Raise domain event
         ModelFailedEvent(
@@ -224,8 +219,7 @@ class ModelInstance(Entity):
             raise ValueError(msg)
 
         self.state = ModelState.UPDATING
-        self.update_timestamp(,
-    )
+        self.update_timestamp()
 
     def update_configuration(self, language: str, task: str,
     ) -> None:
@@ -235,8 +229,7 @@ class ModelInstance(Entity):
         """
         if self.state != ModelState.READY:
             msg = f"Cannot update configuration in state: {self.state}"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
         # Validate new parameters
         if task not in ["transcribe", "translate"]:
@@ -257,8 +250,7 @@ class ModelInstance(Entity):
         return self.state == ModelState.READY
 
     @property
-    def is_loading(self,
-    ) -> bool:
+    def is_loading(self) -> bool:
         """Check if model is currently loading."""
         return self.state in [ModelState.DOWNLOADING, ModelState.INITIALIZING]
 
@@ -285,8 +277,7 @@ class ModelInstance(Entity):
         return self.model_cache_directory / "onnx"
 
     @property
-    def estimated_memory_usage_mb(self,
-    ) -> float:
+    def estimated_memory_usage_mb(self) -> float:
         """Estimate memory usage in MB."""
         base_memory = {
             ModelType.WHISPER_TURBO: 1000.0,
@@ -374,7 +365,7 @@ class ModelInstance(Entity):
         return True
 
     @property
-    def usage_statistics(self) -> dict[str, any]:
+    def usage_statistics(self) -> dict[str, Any]:
         """Get usage statistics for the model."""
         return {
             "total_usage_time": (datetime.now() - self.loaded_at).total_seconds() if self.loaded_at else 0,

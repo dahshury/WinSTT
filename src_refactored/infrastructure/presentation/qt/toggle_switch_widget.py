@@ -177,9 +177,9 @@ class ToggleSwitch(QSlider):
             dict: Current state information
         """
         return {
-            "checked": self.isChecked()
-            "value": self.value()
-            "enabled": self.isEnabled()
+            "checked": self.isChecked(),
+            "value": self.value(),
+            "enabled": self.isEnabled(),
             "visible": self.isVisible(),
         }
 

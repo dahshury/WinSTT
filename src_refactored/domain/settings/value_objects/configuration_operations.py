@@ -6,10 +6,8 @@ including load/save results, phases, and formats.
 
 from enum import Enum
 
-from src_refactored.domain.common.value_object import ValueObject
 
-
-class ConfigurationSource(ValueObject, Enum):
+class ConfigurationSource(Enum):
     """Configuration source types"""
     FILE = "file"
     ENVIRONMENT = "environment"
@@ -19,7 +17,7 @@ class ConfigurationSource(ValueObject, Enum):
     DEFAULT = "default"
 
 
-class LoadResult(ValueObject, Enum):
+class LoadResult(Enum):
     """Configuration load results"""
     SUCCESS = "success"
     FAILED = "failed"
@@ -32,7 +30,7 @@ class LoadResult(ValueObject, Enum):
     FALLBACK_USED = "fallback_used"
 
 
-class LoadPhase(ValueObject, Enum):
+class LoadPhase(Enum):
     """Configuration load phases"""
     INITIALIZING = "initializing"
     LOCATING_SOURCE = "locating_source"
@@ -43,7 +41,7 @@ class LoadPhase(ValueObject, Enum):
     FINALIZING = "finalizing"
 
 
-class SaveResult(ValueObject, Enum):
+class SaveResult(Enum):
     """Configuration save operation results"""
     SUCCESS = "success"
     FAILED = "failed"
@@ -58,7 +56,7 @@ class SaveResult(ValueObject, Enum):
     PARTIAL_SAVE = "partial_save"
 
 
-class SavePhase(ValueObject, Enum):
+class SavePhase(Enum):
     """Configuration save operation phases"""
     INITIALIZING = "initializing"
     VALIDATING_CONFIGURATION = "validating_configuration"
@@ -72,7 +70,7 @@ class SavePhase(ValueObject, Enum):
     COMPLETED = "completed"
 
 
-class SaveFormat(ValueObject, Enum):
+class SaveFormat(Enum):
     """Configuration save formats"""
     JSON = "json"
     YAML = "yaml"
@@ -83,7 +81,7 @@ class SaveFormat(ValueObject, Enum):
     ENCRYPTED = "encrypted"
 
 
-class MergeStrategy(ValueObject, Enum):
+class MergeStrategy(Enum):
     """Configuration merge strategies"""
     REPLACE = "replace"
     MERGE_DEEP = "merge_deep"
@@ -91,7 +89,7 @@ class MergeStrategy(ValueObject, Enum):
     OVERLAY = "overlay"
 
 
-class SaveStrategy(ValueObject, Enum):
+class SaveStrategy(Enum):
     """Configuration save strategies"""
     OVERWRITE = "overwrite"
     MERGE = "merge"

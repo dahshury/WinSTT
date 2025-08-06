@@ -162,9 +162,9 @@ class ValidationReport:
 class AudioValidationServiceState:
     """Current state of audio validation service."""
     initialized: bool = False
-    available_rules: list[ValidationRule] = None
-    active_rules: list[ValidationRule] = None
-    validation_history: list[ValidationReport] = None
+    available_rules: list[ValidationRule] | None = None
+    active_rules: list[ValidationRule] | None = None
+    validation_history: list[ValidationReport] | None = None
     performance_stats: dict[str, Any] | None = None
     error_message: str | None = None
 
@@ -189,7 +189,7 @@ class AudioValidationServiceResponse:
     fixed_data: AudioDataInfo | None = None
     recommendations: list[str] | None = None
     error_message: str | None = None
-    warnings: list[str] = None
+    warnings: list[str] | None = None
     execution_time: float = 0.0
 
     def __post_init__(self):
@@ -311,7 +311,7 @@ class AudioValidationService:
             # Create validation report
             report = ValidationReport(
                 is_valid=True,
-                overall_result=ValidationStatus.VALID,
+                overall_status=ValidationStatus.VALID,
                 issues=[],
                 warnings=[],
                 errors=[],
@@ -332,7 +332,7 @@ class AudioValidationService:
 
                 if validation_result in [ValidationStatus.INVALID, ValidationStatus.ERROR]:
                     report.is_valid = False
-                    report.overall_result = ValidationStatus.INVALID
+                    report.overall_status = ValidationStatus.INVALID
 
             # Apply auto-fixes if requested
             fixed_config = None
@@ -347,7 +347,7 @@ class AudioValidationService:
             execution_time = time.time() - start_time
             report.performance_metrics = {
                 "execution_time": execution_time,
-                "rules_evaluated": len(active_rules)
+                "rules_evaluated": len(active_rules),
                 "issues_found": len(report.issues),
             }
 
@@ -360,12 +360,12 @@ class AudioValidationService:
                 self._logger_service.log_info(
                     "Audio validation completed",
                     is_valid=report.is_valid,
-                    issues_count=len(report.issues)
+                    issues_count=len(report.issues),
                     execution_time=execution_time,
                 )
 
             return AudioValidationServiceResponse(
-                result=report.overall_result,
+                status=report.overall_status,
                 state=self._state,
                 report=report,
                 fixed_config=fixed_config,
@@ -382,12 +382,12 @@ class AudioValidationService:
             if request.enable_logging and self._logger_service:
                 self._logger_service.log_error(
                     "Audio validation error",
-                    error=str(e)
+                    error=str(e),
                     execution_time=time.time() - start_time,
                 )
 
             return AudioValidationServiceResponse(
-                result=ValidationStatus.ERROR,
+                status=ValidationStatus.ERROR,
                 state=self._state,
                 error_message=error_message,
                 warnings=warnings,
@@ -407,25 +407,20 @@ class AudioValidationService:
                 rule_id="sample_rate_range",
                 name="Sample Rate Range",
                 description="Validate sample rate is within supported range",
-                category=ValidationCategory.FORMAT,
+                category=ValidationCategory.TECHNICAL,
                 severity=ValidationSeverity.ERROR,
                 validation_type=ValidationType.SAMPLE_RATE,
-parameters = (
-    {"min_rate": 8000, "max_rate": 192000, "common_rates": [44100, 48000, 96000]},)
-                error_message="Sample rate must be between 8000 and 192000 Hz",
-                fix_suggestion="Use a standard sample rate like 44100 or 48000 Hz",
-            )
+                parameters={"min_rate": 8000, "max_rate": 192000, "common_rates": [44100, 48000, 96000]},
+            ),
             # Channel validation
             ValidationRule(
                 rule_id="channel_count",
                 name="Channel Count",
                 description="Validate channel count is supported",
-                category=ValidationCategory.FORMAT,
+                category=ValidationCategory.TECHNICAL,
                 severity=ValidationSeverity.ERROR,
                 validation_type=ValidationType.CHANNELS,
                 parameters={"min_channels": 1, "max_channels": 8, "common_channels": [1, 2]},
-                error_message="Channel count must be between 1 and 8",
-                fix_suggestion="Use mono (1) or stereo (2) channels for best compatibility",
             ),
 
             # Bit depth validation
@@ -433,13 +428,11 @@ parameters = (
                 rule_id="bit_depth_standard",
                 name="Bit Depth Standard",
                 description="Validate bit depth is a standard value",
-                category=ValidationCategory.FORMAT,
+                category=ValidationCategory.TECHNICAL,
                 severity=ValidationSeverity.WARNING,
-                validation_type=ValidationType.BIT_DEPTH,
+                validation_type=ValidationType.FORMAT,
                 parameters={"supported_depths": [8, 16, 24, 32]},
-                warning_message="Non-standard bit depth may cause compatibility issues",
-                fix_suggestion="Use 16-bit for general use or 24-bit for high quality",
-            )
+            ),
             # Buffer size validation
             ValidationRule(
                 rule_id="buffer_size_power_of_two",
@@ -447,35 +440,29 @@ parameters = (
                 description="Validate buffer size is a power of two",
                 category=ValidationCategory.PERFORMANCE,
                 severity=ValidationSeverity.WARNING,
-                validation_type=ValidationType.BUFFER_SIZE,
+                validation_type=ValidationType.FORMAT,
                 parameters={"min_size": 64, "max_size": 8192},
-                warning_message="Buffer size should be a power of two for optimal performance",
-                fix_suggestion="Use buffer sizes like 512, 1024, 2048, or 4096",
-            )
+            ),
             # Audio format validation
             ValidationRule(
                 rule_id="format_support",
                 name="Format Support",
                 description="Validate audio format is supported",
-                category=ValidationCategory.FORMAT,
+                category=ValidationCategory.TECHNICAL,
                 severity=ValidationSeverity.ERROR,
-                validation_type=ValidationType.AUDIO_FORMAT,
+                validation_type=ValidationType.FORMAT,
                 parameters={"supported_formats": ["wav", "mp3", "flac", "ogg"]},
-                error_message="Audio format is not supported",
-                fix_suggestion="Use WAV for uncompressed or MP3/FLAC for compressed audio",
-            )
+            ),
             # Data integrity validation
             ValidationRule(
                 rule_id="data_integrity",
                 name="Data Integrity",
                 description="Validate audio data integrity",
-                category=ValidationCategory.QUALITY,
+                category=ValidationCategory.TECHNICAL,
                 severity=ValidationSeverity.ERROR,
-                validation_type=ValidationType.DATA_INTEGRITY,
+                validation_type=ValidationType.QUALITY,
                 parameters={"check_nan": True, "check_inf": True, "check_range": True},
-                error_message="Audio data contains invalid values",
-                fix_suggestion="Clean audio data by removing NaN/Inf values and normalizing range",
-            )
+            ),
             # Performance validation
             ValidationRule(
                 rule_id="performance_check",
@@ -483,10 +470,8 @@ parameters = (
                 description="Validate configuration for performance",
                 category=ValidationCategory.PERFORMANCE,
                 severity=ValidationSeverity.WARNING,
-                validation_type=ValidationType.PERFORMANCE,
+                validation_type=ValidationType.FORMAT,
                 parameters={"max_latency_ms": 50, "min_buffer_count": 2},
-                warning_message="Configuration may cause performance issues",
-                fix_suggestion="Adjust buffer size and count for better performance",
             ),
         ]
 
@@ -518,22 +503,20 @@ parameters = (
                 # Update overall result
                 if rule_result == ValidationStatus.INVALID:
                     validation_result = ValidationStatus.INVALID
-elif rule_result = (
-    = ValidationStatus.WARNING and validation_result == ValidationStatus.VALID:)
+                elif rule_result == ValidationStatus.WARNING and validation_result == ValidationStatus.VALID:
                     validation_result = ValidationStatus.WARNING
 
             return validation_result
 
         except Exception as e:
             issue = ValidationIssue(
-                issue_id=f"validation_error_{int(time.time()
-    )}",
                 rule_id="system",
                 severity=ValidationSeverity.ERROR,
-                category=ValidationCategory.FORMAT,
-                validation_type=validation_type,
                 message=f"Validation error: {e!s}",
-                description=f"Error during {validation_type.value} validation",
+                field_path="validation",
+                actual_value=None,
+                expected_value=None,
+                suggestion=f"Check {validation_type.value} validation configuration",
             )
             report.issues.append(issue)
             report.errors.append(str(e))
@@ -552,32 +535,29 @@ elif rule_result = (
                 return self._validate_sample_rate(rule, request, report)
             if rule.validation_type == ValidationType.CHANNELS:
                 return self._validate_channels(rule, request, report)
-            if rule.validation_type == ValidationType.BIT_DEPTH:
+            if rule.validation_type == ValidationType.QUALITY:
                 return self._validate_bit_depth(rule, request, report)
-            if rule.validation_type == ValidationType.BUFFER_SIZE:
-                return self._validate_buffer_size(rule, request, report)
-            if rule.validation_type == ValidationType.AUDIO_FORMAT:
+            if rule.validation_type == ValidationType.FORMAT:
                 return self._validate_audio_format(rule, request, report)
-            if rule.validation_type == ValidationType.DATA_INTEGRITY:
+            if rule.validation_type == ValidationType.QUALITY:
                 return self._validate_data_integrity(rule, request, report)
-            if rule.validation_type == ValidationType.DEVICE_COMPATIBILITY:
+            if rule.validation_type == ValidationType.DEVICE:
                 return self._validate_device_compatibility(rule, request, report)
-            if rule.validation_type == ValidationType.FILE_FORMAT:
+            if rule.validation_type == ValidationType.FORMAT:
                 return self._validate_file_format(rule, request, report)
-            if rule.validation_type == ValidationType.PERFORMANCE:
+            if rule.validation_type == ValidationType.QUALITY:
                 return self._validate_performance(rule, request, report)
             return ValidationStatus.VALID
 
         except Exception as e:
             issue = ValidationIssue(
-                issue_id=f"rule_error_{rule.rule_id}_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=ValidationSeverity.ERROR,
-                category=rule.category,
-                validation_type=rule.validation_type,
                 message=f"Rule application error: {e!s}",
-                description=f"Error applying rule {rule.name}",
+                field_path="rule_application",
+                actual_value=None,
+                expected_value=None,
+                suggestion=f"Check rule {rule.name} configuration",
             )
             report.issues.append(issue)
 
@@ -599,17 +579,13 @@ elif rule_result = (
 
         if sample_rate < min_rate or sample_rate > max_rate:
             issue = ValidationIssue(
-                issue_id=f"sample_rate_range_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=rule.severity,
-                category=rule.category,
-                validation_type=rule.validation_type,
-                message=rule.error_message or f"Sample rate {sample_rate} is out of range",
-                value=sample_rate,
-                expected=f"{min_rate}-{max_rate} Hz",
-                fix_suggestion=rule.fix_suggestion,
-                can_auto_fix=True,
+                message=f"Sample rate {sample_rate} is out of range",
+                field_path="sample_rate",
+                actual_value=sample_rate,
+                expected_value=f"{min_rate}-{max_rate} Hz",
+                suggestion="Consider using a sample rate between the specified range",
             )
             report.issues.append(issue)
 
@@ -622,16 +598,13 @@ elif rule_result = (
         # Check if it's a common rate
         if sample_rate not in common_rates:
             issue = ValidationIssue(
-                issue_id=f"sample_rate_uncommon_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=ValidationSeverity.WARNING,
-                category=rule.category,
-                validation_type=rule.validation_type,
                 message=f"Sample rate {sample_rate} is not commonly used",
-                value=sample_rate,
-                expected=f"Common rates: {common_rates}",
-                fix_suggestion="Consider using 44100 or 48000 Hz for better compatibility",
+                field_path="sample_rate",
+                actual_value=sample_rate,
+                expected_value=f"Common rates: {common_rates}",
+                suggestion="Consider using 44100 or 48000 Hz for better compatibility",
             )
             report.issues.append(issue)
             report.warnings.append(issue.message)
@@ -654,17 +627,13 @@ elif rule_result = (
 
         if channels < min_channels or channels > max_channels:
             issue = ValidationIssue(
-                issue_id=f"channels_range_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=rule.severity,
-                category=rule.category,
-                validation_type=rule.validation_type,
-                message=rule.error_message or f"Channel count {channels} is out of range",
-                value=channels,
-                expected=f"{min_channels}-{max_channels} channels",
-                fix_suggestion=rule.fix_suggestion,
-                can_auto_fix=True,
+                message=f"Channel count {channels} is out of range",
+                field_path="channels",
+                actual_value=channels,
+                expected_value=f"{min_channels}-{max_channels} channels",
+                suggestion="Consider using a channel count within the supported range",
             )
             report.issues.append(issue)
 
@@ -690,17 +659,13 @@ elif rule_result = (
 
         if bit_depth not in supported_depths:
             issue = ValidationIssue(
-                issue_id=f"bit_depth_unsupported_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=rule.severity,
-                category=rule.category,
-                validation_type=rule.validation_type,
-                message=rule.warning_message or f"Bit depth {bit_depth} is not standard",
-                value=bit_depth,
-                expected=f"Supported depths: {supported_depths}",
-                fix_suggestion=rule.fix_suggestion,
-                can_auto_fix=True,
+                message=f"Bit depth {bit_depth} is not standard",
+                field_path="bit_depth",
+                actual_value=bit_depth,
+                expected_value=f"Supported depths: {supported_depths}",
+                suggestion="Consider using a standard bit depth (8, 16, 24, or 32 bits)",
             )
             report.issues.append(issue)
 
@@ -728,17 +693,13 @@ elif rule_result = (
         # Check range
         if buffer_size < min_size or buffer_size > max_size:
             issue = ValidationIssue(
-                issue_id=f"buffer_size_range_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=ValidationSeverity.ERROR,
-                category=rule.category,
-                validation_type=rule.validation_type,
                 message=f"Buffer size {buffer_size} is out of range",
-                value=buffer_size,
-                expected=f"{min_size}-{max_size}",
-                fix_suggestion="Use a buffer size within the supported range",
-                can_auto_fix=True,
+                field_path="buffer_size",
+                actual_value=buffer_size,
+                expected_value=f"{min_size}-{max_size}",
+                suggestion="Use a buffer size within the supported range",
             )
             report.issues.append(issue)
             report.errors.append(issue.message)
@@ -747,17 +708,13 @@ elif rule_result = (
         # Check if power of two
         if buffer_size & (buffer_size - 1) != 0:
             issue = ValidationIssue(
-                issue_id=f"buffer_size_power_of_two_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=rule.severity,
-                category=rule.category,
-                validation_type=rule.validation_type,
-                message=rule.warning_message or f"Buffer size {buffer_size} is not a power of two",
-                value=buffer_size,
-                expected="Power of two (e.g., 512, 1024, 2048, 4096)",
-                fix_suggestion=rule.fix_suggestion,
-                can_auto_fix=True,
+                message=f"Buffer size {buffer_size} is not a power of two",
+                field_path="buffer_size",
+                actual_value=buffer_size,
+                expected_value="Power of two (e.g., 512, 1024, 2048, 4096)",
+                suggestion="Consider using a power of two buffer size for better performance",
             )
             report.issues.append(issue)
             report.warnings.append(issue.message)
@@ -779,17 +736,13 @@ elif rule_result = (
 
         if format_value not in supported_formats:
             issue = ValidationIssue(
-                issue_id=f"format_unsupported_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=rule.severity,
-                category=rule.category,
-                validation_type=rule.validation_type,
-                message=rule.error_message or f"Audio format {format_value} is not supported",
-                value=format_value,
-                expected=f"Supported formats: {supported_formats}",
-                fix_suggestion=rule.fix_suggestion,
-                can_auto_fix=True,
+                message=f"Audio format {format_value} is not supported",
+                field_path="format",
+                actual_value=format_value,
+                expected_value=f"Supported formats: {supported_formats}",
+                suggestion="Consider using a supported audio format",
             )
             report.issues.append(issue)
 
@@ -835,17 +788,13 @@ elif rule_result = (
 
         if issues_found:
             issue = ValidationIssue(
-                issue_id=f"data_integrity_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=rule.severity,
-                category=rule.category,
-                validation_type=rule.validation_type,
                 message=f"Data integrity issues: {', '.join(issues_found)}",
-                description="Audio data contains invalid or out-of-range values",
-                fix_suggestion=rule.fix_suggestion,
-                can_auto_fix=True,
-                metadata={"issues": issues_found},
+                field_path="audio_data",
+                actual_value=None,
+                expected_value="Valid audio data without NaN, infinite, or out-of-range values",
+                suggestion="Clean the audio data to remove invalid values",
             )
             report.issues.append(issue)
 
@@ -870,17 +819,15 @@ elif rule_result = (
         issues_found = []
 
         # Check sample rate support
-        if device.supported_sample_rates and
-    config.sample_rate not in device.supported_sample_rates:
+        if device.supported_sample_rates and config.sample_rate not in device.supported_sample_rates:
+    
             issues_found.append(f"Sample rate {config.sample_rate} not supported by device")
 
         # Check channel count
         if device.type == "output" and config.channels > device.max_output_channels:
-            issues_found.append(f"Channel count {config.channels} exceeds device maximum {device.max\
-    _output_channels}")
+            issues_found.append(f"Channel count {config.channels} exceeds device maximum {device.max_output_channels}")
         elif device.type == "input" and config.channels > device.max_input_channels:
-            issues_found.append(f"Channel count {config.channels} exceeds device maximum {device.max\
-    _input_channels}")
+            issues_found.append(f"Channel count {config.channels} exceeds device maximum {device.max_input_channels}")
 
         # Check device availability
         if not device.is_available:
@@ -888,16 +835,13 @@ elif rule_result = (
 
         if issues_found:
             issue = ValidationIssue(
-                issue_id=f"device_compatibility_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=ValidationSeverity.ERROR,
-                category=rule.category,
-                validation_type=rule.validation_type,
                 message=f"Device compatibility issues: {', '.join(issues_found)}",
-                description=f"Configuration not compatible with device {device.name}",
-                fix_suggestion="Adjust configuration to match device capabilities",
-                metadata={"device_id": device.device_id, "issues": issues_found},
+                field_path="device_compatibility",
+                actual_value=None,
+                expected_value="Configuration compatible with device capabilities",
+                suggestion="Adjust configuration to match device capabilities",
             )
             report.issues.append(issue)
             report.errors.append(issue.message)
@@ -920,17 +864,13 @@ elif rule_result = (
 
         if extension not in supported_extensions:
             issue = ValidationIssue(
-                issue_id=f"file_format_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=ValidationSeverity.WARNING,
-                category=rule.category,
-                validation_type=rule.validation_type,
                 message=f"File extension '{extension}' may not be supported",
-                value=extension,
-                expected=f"Supported extensions: {supported_extensions}",
-                fix_suggestion="Use a supported audio file format",
-                metadata={"file_path": str(file_path)},
+                field_path="file_format",
+                actual_value=extension,
+                expected_value=f"Supported extensions: {supported_extensions}",
+                suggestion="Use a supported audio file format",
             )
             report.issues.append(issue)
             report.warnings.append(issue.message)
@@ -956,18 +896,13 @@ elif rule_result = (
 
         if estimated_latency > max_latency_ms:
             issue = ValidationIssue(
-                issue_id=f"performance_latency_{int(time.time()
-    )}",
                 rule_id=rule.rule_id,
                 severity=rule.severity,
-                category=rule.category,
-                validation_type=rule.validation_type,
-message = (
-    f"Estimated latency {estimated_latency:.1f}ms exceeds maximum {max_latency_ms}ms",)
-                value=estimated_latency,
-                expected=f"<= {max_latency_ms}ms",
-                fix_suggestion="Reduce buffer size to decrease latency",
-                can_auto_fix=True,
+                message=f"Estimated latency {estimated_latency:.1f}ms exceeds maximum {max_latency_ms}ms",
+                field_path="performance",
+                actual_value=estimated_latency,
+                expected_value=f"<= {max_latency_ms}ms",
+                suggestion="Reduce buffer size to decrease latency",
             )
             report.issues.append(issue)
             report.warnings.append(issue.message)
@@ -998,10 +933,8 @@ message = (
 
             # Apply fixes based on issues
             for issue in report.issues:
-                if not issue.can_auto_fix:
-                    continue
-
-                if issue.validation_type == ValidationType.SAMPLE_RATE:
+                # Check if this is a sample rate issue
+                if issue.field_path and "sample_rate" in issue.field_path:
                     if fixed_config.sample_rate < 8000:
                         fixed_config.sample_rate = 44100
                         report.auto_fixes_applied.append("Fixed sample rate to 44100 Hz")
@@ -1009,7 +942,8 @@ message = (
                         fixed_config.sample_rate = 48000
                         report.auto_fixes_applied.append("Fixed sample rate to 48000 Hz")
 
-                elif issue.validation_type == ValidationType.CHANNELS:
+                # Check if this is a channels issue
+                elif issue.field_path and "channels" in issue.field_path:
                     if fixed_config.channels < 1:
                         fixed_config.channels = 1
                         report.auto_fixes_applied.append("Fixed channels to 1 (mono)")
@@ -1017,12 +951,14 @@ message = (
                         fixed_config.channels = 2
                         report.auto_fixes_applied.append("Fixed channels to 2 (stereo)")
 
-                elif issue.validation_type == ValidationType.BIT_DEPTH:
+                # Check if this is a bit depth issue
+                elif issue.field_path and "bit_depth" in issue.field_path:
                     if fixed_config.bit_depth not in [8, 16, 24, 32]:
                         fixed_config.bit_depth = 16
                         report.auto_fixes_applied.append("Fixed bit depth to 16-bit")
 
-                elif issue.validation_type == ValidationType.BUFFER_SIZE:
+                # Check if this is a buffer size issue
+                elif issue.field_path and "buffer_size" in issue.field_path:
                     if fixed_config.buffer_size < 64:
                         fixed_config.buffer_size = 512
                         report.auto_fixes_applied.append("Fixed buffer size to 512")
@@ -1034,8 +970,7 @@ message = (
                         import math
                         power = round(math.log2(fixed_config.buffer_size))
                         fixed_config.buffer_size = 2 ** power
-                        report.auto_fixes_applied.append(f"Fixed buffer size to {fixed_config.buffer\
-    _size} (power of two)")
+                        report.auto_fixes_applied.append(f"Fixed buffer size to {fixed_config.buffer_size} (power of two)")
 
         # Fix audio data if needed
         if request.audio_data and request.audio_data.data is not None:
@@ -1043,16 +978,14 @@ message = (
             data_fixed = False
 
             # Remove NaN and Inf values
-            if np.isnan(data).any() or np.isinf(data).any(,
-    ):
+            if np.isnan(data).any() or np.isinf(data).any():
                 data = np.nan_to_num(data, nan=0.0, posinf=1.0, neginf=-1.0)
                 data_fixed = True
                 report.auto_fixes_applied.append("Removed NaN and infinite values from audio data")
 
             # Normalize range for float data
             if data.dtype in [np.float32, np.float64] and np.abs(data).max() > 1.0:
-                data = data / np.abs(data).max(,
-    )
+                data = data / np.abs(data).max()
                 data_fixed = True
                 report.auto_fixes_applied.append("Normalized audio data to [-1.0, 1.0] range")
 
@@ -1068,8 +1001,7 @@ message = (
                     format=request.audio_data.format,
                     codec=request.audio_data.codec,
                     checksum=request.audio_data.checksum,
-metadata = (
-    request.audio_data.metadata.copy() if request.audio_data.metadata else {},)
+                    metadata=request.audio_data.metadata.copy() if request.audio_data.metadata else {},
                 )
 
         return fixed_config, fixed_data
@@ -1081,8 +1013,8 @@ metadata = (
 
         # Add suggestions from issues
         for issue in report.issues:
-            if issue.fix_suggestion and issue.fix_suggestion not in recommendations:
-                recommendations.append(issue.fix_suggestion)
+            if issue.suggestion and issue.suggestion not in recommendations:
+                recommendations.append(issue.suggestion)
 
         # Add general recommendations
         if request.config:
@@ -1090,21 +1022,18 @@ metadata = (
 
             # Sample rate recommendations
             if config.sample_rate not in [44100, 48000]:
-                recommendations.append("Consider using 44100 Hz or
-    48000 Hz for better compatibility")
+                recommendations.append("Consider using 44100 Hz or 48000 Hz for better compatibility")
+    
 
             # Channel recommendations
             if config.channels > 2:
-                recommendations.append("Consider using stereo (2 channels) for better compatibility"\
-    )
+                recommendations.append("Consider using stereo (2 channels) for better compatibility")
 
             # Buffer size recommendations
             if config.buffer_size < 512:
-                recommendations.append("Consider using a larger buffer size (512+) for better stabil\
-    ity")
+                recommendations.append("Consider using a larger buffer size (512+) for better stability")
             elif config.buffer_size > 4096:
-recommendations.append("Consider using a smaller buffer size (< = (
-    4096) for lower latency"))
+                recommendations.append("Consider using a smaller buffer size (< = 4096) for lower latency")
 
         return recommendations
 
@@ -1121,10 +1050,12 @@ recommendations.append("Consider using a smaller buffer size (< = (
         """Enable or disable a validation rule."""
         for rule in self._state.available_rules:
             if rule.rule_id == rule_id:
-                rule.enabled = enabled
-                # Update active rules
-self._state.active_rules = (
-    [rule for rule in self._state.available_rules if rule.enabled])
+                # Since ValidationRule doesn't have an enabled attribute, we'll track enabled rules separately
+                if enabled:
+                    if rule not in self._state.active_rules:
+                        self._state.active_rules.append(rule)
+                elif rule in self._state.active_rules:
+                    self._state.active_rules.remove(rule)
                 return True
         return False
 
@@ -1136,8 +1067,8 @@ self._state.active_rules = (
             return False
 
         self._state.available_rules.append(rule)
-        if rule.enabled:
-            self._state.active_rules.append(rule)
+        # Add to active rules by default
+        self._state.active_rules.append(rule)
 
         return True
 

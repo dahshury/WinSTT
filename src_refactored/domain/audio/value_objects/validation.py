@@ -225,7 +225,7 @@ class ValidationResult(ValueObject):
     ) -> tuple:
         return (
             self.is_valid,
-            tuple(self.issues)
+            tuple(self.issues),
             self.audio_info,
             self.validation_time,
             tuple(self.rules_applied),

@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src_refactored.domain.ui_coordination.value_objects.ui_state import UIState
+from src_refactored.domain.ui_coordination.value_objects.ui_state_management import UIState
 from src_refactored.infrastructure.main_window.ui_layout_service import UILayoutService
 from src_refactored.infrastructure.main_window.window_configuration_service import (
     WindowConfigurationService,
@@ -86,7 +86,10 @@ class UISetupComponent:
             main_window: The main window
         """
         # Create main vertical layout
-        main_layout = QVBoxLayout(main_window.centralwidget)
+        central_widget = getattr(main_window, "centralwidget", None)
+        if central_widget is None:
+            central_widget = main_window.centralWidget()
+        main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
         main_layout.setObjectName("mainLayout")
@@ -133,7 +136,9 @@ class UISetupComponent:
         title_label.setFont(font)
 
         # Add to layout
-        main_window.main_layout.addWidget(title_label)
+        main_layout = getattr(main_window, "main_layout", None)
+        if main_layout:
+            main_layout.addWidget(title_label)
 
         # Store reference
         main_window.title_label = title_label
@@ -157,7 +162,9 @@ class UISetupComponent:
         status_label.setFont(font)
 
         # Add to layout
-        main_window.main_layout.addWidget(status_label)
+        main_layout = getattr(main_window, "main_layout", None)
+        if main_layout:
+            main_layout.addWidget(status_label)
 
         # Store reference
         main_window.status_label = status_label
@@ -188,7 +195,9 @@ class UISetupComponent:
         progress_layout.addWidget(progress_label)
 
         # Add to main layout
-        main_window.main_layout.addWidget(progress_frame)
+        main_layout = getattr(main_window, "main_layout", None)
+        if main_layout:
+            main_layout.addWidget(progress_frame)
 
         # Store references
         main_window.progress_frame = progress_frame
@@ -220,7 +229,9 @@ class UISetupComponent:
         viz_layout.addWidget(viz_label)
 
         # Add to main layout
-        main_window.main_layout.addWidget(viz_frame)
+        main_layout = getattr(main_window, "main_layout", None)
+        if main_layout:
+            main_layout.addWidget(viz_frame)
 
         # Store references
         main_window.visualization_frame = viz_frame

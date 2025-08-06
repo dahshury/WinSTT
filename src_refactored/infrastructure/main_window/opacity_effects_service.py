@@ -219,7 +219,7 @@ class OpacityEffectsService(QObject):
             animation.setEasingCurve(easing_curve)
 
             # Connect signals
-            animation.started.connect(lambda: self.animation_started.emit(animation_name))
+            animation.valueChanged.connect(lambda: self.animation_started.emit(animation_name))
             animation.finished.connect(lambda: self.animation_finished.emit(animation_name))
             animation.finished.connect(lambda: self._cleanup_animation(animation_name))
 

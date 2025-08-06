@@ -6,7 +6,7 @@ and widget positioning business rules.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from src_refactored.domain.common.entity import Entity
@@ -94,7 +94,7 @@ class WidgetProperties:
     visibility: WidgetVisibility = WidgetVisibility.VISIBLE
     alignment: WidgetAlignment | None = None
     parent: str | None = None
-    children: list[str] = None
+    children: list[str] = field(default_factory=list)
 
     def __post_init__(self,
     ):
@@ -167,8 +167,7 @@ class UILayout(Entity[str]):
             for widget_name, geometry, z_order in default_widgets:
                 widget_result = layout.add_widget(widget_name, geometry, z_order)
                 if not widget_result.is_success:
-                    return Result.failure(f"Failed to add widget {widget_name}: {widget_result.error\
-    ()}")
+                    return Result.failure(f"Failed to add widget {widget_name}: {widget_result.error()}")
 
             return Result.success(layout)
         except Exception as e:
@@ -251,8 +250,7 @@ class UILayout(Entity[str]):
         for child_name in widget.children.copy():
             child_result = self.remove_widget(child_name)
             if not child_result.is_success:
-                return Result.failure(f"Failed to remove child widget {child_name}: {child_result.er\
-    ror()}")
+                return Result.failure(f"Failed to remove child widget {child_name}: {child_result.error()}")
 
         # Remove from widgets and z-order stack
         del self._widgets[name]
@@ -310,7 +308,7 @@ class UILayout(Entity[str]):
         max_z = max((w.z_order.value for w in self._widgets.values()), default=0)
         new_z_order = ZOrderLevel.from_value(max_z + 1)
         if new_z_order.is_success:
-            self._widgets[name].z_order = new_z_order.value()
+            self._widgets[name].z_order = new_z_order.value
 
         self.mark_as_updated()
         return Result.success(None)
@@ -346,7 +344,7 @@ class UILayout(Entity[str]):
     def _update_z_order_stack(self) -> None:
         """Update z-order stack based on widget z-order values."""
         self._z_order_stack = sorted(
-            self._widgets.keys()
+            self._widgets.keys(),
             key=lambda name: self._widgets[name].z_order.value,
         )
 
@@ -390,8 +388,7 @@ class UILayout(Entity[str]):
         """Validate UI layout invariants."""
         if self._container_width <= 0 or self._container_height <= 0:
             msg = "Container dimensions must be positive"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
         if not isinstance(self._layout_type, LayoutType):
             msg = "Invalid layout type"
             raise ValueError(msg)

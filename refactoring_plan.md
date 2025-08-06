@@ -997,6 +997,12 @@ src/infrastructure/
 | - [x] **KeyboardService** | `utils/listener.py` | `src/infrastructure/audio/keyboard_service.py` | 100-150 | Extract keyboard hook implementation with event-driven patterns |
 | - [x] **AudioFileRepository** | `utils/listener.py` | `src/infrastructure/audio/audio_file_repository.py` | 300-400 | Extract file persistence with progress tracking |
 | - [x] **ListenerService** | `utils/listener.py` + `src/core/utils/listener.py` | `src/infrastructure/audio/consolidated_listener_service.py` | 1-575 + 1-68 | Merge full listener implementation (575 lines) with placeholder AudioToText class (68 lines), consolidating key handling, recording state, and audio processing interface |
+| - [x] **AudioBufferService** | `utils/listener.py` | `src/infrastructure/audio/audio_buffer_service.py` | 100-200 | Extract audio buffering operations with circular buffer management |
+| - [x] **AudioDeviceService** | `utils/listener.py` | `src/infrastructure/audio/audio_device_service.py` | 50-150 | Extract PyAudio device enumeration and selection with validation |
+| - [x] **VADModelService** | `utils/listener.py` | `src/infrastructure/audio/vad_model_service.py` | 150-200 | Extract VAD model loading and management operations |
+| - [x] **AudioDataConversionService** | `utils/listener.py` | `src/infrastructure/audio/audio_data_conversion_service.py` | 200-250 | Extract audio format conversion between different data types |
+| - [x] **VADCalibrationService** | `utils/listener.py` | `src/infrastructure/audio/vad_calibration_service.py` | 100-150 | Extract VAD threshold calibration and noise level analysis |
+| - [x] **AudioServiceFactory** | **NEW** | `src/infrastructure/audio/service_factory.py` | **NEW** | Create factory for audio services with proper dependency injection following Factory pattern |
 
 #### 3.2 Transcription Infrastructure Services (Non-blocking Patterns)
 
@@ -1039,7 +1045,7 @@ src/infrastructure/
 | - [x] **VideoConversionService** | `src/ui/window_methods.py` | `src/infrastructure/media/media_conversion_service.py` | 778-811 | Extract FFmpeg video conversion with progress tracking |
 | - [x] **MediaScannerService** | `src/ui/window_methods.py` | `src/infrastructure/media/folder_scanning_service.py` | 726-736 | Extract folder scanning for media files with progress callbacks |
 | - [x] **BatchProcessorService** | `src/ui/window_methods.py` | `src/infrastructure/media/batch_processor_service.py` | 813-929 | Extract batch file processing queue management with progress tracking |
-| - [x] **ProgressTrackingService** | `src/ui/window_methods.py` | `src/infrastructure/media/progress_tracking_service.py` | 931-944 | Extract progress calculation and tracking with callbacks |
+| - [x] **ProgressTrackingService** | `src/ui/window_methods.py`, `src/ui/settings_dialog.py` | `src/infrastructure/progress_management/progress_tracking_service.py` | 931-944, 1187-1208 | Extract consolidated progress calculation and tracking with callbacks, progress tracking with percentage calculation and callbacks |
 
 #### 3.6 System Infrastructure Services Extended (Non-blocking Patterns)
 
@@ -1054,8 +1060,8 @@ src/infrastructure/
 |------|-------------|-------------|------------------|---------|
 | - [x] **Animation Strategies** | `src/ui/core/patterns.py` | `src_refactored/infrastructure/presentation/qt/animation_strategies.py` | 331-419 | Comprehensive animation strategies (FadeInStrategy, SlideInStrategy, FadeOutStrategy, SlideOutStrategy, AnimationContext) with PyQt6 integration for opacity effects and transitions (refactored) |
 | - [x] **MessageDisplayService** | `src/ui/window_methods.py` | `src/infrastructure/ui/message_display_service.py` | 341-470 | Extract message display with effects and progress callbacks |
-| - [x] **DragDropService** | `src/ui/window_methods.py` | `src/infrastructure/ui/drag_drop_service.py` | 624-710 | Extract drag and drop handling with file validation and progress tracking |
-| - [x] **FileDialogService** | `src/ui/window_methods.py` | `src/infrastructure/ui/file_dialog_service.py` | 501-547 | Extract file dialog configuration with media file selection |
+| - [x] **DragDropService** | `src/ui/window_methods.py`, `src/ui/settings_dialog.py` | `src/infrastructure/ui/drag_drop_service.py` | 624-710, 806-857 | Extract consolidated drag and drop handling with file validation, progress tracking, and file type validation (consolidated from multiple sources) |
+| - [x] **FileDialogService** | `src/ui/window_methods.py`, `src/ui/settings_dialog.py` | `src/infrastructure/ui/file_dialog_service.py` | 501-547, 1239-1263 | Extract consolidated file dialog configuration with media file selection, file browsing, validation, and progress callbacks (consolidated from multiple sources) |
 | - [x] **ProgressUIService** | `src/ui/window_methods.py` | `src/infrastructure/ui/progress_ui_service.py` | 1291-1331 | Extract progress bar UI management with complex reparenting |
 | - [x] **StateManagementService** | `src/ui/window_methods.py` | `src/infrastructure/ui/state_management_service.py` | 1333-1345 | Extract UI state coordination with download state management |
 
@@ -1077,8 +1083,8 @@ src/infrastructure/
 | - [x] **SettingsRepositoryService** | `src/ui/settings_dialog.py` | `src/infrastructure/settings/settings_repository_service.py` | 1265-1318 | Extract settings persistence with JSON storage and progress tracking |
 | - [x] **SettingsValidationService** | `src/ui/settings_dialog.py` | `src/infrastructure/settings/settings_validation_service.py` | 186, 1298-1302 | Extract settings validation with business rules and progress callbacks |
 | - [x] **HotkeyRecordingService** | `src/ui/settings_dialog.py` | `src/infrastructure/settings/hotkey_recording_service.py` | 867-969 | Extract key recording and combination validation with progress tracking |
-| - [x] **FileDialogService** | `src/ui/settings_dialog.py` | `src/infrastructure/ui/file_dialog_service.py` | 1239-1263 | Extract file browsing and validation with progress callbacks |
-| - [x] **DragDropService** | `src/ui/settings_dialog.py` | `src/infrastructure/ui/drag_drop_service.py` | 806-857 | Extract drag and drop handling with file type validation |
+
+
 | - [x] **SettingsMigrationService** | `src/ui/settings_dialog.py` | `src/infrastructure/settings/settings_migration_service.py` | 1265-1294 | Extract settings migration and upgrade logic |
 
 #### 3.10 UI Widget Infrastructure Services (Non-blocking Patterns)
@@ -1094,7 +1100,7 @@ src/infrastructure/
 | Task | Source File | Target File | Lines to Extract | Actions |
 |------|-------------|-------------|------------------|---------|
 | - [x] **ProgressBarReparentingService** | `src/ui/settings_dialog.py` | `src/infrastructure/progress_management/progress_bar_reparenting_service.py` | 1571-1613, 1362-1409, 1420-1464 | Extract complex progress bar reparenting and lifecycle management |
-| - [x] **ProgressTrackingService** | `src/ui/settings_dialog.py` | `src/infrastructure/progress_management/progress_tracking_service.py` | 1187-1208 | Extract progress tracking with percentage calculation and callbacks |
+
 | - [x] **UIStateManagementService** | `src/ui/settings_dialog.py` | `src/infrastructure/progress_management/ui_state_management_service.py` | 1320-1361 | Extract UI element enable/disable with visual feedback and opacity effects |
 | - [x] **TimerManagementService** | `src/ui/settings_dialog.py` | `src/infrastructure/progress_management/timer_management_service.py` | 146-148, 1407-1408 | Extract debounce timer management and delayed operations |
 
@@ -1133,6 +1139,21 @@ src/infrastructure/
 | - [x] **LoggingService** | `src/main.py` + `logger/logger.py` | `src/infrastructure/system/logging_service.py` | 12, 79-80 + **mirror existing** | Create service wrapper around existing logger/logger.py setup_logger function for dependency injection ✅ |
 | - [x] **ApplicationBootstrap** | `src/main.py` | `src/infrastructure/presentation/qt/application_bootstrap.py` | 93-96 | Extract QApplication setup and configuration ✓ |
 | - [x] **ErrorHandlingService** | `src/main.py` | `src/infrastructure/presentation/system/error_handling_service.py` | 126-130, 140-143 | Extract application-level error handling and user notifications ✓ |
+
+### Consolidation Summary
+
+**Services Consolidated During Implementation:**
+
+1. **ProgressTrackingService** - Consolidated three implementations:
+   - `src/infrastructure/media/progress_tracking_service.py` (deleted)
+   - `src/infrastructure/audio/progress_tracking_service.py` (deleted)
+   - `src/infrastructure/progress_management/progress_tracking_service.py` (consolidated implementation)
+
+2. **AudioNormalizationService** - Consolidated two implementations:
+   - `src/infrastructure/audio_visualization/audio_normalization_service.py` (deleted)
+   - `src/infrastructure/audio/audio_normalization_service.py` (consolidated implementation with advanced features)
+
+**Note:** All duplicate services have been consolidated to eliminate redundancy while preserving all functionality. The consolidated services include comprehensive features from all original implementations.
 
 ### Phase 4: Presentation Layer Refactoring (Week 7-8)
 
@@ -1495,7 +1516,6 @@ All blocking operations must be implemented with non-blocking patterns using cal
 - **Duplicate Prevention** - Handler existence checking to prevent duplicate logger registration
 - **Directory Creation** - Automatic log directory creation with date-based structure
 
-## Conclusion
 
 This comprehensive refactoring plan transforms WinSTT from a mixed-architecture desktop application into a clean, maintainable hexagonal architecture system. The plan preserves all existing functionality while introducing clear separation of concerns, enhanced testability, and improved maintainability.
 

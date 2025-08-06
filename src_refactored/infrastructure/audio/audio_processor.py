@@ -11,16 +11,31 @@ from collections.abc import Callable
 import numpy as np
 from PyQt6.QtCore import QMutex, QThread, QWaitCondition, pyqtSignal
 
-from src_refactored.application.use_cases.audio_processing.process_audio_use_case import (
-    ProcessAudioUseCase,
+from src_refactored.domain.audio.value_objects.audio_configuration import RecordingConfiguration
+from src_refactored.domain.audio.value_objects.audio_data import AudioData
+from src_refactored.infrastructure.audio.audio_buffer_service import AudioBufferService
+from src_refactored.infrastructure.audio.audio_data_conversion_service import (
+    AudioDataConversionService,
 )
-from src_refactored.domain.audio_processing.value_objects.audio_data import AudioData
-from src_refactored.domain.audio_processing.value_objects.processing_config import (
-    ProcessingConfig,
+
+# Import real service implementations
+from src_refactored.infrastructure.audio.audio_data_validation_service import (
+    AudioDataValidationService,
 )
-from src_refactored.infrastructure.audio_processing.audio_capture_service import (
-    AudioCaptureService,
+from src_refactored.infrastructure.audio.audio_device_service import AudioDeviceService
+from src_refactored.infrastructure.audio.audio_file_service import AudioFileService
+from src_refactored.infrastructure.audio.audio_normalization_service import (
+    AudioNormalizationService,
 )
+from src_refactored.infrastructure.audio.audio_processing_service import AudioProcessingService
+from src_refactored.infrastructure.audio.audio_recording_service import AudioRecordingService
+from src_refactored.infrastructure.audio.audio_stream_service import AudioStreamService
+from src_refactored.infrastructure.audio.logger_service import LoggerService
+from src_refactored.infrastructure.audio.progress_tracking_service import ProgressTrackingService
+from src_refactored.infrastructure.audio.recording_validation_service import (
+    RecordingValidationService,
+)
+from src_refactored.infrastructure.audio.signal_emission_service import SignalEmissionService
 
 
 class AudioProcessor(QThread):
@@ -52,22 +67,40 @@ class AudioProcessor(QThread):
         """
         super().__init__(parent)
 
-        # Initialize use cases (these would be injected via DI in full implementation)
-        self._process_audio_use_case = ProcessAudioUseCase()
+        # Initialize real services for dependency injection
+        self._validation_service = AudioDataValidationService()
+        self._conversion_service = AudioDataConversionService()
+        self._normalization_service = AudioNormalizationService()
+        self._buffer_service = AudioBufferService()
+        self._signal_service = SignalEmissionService()
+        self._logger_service = LoggerService()
 
-        # Initialize services
-        self._audio_capture_service = AudioCaptureService()
+        # Initialize real services for AudioRecordingService
+        device_service = AudioDeviceService()
+        stream_service = AudioStreamService()
+        file_service = AudioFileService()
+        processing_service = AudioProcessingService()
+        recording_validation_service = RecordingValidationService()
+        progress_tracking_service = ProgressTrackingService()
+        recording_logger_service = LoggerService()
+
+        # Initialize services with injected dependencies
+        self._audio_capture_service = AudioRecordingService(
+            device_service=device_service,
+            stream_service=stream_service,
+            file_service=file_service,
+            processing_service=processing_service,
+            validation_service=recording_validation_service,
+            progress_tracking_service=progress_tracking_service,
+            logger_service=recording_logger_service,
+        )
 
         # Processing configuration
-        self._processing_config = ProcessingConfig(
+        self._processing_config = RecordingConfiguration(
             sample_rate=16000,
-            chunk_size=1024,
             channels=1,
-            format_bits=16,
-            buffer_duration=0.1,
-            normalization_enabled=True,
-            noise_reduction_enabled=False,
-            gain_factor=1.0,
+            bit_depth=16,
+            buffer_size=1024,
         )
 
         # Thread control
@@ -97,14 +130,17 @@ class AudioProcessor(QThread):
         self._data_callback: Callable[[np.ndarray], None] | None = None
         self._level_callback: Callable[[float], None] | None = None
 
-    def set_processing_config(self, config: ProcessingConfig):
+    def set_processing_config(self, config: RecordingConfiguration):
         """Set audio processing configuration.
         
         Args:
             config: Processing configuration
         """
-        with QMutex():
+        self._mutex.lock()
+        try:
             self._processing_config = config
+        finally:
+            self._mutex.unlock()
 
     def set_audio_device(self, device_name: str):
         """Set the audio input device.
@@ -165,8 +201,11 @@ class AudioProcessor(QThread):
             self._running = False
 
             # Wake up the thread if it's waiting
-            with QMutex():
+            self._mutex.lock()
+            try:
                 self._condition.wakeAll()
+            finally:
+                self._mutex.unlock()
 
             # Wait for thread to finish
             if self.isRunning():
@@ -180,14 +219,20 @@ class AudioProcessor(QThread):
 
     def pause_processing(self):
         """Pause audio processing."""
-        with QMutex():
+        self._mutex.lock()
+        try:
             self._paused = True
+        finally:
+            self._mutex.unlock()
 
     def resume_processing(self):
         """Resume audio processing."""
-        with QMutex():
+        self._mutex.lock()
+        try:
             self._paused = False
             self._condition.wakeAll()
+        finally:
+            self._mutex.unlock()
 
     def run(self):
         """Main processing loop (runs in separate thread)."""
@@ -212,10 +257,13 @@ class AudioProcessor(QThread):
             while self._running:
                 try:
                     # Check if paused
-                    with QMutex():
+                    self._mutex.lock()
+                    try:
                         if self._paused:
                             self._condition.wait(self._mutex)
                             continue
+                    finally:
+                        self._mutex.unlock()
 
                     # Capture audio data
                     audio_result = self._audio_capture_service.read_audio_chunk()
@@ -272,7 +320,7 @@ class AudioProcessor(QThread):
             Processed audio samples or None if processing failed
         """
         try:
-            samples = audio_data.samples
+            samples = audio_data.data
 
             # Apply normalization if enabled
             if self._processing_config.normalization_enabled:
@@ -493,7 +541,7 @@ class AudioProcessor(QThread):
         self._current_audio_level = 0.0
         self._peak_audio_level = 0.0
 
-    def get_processing_config(self) -> ProcessingConfig:
+    def get_processing_config(self) -> RecordingConfiguration:
         """Get the current processing configuration.
         
         Returns:

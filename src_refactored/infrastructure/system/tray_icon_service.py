@@ -127,8 +127,7 @@ class TrayIconService(QObject):
         return False
 
     def show_message(self,
-title: str, message: str, icon_type: QSystemTrayIcon.MessageIcon = (
-    QSystemTrayIcon.MessageIcon.Information, timeout: int = 5000) -> None:)
+                     title: str, message: str, icon_type: QSystemTrayIcon.MessageIcon = QSystemTrayIcon.MessageIcon.Information, timeout: int = 5000) -> None:
         """Show a notification message from the tray icon.
         
         Args:
@@ -137,8 +136,7 @@ title: str, message: str, icon_type: QSystemTrayIcon.MessageIcon = (
             icon_type: Type of icon to show in the message
             timeout: Message timeout in milliseconds
         """
-        if self.tray_icon and self.tray_icon.isVisible(,
-    ):
+        if self.tray_icon and self.tray_icon.isVisible():
             self.tray_icon.showMessage(title, message, icon_type, timeout)
 
     def add_menu_action(
@@ -245,8 +243,12 @@ title: str, message: str, icon_type: QSystemTrayIcon.MessageIcon = (
 
         # Return default application icon if available
         app = QApplication.instance()
-        if app:
-            return app.style().standardIcon(app.style().StandardPixmap.SP_ComputerIcon)
+        if app and hasattr(app, "style"):
+            style_method = getattr(app, "style", None)
+            if style_method and callable(style_method):
+                style = style_method()
+                if hasattr(style, "standardIcon"):
+                    return style.standardIcon(style.StandardPixmap.SP_ComputerIcon)
 
         return None
 

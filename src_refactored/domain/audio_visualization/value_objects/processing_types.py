@@ -6,10 +6,8 @@ including processing results, phases, and data types.
 
 from enum import Enum
 
-from src_refactored.domain.common.value_object import ValueObject
 
-
-class ProcessingResult(ValueObject, Enum):
+class ProcessingResult(Enum):
     """Enumeration of processing results."""
     SUCCESS = "success"
     FAILURE = "failure"
@@ -20,7 +18,7 @@ class ProcessingResult(ValueObject, Enum):
     CANCELLED = "cancelled"
 
 
-class ProcessingPhase(ValueObject, Enum):
+class ProcessingPhase(Enum):
     """Enumeration of processing phases."""
     INITIALIZING = "initializing"
     VALIDATING_DATA = "validating_data"
@@ -32,7 +30,7 @@ class ProcessingPhase(ValueObject, Enum):
     ERROR_HANDLING = "error_handling"
 
 
-class AudioDataType(ValueObject, Enum):
+class AudioDataType(Enum):
     """Enumeration of audio data types."""
     RAW_BYTES = "raw_bytes"
     NUMPY_ARRAY = "numpy_array"

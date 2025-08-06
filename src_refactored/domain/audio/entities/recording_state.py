@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from src_refactored.domain.common.abstractions import DomainEvent, Entity
 
 if TYPE_CHECKING:
-    from src_refactored.domain.common.value_objects import KeyCombination
+    from src_refactored.domain.settings.value_objects.key_combination import KeyCombination
 
 
 class RecordingPhase(Enum):
@@ -155,8 +155,7 @@ class RecordingState(Entity):
 
         self.hotkey_combination = new_combination
         self.keys_currently_pressed.clear()  # Clear any stale key states
-        self.update_timestamp(,
-    )
+        self.update_timestamp()
 
     def _transition_to_phase(self, new_phase: RecordingPhase,
     ) -> None:

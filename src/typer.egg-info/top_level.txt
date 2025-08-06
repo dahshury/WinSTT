@@ -1,11 +1,7 @@
 __init__
 cache
-config
 core
 main
-main_async
-main_minimal
-main_simple
 resources
 ui
 workers

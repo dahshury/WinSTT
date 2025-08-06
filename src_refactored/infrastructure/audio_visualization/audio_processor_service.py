@@ -20,7 +20,7 @@ from src_refactored.domain.audio_visualization.entities.audio_processor import (
     AudioProcessorConfig,
     ProcessorStatus,
 )
-from src_refactored.infrastructure.system.logging_service import LoggerService
+from src_refactored.infrastructure.system.logging_service import LoggingService
 
 
 class AudioProcessorServiceProtocol(Protocol):
@@ -82,7 +82,7 @@ class PyAudioProcessor(QThread):
         self.audio_queue = queue.Queue(maxsize=10)
 
         # Logging
-        self.logger = LoggerService().get_logger("AudioProcessor")
+        self.logger = LoggingService().get_logger("AudioProcessor")
 
     def initialize_audio(self) -> bool:
         """Initialize PyAudio and audio stream.
@@ -244,13 +244,13 @@ class AudioProcessorService:
     and managing audio processors with threading support.
     """
 
-    def __init__(self, logger_service: LoggerService | None = None):
+    def __init__(self, logger_service: LoggingService | None = None):
         """Initialize the audio processor service.
         
         Args:
             logger_service: Optional logger service
         """
-        self.logger_service = logger_service or LoggerService()
+        self.logger_service = logger_service or LoggingService()
         self.logger = self.logger_service.get_logger("AudioProcessorService")
         self._active_processors: dict[str, PyAudioProcessor] = {}
 
@@ -274,10 +274,11 @@ class AudioProcessorService:
 
         # Create domain entity
         processor_entity = AudioProcessorEntity(
-            processor_id=processor_id,
             config=config,
-            status=ProcessorStatus.CREATED,
+            status=ProcessorStatus.STOPPED,
         )
+        # Set the entity ID after creation since it's inherited from Entity
+        processor_entity._id = processor_id
 
         self.logger.info("Created audio processor: {processor_id}")
         return processor_entity
@@ -292,18 +293,18 @@ class AudioProcessorService:
         Returns:
             True if started successfully, False otherwise
         """
-        pyaudio_processor = self._active_processors.get(processor.processor_id)
+        pyaudio_processor = self._active_processors.get(processor.id)
         if not pyaudio_processor:
-            self.logger.error("Processor not found: {processor.processor_id}")
+            self.logger.error("Processor not found: {processor.id}")
             return False
 
         try:
             pyaudio_processor.start()
             processor.start()
-            self.logger.info("Started audio processor: {processor.processor_id}")
+            self.logger.info("Started audio processor: {processor.id}")
             return True
         except Exception as e:
-            self.logger.exception(f"Failed to start processor {processor.processor_id}: {e}")
+            self.logger.exception(f"Failed to start processor {processor.id}: {e}")
             return False
 
     def stop_processor(self, processor: AudioProcessorEntity,
@@ -316,18 +317,18 @@ class AudioProcessorService:
         Returns:
             True if stopped successfully, False otherwise
         """
-        pyaudio_processor = self._active_processors.get(processor.processor_id)
+        pyaudio_processor = self._active_processors.get(processor.id)
         if not pyaudio_processor:
-            self.logger.error("Processor not found: {processor.processor_id}")
+            self.logger.error("Processor not found: {processor.id}")
             return False
 
         try:
             pyaudio_processor.stop()
             processor.stop()
-            self.logger.info("Stopped audio processor: {processor.processor_id}")
+            self.logger.info("Stopped audio processor: {processor.id}")
             return True
         except Exception as e:
-            self.logger.exception(f"Failed to stop processor {processor.processor_id}: {e}")
+            self.logger.exception(f"Failed to stop processor {processor.id}: {e}")
             return False
 
     def cleanup_processor(self, processor: AudioProcessorEntity,
@@ -337,14 +338,14 @@ class AudioProcessorService:
         Args:
             processor: Audio processor entity
         """
-        pyaudio_processor = self._active_processors.get(processor.processor_id)
+        pyaudio_processor = self._active_processors.get(processor.id)
         if pyaudio_processor:
             try:
                 pyaudio_processor.cleanup_resources()
-                del self._active_processors[processor.processor_id]
-                self.logger.info("Cleaned up processor: {processor.processor_id}")
+                del self._active_processors[processor.id]
+                self.logger.info("Cleaned up processor: {processor.id}")
             except Exception as e:
-                self.logger.exception(f"Failed to cleanup processor {processor.processor_id}: {e}")
+                self.logger.exception(f"Failed to cleanup processor {processor.id}: {e}")
 
     def get_processor_thread(self, processor: AudioProcessorEntity,
     ) -> PyAudioProcessor | None:
@@ -356,7 +357,7 @@ class AudioProcessorService:
         Returns:
             PyAudio processor thread or None if not found
         """
-        return self._active_processors.get(processor.processor_id)
+        return self._active_processors.get(processor.id)
 
     def cleanup_all(self) -> None:
         """Clean up all active processors."""

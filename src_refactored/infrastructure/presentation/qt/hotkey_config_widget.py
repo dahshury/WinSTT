@@ -16,16 +16,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.core.utils import resource_path
-from src_refactored.application.use_cases.settings_management.reset_hotkey_settings_use_case import (
-    ResetHotkeySettingsUseCase,
-)
-from src_refactored.application.use_cases.settings_management.update_hotkey_settings_use_case import (
-    UpdateHotkeySettingsUseCase,
-)
-from src_refactored.domain.settings_management.value_objects.hotkey_configuration import (
-    HotkeyConfiguration,
-)
+from src_refactored.domain.settings.value_objects.key_combination import KeyCombination
+from src_refactored.infrastructure.common.resource_service import resource_path
 
 
 class HotkeyConfigWidget(QGroupBox):
@@ -48,10 +40,6 @@ class HotkeyConfigWidget(QGroupBox):
             parent: Parent widget
         """
         super().__init__("Recording Key Settings", parent)
-
-        # Initialize use cases (these would be injected via DI in full implementation)
-        self._update_hotkey_use_case = UpdateHotkeySettingsUseCase()
-        self._reset_hotkey_use_case = ResetHotkeySettingsUseCase()
 
         # Current configuration
         self._current_hotkey = "F2"
@@ -335,32 +323,6 @@ class HotkeyConfigWidget(QGroupBox):
             key_name = "Space"
         elif key == Qt.Key.Key_Tab:
             key_name = "Tab"
-        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            key_name = "Enter"
-        elif key == Qt.Key.Key_Escape:
-            key_name = "Escape"
-        elif key == Qt.Key.Key_Backspace:
-            key_name = "Backspace"
-        elif key == Qt.Key.Key_Delete:
-            key_name = "Delete"
-        elif key == Qt.Key.Key_Insert:
-            key_name = "Insert"
-        elif key == Qt.Key.Key_Home:
-            key_name = "Home"
-        elif key == Qt.Key.Key_End:
-            key_name = "End"
-        elif key == Qt.Key.Key_PageUp:
-            key_name = "PageUp"
-        elif key == Qt.Key.Key_PageDown:
-            key_name = "PageDown"
-        elif key == Qt.Key.Key_Up:
-            key_name = "Up"
-        elif key == Qt.Key.Key_Down:
-            key_name = "Down"
-        elif key == Qt.Key.Key_Left:
-            key_name = "Left"
-        elif key == Qt.Key.Key_Right:
-            key_name = "Right"
         elif (key >= Qt.Key.Key_A and key <= Qt.Key.Key_Z) or (key >= Qt.Key.Key_0 and key <= Qt.Key.Key_9):
             key_name = chr(key)
         else:
@@ -418,23 +380,21 @@ class HotkeyConfigWidget(QGroupBox):
         """
         return self._current_hotkey
 
-    def get_hotkey_configuration(self) -> HotkeyConfiguration:
+    def get_hotkey_configuration(self) -> KeyCombination:
         """Get the current hotkey configuration as a domain object.
         
         Returns:
-            HotkeyConfiguration domain object
+            KeyCombination domain object
         """
-        return HotkeyConfiguration(
-            recording_key=self._current_hotkey,
-        )
+        return KeyCombination.from_string(self._current_hotkey)
 
-    def set_hotkey_configuration(self, config: HotkeyConfiguration):
+    def set_hotkey_configuration(self, config: KeyCombination):
         """Set the hotkey configuration from a domain object.
         
         Args:
-            config: HotkeyConfiguration domain object
+            config: KeyCombination domain object
         """
-        self.set_hotkey(config.recording_key)
+        self.set_hotkey(config.to_string())
 
     def reset_to_default(self):
         """Reset hotkey to default value."""

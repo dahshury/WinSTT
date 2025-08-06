@@ -57,8 +57,7 @@ class FolderScanningService:
             raise FolderScanningError(msg)
         except Exception as e:
             msg = f"Unexpected error scanning folder: {e}"
-            raise FolderScanningError(msg,
-    )
+            raise FolderScanningError(msg)
 
     def scan_folder_with_progress(
     self,
@@ -97,8 +96,7 @@ class FolderScanningService:
 
                     processed_files += 1
 
-if self.progress_callback and processed_files % 10 = (
-    = 0:  # Update every 10 files)
+            if self.progress_callback and processed_files % 10 == 0:
                         progress = (processed_files / total_files) * 100
                         self.progress_callback(
                             f"Scanning... Found {len(media_files)} media files",
@@ -140,8 +138,7 @@ if self.progress_callback and processed_files % 10 = (
                 if self.progress_callback:
                     folder_progress = (i / total_folders) * 100 if total_folders > 0 else 0
                     self.progress_callback(
-                        f"Scanning folder {i+1}/{total_folders}: {os.path.basename(folder_path,
-    )}",
+                        f"Scanning folder {i+1}/{total_folders}: {os.path.basename(folder_path)}",
                         folder_progress,
                     )
 

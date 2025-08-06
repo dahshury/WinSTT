@@ -11,6 +11,11 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
+from src_refactored.domain.common.ports.environment_port import IEnvironmentPort
+from src_refactored.domain.system_integration.ports.platform_service_port import (
+    IPlatformServicePort,
+)
+
 
 @dataclass(frozen=True)
 class LoggingConfiguration:
@@ -19,10 +24,18 @@ class LoggingConfiguration:
     transformers_level: int = logging.ERROR
     qt_logging_rules: str = "qt.gui.imageio=false;*.debug=false;qt.qpa.*=false"
     
-    def apply(self) -> None:
-        """Apply logging configuration."""
+    def apply(self, environment_service: IEnvironmentPort | None = None) -> None:
+        """Apply logging configuration.
+        
+        Args:
+            environment_service: Optional environment service for setting variables
+        """
         logging.getLogger("transformers").setLevel(self.transformers_level)
-        os.environ["QT_LOGGING_RULES"] = self.qt_logging_rules
+        if environment_service:
+            environment_service.set_variable("QT_LOGGING_RULES", self.qt_logging_rules)
+        else:
+            # Fallback for backward compatibility
+            os.environ["QT_LOGGING_RULES"] = self.qt_logging_rules
 
 
 @dataclass(frozen=True)
@@ -32,10 +45,19 @@ class EnvironmentConfiguration:
     pygame_hide_support_prompt: str = "hide"
     python_warnings: str = "ignore::DeprecationWarning,ignore::SyntaxWarning,ignore::UserWarning"
     
-    def apply(self) -> None:
-        """Apply environment configuration."""
-        os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = self.pygame_hide_support_prompt
-        os.environ["PYTHONWARNINGS"] = self.python_warnings
+    def apply(self, environment_service: IEnvironmentPort | None = None) -> None:
+        """Apply environment configuration.
+        
+        Args:
+            environment_service: Optional environment service for setting variables
+        """
+        if environment_service:
+            environment_service.set_variable("PYGAME_HIDE_SUPPORT_PROMPT", self.pygame_hide_support_prompt)
+            environment_service.set_variable("PYTHONWARNINGS", self.python_warnings)
+        else:
+            # Fallback for backward compatibility
+            os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = self.pygame_hide_support_prompt
+            os.environ["PYTHONWARNINGS"] = self.python_warnings
 
 
 @dataclass(frozen=True)
@@ -69,16 +91,16 @@ class PlatformConfiguration:
     has_win32gui: bool = False
     
     @classmethod
-    def detect(cls) -> "PlatformConfiguration":
-        """Detect platform-specific capabilities."""
-        has_win32gui = False
+    def detect(cls, platform_service) -> "PlatformConfiguration":
+        """Detect platform-specific capabilities using injected platform service.
         
-        if os.name in ("nt", "win32"):
-            try:
-                import win32gui
-                has_win32gui = True
-            except ImportError:
-                has_win32gui = False
+        Args:
+            platform_service: The platform service to use for detection
+            
+        Returns:
+            PlatformConfiguration with detected capabilities
+        """
+        has_win32gui = platform_service.get_win32gui_module() is not None
         
         return cls(has_win32gui=has_win32gui)
 
@@ -116,6 +138,8 @@ class ApplicationConfiguration:
     
     def __init__(
         self,
+        platform_service: IPlatformServicePort | None = None,
+        environment_service: IEnvironmentPort | None = None,
         logging_config: LoggingConfiguration | None = None,
         environment_config: EnvironmentConfiguration | None = None,
         warning_config: WarningConfiguration | None = None,
@@ -125,8 +149,18 @@ class ApplicationConfiguration:
         self.logging_config = logging_config or LoggingConfiguration()
         self.environment_config = environment_config or EnvironmentConfiguration()
         self.warning_config = warning_config or WarningConfiguration()
-        self.platform_config = platform_config or PlatformConfiguration.detect()
+        
+        # Detect platform configuration if not provided
+        if platform_config is None and platform_service is not None:
+            self.platform_config = PlatformConfiguration.detect(platform_service)
+        else:
+            self.platform_config = platform_config or PlatformConfiguration()
+            
         self.path_config = path_config or PathConfiguration.create_default()
+        
+        # Store services for later use
+        self._platform_service = platform_service
+        self._environment_service = environment_service
     
     def initialize(self) -> None:
         """Initialize all application configuration."""
@@ -134,10 +168,10 @@ class ApplicationConfiguration:
         self.path_config.setup_python_path()
         
         # Apply environment configuration
-        self.environment_config.apply()
+        self.environment_config.apply(self._environment_service)
         
         # Apply logging configuration
-        self.logging_config.apply()
+        self.logging_config.apply(self._environment_service)
         
         # Apply warning suppression
         self.warning_config.apply()
@@ -158,15 +192,31 @@ class ApplicationConfiguration:
         return self.path_config.resources_path
 
 
-def create_default_configuration() -> ApplicationConfiguration:
-    """Create default application configuration."""
-    return ApplicationConfiguration()
+def create_default_configuration(
+    platform_service: IPlatformServicePort | None = None,
+    environment_service: IEnvironmentPort | None = None,
+) -> ApplicationConfiguration:
+    """Create default application configuration.
+    
+    Args:
+        platform_service: Optional platform service for dependency injection
+        environment_service: Optional environment service for dependency injection
+        
+    Returns:
+        ApplicationConfiguration with default settings
+    """
+    return ApplicationConfiguration(
+        platform_service=platform_service,
+        environment_service=environment_service,
+    )
 
 
 def create_configuration(
     logging_level: int = logging.ERROR,
     suppress_warnings: bool = True,
     custom_paths: dict[str, str] | None = None,
+    platform_service: IPlatformServicePort | None = None,
+    environment_service: IEnvironmentPort | None = None,
 ) -> ApplicationConfiguration:
     """Create customized application configuration.
     
@@ -174,6 +224,8 @@ def create_configuration(
         logging_level: Logging level for transformers
         suppress_warnings: Whether to suppress warnings
         custom_paths: Custom path overrides
+        platform_service: Optional platform service for dependency injection
+        environment_service: Optional environment service for dependency injection
     
     Returns:
         Configured ApplicationConfiguration instance
@@ -201,6 +253,8 @@ def create_configuration(
         )
     
     return ApplicationConfiguration(
+        platform_service=platform_service,
+        environment_service=environment_service,
         logging_config=logging_config,
         warning_config=warning_config,
         path_config=path_config,

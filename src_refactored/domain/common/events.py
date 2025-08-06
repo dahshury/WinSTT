@@ -41,6 +41,13 @@ class DomainEventType(Enum):
     SETTINGS_UPDATED = "settings_updated"
     HOTKEY_CHANGED = "hotkey_changed"
     PREFERENCES_SAVED = "preferences_saved"
+    RECORDING_KEY_CHANGED = "recording_key_changed"
+    MODEL_CONFIGURATION_CHANGED = "model_configuration_changed"
+    LLM_CONFIGURATION_CHANGED = "llm_configuration_changed"
+    AUDIO_CONFIGURATION_CHANGED = "audio_configuration_changed"
+    OUTPUT_SRT_TOGGLED = "output_srt_toggled"
+    LLM_PROCESSING_ENABLED = "llm_processing_enabled"
+    LLM_PROCESSING_DISABLED = "llm_processing_disabled"
 
     # Common Domain Events
     PROGRESS_UPDATED = "progress_updated"
@@ -128,3 +135,93 @@ class ErrorOccurred(DomainEvent):
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "error_handler")
+
+
+# Settings Domain Events
+
+@dataclass(frozen=True)
+class RecordingKeyChanged(DomainEvent):
+    """Event raised when recording key combination changes."""
+    old_key: str
+    new_key: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.source:
+            object.__setattr__(self, "source", "user_preferences")
+
+
+@dataclass(frozen=True)
+class ModelConfigurationChanged(DomainEvent):
+    """Event raised when model configuration changes."""
+    old_model: str
+    new_model: str
+    old_quantization: str
+    new_quantization: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.source:
+            object.__setattr__(self, "source", "user_preferences")
+
+
+@dataclass(frozen=True)
+class LLMConfigurationChanged(DomainEvent):
+    """Event raised when LLM configuration changes."""
+    old_enabled: bool
+    new_enabled: bool
+    old_model: str
+    new_model: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.source:
+            object.__setattr__(self, "source", "user_preferences")
+
+
+@dataclass(frozen=True)
+class AudioConfigurationChanged(DomainEvent):
+    """Event raised when audio configuration changes."""
+    old_sample_rate: int
+    new_sample_rate: int
+    old_recording_sound_enabled: bool
+    new_recording_sound_enabled: bool
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.source:
+            object.__setattr__(self, "source", "user_preferences")
+
+
+@dataclass(frozen=True)
+class OutputSRTToggled(DomainEvent):
+    """Event raised when SRT output setting is toggled."""
+    old_value: bool
+    new_value: bool
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.source:
+            object.__setattr__(self, "source", "user_preferences")
+
+
+@dataclass(frozen=True)
+class LLMProcessingEnabled(DomainEvent):
+    """Event raised when LLM processing is enabled."""
+    model_name: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.source:
+            object.__setattr__(self, "source", "user_preferences")
+
+
+@dataclass(frozen=True)
+class LLMProcessingDisabled(DomainEvent):
+    """Event raised when LLM processing is disabled."""
+    model_name: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.source:
+            object.__setattr__(self, "source", "user_preferences")

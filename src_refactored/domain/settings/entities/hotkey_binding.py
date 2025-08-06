@@ -49,8 +49,7 @@ class HotkeyBinding(Entity):
     )
     _pressed_keys: set[str] = field(default_factory=set, init=False)
     _key_registry: dict[str, KeyInfo] = field(default_factory=dict, init=False)
-_on_combination_changed: Callable[[KeyCombination], None] | None = (
-    field(default=None, init=False))
+    _on_combination_changed: Callable[[KeyCombination], None] | None = field(default=None, init=False)
 
     def __post_init__(self):
         """Initialize the hotkey binding entity."""
@@ -62,9 +61,9 @@ _on_combination_changed: Callable[[KeyCombination], None] | None = (
         """Initialize the registry of supported keys."""
         # Modifier keys
         modifier_keys = [
-            KeyInfo("CTRL", KeyType.MODIFIER, "Ctrl")
-            KeyInfo("ALT", KeyType.MODIFIER, "Alt")
-            KeyInfo("SHIFT", KeyType.MODIFIER, "Shift")
+            KeyInfo("CTRL", KeyType.MODIFIER, "Ctrl"),
+            KeyInfo("ALT", KeyType.MODIFIER, "Alt"),
+            KeyInfo("SHIFT", KeyType.MODIFIER, "Shift"),
             KeyInfo("META", KeyType.MODIFIER, "Meta"),
         ]
 
@@ -75,9 +74,9 @@ _on_combination_changed: Callable[[KeyCombination], None] | None = (
 
         # Special keys
         special_keys = [
-            KeyInfo("ESC", KeyType.SPECIAL, "Escape")
-            KeyInfo("TAB", KeyType.SPECIAL, "Tab")
-            KeyInfo("CAPS", KeyType.SPECIAL, "Caps Lock")
+            KeyInfo("ESC", KeyType.SPECIAL, "Escape"),
+            KeyInfo("TAB", KeyType.SPECIAL, "Tab"),
+            KeyInfo("CAPS", KeyType.SPECIAL, "Caps Lock"),
             KeyInfo("SPACE", KeyType.SPECIAL, "Space"),
         ]
 
@@ -116,8 +115,7 @@ _on_combination_changed: Callable[[KeyCombination], None] | None = (
         if len(self._pressed_keys) > 0:
             try:
                 # Create new combination from pressed keys
-combination_string = (
-    "+".join(sorted(self._pressed_keys, key=self._get_key_sort_priority)))
+                combination_string = "+".join(sorted(self._pressed_keys, key=self._get_key_sort_priority))
                 new_combination = KeyCombination.from_string(combination_string)
 
                 # Validate the new combination

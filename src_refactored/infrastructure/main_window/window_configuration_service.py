@@ -12,7 +12,7 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QMainWindow, QSizePolicy
 
 from logger import setup_logger
-from src.core.utils import resource_path
+from src_refactored.infrastructure.common.resource_service import resource_path
 
 
 class WindowConfigurationError(Exception):
@@ -180,8 +180,7 @@ class WindowConfigurationService(QObject):
             True if palette configuration successful, False otherwise
         """
         try:
-            palette = QtGui.QPalette(,
-    )
+            palette = QtGui.QPalette()
 
             # Active state colors
             self._set_palette_brush(palette, QtGui.QPalette.ColorGroup.Active,

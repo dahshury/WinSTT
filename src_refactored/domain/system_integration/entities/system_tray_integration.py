@@ -136,11 +136,11 @@ class SystemTrayIntegration(AggregateRoot,
             "show": TrayAction(
                 action_type=TrayActionType.SHOW,
                 label="Show",
-            )
+            ),
             "settings": TrayAction(
                 action_type=TrayActionType.SETTINGS,
                 label="Settings",
-            )
+            ),
             "exit": TrayAction(
                 action_type=TrayActionType.EXIT,
                 label="Exit",
@@ -201,8 +201,7 @@ class SystemTrayIntegration(AggregateRoot,
 
         if action_id in self._actions:
             msg = f"Action with ID '{action_id}' already exists"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
         self._actions[action_id] = action
 
@@ -231,10 +230,10 @@ class SystemTrayIntegration(AggregateRoot,
 
         # Create updated action
         updated_action = TrayAction(
-            action_type=updates.get("action_type", action.action_type)
-            label=updates.get("label", action.label)
-            callback=updates.get("callback", action.callback)
-            enabled=updates.get("enabled", action.enabled)
+            action_type=updates.get("action_type", action.action_type),
+            label=updates.get("label", action.label),
+            callback=updates.get("callback", action.callback),
+            enabled=updates.get("enabled", action.enabled),
             visible=updates.get("visible", action.visible),
         )
 
@@ -276,14 +275,11 @@ class SystemTrayIntegration(AggregateRoot,
     def update_configuration(self, **updates) -> None:
         """Update tray configuration."""
         self._configuration = TrayConfiguration(
-            icon_path=updates.get("icon_path", self._configuration.icon_path)
-            tooltip=updates.get("tooltip", self._configuration.tooltip)
-show_notifications = (
-    updates.get("show_notifications", self._configuration.show_notifications))
-auto_hide_on_close = (
-    updates.get("auto_hide_on_close", self._configuration.auto_hide_on_close))
-double_click_action = (
-    updates.get("double_click_action", self._configuration.double_click_action)),
+            icon_path=updates.get("icon_path", self._configuration.icon_path),
+            tooltip=updates.get("tooltip", self._configuration.tooltip),
+            show_notifications=updates.get("show_notifications", self._configuration.show_notifications),
+            auto_hide_on_close=updates.get("auto_hide_on_close", self._configuration.auto_hide_on_close),
+            double_click_action=updates.get("double_click_action", self._configuration.double_click_action),
         )
 
     def set_notification_callback(self, callback: Callable[[str, str], None]) -> None:
@@ -347,7 +343,7 @@ double_click_action = (
             "is_visible": self.is_visible,
             "is_enabled": self.is_enabled,
             "error_message": self._error_message,
-            "action_count": len(self._actions)
+            "action_count": len(self._actions),
             "visible_actions": len(self.get_visible_actions()),
             "enabled_actions": len(self.get_enabled_actions()),
             "configuration": {

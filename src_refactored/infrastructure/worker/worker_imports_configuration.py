@@ -160,7 +160,7 @@ class WorkerImportsConfiguration:
             worker_type=WorkerImportType.LLM,
             module_path="src_refactored.infrastructure.llm.llm_pyqt_worker_service",
             class_name="LLMPyQtWorkerService",
-            dependencies=["src.core.utils.gemma_inference"],
+            dependencies=["src_refactored.infrastructure.llm.gemma_inference_service"],
         ))
 
         # Listener Worker Configuration

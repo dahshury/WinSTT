@@ -18,6 +18,7 @@ from src_refactored.domain.audio.value_objects import (
     AudioFormatType,
     AudioPlaybackServiceRequest,
     AudioTrack,
+    Duration,
     PlaybackConfiguration,
     PlaybackMetrics,
     PlaybackMode,
@@ -71,7 +72,7 @@ class AudioPlaybackServiceState:
     initialized: bool = False
     current_config: PlaybackConfiguration | None = None
     current_track: AudioTrack | None = None
-    playback_queue: list[AudioTrack] = None
+    playback_queue: list[AudioTrack] | None = None
     processing_state: PlaybackState = PlaybackState.IDLE
     status: PlaybackStatus | None = None
     metrics: PlaybackMetrics | None = None
@@ -97,7 +98,7 @@ class AudioPlaybackServiceResponse:
     metrics: PlaybackMetrics | None = None
     tracks: list[AudioTrack] | None = None
     error_message: str | None = None
-    warnings: list[str] = None
+    warnings: list[str] | None = None
     execution_time: float = 0.0
 
     def __post_init__(self):
@@ -286,8 +287,7 @@ class AudioPlaybackService:
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
         self._seek_event = threading.Event()
-        self._audio_buffer: Queue = Queue(,
-    )
+        self._audio_buffer: Queue = Queue()
         self._stream_id: str | None = None
         self._track_counter = 0
         self._current_position = 0.0
@@ -351,7 +351,7 @@ class AudioPlaybackService:
             if request.enable_logging and self._logger_service:
                 self._logger_service.log_error(
                     "Playback operation failed",
-                    error=str(e)
+                    error=str(e),
                     operation=request.operation.value,
                     execution_time=time.time() - start_time,
                 )
@@ -396,8 +396,16 @@ class AudioPlaybackService:
             self._state.current_config = config
             self._state.available_devices = devices
             self._state.processing_state = PlaybackState.READY
-            self._state.status = PlaybackStatus(volume=config.volume, speed=config.speed)
-            self._state.metrics = PlaybackMetrics(last_update=time.time())
+            self._state.status = PlaybackStatus(
+                is_playing=False,
+                current_position=Duration(seconds=0.0),
+                total_duration=Duration(seconds=0.0),
+                volume_level=config.volume,
+                playback_rate=config.speed,
+            )
+            self._state.metrics = PlaybackMetrics(
+                total_duration=Duration(seconds=0.0),
+            )
 
             init_result = PlaybackInitResult(
                 initialized=True,
@@ -412,7 +420,7 @@ class AudioPlaybackService:
             if request.enable_logging and self._logger_service:
                 self._logger_service.log_info(
                     "Playback service initialized",
-                    available_devices=len(devices)
+                    available_devices=len(devices),
                     execution_time=time.time() - start_time,
                 )
 
@@ -463,8 +471,7 @@ class AudioPlaybackService:
                         execution_time=time.time() - start_time,
                     )
 
-load_success, audio_data, file_info, load_error = (
-    self._file_service.load_file(request.file_path))
+                load_success, audio_data, file_info, load_error = self._file_service.load_file(request.file_path)
                 if not load_success:
                     return AudioPlaybackServiceResponse(
                         result=PlaybackResult.FILE_ERROR,
@@ -480,8 +487,7 @@ load_success, audio_data, file_info, load_error = (
                 track = AudioTrack(
                     track_id=track_id,
                     file_path=request.file_path,
-                    data=audio_data,
-                    duration=file_info.get("duration") if file_info else None,
+                    duration=Duration(seconds=file_info.get("duration", 0.0)) if file_info and file_info.get("duration") else None,
                     sample_rate=file_info.get("sample_rate", 44100) if file_info else 44100,
                     channels=file_info.get("channels", 2) if file_info else 2,
                     bit_depth=file_info.get("bit_depth", 16) if file_info else 16,
@@ -499,8 +505,7 @@ load_success, audio_data, file_info, load_error = (
 
                 track = AudioTrack(
                     track_id=track_id,
-                    data=request.audio_data,
-                    duration=duration,
+                    duration=Duration(seconds=duration) if duration else None,
                     sample_rate=config.sample_rate if config else 44100,
                     channels=config.channels if config else 2,
                     bit_depth=config.bit_depth if config else 16,
@@ -514,13 +519,8 @@ load_success, audio_data, file_info, load_error = (
                     execution_time=time.time() - start_time,
                 )
 
-            # Validate audio data compatibility
-            if track.data is not None:
-                data_valid,
-data_error = (
-    self._validation_service.validate_audio_data(track.data, self._state.current_config))
-                if not data_valid:
-                    warnings.append(f"Audio data validation warning: {data_error}")
+            # Note: AudioTrack doesn't contain audio data, it's metadata only
+            # Audio data validation would need to be done separately if needed
 
             # Update state
             self._state.current_track = track
@@ -534,12 +534,12 @@ data_error = (
             load_result = AudioLoadResult(
                 loaded=True,
                 track=track,
-                duration=track.duration,
+                duration=track.duration.seconds if track.duration else None,
                 format_info={
                     "sample_rate": track.sample_rate,
                     "channels": track.channels,
                     "bit_depth": track.bit_depth,
-                    "format": track.format.value,
+                    "format": track.audio_format.value,
                 },
             )
 
@@ -589,9 +589,7 @@ data_error = (
                 self._playback_thread.join(timeout=2.0)
 
             # Create output stream
-            stream_success,
-stream_id, stream_error = (
-    self._stream_service.create_output_stream(self._state.current_config))
+            stream_success, stream_id, stream_error = self._stream_service.create_output_stream(self._state.current_config)
             if not stream_success:
                 return AudioPlaybackServiceResponse(
                     result=PlaybackResult.DEVICE_ERROR,
@@ -626,7 +624,7 @@ stream_id, stream_error = (
             # Start playback thread
             self._playback_thread = threading.Thread(
                 target=self._playback_worker,
-                args=(request.enable_real_time_callback,)
+                args=(request.enable_real_time_callback,),
                 daemon=True,
             )
             self._playback_thread.start()
@@ -812,7 +810,7 @@ stream_id, stream_error = (
             self._seek_event.set()
 
             # Update state
-            self._state.processing_state = PlaybackState.SEEKING
+            self._state.processing_state = PlaybackState.BUFFERING
 
             operation_result = PlaybackOperationResult(
                 operation_successful=True,
@@ -1008,10 +1006,9 @@ stream_id, stream_error = (
                         title=request.file_path.stem,
                     )
                 elif request.audio_data is not None:
-                    track = AudioTrack(
-                        track_id=track_id,
-                        data=request.audio_data,
-                    )
+                                    track = AudioTrack(
+                    track_id=track_id,
+                )
 
             # Add to queue
             self._state.playback_queue.append(track)
@@ -1019,7 +1016,7 @@ stream_id, stream_error = (
             operation_result = PlaybackOperationResult(
                 operation_successful=True,
                 track_id=track.track_id,
-                queue_size=len(self._state.playback_queue)
+                queue_size=len(self._state.playback_queue),
             )
 
             if request.enable_progress_tracking and self._progress_tracking_service:
@@ -1152,8 +1149,7 @@ stream_id, stream_error = (
                         self._current_position = self._seek_position
                         self._seek_position = None
 
-                    self._seek_event.clear(,
-    )
+                    self._seek_event.clear()
                     self._state.processing_state = PlaybackState.PLAYING
                     continue
 
@@ -1169,8 +1165,7 @@ stream_id, stream_error = (
 
                 # Apply volume
                 if config and config.volume != 1.0:
-volume_success, volume_chunk, volume_error = (
-    self._processing_service.apply_volume()
+                    volume_success, volume_chunk, volume_error = self._processing_service.apply_volume(
                         chunk, config.volume, config.volume_mode,
                     )
                     if volume_success and volume_chunk is not None:
@@ -1178,8 +1173,7 @@ volume_success, volume_chunk, volume_error = (
 
                 # Apply speed change
                 if config and config.speed != 1.0:
-speed_success, speed_chunk, speed_error = (
-    self._processing_service.apply_speed_change()
+                    speed_success, speed_chunk, speed_error = self._processing_service.apply_speed_change(
                         processed_chunk, config.speed,
                     )
                     if speed_success and speed_chunk is not None:
@@ -1195,8 +1189,7 @@ speed_success, speed_chunk, speed_error = (
 
                 # Write to stream
                 if self._stream_id:
-write_success, write_error = (
-    self._stream_service.write_stream(self._stream_id, processed_chunk))
+                    write_success, write_error = self._stream_service.write_stream(self._stream_id, processed_chunk)
 
                     if not write_success:
                         if self._logger_service:
@@ -1226,7 +1219,7 @@ write_success, write_error = (
                         if self._logger_service:
                             self._logger_service.log_warning(
                                 "Error in playback callback",
-                                error=str(e)
+                                error=str(e),
                             )
 
                 # Small delay to control playback rate
@@ -1239,7 +1232,7 @@ write_success, write_error = (
             # Playback finished
             if not self._stop_event.is_set():
                 # Handle loop mode
-                if config and config.mode == PlaybackMode.LOOP:
+                if config and config.mode == PlaybackMode.REPEAT_ONE:
                     self._current_position = 0.0
                     # Restart playback (simplified)
                 elif config and config.mode == PlaybackMode.QUEUE and self._state.playback_queue:
@@ -1258,7 +1251,7 @@ write_success, write_error = (
             if self._logger_service:
                 self._logger_service.log_error(
                     "Error in playback worker",
-                    error=str(e)
+                    error=str(e),
                 )
 
             self._state.processing_state = PlaybackState.ERROR

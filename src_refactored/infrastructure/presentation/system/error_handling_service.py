@@ -283,7 +283,7 @@ class ErrorHandlingService:
 
             self.show_critical_error(
                 message=error_message,
-                details=str(exc_value)
+                details=str(exc_value),
                 exception=exc_value,
                 title=f"{self._application_name} Unexpected Error",
                 exit_code=ExitCode.GENERAL_ERROR,

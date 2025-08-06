@@ -47,8 +47,7 @@ class AudioFormat(ValueObject):
             msg = f"Invalid sample rate: {self.sample_rate}. Must be one of {valid_sample_rates}"
             raise ValueError(msg)
 
-        # Validate channels (mono or stereo,
-    )
+        # Validate channels (mono or stereo)
         if self.channels not in [1, 2]:
             msg = f"Invalid channels: {self.channels}. Must be 1 (mono) or 2 (stereo)"
             raise ValueError(msg)

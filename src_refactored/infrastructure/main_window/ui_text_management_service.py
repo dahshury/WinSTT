@@ -101,7 +101,7 @@ class UITextManagementService(QObject):
             self.register_text_content("model_status", TextContent(
                 text="Model ready",
                 mode=TextUpdateMode.CONDITIONAL,
-                condition_func=lambda: self._application_state.get("model_downloaded", False)
+                condition_func=lambda: self._application_state.get("model_downloaded", False),
                 true_text="Model ready",
                 false_text="Downloading model...",
             ))
@@ -465,8 +465,7 @@ class UITextManagementService(QObject):
             text = content.true_text if condition_result else content.false_text
 
             # Emit condition evaluation signal
-element_name = (
-    next((name for name, c in self._text_contents.items() if c == content), "unknown"))
+            element_name = next((name for name, c in self._text_contents.items() if c == content), "unknown")
             self.condition_evaluated.emit(element_name, condition_result)
 
             return text or content.text
@@ -508,12 +507,15 @@ element_name = (
             text: Text to set
         """
         try:
-            if hasattr(widget, "setText"):
-                widget.setText(text)
-            elif hasattr(widget, "setWindowTitle"):
-                widget.setWindowTitle(text)
+            set_text_method = getattr(widget, "setText", None)
+            if set_text_method and callable(set_text_method):
+                set_text_method(text)
             else:
-                self.logger.warning("Widget does not support text setting: {type(widget)}")
+                set_title_method = getattr(widget, "setWindowTitle", None)
+                if set_title_method and callable(set_title_method):
+                    set_title_method(text)
+                else:
+                    self.logger.warning("Widget does not support text setting: {type(widget)}")
 
         except Exception as e:
             self.logger.exception(f"Failed to set widget text: {e}")
@@ -612,8 +614,7 @@ class UITextManagementManager:
         """
         if not self._service:
             msg = "UI text management service not created"
-            raise UITextManagementError(msg,
-    )
+            raise UITextManagementError(msg)
 
         try:
             for element_name, widget in widgets.items():

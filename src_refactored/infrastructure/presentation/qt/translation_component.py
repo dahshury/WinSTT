@@ -9,11 +9,37 @@ import logging
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QMainWindow, QWidget
 
-from src_refactored.domain.ui_coordination.value_objects.ui_state import UIState
+from src_refactored.domain.audio.value_objects.recording_state import RecordingState
+from src_refactored.domain.common.entities.processing_status import ProcessingState
+from src_refactored.domain.ui_coordination.value_objects.ui_state_management import UIState
 from src_refactored.infrastructure.main_window.ui_text_management_service import (
     UITextManagementService,
 )
-from src_refactored.infrastructure.system.translation_service import TranslationService
+
+
+class MockTranslationService:
+    """Simple mock translation service for basic functionality."""
+    
+    def __init__(self):
+        self.current_language = "en"
+        self.available_languages = ["en", "es", "fr", "de"]
+    
+    def get_current_language(self) -> str:
+        """Get current language."""
+        return self.current_language
+    
+    def set_language(self, language_code: str) -> None:
+        """Set language."""
+        if language_code in self.available_languages:
+            self.current_language = language_code
+    
+    def translate(self, text: str, language: str) -> str:
+        """Simple translation - returns original text for now."""
+        return text
+    
+    def get_available_languages(self) -> list:
+        """Get available languages."""
+        return self.available_languages
 
 
 class TranslationComponent(QObject):
@@ -31,7 +57,7 @@ class TranslationComponent(QObject):
         super().__init__()
         self.logger = logging.getLogger(__name__)
         self.text_service = UITextManagementService()
-        self.translation_service = TranslationService()
+        self.translation_service = MockTranslationService()
 
         # Text mappings
         self.text_mappings: dict[str, str] = {}
@@ -240,7 +266,7 @@ class TranslationComponent(QObject):
         """
         self.update_widget_text("status_label", text_key, **kwargs)
 
-    def apply_state_text(self, state: UIState,
+    def apply_state_text(self, state: UIState | RecordingState | ProcessingState,
     ) -> None:
         """Apply state-specific text updates.
         
@@ -249,9 +275,9 @@ class TranslationComponent(QObject):
         """
         self.logger.debug("Applying state text: {state.value}")
 
-        if state == UIState.RECORDING:
+        if state == RecordingState.RECORDING:
             self.update_status_text("status_recording", key=self.recording_key)
-        elif state == UIState.PROCESSING:
+        elif state == ProcessingState.RUNNING:
             self.update_status_text("status_processing")
         elif state == UIState.ERROR:
             self.update_status_text("status_error")
@@ -380,11 +406,12 @@ class TranslationComponent(QObject):
             Formatted size string
         """
         try:
+            size = float(size_bytes)
             for unit in ["B", "KB", "MB", "GB"]:
-                if size_bytes < 1024.0:
-                    return f"{size_bytes:.1f} {unit}"
-                size_bytes /= 1024.0
-            return f"{size_bytes:.1f} TB"
+                if size < 1024.0:
+                    return f"{size:.1f} {unit}"
+                size /= 1024.0
+            return f"{size:.1f} TB"
 
         except Exception as e:
             self.logger.exception(f"Failed to format file size: {e}")

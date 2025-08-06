@@ -91,7 +91,7 @@ class ValidationIssue(ValueObject):
             self.severity,
             self.message,
             self.field_path,
-            str(self.actual_value)
+            str(self.actual_value),
             str(self.expected_value),
         )
 
@@ -117,7 +117,7 @@ class ValidationResult(ValueObject):
     def _get_equality_components(self) -> tuple:
         return (
             self.is_valid,
-            tuple(self.issues)
+            tuple(self.issues),
             self.validation_type,
             self.timestamp,
         )

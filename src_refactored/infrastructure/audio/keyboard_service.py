@@ -168,8 +168,7 @@ class KeyboardService:
     def clear_event_history(self) -> None:
         """Clear the event history."""
         with self._lock:
-            self._event_history.clear(,
-    )
+            self._event_history.clear()
 
     def _key_event_handler(self, event: Any,
     ) -> None:
@@ -177,11 +176,10 @@ class KeyboardService:
         try:
             # Convert keyboard library event to our KeyEvent
             key_event = KeyEvent(
-event_type = (
-    KeyEventType.KEY_DOWN if event.event_type == "down" else KeyEventType.KEY_UP,)
+                event_type=KeyEventType.KEY_DOWN if event.event_type == "down" else KeyEventType.KEY_UP,
                 key_name=event.name,
-                timestamp=getattr(event, "time", 0.0)
-                scan_code=getattr(event, "scan_code", None)
+                timestamp=getattr(event, "time", 0.0),
+                scan_code=getattr(event, "scan_code", None),
                 is_extended=getattr(event, "is_extended", False),
             )
 
@@ -246,8 +244,7 @@ event_type = (
         # Normalize main key
         normalized_main_key = self._normalize_key_name(combination.key)
         if normalized_main_key:
-            normalized_keys.add(normalized_main_key,
-    )
+            normalized_keys.add(normalized_main_key)
 
         return normalized_keys
 

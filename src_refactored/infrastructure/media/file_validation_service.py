@@ -106,8 +106,7 @@ class FileValidationService:
 
         for i, file_path in enumerate(file_paths):
             if self.progress_callback:
-                progress = (i / total_files,
-    ) * 100 if total_files > 0 else 0
+                progress = (i / total_files) * 100 if total_files > 0 else 0
                 self.progress_callback(f"Validating file {i+1}/{total_files}", progress)
 
             if self.validate_file_exists(file_path) and self.is_supported_media_file(file_path):

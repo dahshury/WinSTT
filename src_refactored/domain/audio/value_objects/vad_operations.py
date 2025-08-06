@@ -64,6 +64,8 @@ class VADConfiguration(ValueObject):
     min_silence_duration: float = 0.1  # seconds
     sample_rate: int = 16000
     chunk_size: int = 512
+    frame_size: int = 512  # Frame size in samples
+    hop_size: int = 256    # Hop size in samples
     window_size: float = 0.032  # 32ms window
     overlap: float = 0.5  # 50% overlap
     enable_smoothing: bool = True
@@ -84,6 +86,12 @@ class VADConfiguration(ValueObject):
             raise ValueError(msg)
         if self.chunk_size <= 0:
             msg = "Chunk size must be positive"
+            raise ValueError(msg)
+        if self.frame_size <= 0:
+            msg = "Frame size must be positive"
+            raise ValueError(msg)
+        if self.hop_size <= 0:
+            msg = "Hop size must be positive"
             raise ValueError(msg)
         if not 0.0 <= self.overlap <= 1.0:
             msg = "Overlap must be between 0.0 and 1.0"

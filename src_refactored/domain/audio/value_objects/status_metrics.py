@@ -82,15 +82,8 @@ class RecordingStatus(ValueObject):
 
         bits_per_sample = 16  # Default assumption
         if self.audio_format:
-            # Map format to bit depth (simplified,
-    )
-            format_bits = {
-                AudioFormat.PCM_16: 16,
-                AudioFormat.PCM_24: 24,
-                AudioFormat.PCM_32: 32,
-                AudioFormat.FLOAT_32: 32,
-            }
-            bits_per_sample = format_bits.get(self.audio_format, 16)
+            # Map format to bit depth (simplified)
+            bits_per_sample = self.audio_format.bit_depth.value
 
         return int(self.sample_rate.value * self.channels * bits_per_sample)
 
@@ -169,12 +162,10 @@ class PlaybackStatus(ValueObject):
         return (self.current_position.total_seconds / self.total_duration.total_seconds) * 100
 
     @property
-    def remaining_duration(self,
-    ) -> Duration:
+    def remaining_duration(self) -> Duration:
         """Get remaining playback duration."""
-remaining_seconds = (
-    max(0, self.total_duration.total_seconds - self.current_position.total_seconds))
-        return Duration.from_seconds(remaining_seconds)
+        remaining_seconds = max(0, self.total_duration.total_seconds - self.current_position.total_seconds)
+        return Duration(seconds=remaining_seconds)
 
     @property
     def effective_volume(self) -> float:

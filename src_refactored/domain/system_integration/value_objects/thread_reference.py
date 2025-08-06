@@ -88,8 +88,7 @@ class ThreadReference:
             msg = "Worker object cannot be None"
             raise ValueError(msg)
 
-        thread_id = f"worker_{id(worker,
-    )}"
+        thread_id = f"worker_{id(worker)}"
 
         return cls(
             thread_id=thread_id,
@@ -165,8 +164,8 @@ class ThreadReference:
 
         return cls(
             thread_id=data["thread_id"],
-            reference_type=ThreadReferenceType(data["reference_type"])
-            thread_name=data.get("thread_name")
+            reference_type=ThreadReferenceType(data["reference_type"]),
+            thread_name=data.get("thread_name"),
             created_at=created_at,
         )
 

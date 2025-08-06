@@ -20,16 +20,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.core.utils import resource_path
-from src_refactored.application.use_cases.settings_management.reset_sound_settings_use_case import (
-    ResetSoundSettingsUseCase,
-)
-from src_refactored.application.use_cases.settings_management.update_sound_settings_use_case import (
-    UpdateSoundSettingsUseCase,
-)
+from src_refactored.domain.settings.ports.sound_settings_port import ISoundSettingsManager
 from src_refactored.domain.settings_management.value_objects.sound_configuration import (
     SoundConfiguration,
 )
+from src_refactored.infrastructure.common.resource_service import resource_path
 from src_refactored.infrastructure.presentation.qt.toggle_switch_widget import ToggleSwitch
 
 
@@ -45,17 +40,17 @@ class SoundConfigWidget(QGroupBox):
     sound_file_changed = pyqtSignal(str)
     sound_reset = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, sound_settings_manager: ISoundSettingsManager, parent=None):
         """Initialize the sound configuration widget.
         
         Args:
+            sound_settings_manager: Sound settings manager port
             parent: Parent widget
         """
         super().__init__("Sound Settings", parent)
 
-        # Initialize use cases (these would be injected via DI in full implementation)
-        self._update_sound_use_case = UpdateSoundSettingsUseCase()
-        self._reset_sound_use_case = ResetSoundSettingsUseCase()
+        # Injected dependencies
+        self._sound_settings_manager = sound_settings_manager
 
         # Current configuration
         self._current_enabled = False

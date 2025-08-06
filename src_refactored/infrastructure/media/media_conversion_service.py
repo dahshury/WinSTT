@@ -50,8 +50,8 @@ class FFmpegConverter(MediaConverter):
             ffmpeg_cmd = [
                 "ffmpeg", "-i", video_path,
                 "-f", "wav",
-                "-ar", str(self.sample_rate)
-                "-ac", str(self.channels)
+                "-ar", str(self.sample_rate),
+                "-ac", str(self.channels),
                 "-loglevel", "error",
                 "pipe:1",
             ]
@@ -80,16 +80,14 @@ class FFmpegConverter(MediaConverter):
             raise MediaConversionError(msg)
         except Exception as e:
             msg = f"Error converting video: {e}"
-            raise MediaConversionError(msg,
-    )
+            raise MediaConversionError(msg)
 
 
 class MediaConversionService:
     """Service for handling media conversion operations."""
 
-    def __init__(self, converter: MediaConverter = None):
-        self._converter = converter or FFmpegConverter(,
-    )
+    def __init__(self, converter: MediaConverter | None = None):
+        self._converter = converter or FFmpegConverter()
 
     def convert_video_to_audio(self, video_path: str,
     ) -> tuple[str, bytes, str] | None:

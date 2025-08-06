@@ -56,6 +56,7 @@ Requires-Dist: aiofiles>=24.1.0
 Requires-Dist: psutil>=7.0.0
 Requires-Dist: librosa>=0.10.2
 Requires-Dist: tree3>=0.2.0
+Requires-Dist: ty>=0.0.1a17
 Provides-Extra: cpu
 Requires-Dist: faster-whisper>=0.10.0; extra == "cpu"
 Requires-Dist: onnxruntime==1.20.0; extra == "cpu"

@@ -16,7 +16,7 @@ from typing import Any, Generic, Protocol, TypeVar
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from src_refactored.domain.common.domain_event import DomainEvent
+from src_refactored.domain.common.events import DomainEvent
 from src_refactored.domain.common.result import Result
 from src_refactored.domain.common.value_object import ValueObject
 
@@ -222,7 +222,7 @@ class IEventHandler(Protocol[E]):
 class IEventBus(Protocol):
     """Protocol for event bus."""
     
-    def publish(self, event: DomainEvent, metadata: EventMetadata = None) -> Result[None]:
+    def publish(self, event: DomainEvent, metadata: EventMetadata | None = None) -> Result[None]:
         """Publish an event.
         
         Args:
@@ -373,7 +373,7 @@ class EventBus(QObject, IEventBus):
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"Event bus {self.bus_id} initialized")
     
-    def publish(self, event: DomainEvent, metadata: EventMetadata = None) -> Result[None]:
+    def publish(self, event: DomainEvent, metadata: EventMetadata | None = None) -> Result[None]:
         """Publish an event.
         
         Args:
@@ -439,10 +439,13 @@ class EventBus(QObject, IEventBus):
                 elif hasattr(handler, "__name__") and handler.__name__ == "<lambda>":
                     handler_type = EventHandlerType.LAMBDA
                 
+                # Cast handler to the expected type for EventHandler
+                from typing import cast
+                handler_func = cast("Callable[[event_type, EventMetadata], None]", handler)
                 event_handler = EventHandler(
                     handler_id=handler_id,
                     event_type=event_type,
-                    handler_func=handler,
+                    handler_func=handler_func,
                     handler_type=handler_type,
                 )
             else:
@@ -901,7 +904,7 @@ def create_event_bus(bus_id: str, max_queue_size: int = 1000,
     return _event_bus_manager.create_bus(bus_id, max_queue_size, set_as_default)
 
 
-def publish_event(event: DomainEvent, metadata: EventMetadata = None, 
+def publish_event(event: DomainEvent, metadata: EventMetadata | None = None, 
                  bus_id: str | None = None) -> Result[None]:
     """Publish an event.
     

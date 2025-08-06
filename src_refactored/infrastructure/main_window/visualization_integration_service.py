@@ -12,8 +12,8 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QEasingCurve, QObject, QPropertyAnimation, pyqtSignal
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
 
-from logger import setup_logger
-from src.ui.voice_visualizer import VoiceVisualizer
+from src_refactored.domain.common.ports.logging_port import LoggingPort
+from src_refactored.infrastructure.presentation.qt.voice_visualizer import VoiceVisualizer
 
 
 class VisualizationIntegrationError(Exception):
@@ -30,10 +30,14 @@ class VisualizationIntegrationService(QObject):
     visualization_error = pyqtSignal(str)  # error_message
     fade_animation_finished = pyqtSignal(str)  # animation_type
 
-    def __init__(self):
-        """Initialize the visualization integration service."""
+    def __init__(self, logger: LoggingPort):
+        """Initialize the visualization integration service.
+        
+        Args:
+            logger: Logging port for logging operations
+        """
         super().__init__()
-        self.logger = setup_logger()
+        self.logger = logger
 
         # Visualization components
         self.voice_visualizer_controller: VoiceVisualizer | None = None
@@ -71,8 +75,7 @@ class VisualizationIntegrationService(QObject):
                                logo_opacity_effect: QGraphicsOpacityEffect,
                                title_opacity_effect: QGraphicsOpacityEffect,
                                settings_opacity_effect: QGraphicsOpacityEffect,
-instruction_opacity_effect: QGraphicsOpacityEffect | None = (
-    None) -> bool:)
+                               instruction_opacity_effect: QGraphicsOpacityEffect | None = None) -> bool:
         """Initialize visualization components and effects.
         
         Args:
@@ -132,8 +135,7 @@ instruction_opacity_effect: QGraphicsOpacityEffect | None = (
                 self.voice_visualizer_controller = VoiceVisualizer(parent_widget)
                 # Connect data signal to update method
                 if hasattr(self.voice_visualizer_controller, "processor"):
-                    self.voice_visualizer_controller.processor.data_ready.connect(self._handle_audio\
-    _data)
+                    self.voice_visualizer_controller.processor.data_ready.connect(self._handle_audio_data)
 
             # Start audio processing
             self.voice_visualizer_controller.start_processing()
@@ -184,8 +186,7 @@ instruction_opacity_effect: QGraphicsOpacityEffect | None = (
         except Exception as e:
             error_msg = f"Failed to stop visualization: {e}"
             self.logger.exception(error_msg)
-            self.visualization_error.emit(error_msg,
-    )
+            self.visualization_error.emit(error_msg)
             return False
 
     def update_waveform(self, audio_data: np.ndarray) -> bool:
@@ -234,14 +235,12 @@ instruction_opacity_effect: QGraphicsOpacityEffect | None = (
         try:
             # Fade in visualizer
             if self.visualizer_opacity_effect:
-self.fade_in_visualizer = (
-    QPropertyAnimation(self.visualizer_opacity_effect, b"opacity"))
+                self.fade_in_visualizer = QPropertyAnimation(self.visualizer_opacity_effect, b"opacity")
                 self.fade_in_visualizer.setDuration(self.animation_duration)
                 self.fade_in_visualizer.setStartValue(0.0)
                 self.fade_in_visualizer.setEndValue(1.0)
                 self.fade_in_visualizer.setEasingCurve(QEasingCurve.Type.InOutQuad)
-                self.fade_in_visualizer.finished.connect(lambda: self.fade_animation_finished.emit("\
-    fade_in_visualizer"))
+                self.fade_in_visualizer.finished.connect(lambda: self.fade_animation_finished.emit("fade_in_visualizer"))
                 self.fade_in_visualizer.start()
 
             # Fade out other elements
@@ -260,22 +259,19 @@ self.fade_in_visualizer = (
         try:
             # Fade out visualizer
             if self.visualizer_opacity_effect:
-self.fade_out_visualizer = (
-    QPropertyAnimation(self.visualizer_opacity_effect, b"opacity"))
+                self.fade_out_visualizer = QPropertyAnimation(self.visualizer_opacity_effect, b"opacity")
                 self.fade_out_visualizer.setDuration(self.animation_duration)
                 self.fade_out_visualizer.setStartValue(1.0)
                 self.fade_out_visualizer.setEndValue(0.0)
                 self.fade_out_visualizer.setEasingCurve(QEasingCurve.Type.InOutQuad)
                 self.fade_out_visualizer.finished.connect(self._on_fade_out_complete)
-                self.fade_out_visualizer.finished.connect(lambda: self.fade_animation_finished.emit(\
-    "fade_out_visualizer"))
+                self.fade_out_visualizer.finished.connect(lambda: self.fade_animation_finished.emit("fade_out_visualizer"))
                 self.fade_out_visualizer.start()
 
             # Fade in other elements
             self._fade_in_element(self.logo_opacity_effect, "fade_in_logo", 1.0)
             self._fade_in_element(self.title_opacity_effect, "fade_in_title", 1.0)
-self._fade_in_element(self.settings_opacity_effect, "fade_in_settings", 1.0, start_value = (
-    0.4))
+            self._fade_in_element(self.settings_opacity_effect, "fade_in_settings", 1.0, start_value = 0.4)
 
             if self.instruction_opacity_effect:
                 self._fade_in_element(self.instruction_opacity_effect, "fade_in_instruction", 1.0)
@@ -391,8 +387,7 @@ self._fade_in_element(self.settings_opacity_effect, "fade_in_settings", 1.0, sta
                 pen = pg.mkPen(color=self.waveform_color, width=self.waveform_width)
                 self.waveform_plot.setPen(pen)
 
-self.logger.debug("Waveform style updated: color = (
-    {self.waveform_color}, width={self.waveform_width}"))
+            self.logger.debug(f"Waveform style updated: color = {self.waveform_color}, width={self.waveform_width}")
 
         except Exception as e:
             self.logger.exception(f"Failed to set waveform style: {e}")
@@ -508,8 +503,7 @@ class VisualizationIntegrationManager:
         """
         if not self._service:
             msg = "Visualization service not created"
-            raise VisualizationIntegrationError(msg,
-    )
+            raise VisualizationIntegrationError(msg)
 
         return self._service.initialize_visualization(
             plot_widget, visualizer_opacity_effect, logo_opacity_effect,
@@ -554,6 +548,5 @@ class VisualizationIntegrationManager:
     def cleanup(self) -> None:
         """Clean up visualization integration manager."""
         if self._service:
-            self._service.cleanup(,
-    )
+            self._service.cleanup()
             self._service = None

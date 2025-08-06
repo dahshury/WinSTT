@@ -68,8 +68,7 @@ class ModelConfiguration(ValueObject):
             raise ValueError(msg)
 
         # GPU usage validation
-        if self.use_gpu and not self._is_gpu_available(,
-    ):
+        if self.use_gpu and not self._is_gpu_available():
             # Note: In a real implementation, you might want to just log a warning
             # instead of raising an exception
             pass  # Allow configuration even if GPU is not available

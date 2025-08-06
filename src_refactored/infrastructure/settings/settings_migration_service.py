@@ -72,8 +72,7 @@ class SettingsMigrationService:
             to_idx = version_order.index(to_version)
         except ValueError as e:
             msg = f"Unknown version: {e}"
-            raise MigrationError(msg,
-    )
+            raise MigrationError(msg)
 
         if from_idx >= to_idx:
             return []  # No migration needed or downgrade not supported
@@ -107,8 +106,7 @@ class SettingsMigrationService:
         migration_path = self.get_migration_path(current_version)
 
         if self.progress_callback:
-self.progress_callback(txt = (
-    f"Migrating settings from {current_version} to {self.CURRENT_VERSION}"))
+            self.progress_callback(txt=f"Migrating settings from {current_version} to {self.CURRENT_VERSION}")
 
         migrated_settings = settings.copy()
 
@@ -131,8 +129,7 @@ self.progress_callback(txt = (
         migrated_settings["migration_date"] = datetime.now().isoformat()
 
         if self.progress_callback:
-            self.progress_callback(txt="Settings migration completed successfully",
-    )
+            self.progress_callback(txt="Settings migration completed successfully")
 
         return migrated_settings
 
@@ -248,8 +245,7 @@ self.progress_callback(txt = (
         Returns:
             Path to the backup file
         """
-        backup_path = Path(backup_dir,
-    )
+        backup_path = Path(backup_dir)
         backup_path.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -291,8 +287,7 @@ self.progress_callback(txt = (
         for key in ["enable_recording_sound", "current_output_srt", "llm_enabled"]:
             if (key in original_settings and key in migrated_settings and
                 type(original_settings[key]) != type(migrated_settings[key])):
-                warnings.append(f"Type changed for {key}: {type(original_settings[key])} -> {type(mi\
-    grated_settings[key])}")
+                warnings.append(f"Type changed for {key}: {type(original_settings[key])} -> {type(migrated_settings[key])}")
 
         return warnings
 
@@ -332,7 +327,7 @@ self.progress_callback(txt = (
         """
         try:
             # Import here to avoid circular dependencies
-            from src.core.utils.config import get_config
+            from src_refactored.infrastructure.common.configuration_service import get_config
 
             settings = get_config()
 
@@ -352,17 +347,16 @@ self.progress_callback(txt = (
 
             # Populate default values from saved settings if available
             loaded_settings = {
-                "default_model": settings.get("model", defaults["model"])
-                "default_quantization": settings.get("quantization", defaults["quantization"])
-                "default_recording_sound": settings.get("recording_sound_enabled",
-                defaults["recording_sound_enabled"])
-                "default_sound_path": settings.get("sound_file_path", defaults["sound_file_path"])
-                "default_output_srt": settings.get("output_srt", defaults["output_srt"])
-                "default_rec_key": settings.get("recording_key", defaults["recording_key"])
-                "default_llm_enabled": settings.get("llm_enabled", defaults["llm_enabled"])
-                "default_llm_model": settings.get("llm_model", defaults["llm_model"])
-                "default_llm_quantization": settings.get("llm_quantization", defaults["llm_quantization"])
-                "default_llm_prompt": settings.get("llm_prompt", defaults["llm_prompt"])
+                "default_model": settings.get("model", defaults["model"]),
+                "default_quantization": settings.get("quantization", defaults["quantization"]),
+                "default_recording_sound": settings.get("recording_sound_enabled", defaults["recording_sound_enabled"]),
+                "default_sound_path": settings.get("sound_file_path", defaults["sound_file_path"]),
+                "default_output_srt": settings.get("output_srt", defaults["output_srt"]),
+                "default_rec_key": settings.get("recording_key", defaults["recording_key"]),
+                "default_llm_enabled": settings.get("llm_enabled", defaults["llm_enabled"]),
+                "default_llm_model": settings.get("llm_model", defaults["llm_model"]),
+                "default_llm_quantization": settings.get("llm_quantization", defaults["llm_quantization"]),
+                "default_llm_prompt": settings.get("llm_prompt", defaults["llm_prompt"]),
             }
 
             # Apply LLM settings to UI controls if provided
@@ -377,8 +371,7 @@ self.progress_callback(txt = (
         except Exception as e:
             error_msg = f"Error loading settings: {e}"
             if self.progress_callback:
-                self.progress_callback(txt=error_msg,
-    )
+                self.progress_callback(txt=error_msg)
             return {}
 
     def _apply_settings_to_ui(self, settings: dict[str, Any], ui_controls: dict[str, Any]) -> None:

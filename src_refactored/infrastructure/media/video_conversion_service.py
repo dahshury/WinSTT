@@ -147,8 +147,8 @@ class VideoConversionService:
             ffmpeg_cmd = [
                 "ffmpeg",
                 "-i", video_path,
-                "-ar", str(sample_rate)
-                "-ac", str(channels)
+                "-ar", str(sample_rate),
+                "-ac", str(channels),
                 "-loglevel", "error",
                 "-y",  # Overwrite output file
                 output_path,

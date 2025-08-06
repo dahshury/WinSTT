@@ -13,18 +13,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src_refactored.application.use_cases.progress_management.reparent_progress_bar_use_case import (
-    ReparentProgressBarUseCase,
-)
-from src_refactored.application.use_cases.progress_management.update_progress_state_use_case import (
-    UpdateProgressStateUseCase,
-)
 from src_refactored.domain.progress_management.value_objects.progress_state import (
     ProgressBarMovementState,
     ProgressState,
 )
-from src_refactored.infrastructure.progress_management.progress_ui_service import (
-    ProgressUIService,
+from src_refactored.infrastructure.progress_management.progress_bar_reparenting_service import (
+    ProgressBarReparentingService,
 )
 
 
@@ -54,12 +48,8 @@ class ProgressManagementWidget(QWidget):
         # Store parent window reference
         self.parent_window = parent_window
 
-        # Initialize use cases (these would be injected via DI in full implementation)
-        self._reparent_progress_bar_use_case = ReparentProgressBarUseCase()
-        self._update_progress_state_use_case = UpdateProgressStateUseCase()
-
         # Initialize services
-        self._progress_ui_service = ProgressUIService()
+        self._progress_reparenting_service = ProgressBarReparentingService()
 
         # Current state
         self._current_state = ProgressState.create_idle()

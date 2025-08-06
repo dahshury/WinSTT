@@ -299,7 +299,7 @@ class UIComponentBase(QObject, IUIComponent):
         except Exception as e:
             self.logger.exception(f"Error emitting event: {e}")
 
-    def get_event_history(self, event_type: UIEventType = None, limit: int | None = None) -> list[UIEvent]:
+    def get_event_history(self, event_type: UIEventType | None = None, limit: int | None = None) -> list[UIEvent]:
         """Get event history.
         
         Args:
@@ -604,9 +604,9 @@ class UILifecycleManager(QObject, IUILifecycleManager):
                 self._registration_count += 1
 
             # Connect component signals
-            if hasattr(component, "state_changed"):
+            if hasattr(component, "state_changed") and callable(getattr(component.state_changed, "connect", None)):
                 component.state_changed.connect(self._on_component_state_changed)
-            if hasattr(component, "error_occurred"):
+            if hasattr(component, "error_occurred") and callable(getattr(component.error_occurred, "connect", None)):
                 component.error_occurred.connect(self._on_component_error)
 
             self.component_registered.emit(component_id)

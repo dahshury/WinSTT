@@ -207,12 +207,11 @@ class Visualizer(Entity):
 
             # Create frame
             frame = VisualizationFrame(
-                timestamp=datetime.now(,
-    )
+                timestamp=datetime.now(),
                 data=vis_data,
                 settings=self.settings,
                 metadata={
-                    "waveform_duration": waveform.duration,
+                    "waveform_duration": waveform.duration_ms,
                     "waveform_rms": waveform.rms_level,
                     "waveform_peak": waveform.peak_level,
                     "sample_count": len(waveform.samples),
@@ -316,7 +315,8 @@ class Visualizer(Entity):
                 if self.render_mode == RenderMode.REAL_TIME:
                     # Generate dummy waveform for testing
                     samples = np.random.normal(0, 0.1, self.settings.chunk_size).astype(np.float32)
-                    waveform = WaveformData.from_numpy(samples, self.settings.sample_rate)
+                    timestamp_ms = time.time() * 1000.0
+                    waveform = WaveformData.from_numpy_array(samples, self.settings.sample_rate, timestamp_ms)
                     self.render_waveform(waveform)
 
                 time.sleep(interval)
@@ -325,10 +325,9 @@ class Visualizer(Entity):
                 self._handle_error(e)
                 break
 
-    def _render_waveform_data(self, waveform: WaveformData,
-    ) -> np.ndarray:
+    def _render_waveform_data(self, waveform: WaveformData) -> np.ndarray:
         """Render waveform visualization data."""
-        samples = waveform.to_numpy()
+        samples = waveform.to_numpy_array()
 
         # Downsample if needed
         target_points = self.settings.width
@@ -365,10 +364,9 @@ class Visualizer(Entity):
         return np.clip(y_coords, 0, height - 1)
 
 
-    def _render_spectrum_data(self, waveform: WaveformData,
-    ) -> np.ndarray:
+    def _render_spectrum_data(self, waveform: WaveformData) -> np.ndarray:
         """Render spectrum visualization data."""
-        samples = waveform.to_numpy()
+        samples = waveform.to_numpy_array()
 
         # Apply window function
         if self.settings.window_function.value != "none":
@@ -479,8 +477,7 @@ class Visualizer(Entity):
         self.statistics.frames_rendered += 1
 
         # Update peak render time
-self.statistics.peak_render_time_ms = (
-    max(self.statistics.peak_render_time_ms, render_time_ms))
+        self.statistics.peak_render_time_ms = max(self.statistics.peak_render_time_ms, render_time_ms)
 
         # Update average render time
         alpha = 0.1  # Smoothing factor

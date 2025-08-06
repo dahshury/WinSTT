@@ -16,6 +16,14 @@ class ToggleSwitch(QSlider):
     
     Extracted from settings_dialog.py (lines 27-112).
     """
+    
+    # Custom styling attributes (set by service when needed)
+    checked_color: str | None = None
+    unchecked_color: str | None = None
+    
+    # Dynamic method attributes (set by service when needed)
+    apply_checked_style: Callable[[], None] | None = None
+    apply_unchecked_style: Callable[[], None] | None = None
 
     def __init__(self, parent=None):
         """Initialize the toggle switch.
@@ -29,6 +37,11 @@ class ToggleSwitch(QSlider):
         self.setFixedSize(23, 11)  # Half the original size (46x22)
         self.setSingleStep(1)
         self.setPageStep(1)
+        
+        # Initialize dynamic method attributes to default implementations
+        self.apply_checked_style = self._apply_checked_style
+        self.apply_unchecked_style = self._apply_unchecked_style
+        
         self._apply_default_style()
 
     def _apply_default_style(self) -> None:

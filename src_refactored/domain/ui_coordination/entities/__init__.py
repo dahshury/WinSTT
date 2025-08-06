@@ -1,19 +1,7 @@
-"""UI coordination entities."""
+"""UI coordination entities.
 
-from .animation_controller import (
-    AnimationController,
-    AnimationGroup,
-    AnimationInstance,
-    AnimationStatus,
-)
-from .ui_coordinator import UICoordinator
+Note: UI-specific entities have been moved to the presentation layer.
+"""
 
-__all__ = [
-    # Animation Controller
-    "AnimationController",
-    "AnimationGroup",
-    "AnimationInstance",
-    "AnimationStatus",
-    # UI Coordinator
-    "UICoordinator",
-]
+# All UI-specific entities have been moved to presentation layer
+__all__ = []

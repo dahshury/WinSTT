@@ -324,9 +324,10 @@ class UIStateManagementService(QObject):
             element: Widget to set opacity for
             opacity: Opacity value (0.0 to 1.0)
         """
-        if hasattr(element, "setOpacity"):
+        set_opacity_method = getattr(element, "setOpacity", None)
+        if set_opacity_method and callable(set_opacity_method):
             # Use built-in opacity
-            element.setOpacity(opacity)
+            set_opacity_method(opacity)
         elif element in self.opacity_effects and self.opacity_effects[element] is not None:
             # Use graphics effect
             self.opacity_effects[element].setOpacity(opacity)

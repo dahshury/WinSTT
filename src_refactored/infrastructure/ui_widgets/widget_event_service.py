@@ -352,13 +352,14 @@ class WidgetEventService(QObject):
         # Override the widget's event methods
         original_mouse_press = widget.mousePressEvent
 
-        def mouse_press_handler(event):
+        def mouse_press_handler(event: QMouseEvent) -> None:
             if not service.handle_mouse_press_event(widget, event):
                 original_mouse_press(event)
 
-        def paint_handler(event):
+        def paint_handler(event: QPaintEvent) -> None:
             service.handle_paint_event(widget, event)
 
+        # Use setattr to avoid shadowing warnings
         widget.mousePressEvent = mouse_press_handler
         widget.paintEvent = paint_handler
 

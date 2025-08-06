@@ -49,6 +49,7 @@ class InitializePhase(Enum):
     INITIALIZATION = "initialization"
     VALIDATION = "validation"
     ICON_LOADING = "icon_loading"
+    ICON_SETUP = "icon_setup"
     MENU_CREATION = "menu_creation"
     EVENT_BINDING = "event_binding"
     SYSTEM_REGISTRATION = "system_registration"

@@ -14,6 +14,12 @@ from typing import TYPE_CHECKING
 
 from src_refactored.domain.audio.value_objects.audio_format import AudioFormat, Duration
 from src_refactored.domain.common.abstractions import AggregateRoot, DomainEvent
+from src_refactored.domain.common.errors import (
+    AudioDomainException,
+    DomainError,
+    ErrorCategory,
+    ErrorSeverity,
+)
 from src_refactored.domain.common.value_object import ProgressPercentage
 
 if TYPE_CHECKING:
@@ -91,12 +97,17 @@ class AudioSession(AggregateRoot):
         Business rule: Can only start from IDLE state.
         """
         if self.state != SessionState.IDLE:
-            msg = f"Cannot start recording from state: {self.state}"
-            raise ValueError(msg)
+            error = DomainError(
+                code="AUDIO_SESSION_INVALID_STATE_TRANSITION",
+                message=f"Cannot start recording from state: {self.state}",
+                category=ErrorCategory.BUSINESS_RULE,
+                severity=ErrorSeverity.ERROR,
+                context={"current_state": self.state.value, "session_id": self.session_id},
+            )
+            raise AudioDomainException(error)
 
         self.state = SessionState.PREPARING
-        self.started_at = datetime.now(,
-    )
+        self.started_at = datetime.now()
         self.recorded_data_size = 0
         self.error_message = None
 
@@ -162,8 +173,8 @@ class AudioSession(AggregateRoot):
 
             # Business rule: Check minimum duration
             if not actual_duration.is_minimum_duration:
-                self.fail_session(f"Recording too short: {actual_duration.seconds}s. Minimum: {self.\
-    minimum_duration.seconds}s")
+                min_duration_msg = f"Recording too short: {actual_duration.seconds}s. Minimum: {self.minimum_duration.seconds}s"
+                self.fail_session(min_duration_msg)
                 return
 
             # Business rule: Check if we have sufficient data
@@ -172,8 +183,7 @@ class AudioSession(AggregateRoot):
                 return
 
             # Success - complete the session
-            self.completed_at = datetime.now(,
-    )
+            self.completed_at = datetime.now()
             self.state = SessionState.COMPLETED
 
             # Raise domain event
@@ -192,8 +202,7 @@ class AudioSession(AggregateRoot):
         """Fail the session with an error."""
         self.state = SessionState.FAILED
         self.error_message = error_message
-        self.completed_at = datetime.now(,
-    )
+        self.completed_at = datetime.now()
 
         # Raise domain event
         event = SessionFailedEvent(
@@ -210,8 +219,14 @@ class AudioSession(AggregateRoot):
     def cancel_session(self) -> None:
         """Cancel the recording session."""
         if self.state in [SessionState.COMPLETED, SessionState.FAILED]:
-            msg = f"Cannot cancel session in final state: {self.state}"
-            raise ValueError(msg)
+            error = DomainError(
+                code="AUDIO_SESSION_CANCEL_INVALID_STATE",
+                message=f"Cannot cancel session in final state: {self.state}",
+                category=ErrorCategory.BUSINESS_RULE,
+                severity=ErrorSeverity.ERROR,
+                context={"current_state": self.state.value, "session_id": self.session_id},
+            )
+            raise AudioDomainException(error)
 
         self.state = SessionState.CANCELLED
         self.completed_at = datetime.now()

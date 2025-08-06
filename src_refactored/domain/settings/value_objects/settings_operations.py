@@ -39,16 +39,26 @@ class SettingType(Enum):
     TRANSCRIPTION = "transcription"
     EXPORT = "export"
     ADVANCED = "advanced"
+    QUANTIZATION = "quantization"
+    RECORDING_SOUND = "recording_sound"
+    SRT_OUTPUT = "srt_output"
+    LLM_SETTINGS = "llm_settings"
+    AUDIO_SETTINGS = "audio_settings"
+    UI_SETTINGS = "ui_settings"
 
 
 class ApplicationState(Enum):
     """Application states during settings changes."""
     IDLE = "idle"
+    APPLYING = "applying"
     APPLYING_SETTINGS = "applying_settings"
     VALIDATING = "validating"
     RESTARTING = "restarting"
     ERROR = "error"
     ROLLBACK = "rollback"
+    DOWNLOADING = "downloading"
+    REINITIALIZING = "reinitializing"
+    COMPLETED = "completed"
 
 
 class ExportResult(Enum):
@@ -178,3 +188,8 @@ class ValidationCategory(Enum):
     SECURITY = "security"
     PERFORMANCE = "performance"
     BUSINESS_RULE = "business_rule"
+    SYSTEM = "system"
+    MODEL = "model"
+    AUDIO = "audio"
+    HOTKEY = "hotkey"
+    LLM = "llm"

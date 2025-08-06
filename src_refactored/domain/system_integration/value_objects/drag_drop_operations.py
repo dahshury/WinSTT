@@ -4,7 +4,7 @@ This module defines domain concepts related to drag and drop functionality,
 including drop actions, file types, and operation configurations.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
@@ -30,8 +30,8 @@ class FileType(Enum):
 class DragDropConfig:
     """Configuration for drag and drop functionality."""
     enabled: bool = True
-    accepted_file_types: list[FileType] = None
-    accepted_extensions: list[str] = None
+    accepted_file_types: list[FileType] = field(default_factory=list)
+    accepted_extensions: list[str] = field(default_factory=list)
     max_file_size_mb: int | None = None
     allow_directories: bool = True
     show_drop_indicator: bool = True

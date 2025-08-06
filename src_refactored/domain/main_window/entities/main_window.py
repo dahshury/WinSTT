@@ -96,8 +96,7 @@ class MainWindow(AggregateRoot[str],
     ) -> Result[MainWindow]:
         """Create a new main window."""
         try:
-            window_id = f"main_window_{datetime.utcnow().timestamp(,
-    )}"
+            window_id = f"main_window_{datetime.utcnow().timestamp()}"
             window = cls(window_id, configuration, ui_layout, visualization)
             return Result.success(window)
         except Exception as e:

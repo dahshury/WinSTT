@@ -15,14 +15,12 @@ try:
     PYQTGRAPH_AVAILABLE = True
 except ImportError:
     PYQTGRAPH_AVAILABLE = False
-    pg = None
+    pg: Any = None
 
-from src_refactored.domain.ui_coordination.value_objects.ui_state import UIState
-from src_refactored.infrastructure.audio_visualization.audio_visualization_service import (
-    AudioVisualizationService,
-)
-from src_refactored.infrastructure.main_window.visualization_integration_service import (
-    VisualizationIntegrationService,
+from src_refactored.domain.ui_coordination.value_objects.ui_state_management import UIState
+from src_refactored.infrastructure.audio_visualization import (
+    AudioProcessorService,
+    VisualizationControllerService,
 )
 
 
@@ -41,8 +39,9 @@ class VisualizationComponent(QObject):
     def __init__(self):
         super().__init__()
         self.logger = logging.getLogger(__name__)
-        self.visualization_service = VisualizationIntegrationService()
-        self.audio_viz_service = AudioVisualizationService()
+        # Initialize services with proper dependencies
+        self.audio_viz_service = AudioProcessorService()
+        self.visualization_service = VisualizationControllerService(self.audio_viz_service)
 
         # Visualization state
         self.is_visualizing = False
@@ -316,13 +315,13 @@ class VisualizationComponent(QObject):
         self.logger.debug("Applying visualization state styling: {state.value}")
 
         # Update curve color based on state
-        if state == UIState.RECORDING:
-            pen = pg.mkPen(color=(255, 68, 68, 180), width=2)  # Red
-        elif state == UIState.PROCESSING:
+        if state == UIState.LOADING:
             pen = pg.mkPen(color=(255, 170, 0, 180), width=2)  # Orange
         elif state == UIState.ERROR:
             pen = pg.mkPen(color=(255, 0, 0, 180), width=2)  # Bright red
-        else:  # IDLE
+        elif state == UIState.SUCCESS:
+            pen = pg.mkPen(color=(0, 255, 0, 180), width=2)  # Green
+        else:  # ENABLED/DISABLED
             pen = pg.mkPen(color=(255, 255, 255, 180), width=2)  # White
 
         self.curve.setPen(pen)

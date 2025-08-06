@@ -49,8 +49,7 @@ class AudioBuffer(ValueObject):
         for waveform in self.data:
             if waveform.sample_rate != self.sample_rate:
                 msg = "Inconsistent sample rate in buffer data"
-                raise ValueError(msg,
-    )
+                raise ValueError(msg)
 
     @classmethod
     def create_empty(cls, max_size: int, sample_rate: int, chunk_size: int,
@@ -69,7 +68,9 @@ class AudioBuffer(ValueObject):
     ) -> "AudioBuffer":
         """Create audio buffer with pre-allocated capacity."""
         # Create silent waveform data for pre-allocation
-        silent_data = WaveformData.create_silence(chunk_size, sample_rate)
+        import time
+        timestamp_ms = time.time() * 1000.0
+        silent_data = WaveformData.silence(chunk_size, sample_rate, timestamp_ms)
         data = [silent_data] * max_size
 
         return cls(
@@ -93,8 +94,7 @@ class AudioBuffer(ValueObject):
             # Remove oldest data (FIFO)
             new_data.pop(0)
 
-        new_data.append(waveform,
-    )
+        new_data.append(waveform)
         new_size = min(self.current_size + 1, self.max_size)
 
         return AudioBuffer(
@@ -107,7 +107,9 @@ class AudioBuffer(ValueObject):
 
     def add_samples(self, samples: np.ndarray) -> "AudioBuffer":
         """Add raw audio samples to the buffer."""
-        waveform = WaveformData.from_numpy(samples, self.sample_rate)
+        import time
+        timestamp_ms = time.time() * 1000.0
+        waveform = WaveformData.from_numpy_array(samples, self.sample_rate, timestamp_ms)
         return self.add_waveform(waveform)
 
     def get_latest(self, count: int = 1,
@@ -131,8 +133,7 @@ class AudioBuffer(ValueObject):
     def get_range(self, start_index: int, end_index: int | None = None) -> list[WaveformData]:
         """Get waveform data in a specific range."""
         if end_index is None:
-            end_index = len(self.data,
-    )
+            end_index = len(self.data)
 
         start_index = max(0, start_index)
         end_index = min(len(self.data), end_index)
@@ -172,7 +173,9 @@ class AudioBuffer(ValueObject):
 
         concatenated_samples = np.concatenate(all_samples)
 
-        return WaveformData.from_numpy(concatenated_samples, self.sample_rate)
+        import time
+        timestamp_ms = time.time() * 1000.0
+        return WaveformData.from_numpy_array(concatenated_samples, self.sample_rate, timestamp_ms)
 
     def concatenate_latest(self, count: int,
     ) -> WaveformData | None:
@@ -192,7 +195,7 @@ class AudioBuffer(ValueObject):
 
         concatenated_samples = np.concatenate(all_samples)
 
-        return WaveformData.from_numpy(concatenated_samples, self.sample_rate)
+        return WaveformData.from_numpy_array(concatenated_samples, self.sample_rate)
 
     def get_average_level(self) -> float:
         """Get average RMS level across all buffer data."""
@@ -249,8 +252,7 @@ class AudioBuffer(ValueObject):
         new_data = self.data.copy()
 
         # Trim data if new size is smaller
-        if len(new_data,
-    ) > new_max_size:
+        if len(new_data) > new_max_size:
             # Keep the most recent data
             new_data = new_data[-new_max_size:]
 
@@ -268,8 +270,7 @@ class AudioBuffer(ValueObject):
         """Filter buffer to only include data with speech activity."""
         active_data = [
             waveform for waveform in self.data
-            if not waveform.is_silence(silence_threshold,
-    )
+            if not waveform.is_silence(silence_threshold)
         ]
 
         return AudioBuffer(
@@ -294,12 +295,12 @@ class AudioBuffer(ValueObject):
             }
 
         return {
-            "count": len(self.data)
-            "total_duration": self.get_total_duration()
-            "total_samples": self.get_total_samples()
-            "average_rms": self.get_average_level()
-            "peak_level": self.get_peak_level()
-            "fill_percentage": self.get_fill_percentage()
+            "count": len(self.data),
+            "total_duration": self.get_total_duration(),
+            "total_samples": self.get_total_samples(),
+            "average_rms": self.get_average_level(),
+            "peak_level": self.get_peak_level(),
+            "fill_percentage": self.get_fill_percentage(),
             "is_full": self.is_full(),
         }
 

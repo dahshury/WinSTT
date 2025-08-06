@@ -242,10 +242,10 @@ class SlideOutStrategy(IAnimationStrategy):
 
 
 __all__ = [
-    "IAnimationStrategy",
+    "AnimationContext",
     "FadeInStrategy",
     "FadeOutStrategy",
+    "IAnimationStrategy",
     "SlideInStrategy",
     "SlideOutStrategy",
-    "AnimationContext",
 ]

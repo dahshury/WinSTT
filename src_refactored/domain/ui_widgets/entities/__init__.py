@@ -1,9 +1,7 @@
-"""UI Widgets domain entities."""
+"""UI Widgets domain entities.
 
-from .toggle_widget import ToggleWidget
-from .widget_state import WidgetState
+Note: UI-specific entities have been moved to the presentation layer.
+"""
 
-__all__ = [
-    "ToggleWidget",
-    "WidgetState",
-]
+# All UI-specific entities have been moved to presentation layer
+__all__ = []

@@ -1,1 +1,1 @@
-"""Settings Domain Events"""
+"""Settings Events Module."""

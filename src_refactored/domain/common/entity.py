@@ -60,5 +60,4 @@ class Entity(ABC, Generic[T]):
         if self._id is None:
             msg = "Entity ID cannot be None"
             raise ValueError(msg)
-        self.__invariants__(,
-    )
+        self.__invariants__()

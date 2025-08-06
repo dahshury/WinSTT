@@ -6,10 +6,8 @@ results, phases, file types, and output formats.
 
 from enum import Enum
 
-from src_refactored.domain.common.value_object import ValueObject
 
-
-class TranscriptionResult(ValueObject, Enum):
+class TranscriptionResult(Enum):
     """Enumeration of transcription results."""
     SUCCESS = "success"
     PARTIAL_SUCCESS = "partial_success"
@@ -19,7 +17,7 @@ class TranscriptionResult(ValueObject, Enum):
     IN_PROGRESS = "in_progress"
 
 
-class TranscriptionPhase(ValueObject, Enum):
+class TranscriptionPhase(Enum):
     """Enumeration of transcription phases."""
     INITIALIZING = "initializing"
     CHECKING_QUEUE = "checking_queue"
@@ -33,7 +31,7 @@ class TranscriptionPhase(ValueObject, Enum):
     ERROR_HANDLING = "error_handling"
 
 
-class FileType(ValueObject, Enum):
+class FileType(Enum):
     """Enumeration of file types in queue."""
     AUDIO_FILE = "audio_file"
     VIDEO_FILE = "video_file"
@@ -41,7 +39,7 @@ class FileType(ValueObject, Enum):
     UNKNOWN = "unknown"
 
 
-class OutputFormat(ValueObject, Enum):
+class OutputFormat(Enum):
     """Enumeration of output formats."""
     TEXT = "text"
     JSON = "json"

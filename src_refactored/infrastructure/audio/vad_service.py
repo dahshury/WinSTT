@@ -84,7 +84,7 @@ class VADServiceResponse:
     calibration: CalibrationResult | None = None
     continuous_result: ContinuousVADResult | None = None
     error_message: str | None = None
-    warnings: list[str] = None
+    warnings: list[str] | None = None
     execution_time: float = 0.0
 
     def __post_init__(self):
@@ -299,7 +299,7 @@ class VADService:
             if request.enable_logging and self._logger_service:
                 self._logger_service.log_error(
                     "VAD operation failed",
-                    error=str(e)
+                    error=str(e),
                     operation=request.operation.value,
                     execution_time=time.time() - start_time,
                 )
@@ -325,8 +325,8 @@ class VADService:
 
         try:
             # Validate configuration
-config_valid, config_error = (
-    self._validation_service.validate_configuration(request.config))
+            config_valid, config_error = (
+                self._validation_service.validate_configuration(request.config))
             if not config_valid:
                 return VADServiceResponse(
                     result=VADResult.FAILED,
@@ -404,8 +404,8 @@ config_valid, config_error = (
 
         try:
             # Validate audio chunk
-chunk_valid, chunk_error = (
-    self._validation_service.validate_audio_chunk(request.audio_chunk))
+            chunk_valid, chunk_error = (
+                self._validation_service.validate_audio_chunk(request.audio_chunk))
             if not chunk_valid:
                 return VADServiceResponse(
                     result=VADResult.AUDIO_ERROR,
@@ -416,8 +416,7 @@ chunk_valid, chunk_error = (
 
             # Preprocess audio if needed
             if request.audio_chunk.sample_rate != self._state.current_config.sample_rate:
-                preprocess_success,
-                processed_audio, preprocess_error = self._audio_processing_service.preprocess_audio(
+                preprocess_success, processed_audio, preprocess_error = self._audio_processing_service.preprocess_audio(
                     request.audio_chunk.data,
                     request.audio_chunk.sample_rate,
                     self._state.current_config.sample_rate,
@@ -431,14 +430,21 @@ chunk_valid, chunk_error = (
                         execution_time=time.time() - start_time,
                     )
 
-                # Update chunk with processed audio
-                request.audio_chunk.data = processed_audio
-                request.audio_chunk.sample_rate = self._state.current_config.sample_rate
+                # Create new chunk with processed audio
+                from src_refactored.domain.audio.value_objects import AudioChunk
+                request.audio_chunk = AudioChunk(
+                    data=processed_audio,
+                    sample_rate=self._state.current_config.sample_rate,
+                    timestamp=request.audio_chunk.timestamp,
+                    duration=request.audio_chunk.duration,
+                    chunk_id=request.audio_chunk.chunk_id,
+                )
 
             # Detect voice activity
-detection_success, confidence, detection_error = (
-    self._model_service.detect_voice_activity()
-                request.audio_chunk, self._state.current_config,
+            detection_success, confidence, detection_error = (
+                self._model_service.detect_voice_activity(
+                    request.audio_chunk, self._state.current_config,
+                )
             )
 
             if not detection_success:
@@ -450,8 +456,8 @@ detection_success, confidence, detection_error = (
                 )
 
             # Determine voice activity
-            activity
- = (
+            activity = (
+        
     VoiceActivity.SPEECH if confidence >= self._state.current_config.threshold else VoiceActivity.SILENCE)
             if abs(confidence - self._state.current_config.threshold) < 0.1:
                 activity = VoiceActivity.UNCERTAIN
@@ -482,8 +488,7 @@ detection_success, confidence, detection_error = (
             self._state.last_detection = detection
 
             if request.enable_progress_tracking and self._progress_tracking_service:
-                self._progress_tracking_service.complete_progress(,
-    )
+                self._progress_tracking_service.complete_progress()
 
             return VADServiceResponse(
                 result=VADResult.SUCCESS,
@@ -515,8 +520,8 @@ detection_success, confidence, detection_error = (
 
         try:
             # Validate threshold
-threshold_valid, threshold_error = (
-    self._validation_service.validate_threshold(request.config.threshold))
+            threshold_valid, threshold_error = (
+                self._validation_service.validate_threshold(request.config.threshold))
             if not threshold_valid:
                 return VADServiceResponse(
                     result=VADResult.THRESHOLD_ERROR,
@@ -645,7 +650,7 @@ threshold_valid, threshold_error = (
             self._stop_event.clear()
             self._worker_thread = threading.Thread(
                 target=self._continuous_processing_worker,
-                args=(request.callback,)
+                args=(request.callback,),
                 daemon=True,
             )
             self._worker_thread.start()
@@ -785,7 +790,7 @@ threshold_valid, threshold_error = (
                 if self._logger_service:
                     self._logger_service.log_error(
                         "Error in continuous VAD processing",
-                        error=str(e)
+                        error=str(e),
                     )
                 break
 

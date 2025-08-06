@@ -14,7 +14,7 @@ class SampleRate(ValueObject):
     value: int
 
     # Standard audio sample rates
-    SUPPORTED_RATES: set[int] = frozenset({
+    SUPPORTED_RATES: frozenset[int] = frozenset({
         8000,   # Telephone quality
         16000,  # Speech recognition standard
         22050,  # Low quality audio

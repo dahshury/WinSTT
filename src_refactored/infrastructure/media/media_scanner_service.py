@@ -46,8 +46,7 @@ class MediaScannerService:
         try:
             folder_path_obj = Path(folder_path)
 
-            if not folder_path_obj.exists() or not folder_path_obj.is_dir(,
-    ):
+            if not folder_path_obj.exists() or not folder_path_obj.is_dir():
                 if self.progress_callback:
                     self.progress_callback(f"Invalid folder path: {folder_path}", 0)
                 return media_files
@@ -134,8 +133,7 @@ class MediaScannerService:
         try:
             directory_path_obj = Path(directory_path)
 
-            if not directory_path_obj.exists() or not directory_path_obj.is_dir(,
-    ):
+            if not directory_path_obj.exists() or not directory_path_obj.is_dir():
                 if self.progress_callback:
                     self.progress_callback(f"Invalid directory path: {directory_path}", 0)
                 return media_files
@@ -191,8 +189,7 @@ class MediaScannerService:
         try:
             directory_path_obj = Path(directory_path)
 
-            if not directory_path_obj.exists() or not directory_path_obj.is_dir(,
-    ):
+            if not directory_path_obj.exists() or not directory_path_obj.is_dir():
                 return stats
 
             for root, dirs, files in os.walk(directory_path):
@@ -232,8 +229,7 @@ class MediaScannerService:
             True if the file is a supported media type, False otherwise
         """
         try:
-            ext = Path(file_path).suffix.lower(,
-    )
+            ext = Path(file_path).suffix.lower()
             return ext in self.supported_extensions
         except (OSError, ValueError):
             return False

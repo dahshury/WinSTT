@@ -10,7 +10,7 @@ from PyQt6.QtCore import QEvent, QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 from logger import setup_logger
-from src.domain.common.result import Result
+from src_refactored.domain.common.result import Result
 from src_refactored.domain.system_integration.value_objects.event_filtering import (
     EventFilterConfig,
     EventType,
@@ -61,8 +61,7 @@ class EventFilterService(QObject):
         except Exception as e:
             error_msg = f"Failed to register filter {config.filter_id}: {e!s}"
             self.logger.exception(error_msg)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def install_filter(self, filter_id: str, target: QObject | None = None) -> Result[None]:
         """Install an event filter.
@@ -111,8 +110,7 @@ class EventFilterService(QObject):
 
         except Exception as e:
             error_msg = f"Failed to install filter {filter_id}: {e!s}"
-            self.logger.exception(error_msg,
-    )
+            self.logger.exception(error_msg)
             self.filter_error.emit(filter_id, error_msg)
             return Result.failure(error_msg)
 
@@ -138,8 +136,7 @@ class EventFilterService(QObject):
             if config.scope == FilterScope.APPLICATION_WIDE:
                 app = QApplication.instance()
                 if app:
-                    app.removeEventFilter(self,
-    )
+                    app.removeEventFilter(self)
 
             elif config.scope in [FilterScope.WINDOW_ONLY, FilterScope.WIDGET_ONLY]:
                 if target:

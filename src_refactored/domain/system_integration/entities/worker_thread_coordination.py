@@ -168,16 +168,14 @@ class WorkerThreadCoordination(Entity):
 
         self._threads[thread_id] = configuration
         self._thread_states[thread_id] = ThreadState.CREATED
-        self._thread_metrics[thread_id] = ThreadMetrics(,
-    )
+        self._thread_metrics[thread_id] = ThreadMetrics()
 
     def remove_thread(self, thread_id: str,
     ) -> None:
         """Remove a thread from coordination."""
         if thread_id not in self._threads:
             msg = f"Thread with ID '{thread_id}' does not exist"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
         # Stop thread if it's running
         if self._thread_states[thread_id] in {ThreadState.RUNNING, ThreadState.PAUSED}:
@@ -448,7 +446,7 @@ class WorkerThreadCoordination(Entity):
 
         return {
             "coordination_id": self._coordination_id,
-            "total_threads": len(self._threads)
+            "total_threads": len(self._threads),
             "running_threads": running_count,
             "error_threads": error_count,
             "total_errors": total_errors,
@@ -469,5 +467,4 @@ class WorkerThreadCoordination(Entity):
     def reset_all_metrics(self) -> None:
         """Reset metrics for all threads."""
         for thread_id in self._threads:
-            self._thread_metrics[thread_id] = ThreadMetrics(,
-    )
+            self._thread_metrics[thread_id] = ThreadMetrics()

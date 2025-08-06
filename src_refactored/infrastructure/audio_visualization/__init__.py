@@ -17,10 +17,8 @@ from .audio_normalization_service import (
     SpeechNormalizer,
 )
 from .audio_processor_service import (
-    AudioFormat,
     AudioProcessorConfig,
     AudioProcessorService,
-    ProcessorState,
     PyAudioProcessor,
 )
 from .audio_stream_service import (
@@ -52,12 +50,9 @@ from .resource_cleanup_service import (
 from .visualization_controller_service import (
     VisualizationController,
     VisualizationControllerService,
-    VisualizationEvent,
-    VisualizationState,
 )
 
 __all__ = [
-    "AudioFormat",
     # Audio Normalization Service
     "AudioNormalizationService",
     "AudioNormalizationServiceProtocol",
@@ -76,7 +71,6 @@ __all__ = [
     "NormalizationConfig",
     "NormalizationMethod",
     "NormalizationProcessor",
-    "ProcessorState",
     "PyAudioProcessor",
     "PyAudioResourceManager",
     "PyAudioStreamInitializer",
@@ -96,8 +90,6 @@ __all__ = [
     "VisualizationController",
     # Visualization Controller Service
     "VisualizationControllerService",
-    "VisualizationEvent",
-    "VisualizationState",
 ]
 
 # Version information

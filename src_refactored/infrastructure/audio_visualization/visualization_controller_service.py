@@ -26,7 +26,7 @@ from src_refactored.infrastructure.audio_visualization.audio_processor_service i
     AudioProcessorService,
     PyAudioProcessor,
 )
-from src_refactored.infrastructure.system.logging_service import LoggerService
+from src_refactored.infrastructure.system.logging_service import LoggingService
 
 
 class VisualizationControllerServiceProtocol(Protocol):
@@ -88,7 +88,7 @@ class VisualizationController(QObject):
         super().__init__(parent)
         self.visualizer = visualizer
         self.audio_processor_service = audio_processor_service
-        self.logger = LoggerService().get_logger("VisualizationController")
+        self.logger = LoggingService().get_logger("VisualizationController")
 
         # Internal state
         self._processor: AudioProcessor | None = None
@@ -117,8 +117,7 @@ class VisualizationController(QObject):
                 self._processor = self.audio_processor_service.create_processor(config)
 
                 # Get PyAudio processor thread for signal connections
-self._pyaudio_processor = (
-    self.audio_processor_service.get_processor_thread(self._processor))
+                self._pyaudio_processor = self.audio_processor_service.get_processor_thread(self._processor)
 
                 if self._pyaudio_processor:
                     # Connect signals
@@ -137,8 +136,7 @@ self._pyaudio_processor = (
             return False
 
         except Exception as e:
-            self.logger.exception(f"Error starting visualization {self.visualizer.visualizer_id}: {e\
-    }")
+            self.logger.exception(f"Error starting visualization {self.visualizer.visualizer_id}: {e}")
             self.error_occurred.emit(self.visualizer.visualizer_id, str(e))
             return False
 
@@ -169,8 +167,7 @@ self._pyaudio_processor = (
             return True
 
         except Exception as e:
-            self.logger.exception(f"Error stopping visualization {self.visualizer.visualizer_id}: {e}",
-    )
+            self.logger.exception(f"Error stopping visualization {self.visualizer.visualizer_id}: {e}")
             self.error_occurred.emit(self.visualizer.visualizer_id, str(e))
             return False
 
@@ -189,8 +186,7 @@ self._pyaudio_processor = (
             self.logger.info("Cleaned up visualization: {self.visualizer.visualizer_id}")
 
         except Exception as e:
-            self.logger.exception(f"Error cleaning up visualization {self.visualizer.visualizer_id}:\
-     {e}")
+            self.logger.exception(f"Error cleaning up visualization {self.visualizer.visualizer_id}: {e}")
 
     def add_data_handler(self, handler: Callable[[np.ndarray], None]) -> None:
         """Add a data handler for visualization updates.
@@ -239,8 +235,7 @@ self._pyaudio_processor = (
                     handler(data)
 
         except Exception as e:
-            self.logger.exception(f"Error handling audio data for {self.visualizer.visualizer_id}: {\
-    e}")
+            self.logger.exception(f"Error handling audio data for {self.visualizer.visualizer_id}: {e}")
 
     def _handle_error(self, error_message: str,
     ) -> None:
@@ -249,8 +244,7 @@ self._pyaudio_processor = (
         Args:
             error_message: Error message from processor
         """
-        self.logger.error("Audio processor error for {self.visualizer.visualizer_id}: {error_message\
-    }")
+        self.logger.error(f"Audio processor error for {self.visualizer.visualizer_id}: {error_message}")
         self.error_occurred.emit(self.visualizer.visualizer_id, error_message)
 
     def _handle_status_change(self, status: str,
@@ -264,9 +258,9 @@ self._pyaudio_processor = (
 
         # Update visualizer status based on processor status
         if status == ProcessorStatus.RUNNING.value:
-            self.visualizer.update_status(VisualizerStatus.ACTIVE)
+            self.visualizer.update_status(VisualizerStatus.RUNNING)
         elif status == ProcessorStatus.STOPPED.value:
-            self.visualizer.update_status(VisualizerStatus.INACTIVE)
+            self.visualizer.update_status(VisualizerStatus.STOPPED)
         elif status == ProcessorStatus.ERROR.value:
             self.visualizer.update_status(VisualizerStatus.ERROR)
 
@@ -280,7 +274,7 @@ class VisualizationControllerService:
 
     def __init__(self,
                  audio_processor_service: AudioProcessorService,
-                 logger_service: LoggerService | None = None):
+                 logger_service: LoggingService | None = None):
         """Initialize the visualization controller service.
 
         Args:
@@ -288,7 +282,7 @@ class VisualizationControllerService:
             logger_service: Optional logger service
         """
         self.audio_processor_service = audio_processor_service
-        self.logger_service = logger_service or LoggerService()
+        self.logger_service = logger_service or LoggingService()
         self.logger = self.logger_service.get_logger("VisualizationControllerService")
         self._active_controllers: dict[str, VisualizationController] = {}
 
@@ -305,10 +299,14 @@ class VisualizationControllerService:
         visualizer_id = f"visualizer_{len(self._active_controllers)}"
 
         # Create visualizer entity
+        from src_refactored.domain.audio_visualization.value_objects.visualization_settings import (
+            VisualizationSettings,
+        )
+        settings = VisualizationSettings.default_waveform()
         visualizer = Visualizer(
-            visualizer_id=visualizer_id,
-            render_mode=RenderMode.WAVEFORM,
-            status=VisualizerStatus.INACTIVE,
+            settings,
+            render_mode=RenderMode.REAL_TIME,
+            status=VisualizerStatus.STOPPED,
         )
 
         # Create controller
@@ -333,9 +331,9 @@ class VisualizationControllerService:
         Returns:
             True if started successfully, False otherwise
         """
-        controller = self._active_controllers.get(visualizer.visualizer_id)
+        controller = self._active_controllers.get(visualizer.id)
         if not controller:
-            self.logger.error("Controller not found: {visualizer.visualizer_id}")
+            self.logger.error(f"Controller not found: {visualizer.id}")
             return False
 
         return controller.start_processing()
@@ -350,7 +348,7 @@ class VisualizationControllerService:
         Returns:
             True if stopped successfully, False otherwise
         """
-        controller = self._active_controllers.get(visualizer.visualizer_id)
+        controller = self._active_controllers.get(visualizer.id)
         if not controller:
             self.logger.error("Controller not found: {visualizer.visualizer_id}")
             return False
@@ -367,7 +365,7 @@ class VisualizationControllerService:
         Returns:
             True if active, False otherwise
         """
-        controller = self._active_controllers.get(visualizer.visualizer_id)
+        controller = self._active_controllers.get(visualizer.id)
         if not controller:
             return False
 
@@ -384,7 +382,7 @@ class VisualizationControllerService:
             visualizer: Visualizer entity
             handler: Function to handle audio data updates
         """
-        controller = self._active_controllers.get(visualizer.visualizer_id)
+        controller = self._active_controllers.get(visualizer.id)
         if controller:
             controller.add_data_handler(handler)
         else:
@@ -400,7 +398,7 @@ class VisualizationControllerService:
         Returns:
             Visualization controller or None if not found
         """
-        return self._active_controllers.get(visualizer.visualizer_id)
+        return self._active_controllers.get(visualizer.id)
 
     def cleanup_visualizer(self, visualizer: Visualizer,
     ) -> None:
@@ -409,15 +407,14 @@ class VisualizationControllerService:
         Args:
             visualizer: Visualizer entity
         """
-        controller = self._active_controllers.get(visualizer.visualizer_id)
+        controller = self._active_controllers.get(visualizer.id)
         if controller:
             try:
                 controller.cleanup()
-                del self._active_controllers[visualizer.visualizer_id]
-                self.logger.info("Cleaned up visualizer: {visualizer.visualizer_id}")
+                del self._active_controllers[visualizer.id]
+                self.logger.info(f"Cleaned up visualizer: {visualizer.id}")
             except Exception as e:
-                self.logger.exception(f"Failed to cleanup visualizer {visualizer.visualizer_id}: {e}\
-    ")
+                self.logger.exception(f"Failed to cleanup visualizer {visualizer.id}: {e}")
 
     def cleanup_all(self) -> None:
         """Clean up all active visualizers."""

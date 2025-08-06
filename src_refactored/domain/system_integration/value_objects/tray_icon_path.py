@@ -73,8 +73,7 @@ class TrayIconPath:
     def exists(self) -> bool:
         """Check if the tray icon file exists."""
         try:
-            return Path(self.path).exists(,
-    )
+            return Path(self.path).exists()
         except (OSError, ValueError):
             return False
 
@@ -102,8 +101,7 @@ class TrayIconPath:
         try:
             path_obj = Path(self.path)
             if path_obj.exists():
-                return path_obj.stat(,
-    ).st_size
+                return path_obj.stat().st_size
             return None
         except (OSError, ValueError):
             return None
@@ -123,12 +121,10 @@ class TrayIconPath:
         """Resolve the path to absolute form."""
         try:
             resolved_path = Path(self.path).resolve()
-            return TrayIconPath(path=str(resolved_path),
-    )
+            return TrayIconPath(path=str(resolved_path))
         except (OSError, ValueError) as e:
             msg = f"Cannot resolve path '{self.path}': {e}"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
     def with_suffix(self, suffix: str,
     ) -> TrayIconPath:
@@ -153,8 +149,7 @@ class TrayIconPath:
         try:
             path_obj = Path(self.path)
             base_obj = Path(base_path)
-            return str(path_obj.relative_to(base_obj),
-    )
+            return str(path_obj.relative_to(base_obj))
         except (OSError, ValueError) as e:
             msg = f"Cannot make path relative to '{base_path}': {e}"
             raise ValueError(msg)
@@ -169,8 +164,7 @@ class TrayIconPath:
                 return False
 
             # Check if it's a file (not directory)
-            if not path_obj.is_file(,
-    ):
+            if not path_obj.is_file():
                 return False
 
             # Check read permissions
@@ -188,8 +182,7 @@ class TrayIconPath:
 
             # Check if path is empty
             if not self.path.strip():
-                errors.append("Path cannot be empty",
-    )
+                errors.append("Path cannot be empty")
                 return errors
 
             # Check file extension

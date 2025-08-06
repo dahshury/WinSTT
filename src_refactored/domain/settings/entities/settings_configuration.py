@@ -86,14 +86,12 @@ class SettingsConfiguration(Entity):
             self._is_dirty = True
         else:
             msg = f"Invalid setting update: {key} = {value}"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         """Get a setting value with optional default."""
         if self._cached_settings is None:
-            self._cached_settings = self.load_configuration(,
-    )
+            self._cached_settings = self.load_configuration()
 
         return self._cached_settings.get(key, default)
 
@@ -157,11 +155,11 @@ class SettingsConfiguration(Entity):
                 "whisper-turbo", "lite-whisper-turbo", "lite-whisper-turbo-fast",
             ],
             "quantization": lambda v: isinstance(v, str) and v in ["Full", "Quantized"],
-            "recording_sound_enabled": lambda v: isinstance(v, bool)
-            "sound_file_path": lambda v: isinstance(v, str)
-            "output_srt": lambda v: isinstance(v, bool)
+            "recording_sound_enabled": lambda v: isinstance(v, bool),
+            "sound_file_path": lambda v: isinstance(v, str),
+            "output_srt": lambda v: isinstance(v, bool),
             "recording_key": lambda v: isinstance(v, str) and len(v.strip()) > 0,
-            "llm_enabled": lambda v: isinstance(v, bool)
+            "llm_enabled": lambda v: isinstance(v, bool),
             "llm_model": lambda v: isinstance(v, str) and len(v.strip()) > 0,
             "llm_quantization": lambda v: isinstance(v, str) and v in ["Full", "Quantized"],
             "llm_prompt": lambda v: isinstance(v, str) and len(v.strip()) > 0,
@@ -181,8 +179,7 @@ class SettingsConfiguration(Entity):
             backup_path = self.config_file_path.with_suffix(".bak")
             backup_path.write_bytes(self.config_file_path.read_bytes())
         except Exception as e:
-            print(f"Warning: Could not create configuration backup: {e}",
-    )
+            print(f"Warning: Could not create configuration backup: {e}")
 
     @classmethod
     def create_default(cls, config_path: Path,
@@ -196,11 +193,11 @@ class SettingsConfiguration(Entity):
             self._cached_settings = self.load_configuration()
 
         return {
-            "Model": self._cached_settings.get("model", "Unknown")
-            "Quantization": self._cached_settings.get("quantization", "Unknown")
+            "Model": self._cached_settings.get("model", "Unknown"),
+            "Quantization": self._cached_settings.get("quantization", "Unknown"),
             "Recording Sound": "Enabled" if self._cached_settings.get("recording_sound_enabled") else "Disabled",
             "SRT Output": "Enabled" if self._cached_settings.get("output_srt") else "Disabled",
-            "Recording Key": self._cached_settings.get("recording_key", "Not Set")
+            "Recording Key": self._cached_settings.get("recording_key", "Not Set"),
             "LLM Processing": "Enabled" if self._cached_settings.get("llm_enabled") else "Disabled",
             "LLM Model": self._cached_settings.get("llm_model", "Not Set"),
         }

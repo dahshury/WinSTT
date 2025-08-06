@@ -128,7 +128,7 @@ class BatchProcessingSession(Entity):
             if media_file.can_be_transcribed_directly():
                 # Add audio files directly to transcription queue
                 self.transcription_queue.append(media_file.file_path)
-            elif media_file.requires_conversion(,
+            elif media_file.requires_conversion(
     ):
                 # Create conversion job for video files
                 conversion_job = ConversionJob.create_with_quality(media_file, conversion_quality)
@@ -340,12 +340,12 @@ class BatchProcessingSession(Entity):
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
-            "id": str(self.id)
+            "id": str(self.id),
             "name": self.name,
             "status": self.status.value,
             "current_file_index": self.current_file_index,
             "total_files_count": self.total_files_count,
-            "progress_percentage": self.get_progress_percentage()
+            "progress_percentage": self.get_progress_percentage(),
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "paused_at": self.paused_at.isoformat() if self.paused_at else None,
@@ -353,6 +353,6 @@ class BatchProcessingSession(Entity):
             "media_files": [f.to_dict() for f in self.media_files],
             "conversion_jobs": [j.to_dict() for j in self.conversion_jobs],
             "session_duration": self.get_session_duration().to_seconds() if self.get_session_duration() else None,
-            "estimated_remaining_time": self.estimate_remaining_processing_time().to_seconds()
+            "estimated_remaining_time": self.estimate_remaining_processing_time().to_seconds(),
             "metadata": self.metadata,
         }

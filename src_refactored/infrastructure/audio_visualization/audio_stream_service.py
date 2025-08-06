@@ -137,8 +137,7 @@ class PyAudioStreamInitializer:
                 StreamInitializationResult.FAILED_FLOAT32
                 if audio_format == pyaudio.paFloat32
                 else StreamInitializationResult.FAILED_INT16
-            ,
-    )
+            )
 
             return StreamInitializationResponse(
                 result=result,
@@ -156,7 +155,7 @@ class PyAudioStreamInitializer:
                 stream.close()
             if audio:
                 audio.terminate()
-        except Exception as e:
+        except Exception:
             self.logger.warning("Error during cleanup of failed attempt: {e}")
 
     def cleanup_stream(self, audio: pyaudio.PyAudio, stream: pyaudio.Stream) -> bool:
@@ -209,8 +208,7 @@ class AudioStreamManager(QObject):
             self.is_initialized = True
 
             self.stream_initialized.emit(response.format_used)
-            self.logger.info("Stream initialized successfully in
-    {response.initialization_time:.3f}s")
+            self.logger.info(f"Stream initialized successfully in {response.initialization_time:.3f}s")
             return True
         error_msg = response.error_message or "Unknown initialization error"
         self.stream_failed.emit(error_msg)
@@ -295,7 +293,7 @@ class AudioStreamService:
 
     def cleanup_all_streams(self) -> None:
         """Clean up all managed streams."""
-        for manager_id, manager in self._managers.items():
+        for manager in self._managers.values():
             manager.cleanup_stream()
             self.logger.info("Cleaned up stream manager: {manager_id}")
 
@@ -304,7 +302,7 @@ class AudioStreamService:
     def get_service_stats(self) -> dict:
         """Get service statistics."""
         return {
-            "total_managers": len(self._managers)
+            "total_managers": len(self._managers),
             "initialized_streams": sum(
                 1 for manager in self._managers.values()
                 if manager.is_initialized

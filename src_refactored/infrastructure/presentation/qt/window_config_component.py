@@ -10,7 +10,7 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QColor, QIcon, QPalette
 from PyQt6.QtWidgets import QMainWindow, QSizePolicy
 
-from src_refactored.domain.ui_coordination.value_objects.ui_state import UIState
+from src_refactored.domain.ui_coordination.value_objects.ui_state_management import UIState
 from src_refactored.infrastructure.main_window.window_configuration_service import (
     WindowConfigurationService,
 )
@@ -121,8 +121,7 @@ class WindowConfigComponent:
             main_window: The main window to configure
         """
         try:
-            palette = QPalette(,
-    )
+            palette = QPalette()
 
             # Dark theme colors
             palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
@@ -279,8 +278,8 @@ class WindowConfigComponent:
 
         skip_block = False
         for line in lines:
-            if "QMainWindow {" in line and
-    ("border:" in stylesheet or "border-radius:" in stylesheet):
+            if "QMainWindow {" in line and ("border:" in stylesheet or "border-radius:" in stylesheet):
+    
                 skip_block = True
                 continue
             if skip_block and "}" in line:
@@ -289,8 +288,7 @@ class WindowConfigComponent:
             if not skip_block:
                 filtered_lines.append(line)
 
-        return "\n".join(filtered_lines,
-    )
+        return "\n".join(filtered_lines)
 
     def set_window_opacity(self, main_window: QMainWindow, opacity: float,
     ) -> None:
@@ -349,5 +347,4 @@ class WindowConfigComponent:
 
                 self.logger.debug("Window centered on screen")
         except Exception as e:
-            self.logger.exception(f"Failed to center window: {e}",
-    )
+            self.logger.exception(f"Failed to center window: {e}")

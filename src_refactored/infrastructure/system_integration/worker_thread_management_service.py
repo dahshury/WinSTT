@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from logger import setup_logger
-from src.domain.common.result import Result
+from src_refactored.domain.common.result import Result
 from src_refactored.domain.system_integration.value_objects.system_operations import ThreadState
 
 
@@ -52,8 +52,7 @@ class WorkerThreadManagementService(QObject):
         """
         try:
             if not issubclass(worker_class, QObject):
-                return Result.failure(f"Worker class {worker_class.__name__} must inherit from QObje\
-    ct")
+                return Result.failure(f"Worker class {worker_class.__name__} must inherit from QObject")
 
             self._worker_classes[name] = worker_class
             self.logger.info("Registered worker class: {name}")
@@ -265,11 +264,22 @@ class WorkerThreadManagementService(QObject):
         Returns:
             Configured WorkerThreadManagementService instance
         """
-        return cls()
-
-        # Register common worker classes (would be imported from actual workers)
-        # service.register_worker_class("vad", VadWorker)
-        # service.register_worker_class("model", ModelWorker)
-        # service.register_worker_class("listener", ListenerWorker)
-        # service.register_worker_class("llm", LLMWorker)
+        from src_refactored.infrastructure.audio.listener_worker_service import (
+            ListenerWorkerService,
+        )
+        from src_refactored.infrastructure.audio.vad_worker_service import VadWorkerService
+        from src_refactored.infrastructure.llm.llm_pyqt_worker_service import LLMPyQtWorkerService
+        from src_refactored.infrastructure.transcription.model_worker_service import (
+            ModelWorkerService,
+        )
+        
+        service = cls()
+        
+        # Register refactored worker services
+        service.register_worker_class("vad", VadWorkerService)
+        service.register_worker_class("model", ModelWorkerService)
+        service.register_worker_class("listener", ListenerWorkerService)
+        service.register_worker_class("llm", LLMPyQtWorkerService)
+        
+        return service
 

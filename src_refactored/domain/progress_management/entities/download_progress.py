@@ -316,8 +316,7 @@ class DownloadProgress(Entity):
 
     def get_average_speed(self) -> float | None:
         """Get average download speed in bytes per second."""
-        duration = self.get_duration(,
-    )
+        duration = self.get_duration()
         if duration is None or duration <= 0:
             return None
 

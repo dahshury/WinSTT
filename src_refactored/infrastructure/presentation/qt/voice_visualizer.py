@@ -10,9 +10,7 @@ from collections.abc import Callable
 import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from src_refactored.application.use_cases.audio_visualization.update_waveform_use_case import (
-    UpdateWaveformUseCase,
-)
+from src_refactored.domain.audio_visualization.ports.waveform_update_port import IWaveformUpdatePort
 from src_refactored.domain.audio_visualization.value_objects.visualization_config import (
     VisualizationConfig,
 )
@@ -42,16 +40,17 @@ class VoiceVisualizerUI(QObject):
     visualization_error = pyqtSignal(str)  # error_message
     processing_state_changed = pyqtSignal(bool)  # is_processing
 
-    def __init__(self, parent=None):
+    def __init__(self, waveform_update_port: IWaveformUpdatePort, parent=None):
         """Initialize the voice visualizer UI.
         
         Args:
+            waveform_update_port: Port for waveform update operations
             parent: Parent UI component
         """
         super().__init__(parent)
 
-        # Initialize use cases (these would be injected via DI in full implementation)
-        self._update_waveform_use_case = UpdateWaveformUseCase()
+        # Injected dependencies
+        self._waveform_update_port = waveform_update_port
 
         # Initialize services
         self._visualization_service = VisualizationService()

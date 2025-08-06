@@ -1,0 +1,56 @@
+"""Window State Management Domain Value Objects.
+
+This module defines value objects for window state management including
+results, phases, states, and transitions.
+These are domain concepts that are independent of any specific UI framework.
+"""
+
+from enum import Enum
+
+
+class ManageResult(Enum):
+    """Enumeration of possible window state management results."""
+    SUCCESS = "success"
+    STATE_CHANGE_FAILED = "state_change_failed"
+    PERSISTENCE_FAILED = "persistence_failed"
+    RESTORATION_FAILED = "restoration_failed"
+    VALIDATION_ERROR = "validation_error"
+    UNSUPPORTED_STATE = "unsupported_state"
+    GEOMETRY_ERROR = "geometry_error"
+    INTERNAL_ERROR = "internal_error"
+
+
+class ManagePhase(Enum):
+    """Enumeration of window state management phases."""
+    INITIALIZATION = "initialization"
+    VALIDATION = "validation"
+    STATE_BACKUP = "state_backup"
+    STATE_TRANSITION = "state_transition"
+    GEOMETRY_ADJUSTMENT = "geometry_adjustment"
+    PERSISTENCE = "persistence"
+    FINALIZATION = "finalization"
+
+
+class WindowState(Enum):
+    """Enumeration of window states."""
+    NORMAL = "normal"
+    MINIMIZED = "minimized"
+    MAXIMIZED = "maximized"
+    FULLSCREEN = "fullscreen"
+    HIDDEN = "hidden"
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    RESTORED = "restored"
+
+
+class StateTransition(Enum):
+    """Enumeration of state transition types."""
+    MINIMIZE = "minimize"
+    MAXIMIZE = "maximize"
+    RESTORE = "restore"
+    HIDE = "hide"
+    SHOW = "show"
+    ACTIVATE = "activate"
+    DEACTIVATE = "deactivate"
+    FULLSCREEN = "fullscreen"
+    EXIT_FULLSCREEN = "exit_fullscreen"

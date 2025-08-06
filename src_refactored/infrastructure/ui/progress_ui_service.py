@@ -13,7 +13,7 @@ from src_refactored.domain.progress_management.value_objects.progress_state impo
     ProgressState,
     ProgressStateType,
 )
-from src_refactored.infrastructure.media.progress_tracking_service import (
+from src_refactored.infrastructure.progress_management.progress_tracking_service import (
     ProgressInfo as BaseProgressInfo,
 )
 

@@ -134,9 +134,9 @@ class EnvironmentService:
             "platform": sys.platform,
             "os_name": os.name,
             "python_version": sys.version,
-            "python_executable": sys.executable,
-            "working_directory": os.getcwd()
-            "temp_directory": self.get_temp_directory()
+            "python_executable": sys.executable,    
+            "working_directory": os.getcwd(),   
+            "temp_directory": self.get_temp_directory(),
             "user_home": self.get_user_home_directory(),
         }
 
@@ -209,8 +209,7 @@ class EnvironmentService:
             logger.setLevel(logging.NOTSET)
 
         self._configured_loggers.clear()
-        self._suppressed_warnings.clear(,
-    )
+        self._suppressed_warnings.clear()
 
     def _set_env_var(self, key: str, value: str,
     ) -> None:

@@ -3,11 +3,9 @@ license
 pyproject.toml
 src/__init__.py
 src/main.py
-src/main_async.py
-src/main_minimal.py
-src/main_simple.py
 src/core/__init__.py
 src/core/utils/__init__.py
+src/core/utils/gemma_inference.py
 src/core/utils/listener.py
 src/core/utils/silero_vad_iterator.py
 src/core/utils/transcribe.py

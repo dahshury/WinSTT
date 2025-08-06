@@ -65,12 +65,8 @@ class ModelCacheService:
         onnx_folder = self.get_onnx_folder_path(model_type)
 
         # Check for required ONNX files
-        encoder_name
- = (
-    "encoder_model.onnx" if quantization.lower() == "full" else f"encoder_model_{quantization.lower()}.onnx")
-        decoder_name
- = (
-    "decoder_model_merged.onnx" if quantization.lower() == "full" else f"decoder_model_merged_{quantization.lower()}.onnx")
+        encoder_name = "encoder_model.onnx" if quantization.lower() == "full" else f"encoder_model_{quantization.lower()}.onnx"
+        decoder_name = "decoder_model_merged.onnx" if quantization.lower() == "full" else f"decoder_model_merged_{quantization.lower()}.onnx"
 
         encoder_path = onnx_folder / encoder_name
         decoder_path = onnx_folder / decoder_name
@@ -149,8 +145,7 @@ class ModelCacheService:
             if models_path.exists():
                 shutil.rmtree(models_path)
                 if self.progress_callback:
-                    self.progress_callback(txt="Cleared all model cache",
-    )
+                    self.progress_callback(txt="Cleared all model cache")
 
     def get_cache_size(self, model_type: str | None = None) -> int:
         """Get the size of the cache in bytes.

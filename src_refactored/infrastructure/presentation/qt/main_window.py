@@ -5,6 +5,7 @@ services following the hexagonal architecture pattern.
 """
 
 import logging
+from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QAction
@@ -22,9 +23,7 @@ from src_refactored.infrastructure.main_window.widget_layering_service import Wi
 from src_refactored.infrastructure.main_window.window_configuration_service import (
     WindowConfigurationService,
 )
-from src_refactored.infrastructure.settings.settings_repository_service import (
-    SettingsRepositoryService,
-)
+from src_refactored.infrastructure.settings.json_settings_repository import JSONSettingsRepository
 from src_refactored.infrastructure.system_integration.drag_drop_integration_service import (
     DragDropIntegrationService,
 )
@@ -32,7 +31,6 @@ from src_refactored.infrastructure.system_integration.event_filter_service impor
 from src_refactored.infrastructure.system_integration.geometry_management_service import (
     GeometryManagementService,
 )
-from src_refactored.infrastructure.system_integration.system_tray_service import SystemTrayService
 from src_refactored.infrastructure.system_integration.worker_thread_management_service import (
     WorkerThreadManagementService,
 )
@@ -79,7 +77,7 @@ class MainWindow(QMainWindow):
 
         # Core services
         self.event_system = UIEventSystem()
-        self.settings_service = SettingsRepositoryService()
+        self.settings_service = JSONSettingsRepository(Path("config/settings.json"))
 
         # Window services
         self.window_config_service = WindowConfigurationService()
@@ -90,7 +88,6 @@ class MainWindow(QMainWindow):
         self.widget_layering_service = WidgetLayeringService()
 
         # System integration services
-        self.system_tray_service = SystemTrayService()
         self.worker_management_service = WorkerThreadManagementService()
         self.event_filter_service = EventFilterService()
         self.drag_drop_service = DragDropIntegrationService()
@@ -222,11 +219,10 @@ class MainWindow(QMainWindow):
         self.settings_action.triggered.connect(self.open_settings)
         self.close_action.triggered.connect(self.close_app)
 
-        # Configure tray using service
-        self.system_tray_service.setup_tray_icon(
-            self.tray_icon,
-            [self.show_action, self.settings_action, self.close_action],
-        )
+        # Configure tray directly
+        self.tray_icon.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_ComputerIcon))
+        self.tray_icon.setToolTip("WinSTT")
+        self.tray_icon.setVisible(True)
 
         self.logger.info("✅ System tray icon created")
 

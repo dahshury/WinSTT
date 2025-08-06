@@ -153,7 +153,7 @@ class AudioFileRepository:
             if self._config.enable_progress_tracking and request.progress_callback:
                 progress = FileOperationProgress(
                     operation_type=FileOperationType.SAVE,
-                    file_path=str(file_path)
+                    file_path=str(file_path),
                     bytes_processed=0,
                     total_bytes=total_bytes,
                     percentage=0.0,
@@ -179,7 +179,7 @@ class AudioFileRepository:
 
             # Create AudioFile entity
             file_size = FileSize(bytes_written)
-            duration = Duration(seconds=request.audio_data.duration_seconds)
+            duration = Duration(seconds=request.audio_data.calculated_duration.total_seconds())
 
             audio_file = AudioFile(
                 file_path=request.file_path,
@@ -187,8 +187,8 @@ class AudioFileRepository:
                 duration=duration,
                 file_size=file_size,
                 source=FileSource.RECORDING,
-                title=request.metadata.get("title")
-                description=request.metadata.get("description")
+                title=request.metadata.get("title"),
+                description=request.metadata.get("description"),
                 tags=request.metadata.get("tags", []),
             )
 
@@ -247,8 +247,7 @@ class AudioFileRepository:
             file_path = Path(request.file_path.path)
 
             # Check if file exists
-            if not file_path.exists(,
-    ):
+            if not file_path.exists():
                 return AudioFileOperationResult(
                     result=FileOperationResult.FILE_NOT_FOUND,
                     error_message="Audio file not found",
@@ -261,7 +260,7 @@ class AudioFileRepository:
             if self._config.enable_progress_tracking and request.progress_callback:
                 progress = FileOperationProgress(
                     operation_type=FileOperationType.LOAD,
-                    file_path=str(file_path)
+                    file_path=str(file_path),
                     bytes_processed=0,
                     total_bytes=file_size,
                     percentage=0.0,
@@ -284,8 +283,7 @@ class AudioFileRepository:
                 frames_read = 0
 
                 while frames_read < n_frames:
-                    chunk_frames = min(self._config.chunk_size // (channels * sample_width,
-    ), n_frames - frames_read)
+                    chunk_frames = min(self._config.chunk_size // (channels * sample_width), n_frames - frames_read)
                     chunk_data = wav_file.readframes(chunk_frames)
                     frames_data.append(chunk_data)
                     frames_read += chunk_frames
@@ -298,8 +296,7 @@ class AudioFileRepository:
                         request.progress_callback(progress)
 
                 # Combine all chunks
-                audio_bytes = b"".join(frames_data,
-    )
+                audio_bytes = b"".join(frames_data)
 
                 # Convert to numpy array
                 if sample_width == 1:
@@ -320,23 +317,30 @@ class AudioFileRepository:
                 if channels > 1:
                     samples = samples.reshape(-1, channels)
 
-                # Create AudioData
-                duration_seconds = n_frames / sample_rate
-                audio_data = AudioData(
-                    samples=samples,
+                # Create AudioFormat
+                from src_refactored.domain.audio.value_objects.audio_format import (
+                    AudioFormatType,
+                    BitDepth,
+                )
+                audio_format = AudioFormat(
+                    format_type=AudioFormatType.WAV,
                     sample_rate=sample_rate,
-                    duration_seconds=duration_seconds,
+                    bit_depth=BitDepth(sample_width * 8),
                     channels=channels,
+                    chunk_size=1024,  # Default chunk size for WAV files
+                )
+
+                # Create AudioData
+                from src_refactored.domain.audio.value_objects.sample_rate import SampleRate
+                audio_data = AudioData(
+                    data=samples,
+                    sample_rate=SampleRate(sample_rate),
+                    channels=channels,
+                    audio_format=audio_format,
                 )
 
                 # Create AudioFile entity
-                audio_format = AudioFormat(
-                    format_type="wav",
-                    sample_rate=sample_rate,
-                    bit_depth=sample_width * 8,
-                    channels=channels,
-                )
-
+                duration_seconds = n_frames / sample_rate
                 file_size_obj = FileSize(file_size)
                 duration = Duration(seconds=duration_seconds)
 
@@ -405,17 +409,15 @@ class AudioFileRepository:
     ) -> AudioFileOperationResult:
         """Validate a save request."""
         # Check file size limit
-estimated_size_mb = (
-    (len(request.audio_data.samples) * 2) / (1024 * 1024)  # Rough estimate for 16-bit)
+        estimated_size_mb = (len(request.audio_data.data) * 2) / (1024 * 1024)  # Rough estimate for 16-bit
         if estimated_size_mb > self._config.max_file_size_mb:
             return AudioFileOperationResult(
                 result=FileOperationResult.FAILURE,
-error_message = (
-    f"File size ({estimated_size_mb:.1f} MB) exceeds limit ({self._config.max_file_size_mb} MB)",),
+                error_message=f"File size ({estimated_size_mb:.1f} MB) exceeds limit ({self._config.max_file_size_mb} MB)",
             )
 
         # Validate audio data
-        if request.audio_data.samples is None or len(request.audio_data.samples) == 0:
+        if request.audio_data.data is None or len(request.audio_data.data) == 0:
             return AudioFileOperationResult(
                 result=FileOperationResult.INVALID_FORMAT,
                 error_message="Audio data is empty",
@@ -430,20 +432,19 @@ error_message = (
             with wave.open(wav_buffer, "wb") as wav_file:
                 wav_file.setnchannels(audio_data.channels)
                 wav_file.setsampwidth(2)  # 16-bit
-                wav_file.setframerate(audio_data.sample_rate)
+                wav_file.setframerate(audio_data.sample_rate.value)
 
                 # Convert samples to bytes
-                if audio_data.samples.dtype != np.int16:
+                if audio_data.data.dtype != np.int16:
                     # Convert to int16 if needed
-                    samples_int16 = (audio_data.samples * 32767).astype(np.int16)
+                    samples_int16 = (audio_data.data * 32767).astype(np.int16)
                 else:
-                    samples_int16 = audio_data.samples
+                    samples_int16 = audio_data.data
 
                 wav_file.writeframes(samples_int16.tobytes())
 
             wav_buffer.seek(0)
-            return wav_buffer.read(,
-    )
+            return wav_buffer.read()
 
     def _backup_existing_file(self, file_path: Path,
     ) -> None:

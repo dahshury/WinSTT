@@ -6,10 +6,8 @@ results, phases, media types, and processing strategies.
 
 from enum import Enum
 
-from src_refactored.domain.common.value_object import ValueObject
 
-
-class ProcessingResult(ValueObject, Enum):
+class ProcessingResult(Enum):
     """Enumeration of processing results."""
     SUCCESS = "success"
     PARTIAL_SUCCESS = "partial_success"
@@ -19,7 +17,7 @@ class ProcessingResult(ValueObject, Enum):
     INVALID_INPUT = "invalid_input"
 
 
-class ProcessingStatus(ValueObject, Enum):
+class ProcessingStatus(Enum):
     """Enumeration of processing status states."""
     IDLE = "idle"
     PROCESSING = "processing"
@@ -28,7 +26,7 @@ class ProcessingStatus(ValueObject, Enum):
     ERROR = "error"
 
 
-class ProcessingPhase(ValueObject, Enum):
+class ProcessingPhase(Enum):
     """Enumeration of processing phases."""
     INITIALIZING = "initializing"
     VALIDATING_FILES = "validating_files"
@@ -41,14 +39,14 @@ class ProcessingPhase(ValueObject, Enum):
     ERROR_HANDLING = "error_handling"
 
 
-class MediaType(ValueObject, Enum):
+class MediaType(Enum):
     """Enumeration of media types."""
     AUDIO = "audio"
     VIDEO = "video"
     UNKNOWN = "unknown"
 
 
-class ProcessingStrategy(ValueObject, Enum):
+class ProcessingStrategy(Enum):
     """Enumeration of processing strategies."""
     SEQUENTIAL = "sequential"
     PARALLEL = "parallel"

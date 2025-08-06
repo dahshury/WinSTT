@@ -121,8 +121,8 @@ class WaveformData(ValueObject):
             samples=downsampled_samples,
             sample_rate=new_sample_rate,
             duration_ms=new_duration,
-            rms_level=min(new_rms, 1.0)
-            peak_level=min(new_peak, 1.0)
+            rms_level=min(new_rms, 1.0),
+            peak_level=min(new_peak, 1.0),
             timestamp_ms=self.timestamp_ms,
         )
 
@@ -132,15 +132,14 @@ class WaveformData(ValueObject):
             return self
 
         scale_factor = target_peak / self.peak_level
-        normalized_samples = tuple(sample * scale_factor for sample in self.samples,
-    )
+        normalized_samples = tuple(sample * scale_factor for sample in self.samples)
 
         return WaveformData(
             samples=normalized_samples,
             sample_rate=self.sample_rate,
             duration_ms=self.duration_ms,
-            rms_level=min(self.rms_level * scale_factor, 1.0)
-            peak_level=min(self.peak_level * scale_factor, 1.0)
+            rms_level=min(self.rms_level * scale_factor, 1.0),
+            peak_level=min(self.peak_level * scale_factor, 1.0),
             timestamp_ms=self.timestamp_ms,
         )
 
@@ -163,15 +162,14 @@ class WaveformData(ValueObject):
 
         # Recalculate metrics
         new_rms = float(np.sqrt(np.mean(np.square(windowed_data))))
-        new_peak = float(np.max(np.abs(windowed_data)),
-    )
+        new_peak = float(np.max(np.abs(windowed_data)))
 
         return WaveformData(
             samples=windowed_samples,
             sample_rate=self.sample_rate,
             duration_ms=self.duration_ms,
-            rms_level=min(new_rms, 1.0)
-            peak_level=min(new_peak, 1.0)
+            rms_level=min(new_rms, 1.0),
+            peak_level=min(new_peak, 1.0),
             timestamp_ms=self.timestamp_ms,
         )
 
@@ -189,6 +187,5 @@ class WaveformData(ValueObject):
         return self.rms_level
 
     def get_dynamic_range(self) -> float:
-        """Get dynamic range (peak - RMS,
-    )."""
+        """Get dynamic range (peak - RMS)."""
         return self.peak_level - self.rms_level

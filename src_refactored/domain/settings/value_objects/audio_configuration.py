@@ -22,6 +22,10 @@ class AudioConfiguration(ValueObject):
     enable_noise_reduction: bool = True
     recording_sound_enabled: bool = False
     recording_sound_path: AudioFilePath | None = None
+    auto_gain_control: bool = False
+    echo_cancellation: bool = False
+    noise_suppression: bool = False
+    voice_activity_detection: bool = False
 
     def __post_init__(self,
     ):

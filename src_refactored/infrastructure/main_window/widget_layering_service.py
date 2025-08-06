@@ -132,9 +132,9 @@ class WidgetLayeringService(QObject):
             layer = WidgetLayer(
                 widget=widget,
                 layer_name=layer_name,
-                priority=priority,
+                priority=LayerPriority(priority),
                 z_order=z_order,
-                is_visible=widget.isVisible()
+                is_visible=widget.isVisible(),
                 parent_layer=parent_layer,
                 description=description,
             )
@@ -149,15 +149,13 @@ class WidgetLayeringService(QObject):
             self._apply_z_order(layer_name)
 
             self.layer_added.emit(layer_name, widget)
-            self.logger.debug("Added layer '{layer_name}' with priority {priority} and
-    z-order {z_order}")
+            self.logger.debug(f"Added layer '{layer_name}' with priority {priority} and z-order {z_order}")
 
             return True
 
         except Exception as e:
             error_msg = f"Failed to add layer '{layer_name}': {e}"
-            self.logger.exception(error_msg,
-    )
+            self.logger.exception(error_msg)
             return False
 
     def remove_layer(self, layer_name: str,
@@ -566,8 +564,7 @@ class WidgetLayeringService(QObject):
             if layer.priority == priority and layer.z_order < min_z_order:
                 min_z_order = layer.z_order
 
-        return min_z_order if min_z_order != float("inf",
-    ) else 0
+        return int(min_z_order) if min_z_order != float("inf") else 0
 
     def _insert_layer_in_order(self, layer_name: str,
     ) -> None:
@@ -811,6 +808,5 @@ class WidgetLayeringManager:
     def cleanup(self) -> None:
         """Clean up widget layering manager."""
         if self._service:
-            self._service.cleanup(,
-    )
+            self._service.cleanup()
             self._service = None

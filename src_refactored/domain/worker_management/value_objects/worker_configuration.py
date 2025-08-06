@@ -7,12 +7,12 @@ including worker setup, initialization parameters, and runtime settings.
 from dataclasses import dataclass, field
 from typing import Any
 
-from domain.audio.value_objects.model_name import ModelName
-from domain.audio.value_objects.quantization_level import QuantizationLevel
-from domain.common.value_object import ValueObject
-from domain.llm.value_objects.llm_model_name import LLMModelName
-from domain.llm.value_objects.llm_quantization_level import LLMQuantizationLevel
-from domain.worker_management.value_objects.worker_operations import WorkerType
+from src_refactored.domain.common.value_object import ValueObject
+from src_refactored.domain.llm.value_objects.llm_model_name import LLMModelName
+from src_refactored.domain.transcription.value_objects.model_name import ModelName
+from src_refactored.domain.transcription.value_objects.quantization import Quantization
+from src_refactored.domain.transcription.value_objects.quantization_level import QuantizationLevel
+from src_refactored.domain.worker_management.value_objects.worker_operations import WorkerType
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,7 @@ class WorkerConfiguration(ValueObject):
     model_name: ModelName | None = None
     quantization_level: QuantizationLevel | None = None
     llm_model_name: LLMModelName | None = None
-    llm_quantization_level: LLMQuantizationLevel | None = None
+    llm_quantization_level: Quantization | None = None
     auto_start: bool = True
     timeout_seconds: int = 30
     retry_count: int = 3

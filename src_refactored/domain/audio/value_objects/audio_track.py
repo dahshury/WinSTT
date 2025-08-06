@@ -225,7 +225,7 @@ class RecordingMetadata(ValueObject):
             return None
 
         delta = self.end_time - self.start_time
-        return Duration.from_seconds(delta.total_seconds())
+        return Duration(seconds=delta.total_seconds())
 
     @property
     def is_mono(self) -> bool:
@@ -269,7 +269,7 @@ class RecordingMetadata(ValueObject):
             file_path=self.file_path,
             file_size_bytes=self.file_size_bytes,
             metadata={
-                "recording_start": self.start_time.isoformat()
+                "recording_start": self.start_time.isoformat(),
                 "recording_end": self.end_time.isoformat() if self.end_time else None,
                 "device_name": self.device_name,
                 "notes": self.notes,
@@ -294,8 +294,7 @@ class RecordingData(ValueObject):
 
     def _get_equality_components(self) -> tuple:
         return (
-            self.data.tobytes(,
-    ) if self.data is not None else None,
+            self.data.tobytes() if self.data is not None else None,
             self.metadata,
             self.timestamp,
             self.chunk_id,

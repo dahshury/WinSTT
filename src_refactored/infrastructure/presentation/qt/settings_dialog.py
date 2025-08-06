@@ -23,19 +23,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.core.utils import get_config, resource_path, save_config
-from src_refactored.application.use_cases.settings_management.load_settings_use_case import (
-    LoadSettingsUseCase,
-)
-from src_refactored.application.use_cases.settings_management.reset_settings_use_case import (
-    ResetSettingsUseCase,
-)
-from src_refactored.application.use_cases.settings_management.save_settings_use_case import (
-    SaveSettingsUseCase,
-)
-from src_refactored.application.use_cases.settings_management.update_settings_use_case import (
-    UpdateSettingsUseCase,
-)
+from src_refactored.infrastructure.common.configuration_service import get_config, save_config
+from src_refactored.infrastructure.common.resource_service import resource_path
 from src_refactored.infrastructure.presentation.qt.toggle_switch_widget import ToggleSwitch
 
 
@@ -60,11 +49,8 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.parent_window = parent
 
-        # Initialize use cases (these would be injected via DI in full implementation)
-        self._load_settings_use_case = LoadSettingsUseCase()
-        self._save_settings_use_case = SaveSettingsUseCase()
-        self._update_settings_use_case = UpdateSettingsUseCase()
-        self._reset_settings_use_case = ResetSettingsUseCase()
+        # Note: Use cases would be injected via DI in full implementation
+        # For now, using direct config functions
 
         # Load current settings
         self._load_current_settings()
@@ -89,8 +75,7 @@ class SettingsDialog(QDialog):
         self.current_model = config.get("model", "whisper-turbo")
         self.current_quantization = config.get("quantization", "Full")
         self.current_rec_key = config.get("recording_key", "F2")
-self.current_sound_path = (
-    config.get("sound_path", resource_path("resources/start_sound.wav")))
+        self.current_sound_path = config.get("sound_path", resource_path("resources/start_sound.wav"))
         self.enable_rec_sound = config.get("recording_sound", True)
         self.current_output_srt = config.get("output_srt", False)
 
@@ -98,8 +83,7 @@ self.current_sound_path = (
         self.llm_enabled = config.get("llm_enabled", False)
         self.llm_model = config.get("llm_model", "microsoft/DialoGPT-medium")
         self.llm_quantization = config.get("llm_quantization", "Full")
-self.llm_prompt = (
-    config.get("llm_prompt", "Please correct any errors in the following text:"))
+        self.llm_prompt = config.get("llm_prompt", "Please correct any errors in the following text:")
 
         # Default values
         self.default_model = "whisper-turbo"
@@ -181,8 +165,7 @@ self.llm_prompt = (
     def _create_recording_key_section(self, main_layout):
         """Create the recording key configuration section."""
         rec_key_group = QGroupBox("Recording Key")
-rec_key_group.setStyleSheet(self.section_style_template.format(bg_color = (
-    self.section_bg_color)))
+        rec_key_group.setStyleSheet(self.section_style_template.format(bg_color=self.section_bg_color))
 
         rec_key_layout = QVBoxLayout()
         rec_key_layout.setSpacing(8)
@@ -737,8 +720,7 @@ rec_key_group.setStyleSheet(self.section_style_template.format(bg_color = (
             self._handle_key_release(event)
             return True
 
-        return super(,
-    ).eventFilter(obj, event)
+        return super().eventFilter(obj, event)
 
     def _handle_key_press(self, event):
         """Handle key press events during key recording."""

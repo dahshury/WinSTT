@@ -206,8 +206,7 @@ class AudioProcessor(Entity):
                     samples = samples.astype(np.float32)
 
             # Handle stereo to mono conversion
-            if len(samples.shape,
-    ) > 1 and samples.shape[1] > 1:
+            if len(samples.shape) > 1 and samples.shape[1] > 1:
                 samples = np.mean(samples, axis=1)
 
             # Apply gain
@@ -227,7 +226,8 @@ class AudioProcessor(Entity):
             samples = np.clip(samples, -1.0, 1.0)
 
             # Create waveform data
-            waveform = WaveformData.from_numpy(samples, self.config.sample_rate)
+            timestamp_ms = time.time() * 1000.0
+            waveform = WaveformData.from_numpy_array(samples, self.config.sample_rate, timestamp_ms)
 
             # Update buffer
             if self.buffer:

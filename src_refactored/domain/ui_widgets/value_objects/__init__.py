@@ -1,11 +1,7 @@
-"""UI Widgets domain value objects."""
+"""UI Widgets domain value objects.
 
-from .widget_dimensions import WidgetDimensions
-from .widget_events import EventType
-from .widget_styling import WidgetStyling
+Note: UI-specific value objects have been moved to the presentation layer.
+"""
 
-__all__ = [
-    "EventType",
-    "WidgetDimensions",
-    "WidgetStyling",
-]
+# All UI-specific value objects have been moved to presentation layer
+__all__ = []

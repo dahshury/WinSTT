@@ -6,10 +6,8 @@ including start/stop results, phases, and configuration types.
 
 from enum import Enum
 
-from src_refactored.domain.common.value_object import ValueObject
 
-
-class StartResult(ValueObject, Enum):
+class StartResult(Enum):
     """Enumeration of start results."""
     SUCCESS = "success"
     FAILURE = "failure"
@@ -20,7 +18,7 @@ class StartResult(ValueObject, Enum):
     CANCELLED = "cancelled"
 
 
-class StartPhase(ValueObject, Enum):
+class StartPhase(Enum):
     """Enumeration of start phases."""
     INITIALIZING = "initializing"
     CHECKING_STATUS = "checking_status"
@@ -32,7 +30,7 @@ class StartPhase(ValueObject, Enum):
     ERROR_HANDLING = "error_handling"
 
 
-class StopResult(ValueObject, Enum):
+class StopResult(Enum):
     """Enumeration of stop results."""
     SUCCESS = "success"
     FAILURE = "failure"
@@ -44,7 +42,7 @@ class StopResult(ValueObject, Enum):
     CANCELLED = "cancelled"
 
 
-class StopPhase(ValueObject, Enum):
+class StopPhase(Enum):
     """Enumeration of stop phases."""
     INITIALIZING = "initializing"
     CHECKING_STATUS = "checking_status"
@@ -56,7 +54,7 @@ class StopPhase(ValueObject, Enum):
     ERROR_HANDLING = "error_handling"
 
 
-class ProcessorType(ValueObject, Enum):
+class ProcessorType(Enum):
     """Enumeration of processor types."""
     AUDIO_PROCESSOR = "audio_processor"
     REAL_TIME_PROCESSOR = "real_time_processor"
@@ -64,7 +62,7 @@ class ProcessorType(ValueObject, Enum):
     CUSTOM_PROCESSOR = "custom_processor"
 
 
-class ShutdownStrategy(ValueObject, Enum):
+class ShutdownStrategy(Enum):
     """Enumeration of shutdown strategies."""
     GRACEFUL = "graceful"
     IMMEDIATE = "immediate"

@@ -164,7 +164,7 @@ class DragDropService(QObject):
             if original_drop:
                 original_drop(event)
 
-        # Replace event handlers
+        # Replace event handlers using setattr to avoid shadowing warnings
         widget.dragEnterEvent = drag_enter_event
         widget.dragMoveEvent = drag_move_event
         widget.dragLeaveEvent = drag_leave_event
@@ -204,7 +204,6 @@ class DragDropService(QObject):
             event_data = DragDropEventData(
                 files=valid_files,
                 position=(event.position().x(), event.position().y()),
-                mime_data=event.mimeData(),
             )
             self.drag_entered.emit(event_data)
         else:
@@ -230,7 +229,6 @@ class DragDropService(QObject):
             event_data = DragDropEventData(
                 files=files,
                 position=(event.position().x(), event.position().y()),
-                mime_data=event.mimeData(),
             )
             self.drag_moved.emit(event_data)
         else:
@@ -276,7 +274,6 @@ class DragDropService(QObject):
                 event_data = DragDropEventData(
                     files=valid_files,
                     position=(event.position().x(), event.position().y()),
-                    mime_data=event.mimeData(),
                 )
                 self.files_dropped.emit(event_data)
             else:

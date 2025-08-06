@@ -50,7 +50,7 @@ class LLMWorkerService:
             logger.debug(f"Initializing LLM model: {model_type} with quantization: {quantization}")
 
             # Import here to avoid circular dependencies
-            from src.core.utils import gemma_inference
+            from . import gemma_inference_service as gemma_inference
 
             # Repo ID based on model type
             repo_id = f"onnx-community/{model_type}-ONNX"
@@ -64,7 +64,7 @@ class LLMWorkerService:
             self.config, self.tokenizer, self.inference_session = gemma_inference.load_model(
                 repo_id=repo_id,
                 cache_path=None,  # Use default cache path
-                display_message_signal=self._create_display_signal_adapter()
+                display_message_signal=self._create_display_signal_adapter(),
                 quantization=quantization,
             )
 
@@ -135,7 +135,7 @@ class LLMWorkerService:
             ]
 
             # Use the gemma_inference module to generate text
-            from src.core.utils import gemma_inference
+            from . import gemma_inference_service as gemma_inference
             generated_text, _ = gemma_inference.generate_text(
                 self.config,
                 self.tokenizer,

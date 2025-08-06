@@ -20,11 +20,7 @@ from src_refactored.domain.common.result import Result
 from .settings_repository import SettingsRepository
 
 
-class JSONSettingsRepositoryMeta(type(QObject), type(SettingsRepository)):
-    """Metaclass to resolve conflict between QObject and SettingsRepository."""
-
-
-class JSONSettingsRepository(QObject, SettingsRepository, metaclass=JSONSettingsRepositoryMeta):
+class JSONSettingsRepository(QObject, SettingsRepository):
     """JSON-based implementation of SettingsRepository.
     
     Provides file-based settings persistence using JSON format with
@@ -41,8 +37,7 @@ class JSONSettingsRepository(QObject, SettingsRepository, metaclass=JSONSettings
         super().__init__()
         self.config_path = Path(config_path)
         self.auto_backup = auto_backup
-        self.logger = setup_logger(,
-    )
+        self.logger = setup_logger()
 
         # Cache for loaded settings
         self._cached_settings: dict[str, Any] | None = None
@@ -171,8 +166,7 @@ class JSONSettingsRepository(QObject, SettingsRepository, metaclass=JSONSettings
             if not settings_result.is_success:
                 return Result.failure(settings_result.error())
 
-            settings = settings_result.value(,
-    )
+            settings = settings_result.value()
             value = settings.get(key, default)
 
             return Result.success(value)
@@ -366,15 +360,13 @@ class JSONSettingsRepository(QObject, SettingsRepository, metaclass=JSONSettings
 
             validation_result = self.validate_settings(backup_settings)
             if not validation_result.is_success:
-                return Result.failure(f"Backup settings validation failed: {validation_result.error(\
-    )}")
+                return Result.failure(f"Backup settings validation failed: {validation_result.error()}")
 
             # Create backup of current settings before restoring
             if self.config_path.exists():
                 current_backup_result = self.backup_settings()
                 if not current_backup_result.is_success:
-                    self.logger.warning("Failed to backup current settings: {current_backup_result.e\
-    rror()}")
+                    self.logger.warning("Failed to backup current settings: {current_backup_result.error()}")
 
             # Restore settings
             return self.save_settings(backup_settings)
@@ -431,11 +423,9 @@ class JSONSettingsRepository(QObject, SettingsRepository, metaclass=JSONSettings
                     )
 
             # Value validation
-valid_models = (
-    ["whisper-turbo", "whisper-large-v3", "whisper-medium", "whisper-small", "whisper-base"])
+            valid_models = ["whisper-turbo", "whisper-large-v3", "whisper-medium", "whisper-small", "whisper-base"]
             if settings.get("model") not in valid_models:
-                return Result.failure(f"Invalid model: {settings.get('model')}. Must be one of {vali\
-    d_models}")
+                return Result.failure(f"Invalid model: {settings.get('model')}. Must be one of {valid_models}")
 
             valid_quantizations = ["full", "quantized"]
             if settings.get("quantization") not in valid_quantizations:
@@ -458,19 +448,18 @@ valid_models = (
         """
         try:
             info = {
-                "config_path": str(self.config_path,
-    )
-                "exists": self.config_path.exists()
+                "config_path": str(self.config_path),
+                "exists": self.config_path.exists(),
                 "auto_backup": self.auto_backup,
-                "cache_valid": self._is_cache_valid()
+                "cache_valid": self._is_cache_valid(),
             }
 
             if self.config_path.exists():
                 stat = self.config_path.stat()
                 info.update({
                     "size_bytes": stat.st_size,
-                    "last_modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
-                    "created": datetime.fromtimestamp(stat.st_ctime).isoformat()
+                    "last_modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
                 })
 
             # Count settings

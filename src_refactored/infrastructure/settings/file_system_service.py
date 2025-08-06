@@ -38,16 +38,14 @@ class FileSystemService:
         """
         try:
             dir_path = Path(path)
-            if not dir_path.is_absolute(,
-    ):
+            if not dir_path.is_absolute():
                 dir_path = self.base_path / dir_path
 
             dir_path.mkdir(parents=True, exist_ok=True)
             return dir_path
         except Exception as e:
             msg = f"Failed to create directory {path}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def file_exists(self, path: str | Path) -> bool:
         """Check if a file exists.
@@ -99,8 +97,7 @@ class FileSystemService:
             return file_path.stat().st_size
         except Exception as e:
             msg = f"Failed to get file size for {path}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def get_file_modified_time(self, path: str | Path) -> datetime:
         """Get the last modification time of a file.
@@ -123,8 +120,7 @@ class FileSystemService:
             return datetime.fromtimestamp(timestamp)
         except Exception as e:
             msg = f"Failed to get modification time for {path}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def copy_file(self, source: str | Path, destination: str | Path) -> None:
         """Copy a file from source to destination.
@@ -146,14 +142,12 @@ class FileSystemService:
                 dst_path = self.base_path / dst_path
 
             # Ensure destination directory exists
-            self.ensure_directory(dst_path.parent,
-    )
+            self.ensure_directory(dst_path.parent)
 
             shutil.copy2(src_path, dst_path)
         except Exception as e:
             msg = f"Failed to copy {source} to {destination}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def move_file(self, source: str | Path, destination: str | Path) -> None:
         """Move a file from source to destination.
@@ -177,12 +171,10 @@ class FileSystemService:
             # Ensure destination directory exists
             self.ensure_directory(dst_path.parent)
 
-            shutil.move(str(src_path,
-    ), str(dst_path))
+            shutil.move(str(src_path), str(dst_path))
         except Exception as e:
             msg = f"Failed to move {source} to {destination}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def delete_file(self, path: str | Path) -> None:
         """Delete a file.
@@ -202,8 +194,7 @@ class FileSystemService:
                 file_path.unlink()
         except Exception as e:
             msg = f"Failed to delete file {path}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def delete_directory(self, path: str | Path, recursive: bool = False) -> None:
         """Delete a directory.
@@ -227,8 +218,7 @@ class FileSystemService:
                     dir_path.rmdir()
         except Exception as e:
             msg = f"Failed to delete directory {path}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def list_files(self, directory: str | Path, pattern: str = "*",
                    recursive: bool = False) -> list[Path]:
@@ -259,8 +249,7 @@ class FileSystemService:
             return list(dir_path.glob(pattern))
         except Exception as e:
             msg = f"Failed to list files in {directory}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def read_text_file(self, path: str | Path, encoding: str = "utf-8") -> str:
         """Read text content from a file.
@@ -277,16 +266,14 @@ class FileSystemService:
         """
         try:
             file_path = Path(path)
-            if not file_path.is_absolute(,
-    ):
+            if not file_path.is_absolute():
                 file_path = self.base_path / file_path
 
             with open(file_path, encoding=encoding) as f:
                 return f.read()
         except Exception as e:
             msg = f"Failed to read file {path}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def write_text_file(self, path: str | Path, content: str,
                        encoding: str = "utf-8") -> None:
@@ -498,8 +485,7 @@ class FileSystemService:
                 if file_path.is_file():
                     file_age = current_time - datetime.fromtimestamp(file_path.stat().st_mtime)
                     if file_age.total_seconds() > max_age_hours * 3600:
-                        file_path.unlink(,
-    )
+                        file_path.unlink()
                         cleaned_count += 1
         except Exception:
             # Ignore errors during cleanup

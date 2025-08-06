@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from src_refactored.domain.common import AggregateRoot
@@ -40,8 +42,7 @@ class UserPreferences(AggregateRoot):
             raise ValueError(msg)
 
         # Validate that audio configuration is compatible with model requirements
-        if not self.audio_config.is_optimized_for_speech(,
-    ) and self.model_config.model_type in [
+        if not self.audio_config.is_optimized_for_speech() and self.model_config.model_type in [
             ModelType.WHISPER_TURBO, ModelType.LITE_WHISPER_TURBO, ModelType.LITE_WHISPER_TURBO_FAST,
         ]:
             # Log warning but don't fail - user might want different audio settings
@@ -51,14 +52,14 @@ class UserPreferences(AggregateRoot):
     def create_default(cls) -> UserPreferences:
         """Create default user preferences."""
         return cls(
-            recording_key=KeyCombination.from_string("CTRL+SHIFT+R")
+            recording_key=KeyCombination.from_string("CTRL+SHIFT+R"),
             model_config=ModelConfiguration(
                 model_type=ModelType.LITE_WHISPER_TURBO,
                 quantization=Quantization.QUANTIZED,
                 use_gpu=True,
-            )
-            llm_config=LLMConfiguration.create_default()
-            audio_config=AudioConfiguration.create_default()
+            ),
+            llm_config=LLMConfiguration.create_default(),
+            audio_config=AudioConfiguration.create_default(),
             output_srt_enabled=True,
         )
 
@@ -73,11 +74,13 @@ class UserPreferences(AggregateRoot):
         self.recording_key = new_key
 
         # Add domain event
-        from src_refactored.domain.common.events import DomainEvent
-        self.add_domain_event(DomainEvent(
-            event_type="RECORDING_KEY_CHANGED",
-            source=self,
-            data={"old_key": old_key.to_string(), "new_key": new_key.to_string()},
+        from src_refactored.domain.common.events import RecordingKeyChanged
+        self.add_domain_event(RecordingKeyChanged(
+            event_id=str(uuid.uuid4()),
+            timestamp=datetime.now().timestamp(),
+            source="user_preferences",
+            old_key=old_key.to_string(),
+            new_key=new_key.to_string(),
         ))
 
         self.mark_as_updated()
@@ -89,16 +92,15 @@ class UserPreferences(AggregateRoot):
         self.model_config = new_config
 
         # Add domain event
-        from src_refactored.domain.common.events import DomainEvent
-        self.add_domain_event(DomainEvent(
-            event_type="MODEL_CONFIGURATION_CHANGED",
-            source=self,
-            data={
-                "old_model": old_config.model_type.value,
-                "new_model": new_config.model_type.value,
-                "old_quantization": old_config.quantization.value,
-                "new_quantization": new_config.quantization.value,
-            },
+        from src_refactored.domain.common.events import ModelConfigurationChanged
+        self.add_domain_event(ModelConfigurationChanged(
+            event_id=str(uuid.uuid4()),
+            timestamp=datetime.now().timestamp(),
+            source="user_preferences",
+            old_model=old_config.model_type.value,
+            new_model=new_config.model_type.value,
+            old_quantization=old_config.quantization.value,
+            new_quantization=new_config.quantization.value,
         ))
 
         self.mark_as_updated()
@@ -110,16 +112,15 @@ class UserPreferences(AggregateRoot):
         self.llm_config = new_config
 
         # Add domain event
-        from src_refactored.domain.common.events import DomainEvent
-        self.add_domain_event(DomainEvent(
-            event_type="LLM_CONFIGURATION_CHANGED",
-            source=self,
-            data={
-                "old_enabled": old_config.enabled,
-                "new_enabled": new_config.enabled,
-                "old_model": old_config.model_name,
-                "new_model": new_config.model_name,
-            },
+        from src_refactored.domain.common.events import LLMConfigurationChanged
+        self.add_domain_event(LLMConfigurationChanged(
+            event_id=str(uuid.uuid4()),
+            timestamp=datetime.now().timestamp(),
+            source="user_preferences",
+            old_enabled=old_config.enabled,
+            new_enabled=new_config.enabled,
+            old_model=old_config.model_name,
+            new_model=new_config.model_name,
         ))
 
         self.mark_as_updated()
@@ -131,16 +132,15 @@ class UserPreferences(AggregateRoot):
         self.audio_config = new_config
 
         # Add domain event
-        from src_refactored.domain.common.events import DomainEvent
-        self.add_domain_event(DomainEvent(
-            event_type="AUDIO_CONFIGURATION_CHANGED",
-            source=self,
-            data={
-                "old_sample_rate": old_config.sample_rate,
-                "new_sample_rate": new_config.sample_rate,
-                "old_recording_sound_enabled": old_config.recording_sound_enabled,
-                "new_recording_sound_enabled": new_config.recording_sound_enabled,
-            },
+        from src_refactored.domain.common.events import AudioConfigurationChanged
+        self.add_domain_event(AudioConfigurationChanged(
+            event_id=str(uuid.uuid4()),
+            timestamp=datetime.now().timestamp(),
+            source="user_preferences",
+            old_sample_rate=old_config.sample_rate,
+            new_sample_rate=new_config.sample_rate,
+            old_recording_sound_enabled=old_config.recording_sound_enabled,
+            new_recording_sound_enabled=new_config.recording_sound_enabled,
         ))
 
         self.mark_as_updated()
@@ -151,11 +151,13 @@ class UserPreferences(AggregateRoot):
         self.output_srt_enabled = not self.output_srt_enabled
 
         # Add domain event
-        from src_refactored.domain.common.events import DomainEvent
-        self.add_domain_event(DomainEvent(
-            event_type="OUTPUT_SRT_TOGGLED",
-            source=self,
-            data={"old_value": old_value, "new_value": self.output_srt_enabled},
+        from src_refactored.domain.common.events import OutputSRTToggled
+        self.add_domain_event(OutputSRTToggled(
+            event_id=str(uuid.uuid4()),
+            timestamp=datetime.now().timestamp(),
+            source="user_preferences",
+            old_value=old_value,
+            new_value=self.output_srt_enabled,
         ))
 
         self.mark_as_updated()
@@ -166,11 +168,12 @@ class UserPreferences(AggregateRoot):
             self.llm_config = self.llm_config.with_enabled(True)
 
             # Add domain event
-            from src_refactored.domain.common.events import DomainEvent
-            self.add_domain_event(DomainEvent(
-                event_type="LLM_PROCESSING_ENABLED",
-                source=self,
-                data={"model_name": self.llm_config.model_name},
+            from src_refactored.domain.common.events import LLMProcessingEnabled
+            self.add_domain_event(LLMProcessingEnabled(
+                event_id=str(uuid.uuid4()),
+                timestamp=datetime.now().timestamp(),
+                source="user_preferences",
+                model_name=self.llm_config.model_name,
             ))
 
             self.mark_as_updated()
@@ -181,11 +184,12 @@ class UserPreferences(AggregateRoot):
             self.llm_config = self.llm_config.with_enabled(False)
 
             # Add domain event
-            from src_refactored.domain.common.events import DomainEvent
-            self.add_domain_event(DomainEvent(
-                event_type="LLM_PROCESSING_DISABLED",
-                source=self,
-                data={"model_name": self.llm_config.model_name},
+            from src_refactored.domain.common.events import LLMProcessingDisabled
+            self.add_domain_event(LLMProcessingDisabled(
+                event_id=str(uuid.uuid4()),
+                timestamp=datetime.now().timestamp(),
+                source="user_preferences",
+                model_name=self.llm_config.model_name,
             ))
 
             self.mark_as_updated()
@@ -212,7 +216,7 @@ class UserPreferences(AggregateRoot):
     def to_dict(self) -> dict[str, Any]:
         """Convert preferences to dictionary for serialization."""
         return {
-            "recording_key": self.recording_key.to_string()
+            "recording_key": self.recording_key.to_string(),
             "model_type": self.model_config.model_type.value,
             "model_quantization": self.model_config.quantization.value,
             "model_use_gpu": self.model_config.use_gpu,
@@ -243,18 +247,17 @@ class UserPreferences(AggregateRoot):
         model_config = ModelConfiguration(
             model_type=ModelType.from_string(data.get("model_type", "lite-whisper-turbo")),
             quantization=Quantization.from_string(data.get("model_quantization", "Quantized")),
-            use_gpu=data.get("model_use_gpu", True)
+            use_gpu=data.get("model_use_gpu", True),
             max_memory=data.get("model_max_memory"),
         )
 
         # Parse LLM configuration
         llm_config = LLMConfiguration(
-            model_name=data.get("llm_model_name", "llama-3.2-3b-instruct")
+            model_name=data.get("llm_model_name", "llama-3.2-3b-instruct"),
             quantization=Quantization.from_string(data.get("llm_quantization", "Quantized")),
-system_prompt = (
-    data.get("llm_system_prompt", LLMConfiguration.create_default().system_prompt),)
-            max_tokens=data.get("llm_max_tokens", 512)
-            temperature=data.get("llm_temperature", 0.7)
+            system_prompt=data.get("llm_system_prompt", LLMConfiguration.create_default().system_prompt),
+            max_tokens=data.get("llm_max_tokens", 512),
+            temperature=data.get("llm_temperature", 0.7),
             enabled=data.get("llm_enabled", False),
         )
 
@@ -264,12 +267,12 @@ system_prompt = (
             recording_sound_path = AudioFilePath(path=data["audio_recording_sound_path"])
 
         audio_config = AudioConfiguration(
-            sample_rate=data.get("audio_sample_rate", 16000)
-            channels=data.get("audio_channels", 1)
-            bit_depth=data.get("audio_bit_depth", 16)
-            buffer_size=data.get("audio_buffer_size", 1024)
-            enable_noise_reduction=data.get("audio_noise_reduction", True)
-            recording_sound_enabled=data.get("audio_recording_sound_enabled", False)
+            sample_rate=data.get("audio_sample_rate", 16000),
+            channels=data.get("audio_channels", 1),
+            bit_depth=data.get("audio_bit_depth", 16),
+            buffer_size=data.get("audio_buffer_size", 1024),
+            enable_noise_reduction=data.get("audio_noise_reduction", True),
+            recording_sound_enabled=data.get("audio_recording_sound_enabled", False),
             recording_sound_path=recording_sound_path,
         )
 

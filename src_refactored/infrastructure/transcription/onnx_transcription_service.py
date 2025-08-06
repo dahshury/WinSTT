@@ -27,6 +27,7 @@ from transformers import WhisperFeatureExtractor, WhisperTokenizerFast
 from logger import setup_logger
 from src_refactored.domain.transcription.entities.transcription_result import TranscriptionResult
 from src_refactored.domain.transcription.entities.transcription_segment import TranscriptionSegment
+from src_refactored.domain.transcription.value_objects.language import Language
 from src_refactored.domain.transcription.value_objects.message_display_callback import (
     MessageDisplayCallback,
 )
@@ -47,15 +48,15 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 custom_logger = setup_logger()
 
 
-def resource_path(relative_path: str,
-    ) -> str:
+def resource_path(relative_path: str) -> str:
     """Get absolute path to resource, works for dev and for PyInstaller."""
     try:
         # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
+        base_path = getattr(sys, "_MEIPASS", None)
+        if base_path is None:
+            base_path = os.path.abspath(".")
     except AttributeError:
-        base_path = os.path.abspath(".",
-    )
+        base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
 
@@ -301,10 +302,14 @@ class ONNXTranscriptionService(QObject):
                 segments = self._generate_segments(request.audio_input, transcription_text)
 
             result = TranscriptionResult(
-                text=transcription_text,
-                segments=segments,
-                language=request.language,
+                transcription_id=request_id,
+                source_audio_id=f"audio_{request_id}",
+                language=request.language or Language.auto_detect(),
             )
+            
+            # Add segments to the result
+            for segment in segments:
+                result.add_segment(segment)
 
             self.status = TranscriptionStatus.COMPLETED
             self.transcription_progress.emit(request_id, 100, "Completed")
@@ -401,7 +406,7 @@ class ONNXTranscriptionService(QObject):
             sentences = [s.strip() for s in sentences if s.strip()]
 
             if not sentences:
-                return [TranscriptionSegment(0.0, audio_duration, transcription)]
+                return [TranscriptionSegment.create_simple_segment(0.0, audio_duration, transcription)]
 
             # Distribute time evenly across sentences
             segments = []
@@ -411,17 +416,15 @@ class ONNXTranscriptionService(QObject):
                 start_time = i * duration_per_segment
                 end_time = min((i + 1) * duration_per_segment, audio_duration)
 
-                segments.append(TranscriptionSegment(
-                    start=start_time,
-                    end=end_time,
-                    text=sentence,
+                segments.append(TranscriptionSegment.create_simple_segment(
+                    start_time, end_time, sentence, i,
                 ))
 
             return segments
 
         except Exception as e:
             custom_logger.exception(f"Error generating segments: {e}")
-            return [TranscriptionSegment(0.0, 30.0, transcription)]
+            return [TranscriptionSegment.create_simple_segment(0.0, 30.0, transcription)]
 
     def get_segments(self) -> list[dict[str, Any]]:
         """Get segments from last transcription (legacy compatibility)."""

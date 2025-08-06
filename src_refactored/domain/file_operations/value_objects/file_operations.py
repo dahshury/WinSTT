@@ -6,10 +6,8 @@ including operation results, types, and status management.
 
 from enum import Enum
 
-from src_refactored.domain.common.value_object import ValueObject
 
-
-class FileOperationResult(ValueObject, Enum):
+class FileOperationResult(Enum):
     """Results of file operations."""
     SUCCESS = "success"
     FAILURE = "failure"
@@ -20,7 +18,7 @@ class FileOperationResult(ValueObject, Enum):
     PATH_TOO_LONG = "path_too_long"
 
 
-class FileOperationType(ValueObject, Enum):
+class FileOperationType(Enum):
     """Types of file operations."""
     SAVE = "save"
     LOAD = "load"

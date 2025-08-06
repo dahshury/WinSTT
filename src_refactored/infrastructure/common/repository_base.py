@@ -979,7 +979,7 @@ class FileRepository(RepositoryBase[TEntity, TId]):
     """File-based repository implementation."""
     
     def __init__(self, entity_type: type[TEntity], storage_path: str, 
-                 serializer: str = "json"):
+                 serializer_type: str = "json"):
         """Initialize file repository.
         
         Args:
@@ -990,9 +990,9 @@ class FileRepository(RepositoryBase[TEntity, TId]):
         super().__init__(entity_type)
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
-        self.serializer = serializer
+        self.serializer = serializer_type
         
-        if serializer not in ["json", "pickle"]:
+        if serializer_type not in ["json", "pickle"]:
             msg = "Serializer must be 'json' or 'pickle'"
             raise ValueError(msg)
     
@@ -1019,7 +1019,15 @@ class FileRepository(RepositoryBase[TEntity, TId]):
         """
         if self.serializer == "json":
             # Convert entity to dict (assuming entity has to_dict method)
-            data = entity.to_dict() if hasattr(entity, "to_dict") else entity.__dict__
+            try:
+                if hasattr(entity, "to_dict"):
+                    to_dict_method = entity.to_dict
+                    data = to_dict_method() if callable(to_dict_method) else entity.__dict__
+                else:
+                    data = entity.__dict__
+            except Exception:
+                # Fallback to __dict__ if to_dict fails
+                data = entity.__dict__
             return json.dumps(data, indent=2, default=str).encode("utf-8")
         # pickle
         return pickle.dumps(entity)
@@ -1279,7 +1287,7 @@ def create_in_memory_repository(entity_type: type[TEntity]) -> InMemoryRepositor
 
 
 def create_file_repository(entity_type: type[TEntity], storage_path: str, 
-                          serializer: str = "json") -> FileRepository[TEntity, Any]:
+                         serializer_type: str = "json") -> FileRepository[TEntity, Any]:
     """Create a file repository.
     
     Args:
@@ -1290,7 +1298,7 @@ def create_file_repository(entity_type: type[TEntity], storage_path: str,
     Returns:
         File repository
     """
-    return FileRepository(entity_type, storage_path, serializer)
+    return FileRepository(entity_type, storage_path, serializer_type)
 
 
 def create_query_specification(entity_type: type[TEntity]) -> QuerySpecification[TEntity]:

@@ -195,8 +195,7 @@ class ProgressSession(AggregateRoot[str],
             current_value >= self._metrics.total_value):
             self.complete()
 
-        self.mark_as_updated(,
-    )
+        self.mark_as_updated()
         return True
 
     def update_percentage(self, percentage: float, message: str | None = None) -> bool:

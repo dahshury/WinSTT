@@ -141,15 +141,13 @@ class MediaFile(Entity):
 
     def is_large_file(self, threshold_mb: float = 100) -> bool:
         """Check if this is considered a large file."""
-        return self.get_file_size_mb(,
-    ) > threshold_mb
+        return self.get_file_size_mb() > threshold_mb
 
     def is_long_duration(self, threshold_minutes: float = 60) -> bool:
         """Check if this has a long duration."""
         if not self.duration:
             return False
-        return self.duration.to_minutes(,
-    ) > threshold_minutes
+        return self.duration.to_minutes() > threshold_minutes
 
     def get_output_filename(self, suffix: str = "_transcription", extension: str = ".txt") -> str:
         """Get suggested output filename for transcription."""
@@ -181,7 +179,7 @@ class MediaFile(Entity):
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
-            "id": str(self.id)
+            "id": str(self.id),
             "file_path": self.file_path,
             "file_format": {
                 "extension": self.file_format.extension,
@@ -191,7 +189,7 @@ class MediaFile(Entity):
             },
             "file_size": self.file_size,
             "duration": self.duration.to_seconds() if self.duration else None,
-            "created_at": self.created_at.isoformat()
+            "created_at": self.created_at.isoformat(),
             "last_modified": self.last_modified.isoformat() if self.last_modified else None,
             "metadata": self.metadata,
         }

@@ -11,7 +11,7 @@ from PyQt6.QtCore import QObject, QRect, QSize, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget
 
 from logger import setup_logger
-from src.domain.common.result import Result
+from src_refactored.domain.common.result import Result
 from src_refactored.domain.system_integration.value_objects.geometry_management import (
     GeometryConfiguration,
     GeometryMode,
@@ -115,8 +115,8 @@ class GeometryManagementService(QObject):
     ) -> Result[WindowGeometry]:
         """Get current widget geometry."""
         try:
-            geometry = WindowGeometry.from_widget(widget)
-            return Result.success(geometry)
+            infra_geometry = InfrastructureWindowGeometry.from_widget(widget)
+            return Result.success(infra_geometry.domain_geometry)
         except Exception as e:
             error_msg = f"Failed to get geometry: {e!s}"
             self.logger.exception(error_msg)
@@ -127,11 +127,13 @@ class GeometryManagementService(QObject):
         """Set widget geometry."""
         try:
             # Store previous geometry
-            current_geometry = WindowGeometry.from_widget(widget)
+            infra_geometry = InfrastructureWindowGeometry.from_widget(widget)
+            current_geometry = infra_geometry.domain_geometry
             self._previous_geometries[widget_name] = current_geometry
 
             # Apply new geometry
-            widget.setGeometry(geometry.to_qrect())
+            infra_geometry = InfrastructureWindowGeometry(geometry)
+            widget.setGeometry(infra_geometry.to_qrect())
 
             self.geometry_changed.emit(widget_name, geometry)
             self.logger.debug(f"Set geometry for {widget_name}: {geometry.width}x{geometry.height} at ({geometry.x}, {geometry.y})")
@@ -170,7 +172,8 @@ class GeometryManagementService(QObject):
         widget: QWidget, mode: GeometryMode, reference_geometry: WindowGeometry | None = None) -> Result[WindowGeometry]:
         """Calculate optimal geometry based on mode."""
         try:
-            current_geometry = WindowGeometry.from_widget(widget)
+            infra_geometry = InfrastructureWindowGeometry.from_widget(widget)
+            current_geometry = infra_geometry.domain_geometry
 
             if mode == GeometryMode.PRESERVE:
                 return Result.success(current_geometry)
@@ -257,8 +260,7 @@ class GeometryManagementService(QObject):
             result = self.set_central_widget_geometry(main_window)
 
             if result.is_success:
-                self.logger.debug("Handled resize event: {main_window.width()}x{main_window.height()\
-    }")
+                self.logger.debug(f"Handled resize event: {main_window.width()}x{main_window.height()}")
 
             return result
 
@@ -273,7 +275,8 @@ class GeometryManagementService(QObject):
             screen = QApplication.primaryScreen()
             if screen:
                 geometry = screen.geometry()
-                return Result.success(WindowGeometry.from_qrect(geometry))
+                infra_geometry = InfrastructureWindowGeometry.from_qrect(geometry)
+                return Result.success(infra_geometry.domain_geometry)
             return Result.failure("No primary screen found")
         except Exception as e:
             error_msg = f"Failed to get screen geometry: {e!s}"

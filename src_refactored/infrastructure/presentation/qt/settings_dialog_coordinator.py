@@ -5,20 +5,21 @@ for the settings dialog, following the refactored DDD architecture.
 """
 
 import os
-from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QEvent
-from PyQt6.QtWidgets import QDialog, QWidget
-from PyQt6.QtGui import QFont
+from typing import Any
 
-from src_refactored.ui.core.abstractions import (
-    IUIComponent, IUIEventHandler, UIEvent, UIEventType, Result
-)
-from src_refactored.ui.core.container import UIContainer, injectable
-from src_refactored.ui.domain.value_objects import (
-    ModelConfiguration, AudioConfiguration, LLMConfiguration
-)
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtWidgets import QWidget
+
 from logger import setup_logger
+from src_refactored.infrastructure.presentation.qt.ui_core_abstractions import IUIEventHandler
+from src_refactored.ui.core.abstractions import (
+    IUIComponent,
+    Result,
+    UIEvent,
+    UIEventType,
+)
+from src_refactored.ui.core.container import injectable
 
 
 @dataclass
@@ -36,7 +37,7 @@ class SettingsDialogState:
     current_llm_prompt: str
     is_downloading_model: bool = False
     recording_key: bool = False
-    pressed_keys: set = None
+    pressed_keys: set[str] | None = None
     
     def __post_init__(self):
         if self.pressed_keys is None:
@@ -61,11 +62,11 @@ class SettingsDialogDefaults:
 class ISettingsService:
     """Interface for settings service."""
     
-    def load_settings(self) -> Dict[str, Any]:
+    def load_settings(self) -> dict[str, Any]:
         """Load settings from storage."""
         raise NotImplementedError
     
-    def save_settings(self, settings: Dict[str, Any]) -> Result[None]:
+    def save_settings(self, settings: dict[str, Any]) -> Result[None]:
         """Save settings to storage."""
         raise NotImplementedError
     
@@ -108,7 +109,7 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
     def __init__(self, 
                  settings_service: ISettingsService,
                  progress_service: IProgressService,
-                 parent: Optional[QWidget] = None):
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.settings_service = settings_service
         self.progress_service = progress_service
@@ -129,7 +130,7 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
         
         # Tracking flags
         self.is_progress_bar_moving = False
-        self.reset_buttons: List[QWidget] = []
+        self.reset_buttons: list[QWidget] = []
         
         # Load initial settings
         self._load_settings()
@@ -146,7 +147,7 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
             current_llm_enabled=self.defaults.llm_enabled,
             current_llm_model=self.defaults.llm_model,
             current_llm_quantization=self.defaults.llm_quantization,
-            current_llm_prompt=self.defaults.llm_prompt
+            current_llm_prompt=self.defaults.llm_prompt,
         )
     
     def _load_settings(self) -> None:
@@ -155,37 +156,37 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
             settings = self.settings_service.load_settings()
             
             # Update state with loaded settings
-            self.state.current_model = settings.get('model', self.defaults.model)
-            self.state.current_quantization = settings.get('quantization', self.defaults.quantization)
-            self.state.enable_rec_sound = settings.get('recording_sound', self.defaults.recording_sound)
-            self.state.current_sound_path = settings.get('sound_path', self.defaults.sound_path)
-            self.state.current_output_srt = settings.get('output_srt', self.defaults.output_srt)
-            self.state.current_rec_key = settings.get('rec_key', self.defaults.rec_key)
-            self.state.current_llm_enabled = settings.get('llm_enabled', self.defaults.llm_enabled)
-            self.state.current_llm_model = settings.get('llm_model', self.defaults.llm_model)
-            self.state.current_llm_quantization = settings.get('llm_quantization', self.defaults.llm_quantization)
-            self.state.current_llm_prompt = settings.get('llm_prompt', self.defaults.llm_prompt)
+            self.state.current_model = settings.get("model", self.defaults.model)
+            self.state.current_quantization = settings.get("quantization", self.defaults.quantization)
+            self.state.enable_rec_sound = settings.get("recording_sound", self.defaults.recording_sound)
+            self.state.current_sound_path = settings.get("sound_path", self.defaults.sound_path)
+            self.state.current_output_srt = settings.get("output_srt", self.defaults.output_srt)
+            self.state.current_rec_key = settings.get("rec_key", self.defaults.rec_key)
+            self.state.current_llm_enabled = settings.get("llm_enabled", self.defaults.llm_enabled)
+            self.state.current_llm_model = settings.get("llm_model", self.defaults.llm_model)
+            self.state.current_llm_quantization = settings.get("llm_quantization", self.defaults.llm_quantization)
+            self.state.current_llm_prompt = settings.get("llm_prompt", self.defaults.llm_prompt)
             
             self.logger.info("Settings loaded successfully")
             
         except Exception as e:
-            self.logger.error(f"Failed to load settings: {e}")
+            self.logger.exception(f"Failed to load settings: {e}")
             # Keep default state on error
     
     def save_settings(self) -> Result[None]:
         """Save current state to storage."""
         try:
             settings = {
-                'model': self.state.current_model,
-                'quantization': self.state.current_quantization,
-                'recording_sound': self.state.enable_rec_sound,
-                'sound_path': self.state.current_sound_path,
-                'output_srt': self.state.current_output_srt,
-                'rec_key': self.state.current_rec_key,
-                'llm_enabled': self.state.current_llm_enabled,
-                'llm_model': self.state.current_llm_model,
-                'llm_quantization': self.state.current_llm_quantization,
-                'llm_prompt': self.state.current_llm_prompt
+                "model": self.state.current_model,
+                "quantization": self.state.current_quantization,
+                "recording_sound": self.state.enable_rec_sound,
+                "sound_path": self.state.current_sound_path,
+                "output_srt": self.state.current_output_srt,
+                "rec_key": self.state.current_rec_key,
+                "llm_enabled": self.state.current_llm_enabled,
+                "llm_model": self.state.current_llm_model,
+                "llm_quantization": self.state.current_llm_quantization,
+                "llm_prompt": self.state.current_llm_prompt,
             }
             
             result = self.settings_service.save_settings(settings)
@@ -197,7 +198,7 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
             
         except Exception as e:
             error_msg = f"Failed to save settings: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
     def handle_model_changed(self, model: str) -> None:
@@ -214,7 +215,7 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
             self.save_settings()
             self.logger.info(f"Quantization changed to: {quantization}")
     
-    def handle_recording_sound_changed(self, enabled: bool, sound_path: str = None) -> None:
+    def handle_recording_sound_changed(self, enabled: bool, sound_path: str | None = None) -> None:
         """Handle recording sound settings change."""
         changed = False
         
@@ -237,8 +238,8 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
             self.save_settings()
             self.logger.info(f"SRT output changed to: {enabled}")
     
-    def handle_llm_settings_changed(self, enabled: bool = None, model: str = None, 
-                                   quantization: str = None, prompt: str = None) -> None:
+    def handle_llm_settings_changed(self, enabled: bool | None = None, model: str | None = None, 
+                                   quantization: str | None = None, prompt: str | None = None) -> None:
         """Handle LLM settings change."""
         changed = False
         
@@ -280,14 +281,14 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
             self.handle_recording_sound_changed(self.state.enable_rec_sound, file_path)
             
             # Notify parent window if available
-            if self.parent_window and hasattr(self.parent_window, 'display_message'):
+            if self.parent_window and hasattr(self.parent_window, "display_message"):
                 self.parent_window.display_message(txt=f"Recording sound updated to {os.path.basename(file_path)}")
             
             return Result.success(None)
             
         except Exception as e:
             error_msg = f"Failed to handle file drop: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
     def reset_all_settings(self) -> None:
@@ -298,7 +299,7 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
             self.logger.info("All settings reset to defaults")
             
         except Exception as e:
-            self.logger.error(f"Failed to reset settings: {e}")
+            self.logger.exception(f"Failed to reset settings: {e}")
     
     def start_model_download(self, model_name: str) -> None:
         """Start model download process."""
@@ -352,18 +353,18 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
                 self.save_settings()
             elif event.event_type == UIEventType.MODEL_DOWNLOAD_STARTED:
                 # Handle model download start
-                model_name = event.data.get('model_name', 'Unknown')
+                model_name = event.data.get("model_name", "Unknown")
                 self.start_model_download(model_name)
             elif event.event_type == UIEventType.MODEL_DOWNLOAD_COMPLETED:
                 # Handle model download completion
-                model_name = event.data.get('model_name', 'Unknown')
+                model_name = event.data.get("model_name", "Unknown")
                 self.complete_model_download(model_name)
             
             return Result.success(None)
             
         except Exception as e:
             error_msg = f"Failed to handle event {event.event_type}: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
     def initialize(self) -> Result[None]:
@@ -374,7 +375,7 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
             return Result.success(None)
         except Exception as e:
             error_msg = f"Failed to initialize settings dialog coordinator: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
     def cleanup(self) -> None:
@@ -383,4 +384,4 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
             self.progress_timer.stop()
             self.logger.info("Settings dialog coordinator cleaned up")
         except Exception as e:
-            self.logger.error(f"Error during cleanup: {e}")
+            self.logger.exception(f"Error during cleanup: {e}")

@@ -522,8 +522,8 @@ class ProgressTracker(QObject, IProgressTracker):
 class UIProgressCallback(ProgressCallback):
     """Progress callback that updates UI components."""
     
-    def __init__(self, progress_bar: QProgressBar = None, status_label: QLabel = None, 
-                 details_label: QLabel = None, callback_id: str | None = None):
+    def __init__(self, progress_bar: QProgressBar | None = None, status_label: QLabel | None = None, 
+                 details_label: QLabel | None = None, callback_id: str | None = None):
         """Initialize UI progress callback.
         
         Args:
@@ -932,7 +932,7 @@ class ProgressCallbackManager:
             self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
-    def get_active_trackers(self) -> List[str]:
+    def get_active_trackers(self) -> list[str]:
         """Get list of active tracker IDs.
         
         Returns:
@@ -944,7 +944,7 @@ class ProgressCallbackManager:
                 if tracker.is_tracking()
             ]
     
-    def get_all_callbacks(self) -> List[str]:
+    def get_all_callbacks(self) -> list[str]:
         """Get list of all callback IDs.
         
         Returns:
@@ -953,7 +953,7 @@ class ProgressCallbackManager:
         with self._lock:
             return list(self._callbacks.keys())
     
-    def get_all_trackers(self) -> List[str]:
+    def get_all_trackers(self) -> list[str]:
         """Get list of all tracker IDs.
         
         Returns:
@@ -964,8 +964,8 @@ class ProgressCallbackManager:
 
 
 # Convenience functions
-def create_ui_progress_callback(progress_bar: QProgressBar = None, status_label: QLabel = None,
-                              details_label: QLabel = None) -> UIProgressCallback:
+def create_ui_progress_callback(progress_bar: QProgressBar | None = None, status_label: QLabel | None = None,
+                              details_label: QLabel | None = None) -> UIProgressCallback:
     """Create a UI progress callback.
     
     Args:
@@ -1001,3 +1001,28 @@ def create_composite_callback(*callbacks: IProgressCallback) -> CompositeProgres
         Composite progress callback
     """
     return CompositeProgressCallback(list(callbacks))
+
+
+def create_simple_progress_info(
+    current: float, 
+    total: float = 100.0, 
+    message: str = "", 
+    status: ProgressStatus = ProgressStatus.IN_PROGRESS,
+) -> ProgressInfo:
+    """Create a simple ProgressInfo with automatic percentage calculation.
+    
+    Args:
+        current: Current progress value
+        total: Total progress value (default 100)
+        message: Progress message
+        status: Progress status
+        
+    Returns:
+        ProgressInfo instance with calculated percentage
+    """
+    return ProgressInfo.create(
+        current=current,
+        total=total,
+        status=status,
+        message=message,
+    )

@@ -335,8 +335,7 @@ class TimerManagementService(QObject):
         weak_ref = weakref.ref(target_object)
 
         def reset_flag():
-            obj = weak_ref(,
-    )
+            obj = weak_ref()
             if obj is not None:
                 setattr(obj, flag_name, False)
 

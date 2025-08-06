@@ -13,7 +13,7 @@ from typing import Any, Protocol, TypeVar
 
 from PyQt6.QtCore import QEasingCurve, QObject, QPropertyAnimation
 from PyQt6.QtGui import QFont, QPalette
-from PyQt6.QtWidgets import QFormLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFormLayout, QGridLayout, QHBoxLayout, QLayout, QVBoxLayout, QWidget
 
 from src_refactored.domain.common.result import Result
 from src_refactored.domain.common.value_object import ValueObject
@@ -186,7 +186,7 @@ class MVVMPattern(IUIPattern):
                     view_model.set_model(model)
             
             # Connect ViewModel to View
-            if hasattr(target, "set_view_model"):
+            if hasattr(target, "set_view_model") and callable(getattr(target, "set_view_model", None)):
                 target.set_view_model(view_model)
             else:
                 # Store as property

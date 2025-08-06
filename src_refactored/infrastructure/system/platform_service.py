@@ -202,8 +202,7 @@ class PlatformService:
             # macOS: Use ~/Library/Application Support
             return os.path.join(os.path.expanduser("~"), "Library", "Application Support", app_name)
         # Linux: Use XDG_CONFIG_HOME or ~/.config
-config_home = (
-    os.environ.get("XDG_CONFIG_HOME", os.path.join(os.path.expanduser("~"), ".config")))
+        config_home = os.environ.get("XDG_CONFIG_HOME", os.path.join(os.path.expanduser("~"), ".config"))
         return os.path.join(config_home, app_name.lower())
 
     def get_platform_specific_data_dir(self, app_name: str,
@@ -224,8 +223,7 @@ config_home = (
             # macOS: Use ~/Library/Application Support
             return os.path.join(os.path.expanduser("~"), "Library", "Application Support", app_name)
         # Linux: Use XDG_DATA_HOME or ~/.local/share
-data_home = (
-    os.environ.get("XDG_DATA_HOME", os.path.join(os.path.expanduser("~"), ".local", "share")))
+        data_home = os.environ.get("XDG_DATA_HOME", os.path.join(os.path.expanduser("~"), ".local", "share"))
         return os.path.join(data_home, app_name.lower())
 
     def get_platform_specific_cache_dir(self, app_name: str,
@@ -246,8 +244,7 @@ data_home = (
             # macOS: Use ~/Library/Caches
             return os.path.join(os.path.expanduser("~"), "Library", "Caches", app_name)
         # Linux: Use XDG_CACHE_HOME or ~/.cache
-cache_home = (
-    os.environ.get("XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache")))
+        cache_home = os.environ.get("XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache"))
         return os.path.join(cache_home, app_name.lower())
 
     def get_executable_extension(self) -> str:
@@ -337,7 +334,7 @@ cache_home = (
             Dictionary with requirement validation results
         """
         requirements = {
-            "platform_supported": self.is_windows() or self.is_linux() or self.is_macos()
+            "platform_supported": self.is_windows() or self.is_linux() or self.is_macos(),
             "python_version_supported": sys.version_info >= (3, 8),
         }
 

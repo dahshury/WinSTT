@@ -414,8 +414,7 @@ class EventSystemIntegration(Entity):
                 results.extend(event_results)
 
             # Clear processed events
-            self._event_queue.clear(,
-    )
+            self._event_queue.clear()
 
         finally:
             self._is_processing = False
@@ -539,7 +538,7 @@ class EventSystemIntegration(Entity):
 
         return {
             "handler_id": handler_id,
-            "total_processed": len(processing_times)
+            "total_processed": len(processing_times),
             "error_count": error_count,
             "success_rate": 1.0 - (error_count / max(1, len(processing_times))),
             "avg_processing_time_ms": sum(processing_times) / max(1, len(processing_times)),
@@ -559,11 +558,11 @@ class EventSystemIntegration(Entity):
             "system_id": self._system_id,
             "total_events_processed": total_events,
             "total_errors": total_errors,
-            "current_queue_size": len(self._event_queue)
-            "registered_handlers": len(self._handlers)
+            "current_queue_size": len(self._event_queue),
+            "registered_handlers": len(self._handlers),
             "active_filters": len([f for f in self._filters.values() if f.enabled]),
-            "events_by_type": dict(self._event_count)
-            "error_rate": total_errors / max(1, total_events)
+            "events_by_type": dict(self._event_count),
+            "error_rate": total_errors / max(1, total_events),
             "is_processing": self._is_processing,
             "is_paused": self._processing_paused,
         }

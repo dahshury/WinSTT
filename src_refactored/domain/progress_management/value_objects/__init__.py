@@ -1,9 +1,8 @@
-"""Progress management value objects."""
+"""Progress Management Value Objects.
 
-from .progress_percentage import ProgressPercentage
-from .progress_state import ProgressState
+This module exports progress-related value objects.
+"""
 
-__all__ = [
-    "ProgressPercentage",
-    "ProgressState",
-]
+from .progress_info import ProgressInfo, ProgressStatus
+
+__all__ = ["ProgressInfo", "ProgressStatus"]

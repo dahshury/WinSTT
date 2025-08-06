@@ -45,7 +45,7 @@ class ProcessingStatus:
     )
     data: ProcessingStatusData = field(default_factory=lambda: ProcessingStatusData(
         state=ProcessingState.PENDING,
-        progress=ProgressPercentage(0.0)
+        progress=ProgressPercentage(0.0),
         message="Initializing...",
     ))
 
@@ -64,7 +64,7 @@ class ProcessingStatus:
         """Mark as completed."""
         self.data = ProcessingStatusData(
             state=ProcessingState.COMPLETED,
-            progress=ProgressPercentage(100.0)
+            progress=ProgressPercentage(100.0),
             message=message,
         )
         self.updated_at = datetime.now()

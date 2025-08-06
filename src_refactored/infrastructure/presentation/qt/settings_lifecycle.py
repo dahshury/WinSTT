@@ -13,9 +13,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QCloseEvent, QShowEvent
 from PyQt6.QtWidgets import QDialog, QLayout, QProgressBar, QWidget
 
-from src_refactored.application.use_cases.lifecycle.manage_dialog_lifecycle_use_case import (
-    ManageDialogLifecycleUseCase,
-)
+from src_refactored.domain.common.ports.dialog_lifecycle_port import IDialogLifecycleManager
 from src_refactored.infrastructure.lifecycle.dialog_lifecycle_service import (
     DialogLifecycleService,
 )
@@ -42,11 +40,12 @@ class SettingsLifecycleManager(QObject):
     cleanup_completed = pyqtSignal()
     lifecycle_error = pyqtSignal(str)  # error_message
 
-    def __init__(self, dialog: QDialog, parent=None):
+    def __init__(self, dialog: QDialog, lifecycle_manager: IDialogLifecycleManager, parent=None):
         """Initialize the lifecycle manager.
         
         Args:
             dialog: The dialog to manage
+            lifecycle_manager: Dialog lifecycle manager port
             parent: Parent object
         """
         super().__init__(parent)
@@ -55,8 +54,8 @@ class SettingsLifecycleManager(QObject):
         self._dialog = dialog
         self._parent_window = None
 
-        # Initialize use cases (these would be injected via DI in full implementation)
-        self._manage_lifecycle_use_case = ManageDialogLifecycleUseCase()
+        # Injected dependencies
+        self._manage_lifecycle_use_case = lifecycle_manager
 
         # Initialize services
         self._lifecycle_service = DialogLifecycleService()

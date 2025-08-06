@@ -4,6 +4,7 @@ This module defines audio configuration value objects that represent
 business concepts for audio system configuration.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -206,6 +207,11 @@ class StreamConfiguration(ValueObject):
     enable_noise_suppression: bool = False
     enable_auto_gain: bool = False
     latency: float = 0.1  # seconds
+    non_blocking: bool = False
+    timeout: float = 1.0
+    callback: Callable[[bytes, int], None] | None = None
+    error_callback: Callable[[str], None] | None = None
+    audio_config: AudioConfiguration | None = None
 
     def _get_equality_components(self,
     ) -> tuple:
@@ -221,6 +227,11 @@ class StreamConfiguration(ValueObject):
             self.enable_noise_suppression,
             self.enable_auto_gain,
             self.latency,
+            self.non_blocking,
+            self.timeout,
+            self.callback,
+            self.error_callback,
+            self.audio_config,
         )
 
     def __invariants__(self) -> None:
@@ -238,5 +249,7 @@ class StreamConfiguration(ValueObject):
             raise ValueError(msg)
         if self.latency < 0:
             msg = "Latency must be non-negative"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
+        if self.timeout < 0:
+            msg = "Timeout must be non-negative"
+            raise ValueError(msg)

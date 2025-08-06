@@ -15,7 +15,7 @@ from typing import Any, Protocol
 import pyaudio
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
-from src_refactored.infrastructure.system.logging_service import LoggerService
+from src_refactored.infrastructure.system.logging_service import LoggingService
 
 
 class ResourceType(Enum):
@@ -89,7 +89,7 @@ class PyAudioResourceManager:
 
     def __init__(self):
         """Initialize the PyAudio resource manager."""
-        self.logger = LoggerService().get_logger("PyAudioResourceManager")
+        self.logger = LoggingService().get_logger("PyAudioResourceManager")
         self._lock = threading.RLock()
 
     def cleanup_stream(self, stream: pyaudio.Stream, timeout: float = 5.0,
@@ -169,7 +169,7 @@ class ThreadResourceManager:
 
     def __init__(self):
         """Initialize the thread resource manager."""
-        self.logger = LoggerService().get_logger("ThreadResourceManager")
+        self.logger = LoggingService().get_logger("ThreadResourceManager")
 
     def cleanup_thread(self, thread: QThread, timeout: float = 5.0, force: bool = False,
     ) -> bool:
@@ -240,7 +240,7 @@ class ResourceCleanupManager(QObject):
             parent: Parent QObject
         """
         super().__init__(parent)
-        self.logger = LoggerService().get_logger("ResourceCleanupManager")
+        self.logger = LoggingService().get_logger("ResourceCleanupManager")
 
         # Resource tracking
         self._resources: dict[str, ResourceInfo] = {}
@@ -538,13 +538,13 @@ class ResourceCleanupService:
     with domain entities and application use cases.
     """
 
-    def __init__(self, logger_service: LoggerService | None = None):
+    def __init__(self, logger_service: LoggingService | None = None):
         """Initialize the resource cleanup service.
         
         Args:
             logger_service: Optional logger service
         """
-        self.logger_service = logger_service or LoggerService()
+        self.logger_service = logger_service or LoggingService()
         self.logger = self.logger_service.get_logger("ResourceCleanupService")
         self.cleanup_manager = ResourceCleanupManager()
 
@@ -620,12 +620,10 @@ class ResourceCleanupService:
         """
         try:
             # Register resource
-success = (
-    self.register_resource(resource_id, resource_type, resource_object, cleanup_timeout))
+            success = self.register_resource(resource_id, resource_type, resource_object, cleanup_timeout)
             if not success:
                 msg = f"Failed to register resource: {resource_id}"
-                raise RuntimeError(msg,
-    )
+                raise RuntimeError(msg)
 
             yield resource_object
 
@@ -663,8 +661,7 @@ success = (
 
         # Count by state
         for resource_id in self.cleanup_manager.list_resources():
-            resource_info = self.cleanup_manager.get_resource_info(resource_id,
-    )
+            resource_info = self.cleanup_manager.get_resource_info(resource_id)
             if resource_info:
                 state = resource_info.state.value
                 stats["by_state"][state] = stats["by_state"].get(state, 0) + 1

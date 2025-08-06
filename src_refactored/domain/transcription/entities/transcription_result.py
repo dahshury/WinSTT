@@ -202,8 +202,7 @@ class TranscriptionResult(AggregateRoot):
         self._update_overall_confidence()
 
         # Generate final text
-        final_text = self.get_full_text(,
-    )
+        final_text = self.get_full_text()
 
         # Raise domain event
         event = TranscriptionCompletedEvent(
@@ -212,7 +211,7 @@ class TranscriptionResult(AggregateRoot):
             source="TranscriptionResult",
             transcription_id=self.transcription_id,
             final_text=final_text,
-            segment_count=len(self.segments)
+            segment_count=len(self.segments),
             processing_duration=self.processing_duration,
             confidence=self.overall_confidence,
         )
@@ -226,8 +225,7 @@ class TranscriptionResult(AggregateRoot):
         """Fail the transcription with an error."""
         self.status = TranscriptionStatus.FAILED
         self.error_message = error_message
-        self.completed_at = datetime.now(,
-    )
+        self.completed_at = datetime.now()
 
         # Raise domain event
         event = TranscriptionFailedEvent(
@@ -483,8 +481,7 @@ class TranscriptionResult(AggregateRoot):
         for segment in self.segments:
             if segment.duration.seconds > 30:  # Very long segments might indicate issues
                 return False
-            if segment.duration.seconds < 0.1 and
-    not segment.text.is_empty:  # Very short segments with content
+            if (segment.duration.seconds < 0.1 and not segment.text.is_empty):  # Very short segments with content
                 return False
 
         return True

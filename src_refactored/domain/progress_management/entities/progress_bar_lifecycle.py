@@ -162,8 +162,7 @@ class ProgressBarLifecycle(Entity[str],
             self._state = ProgressBarState.ACTIVE
         else:
             # Restore to previous parent on failure
-self._state = (
-    ProgressBarState.ATTACHED if self._current_parent else ProgressBarState.IDLE)
+            self._state = ProgressBarState.ATTACHED if self._current_parent else ProgressBarState.IDLE
 
         self._target_parent = None
         self._operation_start_time = None
@@ -217,8 +216,7 @@ self._state = (
         self._target_parent = None
         self._operation_count += 1
 
-        self.mark_as_updated(,
-    )
+        self.mark_as_updated()
         return True
 
     def error(self, error_message: str,
@@ -411,8 +409,7 @@ self._state = (
 
         if self._state == ProgressBarState.ERROR and not self._error_message:
             msg = "Error state must have error message"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
         if self._is_moving and self._state not in [ProgressBarState.REPARENTING, ProgressBarState.RESTORING]:
             msg = "Moving flag can only be set during reparenting or restoring"

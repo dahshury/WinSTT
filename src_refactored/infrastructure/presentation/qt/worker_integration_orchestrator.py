@@ -5,19 +5,23 @@ DI container and follows the refactored DDD architecture.
 """
 
 import gc
-from typing import Optional, Dict, Any, Callable
 from dataclasses import dataclass
-from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
-from PyQt6.QtWidgets import QApplication
+from typing import Any
 
-from src_refactored.ui.core.abstractions import (
-    IUIComponent, IUIEventHandler, UIEvent, UIEventType, Result
+from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
+
+from src_refactored.domain.common.ports.logging_port import LoggingPort
+from src_refactored.domain.common.ports.progress_notification_port import (
+    IProgressNotificationService,
 )
-from src_refactored.ui.core.container import UIContainer, injectable
-from src_refactored.ui.domain.value_objects import (
-    ModelConfiguration, AudioConfiguration, LLMConfiguration
+from src_refactored.domain.common.ports.ui_component_port import (
+    IUIComponent,
+    IUIEventHandler,
+    UIEvent,
+    UIEventType,
 )
-from logger import setup_logger
+from src_refactored.domain.common.result import Result
+from src_refactored.domain.worker_management.ports.worker_factory_port import IWorkerFactory
 
 
 @dataclass
@@ -27,47 +31,11 @@ class WorkerStatus:
     worker_type: str
     is_running: bool
     is_initialized: bool
-    thread_id: Optional[str] = None
-    error_message: Optional[str] = None
+    thread_id: str | None = None
+    error_message: str | None = None
 
 
-class IWorkerFactory:
-    """Interface for worker factory."""
-    
-    def create_vad_worker(self) -> QObject:
-        """Create VAD worker."""
-        raise NotImplementedError
-    
-    def create_model_worker(self, model_type: str, quantization: str) -> QObject:
-        """Create model worker."""
-        raise NotImplementedError
-    
-    def create_listener_worker(self, model: Any, vad: Any, rec_key: str) -> QObject:
-        """Create listener worker."""
-        raise NotImplementedError
-    
-    def create_llm_worker(self, model_type: str, quantization: str) -> QObject:
-        """Create LLM worker."""
-        raise NotImplementedError
 
-
-class IProgressNotificationService:
-    """Interface for progress notification service."""
-    
-    def notify_progress(self, message: str, percentage: Optional[int] = None) -> None:
-        """Notify progress update."""
-        raise NotImplementedError
-    
-    def notify_error(self, error_message: str) -> None:
-        """Notify error."""
-        raise NotImplementedError
-    
-    def notify_completion(self, message: str) -> None:
-        """Notify completion."""
-        raise NotImplementedError
-
-
-@injectable
 class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
     """Orchestrates PyQt workers and integrates them with the DI container.
     
@@ -87,16 +55,17 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
     
     def __init__(self, 
                  worker_factory: IWorkerFactory,
-                 progress_service: IProgressNotificationService):
+                 progress_service: IProgressNotificationService,
+                 logger: LoggingPort):
         super().__init__()
         self.worker_factory = worker_factory
         self.progress_service = progress_service
-        self.logger = setup_logger()
+        self.logger = logger
         
         # Worker management
-        self.workers: Dict[str, QObject] = {}
-        self.threads: Dict[str, QThread] = {}
-        self.worker_status: Dict[str, WorkerStatus] = {}
+        self.workers: dict[str, QObject] = {}
+        self.threads: dict[str, QThread] = {}
+        self.worker_status: dict[str, WorkerStatus] = {}
         
         # Cleanup timer
         self.cleanup_timer = QTimer()
@@ -134,7 +103,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
                 worker_type="vad",
                 is_running=False,
                 is_initialized=False,
-                thread_id=str(thread.currentThreadId())
+                thread_id=str(thread.currentThreadId()),
             )
             
             # Start thread
@@ -146,7 +115,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             
         except Exception as e:
             error_msg = f"Failed to create VAD worker: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
     def create_model_worker(self, model_type: str, quantization: str) -> Result[str]:
@@ -173,7 +142,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
                 worker_type="model",
                 is_running=False,
                 is_initialized=False,
-                thread_id=str(thread.currentThreadId())
+                thread_id=str(thread.currentThreadId()),
             )
             
             # Start thread
@@ -185,7 +154,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             
         except Exception as e:
             error_msg = f"Failed to create model worker: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
     def create_listener_worker(self, model: Any, vad: Any, rec_key: str) -> Result[str]:
@@ -215,7 +184,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
                 worker_type="listener",
                 is_running=False,
                 is_initialized=False,
-                thread_id=str(thread.currentThreadId())
+                thread_id=str(thread.currentThreadId()),
             )
             
             # Start thread
@@ -227,7 +196,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             
         except Exception as e:
             error_msg = f"Failed to create listener worker: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
     def create_llm_worker(self, model_type: str, quantization: str) -> Result[str]:
@@ -255,7 +224,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
                 worker_type="llm",
                 is_running=False,
                 is_initialized=False,
-                thread_id=str(thread.currentThreadId())
+                thread_id=str(thread.currentThreadId()),
             )
             
             # Start thread
@@ -267,7 +236,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             
         except Exception as e:
             error_msg = f"Failed to create LLM worker: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
     def stop_worker(self, worker_id: str) -> Result[None]:
@@ -280,7 +249,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             thread = self.threads[worker_id]
             
             # Stop worker if it has a stop method
-            if hasattr(worker, 'stop'):
+            if hasattr(worker, "stop"):
                 worker.stop()
             
             # Quit and wait for thread
@@ -298,7 +267,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             
         except Exception as e:
             error_msg = f"Failed to stop worker {worker_id}: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
     def stop_all_workers(self) -> Result[None]:
@@ -313,18 +282,18 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             
         except Exception as e:
             error_msg = f"Failed to stop all workers: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
-    def get_worker_status(self, worker_id: str) -> Optional[WorkerStatus]:
+    def get_worker_status(self, worker_id: str) -> WorkerStatus | None:
         """Get status of a specific worker."""
         return self.worker_status.get(worker_id)
     
-    def get_all_worker_status(self) -> Dict[str, WorkerStatus]:
+    def get_all_worker_status(self) -> dict[str, WorkerStatus]:
         """Get status of all workers."""
         return self.worker_status.copy()
     
-    def get_worker(self, worker_id: str) -> Optional[QObject]:
+    def get_worker(self, worker_id: str) -> QObject | None:
         """Get worker instance by ID."""
         return self.workers.get(worker_id)
     
@@ -370,20 +339,20 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             gc.collect()
             
         except Exception as e:
-            self.logger.error(f"Error during periodic cleanup: {e}")
+            self.logger.exception(f"Error during periodic cleanup: {e}")
     
     def _cleanup_worker(self, worker_id: str) -> None:
         """Cleanup a finished worker."""
         try:
             if worker_id in self.workers:
                 worker = self.workers[worker_id]
-                if hasattr(worker, 'deleteLater'):
+                if hasattr(worker, "deleteLater"):
                     worker.deleteLater()
                 del self.workers[worker_id]
             
             if worker_id in self.threads:
                 thread = self.threads[worker_id]
-                if hasattr(thread, 'deleteLater'):
+                if hasattr(thread, "deleteLater"):
                     thread.deleteLater()
                 del self.threads[worker_id]
             
@@ -393,41 +362,40 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             self.logger.debug(f"Cleaned up worker {worker_id}")
             
         except Exception as e:
-            self.logger.error(f"Error cleaning up worker {worker_id}: {e}")
+            self.logger.exception(f"Error cleaning up worker {worker_id}: {e}")
     
     def handle_event(self, event: UIEvent) -> Result[None]:
         """Handle UI events."""
         try:
             if event.event_type == UIEventType.WORKER_START_REQUESTED:
-                worker_type = event.data.get('worker_type')
-                if worker_type == 'vad':
+                worker_type = event.data.get("worker_type")
+                if worker_type == "vad":
                     return self.create_vad_worker()
-                elif worker_type == 'model':
-                    model_type = event.data.get('model_type', 'whisper-turbo')
-                    quantization = event.data.get('quantization', 'Full')
+                if worker_type == "model":
+                    model_type = event.data.get("model_type", "whisper-turbo")
+                    quantization = event.data.get("quantization", "Full")
                     return self.create_model_worker(model_type, quantization)
-                elif worker_type == 'listener':
-                    model = event.data.get('model')
-                    vad = event.data.get('vad')
-                    rec_key = event.data.get('rec_key', 'CTRL+ALT+A')
+                if worker_type == "listener":
+                    model = event.data.get("model")
+                    vad = event.data.get("vad")
+                    rec_key = event.data.get("rec_key", "CTRL+ALT+A")
                     return self.create_listener_worker(model, vad, rec_key)
-                elif worker_type == 'llm':
-                    model_type = event.data.get('model_type', 'gemma-3-1b-it')
-                    quantization = event.data.get('quantization', 'Full')
+                if worker_type == "llm":
+                    model_type = event.data.get("model_type", "gemma-3-1b-it")
+                    quantization = event.data.get("quantization", "Full")
                     return self.create_llm_worker(model_type, quantization)
             
             elif event.event_type == UIEventType.WORKER_STOP_REQUESTED:
-                worker_id = event.data.get('worker_id')
+                worker_id = event.data.get("worker_id")
                 if worker_id:
                     return self.stop_worker(worker_id)
-                else:
-                    return self.stop_all_workers()
+                return self.stop_all_workers()
             
             return Result.success(None)
             
         except Exception as e:
             error_msg = f"Failed to handle event {event.event_type}: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
     def initialize(self) -> Result[None]:
@@ -437,7 +405,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             return Result.success(None)
         except Exception as e:
             error_msg = f"Failed to initialize worker orchestrator: {e}"
-            self.logger.error(error_msg)
+            self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
     def cleanup(self) -> None:
@@ -454,4 +422,4 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             self.logger.info("Worker integration orchestrator cleaned up")
             
         except Exception as e:
-            self.logger.error(f"Error during orchestrator cleanup: {e}")
+            self.logger.exception(f"Error during orchestrator cleanup: {e}")

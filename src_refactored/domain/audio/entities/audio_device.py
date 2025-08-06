@@ -39,7 +39,7 @@ class DeviceCapabilities(ValueObject):
             self.max_input_channels,
             self.max_output_channels,
             self.default_sample_rate,
-            tuple(self.supported_sample_rates)
+            tuple(self.supported_sample_rates),
             self.latency_low,
             self.latency_high,
             self.host_api,
@@ -116,12 +116,9 @@ class AudioDevice(Entity[int],
             msg = "Device must have capabilities"
             raise ValueError(msg)
 
-    @property
-    def supports_sample_rate(self) -> bool:
+    def supports_sample_rate(self, sample_rate: float) -> bool:
         """Check if device supports a specific sample rate."""
-        def check_rate(sample_rate: float) -> bool:
-            return sample_rate in self.capabilities.supported_sample_rates
-        return check_rate
+        return sample_rate in self.capabilities.supported_sample_rates
 
     @property
     def can_record(self) -> bool:
@@ -153,8 +150,7 @@ class AudioDevice(Entity[int],
         if target_latency <= 0:
             target_latency = 0.01  # 10ms default
 
-        buffer_size = int(sample_rate * target_latency,
-    )
+        buffer_size = int(sample_rate * target_latency)
 
         # Round to nearest power of 2 for efficiency
         power = 1

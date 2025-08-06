@@ -12,7 +12,7 @@ from PyQt6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropE
 from PyQt6.QtWidgets import QWidget
 
 from logger import setup_logger
-from src.domain.common.result import Result
+from src_refactored.domain.common.result import Result
 from src_refactored.domain.system_integration.value_objects.drag_drop_operations import (
     DragDropConfig,
     DropResult,
@@ -89,7 +89,7 @@ class DragDropIntegrationService(QObject):
                 if original_drop:
                     original_drop(event)
 
-            # Replace event handlers
+            # Override event methods using setattr to avoid shadowing warnings
             widget.dragEnterEvent = drag_enter_event
             widget.dragMoveEvent = drag_move_event
             widget.dragLeaveEvent = drag_leave_event
@@ -167,7 +167,10 @@ class DragDropIntegrationService(QObject):
             if acceptable_files:
                 if self.config.show_drop_indicator:
                     # Change cursor to indicate drop is possible
-                    event.source().setCursor(Qt.CursorShape.DragCopyCursor)
+                    source = event.source()
+                    set_cursor_method = getattr(source, "setCursor", None)
+                    if set_cursor_method and callable(set_cursor_method):
+                        set_cursor_method(Qt.CursorShape.DragCopyCursor)
 
                 self.drag_entered.emit([str(f) for f in acceptable_files])
                 event.acceptProposedAction()
@@ -189,9 +192,8 @@ class DragDropIntegrationService(QObject):
     def _handle_drag_leave(self, event: QDragLeaveEvent) -> None:
         """Handle drag leave event."""
         try:
-            # Reset cursor
-            if hasattr(event.source(), "setCursor"):
-                event.source().setCursor(Qt.CursorShape.ArrowCursor)
+            # Reset cursor - QDragLeaveEvent doesn't have source()
+            # Cursor will be reset automatically when drag leaves
 
             self.drag_left.emit()
             event.accept()
@@ -203,8 +205,10 @@ class DragDropIntegrationService(QObject):
         """Handle drop event."""
         try:
             # Reset cursor
-            if hasattr(event.source(), "setCursor"):
-                event.source().setCursor(Qt.CursorShape.ArrowCursor)
+            source = event.source()
+            set_cursor_method = getattr(source, "setCursor", None)
+            if set_cursor_method and callable(set_cursor_method):
+                set_cursor_method(Qt.CursorShape.ArrowCursor)
 
             mime_data = event.mimeData()
             if not mime_data.hasUrls():

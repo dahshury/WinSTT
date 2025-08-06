@@ -73,8 +73,7 @@ class ConversionJob(Entity):
             raise ValueError(msg)
 
         self.status = ConversionStatus.IN_PROGRESS
-        self.started_at = datetime.now(,
-    )
+        self.started_at = datetime.now()
         self.progress_percentage = 0.0
 
     def update_progress(self, percentage: float,
@@ -86,8 +85,7 @@ class ConversionJob(Entity):
 
         if not 0 <= percentage <= 100:
             msg = "Progress percentage must be between 0 and 100"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
         self.progress_percentage = percentage
 
@@ -106,8 +104,7 @@ class ConversionJob(Entity):
         # Calculate actual duration
         if self.started_at:
             duration_seconds = (self.completed_at - self.started_at).total_seconds()
-            self.actual_duration = MediaDuration.from_seconds(duration_seconds,
-    )
+            self.actual_duration = MediaDuration.from_seconds(duration_seconds)
 
     def complete_with_file(self, output_file_path: str,
     ) -> None:
@@ -128,8 +125,7 @@ class ConversionJob(Entity):
         # Calculate actual duration
         if self.started_at:
             duration_seconds = (self.completed_at - self.started_at).total_seconds()
-            self.actual_duration = MediaDuration.from_seconds(duration_seconds,
-    )
+            self.actual_duration = MediaDuration.from_seconds(duration_seconds)
 
     def fail(self, error_message: str,
     ) -> None:
@@ -207,8 +203,7 @@ class ConversionJob(Entity):
         """Estimate total processing time for this job."""
         if self.source_file.duration:
             estimated_seconds = self.target_quality.estimate_processing_time(
-                self.source_file.duration.to_seconds(,
-    ),
+                self.source_file.duration.to_seconds(),
             )
         else:
             # Fallback estimate based on file size
@@ -258,10 +253,10 @@ class ConversionJob(Entity):
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
-            "id": str(self.id)
-            "source_file_id": str(self.source_file.id)
+            "id": str(self.id),
+            "source_file_id": str(self.source_file.id),
             "source_file_path": self.source_file.file_path,
-            "target_quality": self.target_quality.to_dict()
+            "target_quality": self.target_quality.to_dict(),
             "status": self.status.value,
             "progress_percentage": self.progress_percentage,
             "started_at": self.started_at.isoformat() if self.started_at else None,
@@ -270,6 +265,6 @@ class ConversionJob(Entity):
             "output_file_path": self.output_file_path,
             "estimated_duration": self.estimated_duration.to_seconds() if self.estimated_duration else None,
             "actual_duration": self.actual_duration.to_seconds() if self.actual_duration else None,
-            "output_size_mb": self.get_output_size_mb()
+            "output_size_mb": self.get_output_size_mb(),
             "metadata": self.metadata,
         }

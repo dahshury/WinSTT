@@ -191,7 +191,7 @@ class ProgressBarReparentingService(QObject):
                 if self.original_progress_geometry is not None:
                     progress_bar.setGeometry(self.original_progress_geometry)
             # Fallback to centralwidget if original parent unknown
-            elif hasattr(main_window, "centralwidget"):
+            elif hasattr(main_window, "centralwidget") and isinstance(main_window.centralwidget, QWidget):
                 progress_bar.setParent(main_window.centralwidget)
             else:
                 progress_bar.setParent(main_window)
@@ -204,14 +204,16 @@ class ProgressBarReparentingService(QObject):
             progress_bar.update()
             if self.original_progress_parent is not None:
                 self.original_progress_parent.update()
-            elif hasattr(main_window, "centralwidget"):
+            elif hasattr(main_window, "centralwidget") and isinstance(main_window.centralwidget, QWidget):
                 main_window.centralwidget.update()
             else:
                 main_window.update()
 
             # Emit signal
-target_parent = (
-    self.original_progress_parent or getattr(main_window, "centralwidget", main_window))
+            target_parent = (
+                self.original_progress_parent
+                or getattr(main_window, "centralwidget", main_window)
+            )
             self.progress_bar_restored.emit(progress_bar, target_parent)
 
             # Reset flag after delay

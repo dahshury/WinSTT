@@ -6,10 +6,8 @@ results, phases, audio formats, and conversion strategies.
 
 from enum import Enum
 
-from src_refactored.domain.common.value_object import ValueObject
 
-
-class ConversionResult(ValueObject, Enum):
+class ConversionResult(Enum):
     """Enumeration of conversion results."""
     SUCCESS = "success"
     FAILURE = "failure"
@@ -20,7 +18,7 @@ class ConversionResult(ValueObject, Enum):
     TIMEOUT = "timeout"
 
 
-class ConversionPhase(ValueObject, Enum):
+class ConversionPhase(Enum):
     """Enumeration of conversion phases."""
     INITIALIZING = "initializing"
     VALIDATING_INPUT = "validating_input"
@@ -32,7 +30,7 @@ class ConversionPhase(ValueObject, Enum):
     ERROR_HANDLING = "error_handling"
 
 
-class AudioFormat(ValueObject, Enum):
+class AudioFormat(Enum):
     """Enumeration of audio formats."""
     WAV = "wav"
     MP3 = "mp3"
@@ -41,7 +39,7 @@ class AudioFormat(ValueObject, Enum):
     OGG = "ogg"
 
 
-class ConversionStrategy(ValueObject, Enum):
+class ConversionStrategy(Enum):
     """Enumeration of conversion strategies."""
     FAST = "fast"
     BALANCED = "balanced"

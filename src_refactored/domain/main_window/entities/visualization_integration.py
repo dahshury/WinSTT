@@ -49,7 +49,7 @@ class VisualizationSettings:
     mode: VisualizationMode = VisualizationMode.WAVEFORM
     color: tuple[int, int, int] = (189, 46, 45)  # Red color
     line_width: float = 2.5
-    opacity: OpacityLevel = None
+    opacity: OpacityLevel | None = None
     animation_style: AnimationStyle = AnimationStyle.SMOOTH
     update_interval_ms: int = 50
     buffer_size: int = 1024
@@ -57,7 +57,7 @@ class VisualizationSettings:
     def __post_init__(self):
         """Initialize default opacity."""
         if self.opacity is None:
-            self.opacity = OpacityLevel.from_value(1.0).value()
+            self.opacity = OpacityLevel.from_value(1.0).value
 
     def validate(self) -> Result[None]:
         """Validate settings."""
@@ -125,7 +125,7 @@ class VisualizationIntegration(Entity[str],
         self._current_data: WaveformData | None = None
         self._data_history: list[WaveformData] = []
         self._is_visible = False
-        self._background_opacity = OpacityLevel.from_value(0.0).value()
+        self._background_opacity = OpacityLevel.from_value(0.0).value
         self._max_history_size = 100
         self.validate()
 
@@ -136,8 +136,7 @@ class VisualizationIntegration(Entity[str],
             settings = VisualizationSettings()
             validation_result = settings.validate()
             if not validation_result.is_success:
-                return Result.failure(f"Invalid settings: {validation_result.error()}",
-    )
+                return Result.failure(f"Invalid settings: {validation_result.error}")
 
             integration = cls(
                 integration_id="main_window_visualization",
@@ -237,7 +236,7 @@ class VisualizationIntegration(Entity[str],
         """Update visualization settings."""
         validation_result = settings.validate()
         if not validation_result.is_success:
-            return Result.failure(f"Invalid settings: {validation_result.error()}")
+            return Result.failure(f"Invalid settings: {validation_result.error}")
 
         self._settings = settings
         self.mark_as_updated()
@@ -383,8 +382,7 @@ class VisualizationIntegration(Entity[str],
         """Validate visualization integration invariants."""
         if not self._settings:
             msg = "Visualization settings are required"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
         if not isinstance(self._state, VisualizationState):
             msg = "Invalid visualization state"
             raise ValueError(msg)
@@ -393,5 +391,4 @@ class VisualizationIntegration(Entity[str],
             raise ValueError(msg)
         if self._max_history_size <= 0:
             msg = "Max history size must be positive"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)

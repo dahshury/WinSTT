@@ -4,19 +4,18 @@ This module provides automatic service registration using decorators and reflect
 integrating with the existing UIContainer infrastructure.
 """
 
-import logging
-import inspect
 import importlib
-from typing import Type, TypeVar, Optional, Any, Dict, List, Callable, Union
-from functools import wraps
-from pathlib import Path
+import inspect
+from collections.abc import Callable
 from enum import Enum
+from pathlib import Path
+from typing import TypeVar
 
-from src.ui.core.container import UIContainer, UIContainerBuilder
-from src.ui.core.abstractions import IServiceProvider
-from logger import setup_logger
+from src_refactored.domain.common.ports.logging_port import LoggingPort
 
-T = TypeVar('T')
+from ...presentation.core.container import UIContainerBuilder
+
+T = TypeVar("T")
 
 
 class ServiceLifetime(Enum):
@@ -28,7 +27,6 @@ class ServiceLifetime(Enum):
 
 class ServiceRegistrationError(Exception):
     """Base exception for service registration errors."""
-    pass
 
 
 class ServiceMetadata:
@@ -36,12 +34,12 @@ class ServiceMetadata:
     
     def __init__(
         self,
-        service_type: Type,
-        implementation_type: Optional[Type] = None,
+        service_type: type,
+        implementation_type: type | None = None,
         lifetime: ServiceLifetime = ServiceLifetime.SINGLETON,
-        factory: Optional[Callable] = None,
-        dependencies: Optional[List[Type]] = None,
-        tags: Optional[List[str]] = None
+        factory: Callable | None = None,
+        dependencies: list[type] | None = None,
+        tags: list[str] | None = None,
     ):
         self.service_type = service_type
         self.implementation_type = implementation_type or service_type
@@ -58,21 +56,21 @@ class ServiceMetadata:
 class ServiceRegistry:
     """Registry for managing service metadata and registration."""
     
-    def __init__(self):
-        self.logger = setup_logger()
-        self._services: Dict[Type, ServiceMetadata] = {}
-        self._named_services: Dict[str, ServiceMetadata] = {}
+    def __init__(self, logger: LoggingPort):
+        self.logger = logger
+        self._services: dict[type, ServiceMetadata] = {}
+        self._named_services: dict[str, ServiceMetadata] = {}
         self._registration_counter = 0
     
     def register_service(
         self,
-        service_type: Type[T],
-        implementation_type: Optional[Type[T]] = None,
+        service_type: type[T],
+        implementation_type: type[T] | None = None,
         lifetime: ServiceLifetime = ServiceLifetime.SINGLETON,
-        factory: Optional[Callable[[], T]] = None,
-        dependencies: Optional[List[Type]] = None,
-        tags: Optional[List[str]] = None,
-        name: Optional[str] = None
+        factory: Callable[[], T] | None = None,
+        dependencies: list[type] | None = None,
+        tags: list[str] | None = None,
+        name: str | None = None,
     ) -> None:
         """Register a service with metadata.
         
@@ -91,7 +89,7 @@ class ServiceRegistry:
             lifetime=lifetime,
             factory=factory,
             dependencies=dependencies,
-            tags=tags
+            tags=tags,
         )
         metadata.registration_order = self._registration_counter
         self._registration_counter += 1
@@ -103,23 +101,23 @@ class ServiceRegistry:
         
         self.logger.debug(f"Registered service: {service_type.__name__} ({lifetime.value})")
     
-    def get_service_metadata(self, service_type: Type[T]) -> Optional[ServiceMetadata]:
+    def get_service_metadata(self, service_type: type[T]) -> ServiceMetadata | None:
         """Get metadata for a service type."""
         return self._services.get(service_type)
     
-    def get_named_service_metadata(self, name: str) -> Optional[ServiceMetadata]:
+    def get_named_service_metadata(self, name: str) -> ServiceMetadata | None:
         """Get metadata for a named service."""
         return self._named_services.get(name)
     
-    def get_services_by_tag(self, tag: str) -> List[ServiceMetadata]:
+    def get_services_by_tag(self, tag: str) -> list[ServiceMetadata]:
         """Get all services with a specific tag."""
         return [metadata for metadata in self._services.values() if tag in metadata.tags]
     
-    def get_all_services(self) -> List[ServiceMetadata]:
+    def get_all_services(self) -> list[ServiceMetadata]:
         """Get all registered services ordered by registration."""
         return sorted(self._services.values(), key=lambda m: m.registration_order)
     
-    def is_registered(self, service_type: Type[T]) -> bool:
+    def is_registered(self, service_type: type[T]) -> bool:
         """Check if a service type is registered."""
         return service_type in self._services
     
@@ -143,9 +141,9 @@ def get_global_registry() -> ServiceRegistry:
 # Decorator functions for service registration
 def service(
     lifetime: ServiceLifetime = ServiceLifetime.SINGLETON,
-    interface: Optional[Type] = None,
-    tags: Optional[List[str]] = None,
-    name: Optional[str] = None
+    interface: type | None = None,
+    tags: list[str] | None = None,
+    name: str | None = None,
 ):
     """Decorator to mark a class as a service.
     
@@ -155,7 +153,7 @@ def service(
         tags: List of tags for categorization
         name: Optional name for named registration
     """
-    def decorator(cls: Type[T]) -> Type[T]:
+    def decorator(cls: type[T]) -> type[T]:
         service_type = interface or cls
         
         # Extract dependencies from constructor
@@ -167,7 +165,7 @@ def service(
             lifetime=lifetime,
             dependencies=dependencies,
             tags=tags,
-            name=name
+            name=name,
         )
         
         # Mark the class with registration metadata
@@ -176,7 +174,7 @@ def service(
             implementation_type=cls,
             lifetime=lifetime,
             dependencies=dependencies,
-            tags=tags
+            tags=tags,
         )
         
         return cls
@@ -184,26 +182,26 @@ def service(
     return decorator
 
 
-def singleton(interface: Optional[Type] = None, tags: Optional[List[str]] = None, name: Optional[str] = None):
+def singleton(interface: type | None = None, tags: list[str] | None = None, name: str | None = None):
     """Decorator to mark a class as a singleton service."""
     return service(ServiceLifetime.SINGLETON, interface, tags, name)
 
 
-def transient(interface: Optional[Type] = None, tags: Optional[List[str]] = None, name: Optional[str] = None):
+def transient(interface: type | None = None, tags: list[str] | None = None, name: str | None = None):
     """Decorator to mark a class as a transient service."""
     return service(ServiceLifetime.TRANSIENT, interface, tags, name)
 
 
-def scoped(interface: Optional[Type] = None, tags: Optional[List[str]] = None, name: Optional[str] = None):
+def scoped(interface: type | None = None, tags: list[str] | None = None, name: str | None = None):
     """Decorator to mark a class as a scoped service."""
     return service(ServiceLifetime.SCOPED, interface, tags, name)
 
 
 def factory_service(
-    service_type: Type[T],
+    service_type: type[T],
     lifetime: ServiceLifetime = ServiceLifetime.SINGLETON,
-    tags: Optional[List[str]] = None,
-    name: Optional[str] = None
+    tags: list[str] | None = None,
+    name: str | None = None,
 ):
     """Decorator to mark a function as a service factory.
     
@@ -223,7 +221,7 @@ def factory_service(
             factory=factory_func,
             dependencies=dependencies,
             tags=tags,
-            name=name
+            name=name,
         )
         
         return factory_func
@@ -231,14 +229,14 @@ def factory_service(
     return decorator
 
 
-def _extract_dependencies(cls: Type) -> List[Type]:
+def _extract_dependencies(cls: type) -> list[type]:
     """Extract dependency types from a class constructor."""
     try:
         signature = inspect.signature(cls.__init__)
         dependencies = []
         
         for param_name, param in signature.parameters.items():
-            if param_name == 'self':
+            if param_name == "self":
                 continue
             
             if param.annotation != inspect.Parameter.empty:
@@ -249,13 +247,13 @@ def _extract_dependencies(cls: Type) -> List[Type]:
         return []
 
 
-def _extract_dependencies_from_function(func: Callable) -> List[Type]:
+def _extract_dependencies_from_function(func: Callable) -> list[type]:
     """Extract dependency types from a function signature."""
     try:
         signature = inspect.signature(func)
         dependencies = []
         
-        for param_name, param in signature.parameters.items():
+        for param in signature.parameters.values():
             if param.annotation != inspect.Parameter.empty:
                 dependencies.append(param.annotation)
         
@@ -267,7 +265,7 @@ def _extract_dependencies_from_function(func: Callable) -> List[Type]:
 class AutoServiceRegistrar:
     """Automatic service registration using reflection."""
     
-    def __init__(self, registry: Optional[ServiceRegistry] = None):
+    def __init__(self, registry: ServiceRegistry | None = None):
         self.registry = registry or _global_registry
         self.logger = setup_logger()
     
@@ -282,8 +280,9 @@ class AutoServiceRegistrar:
             self._scan_module(module)
             self.logger.info(f"Auto-registered services from module: {module_name}")
         except Exception as e:
-            self.logger.error(f"Failed to auto-register from module {module_name}: {e}")
-            raise ServiceRegistrationError(f"Failed to register from module {module_name}") from e
+            self.logger.exception(f"Failed to auto-register from module {module_name}: {e}")
+            msg = f"Failed to register from module {module_name}"
+            raise ServiceRegistrationError(msg) from e
     
     def register_from_package(self, package_name: str, recursive: bool = True) -> None:
         """Register all decorated services from a package.
@@ -303,15 +302,16 @@ class AutoServiceRegistrar:
             
             self.logger.info(f"Auto-registered services from package: {package_name}")
         except Exception as e:
-            self.logger.error(f"Failed to auto-register from package {package_name}: {e}")
-            raise ServiceRegistrationError(f"Failed to register from package {package_name}") from e
+            self.logger.exception(f"Failed to auto-register from package {package_name}: {e}")
+            msg = f"Failed to register from package {package_name}"
+            raise ServiceRegistrationError(msg) from e
     
     def _scan_module(self, module) -> None:
         """Scan a module for decorated services."""
         for name in dir(module):
             obj = getattr(module, name)
             
-            if inspect.isclass(obj) and hasattr(obj, '_service_metadata'):
+            if inspect.isclass(obj) and hasattr(obj, "_service_metadata"):
                 # Service already registered via decorator
                 self.logger.debug(f"Found decorated service: {obj.__name__}")
     
@@ -341,7 +341,7 @@ class AutoServiceRegistrar:
 class ServiceRegistrationBuilder:
     """Builder for configuring service registration with UIContainer."""
     
-    def __init__(self, container_builder: UIContainerBuilder, registry: Optional[ServiceRegistry] = None):
+    def __init__(self, container_builder: UIContainerBuilder, registry: ServiceRegistry | None = None):
         self.container_builder = container_builder
         self.registry = registry or _global_registry
         self.logger = setup_logger()
@@ -373,7 +373,8 @@ class ServiceRegistrationBuilder:
         if metadata.factory:
             factory_func = metadata.factory
         else:
-            factory_func = lambda: metadata.implementation_type()
+            def factory_func():
+                return metadata.implementation_type()
         
         if metadata.lifetime == ServiceLifetime.SINGLETON:
             self.container_builder.register_singleton(metadata.service_type, factory_func)

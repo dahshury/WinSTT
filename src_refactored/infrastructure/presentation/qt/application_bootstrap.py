@@ -5,6 +5,7 @@ configuration, and lifecycle management.
 """
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -300,7 +301,7 @@ class ApplicationBootstrapManager:
         return self.service.setup_winstt_application(argv, icon_resource_path)
 
     def run_application_with_bootstrap(self,
-                                     setup_func: callable,
+                                     setup_func: Callable[[], None],
                                      argv: list[str] | None = None,
                                      icon_path: str | None = None) -> int:
         """Run application with full bootstrap lifecycle.

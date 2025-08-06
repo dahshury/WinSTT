@@ -60,7 +60,7 @@ class LLMPyQtWorkerService(QObject):
                 pass
 
             # Import gemma inference module
-            from src.core.utils import gemma_inference
+            from . import gemma_inference_service as gemma_inference
 
             # Determine repo ID based on model type
             repo_id = f"onnx-community/{self.model_type}-ONNX"
@@ -131,7 +131,7 @@ class LLMPyQtWorkerService(QObject):
             ]
 
             # Use the gemma_inference module to generate text
-            from src.core.utils import gemma_inference
+            from . import gemma_inference_service as gemma_inference
             generated_text, _ = gemma_inference.generate_text(
                 self.config,
                 self.tokenizer,
@@ -180,7 +180,7 @@ class LLMPyQtWorkerService(QObject):
         return {
             "model_type": self.model_type,
             "quantization": self.quantization,
-            "status": str(self.status)
+            "status": str(self.status),
             "initialized": str(self.is_initialized()),
         }
 
@@ -228,8 +228,9 @@ class LLMPyQtWorkerManager:
         worker.run()
 
     def generate_text(self,
-worker: LLMPyQtWorkerService, user_prompt: str, system_prompt: str = (
-    "You are a helpful assistant.",),
+    worker: LLMPyQtWorkerService,
+    user_prompt: str,
+    system_prompt: str = "You are a helpful assistant.",
     ) -> str:
         """Generate text using an LLM PyQt worker.
         

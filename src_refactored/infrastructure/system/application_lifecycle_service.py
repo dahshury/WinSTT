@@ -246,7 +246,7 @@ class ApplicationLifecycleService:
             Dictionary with cleanup status information
         """
         return {
-            "handlers_count": len(self._cleanup_handlers)
+            "handlers_count": len(self._cleanup_handlers),
             "shutdown_registered": self._is_shutdown_registered,
             "shutdown_in_progress": self._shutdown_in_progress,
             "exit_code": self._exit_code,

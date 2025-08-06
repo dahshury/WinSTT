@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src_refactored.domain.ui_coordination.value_objects.ui_state import UIState
+from src_refactored.domain.ui_coordination.value_objects.ui_state_management import UIState
 from src_refactored.infrastructure.main_window.ui_layout_service import UILayoutService
 from src_refactored.infrastructure.main_window.ui_text_management_service import (
     UITextManagementService,
@@ -344,10 +344,8 @@ class WidgetLayoutComponent:
         self.widgets["settings_button"].setFocusPolicy(Qt.FocusPolicy.TabFocus)
 
         # Configure text interaction
-        self.widgets["title_label"].setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction\
-    )
-        self.widgets["status_label"].setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteractio\
-    n)
+        self.widgets["title_label"].setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.widgets["status_label"].setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
 
         self.logger.debug("Widget properties configured")
 
@@ -406,7 +404,10 @@ class WidgetLayoutComponent:
         self.logger.info("Applying widget state styling: {state.value}")
 
         # Update status text based on state
-        if state == UIState.RECORDING:
+        if state == UIState.LOADING:
+            self.update_status_text("Loading...")
+            self._apply_loading_styling()
+        elif state == UIState.RECORDING:
             self.update_status_text("Recording... Press hotkey to stop")
             self._apply_recording_styling()
         elif state == UIState.PROCESSING:
@@ -415,7 +416,10 @@ class WidgetLayoutComponent:
         elif state == UIState.ERROR:
             self.update_status_text("Error occurred")
             self._apply_error_styling()
-        else:  # IDLE
+        elif state == UIState.SUCCESS:
+            self.update_status_text("Ready to transcribe")
+            self._apply_idle_styling()
+        else:  # ENABLED/DISABLED
             self.update_status_text("Ready to transcribe")
             self._apply_idle_styling()
 
