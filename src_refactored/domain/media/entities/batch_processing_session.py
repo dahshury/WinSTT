@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -43,7 +44,7 @@ class BatchProcessingSession(Entity):
     progress_callback: Callable[[float, str], None] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize the batch processing session."""
         super().__post_init__()
         self.total_files_count = len(self.media_files)
@@ -362,9 +363,9 @@ class BatchProcessingSession(Entity):
             "current_file_index": self.current_file_index,
             "total_files_count": self.total_files_count,
             "progress_percentage": self.get_progress_percentage(),
-            "started_at": self.started_at.isoformat() if self.started_at else None,
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
-            "paused_at": self.paused_at.isoformat() if self.paused_at else None,
+            "started_at": datetime.fromtimestamp(self.started_at).isoformat() if self.started_at else None,
+            "completed_at": datetime.fromtimestamp(self.completed_at).isoformat() if self.completed_at else None,
+            "paused_at": datetime.fromtimestamp(self.paused_at).isoformat() if self.paused_at else None,
             "error_message": self.error_message,
             "media_files": [f.to_dict() for f in self.media_files],
             "conversion_jobs": [j.to_dict() for j in self.conversion_jobs],

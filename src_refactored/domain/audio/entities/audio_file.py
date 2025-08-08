@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src_refactored.domain.common.abstractions import Entity
 from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
@@ -33,11 +33,11 @@ class FilePath(ValueObject):
     """File path value object."""
     path: str
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (self.path,)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.path.strip():
             msg = "File path cannot be empty"
             raise ValueError(msg)
@@ -107,11 +107,11 @@ class FileSize(ValueObject):
     """File size value object."""
     bytes: int
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (self.bytes,)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.bytes < 0:
             msg = f"File size cannot be negative: {self.bytes}"
             raise ValueError(msg)
@@ -142,31 +142,7 @@ class FileSize(ValueObject):
         return f"{self.gb:.1f} GB"
 
 
-class Duration(ValueObject):
-    """Duration value object."""
-    seconds: float
-
-    def _get_equality_components(self) -> tuple:
-        """Get components for equality comparison."""
-        return (self.seconds,)
-
-    def __post_init__(self):
-        if self.seconds < 0:
-            msg = f"Duration cannot be negative: {self.seconds}"
-            raise ValueError(msg)
-
-    @property
-    def is_minimum_duration(self) -> bool:
-        """Check if duration is at least 0.5 seconds."""
-        return self.seconds >= 0.5
-
-    def format_human_readable(self) -> str:
-        """Format duration as a human-readable string."""
-        if self.seconds < 60:
-            return f"{self.seconds:.1f}s"
-        if self.seconds < 3600:
-            return f"{self.seconds / 60:.1f}m"
-        return f"{self.seconds / 3600:.1f}h"
+    # Removed local Duration to avoid name conflict with domain Duration
 
 
 class AudioFile(Entity):
@@ -178,7 +154,7 @@ class AudioFile(Entity):
     """
     
     def __init__(self, entity_id: str, file_path: FilePath, audio_format: AudioFormat, 
-                 duration: Duration, file_size: FileSize, source: FileSource, **kwargs):
+                 duration: Duration, file_size: FileSize, source: FileSource, **kwargs: Any) -> None:
         """Initialize AudioFile entity."""
         super().__init__(entity_id)
         self.file_path = file_path
@@ -188,10 +164,10 @@ class AudioFile(Entity):
         self.source = source
         
         # Set optional fields from kwargs
-        self.last_accessed = kwargs.get("last_accessed", DomainIdentityGenerator.generate_timestamp())
-        self.title = kwargs.get("title")
-        self.description = kwargs.get("description")
-        self.tags = kwargs.get("tags", [])
+        self.last_accessed: float = float(kwargs.get("last_accessed", DomainIdentityGenerator.generate_timestamp()))
+        self.title: str | None = kwargs.get("title")
+        self.description: str | None = kwargs.get("description")
+        self.tags: list[str] = list(kwargs.get("tags", []))
 
         # Validate file path for audio
         if not self.file_path.is_audio_file:
@@ -243,7 +219,7 @@ class AudioFile(Entity):
         """Check if file is considered high quality."""
         return (
             self.audio_format.sample_rate >= 44100 and
-            self.audio_format.bit_depth.value >= 16 and
+            self.audio_format.bit_depth >= 16 and
             self.estimated_bitrate >= 128  # kbps
         )
 
@@ -253,7 +229,7 @@ class AudioFile(Entity):
         return (
             self.audio_format.sample_rate == 16000 and
             self.audio_format.is_mono and
-            self.audio_format.bit_depth.value == 16
+            self.audio_format.bit_depth == 16
         )
 
     @property
@@ -284,7 +260,7 @@ class AudioFile(Entity):
             f"{self.display_name} - "
             f"{self.duration.format_human_readable()} - "
             f"{self.file_size.format_human_readable()} - "
-            f"{self.audio_format.sample_rate}Hz/{self.audio_format.bit_depth.value}-bit"
+            f"{self.audio_format.sample_rate}Hz/{self.audio_format.bit_depth}-bit"
         )
 
     def validate_for_transcription(self) -> bool:

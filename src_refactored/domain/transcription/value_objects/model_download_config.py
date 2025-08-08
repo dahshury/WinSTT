@@ -24,7 +24,7 @@ class ModelDownloadConfig(ValueObject):
     timeout: int = 30
     chunk_size: int = 1024
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate model download configuration."""
         if not self.cache_path:
             msg = "Cache path is required"

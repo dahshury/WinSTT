@@ -13,7 +13,7 @@ class ModelName(ValueObject):
 
     value: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate model name after initialization."""
         if not self.value or not self.value.strip():
             msg = "Model name cannot be empty"

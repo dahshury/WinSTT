@@ -465,6 +465,20 @@ class WidgetLayoutComponent:
             """
             self.widgets["title_label"].setStyleSheet(style)
 
+    def _apply_loading_styling(self) -> None:
+        """Apply styling for loading state."""
+        if "title_label" in self.widgets:
+            style = """
+                QLabel#title_label {
+                    color: #ffaa00;
+                    background-color: transparent;
+                    font-weight: bold;
+                    font-size: 24px;
+                    padding: 10px;
+                }
+            """
+            self.widgets["title_label"].setStyleSheet(style)
+
     def _apply_idle_styling(self) -> None:
         """Apply styling for idle state."""
         if "title_label" in self.widgets:

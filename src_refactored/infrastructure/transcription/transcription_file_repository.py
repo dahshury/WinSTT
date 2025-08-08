@@ -25,6 +25,12 @@ class TranscriptionFileRepository:
         self.progress_callback = progress_callback
         self._ensure_base_directory()
 
+    def _notify(self, message: str) -> None:
+        """Notify progress via domain ProgressCallback signature."""
+        if self.progress_callback:
+            # Domain ProgressCallback: (current, total, message)
+            self.progress_callback(0, 0, message)
+
     def _ensure_base_directory(self) -> None:
         """Ensure base directory exists."""
         self.base_path.mkdir(parents=True, exist_ok=True)
@@ -47,22 +53,27 @@ class TranscriptionFileRepository:
 
         if output_format.lower() == "srt":
             output_path = self.base_path / f"{base_name}.srt"
-            content = self._format_as_srt(transcription)
+            content_str = self._format_as_srt(transcription)
+            is_json = False
+            json_obj: dict[str, Any] | None = None
         elif output_format.lower() == "json":
             output_path = self.base_path / f"{base_name}.json"
-            content = self._format_as_json(transcription, audio_file_path)
+            is_json = True
+            json_obj = self._format_as_json(transcription, audio_file_path)
+            content_str = ""
         else:
             output_path = self.base_path / f"{base_name}.txt"
-            content = transcription
+            content_str = transcription
+            is_json = False
+            json_obj = None
 
         with open(output_path, "w", encoding="utf-8") as f:
-            if output_format.lower() == "json":
-                json.dump(content, f, indent=2, ensure_ascii=False)
+            if is_json and json_obj is not None:
+                json.dump(json_obj, f, indent=2, ensure_ascii=False)
             else:
-                f.write(content)
+                f.write(content_str)
 
-        if self.progress_callback:
-            self.progress_callback(txt=f"Saved transcription to {output_path.name}")
+        self._notify(f"Saved transcription to {output_path.name}")
 
         return str(output_path)
 
@@ -84,26 +95,31 @@ class TranscriptionFileRepository:
 
         if output_format.lower() == "srt":
             output_path = self.base_path / f"{base_name}.srt"
-            content = self._segments_to_srt(segments)
+            content_str = self._segments_to_srt(segments)
+            is_json = False
+            json_obj = None
         elif output_format.lower() == "vtt":
             output_path = self.base_path / f"{base_name}.vtt"
-            content = self._segments_to_vtt(segments)
+            content_str = self._segments_to_vtt(segments)
+            is_json = False
+            json_obj = None
         else:
             output_path = self.base_path / f"{base_name}.json"
-            content = {
+            is_json = True
+            json_obj = {
                 "audio_file": audio_file_path,
                 "timestamp": datetime.now().isoformat(),
                 "segments": segments,
             }
+            content_str = ""
 
         with open(output_path, "w", encoding="utf-8") as f:
-            if output_format.lower() == "json":
-                json.dump(content, f, indent=2, ensure_ascii=False)
+            if is_json and json_obj is not None:
+                json.dump(json_obj, f, indent=2, ensure_ascii=False)
             else:
-                f.write(content)
+                f.write(content_str)
 
-        if self.progress_callback:
-            self.progress_callback(txt=f"Saved segmented transcription to {output_path.name}")
+        self._notify(f"Saved segmented transcription to {output_path.name}")
 
         return str(output_path)
 
@@ -173,8 +189,7 @@ class TranscriptionFileRepository:
         file_path = Path(transcription_file_path)
         if file_path.exists():
             file_path.unlink()
-            if self.progress_callback:
-                self.progress_callback(txt=f"Deleted transcription {file_path.name}")
+            self._notify(f"Deleted transcription {file_path.name}")
             return True
         return False
 

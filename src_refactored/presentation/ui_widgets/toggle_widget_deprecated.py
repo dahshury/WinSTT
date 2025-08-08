@@ -45,15 +45,15 @@ class ToggleConfiguration:
             raise ValueError(msg)
 
 
-class ToggleWidgetDeprecated(AggregateRoot[str]):
+class ToggleWidgetDeprecated(AggregateRoot):
     """DEPRECATED: Toggle widget aggregate root - violates hexagonal architecture."""
 
     def __init__(self, widget_id: str, configuration: ToggleConfiguration):
         super().__init__(widget_id)
         self._state = ToggleState.OFF
         self._configuration = configuration
-        self._previous_state = None
-        self._state_changed = False
+        self._previous_state: ToggleState | None = None
+        self._state_changed: bool = False
         self.validate()
 
     # ... rest of the implementation is preserved for reference ...

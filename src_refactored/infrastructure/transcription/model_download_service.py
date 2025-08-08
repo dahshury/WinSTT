@@ -11,7 +11,7 @@ import logging
 import os
 from pathlib import Path
 
-import requests
+import requests  # type: ignore[import-untyped]
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from src_refactored.domain.transcription.value_objects.download_progress import DownloadProgress

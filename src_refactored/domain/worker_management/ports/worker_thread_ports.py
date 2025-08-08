@@ -110,7 +110,7 @@ class IThreadManagementPort(ABC):
     """Port interface for thread management operations."""
     
     @abstractmethod
-    def create_thread(self, thread_name: str, target: Callable, args: tuple = ()) -> Result[str]:
+    def create_thread(self, thread_name: str, target: Callable[..., object], args: tuple[object, ...] = ()) -> Result[str]:
         """Create a new thread.
         
         Args:

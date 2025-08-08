@@ -66,18 +66,24 @@ class PyQtGraphRendererAdapter(VisualizationRendererPort):
                 return Result.failure("Visualization widget not initialized")
 
             if hasattr(waveform, "samples") and waveform.samples:
-                self._waveform_plot.setData(waveform.samples)
+                self._waveform_plot.setData(list(waveform.samples))
             else:
                 self._waveform_plot.setData([], [])
 
-            visualization_data = VisualizationData(
-                frame=VisualizationFrame(
-                    timestamp=0.0,
-                    data=waveform.samples if hasattr(waveform, "samples") else [],
-                    sample_rate=waveform.sample_rate if hasattr(waveform, "sample_rate") else 44100,
-                ),
+            # Build VisualizationData/Frame according to domain definitions
+            viz_data = VisualizationData(
+                data_points=list(waveform.samples) if hasattr(waveform, "samples") else [],
+                width=len(waveform.samples) if hasattr(waveform, "samples") else 0,
+                height=1,
+                data_type="waveform",
+                timestamp=QtCore.QDateTime.currentDateTime().toPyDateTime(),
             )
-            return Result.success(visualization_data)
+            frame = VisualizationFrame(
+                visualization_data=viz_data,
+                settings=VisualizationSettings(),
+                frame_id="waveform",
+            )
+            return Result.success(viz_data)
         except Exception as exc:
             if self._logger:
                 self._logger.log_error(f"Error rendering waveform: {exc}")
@@ -92,9 +98,9 @@ class PyQtGraphRendererAdapter(VisualizationRendererPort):
     def create_visualization_frame(self, visualization_data: VisualizationData, settings: VisualizationSettings, metadata: dict[str, object] | None = None) -> Result[VisualizationFrame]:
         try:
             frame = VisualizationFrame(
-                timestamp=visualization_data.frame.timestamp if hasattr(visualization_data, "frame") else 0.0,
-                data=visualization_data.frame.data if hasattr(visualization_data, "frame") else [],
-                sample_rate=visualization_data.frame.sample_rate if hasattr(visualization_data, "frame") else 44100,
+                visualization_data=visualization_data,
+                settings=settings,
+                frame_id="frame",
             )
             return Result.success(frame)
         except Exception as exc:

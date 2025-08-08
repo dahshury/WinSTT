@@ -12,7 +12,7 @@ class SampleRate(ValueObject):
     """Sample rate value object for audio operations."""
     value: int
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (self.value,)
 
@@ -26,7 +26,7 @@ class SampleRate(ValueObject):
         96000,  # High-resolution audio
     })
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.value <= 0:
             msg = f"Sample rate must be positive, got {self.value}"
             raise ValueError(msg)

@@ -198,7 +198,12 @@ class StartupApplicationUseCase:
         """Setup application logging."""
         try:
             if request.configuration.enable_logging:
-                logger = self.logger_service.setup_logger(request.configuration.log_level)
+                # Convert domain LogLevel enum to int for logger setup
+                try:
+                    level_int = int(request.configuration.log_level.value)
+                except Exception:
+                    level_int = logging.INFO
+                logger = self.logger_service.setup_logger(level_int)
                 response.logger = logger
 
                 if logger:
@@ -241,7 +246,8 @@ class StartupApplicationUseCase:
     ) -> bool:
         """Initialize the application framework (PyQt)."""
         try:
-            args = request.command_line_args or self.command_line_service.get_arguments()
+            args_result = self.command_line_service.get_arguments()
+            args = request.command_line_args if request.command_line_args is not None else (args_result.value if args_result.is_success and args_result.value is not None else [])
             app = self.application_factory.create_application(args, request.configuration)
 
             if app:

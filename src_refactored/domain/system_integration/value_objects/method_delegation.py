@@ -37,7 +37,7 @@ class MethodInfo:
     is_required: bool = True
     description: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             msg = "Method name cannot be empty"
             raise ValueError(msg)
@@ -59,7 +59,7 @@ class DelegationConfiguration:
     validate_signatures: bool = True
     allow_overrides: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.target_class_name:
             msg = "Target class name cannot be empty"
             raise ValueError(msg)

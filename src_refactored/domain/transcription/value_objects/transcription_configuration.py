@@ -28,7 +28,7 @@ class TranscriptionConfiguration(ValueObject):
     return_segments: bool = True
     enable_vad: bool = True  # Voice Activity Detection
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate transcription configuration parameters."""
         if self.task not in ("transcribe", "translate"):
             msg = f"Invalid task: {self.task}. Must be 'transcribe' or 'translate'"

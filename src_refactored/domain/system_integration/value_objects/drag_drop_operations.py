@@ -46,7 +46,7 @@ class DragDropConfig:
     auto_process: bool = True
 
     def __post_init__(self,
-    ):
+    ) -> None:
         if self.accepted_file_types is None:
             self.accepted_file_types = [FileType.AUDIO, FileType.VIDEO]
         if self.accepted_extensions is None:

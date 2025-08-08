@@ -10,7 +10,7 @@ from src_refactored.domain.window_management.value_objects import ActivationMeth
 
 
 @dataclass
-class ActivationConfiguration(Entity[str]):
+class ActivationConfiguration(Entity):
     """Configuration for window activation.
     
     This entity encapsulates all the settings and preferences for how
@@ -28,7 +28,7 @@ class ActivationConfiguration(Entity[str]):
     flash_window: bool = False
     flash_count: int = 3
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Generate ID based on configuration
         config_id = f"{self.method.value}_{self.timeout_seconds}_{self.retry_attempts}"
         super().__init__(config_id,

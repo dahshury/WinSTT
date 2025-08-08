@@ -110,10 +110,12 @@ class DragDropService(QObject):
             if original_drop:
                 original_drop(event)
 
-        widget.dragEnterEvent = drag_enter_event
-        widget.dragMoveEvent = drag_move_event
-        widget.dragLeaveEvent = drag_leave_event
-        widget.dropEvent = drop_event
+        # Attach event handlers via QObject.installEventFilter is preferred, but here we
+        # assign callables with correct signatures and types for mypy.
+        widget.dragEnterEvent = drag_enter_event  # type: ignore[method-assign,assignment]
+        widget.dragMoveEvent = drag_move_event    # type: ignore[method-assign,assignment]
+        widget.dragLeaveEvent = drag_leave_event  # type: ignore[method-assign,assignment]
+        widget.dropEvent = drop_event             # type: ignore[method-assign,assignment]
 
     def disable_drag_drop(self, widget: QWidget,
     ) -> None:
@@ -192,9 +194,11 @@ class DragDropService(QObject):
             self.invalid_files_dropped.emit(invalid_files)
         self._drag_active = False
 
-    def _extract_files_from_mime_data(self, mime_data: QMimeData,
+    def _extract_files_from_mime_data(self, mime_data: QMimeData | None,
     ) -> list[str]:
-        files = []
+        files: list[str] = []
+        if mime_data is None:
+            return files
         if mime_data.hasUrls():
             for url in mime_data.urls():
                 if url.isLocalFile():

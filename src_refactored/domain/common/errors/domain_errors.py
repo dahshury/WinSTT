@@ -39,7 +39,7 @@ class DomainError(Exception):
     context: dict[str, Any] | None = None
     inner_exception: Exception | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__init__(self.message)
         if self.context is None:
             self.context = {}
@@ -52,7 +52,7 @@ class ValidationError(DomainError):
     field_name: str | None = None
     invalid_value: Any | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not hasattr(self, "category"):
             self.category = ErrorCategory.VALIDATION
         super().__post_init__()
@@ -66,7 +66,7 @@ class ConfigurationError(DomainError):
     expected_type: str | None = None
     actual_value: Any | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not hasattr(self, "category"):
             self.category = ErrorCategory.CONFIGURATION
         super().__post_init__()
@@ -80,7 +80,7 @@ class TranscriptionError(DomainError):
     file_path: str | None = None
     audio_format: str | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not hasattr(self, "category"):
             self.category = ErrorCategory.TRANSCRIPTION
         super().__post_init__()
@@ -94,7 +94,7 @@ class AudioError(DomainError):
     sample_rate: int | None = None
     channels: int | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not hasattr(self, "category"):
             self.category = ErrorCategory.AUDIO
         super().__post_init__()
@@ -107,7 +107,7 @@ class FileOperationError(DomainError):
     file_path: str | None = None
     operation: str | None = None  # read, write, delete, etc.
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not hasattr(self, "category"):
             self.category = ErrorCategory.FILE_OPERATION
         super().__post_init__()
@@ -121,7 +121,7 @@ class WorkerError(DomainError):
     worker_id: str | None = None
     thread_id: str | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not hasattr(self, "category"):
             self.category = ErrorCategory.WORKER
         super().__post_init__()
@@ -135,7 +135,7 @@ class NetworkError(DomainError):
     status_code: int | None = None
     timeout: float | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not hasattr(self, "category"):
             self.category = ErrorCategory.NETWORK
         super().__post_init__()
@@ -148,7 +148,7 @@ class SystemError(DomainError):
     system_resource: str | None = None
     operation: str | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not hasattr(self, "category"):
             self.category = ErrorCategory.SYSTEM
         super().__post_init__()
@@ -161,7 +161,7 @@ class BusinessRuleError(DomainError):
     rule_name: str | None = None
     violated_constraint: str | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not hasattr(self, "category"):
             self.category = ErrorCategory.BUSINESS_RULE
         super().__post_init__()

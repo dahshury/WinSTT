@@ -22,6 +22,11 @@ class SettingsValidator:
         self.progress_callback = progress_callback
         self._validation_rules = self._get_default_validation_rules()
 
+    def _notify(self, message: str) -> None:
+        """Notify progress via domain ProgressCallback signature."""
+        if self.progress_callback:
+            self.progress_callback(0, 0, message)
+
     def _get_default_validation_rules(self) -> dict[str, dict[str, Any]]:
         """Get default validation rules for settings.
         
@@ -88,8 +93,7 @@ class SettingsValidator:
         """
         errors = {}
 
-        if self.progress_callback:
-            self.progress_callback(txt="Validating settings...")
+        self._notify("Validating settings...")
 
         for key, rules in self._validation_rules.items():
             field_errors = self._validate_field(key, settings.get(key), rules)
@@ -101,11 +105,10 @@ class SettingsValidator:
         if unknown_keys:
             errors["unknown_keys"] = [f"Unknown setting: {key}" for key in unknown_keys]
 
-        if self.progress_callback:
-            if errors:
-                self.progress_callback(txt=f"Settings validation failed with {len(errors)} errors")
-            else:
-                self.progress_callback(txt="Settings validation passed")
+        if errors:
+            self._notify(f"Settings validation failed with {len(errors)} errors")
+        else:
+            self._notify("Settings validation passed")
 
         return errors
 
@@ -256,8 +259,7 @@ class SettingsValidator:
             if key not in result and "default" in rules:
                 result[key] = rules["default"]
 
-        if self.progress_callback:
-            self.progress_callback(txt="Applied default values to settings")
+        self._notify("Applied default values to settings")
 
         return result
 
@@ -289,8 +291,7 @@ class SettingsValidator:
         # Apply defaults for missing required fields
         sanitized = self.apply_defaults(sanitized)
 
-        if self.progress_callback:
-            self.progress_callback(txt="Settings sanitized successfully")
+        self._notify("Settings sanitized successfully")
 
         return sanitized
 

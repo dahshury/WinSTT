@@ -589,7 +589,18 @@ class UILayoutManager(IUILayoutManager):
             self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
-    def add_widget(self, layout: Any, widget: QWidget, position: Any = None) -> Result[None]:
+    # Keep a convenience overload while honoring Protocol signature
+    def add_widget(self, widget: QWidget, position: Any = None) -> Result[None]:
+        # Default to a stored main layout if present
+        layout = self._layouts.get("main", None)
+        if layout is None and self._layouts:
+            # pick any available layout
+            layout = next(iter(self._layouts.values()))
+        if layout is None:
+            return Result.failure("No layout available")
+        return self._add_widget_to_layout(layout, widget, position)
+
+    def _add_widget_to_layout(self, layout: Any, widget: QWidget, position: Any = None) -> Result[None]:
         """Add a widget to the layout.
         
         Args:
@@ -631,7 +642,15 @@ class UILayoutManager(IUILayoutManager):
             self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
-    def remove_widget(self, layout: Any, widget: QWidget) -> Result[None]:
+    def remove_widget(self, widget: QWidget) -> Result[None]:
+        # Remove from any known layout containing the widget
+        for layout in self._layouts.values():
+            try:
+                layout.removeWidget(widget)  # type: ignore[no-untyped-call]
+                return Result.success(None)
+            except Exception:
+                continue
+        return Result.failure("Widget not found in layouts")
         """Remove a widget from the layout.
         
         Args:
@@ -1169,13 +1188,13 @@ class UIComponentFactory:
                 for pattern_name in patterns:
                     pattern_result = self._pattern_registry.apply_pattern(pattern_name, widget)
                     if not pattern_result.is_success:
-                        self.logger.warning(f"Failed to apply pattern '{pattern_name}': {pattern_result.error()}")
+                        self.logger.warning(f"Failed to apply pattern '{pattern_name}': {pattern_result.get_error()}")
             
             # Apply theme
             if theme:
                 theme_result = self._theme_manager.apply_theme(widget, theme)
                 if not theme_result.is_success:
-                    self.logger.warning(f"Failed to apply theme '{theme}': {theme_result.error()}")
+                    self.logger.warning(f"Failed to apply theme '{theme}': {theme_result.get_error()}")
             
             self.logger.info(f"Created widget component '{component_id}'")
             return Result.success(component)
@@ -1216,13 +1235,13 @@ class UIComponentFactory:
                 for pattern_name in patterns:
                     pattern_result = self._pattern_registry.apply_pattern(pattern_name, dialog)
                     if not pattern_result.is_success:
-                        self.logger.warning(f"Failed to apply pattern '{pattern_name}': {pattern_result.error()}")
+                        self.logger.warning(f"Failed to apply pattern '{pattern_name}': {pattern_result.get_error()}")
             
             # Apply theme
             if theme:
                 theme_result = self._theme_manager.apply_theme(dialog, theme)
                 if not theme_result.is_success:
-                    self.logger.warning(f"Failed to apply theme '{theme}': {theme_result.error()}")
+                    self.logger.warning(f"Failed to apply theme '{theme}': {theme_result.get_error()}")
             
             self.logger.info(f"Created dialog component '{component_id}'")
             return Result.success(component)

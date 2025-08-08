@@ -45,7 +45,7 @@ class ProgressState(ValueObject):
     movement_state: ProgressBarMovementState = ProgressBarMovementState.STATIONARY
     error_message: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate progress state after initialization."""
         # Validate state consistency
         if self.state_type == ProgressStateType.DOWNLOADING and not self.is_downloading_model:

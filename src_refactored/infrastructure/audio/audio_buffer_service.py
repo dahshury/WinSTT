@@ -6,8 +6,7 @@ audio data buffers according to the protocol requirements.
 
 from collections import deque
 
-import numpy as np
-
+from src_refactored.domain.audio.value_objects.audio_samples import AudioSampleData
 from src_refactored.domain.audio_visualization.protocols import (
     AudioBufferServiceProtocol,
 )
@@ -22,10 +21,14 @@ class AudioBufferService(AudioBufferServiceProtocol):
         Args:
             max_size: Maximum number of chunks to keep in buffer
         """
-        self._buffer = deque(maxlen=max_size)
+        self._buffer: deque[AudioSampleData] = deque(maxlen=max_size)
         self._max_size = max_size
 
-    def update_buffer(self, data: np.ndarray) -> bool:
+    def add_to_buffer(self, data: AudioSampleData) -> None:
+        """Add audio data to buffer."""
+        self._buffer.append(data)
+
+    def update_buffer(self, data: AudioSampleData) -> bool:
         """Update the circular audio buffer.
         
         Args:
@@ -35,17 +38,17 @@ class AudioBufferService(AudioBufferServiceProtocol):
             True if buffer updated successfully
         """
         try:
-            if data is None or len(data) == 0:
+            if data is None or data.frame_count == 0:
                 return False
                 
             # Add data to buffer
-            self._buffer.append(data.copy())
+            self._buffer.append(data)
             return True
             
         except Exception:
             return False
 
-    def get_buffer_data(self) -> np.ndarray:
+    def get_buffer_data(self) -> AudioSampleData | None:
         """Get current buffer data.
         
         Returns:
@@ -53,13 +56,29 @@ class AudioBufferService(AudioBufferServiceProtocol):
         """
         try:
             if not self._buffer:
-                return np.array([], dtype=np.float32)
-                
-            # Concatenate all chunks in buffer
-            return np.concatenate(list(self._buffer))
+                return None
+
+            if len(self._buffer) == 1:
+                return self._buffer[0]
+
+            # Concatenate samples from all chunks (assumes same rate/channels)
+            first = self._buffer[0]
+            concatenated_samples: list[float] = []
+            for chunk in self._buffer:
+                concatenated_samples.extend(chunk.samples)
+
+            return AudioSampleData(
+                samples=tuple(concatenated_samples),
+                sample_rate=first.sample_rate,
+                channels=first.channels,
+                data_type=first.data_type,
+                timestamp=first.timestamp,
+                duration=None,
+                metadata={},
+            )
             
         except Exception:
-            return np.array([], dtype=np.float32)
+            return None
 
     def get_buffer_size(self) -> int:
         """Get buffer size.
@@ -92,3 +111,7 @@ class AudioBufferService(AudioBufferServiceProtocol):
             # Create new deque with new maxlen
             old_buffer = list(self._buffer)
             self._buffer = deque(old_buffer, maxlen=max_size)
+
+    def is_buffer_full(self) -> bool:
+        """Check if the buffer is at capacity."""
+        return len(self._buffer) >= self._max_size

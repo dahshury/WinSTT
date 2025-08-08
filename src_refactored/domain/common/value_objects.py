@@ -18,11 +18,11 @@ class Timestamp(ValueObject):
     """Value object for timestamps with timezone awareness."""
     value: datetime
     
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (self.value,)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.value is None:
             msg = "Timestamp value cannot be None"
             raise ValueError(msg)
@@ -43,6 +43,11 @@ class Timestamp(ValueObject):
     def to_iso_string(self) -> str:
         """Convert to ISO format string."""
         return self.value.isoformat()
+
+    @classmethod
+    def now(cls) -> Timestamp:
+        """Create a timestamp for the current time using domain time source."""
+        return cls(datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
     
     def is_before(self, other: Timestamp) -> bool:
         """Check if this timestamp is before another."""
@@ -58,11 +63,11 @@ class Identifier(ValueObject):
     """Value object for unique identifiers."""
     value: str
     
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (self.value,)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.value or not self.value.strip():
             msg = "Identifier value cannot be empty"
             raise ValueError(msg)
@@ -87,11 +92,11 @@ class Version(ValueObject):
     minor: int
     patch: int
     
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (self.major, self.minor, self.patch)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.major < 0 or self.minor < 0 or self.patch < 0:
             msg = "Version numbers cannot be negative"
             raise ValueError(msg)

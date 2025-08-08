@@ -111,7 +111,7 @@ class AudioProcessor(Entity):
     _lock_id: str | None = field(default=None, init=False)
     _processing_measurement_id: str | None = field(default=None, init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize audio processor."""
         super().__post_init__()
         self.config.validate()

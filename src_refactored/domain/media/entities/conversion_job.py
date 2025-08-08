@@ -2,6 +2,7 @@
 
 from enum import Enum
 from typing import Any
+from datetime import datetime
 
 from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.entity import Entity
@@ -24,23 +25,23 @@ class ConversionJob(Entity):
     """Entity representing a media file conversion job."""
 
     def __init__(self, entity_id: str, source_file: MediaFile, target_quality: ConversionQuality, 
-                 file_system_port: FileSystemPort, **kwargs):
+                 file_system_port: FileSystemPort, **kwargs: Any) -> None:
         """Initialize the conversion job."""
         super().__init__(entity_id)
         
         self.source_file = source_file
         self.target_quality = target_quality
         self.file_system_port = file_system_port
-        self.status = kwargs.get("status", ConversionStatus.PENDING)
-        self.progress_percentage = kwargs.get("progress_percentage", 0.0)
-        self.started_at = kwargs.get("started_at")
-        self.completed_at = kwargs.get("completed_at")
-        self.error_message = kwargs.get("error_message")
-        self.output_data = kwargs.get("output_data")
-        self.output_file_path = kwargs.get("output_file_path")
-        self.estimated_duration = kwargs.get("estimated_duration")
-        self.actual_duration = kwargs.get("actual_duration")
-        self.metadata = kwargs.get("metadata", {})
+        self.status: ConversionStatus = kwargs.get("status", ConversionStatus.PENDING)
+        self.progress_percentage: float = float(kwargs.get("progress_percentage", 0.0))
+        self.started_at: float | None = kwargs.get("started_at")
+        self.completed_at: float | None = kwargs.get("completed_at")
+        self.error_message: str | None = kwargs.get("error_message")
+        self.output_data: bytes | None = kwargs.get("output_data")
+        self.output_file_path: str | None = kwargs.get("output_file_path")
+        self.estimated_duration: MediaDuration | None = kwargs.get("estimated_duration")
+        self.actual_duration: MediaDuration | None = kwargs.get("actual_duration")
+        self.metadata: dict[str, Any] = kwargs.get("metadata", {})
 
         # Validate that source file requires conversion
         if not self.source_file.requires_conversion():
@@ -165,28 +166,28 @@ class ConversionJob(Entity):
 
     def is_pending(self) -> bool:
         """Check if job is pending."""
-        return self.status == ConversionStatus.PENDING
+        return bool(self.status == ConversionStatus.PENDING)
 
     def is_in_progress(self) -> bool:
         """Check if job is in progress."""
-        return self.status == ConversionStatus.IN_PROGRESS
+        return bool(self.status == ConversionStatus.IN_PROGRESS)
 
     def is_completed(self) -> bool:
         """Check if job is completed successfully."""
-        return self.status == ConversionStatus.COMPLETED
+        return bool(self.status == ConversionStatus.COMPLETED)
 
     def is_failed(self) -> bool:
         """Check if job failed."""
-        return self.status == ConversionStatus.FAILED
+        return bool(self.status == ConversionStatus.FAILED)
 
     def is_cancelled(self) -> bool:
         """Check if job was cancelled."""
-        return self.status == ConversionStatus.CANCELLED
+        return bool(self.status == ConversionStatus.CANCELLED)
 
     def is_finished(self,
     ) -> bool:
         """Check if job is finished (completed, failed, or cancelled)."""
-        return self.status in [ConversionStatus.COMPLETED, ConversionStatus.FAILED, ConversionStatus.CANCELLED]
+        return bool(self.status in [ConversionStatus.COMPLETED, ConversionStatus.FAILED, ConversionStatus.CANCELLED])
 
     def has_output_data(self) -> bool:
         """Check if job has in-memory output data."""
@@ -199,7 +200,7 @@ class ConversionJob(Entity):
         
         # Check file existence through port
         exists_result = self.file_system_port.file_exists(self.output_file_path)
-        return bool(exists_result.is_success and exists_result.value)
+        return bool(exists_result.is_success and bool(exists_result.value))
 
     def get_output_size_mb(self) -> float | None:
         """Get output size in MB."""
@@ -212,7 +213,7 @@ class ConversionJob(Entity):
             if exists_result.is_success and exists_result.value:
                 size_result = self.file_system_port.get_file_size(self.output_file_path)
                 if size_result.is_success and size_result.value is not None:
-                    return size_result.value / (1024 * 1024)
+                    return float(size_result.value) / (1024 * 1024)
         
         return None
 
@@ -276,8 +277,8 @@ class ConversionJob(Entity):
             "target_quality": self.target_quality.to_dict(),
             "status": self.status.value,
             "progress_percentage": self.progress_percentage,
-            "started_at": self.started_at.isoformat() if self.started_at else None,
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "started_at": (datetime.fromtimestamp(self.started_at).isoformat() if self.started_at else None),
+            "completed_at": (datetime.fromtimestamp(self.completed_at).isoformat() if self.completed_at else None),
             "error_message": self.error_message,
             "output_file_path": self.output_file_path,
             "estimated_duration": self.estimated_duration.to_seconds() if self.estimated_duration else None,

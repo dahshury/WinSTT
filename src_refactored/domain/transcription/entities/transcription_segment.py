@@ -31,7 +31,7 @@ class TranscriptionSegment(Entity):
     language_detected: str | None = None
     sequence_number: int = 0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
         # Business rule: Start time must be before end time

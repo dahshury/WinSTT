@@ -25,7 +25,7 @@ class VisualizationData(ValueObject):
     timestamp: datetime
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             tuple(self.data_points),
             self.width,
@@ -142,7 +142,7 @@ class VisualizationFrame(ValueObject):
     frame_id: str
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.visualization_data,
             self.settings,
@@ -185,7 +185,7 @@ class RenderStatistics(ValueObject):
     current_fps: float = 0.0
     target_fps: float = 0.0
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.frames_rendered,
             self.frames_dropped,

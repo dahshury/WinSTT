@@ -588,8 +588,9 @@ class UIProgressCallback(ProgressCallback):
             details: Error details
         """
         try:
-            if self.progress_bar:
-                self.progress_bar.setVisible(False)
+            pb = self.progress_bar
+            if pb is not None:
+                pb.setVisible(False)
             
             if self.status_label:
                 self.status_label.setText(f"Error: {error}")
@@ -610,10 +611,11 @@ class UIProgressCallback(ProgressCallback):
             details: Completion details
         """
         try:
-            if self.progress_bar:
-                self.progress_bar.setValue(100)
+            pb2 = self.progress_bar
+            if pb2 is not None:
+                pb2.setValue(100)
                 # Hide progress bar after a delay
-                QTimer.singleShot(2000, lambda: self.progress_bar.setVisible(False))
+                QTimer.singleShot(2000, lambda: pb2.setVisible(False))
             
             if self.status_label:
                 self.status_label.setText(message or "Completed")
@@ -633,8 +635,9 @@ class UIProgressCallback(ProgressCallback):
             message: Cancellation message
         """
         try:
-            if self.progress_bar:
-                self.progress_bar.setVisible(False)
+            pb3 = self.progress_bar
+            if pb3 is not None:
+                pb3.setVisible(False)
             
             if self.status_label:
                 self.status_label.setText(message or "Cancelled")

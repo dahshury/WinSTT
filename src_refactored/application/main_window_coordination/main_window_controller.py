@@ -83,24 +83,27 @@ class MainWindowController:
         """
         try:
             # Ask domain for current recording state
+            from src_refactored.application.audio_recording.get_recording_status_use_case import (
+                GetRecordingStatusRequest,
+            )
             from src_refactored.domain.audio.value_objects.recording_state import (
                 RecordingState as VoRecordingState,
             )
-            status_response = self._recording_status.execute(None)
+            status_response = self._recording_status.execute(GetRecordingStatusRequest())
             is_currently_recording = (getattr(status_response, "state", None) == VoRecordingState.RECORDING)
             
             if request.is_pressed and not is_currently_recording:
                 return self._start_hotkey_recording(request.hotkey_name)
-            elif not request.is_pressed and is_currently_recording:
-                return self._stop_hotkey_recording()
-            elif not request.is_pressed and not is_currently_recording:
-                # Hotkey released but we weren't recording - still need to reset UI to be safe
-                if self._ui_status:
+            elif not request.is_pressed:
+                # Always attempt a coordinated stop on release (idempotent)
+                stopped = self._stop_hotkey_recording()
+                if not stopped and self._ui_status:
+                    # Ensure UI is reset even if stop failed/no-op
                     self._ui_status.show_status(StatusMessage(
-                    text="Ready for transcription",
-                    type=StatusType.INFO,
+                        text="Ready for transcription",
+                        type=StatusType.INFO,
                     ))
-                return True  # Return True so UI gets reset
+                return True
             else:
                 # Pressing when already recording - no action needed
                 return False
@@ -117,13 +120,16 @@ class MainWindowController:
     def handle_file_transcription(self, request: FileTranscriptionRequest) -> None:
         """Handle file transcription request."""
         try:
-            self._ui_status.show_status(StatusMessage(
-                text=f"Transcribing {request.file_path}...",
-                type=StatusType.TRANSCRIBING,
-                show_progress_bar=True,
-                duration=StatusDuration.PERSISTENT,
-                auto_clear=False,
-            ))
+            if self._ui_status:
+                self._ui_status.show_status(
+                    StatusMessage(
+                        text=f"Transcribing {request.file_path}...",
+                        type=StatusType.TRANSCRIBING,
+                        show_progress_bar=True,
+                        duration=StatusDuration.PERSISTENT,
+                        auto_clear=False,
+                    ),
+                )
             
             # In real implementation, this would trigger transcription service
             # For now, simulate completion after delay
@@ -131,28 +137,31 @@ class MainWindowController:
             
         except Exception as e:
             self._logger.log_error(f"Error handling file transcription: {e}")
-            self._ui_status.show_status(StatusMessage(
-                text="Error transcribing file",
-                type=StatusType.ERROR,
-            ))
+            if self._ui_status:
+                self._ui_status.show_status(
+                    StatusMessage(
+                        text="Error transcribing file",
+                        type=StatusType.ERROR,
+                    ),
+                )
     
     def complete_transcription(self, result: str, transcription_type: str = "hotkey") -> None:
         """Handle transcription completion."""
         try:
             if transcription_type == "hotkey":
                 # Show actual transcription result for hotkey recording
-                self._ui_status.show_status(StatusMessage(
+                if self._ui_status:
+                    self._ui_status.show_status(StatusMessage(
                     text=f"Transcription: {result}",
                     type=StatusType.SUCCESS,
                     duration=StatusDuration.LONG,
                 ))
-            else:
-                # Show completion message for file transcription
+            elif self._ui_status:
                 self._ui_status.show_status(StatusMessage(
-                    text="File transcription complete!",
-                    type=StatusType.SUCCESS,
-                    duration=StatusDuration.NORMAL,
-                ))
+                text="File transcription complete!",
+                type=StatusType.SUCCESS,
+                duration=StatusDuration.NORMAL,
+            ))
             
             self._logger.log_info(f"Transcription completed: {transcription_type}")
             
@@ -284,7 +293,10 @@ class MainWindowController:
     def get_recording_status(self) -> bool:
         """Get current recording status."""
         try:
-            response = self._recording_status.execute(None)
+            from src_refactored.application.audio_recording.get_recording_status_use_case import (
+                GetRecordingStatusRequest,
+            )
+            response = self._recording_status.execute(GetRecordingStatusRequest())
             return getattr(response, "is_recording", False)
         except Exception:
             return False

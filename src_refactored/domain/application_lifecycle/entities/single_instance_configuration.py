@@ -11,7 +11,7 @@ from src_refactored.domain.window_management.value_objects import ActivationMeth
 
 
 @dataclass
-class SingleInstanceConfiguration(Entity[str]):
+class SingleInstanceConfiguration(Entity):
     """Configuration for single instance checking.
     
     This entity encapsulates all the settings for checking and enforcing
@@ -29,7 +29,7 @@ class SingleInstanceConfiguration(Entity[str]):
     retry_delay_seconds: float = 0.5
     cleanup_on_exit: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Generate ID based on configuration
         config_id = f"{self.check_method.value}_{self.socket_port}_{self.activation_timeout_seconds}"
         super().__init__(config_id)

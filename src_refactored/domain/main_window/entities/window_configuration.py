@@ -42,7 +42,7 @@ class WindowDimensions:
     max_width: int | None = None
     max_height: int | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate dimensions."""
         if self.width <= 0 or self.height <= 0:
             msg = "Width and height must be positive"
@@ -71,7 +71,7 @@ class WindowDimensions:
         return self.width * self.height
 
 
-class WindowConfiguration(Entity[str],
+class WindowConfiguration(Entity,
     ):
     """Window configuration entity.
     

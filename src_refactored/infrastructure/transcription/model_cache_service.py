@@ -23,6 +23,11 @@ class ModelCacheService:
         self.progress_callback = progress_callback
         self._ensure_cache_directory()
 
+    def _notify(self, message: str) -> None:
+        """Notify progress via domain ProgressCallback signature."""
+        if self.progress_callback:
+            self.progress_callback(0, 0, message)
+
     def _ensure_cache_directory(self) -> None:
         """Ensure cache directory exists."""
         self.cache_path.mkdir(parents=True, exist_ok=True)
@@ -138,14 +143,12 @@ class ModelCacheService:
             model_cache_path = self.get_model_cache_path(model_type)
             if model_cache_path.exists():
                 shutil.rmtree(model_cache_path)
-                if self.progress_callback:
-                    self.progress_callback(txt=f"Cleared cache for {model_type}")
+                self._notify(f"Cleared cache for {model_type}")
         else:
             models_path = self.cache_path / "models"
             if models_path.exists():
                 shutil.rmtree(models_path)
-                if self.progress_callback:
-                    self.progress_callback(txt="Cleared all model cache")
+                self._notify("Cleared all model cache")
 
     def get_cache_size(self, model_type: str | None = None) -> int:
         """Get the size of the cache in bytes.

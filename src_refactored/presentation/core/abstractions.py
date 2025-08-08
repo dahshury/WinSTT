@@ -9,6 +9,7 @@ Framework-specific implementations should use adapters in the infrastructure lay
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
@@ -25,7 +26,14 @@ TQuery = TypeVar("TQuery", bound="IQuery")
 TResult = TypeVar("TResult")
 TState = TypeVar("TState")
 TEvent = TypeVar("TEvent", bound="UIEvent")
-TWidget = TypeVar("TWidget")  # Generic widget type instead of QWidget
+TObservedEvent = TypeVar("TObservedEvent")
+TWidget = TypeVar("TWidget", covariant=True)  # Generic widget type instead of QWidget
+TQueryResult = TypeVar("TQueryResult")
+TValidatorType = TypeVar("TValidatorType")
+TFactoryResult = TypeVar("TFactoryResult")
+TRepoType = TypeVar("TRepoType")
+TStrategyContext = TypeVar("TStrategyContext", contravariant=True)
+TStrategyResult = TypeVar("TStrategyResult")
 
 # ============================================================================
 # EVENT SYSTEM
@@ -75,10 +83,11 @@ class ICommand(Protocol):
         """Check if command can be executed."""
         ...
 
-class IQuery(Protocol, Generic[TResult]):
+class IQuery(Generic[TQueryResult], ABC):
     """Interface for queries that read data."""
-    
-    def execute(self) -> Result[TResult]:
+
+    @abstractmethod
+    def execute(self) -> Result[TQueryResult]:
         """Execute the query and return result."""
         ...
 
@@ -86,25 +95,25 @@ class IQuery(Protocol, Generic[TResult]):
 # OBSERVER PATTERN
 # ============================================================================
 
-class IObserver(Protocol, Generic[TEvent]):  # type: ignore[misc]
+class IObserver(Protocol):
     """Observer interface for event handling."""
     
-    def notify(self, event: TEvent) -> None:
+    def notify(self, event: Any) -> None:
         """Handle the event notification."""
         ...
 
-class IObservable(Protocol, Generic[TEvent]):
+class IObservable(Protocol):
     """Observable interface for event publishing."""
     
-    def subscribe(self, observer: IObserver[TEvent]) -> None:
+    def subscribe(self, observer: IObserver) -> None:
         """Subscribe an observer to events."""
         ...
     
-    def unsubscribe(self, observer: IObserver[TEvent]) -> None:
+    def unsubscribe(self, observer: IObserver) -> None:
         """Unsubscribe an observer from events."""
         ...
     
-    def notify_observers(self, event: TEvent) -> None:
+    def notify_observers(self, event: Any) -> None:
         """Notify all observers of an event."""
         ...
 
@@ -119,7 +128,7 @@ class IMediator(Protocol):
         """Send a command through the mediator."""
         ...
     
-    def send_query(self, query: IQuery[TResult]) -> Result[TResult]:
+    def send_query(self, query: IQuery[T]) -> Result[T]:
         """Send a query through the mediator."""
         ...
     
@@ -150,7 +159,7 @@ class IServiceProvider(Protocol):
 # UI COMPONENT PATTERNS (FRAMEWORK-AGNOSTIC)
 # ============================================================================
 
-class IUIComponent(Protocol, Generic[TWidget]):  # type: ignore[misc]
+class IUIComponent(Protocol, Generic[TWidget]):
     """Base interface for UI components - framework agnostic."""
     
     @property
@@ -182,17 +191,19 @@ class IUIState(Protocol, Generic[TState]):
         """Reset to initial state."""
         ...
 
-class IUIValidator(Protocol, Generic[T]):
+class IUIValidator(Generic[TValidatorType], ABC):
     """Interface for UI validation."""
     
-    def validate(self, value: T) -> Result[T]:
+    @abstractmethod
+    def validate(self, value: TValidatorType) -> Result[TValidatorType]:
         """Validate a value."""
         ...
 
-class IUIFactory(Protocol, Generic[T]):
+class IUIFactory(Generic[TFactoryResult], ABC):
     """Factory interface for creating UI objects."""
     
-    def create(self, **kwargs) -> Result[T]:
+    @abstractmethod
+    def create(self, **kwargs) -> Result[TFactoryResult]:
         """Create an instance."""
         ...
 
@@ -230,10 +241,11 @@ class IPresenter(Protocol):
 # STRATEGY PATTERN
 # ============================================================================
 
-class IStrategy(Protocol, Generic[T, TResult]):  # type: ignore[misc]
+class IStrategy(Generic[TStrategyContext, TStrategyResult], ABC):
     """Strategy interface for algorithm encapsulation."""
     
-    def execute(self, context: T) -> Result[TResult]:
+    @abstractmethod
+    def execute(self, context: TStrategyContext) -> Result[TStrategyResult]:
         """Execute the strategy."""
         ...
 
@@ -241,17 +253,20 @@ class IStrategy(Protocol, Generic[T, TResult]):  # type: ignore[misc]
 # REPOSITORY PATTERN
 # ============================================================================
 
-class IUIRepository(Protocol, Generic[T]):
+class IUIRepository(Generic[TRepoType], ABC):
     """Repository interface for data access."""
     
-    def save(self, entity: T) -> Result[None]:
+    @abstractmethod
+    def save(self, entity: TRepoType) -> Result[None]:
         """Save an entity."""
         ...
     
-    def load(self, identifier: str) -> Result[T]:
+    @abstractmethod
+    def load(self, identifier: str) -> Result[TRepoType]:
         """Load an entity by identifier."""
         ...
     
+    @abstractmethod
     def delete(self, identifier: str) -> Result[None]:
         """Delete an entity by identifier."""
         ...

@@ -1,6 +1,7 @@
 """Progress UI service for managing progress bars and UI state (Presentation)."""
 
 from PyQt6 import QtCore
+import time
 from PyQt6.QtCore import QEasingCurve, QObject, QPropertyAnimation, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QLabel, QProgressBar, QPushButton
@@ -22,6 +23,12 @@ class ProgressInfo(BaseProgressInfo):
         self.state = ProgressState.create_idle()
         self.message = ""
         self.details = ""
+        # Keep float timestamps to match BaseProgressInfo typing
+        self.start_time = time.time()
+        self.last_update = self.start_time
+        # Convenience Qt timestamps (not used by BaseProgressInfo API)
+        self.start_dt = QtCore.QDateTime.currentDateTime()
+        self.last_update_dt = self.start_dt
     @property
     def percentage(self) -> float:
         if self.maximum_value <= 0:
@@ -35,7 +42,8 @@ class ProgressInfo(BaseProgressInfo):
         return self.state.is_active()
     @property
     def elapsed_time(self) -> int:
-        return self.start_time.msecsTo(QtCore.QDateTime.currentDateTime())
+        # Return milliseconds using Qt timebases while keeping float fields consistent
+        return self.start_dt.msecsTo(QtCore.QDateTime.currentDateTime())
     def update(self,
                current_value: float | None = None,
                maximum_value: float | None = None,
@@ -52,7 +60,8 @@ class ProgressInfo(BaseProgressInfo):
             self.message = message
         if details is not None:
             self.details = details
-        self.last_update = QtCore.QDateTime.currentDateTime()
+        self.last_update = time.time()
+        self.last_update_dt = QtCore.QDateTime.currentDateTime()
 
 
 class ProgressUIService(QObject):
@@ -361,7 +370,7 @@ class ProgressUIService(QObject):
 
     def is_progress_active(self, progress_id: str) -> bool:
         info = self._progress_info.get(progress_id)
-        return info.is_active() if info else False
+        return info.is_active if info else False
 
     def set_animation_enabled(self, enabled: bool) -> None:
         self._animate_updates = enabled

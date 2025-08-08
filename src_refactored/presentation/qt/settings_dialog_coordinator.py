@@ -10,22 +10,25 @@ import logging
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+import contextlib
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
+from src_refactored.infrastructure.presentation.qt.ui_core_abstractions import (
+    IUIEventHandler,
+    UIEventType,
+)
 from src_refactored.presentation.core.abstractions import (
     IUIComponent,
     Result,
 )
 from src_refactored.presentation.core.container import injectable
-from src_refactored.presentation.core.events import (
-    UIEvent,
-    UIEventType,
-)
-from src_refactored.presentation.core.ui_abstractions import IUIEventHandler
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QWidget
+
+    from src_refactored.infrastructure.presentation.qt.ui_core_abstractions import UIEvent
+
     from .settings_dialog_impl import SettingsDialog, SettingsDialogData
 
 
@@ -43,7 +46,7 @@ class SettingsDialogState:
     current_llm_quantization: str
     current_llm_prompt: str
     is_downloading_model: bool = False
-    recording_key: bool = False
+    recording_key: str = ""
     pressed_keys: set[str] | None = None
     
     def __post_init__(self):
@@ -98,7 +101,7 @@ class IProgressService:
         raise NotImplementedError
 
 
-@injectable
+@injectable()
 class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
     """Coordinates settings dialog operations and event handling."""
     
@@ -351,17 +354,22 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
         """Get current dialog state."""
         return self.state
     
-    def handle_event(self, event: UIEvent) -> Result[None]:
+    def handle_event(self, event: "UIEvent") -> Result[None]:
         """Handle UI events."""
         try:
-            if event.event_type == UIEventType.SETTINGS_CHANGED:
+            # Extract event id from event.data if present
+            event_id = ""
+            with contextlib.suppress(Exception):
+                event_id = str(event.data.get("event_id", ""))
+
+            if event_id == "SETTINGS_CHANGED":
                 # Handle settings change event
                 self.save_settings()
-            elif event.event_type == UIEventType.MODEL_DOWNLOAD_STARTED:
+            elif event_id == "MODEL_DOWNLOAD_STARTED":
                 # Handle model download start
                 model_name = event.data.get("model_name", "Unknown")
                 self.start_model_download(model_name)
-            elif event.event_type == UIEventType.MODEL_DOWNLOAD_COMPLETED:
+            elif event_id == "MODEL_DOWNLOAD_COMPLETED":
                 # Handle model download completion
                 model_name = event.data.get("model_name", "Unknown")
                 self.complete_model_download(model_name)
@@ -369,7 +377,7 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
             return Result.success(None)
             
         except Exception as e:
-            error_msg = f"Failed to handle event {event.event_type}: {e}"
+            error_msg = f"Failed to handle event {getattr(event, 'event_id', '')}: {e}"
             self.logger.exception(error_msg)
             return Result.failure(error_msg)
     
@@ -392,7 +400,7 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
                 self._dialog.activateWindow()
                 return
             
-            from .settings_dialog_impl import SettingsDialog, SettingsDialogData
+            from .settings_dialog_impl import SettingsDialog
             
             # Create dialog with proper architecture
             self._dialog = SettingsDialog(

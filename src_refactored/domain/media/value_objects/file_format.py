@@ -38,7 +38,7 @@ class FileFormat(ValueObject):
         ".wmv": ("video/x-ms-wmv", "WMV Video"),
     }
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.extension,
@@ -47,7 +47,7 @@ class FileFormat(ValueObject):
             self.description,
         )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate the file format after initialization."""
         if not self.extension.startswith("."):
             msg = "Extension must start with a dot"

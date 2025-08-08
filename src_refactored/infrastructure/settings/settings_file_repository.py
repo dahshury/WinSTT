@@ -22,6 +22,11 @@ class SettingsFileRepository:
         self.progress_callback = progress_callback
         self._ensure_settings_directory()
 
+    def _notify(self, message: str) -> None:
+        """Notify progress via domain ProgressCallback signature."""
+        if self.progress_callback:
+            self.progress_callback(0, 0, message)
+
     def _ensure_settings_directory(self) -> None:
         """Ensure settings directory exists."""
         self.settings_file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -33,22 +38,18 @@ class SettingsFileRepository:
             Dictionary containing settings data
         """
         if not self.settings_file_path.exists():
-            if self.progress_callback:
-                self.progress_callback(txt="Settings file not found, using defaults")
+            self._notify("Settings file not found, using defaults")
             return {}
 
         try:
             with open(self.settings_file_path, encoding="utf-8") as f:
                 settings = json.load(f)
 
-            if self.progress_callback:
-                self.progress_callback(txt="Settings loaded successfully",
-    )
+            self._notify("Settings loaded successfully")
 
             return settings
         except (OSError, json.JSONDecodeError) as e:
-            if self.progress_callback:
-                self.progress_callback(txt=f"Error loading settings: {e}")
+            self._notify(f"Error loading settings: {e}")
             return {}
 
     def save_settings(self, settings: dict[str, Any]) -> bool:
@@ -69,13 +70,11 @@ class SettingsFileRepository:
             with open(self.settings_file_path, "w", encoding="utf-8") as f:
                 json.dump(settings, f, indent=2, ensure_ascii=False)
 
-            if self.progress_callback:
-                self.progress_callback(txt="Settings saved successfully")
+            self._notify("Settings saved successfully")
 
             return True
         except (OSError, TypeError) as e:
-            if self.progress_callback:
-                self.progress_callback(txt=f"Error saving settings: {e}")
+            self._notify(f"Error saving settings: {e}")
             return False
 
     def backup_settings(self, backup_suffix: str | None = None) -> str:
@@ -103,8 +102,7 @@ class SettingsFileRepository:
 
         backup_path.write_bytes(self.settings_file_path.read_bytes())
 
-        if self.progress_callback:
-            self.progress_callback(txt=f"Settings backed up to {backup_path.name}")
+        self._notify(f"Settings backed up to {backup_path.name}")
 
         return str(backup_path,
     )
@@ -121,8 +119,7 @@ class SettingsFileRepository:
         """
         backup_path = Path(backup_file_path)
         if not backup_path.exists():
-            if self.progress_callback:
-                self.progress_callback(txt=f"Backup file not found: {backup_path}")
+            self._notify(f"Backup file not found: {backup_path}")
             return False
 
         try:
@@ -133,13 +130,11 @@ class SettingsFileRepository:
             # Copy backup to settings file
             self.settings_file_path.write_bytes(backup_path.read_bytes())
 
-            if self.progress_callback:
-                self.progress_callback(txt="Settings restored from backup")
+            self._notify("Settings restored from backup")
 
             return True
         except (OSError, json.JSONDecodeError) as e:
-            if self.progress_callback:
-                self.progress_callback(txt=f"Error restoring settings: {e}")
+            self._notify(f"Error restoring settings: {e}")
             return False
 
     def list_backups(self) -> list[str]:
@@ -170,8 +165,7 @@ class SettingsFileRepository:
         backup_path = Path(backup_file_path)
         if backup_path.exists():
             backup_path.unlink()
-            if self.progress_callback:
-                self.progress_callback(txt=f"Deleted backup {backup_path.name}")
+            self._notify(f"Deleted backup {backup_path.name}")
             return True
         return False
 

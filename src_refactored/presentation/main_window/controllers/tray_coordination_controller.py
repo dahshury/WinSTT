@@ -56,7 +56,7 @@ class TrayCoordinationController:
             )
             
             # Create tray icon through adapter
-            create_result = self._tray_port.create_tray_icon(icon_path, tray_config.tooltip)
+            create_result = self._tray_port.create_tray_icon(icon_path or "", tray_config.tooltip)
             if not create_result.is_success:
                 if self._logger:
                     self._logger.log_error(f"Failed to create tray icon: {create_result.error}")
@@ -78,32 +78,32 @@ class TrayCoordinationController:
             ]
             
             # Ensure the adapter creates the base menu and then add custom items
-            menu_result = self._tray_port.create_tray_menu(self._tray_id, menu_items)
+            menu_result = self._tray_port.create_tray_menu(self._tray_id or "", menu_items)
             if not menu_result.is_success and self._logger:
                 self._logger.log_warning(f"Failed to create tray menu: {menu_result.error}")
             
             # Register callbacks for tray events
             self._tray_port.register_tray_callback(
-                self._tray_id, 
+                self._tray_id or "", 
                 "show_window", 
                 lambda event: show_window_callback(),
             )
             
             self._tray_port.register_tray_callback(
-                self._tray_id,
+                self._tray_id or "",
                 "settings",
                 lambda event: settings_callback(),
             )
             
             self._tray_port.register_tray_callback(
-                self._tray_id,
+                self._tray_id or "",
                 "close_app",
                 lambda event: exit_callback(),
             )
             
             # Show the tray icon using domain entity
             self._tray_integration.show_tray()
-            show_result = self._tray_port.show_tray_icon(self._tray_id)
+            show_result = self._tray_port.show_tray_icon(self._tray_id or "")
             
             if not show_result.is_success:
                 if self._logger:

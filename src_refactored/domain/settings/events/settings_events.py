@@ -15,7 +15,7 @@ class SettingsUpdatedEvent(DomainEvent):
     changes_count: int
     restart_required: bool = False
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -27,7 +27,7 @@ class SettingsApplyProgressEvent(DomainEvent):
     message: str
     current_step: str
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -38,7 +38,7 @@ class SettingsValidationFailedEvent(DomainEvent):
     failed_settings: list[str]
     error_messages: list[str]
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -49,7 +49,7 @@ class WorkerReinitializationRequestedEvent(DomainEvent):
     worker_types: list[str]
     reason: str
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -60,7 +60,7 @@ class ApplicationRestartRequestedEvent(DomainEvent):
     reason: str
     changes: list[str]
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -72,5 +72,5 @@ class SettingsErrorEvent(DomainEvent):
     error_message: str
     context: dict[str, Any]
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()

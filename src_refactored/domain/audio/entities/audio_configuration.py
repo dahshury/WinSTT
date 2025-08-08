@@ -39,7 +39,7 @@ class AudioRecorderConfiguration(ValueObject):
     buffer_size: int = 1024
     max_duration: float = 300.0  # 5 minutes default
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Validation can be added here if needed
         pass
     

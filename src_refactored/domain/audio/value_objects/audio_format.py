@@ -33,11 +33,14 @@ class BitDepth(Enum):
 class AudioFormat(ValueObject):
     """Audio format value object."""
     format_type: AudioFormatType
+    sample_rate: int
+    channels: int
     bit_depth: int
+    chunk_size: int
     compression: str | None = None
     quality: AudioQuality | None = None
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.format_type,
@@ -46,9 +49,9 @@ class AudioFormat(ValueObject):
             self.quality,
         )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Validate sample rate (common rates used in speech recognition)
-        valid_sample_rates = [8000, 16000, 22050, 44100, 48000]
+        valid_sample_rates = [8000, 16000, 22050, 44100, 48000, 96000]
         if self.sample_rate not in valid_sample_rates:
             msg = f"Invalid sample rate: {self.sample_rate}. Must be one of {valid_sample_rates}"
             raise ValueError(msg)
@@ -58,28 +61,30 @@ class AudioFormat(ValueObject):
             msg = f"Invalid channels: {self.channels}. Must be 1 (mono) or 2 (stereo)"
             raise ValueError(msg)
 
+        # Validate bit depth
+        if self.bit_depth not in [8, 16, 24, 32]:
+            msg = f"Invalid bit depth: {self.bit_depth}. Must be one of [8, 16, 24, 32]"
+            raise ValueError(msg)
+
         # Validate chunk size (power of 2, reasonable range)
         if self.chunk_size < 64 or self.chunk_size > 8192:
             msg = f"Invalid chunk size: {self.chunk_size}. Must be between 64 and 8192"
             raise ValueError(msg)
 
         # Check if chunk size is power of 2
-        if self.chunk_size & (self.chunk_size - 1,
-    ) != 0:
+        if self.chunk_size & (self.chunk_size - 1) != 0:
             msg = f"Chunk size must be a power of 2, got: {self.chunk_size}"
             raise ValueError(msg)
 
     @property
     def is_mono(self) -> bool:
         """Check if audio format is mono."""
-        # Default to mono for speech recognition formats
-        return True
+        return self.channels == 1
 
     @property
     def is_stereo(self) -> bool:
         """Check if audio format is stereo."""
-        # Default to mono for speech recognition formats
-        return False
+        return self.channels == 2
 
     @property
     def bytes_per_sample(self) -> int:
@@ -89,21 +94,22 @@ class AudioFormat(ValueObject):
     @property
     def bytes_per_frame(self) -> int:
         """Calculate bytes per frame (sample * channels)."""
-        # Default to mono (1 channel)
-        return self.bytes_per_sample * 1
+        return self.bytes_per_sample * self.channels
 
     @property
     def bytes_per_second(self) -> int:
         """Calculate bytes per second for this format."""
-        # Default to 16kHz for speech recognition
-        return 16000 * self.bytes_per_frame
+        return self.sample_rate * self.bytes_per_frame
 
     @classmethod
     def for_speech_recognition(cls) -> AudioFormat:
         """Create standard format for speech recognition (16kHz, mono, 16-bit)."""
         return cls(
             format_type=AudioFormatType.WAV,
+            sample_rate=16000,
+            channels=1,
             bit_depth=16,
+            chunk_size=1024,
             compression=None,
             quality=None,
         )
@@ -113,7 +119,10 @@ class AudioFormat(ValueObject):
         """Create high-quality format (48kHz, stereo, 24-bit)."""
         return cls(
             format_type=AudioFormatType.WAV,
+            sample_rate=48000,
+            channels=2,
             bit_depth=24,
+            chunk_size=2048,
             compression=None,
             quality=None,
         )
@@ -123,7 +132,10 @@ class AudioFormat(ValueObject):
         """Create WAV format configuration."""
         return cls(
             format_type=AudioFormatType.WAV,
+            sample_rate=44100,
+            channels=1,
             bit_depth=bit_depth,
+            chunk_size=1024,
             compression=None,
             quality=None,
         )
@@ -133,7 +145,10 @@ class AudioFormat(ValueObject):
         """Create MP3 format configuration."""
         return cls(
             format_type=AudioFormatType.MP3,
+            sample_rate=44100,
+            channels=2,
             bit_depth=16,
+            chunk_size=1024,
             compression="mp3",
             quality=AudioQuality.create_medium_quality(44100, 16),
         )
@@ -144,7 +159,7 @@ class SampleRate(ValueObject):
     """Value object for audio sample rate with validation."""
     value: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         valid_rates = [8000, 16000, 22050, 44100, 48000, 96000]
         if self.value not in valid_rates:
             msg = f"Invalid sample rate: {self.value}. Must be one of {valid_rates}"
@@ -172,11 +187,11 @@ class Duration(ValueObject):
     """Value object for audio duration with business rules."""
     seconds: float
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (self.seconds,)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.seconds < 0:
             msg = f"Duration cannot be negative: {self.seconds}"
             raise ValueError(msg)
@@ -213,8 +228,7 @@ class Duration(ValueObject):
             seconds = self.seconds % 60
             return f"{minutes}m {seconds:.1f}s"
         hours = int(self.seconds // 3600)
-        minutes = int((self.seconds % 3600) // 60,
-    )
+        minutes = int((self.seconds % 3600) // 60)
         seconds = self.seconds % 60
         return f"{hours}h {minutes}m {seconds:.1f}s"
 

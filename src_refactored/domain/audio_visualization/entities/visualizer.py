@@ -87,7 +87,7 @@ class Visualizer(Entity):
     _lock_id: str | None = field(default=None, init=False)
     _render_measurement_id: str | None = field(default=None, init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize visualizer."""
         super().__post_init__()
         # Update statistics with target FPS from settings

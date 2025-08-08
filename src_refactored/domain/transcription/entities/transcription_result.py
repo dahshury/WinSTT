@@ -95,9 +95,9 @@ class TranscriptionResult(AggregateRoot):
     overall_confidence: ConfidenceScore = field(default_factory=lambda: ConfidenceScore(0.0))
     error_message: str | None = None
     model_version: str = ""
-    processing_parameters: dict = field(default_factory=dict)
+    processing_parameters: dict[str, object] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__init__(self.transcription_id,
     )
 
@@ -404,7 +404,7 @@ class TranscriptionResult(AggregateRoot):
             ],
             "metadata": {
                 "model_version": self.model_version,
-                "processed_at": self.completed_at.isoformat() if self.completed_at else None,
+                "processed_at": self.completed_at if self.completed_at else None,
                 "processing_duration_seconds": self.processing_duration.seconds if self.processing_duration else None,
             },
         }

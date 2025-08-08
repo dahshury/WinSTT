@@ -23,7 +23,7 @@ class AudioBuffer(ValueObject):
     data: list[WaveformData]
     current_size: int = 0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate audio buffer configuration."""
         if self.max_size <= 0:
             msg = "Max size must be positive"
@@ -284,7 +284,7 @@ class AudioBuffer(ValueObject):
             current_size=len(active_data),
         )
 
-    def get_statistics(self) -> dict:
+    def get_statistics(self) -> dict[str, float | int | bool]:
         """Get buffer statistics."""
         if not self.data:
             return {

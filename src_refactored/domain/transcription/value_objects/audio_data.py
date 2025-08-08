@@ -19,7 +19,7 @@ class AudioData:
     channels: int = 1
     metadata: dict[str, Any] | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate audio data."""
         if len(self.samples) == 0:
             msg = "Audio samples cannot be empty"

@@ -58,10 +58,10 @@ class VisualizationSettings:
     update_interval_ms: int = 50
     buffer_size: int = 1024
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize default opacity."""
         if self.opacity is None:
-            self.opacity = OpacityLevel.from_value(1.0).value
+            self.opacity = OpacityLevel.from_value(1.0)
 
     def validate(self) -> Result[None]:
         """Validate settings."""
@@ -79,7 +79,7 @@ class VisualizationSettings:
 # WaveformData is now imported from audio_visualization.value_objects.waveform_data
 
 
-class VisualizationIntegration(Entity[str],
+class VisualizationIntegration(Entity,
     ):
     """Visualization integration entity.
     

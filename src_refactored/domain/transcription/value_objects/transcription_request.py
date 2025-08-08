@@ -28,12 +28,11 @@ class TranscriptionRequest(ValueObject):
     task: str = "transcribe"  # or "translate"
     return_segments: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate transcription request parameters."""
         if not self.audio_input:
             msg = "Audio input is required"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
         if self.task not in ("transcribe", "translate"):
             msg = f"Invalid task: {self.task}. Must be 'transcribe' or 'translate'"

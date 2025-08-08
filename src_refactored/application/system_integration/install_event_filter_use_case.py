@@ -645,7 +645,7 @@ class InstallEventFilterUseCase:
                 self._progress_tracking_service.update_progress(InstallPhase.TESTING, 0.0)
 
             testing_completed = False
-            performance_metrics = {}
+            performance_metrics: dict[str, float] = {}
             validation_results: dict[str, bool] = {}
 
             if request.testing_config.enable_testing:
@@ -676,24 +676,24 @@ class InstallEventFilterUseCase:
                     if not validation_passed:
                         warnings.append(f"Response validation failed: {validation_error}")
                     elif isinstance(validation_result, dict):
-                        validation_results = validation_result  # type: ignore[assignment]
+                        # validation_result is expected to be mapping of filter_id -> passed(bool)
+                        # Ensure type consistency
+                        validation_results = {str(k): bool(v) for k, v in validation_result.items()}
                 # If validate_responses is False, validation_results remains as initialized empty dict
 
                 # Update filter results with test information
                 for filter_result in state.filter_results:
                     if filter_result.filter_installed:
-                        filter_result.test_results = (
-                            validation_results.get(filter_result.filter_id, {}) 
-                            if isinstance(validation_results, dict) 
-                            else {}
-                        )
+                        # Store a small structured result per filter
+                        filter_passed = bool(validation_results.get(filter_result.filter_id, False))
+                        filter_result.test_results = {"validated": filter_passed}
 
             state.testing_result = TestingResult(
                 testing_completed=testing_completed,
-                tests_passed=len([r for r in validation_results.values() if r]) if isinstance(validation_results, dict) else 0,
-                tests_failed=len([r for r in validation_results.values() if not r]) if isinstance(validation_results, dict) else 0,
+                tests_passed=sum(1 for r in validation_results.values() if r),
+                tests_failed=sum(1 for r in validation_results.values() if not r),
                 performance_metrics=performance_metrics,
-                stress_test_passed=request.testing_config.stress_testing and testing_completed,
+                stress_test_passed=bool(request.testing_config.stress_testing and testing_completed),
                 validation_successful=bool(validation_results),
             )
 

@@ -8,7 +8,7 @@ import abc
 import json
 import logging
 import pickle
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -26,7 +26,7 @@ from src_refactored.domain.common.value_object import ValueObject
 
 T = TypeVar("T")
 TEntity = TypeVar("TEntity", bound=Entity)
-TId = TypeVar("TId")
+TId = TypeVar("TId", bound=Hashable)
 
 
 class RepositoryError(Exception):
@@ -358,10 +358,15 @@ class QueryResult(Generic[TEntity]):
         return QueryResult(filtered_entities, self.page_info, self.total_count)
 
 
-class IRepository(Protocol[TEntity, TId]):
+from typing import TypeVar
+
+_TId_contra = TypeVar("_TId_contra", contravariant=True)
+
+
+class IRepository(Protocol[TEntity, _TId_contra]):
     """Protocol for repository pattern."""
     
-    def get_by_id(self, entity_id: TId) -> Result[TEntity | None]:
+    def get_by_id(self, entity_id: _TId_contra) -> Result[TEntity | None]:
         """Get entity by ID.
         
         Args:
@@ -424,7 +429,7 @@ class IRepository(Protocol[TEntity, TId]):
         """
         ...
     
-    def remove_by_id(self, entity_id: TId) -> Result[None]:
+    def remove_by_id(self, entity_id: _TId_contra) -> Result[None]:
         """Remove entity by ID.
         
         Args:
@@ -435,7 +440,7 @@ class IRepository(Protocol[TEntity, TId]):
         """
         ...
     
-    def exists(self, entity_id: TId) -> Result[bool]:
+    def exists(self, entity_id: _TId_contra) -> Result[bool]:
         """Check if entity exists.
         
         Args:
@@ -610,8 +615,11 @@ class RepositoryBase(Generic[TEntity, TId], IRepository[TEntity, TId]):
         try:
             with self._lock:
                 # Check if entity already exists
-                if hasattr(entity, "id") and self._exists_impl(entity.id):
-                    return Result.failure(f"Entity with ID {entity.id} already exists")
+                if hasattr(entity, "id"):
+                    from typing import cast
+                    entity_id_typed: TId = cast(TId, getattr(entity, "id"))
+                    if self._exists_impl(entity_id_typed):
+                        return Result.failure(f"Entity with ID {getattr(entity, 'id', 'unknown')} already exists")
                 
                 self._add_impl(entity)
                 self.logger.debug(f"Added entity {getattr(entity, 'id', 'unknown')}")
@@ -633,8 +641,11 @@ class RepositoryBase(Generic[TEntity, TId], IRepository[TEntity, TId]):
         try:
             with self._lock:
                 # Check if entity exists
-                if hasattr(entity, "id") and not self._exists_impl(entity.id):
-                    return Result.failure(f"Entity with ID {entity.id} not found")
+                if hasattr(entity, "id"):
+                    from typing import cast
+                    entity_id_typed: TId = cast(TId, getattr(entity, "id"))
+                    if not self._exists_impl(entity_id_typed):
+                        return Result.failure(f"Entity with ID {getattr(entity, 'id', 'unknown')} not found")
                 
                 self._update_impl(entity)
                 self.logger.debug(f"Updated entity {getattr(entity, 'id', 'unknown')}")
@@ -733,9 +744,9 @@ class RepositoryBase(Generic[TEntity, TId], IRepository[TEntity, TId]):
         """
         result = self.find(specification)
         if not result.is_success:
-            return Result.failure(result.error())
-        
-        query_result = result.value()
+            return Result.failure(result.get_error())
+
+        query_result = result.get_value()
         if query_result.is_empty:
             return Result.success(None)
         
@@ -758,9 +769,9 @@ class RepositoryBase(Generic[TEntity, TId], IRepository[TEntity, TId]):
         
         result = self.find(specification)
         if not result.is_success:
-            return Result.failure(result.error())
-        
-        query_result = result.value()
+            return Result.failure(result.get_error())
+
+        query_result = result.get_value()
         return Result.success(query_result.first)
 
 
@@ -889,7 +900,11 @@ class InMemoryRepository(RepositoryBase[TEntity, TId]):
         """
         try:
             reverse = sort_criteria.direction == SortDirection.DESC
-            return sorted(entities, key=lambda e: getattr(e, sort_criteria.field, None), reverse=reverse)
+            return sorted(
+                entities,
+                key=lambda e: str(getattr(e, sort_criteria.field, "")),
+                reverse=reverse,
+            )
         except Exception:
             # If sorting fails, return original list
             return entities
@@ -901,7 +916,8 @@ class InMemoryRepository(RepositoryBase[TEntity, TId]):
             entity: Entity to add
         """
         if hasattr(entity, "id"):
-            self._entities[entity.id] = entity
+            from typing import cast
+            self._entities[cast(TId, getattr(entity, "id"))] = entity
         else:
             msg = "Entity must have an 'id' attribute"
             raise ValueError(msg)
@@ -913,7 +929,8 @@ class InMemoryRepository(RepositoryBase[TEntity, TId]):
             entity: Entity to update
         """
         if hasattr(entity, "id"):
-            self._entities[entity.id] = entity
+            from typing import cast
+            self._entities[cast(TId, getattr(entity, "id"))] = entity
         else:
             msg = "Entity must have an 'id' attribute"
             raise ValueError(msg)
@@ -924,8 +941,11 @@ class InMemoryRepository(RepositoryBase[TEntity, TId]):
         Args:
             entity: Entity to remove
         """
-        if hasattr(entity, "id") and entity.id in self._entities:
-            del self._entities[entity.id]
+        if hasattr(entity, "id"):
+            from typing import cast
+            key = cast(TId, getattr(entity, "id"))
+            if key in self._entities:
+                del self._entities[key]
     
     def _exists_impl(self, entity_id: TId) -> bool:
         """Check if entity exists.
@@ -1043,14 +1063,16 @@ class FileRepository(RepositoryBase[TEntity, TId]):
         """
         if self.serializer == "json":
             json_data = json.loads(data.decode("utf-8"))
-            # Convert dict to entity (assuming entity has from_dict class method)
+            # Convert dict to entity (prefer explicit from_dict when available)
             if hasattr(self.entity_type, "from_dict"):
-                return self.entity_type.from_dict(json_data)
+                from typing import cast
+                from_dict_fn = getattr(self.entity_type, "from_dict")
+                return cast(TEntity, from_dict_fn(json_data))
             # Create entity instance and set attributes
-            entity = self.entity_type.__new__(self.entity_type)
+            entity = self.entity_type.__new__(self.entity_type)  # type: ignore[call-overload]
             for key, value in json_data.items():
                 setattr(entity, key, value)
-            return entity
+            return entity  # type: ignore[return-value]
         # pickle
         return pickle.loads(data)
     
@@ -1194,7 +1216,11 @@ class FileRepository(RepositoryBase[TEntity, TId]):
         """
         try:
             reverse = sort_criteria.direction == SortDirection.DESC
-            return sorted(entities, key=lambda e: getattr(e, sort_criteria.field, None), reverse=reverse)
+            return sorted(
+                entities,
+                key=lambda e: str(getattr(e, sort_criteria.field, "")),
+                reverse=reverse,
+            )
         except Exception:
             # If sorting fails, return original list
             return entities
@@ -1209,7 +1235,8 @@ class FileRepository(RepositoryBase[TEntity, TId]):
             msg = "Entity must have an 'id' attribute"
             raise ValueError(msg)
         
-        file_path = self._get_entity_file_path(entity.id)
+        from typing import cast
+        file_path = self._get_entity_file_path(cast(TId, getattr(entity, "id")))
         data = self._serialize_entity(entity)
         
         with open(file_path, "wb") as f:
@@ -1234,7 +1261,8 @@ class FileRepository(RepositoryBase[TEntity, TId]):
             msg = "Entity must have an 'id' attribute"
             raise ValueError(msg)
         
-        file_path = self._get_entity_file_path(entity.id)
+        from typing import cast
+        file_path = self._get_entity_file_path(cast(TId, getattr(entity, "id")))
         
         if file_path.exists():
             file_path.unlink()

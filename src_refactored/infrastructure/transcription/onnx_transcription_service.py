@@ -14,12 +14,12 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, Deque, Dict
 
 import librosa
 import numpy as np
 import onnxruntime as ort
-import requests
+import requests  # type: ignore[import-untyped]
 from pydub import AudioSegment
 from PyQt6.QtCore import QObject, pyqtSignal
 from transformers import WhisperFeatureExtractor, WhisperTokenizerFast
@@ -107,21 +107,21 @@ class ONNXTranscriptionService(QObject):
         # State
         self.status = TranscriptionStatus.IDLE
         self.is_initialized = False
-        self.sessions = {}
-        self.tokenizer = None
-        self.feature_extractor = None
+        self.sessions: Dict[str, ort.InferenceSession] = {}
+        self.tokenizer: WhisperTokenizerFast | None = None
+        self.feature_extractor: WhisperFeatureExtractor | None = None
 
         # Streaming support
-        self.audio_buffer = deque(maxlen=48000)  # 3 seconds at 16kHz
+        self.audio_buffer: Deque[float] = deque(maxlen=48000)  # 3 seconds at 16kHz
         self.buffer_lock = threading.Lock()
-        self.transcript_queue = queue.Queue()
-        self.current_transcript = ""
-        self.is_processing = False
-        self.processing_thread = None
+        self.transcript_queue: queue.Queue[str] = queue.Queue()
+        self.current_transcript: str = ""
+        self.is_processing: bool = False
+        self.processing_thread: threading.Thread | None = None
 
         # Last transcription data for segment extraction
-        self.last_audio_path = None
-        self.last_transcription = None
+        self.last_audio_path: str | None = None
+        self.last_transcription: str | None = None
 
         # Model paths and URLs
         self._setup_model_configuration()
@@ -297,7 +297,7 @@ class ONNXTranscriptionService(QObject):
 
             # Generate segments if requested
             segments = []
-            if request.return_segments:
+            if getattr(request, "return_segments", False):
                 segments = self._generate_segments(request.audio_input, transcription_text)
 
             result = TranscriptionResult(
@@ -345,7 +345,8 @@ class ONNXTranscriptionService(QObject):
             audio_array = audio_input.astype(np.float32)
 
         # Extract features
-        inputs = self.feature_extractor(
+            assert self.feature_extractor is not None
+            inputs = self.feature_extractor(
             audio_array,
             sampling_rate=16000,
             return_tensors="np",
@@ -383,6 +384,7 @@ class ONNXTranscriptionService(QObject):
         predicted_ids = np.argmax(output_ids, axis=-1)
 
         # Decode to text
+        assert self.tokenizer is not None
         transcription = self.tokenizer.decode(predicted_ids[0], skip_special_tokens=True)
 
         return transcription.strip()
@@ -431,11 +433,14 @@ class ONNXTranscriptionService(QObject):
             return []
 
         segments = self._generate_segments(self.last_audio_path, self.last_transcription)
-        return [{
-            "start": seg.start,
-            "end": seg.end,
-            "text": seg.text,
-        } for seg in segments]
+        return [
+            {
+                "start": seg.start_time.seconds,
+                "end": seg.end_time.seconds,
+                "text": getattr(seg.text, "content", str(seg.text)),
+            }
+            for seg in segments
+        ]
 
     # Streaming methods
     def start_streaming(self) -> None:
@@ -483,6 +488,7 @@ class ONNXTranscriptionService(QObject):
                         audio_data = np.array(list(self.audio_buffer), dtype=np.float32)
 
                         # Process through pipeline
+                        assert self.feature_extractor is not None
                         features = self.feature_extractor(
                             audio_data,
                             sampling_rate=16000,

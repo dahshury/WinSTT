@@ -11,6 +11,7 @@ from typing import Protocol
 
 import numpy as np
 
+from collections.abc import Sequence
 from src_refactored.domain.audio.value_objects.audio_samples import AudioSampleData
 from src_refactored.infrastructure.system.logging_service import LoggingService
 
@@ -90,33 +91,33 @@ class NormalizationProcessor:
     """Core normalization processing logic."""
 
     @staticmethod
-    def calculate_rms(samples: list[float]) -> float:
+    def calculate_rms(samples: Sequence[float]) -> float:
         """Calculate RMS (Root Mean Square) of audio samples."""
         if not samples:
             return 0.0
         return np.sqrt(np.mean(np.square(samples)))
 
     @staticmethod
-    def calculate_peak(samples: list[float]) -> float:
+    def calculate_peak(samples: Sequence[float]) -> float:
         """Calculate peak amplitude of audio samples."""
         if not samples:
             return 0.0
         return max(abs(sample) for sample in samples)
 
     @staticmethod
-    def apply_gain(samples: list[float], gain_factor: float) -> list[float]:
+    def apply_gain(samples: Sequence[float], gain_factor: float) -> list[float]:
         """Apply gain factor to audio samples."""
         if gain_factor == 1.0:
-            return samples
-        return [sample * gain_factor for sample in samples]
+            return list(samples)
+        return [float(sample) * gain_factor for sample in samples]
 
     @staticmethod
-    def clip_samples(samples: list[float], min_val: float = -1.0, max_val: float = 1.0) -> list[float]:
+    def clip_samples(samples: Sequence[float], min_val: float = -1.0, max_val: float = 1.0) -> list[float]:
         """Clip samples to prevent overflow."""
         return [max(min_val, min(max_val, sample)) for sample in samples]
 
     @staticmethod
-    def apply_noise_gate(samples: list[float], threshold: float) -> list[float]:
+    def apply_noise_gate(samples: Sequence[float], threshold: float) -> list[float]:
         """Apply noise gate to reduce background noise."""
         return [sample if abs(sample) > threshold else 0.0 for sample in samples]
 
@@ -138,7 +139,7 @@ class SpeechNormalizer:
 
         if rms > 0:
             # Apply speech-specific scaling
-            normalized_samples = self._apply_speech_scaling(audio_data.samples, rms)
+            normalized_samples = self._apply_speech_scaling(list(audio_data.samples), rms)
             
             # Apply noise gate
             normalized_samples = NormalizationProcessor.apply_noise_gate(
@@ -222,7 +223,7 @@ class AudioNormalizationService:
             normalized_samples = self.processor.apply_gain(audio_data.samples, gain_factor)
             normalized_samples = self.processor.clip_samples(normalized_samples)
         else:
-            normalized_samples = audio_data.samples
+            normalized_samples = list(audio_data.samples)
 
         return AudioSampleData(
             samples=normalized_samples,
@@ -245,7 +246,7 @@ class AudioNormalizationService:
             normalized_samples = self.processor.apply_gain(audio_data.samples, gain_factor)
             normalized_samples = self.processor.clip_samples(normalized_samples)
         else:
-            normalized_samples = audio_data.samples
+            normalized_samples = list(audio_data.samples)
 
         return AudioSampleData(
             samples=normalized_samples,
@@ -273,7 +274,7 @@ class AudioNormalizationService:
             normalized_samples = self.processor.apply_gain(audio_data.samples, gain_factor)
             normalized_samples = self.processor.clip_samples(normalized_samples)
         else:
-            normalized_samples = audio_data.samples
+            normalized_samples = list(audio_data.samples)
 
         return AudioSampleData(
             samples=normalized_samples,

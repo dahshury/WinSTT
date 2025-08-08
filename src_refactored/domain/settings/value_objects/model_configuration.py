@@ -61,7 +61,7 @@ class ModelConfiguration(ValueObject):
     use_gpu: bool
     max_memory: int | None = None
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.model_type,
@@ -70,7 +70,7 @@ class ModelConfiguration(ValueObject):
             self.max_memory,
         )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate model configuration after initialization."""
         if self.max_memory is not None and self.max_memory <= 0:
             msg = "Max memory must be positive"

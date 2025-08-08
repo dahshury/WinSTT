@@ -33,12 +33,12 @@ class AudioDataValidationService(AudioDataValidationServiceProtocol):
                 
             if data_type == AudioDataType.NUMPY_ARRAY:
                 return isinstance(data, np.ndarray) and len(data) > 0
-            if data_type == AudioDataType.BYTES:
+            if data_type == AudioDataType.RAW_BYTES:
                 return isinstance(data, bytes) and len(data) > 0
-            if data_type == AudioDataType.LIST:
-                return isinstance(data, list) and len(data) > 0
-            if data_type == AudioDataType.TUPLE:
-                return isinstance(data, tuple) and len(data) > 0
+            if data_type == AudioDataType.FLOAT_ARRAY:
+                return isinstance(data, list | tuple) and len(data) > 0
+            if data_type in (AudioDataType.INT16_ARRAY, AudioDataType.INT32_ARRAY):
+                return isinstance(data, list | tuple) and len(data) > 0
             return False
                 
         except Exception:
@@ -55,7 +55,8 @@ class AudioDataValidationService(AudioDataValidationServiceProtocol):
             Dictionary with data information
         """
         try:
-            info = {
+            # Widen the type so subsequent numeric fields are accepted
+            info: dict[str, Any] = {
                 "data_type": data_type.value,
                 "is_valid": self.validate_raw_data(data, data_type),
             }

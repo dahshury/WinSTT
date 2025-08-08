@@ -20,7 +20,7 @@ class LLMConfiguration(ValueObject):
     temperature: float = 0.7
     enabled: bool = True
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.model_name,
@@ -31,7 +31,7 @@ class LLMConfiguration(ValueObject):
             self.enabled,
         )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate LLM configuration after initialization."""
         if not self.model_name or not self.model_name.strip():
             msg = "Model name cannot be empty"

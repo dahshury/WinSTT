@@ -23,7 +23,7 @@ class MediaFile(Entity):
     last_modified: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize the media file after creation."""
         super().__post_init__()
 

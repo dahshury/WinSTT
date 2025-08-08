@@ -164,11 +164,12 @@ class VoiceVisualizerUI(QObject):
             if not self._is_active:
                 return
 
-            # Create waveform data object
-            waveform_data = WaveformData(
-                samples=data,
+            # Create waveform data object using value object factory
+            timestamp_ms = self._get_current_timestamp() * 1000.0
+            waveform_data = WaveformData.from_samples_list(
+                samples=data.tolist(),
                 sample_rate=self._visualization_config.sample_rate,
-                timestamp=self._get_current_timestamp(),
+                timestamp_ms=timestamp_ms,
             )
 
             # Store current waveform
@@ -417,7 +418,7 @@ class VoiceVisualizerUI(QObject):
             "has_waveform": True,
             "sample_count": len(waveform.samples),
             "duration": len(waveform.samples) / waveform.sample_rate,
-            "timestamp": waveform.timestamp,
+            "timestamp": waveform.timestamp_ms / 1000.0,
             "sample_rate": waveform.sample_rate,
             "min_amplitude": float(np.min(waveform.samples)),
             "max_amplitude": float(np.max(waveform.samples)),
@@ -435,9 +436,9 @@ class VoiceVisualizerUI(QObject):
 
         waveform = self._current_waveform
         return {
-            "samples": waveform.samples.tolist(),
+            "samples": list(waveform.samples),
             "sample_rate": waveform.sample_rate,
-            "timestamp": waveform.timestamp,
+            "timestamp": waveform.timestamp_ms / 1000.0,
             "duration": len(waveform.samples) / waveform.sample_rate,
         }
 
@@ -453,12 +454,12 @@ class VoiceVisualizerUI(QObject):
         try:
             samples = np.array(data["samples"], dtype=np.float32)
             sample_rate = data["sample_rate"]
-            timestamp = data.get("timestamp", self._get_current_timestamp())
+            timestamp_ms = float(data.get("timestamp", self._get_current_timestamp())) * 1000.0
 
-            self._current_waveform = WaveformData(
-                samples=samples,
+            self._current_waveform = WaveformData.from_samples_list(
+                samples=samples.tolist(),
                 sample_rate=sample_rate,
-                timestamp=timestamp,
+                timestamp_ms=timestamp_ms,
             )
 
             # Emit update signal

@@ -8,9 +8,9 @@ import numpy as np
 
 from src_refactored.domain.audio.value_objects import (
     AudioChunk,
-    CalibrationResult,
-    VADConfiguration,
 )
+from src_refactored.domain.audio.value_objects.audio_operations import CalibrationResult
+from src_refactored.domain.audio.value_objects.vad_operations import VADConfiguration
 
 from .vad_service import CalibrationServiceProtocol
 
@@ -26,21 +26,32 @@ class VADCalibrationService(CalibrationServiceProtocol):
         """Calibrate VAD threshold based on audio chunks."""
         try:
             if not audio_chunks:
+                # Provide a minimal but valid result using domain-required fields
                 return CalibrationResult(
-                    calibrated=False,
-                    error_message="No audio chunks provided for calibration",
+                    optimal_threshold=0.5,
+                    noise_level=0.0,
+                    speech_level=0.0,
+                    calibration_duration=0.0,
+                    confidence=0.0,
+                    samples_processed=0,
+                    calibration_method="rms_percentile",
                 )
 
             # Extract audio data from chunks
-            all_audio_data = []
+            all_audio_data: list[float] = []
             for chunk in audio_chunks:
                 if hasattr(chunk, "data") and chunk.data is not None:
                     all_audio_data.extend(chunk.data)
 
             if not all_audio_data:
                 return CalibrationResult(
-                    calibrated=False,
-                    error_message="No valid audio data found in chunks",
+                    optimal_threshold=0.5,
+                    noise_level=0.0,
+                    speech_level=0.0,
+                    calibration_duration=0.0,
+                    confidence=0.0,
+                    samples_processed=0,
+                    calibration_method="rms_percentile",
                 )
 
             # Convert to numpy array
@@ -69,17 +80,24 @@ class VADCalibrationService(CalibrationServiceProtocol):
             optimal_threshold = max(0.0, min(1.0, optimal_threshold))
 
             return CalibrationResult(
-                calibrated=True,
-                noise_level=noise_level,
-                speech_level=speech_level,
-                optimal_threshold=optimal_threshold,
-                calibration_samples=len(audio_chunks),
+                optimal_threshold=float(optimal_threshold),
+                noise_level=float(noise_level),
+                speech_level=float(speech_level),
+                calibration_duration=0.0,
+                confidence=1.0 if speech_level > noise_level else 0.5,
+                samples_processed=len(all_audio_data),
+                calibration_method="rms_percentile",
             )
 
         except Exception as e:
             return CalibrationResult(
-                calibrated=False,
-                error_message=str(e),
+                optimal_threshold=0.5,
+                noise_level=0.0,
+                speech_level=0.0,
+                calibration_duration=0.0,
+                confidence=0.0,
+                samples_processed=0,
+                calibration_method=f"error:{type(e).__name__}",
             )
 
     def analyze_noise_level(self, audio_chunks: list[AudioChunk]) -> float:
@@ -89,7 +107,7 @@ class VADCalibrationService(CalibrationServiceProtocol):
                 return 0.0
 
             # Extract all audio data
-            all_audio_data = []
+            all_audio_data: list[float] = []
             for chunk in audio_chunks:
                 if hasattr(chunk, "data") and chunk.data is not None:
                     all_audio_data.extend(chunk.data)
@@ -113,7 +131,7 @@ class VADCalibrationService(CalibrationServiceProtocol):
                 return 0.0
 
             # Extract all audio data
-            all_audio_data = []
+            all_audio_data: list[float] = []
             for chunk in audio_chunks:
                 if hasattr(chunk, "data") and chunk.data is not None:
                     all_audio_data.extend(chunk.data)

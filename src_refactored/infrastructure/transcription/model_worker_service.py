@@ -6,9 +6,14 @@ file processing, and progress tracking capabilities.
 
 import io
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 from PyQt6.QtCore import QObject, pyqtSignal
+
+
+class _TranscriberProtocol(Protocol):
+    def transcribe(self, file_path: str | io.BytesIO) -> str: ...
+    def get_segments(self) -> list[dict[str, Any]]: ...
 
 
 class ModelWorkerService(QObject):
@@ -39,7 +44,7 @@ class ModelWorkerService(QObject):
         self.model_type = model_type
         self.quantization = quantization
         self.status = False
-        self.model: object | None = None
+        self.model: _TranscriberProtocol | None = None
 
     def run(self) -> None:
         """Initialize the transcription model.

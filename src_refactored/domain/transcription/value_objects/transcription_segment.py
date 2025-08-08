@@ -20,7 +20,7 @@ class TranscriptionSegment:
     language: str | None = None
     metadata: dict[str, Any] | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate transcription segment."""
         if self.start < 0:
             msg = "Start time must be non-negative"

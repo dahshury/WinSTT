@@ -1,0 +1,3 @@
+src_refactored\presentation\core\patterns.py: note: In member "__init__" of class "UICommandInvoker":
+src_refactored\presentation\core\patterns.py:630: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
+Success: no issues found in 6 source files

@@ -13,7 +13,7 @@ class QuantizationLevel(ValueObject):
 
     value: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate quantization level after initialization."""
         if not self.value or not self.value.strip():
             msg = "Quantization level cannot be empty"

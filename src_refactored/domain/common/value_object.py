@@ -7,8 +7,8 @@ Follows DDD principles with equality and validation support.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from abc import ABC
+from dataclasses import dataclass, fields
 
 
 @dataclass(frozen=True)
@@ -20,13 +20,18 @@ class ValueObject(ABC):
     They should contain validation logic in __post_init__.
     """
 
-    @abstractmethod
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components used for equality comparison.
         
-        Returns:
-            Tuple of components for equality comparison
+        Default implementation returns a tuple of all dataclass field values in
+        declaration order. Override in subclasses when a subset or custom
+        projection is required.
         """
+        try:
+            return tuple(getattr(self, f.name) for f in fields(self))
+        except Exception:
+            # Fallback to instance dict order if fields() is unavailable
+            return tuple(getattr(self, name) for name in vars(self))
 
     def __eq__(self, other: object,
     ) -> bool:
@@ -45,11 +50,11 @@ class ProgressPercentage(ValueObject):
     """Value object for progress percentage with validation (0-100)."""
     value: float
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (self.value,)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not 0.0 <= self.value <= 100.0:
             msg = f"Progress percentage must be between 0 and 100, got {self.value}"
             raise ValueError(msg)

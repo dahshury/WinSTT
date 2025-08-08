@@ -194,16 +194,24 @@ class TaskResult(Generic[T]):
         Returns:
             Domain Result object
         """
-        if self.is_success:
+        if self.is_success and self.result is not None:
             return Result.success(self.result)
+        if self.is_success and self.result is None:
+            # Guard against None values when a success status is reported
+            return Result.failure("Task returned no result")
         error_msg = self.error or f"Task failed with status: {self.status.value}"
         return Result.failure(error_msg)
 
 
-class ITask(Protocol[T]):
+from typing import TypeVar
+
+_T_co = TypeVar("_T_co", covariant=True)
+
+
+class ITask(Protocol[_T_co]):
     """Protocol for tasks."""
     
-    def execute(self, progress_callback: IProgressCallback | None = None) -> T:
+    def execute(self, progress_callback: IProgressCallback | None = None) -> _T_co:
         """Execute the task.
         
         Args:

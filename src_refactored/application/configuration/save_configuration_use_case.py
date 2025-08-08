@@ -109,6 +109,12 @@ class FileSystemServiceProtocol(Protocol):
         """Get available disk space in bytes"""
         ...
 
+    # Optional atomic move support. Some implementations may provide this.
+    def move_file(self, source: str, destination: str,
+    ) -> Result[None]:  # pragma: no cover - optional method
+        """Atomically move/rename a file from source to destination"""
+        ...
+
 
 class SerializationServiceProtocol(Protocol):
     """Protocol for data serialization operations"""

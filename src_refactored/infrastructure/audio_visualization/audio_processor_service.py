@@ -107,8 +107,8 @@ class PyAudioProcessor(QThread):
                 self.logger.info("Audio initialized with float32 format")
                 return True
 
-            except Exception:
-                self.logger.warning("Float32 format failed, trying fallback: {e}")
+            except Exception as e:
+                self.logger.warning("Float32 format failed, trying fallback: %s", e)
 
                 # Clean up failed attempt
                 if self.stream:
@@ -356,7 +356,7 @@ class AudioProcessorService:
         Returns:
             True if started successfully, False otherwise
         """
-        pyaudio_processor = self._active_processors.get(processor.id)
+        pyaudio_processor = self._active_processors.get(str(processor.id))
         if not pyaudio_processor:
             self.logger.error("Processor not found: {processor.id}")
             return False
@@ -380,7 +380,7 @@ class AudioProcessorService:
         Returns:
             True if stopped successfully, False otherwise
         """
-        pyaudio_processor = self._active_processors.get(processor.id)
+        pyaudio_processor = self._active_processors.get(str(processor.id))
         if not pyaudio_processor:
             self.logger.error("Processor not found: {processor.id}")
             return False
@@ -401,7 +401,7 @@ class AudioProcessorService:
         Args:
             processor: Audio processor entity
         """
-        pyaudio_processor = self._active_processors.get(processor.id)
+        pyaudio_processor = self._active_processors.get(str(processor.id))
         if pyaudio_processor:
             try:
                 pyaudio_processor.cleanup_resources()
@@ -420,7 +420,7 @@ class AudioProcessorService:
         Returns:
             PyAudio processor thread or None if not found
         """
-        return self._active_processors.get(processor.id)
+        return self._active_processors.get(str(processor.id))
 
     def cleanup_all(self) -> None:
         """Clean up all active processors."""
@@ -431,5 +431,10 @@ class AudioProcessorService:
             except Exception as e:
                 self.logger.exception(f"Error cleaning up processor {processor_id}: {e}")
 
-        self._active_processors.clear()
+        # Explicitly delete keys by string to satisfy type checkers
+        for pid in list(self._active_processors.keys()):
+            try:
+                del self._active_processors[pid]
+            except Exception:
+                pass
         self.logger.info("Cleaned up all audio processors")

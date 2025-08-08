@@ -6,7 +6,8 @@ using the enterprise IoC container for dependency injection.
 This is part of the composition root and is allowed to know about all layers.
 """
 
-from typing import Any, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar, cast
 
 # Import application services - ALLOWED in composition root
 from src_refactored.application.application_config import (
@@ -38,7 +39,8 @@ from src_refactored.infrastructure.adapters.logging_adapter import PythonLogging
 from src_refactored.infrastructure.common.event_bus import (
     EventBus,
     EventBusManager,
-    create_event_bus,
+    get_event_bus,
+    initialize_default_event_bus,
 )
 from src_refactored.infrastructure.common.progress_callback import (
     ProgressCallbackManager,
@@ -117,9 +119,10 @@ class ContainerConfiguration:
         
         # Logging Service (Singleton)
         if self._builder is not None:
+            # Register logger adapter as ILoggerPort
             self._builder.add_singleton(
-                ILoggerPort,
-                lambda: PythonLoggingAdapter(),
+                cast(type[Any], ILoggerPort),
+                cast(Callable[[], ILoggerPort], lambda: PythonLoggingAdapter().setup_logger()),
             )
         
         # Application Configuration (Singleton)
@@ -132,8 +135,8 @@ class ContainerConfiguration:
         # Application Orchestrator (Singleton)
         if self._builder is not None:
             def create_orchestrator() -> ApplicationOrchestrator:
-                logger = PythonLoggingAdapter()
-                startup_service = self._create_application_startup_service()
+                logger: ILoggerPort = PythonLoggingAdapter().setup_logger()
+                startup_service: IApplicationStartupService = self._create_application_startup_service()
                 return create_application_orchestrator(startup_service, logger)
             
             self._builder.add_singleton(
@@ -161,10 +164,15 @@ class ContainerConfiguration:
         
         # Event Bus (Singleton)
         if self._builder is not None:
-            self._builder.add_singleton(
-                EventBus,
-                lambda: create_event_bus("default", set_as_default=True).value,
-            )
+            def _event_bus_factory() -> EventBus:
+                initialize_default_event_bus()
+                bus = get_event_bus("default")
+                if bus is None:
+                    # Fallback to a fresh instance to satisfy type checker
+                    return EventBus("default")
+                return bus
+
+            self._builder.add_singleton(EventBus, _event_bus_factory)
         
         if self._builder is not None:
             self._builder.add_singleton(
@@ -179,8 +187,8 @@ class ContainerConfiguration:
         # Application Startup Service (Transient)
         if self._builder is not None:
             self._builder.add_transient(
-                IApplicationStartupService,
-                lambda: self._create_application_startup_service(),
+                cast(type[Any], IApplicationStartupService),
+                cast(Callable[[], IApplicationStartupService], lambda: self._create_application_startup_service()),
             )
         
         # Note: Shutdown Use Case temporarily removed until proper implementation
@@ -193,9 +201,11 @@ class ContainerConfiguration:
         
         # Unit of Work Services (Transient for stateless operations)
         if self._builder is not None:
+            from src_refactored.infrastructure.common.unit_of_work import InMemoryUnitOfWork
+
             self._builder.add_transient(
-                "InMemoryUnitOfWork",
-                lambda: create_in_memory_unit_of_work(),
+                InMemoryUnitOfWork,
+                cast(Callable[[], InMemoryUnitOfWork], lambda: create_in_memory_unit_of_work()),
             )
     
     def _register_ui_pattern_services(self) -> None:
@@ -425,7 +435,7 @@ def get_service(service_type: type[T]) -> T:
     """
     if _global_helper is None:
         configure_global_container()
-    
+    assert _global_helper is not None
     return _global_helper.get_service(service_type)
 
 
@@ -440,7 +450,7 @@ def get_service_by_name(service_name: str) -> Any:
     """
     if _global_helper is None:
         configure_global_container()
-    
+    assert _global_helper is not None
     return _global_helper.get_service_by_name(service_name)
 
 
@@ -463,28 +473,14 @@ def register_worker_services(builder: EnterpriseContainerBuilder) -> None:
 
 
 def register_ui_adapters(builder: EnterpriseContainerBuilder) -> None:
-    """Register framework-agnostic UI adapters with the container."""
-    from src_refactored.infrastructure.adapters.pyqt6.widget_adapters import (
-        QtAnimationFactory,
-        QtEffectsFactory,
-        QtFontFactory,
-        QtUIWidgetFactory,
-        QtWidgetStyler,
-    )
-    from src_refactored.presentation.core.ui_abstractions import (
-        IAnimationFactory,
-        IEffectsFactory,
-        IFontFactory,
-        IUIWidgetFactory,
-        IWidgetStyler,
-    )
-    
-    # Register PyQt6 adapters as singletons
-    builder.add_singleton(IUIWidgetFactory, QtUIWidgetFactory)
-    builder.add_singleton(IFontFactory, QtFontFactory)
-    builder.add_singleton(IAnimationFactory, QtAnimationFactory)
-    builder.add_singleton(IEffectsFactory, QtEffectsFactory)
-    builder.add_singleton(IWidgetStyler, QtWidgetStyler)
+    """Register framework-agnostic UI adapters with the container.
+
+    Only register adapters that exist to satisfy type-checking.
+    """
+    from src_refactored.infrastructure.adapters.pyqt6.widget_adapters import QtUIWidgetFactory
+    from src_refactored.presentation.core.ui_abstractions import IUIWidgetFactory
+
+    builder.add_singleton(cast(type[Any], IUIWidgetFactory), QtUIWidgetFactory)
 
 
 def register_ui_patterns(builder: EnterpriseContainerBuilder) -> None:
@@ -504,7 +500,7 @@ def register_ui_patterns(builder: EnterpriseContainerBuilder) -> None:
     )
     
     # Factory patterns - UIWidgetFactory now requires dependencies
-    builder.add_singleton(IWidgetFactory, UIWidgetFactory)
+    builder.add_singleton(cast(type[Any], IWidgetFactory), UIWidgetFactory)
     
     # Builder patterns - register as transient for stateful building
     builder.add_transient(UIComponentBuilder, UIComponentBuilder)

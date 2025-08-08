@@ -78,7 +78,7 @@ class WidgetLayeringService(QObject):
             self.logger.exception(f"Failed to initialize layer priorities: {e}")
 
     def add_layer(self, layer_name: str, widget: QWidget,
-                  priority: int | None = None,
+                  priority: LayerPriority | int | None = None,
                   description: str | None = None,
                   parent_layer: str | None = None) -> bool:
         try:
@@ -86,12 +86,14 @@ class WidgetLayeringService(QObject):
                 self.logger.warning("Layer '{layer_name}' already exists, updating")
                 return self.update_layer(layer_name, widget, priority, description)
             if priority is None:
-                priority = self._standard_layers.get(layer_name, LayerPriority.UI_ELEMENTS)
-            z_order = self._calculate_z_order(priority)
+                priority_obj = self._standard_layers.get(layer_name, LayerPriority.UI_ELEMENTS)
+            else:
+                priority_obj = priority if isinstance(priority, LayerPriority) else LayerPriority(int(priority))
+            z_order = self._calculate_z_order(int(priority_obj))
             layer = WidgetLayer(
                 widget=widget,
                 layer_name=layer_name,
-                priority=LayerPriority(priority),
+                priority=priority_obj if isinstance(priority_obj, LayerPriority) else LayerPriority(int(priority_obj)),
                 z_order=z_order,
                 is_visible=widget.isVisible(),
                 parent_layer=parent_layer,
@@ -107,7 +109,7 @@ class WidgetLayeringService(QObject):
             return False
 
     def update_layer(self, layer_name: str, widget: QWidget | None = None,
-                    priority: int | None = None,
+                    priority: LayerPriority | int | None = None,
                     description: str | None = None) -> bool:
         try:
             if layer_name not in self._layers:
@@ -117,8 +119,9 @@ class WidgetLayeringService(QObject):
                 layer.widget = widget
                 layer.is_visible = widget.isVisible()
             if priority is not None:
-                layer.priority = priority
-                layer.z_order = self._calculate_z_order(priority)
+                priority_obj = priority if isinstance(priority, LayerPriority) else LayerPriority(int(priority))
+                layer.priority = priority_obj
+                layer.z_order = self._calculate_z_order(int(priority_obj))
                 if layer_name in self._layer_order:
                     self._layer_order.remove(layer_name)
                 self._insert_layer_in_order(layer_name)
@@ -200,7 +203,7 @@ class WidgetLayeringService(QObject):
     ) -> int:
         max_z_order = 0
         for layer in self._layers.values():
-            if layer.priority == priority and layer.z_order > max_z_order:
+            if int(layer.priority) == int(priority) and layer.z_order > max_z_order:
                 max_z_order = layer.z_order
         return max_z_order
 
@@ -208,7 +211,7 @@ class WidgetLayeringService(QObject):
     ) -> int:
         min_z_order = float("inf")
         for layer in self._layers.values():
-            if layer.priority == priority and layer.z_order < min_z_order:
+            if int(layer.priority) == int(priority) and layer.z_order < min_z_order:
                 min_z_order = layer.z_order
         return int(min_z_order) if min_z_order != float("inf") else 0
 

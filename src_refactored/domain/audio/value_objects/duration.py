@@ -12,7 +12,7 @@ class Duration(ValueObject):
     """Duration value object for audio operations."""
     seconds: float
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (self.seconds,)
 
@@ -20,7 +20,7 @@ class Duration(ValueObject):
     MIN_DURATION = 0.1  # Minimum 100ms for meaningful audio
     MAX_DURATION = 3600.0  # Maximum 1 hour for practical limits
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.seconds < 0:
             msg = f"Duration cannot be negative, got {self.seconds}"
             raise ValueError(msg)
@@ -29,21 +29,15 @@ class Duration(ValueObject):
             msg = (
                 f"Duration too short for processing: {self.seconds}s. "
                 f"Minimum: {self.MIN_DURATION}s"
-            ,
-    )
-            raise ValueError(
-                msg,
             )
+            raise ValueError(msg)
 
         if self.seconds > self.MAX_DURATION:
             msg = (
                 f"Duration too long: {self.seconds}s. "
                 f"Maximum: {self.MAX_DURATION}s"
-            ,
-    )
-            raise ValueError(
-                msg,
             )
+            raise ValueError(msg)
 
     @property
     def milliseconds(self) -> float:

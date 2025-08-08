@@ -25,7 +25,7 @@ class AudioRecorder(Entity):
     minimum_duration: float = 0.5
     start_time: float = 0.0
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Initialize the Entity with recording_id
         if not self.recording_id:
             object.__setattr__(self, "recording_id", DomainIdentityGenerator.generate_domain_id("recording"))

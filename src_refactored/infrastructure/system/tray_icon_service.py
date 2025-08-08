@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QAction, QIcon
-from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
+from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 
 class TrayIconService(QObject):
@@ -20,7 +20,8 @@ class TrayIconService(QObject):
     """
 
     # Signals for tray icon events
-    tray_activated = pyqtSignal(QSystemTrayIcon.ActivationReason)
+    # Use int to avoid enum conversion issues across C++/Python boundary on some platforms
+    tray_activated = pyqtSignal(int)
     show_window_requested = pyqtSignal()
     settings_requested = pyqtSignal()
     close_app_requested = pyqtSignal()
@@ -34,9 +35,9 @@ class TrayIconService(QObject):
         """
         super().__init__()
         self.app_name = app_name
-        self.icon_path = icon_path
-        self.tray_icon = None
-        self.tray_menu = None
+        self.icon_path: str | None = icon_path
+        self.tray_icon: QSystemTrayIcon | None = None
+        self.tray_menu: QMenu | None = None
         self._is_visible = False
 
     def create_tray_icon(self) -> bool:
@@ -50,15 +51,17 @@ class TrayIconService(QObject):
 
         # Create tray icon with a stable parent (the QApplication instance) to ensure lifetime
         app = QApplication.instance()
+        # Create and store tray icon
         self.tray_icon = QSystemTrayIcon(app)
 
         # Set icon
         icon = self._load_icon()
-        if icon:
+        if icon and self.tray_icon is not None:
             self.tray_icon.setIcon(icon)
 
         # Set tooltip
-        self.tray_icon.setToolTip(self.app_name)
+        if self.tray_icon is not None:
+            self.tray_icon.setToolTip(self.app_name)
 
         # Create context menu
         self._create_tray_menu()
@@ -68,7 +71,8 @@ class TrayIconService(QObject):
             self.tray_icon.setContextMenu(self.tray_menu)
 
         # Connect signals
-        self.tray_icon.activated.connect(self._on_tray_activated)
+        if self.tray_icon is not None:
+            self.tray_icon.activated.connect(self._on_tray_activated)
 
         return True
 
@@ -78,7 +82,7 @@ class TrayIconService(QObject):
         Returns:
             True if tray icon was shown successfully, False otherwise
         """
-        if not self.tray_icon and not self.create_tray_icon():
+        if self.tray_icon is None and not self.create_tray_icon():
             return False
 
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -88,7 +92,7 @@ class TrayIconService(QObject):
         if not self.tray_menu:
             self._create_tray_menu()
             
-        if self.tray_menu:
+        if self.tray_menu and self.tray_icon:
             self.tray_icon.setContextMenu(self.tray_menu)
             # Verify menu is actually attached
             attached_menu = self.tray_icon.contextMenu()
@@ -96,13 +100,14 @@ class TrayIconService(QObject):
                 # Try setting it again
                 self.tray_icon.setContextMenu(self.tray_menu)
 
+        assert self.tray_icon is not None
         self.tray_icon.show()
         self._is_visible = True
         return True
 
     def hide_tray_icon(self) -> None:
         """Hide the tray icon."""
-        if self.tray_icon:
+        if self.tray_icon is not None:
             self.tray_icon.hide()
             self._is_visible = False
 
@@ -121,7 +126,7 @@ class TrayIconService(QObject):
         Args:
             tooltip: New tooltip text
         """
-        if self.tray_icon:
+        if self.tray_icon is not None:
             self.tray_icon.setToolTip(tooltip)
 
     def update_icon(self, icon_path: str,
@@ -134,7 +139,7 @@ class TrayIconService(QObject):
         Returns:
             True if icon was updated successfully, False otherwise
         """
-        if not self.tray_icon:
+        if self.tray_icon is None:
             return False
 
         icon = self._load_icon(icon_path)
@@ -182,16 +187,17 @@ class TrayIconService(QObject):
         action.triggered.connect(callback)
 
         # Insert before the separator (before Show/Close actions)
-        actions = self.tray_menu.actions()
-        min_default_actions = 2  # Show and Close actions
-        if len(actions) >= min_default_actions:
-            self.tray_menu.insertAction(actions[-2], action)
-            self.tray_menu.insertSeparator(actions[-2])
-        else:
-            self.tray_menu.addAction(action)
+        if self.tray_menu is not None:
+            actions: list[QAction] = self.tray_menu.actions()
+            min_default_actions = 2  # Show and Close actions
+            if len(actions) >= min_default_actions:
+                self.tray_menu.insertAction(actions[-2], action)
+                self.tray_menu.insertSeparator(actions[-2])
+            else:
+                self.tray_menu.addAction(action)
 
         # Ensure menu is attached to tray icon
-        if self.tray_icon and self.tray_menu:
+        if self.tray_icon is not None and self.tray_menu is not None:
             self.tray_icon.setContextMenu(self.tray_menu)
 
         return action
@@ -208,10 +214,10 @@ class TrayIconService(QObject):
 
     def cleanup(self) -> None:
         """Clean up tray icon resources."""
-        if self.tray_icon:
+        if self.tray_icon is not None:
             self.tray_icon.hide()
             self.tray_icon = None
-        if self.tray_menu:
+        if self.tray_menu is not None:
             self.tray_menu = None
         self._is_visible = False
 
@@ -237,7 +243,7 @@ class TrayIconService(QObject):
         self.tray_menu.addAction(close_action)
 
         # Set menu to tray icon immediately
-        if self.tray_icon:
+        if self.tray_icon is not None:
             self.tray_icon.setContextMenu(self.tray_menu)
 
     def _load_icon(self, icon_path: str | None = None) -> QIcon | None:
@@ -288,7 +294,7 @@ class TrayIconService(QObject):
         from contextlib import suppress
         
         with suppress(Exception):
-            # Convert enum to int for signal emission to avoid type conversion issues
+            # Emit as plain int to avoid enum conversion issues
             self.tray_activated.emit(int(reason))
 
         # Ensure right-click shows context menu reliably
@@ -300,7 +306,7 @@ class TrayIconService(QObject):
                     self.tray_menu.exec(QCursor.pos())
                 except Exception:
                     # Fallback: ensure menu is attached; Qt should handle display
-                    if self.tray_icon and self.tray_menu:
+                    if self.tray_icon is not None and self.tray_menu is not None:
                         self.tray_icon.setContextMenu(self.tray_menu)
         # Double-click shows window, matching domain default behavior
         elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:

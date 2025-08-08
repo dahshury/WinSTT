@@ -309,7 +309,8 @@ class UIStateManagementService(QObject):
         if element not in self.opacity_effects:
             if hasattr(element, "setOpacity"):
                 # Element has built-in opacity support
-                self.opacity_effects[element] = None
+                # Store a sentinel to indicate built-in support without effect
+                self.opacity_effects[element] = None  # type: ignore[assignment]
             else:
                 # Create graphics opacity effect
                 effect = QGraphicsOpacityEffect(element)

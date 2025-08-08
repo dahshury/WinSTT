@@ -30,7 +30,7 @@ class ProcessingStatusData(ValueObject):
     message: str
     error: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.state == ProcessingState.FAILED and not self.error:
             msg = "Failed processing status must have an error message"
             raise ValueError(msg)

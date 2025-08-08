@@ -8,7 +8,7 @@ from PyQt6.QtCore import QEasingCurve, QObject, QPropertyAnimation, pyqtSignal
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
 
 from src_refactored.domain.common.ports.logging_port import LoggingPort
-from src_refactored.presentation.qt.voice_visualizer import VoiceVisualizer
+from src_refactored.presentation.qt.voice_visualizer import VoiceVisualizerUI
 
 
 class VisualizationIntegrationError(Exception):
@@ -25,7 +25,7 @@ class VisualizationIntegrationService(QObject):
     def __init__(self, logger: LoggingPort | None = None):
         super().__init__()
         self.logger = logger
-        self.voice_visualizer_controller: VoiceVisualizer | None = None
+        self.voice_visualizer_controller: VoiceVisualizerUI | None = None
         self.plot_widget: pg.PlotWidget | None = None
         self.waveform_plot = None
         self.visualizer_opacity_effect: QGraphicsOpacityEffect | None = None
@@ -69,7 +69,7 @@ class VisualizationIntegrationService(QObject):
         except Exception as e:
             error_msg = f"Failed to initialize visualization: {e}"
             if self.logger:
-                self.logger.log_exception(error_msg)
+                self.logger.log_error(error_msg)
             self.visualization_error.emit(error_msg)
             return False
 
@@ -81,10 +81,8 @@ class VisualizationIntegrationService(QObject):
                     self.logger.log_warning("Visualization already active")
                 return True
             if not self.voice_visualizer_controller:
-                self.voice_visualizer_controller = VoiceVisualizer(parent_widget)
-                if hasattr(self.voice_visualizer_controller, "processor"):
-                    self.voice_visualizer_controller.processor.data_ready.connect(self._handle_audio_data)
-            self.voice_visualizer_controller.start_processing()
+                self.voice_visualizer_controller = VoiceVisualizerUI(parent_widget)  # type: ignore[arg-type]
+            self.voice_visualizer_controller.start_visualization()
             if self.plot_widget:
                 self.plot_widget.setVisible(True)
             self._start_fade_in_animations()
@@ -96,7 +94,7 @@ class VisualizationIntegrationService(QObject):
         except Exception as e:
             error_msg = f"Failed to start visualization: {e}"
             if self.logger:
-                self.logger.log_exception(error_msg)
+                self.logger.log_error(error_msg)
             self.visualization_error.emit(error_msg)
             return False
 
@@ -118,7 +116,7 @@ class VisualizationIntegrationService(QObject):
         except Exception as e:
             error_msg = f"Failed to stop visualization: {e}"
             if self.logger:
-                self.logger.log_exception(error_msg)
+                self.logger.log_error(error_msg)
             self.visualization_error.emit(error_msg)
             return False
 
@@ -135,7 +133,7 @@ class VisualizationIntegrationService(QObject):
             return True
         except Exception as e:
             if self.logger:
-                self.logger.log_exception(f"Failed to update waveform: {e}")
+                self.logger.log_error(f"Failed to update waveform: {e}")
             return False
 
     def _handle_audio_data(self, audio_data: np.ndarray) -> None:
@@ -159,7 +157,7 @@ class VisualizationIntegrationService(QObject):
                 self._fade_out_element(self.instruction_opacity_effect, "fade_out_instruction")
         except Exception as e:
             if self.logger:
-                self.logger.log_exception(f"Failed to start fade in animations: {e}")
+                self.logger.log_error(f"Failed to start fade in animations: {e}")
 
     def _start_fade_out_animations(self) -> None:
         try:
@@ -179,7 +177,7 @@ class VisualizationIntegrationService(QObject):
                 self._fade_in_element(self.instruction_opacity_effect, "fade_in_instruction", 1.0)
         except Exception as e:
             if self.logger:
-                self.logger.log_exception(f"Failed to start fade out animations: {e}")
+                self.logger.log_error(f"Failed to start fade out animations: {e}")
 
     def _fade_out_element(self, opacity_effect: QGraphicsOpacityEffect | None,
                          animation_name: str, end_value: float = 0.4,
@@ -197,7 +195,7 @@ class VisualizationIntegrationService(QObject):
             setattr(self, animation_name.replace("fade_out_", "fade_out_"), animation)
         except Exception as e:
             if self.logger:
-                self.logger.log_exception(f"Failed to fade out element {animation_name}: {e}")
+                self.logger.log_error(f"Failed to fade out element {animation_name}: {e}")
 
     def _fade_in_element(self, opacity_effect: QGraphicsOpacityEffect | None,
                         animation_name: str, end_value: float = 1.0,
@@ -216,7 +214,7 @@ class VisualizationIntegrationService(QObject):
             setattr(self, animation_name.replace("fade_in_", "fade_in_"), animation)
         except Exception as e:
             if self.logger:
-                self.logger.log_exception(f"Failed to fade in element {animation_name}: {e}")
+                self.logger.log_error(f"Failed to fade in element {animation_name}: {e}")
 
     def _on_fade_out_complete(self) -> None:
         try:
@@ -224,15 +222,16 @@ class VisualizationIntegrationService(QObject):
                 self.plot_widget.setVisible(False)
         except Exception as e:
             if self.logger:
-                self.logger.log_exception(f"Failed to handle fade out completion: {e}")
+                self.logger.log_error(f"Failed to handle fade out completion: {e}")
 
     def _schedule_stop_processing(self) -> None:
         try:
             if self.voice_visualizer_controller:
-                self.voice_visualizer_controller.stop_processing()
+                # VoiceVisualizerUI exposes start/stop_visualization; it does not have stop_processing
+                self.voice_visualizer_controller.stop_visualization()
         except Exception as e:
             if self.logger:
-                self.logger.log_exception(f"Failed to stop audio processing: {e}")
+                self.logger.log_error(f"Failed to stop audio processing: {e}")
 
     def set_animation_duration(self, duration_ms: int,
     ) -> None:
@@ -252,7 +251,7 @@ class VisualizationIntegrationService(QObject):
                 self.waveform_plot.setPen(pen)
         except Exception as e:
             if self.logger:
-                self.logger.log_exception(f"Failed to set waveform style: {e}")
+                self.logger.log_error(f"Failed to set waveform style: {e}")
 
     def set_downsample_factor(self, factor: int,
     ) -> None:
@@ -264,7 +263,7 @@ class VisualizationIntegrationService(QObject):
     def is_active(self) -> bool:
         return self.is_visualization_active
 
-    def get_voice_visualizer_controller(self) -> VoiceVisualizer | None:
+    def get_voice_visualizer_controller(self) -> VoiceVisualizerUI | None:
         return self.voice_visualizer_controller
 
     def cleanup(self) -> None:
@@ -272,7 +271,7 @@ class VisualizationIntegrationService(QObject):
             if self.is_visualization_active:
                 self.stop_visualization()
             if self.voice_visualizer_controller:
-                self.voice_visualizer_controller.stop_processing()
+                self.voice_visualizer_controller.stop_visualization()
                 self.voice_visualizer_controller = None
             self.plot_widget = None
             self.waveform_plot = None
@@ -293,7 +292,7 @@ class VisualizationIntegrationService(QObject):
                 self.logger.log_debug("Visualization resources cleaned up")
         except Exception as e:
             if self.logger:
-                self.logger.log_exception(f"Failed to cleanup visualization: {e}")
+                self.logger.log_error(f"Failed to cleanup visualization: {e}")
 
 
 class VisualizationIntegrationManager:

@@ -160,7 +160,7 @@ class UIWidgetFactory(ABC):
     """Abstract factory for creating UI widgets."""
 
     @abstractmethod
-    def create_window(self, **kwargs) -> IUIWindow:
+    def create_window(self, **kwargs: Any) -> IUIWindow:
         """Create a new window.
         
         Returns:
@@ -169,7 +169,7 @@ class UIWidgetFactory(ABC):
         ...
 
     @abstractmethod
-    def create_container(self, **kwargs) -> IUIContainer:
+    def create_container(self, **kwargs: Any) -> IUIContainer:
         """Create a new container.
         
         Returns:
@@ -178,7 +178,7 @@ class UIWidgetFactory(ABC):
         ...
 
     @abstractmethod
-    def create_widget(self, widget_type: str, **kwargs) -> IUIWidget:
+    def create_widget(self, widget_type: str, **kwargs: Any) -> IUIWidget:
         """Create a generic widget.
         
         Args:

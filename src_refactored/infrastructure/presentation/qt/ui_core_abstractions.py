@@ -228,7 +228,7 @@ class UIComponentBase(QObject, IUIComponent):
             # Perform cleanup
             cleanup_result = self._do_cleanup()
             if not cleanup_result.is_success:
-                self.logger.warning(f"Cleanup issues for component {self._component_id}: {cleanup_result.error()}")
+                self.logger.warning(f"Cleanup issues for component {self._component_id}: {cleanup_result.get_error()}")
 
             self._cleanup_time = datetime.utcnow()
             self._set_state(UIState.DISPOSED)
@@ -433,9 +433,10 @@ class UIWidgetComponent(UIComponentBase, Generic[TWidget]):
         try:
             # Connect common widget signals if they exist
             if hasattr(self._widget, "destroyed"):
-                self._widget.destroyed.connect(
-                    lambda: self.emit_event(UIEventType.CLOSE),
-                )
+                try:
+                    self._widget.destroyed.connect(lambda _obj=None: self.emit_event(UIEventType.CLOSE))
+                except Exception:
+                    pass
 
             # Connect focus signals if available
             if hasattr(self._widget, "focusInEvent"):
@@ -638,7 +639,7 @@ class UILifecycleManager(QObject, IUILifecycleManager):
             # Cleanup component
             cleanup_result = component.cleanup()
             if not cleanup_result.is_success:
-                self.logger.warning(f"Component cleanup issues: {cleanup_result.error()}")
+                self.logger.warning(f"Component cleanup issues: {cleanup_result.get_error()}")
 
             # Remove from tracking
             with self._mutex:
@@ -687,8 +688,8 @@ class UILifecycleManager(QObject, IUILifecycleManager):
                         if component_id not in self._initialization_order:
                             self._initialization_order.append(component_id)
                     else:
-                        failed_components.append((component_id, init_result.error()))
-                        self.logger.error(f"Failed to initialize {component_id}: {init_result.error()}")
+                        failed_components.append((component_id, init_result.get_error()))
+                        self.logger.error(f"Failed to initialize {component_id}: {init_result.get_error()}")
                 except Exception as e:
                     failed_components.append((component_id, str(e)))
                     self.logger.exception(f"Exception initializing {component_id}: {e}")
@@ -730,7 +731,7 @@ class UILifecycleManager(QObject, IUILifecycleManager):
                         if cleanup_result.is_success:
                             self._cleanup_count += 1
                         else:
-                            failed_cleanups.append((component_id, cleanup_result.error()))
+                            failed_cleanups.append((component_id, cleanup_result.get_error()))
                     except Exception as e:
                         failed_cleanups.append((component_id, str(e)))
                         self.logger.exception(f"Exception cleaning up {component_id}: {e}")

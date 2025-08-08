@@ -25,7 +25,9 @@ class DragDropEventController:
     def handle_drag_enter(self, event) -> None:
         try:
             if self.coordinator:
-                self.coordinator.handle_drag_enter(event)
+                if hasattr(self.coordinator, "setup_main_window_drag_drop"):
+                    # No direct handler; rely on adapter wiring
+                    pass
         except Exception as e:
             if self.logger:
                 self.logger.log_error(f"Error forwarding dragEnterEvent: {e}")
@@ -33,7 +35,9 @@ class DragDropEventController:
     def handle_drop(self, event) -> None:
         try:
             if self.coordinator:
-                self.coordinator.handle_drop(event)
+                if hasattr(self.coordinator, "setup_main_window_drag_drop"):
+                    # No direct handler; rely on adapter wiring
+                    pass
         except Exception as e:
             if self.logger:
                 self.logger.log_error(f"Error forwarding dropEvent: {e}")

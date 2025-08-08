@@ -43,7 +43,7 @@ class EventPriority(Enum):
 @dataclass
 class EventSubscription(Generic[TEvent]):
     """Represents an event subscription with metadata."""
-    observer: IObserver[TEvent]
+    observer: IObserver
     event_type: type[TEvent]
     priority: EventPriority = EventPriority.NORMAL
     filter_func: Callable[[TEvent], bool] | None = None
@@ -72,7 +72,7 @@ class IQueryHandler(Generic[TQuery, TResult]):
 # MAIN EVENT SYSTEM
 # ============================================================================
 
-class UIEventSystem(IObservable[UIEvent], IMediator):
+class UIEventSystem(IObservable, IMediator):
     """Comprehensive event system with mediator pattern implementation.
     
     Features:
@@ -102,7 +102,7 @@ class UIEventSystem(IObservable[UIEvent], IMediator):
         }
     
     def subscribe(self,  # type: ignore[override]
-                  observer: IObserver[TEvent],
+                  observer: IObserver,
                   event_type: type[TEvent],
                   priority: EventPriority = EventPriority.NORMAL,
                   filter_func: Callable[[TEvent], bool] | None = None,
@@ -141,7 +141,7 @@ class UIEventSystem(IObservable[UIEvent], IMediator):
             
             return subscription.subscription_id
     
-    def unsubscribe(self, observer: IObserver[TEvent]) -> None:
+    def unsubscribe(self, observer: IObserver) -> None:
         """Unsubscribe an observer from all events."""
         with self._lock:
             for event_type in list(self._subscriptions.keys()):
@@ -222,7 +222,7 @@ class UIEventSystem(IObservable[UIEvent], IMediator):
                 # Log error but continue processing other subscriptions
                 print(f"Error processing event subscription: {e}")
     
-    def _notify_observer_safe(self, observer: IObserver[UIEvent], event: UIEvent) -> None:
+    def _notify_observer_safe(self, observer: IObserver, event: UIEvent) -> None:
         """Safely notify an observer, handling any exceptions."""
         try:
             observer.notify(event)

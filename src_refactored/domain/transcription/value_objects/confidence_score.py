@@ -31,7 +31,7 @@ class ConfidenceScore(ValueObject):
     """
     value: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not 0.0 <= self.value <= 1.0:
             msg = f"Confidence score must be between 0.0 and 1.0, got: {self.value}"
             raise ValueError(msg)

@@ -53,6 +53,22 @@ class HotkeyHandler(Protocol):
         ...
 
 
+class _FunctionHotkeyHandler(HotkeyHandler):
+    """Adapter to allow plain functions with a single 'on_hotkey_pressed' method."""
+
+    def __init__(self, on_pressed: Any, on_released: Any | None = None):
+        self._on_pressed = on_pressed
+        self._on_released = on_released
+
+    def on_hotkey_pressed(self, combination: KeyCombination) -> None:
+        if callable(self._on_pressed):
+            self._on_pressed(combination)
+
+    def on_hotkey_released(self, combination: KeyCombination) -> None:
+        if callable(self._on_released):
+            self._on_released(combination)
+
+
 @dataclass
 class KeyboardServiceConfiguration:
     """Configuration for keyboard service."""
@@ -113,14 +129,18 @@ class KeyboardService:
                 return KeyboardServiceResult.FAILURE
 
     def register_hotkey(self,
-    hotkey_id: str, combination: KeyCombination, handler: HotkeyHandler,
+    hotkey_id: str, combination: KeyCombination, handler: HotkeyHandler | Any,
     ) -> KeyboardServiceResult:
         """Register a hotkey combination with a handler."""
         with self._lock:
             if not combination.is_valid_for_recording():
                 return KeyboardServiceResult.INVALID_COMBINATION
 
-            self._registered_hotkeys[hotkey_id] = (combination, handler)
+            # Wrap plain callables into the adapter
+            if not hasattr(handler, "on_hotkey_pressed"):
+                handler = _FunctionHotkeyHandler(handler)
+
+            self._registered_hotkeys[hotkey_id] = (combination, handler)  # type: ignore[arg-type]
             return KeyboardServiceResult.SUCCESS
 
     def unregister_hotkey(self, hotkey_id: str,

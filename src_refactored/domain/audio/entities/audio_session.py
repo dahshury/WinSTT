@@ -91,7 +91,7 @@ class AudioSession(AggregateRoot):
     maximum_duration: Duration = field(default_factory=lambda: Duration(300.0))  # 5 minutes
     error_message: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__init__(self.session_id)
 
     def start_recording(self) -> None:

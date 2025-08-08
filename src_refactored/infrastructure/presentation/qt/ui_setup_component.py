@@ -365,13 +365,13 @@ class UISetupComponent:
         """
         self.logger.info("Applying UI state: {state.value}")
 
-        if state == UIState.RECORDING:
+        if state.name == "RECORDING":
             self._apply_recording_ui_state(main_window)
-        elif state == UIState.PROCESSING:
+        elif state.name == "PROCESSING":
             self._apply_processing_ui_state(main_window)
-        elif state == UIState.IDLE:
+        elif state.name == "IDLE":
             self._apply_idle_ui_state(main_window)
-        elif state == UIState.ERROR:
+        elif state.name == "ERROR":
             self._apply_error_ui_state(main_window)
 
     def _apply_recording_ui_state(self, main_window: QMainWindow,

@@ -27,7 +27,7 @@ class AudioConfiguration(ValueObject):
     noise_suppression: bool = False
     voice_activity_detection: bool = False
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.sample_rate,
@@ -40,7 +40,7 @@ class AudioConfiguration(ValueObject):
         )
 
     def __post_init__(self,
-    ):
+    ) -> None:
         """Validate audio configuration after initialization."""
         # Validate sample rate
         valid_sample_rates = {8000, 16000, 22050, 44100, 48000, 96000}
@@ -61,8 +61,7 @@ class AudioConfiguration(ValueObject):
             raise ValueError(msg)
 
         # Validate buffer size
-        if self.buffer_size <= 0 or (self.buffer_size & (self.buffer_size - 1),
-    ) != 0:
+        if self.buffer_size <= 0 or (self.buffer_size & (self.buffer_size - 1)) != 0:
             msg = f"Buffer size must be a positive power of 2, got: {self.buffer_size}"
             raise ValueError(msg)
 

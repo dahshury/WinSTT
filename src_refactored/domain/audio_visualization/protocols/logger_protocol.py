@@ -9,7 +9,7 @@ from typing import Protocol
 class LoggerServiceProtocol(Protocol):
     """Protocol for logger service."""
 
-    def log_info(self, message: str, **kwargs) -> None:
+    def log_info(self, message: str, **kwargs: object) -> None:
         """Log an info message.
         
         Args:
@@ -18,7 +18,7 @@ class LoggerServiceProtocol(Protocol):
         """
         ...
 
-    def log_warning(self, message: str, **kwargs) -> None:
+    def log_warning(self, message: str, **kwargs: object) -> None:
         """Log a warning message.
         
         Args:
@@ -27,7 +27,7 @@ class LoggerServiceProtocol(Protocol):
         """
         ...
 
-    def log_error(self, message: str, **kwargs) -> None:
+    def log_error(self, message: str, **kwargs: object) -> None:
         """Log an error message.
         
         Args:
@@ -36,7 +36,7 @@ class LoggerServiceProtocol(Protocol):
         """
         ...
 
-    def log_debug(self, message: str, **kwargs) -> None:
+    def log_debug(self, message: str, **kwargs: object) -> None:
         """Log a debug message.
         
         Args:

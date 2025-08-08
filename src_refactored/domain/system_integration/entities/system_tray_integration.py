@@ -37,7 +37,7 @@ class TrayAction:
     enabled: bool = True
     visible: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate tray action."""
         if not self.label or not self.label.strip():
             msg = "Action label cannot be empty"
@@ -57,7 +57,7 @@ class TrayConfiguration:
     auto_hide_on_close: bool = True
     double_click_action: TrayActionType = TrayActionType.SHOW
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate tray configuration."""
         if not self.icon_path or not self.icon_path.strip():
             msg = "Icon path cannot be empty"
@@ -219,7 +219,7 @@ class SystemTrayIntegration(AggregateRoot,
 
         del self._actions[action_id]
 
-    def update_action(self, action_id: str, **updates) -> None:
+    def update_action(self, action_id: str, **updates: Any) -> None:
         """Update an existing action."""
         if action_id not in self._actions:
             msg = f"Action with ID '{action_id}' does not exist"
@@ -272,7 +272,7 @@ class SystemTrayIntegration(AggregateRoot,
     )
                 raise
 
-    def update_configuration(self, **updates) -> None:
+    def update_configuration(self, **updates: Any) -> None:
         """Update tray configuration."""
         self._configuration = TrayConfiguration(
             icon_path=updates.get("icon_path", self._configuration.icon_path),

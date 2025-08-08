@@ -22,7 +22,7 @@ class ApplicationInstance:
     configuration: dict[str, Any] | None = None
     process_id: int | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.configuration is None:
             self.configuration = {}
     

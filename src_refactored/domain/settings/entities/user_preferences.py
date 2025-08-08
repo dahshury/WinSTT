@@ -28,12 +28,12 @@ class UserPreferences(AggregateRoot):
     audio_config: AudioConfiguration
     output_srt_enabled: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize the aggregate root."""
         super().__post_init__()
         self._validate_preferences()
 
-    def _validate_preferences(self):
+    def _validate_preferences(self) -> None:
         """Validate the overall preferences configuration."""
         # Ensure recording key is valid for hotkey usage
         if not self.recording_key.is_valid_for_recording():

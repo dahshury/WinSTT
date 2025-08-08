@@ -6,6 +6,7 @@ user notifications, and graceful application termination.
 
 import sys
 from collections.abc import Callable
+from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtWidgets import QMessageBox, QWidget
@@ -285,14 +286,17 @@ class ErrorHandlingService:
             self._requested_exit_code = exit_code.value
 
     def create_exception_handler(self,
-    ) -> Callable[[type, Exception, Any], None]:
+    ) -> Callable[[type[BaseException], BaseException, TracebackType | None], Any]:
         """Create a global exception handler for unhandled exceptions.
         
         Returns:
             Exception handler function that can be assigned to sys.excepthook
         """
-        def exception_handler(exc_type: type, exc_value: Exception, exc_traceback: Any,
-    ) -> None:
+        def exception_handler(
+            exc_type: type[BaseException],
+            exc_value: BaseException,
+            exc_traceback: TracebackType | None,
+        ) -> Any:
             """Handle unhandled exceptions."""
             if issubclass(exc_type, KeyboardInterrupt):
                 # Allow KeyboardInterrupt to exit normally
@@ -304,7 +308,7 @@ class ErrorHandlingService:
             self.show_critical_error(
                 message=error_message,
                 details=str(exc_value),
-                exception=exc_value,
+                exception=Exception(str(exc_value)),
                 title=f"{self._application_name} Unexpected Error",
                 exit_code=ExitCode.GENERAL_ERROR,
             )

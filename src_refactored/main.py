@@ -157,6 +157,12 @@ class WinSTTApplication:
             audio_recorder = AudioRecorder()  # Uses defaults
             
             # Create the bridge adapter that unifies the old AudioToText with the new DDD system
+            # Create text paste adapter (infrastructure)
+            from src_refactored.infrastructure.adapters.text_paste_adapter import (
+                ClipboardTextPasteAdapter,
+            )
+            text_paste_adapter = ClipboardTextPasteAdapter(self.logger)
+
             self.bridge_adapter = AudioToTextBridgeAdapter(
                 audio_recorder=audio_recorder,
                 transcription_adapter=transcription_model,
@@ -164,6 +170,7 @@ class WinSTTApplication:
                 recording_key=recording_key,
                 logger=self.logger,
                 ui_callback=None,  # Will be set after main window creation
+                text_paste_port=text_paste_adapter,
             )
             
             # Create use cases with shared audio recorder
@@ -239,7 +246,7 @@ class WinSTTApplication:
                         # Only treat as RECORDING if it explicitly starts with Recording...
                         elif lower.startswith("recording..."):
                             status_type = StatusType.RECORDING
-                        elif "transcribing" in lower or "transcription" in lower:
+                        elif lower.startswith("transcribing"):
                             status_type = StatusType.TRANSCRIBING
                         elif "error" in lower or "failed" in lower:
                             status_type = StatusType.ERROR

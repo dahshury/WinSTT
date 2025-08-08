@@ -1,0 +1,278 @@
+Metadata-Version: 2.4
+Name: winstt
+Version: 0.1.0
+Summary: Voice typing application using Whisper
+Author-email: Your Name <your.email@example.com>
+License: MIT License
+        
+        Copyright (c) 2022 OpenAI
+        
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+        
+        The above copyright notice and this permission notice shall be included in all
+        copies or substantial portions of the Software.
+        
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+        SOFTWARE.
+Requires-Python: <3.13,>=3.12
+Description-Content-Type: text/markdown
+License-File: license
+Requires-Dist: requests==2.31.0
+Requires-Dist: tqdm==4.67.0
+Requires-Dist: pyqt6==6.7.1
+Requires-Dist: keyboard==0.13.5
+Requires-Dist: pydub==0.25.1
+Requires-Dist: pygame==2.6.1
+Requires-Dist: pynput==1.7.7
+Requires-Dist: pyperclip==1.9.0
+Requires-Dist: pvporcupine==1.9.5
+Requires-Dist: pywin32==310
+Requires-Dist: pyqtgraph==0.13.7
+Requires-Dist: pyaudio==0.2.14
+Requires-Dist: numpy<2.3,>=2.0.0
+Requires-Dist: numba>=0.60.0
+Requires-Dist: onnxruntime>=1.20.0
+Requires-Dist: transformers>=4.46.1
+Requires-Dist: flatbuffers
+Requires-Dist: packaging
+Requires-Dist: protobuf
+Requires-Dist: sympy
+Requires-Dist: pre-commit>=4.2.0
+Requires-Dist: mypy>=1.10.0
+Requires-Dist: ruff>=0.4.4
+Requires-Dist: mdformat>=0.7.22
+Requires-Dist: pyinstaller>=6.14.2
+Requires-Dist: aiofiles>=24.1.0
+Requires-Dist: psutil>=7.0.0
+Requires-Dist: librosa>=0.10.2
+Requires-Dist: tree3>=0.2.0
+Requires-Dist: ty>=0.0.1a17
+Provides-Extra: cpu
+Requires-Dist: faster-whisper>=0.10.0; extra == "cpu"
+Requires-Dist: onnxruntime==1.20.0; extra == "cpu"
+Provides-Extra: gpu
+Requires-Dist: librosa>=0.10.2; extra == "gpu"
+Requires-Dist: transformers>=4.46.1; extra == "gpu"
+Requires-Dist: torch>=2.7.1; extra == "gpu"
+Requires-Dist: openai-whisper>=20250625; extra == "gpu"
+Requires-Dist: onnxruntime-gpu==1.20.0; extra == "gpu"
+Provides-Extra: dev
+Requires-Dist: types-requests>=2.32.4.20250611; extra == "dev"
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Provides-Extra: build
+Requires-Dist: setuptools>=45; extra == "build"
+Requires-Dist: wheel; extra == "build"
+Requires-Dist: twine>=4.0.0; extra == "build"
+Provides-Extra: dev-all
+Dynamic: license-file
+
+# <img src="./media/Windows 1 Theta.ico" alt="Alt text" width="30"> WinSTT
+
+![Alt text](/media/untitled.png)
+
+An application for desktop STT using [OpenAI-Whisper](https://github.com/openai/whisper)
+
+Type in any application using your voice. WinSTT is an application that leverages the power of OpenAI's Whisper STT model for efficient voice typing functionality. This desktop tool allows users to transcribe speech into text, with support for over 99 languages and the capability to run locally without the need for an internet connection.
+
+## Why
+
+Existing Windows speech to text is slow, not accurate, and not intuitive. This app provides customizable hotkey activation, and fast and accurate transcription for rapid typing. This is especially useful to those who write articles, blogs, and even conversations.
+
+## Setup
+
+### Precompiled Binary (Recommended for Windows Users)
+
+- Download the `.exe` file from the latest release from the [Releases](https://github.com/dahshury/WinSTT/releases) section .
+
+### Development Setup
+
+This project uses [uv](https://docs.astral.sh/uv/) for fast and reliable dependency management.
+
+#### Prerequisites
+
+1. Install uv:
+   ```bash
+   # Windows (PowerShell)
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+   # Or via pip
+   pip install uv
+   ```
+
+#### Install Dependencies
+
+- First, clone the repo:
+
+  ```bash
+  git clone https://github.com/dahshury/WinSTT
+  ```
+
+- Navigate to the cloned directory:
+
+  ```bash
+  cd WinSTT
+  ```
+
+- Choose your installation method:
+
+  **CPU-Only Installation (Recommended for most users)**
+  Lighter installation without GPU acceleration:
+
+  ```bash
+  uv sync --extra cpu
+  ```
+
+  **GPU-Accelerated Installation**
+  For systems with NVIDIA GPUs and CUDA support:
+
+  ```bash
+  uv sync --extra gpu
+  ```
+
+  **Development Installation**
+  For contributors and developers:
+
+  ```bash
+  # Basic development setup with CPU
+  uv sync --extra dev --extra cpu
+
+  # Development with GPU acceleration  
+  uv sync --extra dev --extra gpu
+  ```
+
+  <details>
+    <summary>Linux users only: additional setup for PyAudio</summary>
+
+  For Linux, you need to install `PortAudio`, which PyAudio depends on. Use the following commands to install PortAudio on common Linux distributions:
+
+  - **Debian/Ubuntu**:
+    ```bash
+    sudo apt update
+    sudo apt install portaudio19-dev libxcb1 libxcb-cursor0 libxcb-keysyms1 libxcb-render0 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-icccm4 libxcb-image0 libxcb-sync1 libxcb-xinerama0 libxcb-randr0 libxcb-util1 libx11-xcb1 libxrender1 libxkbcommon-x11-0
+    ```
+
+  </details>
+
+#### Available Dependency Groups
+
+- **Core**: Always installed - basic application framework
+- **cpu**: CPU-only inference using faster-whisper and ONNX
+- **gpu**: GPU-accelerated inference with CUDA support
+- **dev**: Development tools (linting, type checking, pre-commit)
+- **build**: Distribution and packaging tools
+
+#### Start The App
+
+```bash
+# Recommended: Run with async loading screen
+uv run python src/main_async.py
+
+# Or run the standard version  
+uv run python src/main.py
+
+# Or activate the environment and run
+source .venv/bin/activate  # Linux/macOS
+# .venv\Scripts\activate   # Windows
+python src/main_async.py
+```
+
+**Recommended**: Use `main_async.py` for better startup experience with loading screen.
+
+#### Building for Distribution
+
+```bash
+# Install build dependencies
+uv sync --extra build
+
+# Build executable
+uv run pyinstaller --onefile src/main.py
+```
+
+#### Updating Dependencies
+
+```bash
+# Update all dependencies
+uv lock --upgrade
+
+# Sync updated lockfile
+uv sync
+```
+
+## Usage
+
+Hold the Alt+Ctrl+A key combination to start recording, release it to stop. There can be a very slight delay between the start of the pressing and the start of the app listening to the audio from your microphone. You should only start speaking after hearing the audio cue.
+
+- Releasing the key will transcribe the audio you recorded, paste it wherever your typing pointer is in any application. The processing speed will depend on the model chosen and your computer capabilities.
+
+- The app contains a "record key" button, which allows you to change the recording key that you have to hold to start recording. Press record key, and then press and hold the buttons you wish to start the recording with, then click stop to change the recording key.
+
+- This tool is powered by Hugging Face's ASR models, primarily Whisper by OpenAI. The larger the model, the better the accuracy and the slower the speed. Try the model that best suits your hardware and needs.
+
+## Notes
+
+- Upon loading the app for the first time, Please wait for the model files to be downloaded, (about 1 GB for CPU version, 3 GB for GPU version) this will depend on your internet connection. After the model is downloaded, no internet connection needed unless you change the model. After that, the first recording might be pasted a little bit slower than the consequent ones.
+- The app will automatically detect if audio is present in the speech. If not, or if an error occurs, it will output a message inside the app and inside the logs folder.
+- The application only records while the record key is held down.
+- You can use this app using a CPU, it will run Whisper-Turbo quantized by default. However, if you have a CUDA GPU, the app will run the full version and this will increase the speed and the accuracy and is highly recommended.
+- The application does not transcribe audio that is less than 0.5 second long. If your sentence is short, consider not letting go of the button until 0.5s has passed.
+- Some antivirus programs may flag .exe files generated by PyInstaller as current releases as suspicious. This is a known issue. Rest assured, the binaries are clean and safe. The app has passed most VirusTotal's tests, which you can check out [here](https://www.virustotal.com/gui/file/fd093cae0e778901d77e2a87fdfeed5ae259031640ca097cdd8900861f7ce36a?nocache=1), the rest are false positives.
+
+## Troubleshooting
+
+### White Screen Issue
+
+If the application starts but shows only a white/blank window:
+
+1. **Use the async version (recommended)**:
+
+   ```bash
+   uv run python src/main_async.py
+   ```
+
+   This version shows a loading screen while workers initialize, fixing the white screen issue.
+
+1. **Try the minimal test version**:
+
+   ```bash
+   uv run python src/main_minimal.py
+   ```
+
+   This tests just the UI without worker initialization to isolate the issue.
+
+1. **Check dependencies**:
+
+   ```bash
+   # Ensure you have the correct dependencies installed
+   uv sync --extra cpu  # or --extra gpu
+   ```
+
+### Common Issues
+
+- **Resource loading errors**: Usually fixed by running the test script above
+- **Import errors**: Ensure all dependencies are installed with `uv sync`
+- **GPU version issues**: Try the CPU version first with `uv sync --extra cpu`
+- **Python version**: Requires Python 3.11 or higher
+
+### Getting Help
+
+If issues persist:
+
+1. Run the test script and include the output when reporting issues
+1. Check the `log/` directory for error messages
+1. Try the legacy version as a fallback
+
+## Acknowledgments
+
+- [Silero's Voice Activity Detection (VAD)](https://github.com/snakers4/silero-vad) is implemented to prevent hallucinations on silence start, and prevent empty file processing.

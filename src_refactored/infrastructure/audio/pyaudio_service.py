@@ -119,7 +119,8 @@ class PyAudioServiceState:
     initialized: bool = False
     active_streams: dict[str, Any] | None = None
     available_devices: DeviceListResult | None = None
-    current_config: AudioConfiguration | None = None
+    # Track the most recent configuration (recording stream or base audio)
+    current_config: AudioConfiguration | StreamConfiguration | None = None
     error_message: str | None = None
 
     def __post_init__(self):
@@ -317,6 +318,7 @@ class PyAudioRecorder:
             if self.p is None:
                 self._initialize_pyaudio()
 
+            assert self.p is not None
             self.stream = self.p.open(
                 format=self.FORMAT,
                 channels=self.CHANNELS,
@@ -451,7 +453,8 @@ class PyAudioService:
         self._logger_service = logger_service
 
         self._state = PyAudioServiceState()
-        self._data_queue = Queue()
+        # Typed audio data queue
+        self._data_queue: Queue[AudioData] = Queue()
         self._stop_event = threading.Event()
         self._worker_thread: threading.Thread | None = None
         self._recorder: PyAudioRecorder | None = None
@@ -460,7 +463,7 @@ class PyAudioService:
     ) -> PyAudioServiceResponse:
         """Execute PyAudio service operation."""
         start_time = time.time()
-        warnings = []
+        warnings: list[str] = []
 
         try:
             if request.enable_progress_tracking and self._progress_tracking_service:
@@ -636,8 +639,8 @@ class PyAudioService:
                     execution_time=time.time() - start_time,
                 )
 
-            device_success, device, device_error = self._device_management_service.get_device_info(device_index)
-            if not device_success:
+            device_success, device, device_error = self._device_management_service.get_device_info(int(device_index))
+            if not device_success or device is None:
                 return PyAudioServiceResponse(
                     result=AudioResult.DEVICE_ERROR,
                     state=self._state,
@@ -646,8 +649,11 @@ class PyAudioService:
                 )
 
             # Test device
+            # The protocol expects an AudioConfiguration for test_device
             test_result = self._device_management_service.test_device(
-                device, request.stream_config, request.test_duration,
+                device,
+                request.stream_config.audio_config,
+                request.test_duration,
             )
 
             if request.enable_progress_tracking and self._progress_tracking_service:
@@ -715,9 +721,12 @@ class PyAudioService:
                 )
 
             # Store stream
-            stream_id = f"recording_{len(self._state.active_streams)}"
-            self._state.active_streams[stream_id] = stream
-            self._state.current_config = request.stream_config
+            active_streams = self._state.active_streams or {}
+            stream_id = f"recording_{len(active_streams)}"
+            active_streams[stream_id] = stream
+            self._state.active_streams = active_streams
+            # Track only the base audio configuration for summary state
+            self._state.current_config = request.stream_config.audio_config
 
             stream_result = StreamOperationResult(
                 stream_created=True,
@@ -757,13 +766,16 @@ class PyAudioService:
         try:
             # Stop all recording streams
             stopped_streams = 0
-            for stream_id, stream in list(self._state.active_streams.items()):
+            for stream_id, stream in list((self._state.active_streams or {}).items()):
                 if "recording" in stream_id:
                     stop_success, stop_error = self._stream_management_service.stop_stream(stream)
                     if stop_success:
                         close_success, close_error = self._stream_management_service.close_stream(stream)
                         if close_success:
-                            del self._state.active_streams[stream_id]
+                            active_streams = self._state.active_streams or {}
+                            if stream_id in active_streams:
+                                del active_streams[stream_id]
+                                self._state.active_streams = active_streams
                             stopped_streams += 1
                         else:
                             warnings.append(f"Failed to close stream {stream_id}: {close_error}")
@@ -825,7 +837,7 @@ class PyAudioService:
             self._stop_data_collection_thread()
 
             # Close all active streams
-            for stream_id, stream in list(self._state.active_streams.items()):
+            for stream_id, stream in list((self._state.active_streams or {}).items()):
                 try:
                     self._stream_management_service.stop_stream(stream)
                     self._stream_management_service.close_stream(stream)
@@ -833,7 +845,10 @@ class PyAudioService:
                     warnings.append(f"Error closing stream {stream_id}: {e!s}")
 
             # Reset state
-            self._state.active_streams.clear()
+            if self._state.active_streams:
+                self._state.active_streams.clear()
+            else:
+                self._state.active_streams = {}
             self._state.current_config = None
 
             if request.enable_progress_tracking and self._progress_tracking_service:
@@ -889,23 +904,25 @@ class PyAudioService:
                     # Add to queue
                     try:
                         self._data_queue.put_nowait(audio_data)
-                    except:
-                        pass  # Queue full, skip this chunk
+                    except Exception:
+                        # Queue full or closed, skip this chunk
+                        pass
 
                     # Call callback if provided
                     if config.callback:
                         try:
-                            config.callback(audio_data.data, audio_data.frame_count)
+                            # Callback accepts a single payload argument
+                            config.callback(audio_data)
                         except Exception as e:
                             if config.error_callback:
-                                config.error_callback(f"Callback error: {e!s}")
+                                config.error_callback(e)
 
                 elif data_error and config.error_callback:
-                    config.error_callback(data_error)
+                    config.error_callback(Exception(data_error))
 
             except Exception as e:
                 if config.error_callback:
-                    config.error_callback(f"Data collection error: {e!s}")
+                    config.error_callback(e)
                 break
 
     def get_audio_data(self, timeout: float = 0.1) -> AudioData | None:

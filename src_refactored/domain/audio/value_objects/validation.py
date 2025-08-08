@@ -46,7 +46,7 @@ class ValidationRule(ValueObject):
     is_enabled: bool = True
     parameters: dict[str, Any] = field(default_factory=dict)
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.rule_id,
             self.name,
@@ -91,7 +91,7 @@ class ValidationIssue(ValueObject):
     timestamp: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
     context: dict[str, Any] = field(default_factory=dict)
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.issue_id,
             self.rule,
@@ -147,7 +147,7 @@ class AudioDataInfo(ValueObject):
     file_size_bytes: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.sample_rate,
             self.channels,
@@ -222,7 +222,7 @@ class ValidationResult(ValueObject):
     rules_applied: list[ValidationRule] = field(default_factory=list)
 
     def _get_equality_components(self,
-    ) -> tuple:
+    ) -> tuple[object, ...]:
         return (
             self.is_valid,
             tuple(self.issues),

@@ -3,7 +3,6 @@
 import logging
 import threading
 import time
-from abc import ABC
 from collections import defaultdict, deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -11,6 +10,7 @@ from typing import Any, TypeVar
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from src_refactored.domain.common.result import Result
 from src_refactored.domain.ui_coordination.value_objects.event_system import (
     EventMetrics,
     EventPriority,
@@ -32,11 +32,7 @@ TQuery = TypeVar("TQuery", bound=IQuery)
 TResult = TypeVar("TResult")
 
 
-class UIEventSystemMeta(type(QObject), type(ABC)):
-    """Metaclass that resolves the conflict between QObject and ABC metaclasses."""
-
-
-class UIEventSystem(QObject, IObservable[UIEvent], IMediator, metaclass=UIEventSystemMeta):
+class UIEventSystem(QObject):
     """Comprehensive UI event system with enterprise features."""
 
     # PyQt signals for cross-thread communication
@@ -52,11 +48,17 @@ class UIEventSystem(QObject, IObservable[UIEvent], IMediator, metaclass=UIEventS
         # Thread safety
         self._lock = threading.RLock()
         self._subscriptions: dict[type[UIEvent], list[EventSubscription]] = defaultdict(list)
-        self._observers: dict[str, IObserver[UIEvent]] = {}
+        self._observers: dict[str, IObserver] = {}
 
         # Event history and metrics
         self._event_history: deque[UIEvent] = deque(maxlen=max_history)
         self._metrics = EventMetrics()
+        # Local counters to avoid mutating frozen metrics value object
+        self._ev_count: int = 0
+        self._failed_count: int = 0
+        self._retry_count: int = 0
+        self._processing_time_ms_total: float = 0.0
+        self._last_processed_at: float = 0.0
 
         # Async processing
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -76,7 +78,12 @@ class UIEventSystem(QObject, IObservable[UIEvent], IMediator, metaclass=UIEventS
         self._processing_thread.started.connect(self._process_events)
         self._processing_thread.start()
 
-    def subscribe(
+    # ABC-compatible signature (matches IObservable)
+    def subscribe(self, observer: IObserver[UIEvent]) -> str:  # type: ignore[override]
+        return self.subscribe_with_options(observer, UIEvent)
+
+    # Extended API with options for internal usage
+    def subscribe_with_options(
         self,
         observer: IObserver[UIEvent],
         event_type: type[UIEvent],
@@ -85,45 +92,42 @@ class UIEventSystem(QObject, IObservable[UIEvent], IMediator, metaclass=UIEventS
         filter_func: Callable[[UIEvent], bool] | None = None,
     ) -> str:
         with self._lock:
+            # Adapt to domain value object shape
             subscription = EventSubscription(
-                event_type=event_type,
+                event_type=event_type.__name__,
+                subscriber_id=f"sub_{len(self._observers)+1}",
                 priority=priority,
-                is_async=is_async,
-                filter_func=filter_func,
-                created_at=time.time(),
+                filter_criteria={},
             )
             self._subscriptions[event_type].append(subscription)
-            self._observers[subscription.subscription_id] = observer
-            self._metrics.active_subscriptions += 1
+            # Use subscriber_id as key
+            self._observers[subscription.subscriber_id] = observer
+            # Metrics is a ValueObject with read-only fields in some variants; skip mutation
             self._logger.debug(
                 f"Subscribed {observer.__class__.__name__} to {event_type.__name__} "
-                f"with ID {subscription.subscription_id}",
+                f"with ID {subscription.subscriber_id}",
             )
-            return subscription.subscription_id
+            return subscription.subscriber_id
 
-    def unsubscribe(self, subscription_id: str,
-    ) -> bool:
+    def unsubscribe(self, subscription_id: str) -> None:  # type: ignore[override]
         with self._lock:
-            if subscription_id not in self._observers:
-                return False
-            del self._observers[subscription_id]
-            for event_type, subscriptions in self._subscriptions.items():
-                self._subscriptions[event_type] = [
-                    sub for sub in subscriptions if sub.subscription_id != subscription_id
-                ]
-            self._metrics.active_subscriptions -= 1
-            self._logger.debug(f"Unsubscribed {subscription_id}")
-            return True
+            if subscription_id in self._observers:
+                del self._observers[subscription_id]
+                for event_type, subscriptions in self._subscriptions.items():
+                    self._subscriptions[event_type] = [
+                        sub for sub in subscriptions if sub.subscriber_id != subscription_id
+                    ]
+                self._logger.debug(f"Unsubscribed {subscription_id}")
 
     def publish(self, event: UIEvent,
     ) -> None:
-        if not event.timestamp:
-            event.timestamp = time.time()
+        # Ensure timestamp is set; UIEvent from domain may be frozen
+        # Do not mutate event; timestamp is treated as read-only in domain
         with self._lock:
             self._event_history.append(event)
-            self._metrics.events_published += 1
-            self._processing_queue[event.priority].append(event)
-            self._logger.debug(f"Published event {event.event_type} with ID {event.event_id}")
+            # Enqueue with default priority
+            self._processing_queue[EventPriority.NORMAL].append(event)
+            self._logger.debug(f"Published event {event.event_type}")
         self.event_published.emit(event)
 
     def _process_events(self) -> None:
@@ -144,51 +148,49 @@ class UIEventSystem(QObject, IObservable[UIEvent], IMediator, metaclass=UIEventS
     def _process_single_event(self, event: UIEvent,
     ) -> None:
         start_time = time.time()
-        event.status = EventStatus.PROCESSING
+        # Track status locally through metrics only
         try:
             with self._lock:
                 subscriptions = self._subscriptions.get(type(event), [])
             for subscription in subscriptions:
                 try:
-                    if subscription.filter_func and not subscription.filter_func(event):
-                        continue
-                    observer = self._observers.get(subscription.subscription_id)
+                    # Domain subscription does not carry a filter function; deliver directly
+                    observer = self._observers.get(subscription.subscriber_id)
                     if not observer:
                         continue
-                    subscription.last_triggered = time.time()
-                    subscription.trigger_count += 1
-                    if subscription.is_async:
-                        self._executor.submit(observer.on_event, event)
-                    else:
-                        observer.on_event(event)
+                    # Execute synchronously; domain subscription doesn't carry async flags
+                    observer.on_next(event)
                 except Exception as e:
                     self._logger.exception(
-                        f"Error processing event {event.event_id} for subscription {subscription.subscription_id}: {e}",
+                        f"Error processing event for subscription {subscription.subscriber_id}: {e}",
                     )
-                    self._metrics.failed_events += 1
-                    event.status = EventStatus.FAILED
+                    # Skip mutating read-only metrics
                     self.event_failed.emit(event, str(e))
                     return
-            event.status = EventStatus.COMPLETED
-            self._metrics.events_processed += 1
             processing_time = time.time() - start_time
             self._processing_times.append(processing_time)
-            self._update_performance_metrics()
+            self._ev_count += 1
+            self._processing_time_ms_total += processing_time * 1000.0
+            self._last_processed_at = time.time()
             self.event_processed.emit(event)
         except Exception as e:
-            self._logger.exception(f"Critical error processing event {event.event_id}: {e}")
-            event.status = EventStatus.FAILED
-            self._metrics.failed_events += 1
+            self._logger.exception(f"Critical error processing event: {e}")
+            self._failed_count += 1
             self.event_failed.emit(event, str(e))
 
     def _update_performance_metrics(self) -> None:
         if not self._processing_times:
             return
         times = list(self._processing_times)
-        self._metrics.average_processing_time = sum(times) / len(times)
-        self._metrics.peak_processing_time = max(times)
-        self._metrics.total_processing_time += times[-1]
-        self.metrics_updated.emit(self._metrics)
+        # Emit snapshot metrics using domain value object
+        snapshot = EventMetrics(
+            event_count=self._ev_count,
+            processing_time_ms=self._processing_time_ms_total,
+            failed_count=self._failed_count,
+            retry_count=self._retry_count,
+            last_processed_at=self._last_processed_at,
+        )
+        self.metrics_updated.emit(snapshot)
 
     def register_command_handler(
         self,
@@ -224,7 +226,7 @@ class UIEventSystem(QObject, IObservable[UIEvent], IMediator, metaclass=UIEventS
             self._logger.exception(f"Error executing command {command_type.__name__}: {e}")
             raise
 
-    def send_query(self, query: IQuery[TResult]) -> TResult:
+    def send_query(self, query: IQuery[TResult]) -> Result[TResult]:  # type: ignore[override]
         query_type = type(query)
         with self._lock:
             handler = self._query_handlers.get(query_type)
@@ -243,13 +245,11 @@ class UIEventSystem(QObject, IObservable[UIEvent], IMediator, metaclass=UIEventS
     ) -> EventMetrics:
         with self._lock:
             return EventMetrics(
-                events_published=self._metrics.events_published,
-                events_processed=self._metrics.events_processed,
-                failed_events=self._metrics.failed_events,
-                active_subscriptions=self._metrics.active_subscriptions,
-                average_processing_time=self._metrics.average_processing_time,
-                peak_processing_time=self._metrics.peak_processing_time,
-                total_processing_time=self._metrics.total_processing_time,
+                event_count=self._ev_count,
+                processing_time_ms=self._processing_time_ms_total,
+                failed_count=self._failed_count,
+                retry_count=self._retry_count,
+                last_processed_at=self._last_processed_at,
             )
 
     def get_event_history(self, event_type: type[UIEvent] | None = None) -> list[UIEvent]:

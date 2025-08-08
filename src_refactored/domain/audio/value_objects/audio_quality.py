@@ -28,7 +28,7 @@ class AudioQuality(ValueObject):
     bit_depth: int
     compression_ratio: float | None = None
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.quality_level,
@@ -37,8 +37,8 @@ class AudioQuality(ValueObject):
             self.compression_ratio,
         )
 
-    def __post_init__(self):
-        if not 0.0 <= self.compression_ratio <= 1.0:
+    def __post_init__(self) -> None:
+        if self.compression_ratio is not None and not 0.0 <= self.compression_ratio <= 1.0:
             msg = f"Compression ratio must be between 0.0 and 1.0, got: {self.compression_ratio}"
             raise ValueError(msg)
 
@@ -136,7 +136,7 @@ class NoiseLevel(ValueObject):
     """Value object for audio noise level measurement."""
     decibels: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.decibels < 0 or self.decibels > 120:
             msg = f"Noise level must be between 0 and 120 dB, got: {self.decibels}"
             raise ValueError(msg)

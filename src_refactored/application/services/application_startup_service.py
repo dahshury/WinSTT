@@ -156,11 +156,10 @@ class ApplicationStartupService:
         """Start the application event loop."""
         return self._application_lifecycle_port.start_event_loop()
     
-    def shutdown_application(self) -> Result[None]:
+    def shutdown_application(self, config: ShutdownConfiguration) -> Result[None]:
         """Perform graceful application shutdown."""
         try:
-            # Create default shutdown configuration
-            config = ShutdownConfiguration()
+            # Use provided shutdown configuration
             
             # Close main window if it exists
             if self._main_window_id:

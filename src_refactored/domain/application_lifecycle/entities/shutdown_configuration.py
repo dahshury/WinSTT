@@ -9,7 +9,7 @@ from src_refactored.domain.common.entity import Entity
 
 
 @dataclass
-class ShutdownConfiguration(Entity[str]):
+class ShutdownConfiguration(Entity):
     """Configuration for application shutdown.
     
     This entity encapsulates all the settings and preferences for how
@@ -24,7 +24,7 @@ class ShutdownConfiguration(Entity[str]):
     graceful_timeout_seconds: int = 10
     force_exit_on_timeout: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Generate ID based on key configuration settings
         config_id = f"shutdown_{self.worker_timeout_seconds}_{self.graceful_timeout_seconds}_{self.save_state}"
         super().__init__(config_id)

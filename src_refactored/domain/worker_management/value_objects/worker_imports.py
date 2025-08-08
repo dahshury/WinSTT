@@ -28,7 +28,7 @@ class WorkerImportConfig:
     dependencies: list[str] | None = None
     initialization_params: dict[str, Any] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.dependencies is None:
             self.dependencies = []
         if self.initialization_params is None:

@@ -94,7 +94,7 @@ class IQuery(ABC, Generic[TResult]):
     """Base interface for queries in CQRS pattern."""
 
 
-TQuery = TypeVar("TQuery", bound=IQuery)
+TQuery = TypeVar("TQuery", bound=IQuery[Any])
 
 
 class IQueryHandler(ABC, Generic[TQuery, TResult]):
@@ -211,7 +211,7 @@ class IMediator(ABC):
         ...
     
     @abstractmethod
-    def send_query(self, query: IQuery) -> Result[Any]:
+    def send_query(self, query: IQuery[Any]) -> Result[Any]:
         """Send a query for processing.
         
         Args:
@@ -301,6 +301,6 @@ class UIEvent(ValueObject):
     target_component: str = ""
     event_data: dict[str, Any] = field(default_factory=dict)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.event_data is None:
             object.__setattr__(self, "event_data", {})

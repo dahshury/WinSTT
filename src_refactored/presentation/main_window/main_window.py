@@ -5,7 +5,7 @@ principles with proper separation of concerns.
 """
 
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QIcon, QPalette
@@ -40,6 +40,9 @@ from src_refactored.presentation.system.user_notification_service import (
     QMessageBoxNotificationService,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 class IConfigurationService(Protocol):
     """Protocol for configuration service dependency."""
@@ -53,9 +56,9 @@ class IResourceService(Protocol):
 
 class IKeyboardService(Protocol):
     """Protocol for keyboard service dependency."""
-    def register_hotkey(self, key_combination: str, callback) -> None: ...
+    def register_hotkey(self, key_combination: str, callback: "Callable[[], None]") -> None: ...
     def unregister_hotkey(self, key_combination: str) -> None: ...
-    def set_recording_callback(self, callback) -> None: ...
+    def set_recording_callback(self, callback: "Callable[[bool], None]") -> None: ...
     def start_monitoring(self) -> None: ...
     def stop_monitoring(self) -> None: ...
 
@@ -90,6 +93,10 @@ class MainWindow(QMainWindow):
         self._controller = main_window_controller
         self._system_tray_adapter = system_tray_adapter
         self._drag_drop_adapter = drag_drop_adapter
+
+        # Optional controllers typed as Optional
+        self._tray_controller: TrayCoordinationController | None = None
+        self._drag_drop_controller: DragDropCoordinationController | None = None
         
         # Load configuration
         self._load_configuration()
@@ -102,7 +109,7 @@ class MainWindow(QMainWindow):
         self._build_ui_via_controller()
 
         # Create event-forwarding controllers (SoC) that other setup depends on
-        self._dragdrop_event_controller = DragDropEventController(
+        self._dragdrop_event_controller: DragDropEventController = DragDropEventController(
             coordinator=None,  # will set inside _setup_controllers if available
             logger=self._logger,
         )
@@ -111,7 +118,7 @@ class MainWindow(QMainWindow):
         self._setup_controllers()
 
         # Create minimize controller after tray is available
-        self._minimize_controller = WindowMinimizeController(
+        self._minimize_controller: WindowMinimizeController = WindowMinimizeController(
             tray_notifier=self._tray_controller,
             logger=self._logger,
         )
@@ -130,12 +137,14 @@ class MainWindow(QMainWindow):
     
     def _load_configuration(self) -> None:
         """Load application configuration."""
-        self._recording_key = self._config.get_value("rec_key", "F9")
+        rec_key = self._config.get_value("rec_key", "F9")
+        self._recording_key = rec_key or "F9"
         self._enable_sound = self._config.get_value("recording_sound_enabled", "True") == "True"
-        self._sound_path = self._config.get_value(
+        sound_path = self._config.get_value(
             "sound_file_path", 
             self._resources.get_resource_path("resources/splash.mp3"),
         )
+        self._sound_path = sound_path or self._resources.get_resource_path("resources/splash.mp3")
         
         # Query hardware capabilities via application use case and injected port
         try:

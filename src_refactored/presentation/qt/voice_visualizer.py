@@ -164,10 +164,19 @@ class VoiceVisualizerUI(QObject):
                 return
 
             # Create waveform data object
+            samples_tuple = tuple(float(x) for x in data.tolist())
+            duration_ms = (len(samples_tuple) / self._visualization_config.sample_rate) * 1000.0
+            timestamp_ms = self._get_current_timestamp() * 1000.0
+            # Basic metrics for compatibility
+            rms = float(np.sqrt(np.mean(np.square(data)))) if len(data) > 0 else 0.0
+            peak = float(np.max(np.abs(data))) if len(data) > 0 else 0.0
             waveform_data = WaveformData(
-                samples=data,
+                samples=samples_tuple,
                 sample_rate=self._visualization_config.sample_rate,
-                timestamp=self._get_current_timestamp(),
+                duration_ms=duration_ms,
+                rms_level=min(rms, 1.0),
+                peak_level=min(peak, 1.0),
+                timestamp_ms=timestamp_ms,
             )
 
             # Store current waveform
@@ -182,9 +191,10 @@ class VoiceVisualizerUI(QObject):
                 self._update_callback(data)
 
             # Try to update parent directly (legacy support)
-            if self.parent() and hasattr(self.parent(), "update_waveform"):
+            parent_obj = self.parent()
+            if parent_obj is not None and hasattr(parent_obj, "update_waveform"):
                 with contextlib.suppress(Exception):
-                    self.parent().update_waveform(data)
+                    parent_obj.update_waveform(data)  # type: ignore[attr-defined]
 
             # Emit signal
             self.waveform_updated.emit(waveform_data)
@@ -415,12 +425,12 @@ class VoiceVisualizerUI(QObject):
         return {
             "has_waveform": True,
             "sample_count": len(waveform.samples),
-            "duration": len(waveform.samples) / waveform.sample_rate,
-            "timestamp": waveform.timestamp,
+            "duration": waveform.duration_ms / 1000.0,
+            "timestamp": waveform.timestamp_ms / 1000.0,
             "sample_rate": waveform.sample_rate,
             "min_amplitude": float(np.min(waveform.samples)),
             "max_amplitude": float(np.max(waveform.samples)),
-            "rms_amplitude": float(np.sqrt(np.mean(np.square(waveform.samples)))),
+            "rms_amplitude": waveform.rms_level,
         }
 
     def export_waveform_data(self) -> dict | None:
@@ -434,10 +444,10 @@ class VoiceVisualizerUI(QObject):
 
         waveform = self._current_waveform
         return {
-            "samples": waveform.samples.tolist(),
+            "samples": list(waveform.samples),
             "sample_rate": waveform.sample_rate,
-            "timestamp": waveform.timestamp,
-            "duration": len(waveform.samples) / waveform.sample_rate,
+            "timestamp": waveform.timestamp_ms,
+            "duration": waveform.duration_ms,
         }
 
     def import_waveform_data(self, data: dict) -> bool:
@@ -452,12 +462,18 @@ class VoiceVisualizerUI(QObject):
         try:
             samples = np.array(data["samples"], dtype=np.float32)
             sample_rate = data["sample_rate"]
-            timestamp = data.get("timestamp", self._get_current_timestamp())
+            timestamp_ms = float(data.get("timestamp", self._get_current_timestamp() * 1000.0))
+            duration_ms = (len(samples) / sample_rate) * 1000.0 if sample_rate > 0 else 0.0
+            rms = float(np.sqrt(np.mean(np.square(samples)))) if len(samples) > 0 else 0.0
+            peak = float(np.max(np.abs(samples))) if len(samples) > 0 else 0.0
 
             self._current_waveform = WaveformData(
-                samples=samples,
-                sample_rate=sample_rate,
-                timestamp=timestamp,
+                samples=tuple(float(x) for x in samples),
+                sample_rate=int(sample_rate),
+                duration_ms=duration_ms,
+                rms_level=min(rms, 1.0),
+                peak_level=min(peak, 1.0),
+                timestamp_ms=timestamp_ms,
             )
 
             # Emit update signal

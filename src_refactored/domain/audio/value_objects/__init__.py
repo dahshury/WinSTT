@@ -11,13 +11,7 @@ from .audio_configuration import (
 )
 from .audio_data import AudioBuffer, AudioData, StreamMetrics, StreamState
 from .audio_format import AudioFormat, AudioFormatType, BitDepth
-from .audio_operations import (
-    AudioChunk,
-    AudioOperation,
-    AudioResult,
-    CalibrationResult,
-    DeviceType,
-)
+from .audio_operations import AudioChunk, AudioOperation, AudioResult, CalibrationResult, DeviceType
 from .audio_quality import AudioQuality
 from .audio_track import AudioTrack, RecordingData, RecordingMetadata
 from .channel_count import ChannelCount
@@ -84,6 +78,8 @@ __all__ = [
     "AudioDataInfo",
     # Basic audio properties
     "AudioFormat",
+    "AudioFormatType",
+    "BitDepth",
     "AudioOperation",
     "AudioPlaybackServiceRequest",
     "AudioQuality",

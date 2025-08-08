@@ -37,7 +37,7 @@ class ProgressBarGeometry:
     width: int
     height: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate geometry values."""
         if self.width <= 0 or self.height <= 0:
             msg = "Width and height must be positive"
@@ -64,7 +64,7 @@ class ProgressBarConfiguration:
     enable_animations: bool = True
     timeout_seconds: int | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration."""
         if not self.bar_id:
             msg = "Bar ID cannot be empty"
@@ -74,8 +74,7 @@ class ProgressBarConfiguration:
             raise ValueError(msg)
         if self.timeout_seconds is not None and self.timeout_seconds <= 0:
             msg = "Timeout must be positive"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
 
 @dataclass
@@ -89,7 +88,7 @@ class ParentContext:
     z_order: int | None = None
     custom_properties: dict[str, Any] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate parent context."""
         if not self.parent_id:
             msg = "Parent ID cannot be empty"
@@ -102,7 +101,7 @@ class ParentContext:
             raise ValueError(msg)
 
 
-class ProgressBarLifecycle(Entity[str],
+class ProgressBarLifecycle(Entity,
     ):
     """Progress bar lifecycle entity managing reparenting and state transitions."""
 

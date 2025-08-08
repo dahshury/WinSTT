@@ -53,7 +53,7 @@ class JSONSettingsRepository(SettingsRepository):
         """
         try:
             # Check if we can use cached settings
-            if self._is_cache_valid():
+            if self._is_cache_valid() and self._cached_settings is not None:
                 return Result.success(self._cached_settings.copy())
 
             if not self.config_path.exists():
@@ -71,7 +71,7 @@ class JSONSettingsRepository(SettingsRepository):
             validation_result = self.validate_settings(settings)
             if not validation_result.is_success:
                 if self.logger:
-                    self.logger.log_error(f"Settings validation failed: {validation_result.error()}")
+                    self.logger.log_error(f"Settings validation failed: {validation_result.get_error()}")
                 # Return default settings on validation failure
                 default_settings = self._get_default_settings()
                 self._cached_settings = default_settings
@@ -116,7 +116,7 @@ class JSONSettingsRepository(SettingsRepository):
             # Validate settings before saving
             validation_result = self.validate_settings(settings)
             if not validation_result.is_success:
-                error_msg = f"Settings validation failed: {validation_result.error()}"
+                error_msg = f"Settings validation failed: {validation_result.get_error()}"
                 if self.logger:
                     self.logger.log_error(error_msg)
                 return Result.failure(error_msg)
@@ -125,13 +125,13 @@ class JSONSettingsRepository(SettingsRepository):
             if self.auto_backup and self.config_path.exists():
                 backup_result = self.backup_settings()
                 if self.logger and not backup_result.is_success:
-                    self.logger.log_warning(f"Failed to create backup: {backup_result.error()}")
+                    self.logger.log_warning(f"Failed to create backup: {backup_result.get_error()}")
 
             # Ensure directory exists
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Write settings to file
-            with open(self.config_path, "w", encoding="utf-8") as f:
+            with self.config_path.open("w", encoding="utf-8") as f:
                 json.dump(settings, f, indent=2, ensure_ascii=False)
 
             # Update cache
@@ -149,8 +149,7 @@ class JSONSettingsRepository(SettingsRepository):
             if self.logger:
                 self.logger.log_error(error_msg, exception=e)
             # Event publication is responsibility of Application layer
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def get_setting(self, key: str, default: Any = None) -> Result[Any]:
         """Get a specific setting value.
@@ -165,9 +164,9 @@ class JSONSettingsRepository(SettingsRepository):
         try:
             settings_result = self.load_settings()
             if not settings_result.is_success:
-                return Result.failure(settings_result.error())
+                return Result.failure(settings_result.get_error())
 
-            settings = settings_result.value()
+            settings = settings_result.get_value()
             value = settings.get(key, default)
 
             return Result.success(value)
@@ -176,8 +175,7 @@ class JSONSettingsRepository(SettingsRepository):
             error_msg = f"Failed to get setting '{key}': {e}"
             if self.logger:
                 self.logger.log_error(error_msg, exception=e)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def set_setting(self, key: str, value: Any,
     ) -> Result[None]:
@@ -193,9 +191,9 @@ class JSONSettingsRepository(SettingsRepository):
         try:
             settings_result = self.load_settings()
             if not settings_result.is_success:
-                return Result.failure(settings_result.error())
+                return Result.failure(settings_result.get_error())
 
-            settings = settings_result.value()
+            settings = settings_result.get_value()
             settings[key] = value
 
             return self.save_settings(settings)
@@ -204,8 +202,7 @@ class JSONSettingsRepository(SettingsRepository):
             error_msg = f"Failed to set setting '{key}': {e}"
             if self.logger:
                 self.logger.log_error(error_msg, exception=e)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def has_setting(self, key: str,
     ) -> Result[bool]:
@@ -220,9 +217,9 @@ class JSONSettingsRepository(SettingsRepository):
         try:
             settings_result = self.load_settings()
             if not settings_result.is_success:
-                return Result.failure(settings_result.error())
+                return Result.failure(settings_result.get_error())
 
-            settings = settings_result.value()
+            settings = settings_result.get_value()
             exists = key in settings
 
             return Result.success(exists)
@@ -231,8 +228,7 @@ class JSONSettingsRepository(SettingsRepository):
             error_msg = f"Failed to check setting '{key}': {e}"
             if self.logger:
                 self.logger.log_error(error_msg, exception=e)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def delete_setting(self, key: str,
     ) -> Result[None]:
@@ -247,9 +243,9 @@ class JSONSettingsRepository(SettingsRepository):
         try:
             settings_result = self.load_settings()
             if not settings_result.is_success:
-                return Result.failure(settings_result.error())
+                return Result.failure(settings_result.get_error())
 
-            settings = settings_result.value()
+            settings = settings_result.get_value()
 
             if key not in settings:
                 return Result.failure(f"Setting '{key}' does not exist")
@@ -273,9 +269,9 @@ class JSONSettingsRepository(SettingsRepository):
         try:
             settings_result = self.load_settings()
             if not settings_result.is_success:
-                return Result.failure(settings_result.error())
+                return Result.failure(settings_result.get_error())
 
-            settings = settings_result.value()
+            settings = settings_result.get_value()
             keys = list(settings.keys())
 
             return Result.success(keys)
@@ -297,7 +293,9 @@ class JSONSettingsRepository(SettingsRepository):
             if self.auto_backup and self.config_path.exists():
                 backup_result = self.backup_settings()
                 if self.logger and not backup_result.is_success:
-                    self.logger.log_warning(f"Failed to create backup before clearing: {backup_result.error()}")
+                    self.logger.log_warning(
+                        f"Failed to create backup before clearing: {backup_result.get_error()}"
+                    )
 
             # Save empty settings
             empty_settings = self._get_default_settings()
@@ -307,8 +305,7 @@ class JSONSettingsRepository(SettingsRepository):
             error_msg = f"Failed to clear settings: {e}"
             if self.logger:
                 self.logger.log_error(error_msg, exception=e)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def backup_settings(self, backup_path: Path | None = None) -> Result[Path]:
         """Create a backup of current settings.
@@ -324,8 +321,7 @@ class JSONSettingsRepository(SettingsRepository):
                 return Result.failure("No settings file to backup")
 
             if backup_path is None:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S",
-    )
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 backup_filename = f"{self.config_path.stem}_backup_{timestamp}.json"
                 backup_path = self.config_path.parent / "backups" / backup_filename
 
@@ -345,8 +341,7 @@ class JSONSettingsRepository(SettingsRepository):
             error_msg = f"Failed to create backup: {e}"
             if self.logger:
                 self.logger.log_error(error_msg, exception=e)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def restore_settings(self, backup_path: Path,
     ) -> Result[None]:
@@ -368,13 +363,13 @@ class JSONSettingsRepository(SettingsRepository):
 
             validation_result = self.validate_settings(backup_settings)
             if not validation_result.is_success:
-                return Result.failure(f"Backup settings validation failed: {validation_result.error()}")
+                return Result.failure(f"Backup settings validation failed: {validation_result.get_error()}")
 
             # Create backup of current settings before restoring
             if self.config_path.exists():
                 current_backup_result = self.backup_settings()
                 if self.logger and not current_backup_result.is_success:
-                    self.logger.log_warning(f"Failed to backup current settings: {current_backup_result.error()}")
+                    self.logger.log_warning(f"Failed to backup current settings: {current_backup_result.get_error()}")
 
             # Restore settings
             return self.save_settings(backup_settings)
@@ -389,8 +384,7 @@ class JSONSettingsRepository(SettingsRepository):
             error_msg = f"Failed to restore settings: {e}"
             if self.logger:
                 self.logger.log_error(error_msg, exception=e)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def validate_settings(self, settings: dict[str, Any]) -> Result[None]:
         """Validate settings before saving.
@@ -476,7 +470,7 @@ class JSONSettingsRepository(SettingsRepository):
             # Count settings
             settings_result = self.load_settings()
             if settings_result.is_success:
-                settings = settings_result.value()
+                settings = settings_result.get_value()
                 info["settings_count"] = len(settings)
                 info["settings_keys"] = list(settings.keys())
 

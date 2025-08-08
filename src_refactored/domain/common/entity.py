@@ -3,24 +3,25 @@
 from __future__ import annotations
 
 from abc import ABC
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING
 
 from .domain_utils import DomainIdentityGenerator
 
-T = TypeVar("T")
+if TYPE_CHECKING:
+    from collections.abc import Hashable
 
 
-class Entity(ABC, Generic[T]):
+class Entity(ABC):
     """Base class for domain entities with identity."""
 
-    def __init__(self, entity_id: T,
+    def __init__(self, entity_id: Hashable,
     ):
-        self._id = entity_id
+        self._id: Hashable = entity_id
         self._created_at = self._current_timestamp()
         self._updated_at = self._created_at
 
     @property
-    def id(self) -> T:
+    def id(self) -> Hashable:
         """Get entity identifier."""
         return self._id
 
@@ -47,6 +48,12 @@ class Entity(ABC, Generic[T]):
     def __hash__(self) -> int:
         """Hash based on entity ID and type."""
         return hash((self._id, type(self)))
+
+    # Provide a no-op __post_init__ so dataclass-based subclasses can safely call super()
+    def __post_init__(self) -> None:  # - lifecycle hook
+        """Dataclass post-init hook for subclasses."""
+        # Ensure updated timestamp consistency
+        self._updated_at = self._created_at
 
     @staticmethod
     def _current_timestamp() -> float:

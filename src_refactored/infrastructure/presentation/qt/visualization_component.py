@@ -11,11 +11,12 @@ from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
 
 try:
-    import pyqtgraph as pg
+    import pyqtgraph as _pg  # type: ignore[import-not-found]
+    pg: Any = _pg
     PYQTGRAPH_AVAILABLE = True
-except ImportError:
+except Exception:
     PYQTGRAPH_AVAILABLE = False
-    pg: Any = None
+    pg = None  # type: ignore[assignment]
 
 from src_refactored.domain.ui_coordination.value_objects.ui_state_management import UIState
 from src_refactored.infrastructure.audio_visualization import (

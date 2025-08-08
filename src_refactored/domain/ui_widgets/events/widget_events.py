@@ -19,7 +19,7 @@ class WidgetCreationRequestedEvent(DomainEvent):
     configuration: dict[str, Any]
     parent_widget_id: str | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -31,7 +31,7 @@ class WidgetCreatedEvent(DomainEvent):
     widget_id: str
     properties: dict[str, Any]
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -42,7 +42,7 @@ class WidgetDestroyRequestedEvent(DomainEvent):
     widget_id: str
     cleanup_resources: bool = True
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -52,7 +52,7 @@ class WidgetDestroyedEvent(DomainEvent):
     
     widget_id: str
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -64,7 +64,7 @@ class WidgetConfigurationChangedEvent(DomainEvent):
     changed_properties: dict[str, Any]
     previous_values: dict[str, Any] | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -77,7 +77,7 @@ class WidgetStateChangedEvent(DomainEvent):
     previous_state: str | None = None
     user_initiated: bool = False
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -90,7 +90,7 @@ class WidgetValueChangedEvent(DomainEvent):
     previous_value: Any | None = None
     user_initiated: bool = False
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -102,7 +102,7 @@ class WidgetEventTriggeredEvent(DomainEvent):
     event_type: str
     event_data: dict[str, Any] | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -115,7 +115,7 @@ class ToggleWidgetToggledEvent(DomainEvent):
     previous_state: bool
     user_initiated: bool = False
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -127,7 +127,7 @@ class WidgetValidationFailedEvent(DomainEvent):
     validation_errors: dict[str, str]
     attempted_value: Any
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -138,7 +138,7 @@ class WidgetFocusChangedEvent(DomainEvent):
     widget_id: str
     has_focus: bool
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -150,5 +150,5 @@ class WidgetVisibilityChangedEvent(DomainEvent):
     is_visible: bool
     reason: str | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()

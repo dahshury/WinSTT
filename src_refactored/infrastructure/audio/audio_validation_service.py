@@ -13,7 +13,9 @@ from typing import Any, Protocol
 import numpy as np
 
 # Import domain concepts
-from src_refactored.domain.audio.value_objects import (
+# Use the canonical domain validation types from validation_operations to avoid
+# name/shape conflicts with similarly named classes in validation.py
+from src_refactored.domain.audio.value_objects.validation_operations import (
     ValidationCategory,
     ValidationIssue,
     ValidationRule,
@@ -295,7 +297,7 @@ class AudioValidationService:
     ) -> AudioValidationServiceResponse:
         """Execute audio validation."""
         start_time = time.time()
-        warnings = []
+        warnings: list[str] = []
 
         try:
             if request.enable_logging and self._logger_service:
@@ -321,7 +323,9 @@ class AudioValidationService:
             )
 
             # Get active rules
-            active_rules = request.rules if request.rules else self._state.active_rules
+            active_rules = request.rules if request.rules is not None else self._state.active_rules
+            # Ensure active_rules is a concrete list
+            active_rules = active_rules or []
 
             # Perform validations
             for validation_type in request.validation_types:
@@ -352,9 +356,11 @@ class AudioValidationService:
             }
 
             # Add to history
-            self._state.validation_history.append(report)
-            if len(self._state.validation_history) > 100:  # Keep last 100 reports
-                self._state.validation_history.pop(0)
+            history = self._state.validation_history or []
+            history.append(report)
+            if len(history) > 100:  # Keep last 100 reports
+                history.pop(0)
+            self._state.validation_history = history
 
             if request.enable_logging and self._logger_service:
                 self._logger_service.log_info(
@@ -397,7 +403,8 @@ class AudioValidationService:
     def _initialize_service(self) -> None:
         """Initialize the validation service."""
         self._state.initialized = True
-        self._state.active_rules = [rule for rule in self._state.available_rules if rule.enabled]
+        # There is no enabled flag on ValidationRule (immutable VO). Treat all as active by default.
+        self._state.active_rules = list(self._state.available_rules or [])
 
     def _initialize_default_rules(self) -> None:
         """Initialize default validation rules."""
@@ -495,9 +502,6 @@ class AudioValidationService:
             validation_result = ValidationStatus.VALID
 
             for rule in type_rules:
-                if not rule.enabled:
-                    continue
-
                 rule_result = self._apply_validation_rule(rule, request, report)
 
                 # Update overall result
@@ -1039,23 +1043,26 @@ class AudioValidationService:
 
     def get_available_rules(self) -> list[ValidationRule]:
         """Get available validation rules."""
-        return self._state.available_rules.copy()
+        return list(self._state.available_rules or [])
 
     def get_active_rules(self) -> list[ValidationRule]:
         """Get active validation rules."""
-        return self._state.active_rules.copy()
+        return list(self._state.active_rules or [])
 
     def set_rule_enabled(self, rule_id: str, enabled: bool,
     ) -> bool:
         """Enable or disable a validation rule."""
-        for rule in self._state.available_rules:
+        available_rules = self._state.available_rules or []
+        active_rules = list(self._state.active_rules or [])
+        for rule in available_rules:
             if rule.rule_id == rule_id:
                 # Since ValidationRule doesn't have an enabled attribute, we'll track enabled rules separately
                 if enabled:
-                    if rule not in self._state.active_rules:
-                        self._state.active_rules.append(rule)
-                elif rule in self._state.active_rules:
-                    self._state.active_rules.remove(rule)
+                    if rule not in active_rules:
+                        active_rules.append(rule)
+                elif rule in active_rules:
+                    active_rules.remove(rule)
+                self._state.active_rules = active_rules
                 return True
         return False
 
@@ -1063,18 +1070,22 @@ class AudioValidationService:
     ) -> bool:
         """Add a custom validation rule."""
         # Check if rule ID already exists
-        if any(r.rule_id == rule.rule_id for r in self._state.available_rules):
+        if any(r.rule_id == rule.rule_id for r in (self._state.available_rules or [])):
             return False
 
-        self._state.available_rules.append(rule)
+        available = list(self._state.available_rules or [])
+        available.append(rule)
+        self._state.available_rules = available
         # Add to active rules by default
-        self._state.active_rules.append(rule)
+        active = list(self._state.active_rules or [])
+        active.append(rule)
+        self._state.active_rules = active
 
         return True
 
     def get_validation_history(self) -> list[ValidationReport]:
         """Get validation history."""
-        return self._state.validation_history.copy()
+        return list(self._state.validation_history or [])
 
     def get_state(self) -> AudioValidationServiceState:
         """Get current service state."""

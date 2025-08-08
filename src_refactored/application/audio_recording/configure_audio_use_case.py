@@ -92,6 +92,10 @@ class ConfigureAudioUseCase(UseCase[ConfigureAudioRequest, ConfigureAudioRespons
 
             # Create new configuration
             try:
+                # AudioRecorderConfiguration expects concrete value objects; validate presence
+                if sample_rate is None or channels is None or audio_format is None:
+                    msg = "sample_rate, channels, and audio_format are required to build configuration"
+                    raise ValueError(msg)
                 new_configuration = AudioRecorderConfiguration(
                     sample_rate=sample_rate,
                     channels=channels,

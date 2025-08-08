@@ -362,7 +362,8 @@ class WorkerIntegrationComponent(QObject):
         Args:
             error_message: Error message
         """
-        self.logger.error("Transcription error: {error_message}")
+        if self.logger:
+            self.logger.error(f"Transcription error: {error_message}")
 
         # Emit signal
         self.worker_error.emit("transcription", error_message)
@@ -400,7 +401,8 @@ class WorkerIntegrationComponent(QObject):
         Args:
             error_message: Error message
         """
-        self.logger.error("LLM error: {error_message}")
+        if self.logger:
+            self.logger.error(f"LLM error: {error_message}")
         self.worker_error.emit("llm", error_message)
 
     def _handle_llm_progress(self, progress: int,
@@ -444,7 +446,8 @@ class WorkerIntegrationComponent(QObject):
         Args:
             error_message: Error message
         """
-        self.logger.error("Listener error: {error_message}")
+        if self.logger:
+            self.logger.error(f"Listener error: {error_message}")
         self.is_recording = False
         self.worker_error.emit("listener", error_message)
 

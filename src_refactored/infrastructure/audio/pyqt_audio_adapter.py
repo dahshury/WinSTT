@@ -140,7 +140,7 @@ class PyQtAudioAdapterService:
         # Import here to avoid circular dependencies
         from utils.listener import AudioToText
 
-        audio_to_text = AudioToText(model_cls, vad_cls, rec_key, error_callback=error_callback)
+        audio_to_text = AudioToText(model_cls, vad_cls, rec_key or "", error_callback=error_callback)
         return self.create_adapter(audio_to_text)
 
 

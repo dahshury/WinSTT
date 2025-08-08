@@ -69,7 +69,7 @@ class QtSystemTrayAdapter(ISystemTrayPort):
             if not tray_service.show_tray_icon():
                 return Result.failure("Failed to show tray icon")
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error showing tray icon: {e}"
@@ -85,7 +85,7 @@ class QtSystemTrayAdapter(ISystemTrayPort):
                 return Result.failure(f"Tray icon with ID '{icon_id}' not found")
             
             tray_service.hide_tray_icon()
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error hiding tray icon: {e}"
@@ -106,7 +106,7 @@ class QtSystemTrayAdapter(ISystemTrayPort):
             if not tray_service.update_icon(resolved_icon_path):
                 return Result.failure("Failed to update tray icon")
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error updating tray icon: {e}"
@@ -122,7 +122,7 @@ class QtSystemTrayAdapter(ISystemTrayPort):
                 return Result.failure(f"Tray icon with ID '{icon_id}' not found")
             
             tray_service.update_tooltip(tooltip)
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error setting tray tooltip: {e}"
@@ -148,7 +148,7 @@ class QtSystemTrayAdapter(ISystemTrayPort):
             qt_icon_type = self._convert_message_type(message_type)
             
             tray_service.show_message(title, message, qt_icon_type, duration_ms)
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error showing tray message: {e}"
@@ -173,7 +173,7 @@ class QtSystemTrayAdapter(ISystemTrayPort):
                 if text and callback and text not in default_labels:
                     tray_service.add_menu_action(text, callback, shortcut)
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error creating tray menu: {e}"
@@ -212,11 +212,12 @@ class QtSystemTrayAdapter(ISystemTrayPort):
                     lambda: callback({"event": "close_app"}),
                 )
             elif event_type == "tray_activated":
+                # Reason is emitted as int; pass through directly
                 tray_service.tray_activated.connect(
                     lambda reason: callback({"event": "tray_activated", "reason": reason}),
                 )
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error registering tray callback: {e}"
@@ -249,7 +250,7 @@ class QtSystemTrayAdapter(ISystemTrayPort):
                     1000,
                 )
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error setting tray state: {e}"

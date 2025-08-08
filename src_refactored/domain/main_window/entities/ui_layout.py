@@ -48,7 +48,7 @@ class WidgetGeometry:
     width: int
     height: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate geometry."""
         if self.width <= 0 or self.height <= 0:
             msg = "Width and height must be positive"
@@ -97,7 +97,7 @@ class WidgetProperties:
     children: list[str] = field(default_factory=list)
 
     def __post_init__(self,
-    ):
+    ) -> None:
         """Initialize children list."""
         if self.children is None:
             self.children = []
@@ -115,7 +115,7 @@ class WidgetProperties:
             self.children.remove(child_name)
 
 
-class UILayout(Entity[str]):
+class UILayout(Entity):
     """UI layout entity.
     
     Manages UI layout coordination and widget positioning business rules.

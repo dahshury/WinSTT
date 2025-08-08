@@ -42,7 +42,7 @@ class ProgressMetrics:
     estimated_time_remaining: timedelta | None = None
     average_speed: float | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate progress metrics."""
         if self.current_value < 0:
             msg = "Current value cannot be negative"
@@ -81,7 +81,7 @@ class ProgressConfiguration:
     enable_speed_calculation: bool = True
     enable_eta_calculation: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate progress configuration."""
         if not self.session_id:
             msg = "Session ID cannot be empty"
@@ -97,7 +97,7 @@ class ProgressConfiguration:
             raise ValueError(msg)
 
 
-class ProgressSession(AggregateRoot[str],
+class ProgressSession(AggregateRoot,
     ):
     """Progress session aggregate managing progress tracking and lifecycle."""
 

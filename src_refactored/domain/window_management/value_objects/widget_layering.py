@@ -43,7 +43,7 @@ class WidgetLayerConfiguration(ValueObject):
     parent_layer: str | None = None
     metadata: dict[str, Any] | None = None
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.widget_id,

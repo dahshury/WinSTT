@@ -96,10 +96,10 @@ class Result(Generic[T]):
 
 # Utility functions for working with Results
 
-def combine_results(*results: Result,
-    ) -> Result[tuple]:
+def combine_results(*results: Result[object],
+    ) -> Result[tuple[object, ...]]:
     """Combine multiple results into a single result with tuple value."""
-    values = []
+    values: list[object] = []
     for result in results:
         if not result.is_success:
             return Result.failure(result.error or "Unknown error")

@@ -18,6 +18,7 @@ from .ui_widget_operations import (
     HandlePhase,
     HandleResult,
     StateChangeType,
+    ToggleSize,
     ToggleStyle,
     UpdatePhase,
     UpdateResult,
@@ -54,6 +55,7 @@ __all__ = [
     # Widget State
     "StateChangeType",
     # Widget Style
+    "ToggleSize",
     "ToggleStyle",
     # Widget Updates
     "UpdatePhase",

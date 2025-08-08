@@ -23,7 +23,7 @@ class VisualizationConfiguration(ValueObject):
     progress_callback_interval: float = 0.1
 
     def _get_equality_components(self,
-    ) -> tuple:
+    ) -> tuple[object, ...]:
         return (
             self.processor_type,
             self.auto_start_processor,
@@ -58,7 +58,7 @@ class VisualizationStopConfiguration(ValueObject):
     progress_callback_interval: float = 0.1
 
     def _get_equality_components(self,
-    ) -> tuple:
+    ) -> tuple[object, ...]:
         return (
             self.shutdown_strategy,
             self.disconnect_signals,

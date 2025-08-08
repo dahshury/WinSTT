@@ -54,7 +54,7 @@ class ThreadConfiguration:
     timeout_seconds: int = 30
 
     def __post_init__(self,
-    ):
+    ) -> None:
         """Validate thread configuration."""
         if self.max_restart_attempts < 0:
             msg = f"Max restart attempts cannot be negative, got: {self.max_restart_attempts}"

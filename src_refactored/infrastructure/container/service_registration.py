@@ -13,7 +13,8 @@ from typing import TypeVar
 
 from src_refactored.domain.common.ports.logger_port import ILoggerPort
 
-from ...presentation.core.container import UIContainerBuilder
+# The refactored container exposes EnterpriseContainerBuilder; map to that for registration
+from ...presentation.core.container import EnterpriseContainerBuilder as UIContainerBuilder
 
 T = TypeVar("T")
 
@@ -99,7 +100,8 @@ class ServiceRegistry:
         if name:
             self._named_services[name] = metadata
         
-        self.logger.debug(f"Registered service: {service_type.__name__} ({lifetime.value})")
+        if self.logger:
+            self.logger.debug(f"Registered service: {service_type.__name__} ({lifetime.value})")
     
     def get_service_metadata(self, service_type: type[T]) -> ServiceMetadata | None:
         """Get metadata for a service type."""
@@ -126,7 +128,8 @@ class ServiceRegistry:
         self._services.clear()
         self._named_services.clear()
         self._registration_counter = 0
-        self.logger.debug("Service registry cleared")
+        if self.logger:
+            self.logger.debug("Service registry cleared")
 
 
 # Global service registry
@@ -168,14 +171,22 @@ def service(
             name=name,
         )
         
-        # Mark the class with registration metadata
-        cls._service_metadata = ServiceMetadata(
-            service_type=service_type,
-            implementation_type=cls,
-            lifetime=lifetime,
-            dependencies=dependencies,
-            tags=tags,
-        )
+        # Mark the class with registration metadata on __dict__ to avoid mypy attr-defined complaints
+        try:
+            setattr(
+                cls,
+                "_service_metadata",
+                ServiceMetadata(
+                    service_type=service_type,
+                    implementation_type=cls,
+                    lifetime=lifetime,
+                    dependencies=dependencies,
+                    tags=tags,
+                ),
+            )
+        except Exception:
+            # Best-effort; registration is already stored in the registry
+            pass
         
         return cls
     
@@ -232,7 +243,11 @@ def factory_service(
 def _extract_dependencies(cls: type) -> list[type]:
     """Extract dependency types from a class constructor."""
     try:
-        signature = inspect.signature(cls.__init__)
+        # Accessing __init__ on instances can be unsound; use the attribute from the class
+        init_func = getattr(cls, "__init__", None)
+        if init_func is None:
+            return []
+        signature = inspect.signature(init_func)
         dependencies = []
         
         for param_name, param in signature.parameters.items():
@@ -296,7 +311,11 @@ class AutoServiceRegistrar:
         """
         try:
             package = importlib.import_module(package_name)
-            package_path = Path(package.__file__).parent
+            package_file = getattr(package, "__file__", None)
+            if package_file is None:
+                msg = f"Package '{package_name}' has no __file__ attribute"
+                raise ServiceRegistrationError(msg)
+            package_path = Path(package_file).parent
             
             if recursive:
                 self._scan_package_recursive(package_path, package_name)
@@ -331,7 +350,8 @@ class AutoServiceRegistrar:
             try:
                 self.register_from_module(module_name)
             except Exception as e:
-                self.logger.warning(f"Failed to scan module {module_name}: {e}")
+                if self.logger:
+                    self.logger.warning(f"Failed to scan module {module_name}: {e}")
     
     def _scan_package_recursive(self, package_path: Path, package_name: str) -> None:
         """Recursively scan a package and its subpackages."""
@@ -386,11 +406,11 @@ class ServiceRegistrationBuilder:
                 return metadata.implementation_type()
         
         if metadata.lifetime == ServiceLifetime.SINGLETON:
-            self.container_builder.register_singleton(metadata.service_type, factory_func)
+            self.container_builder.add_singleton(metadata.service_type, factory_func)
         elif metadata.lifetime == ServiceLifetime.TRANSIENT:
-            self.container_builder.register_transient(metadata.service_type, factory_func)
+            self.container_builder.add_transient(metadata.service_type, factory_func)
         elif metadata.lifetime == ServiceLifetime.SCOPED:
-            self.container_builder.register_scoped(metadata.service_type, factory_func)
+            self.container_builder.add_scoped(metadata.service_type, factory_func)
         
         if self.logger:
             self.logger.debug(f"Registered {metadata.service_type.__name__} as {metadata.lifetime.value}")

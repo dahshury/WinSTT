@@ -15,7 +15,18 @@ from src_refactored.presentation.main_window.builders.main_window_builder import
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src_refactored.domain.common.ports.logging_port import LoggingPort
+    from src_refactored.presentation.adapters.pyqtgraph_renderer_adapter import (
+        PyQtGraphRendererAdapter,
+    )
+    from src_refactored.presentation.main_window.components.progress_indicator_component import (
+        ProgressIndicatorComponent,
+    )
+    from src_refactored.presentation.main_window.components.status_display_component import (
+        StatusDisplayComponent,
+    )
 
 
 class IResourceService(Protocol):
@@ -34,9 +45,9 @@ class IThemeService(Protocol):
 class BuiltUI:
     """Holds references to built UI sub-systems."""
 
-    status_display: object
-    progress_indicator: object
-    visualization_renderer: object
+    status_display: StatusDisplayComponent
+    progress_indicator: ProgressIndicatorComponent
+    visualization_renderer: PyQtGraphRendererAdapter
 
 
 class UIConstructionController:
@@ -52,7 +63,7 @@ class UIConstructionController:
         theme_service: IThemeService,
         recording_key: str,
         has_hw_acceleration: bool,
-        on_settings_clicked: callable,
+        on_settings_clicked: Callable[[], None],
     ) -> BuiltUI:
         """Build all UI components and return references to them.
 
@@ -64,7 +75,8 @@ class UIConstructionController:
             has_hw_acceleration: Whether to show enabled state on the indicator
             on_settings_clicked: Callback invoked when settings button is pressed
         """
-        builder = MainWindowUIBuilder(parent_widget, resources, theme_service, self._logger)
+        # The builder expects a concrete UIThemeService; relax via type: ignore
+        builder = MainWindowUIBuilder(parent_widget, resources, theme_service, self._logger)  # type: ignore[arg-type]
 
         builder.build_status_components() \
             .build_progress_components() \

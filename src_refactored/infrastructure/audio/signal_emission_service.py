@@ -21,7 +21,7 @@ class SignalEmissionService(SignalEmissionServiceProtocol):
         self._data_ready_callbacks: list[Callable[[np.ndarray], None]] = []
         self._buffer_updated_callbacks: list[Callable[[np.ndarray], None]] = []
 
-    def emit_data_ready(self, data: np.ndarray) -> bool:
+    def emit_data_ready(self, data: np.ndarray) -> None:
         """Emit data ready signal.
         
         Args:
@@ -32,7 +32,7 @@ class SignalEmissionService(SignalEmissionServiceProtocol):
         """
         try:
             if data is None or len(data) == 0:
-                return False
+                return None
                 
             # Call all registered callbacks
             for callback in self._data_ready_callbacks:
@@ -42,12 +42,12 @@ class SignalEmissionService(SignalEmissionServiceProtocol):
                     # Continue with other callbacks even if one fails
                     continue
                     
-            return True
+            return None
             
         except Exception:
-            return False
+            return None
 
-    def emit_buffer_updated(self, buffer_data: np.ndarray) -> bool:
+    def emit_buffer_updated(self, buffer_data: np.ndarray) -> None:
         """Emit buffer updated signal.
         
         Args:
@@ -58,7 +58,7 @@ class SignalEmissionService(SignalEmissionServiceProtocol):
         """
         try:
             if buffer_data is None:
-                return False
+                return None
                 
             # Call all registered callbacks
             for callback in self._buffer_updated_callbacks:
@@ -68,10 +68,10 @@ class SignalEmissionService(SignalEmissionServiceProtocol):
                     # Continue with other callbacks even if one fails
                     continue
                     
-            return True
+            return None
             
         except Exception:
-            return False
+            return None
 
     def register_data_ready_callback(self, callback: Callable[[np.ndarray], None]) -> None:
         """Register a callback for data ready events.

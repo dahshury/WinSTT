@@ -168,7 +168,8 @@ class LoggingService:
 
         # Configure root logger
         root_logger = logging.getLogger()
-        root_logger.setLevel(min(console_lvl, file_lvl))
+        # Ensure both are ints
+        root_logger.setLevel(int(min(int(console_lvl), int(file_lvl))))
 
         # Clear existing handlers
         root_logger.handlers.clear()
@@ -197,8 +198,10 @@ class LoggingService:
 
         if level is not None:
             if isinstance(level, str):
-                level = getattr(logging, level.upper())
-            logger.setLevel(level)
+                resolved_level = getattr(logging, level.upper())
+            else:
+                resolved_level = int(level)
+            logger.setLevel(resolved_level)
 
         self._configured_loggers[name] = logger
         return logger
@@ -270,7 +273,13 @@ class LoggingService:
                 encoding="utf-8",
             )
         else:
-            handler = logging.FileHandler(log_file, encoding="utf-8")
+            # Keep type consistent for callers that expect RotatingFileHandler
+            handler = logging.handlers.RotatingFileHandler(
+                log_file,
+                maxBytes=0,
+                backupCount=0,
+                encoding="utf-8",
+            )
 
         handler.setLevel(level)
 

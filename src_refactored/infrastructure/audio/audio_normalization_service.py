@@ -10,6 +10,10 @@ from enum import Enum
 import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from src_refactored.domain.audio.value_objects.audio_samples import (
+    AudioDataType,
+    AudioSampleData,
+)
 from src_refactored.domain.audio_visualization.protocols import (
     AudioNormalizationServiceProtocol,
 )
@@ -102,7 +106,7 @@ class SpeechNormalizer:
                     normalized = self.apply_soft_clipping(normalized)
 
                 # Update smoothed amplitude for next iteration
-                current_max = np.max(np.abs(normalized))
+                current_max: float = float(np.max(np.abs(normalized)))
                 self._smoothed_amplitude = (
                     self.config.smoothing_factor * current_max +
                     (1 - self.config.smoothing_factor) * self._smoothed_amplitude
@@ -336,7 +340,7 @@ class AudioNormalizationService(AudioNormalizationServiceProtocol):
 
         self.processor = NormalizationProcessor(self.default_config)
 
-    def normalize_for_speech(self, data: np.ndarray, scaling_factor: float = 0.3) -> np.ndarray:
+    def normalize_for_speech(self, data: AudioSampleData, scaling_factor: float = 0.3) -> AudioSampleData:
         """Normalize audio data optimized for speech.
         
         Args:
@@ -347,7 +351,7 @@ class AudioNormalizationService(AudioNormalizationServiceProtocol):
             Normalized audio data
         """
         try:
-            if len(data) == 0:
+            if data.frame_count == 0:
                 return data
                 
             # Use advanced speech normalizer
@@ -362,13 +366,22 @@ class AudioNormalizationService(AudioNormalizationServiceProtocol):
             )
             
             normalizer = SpeechNormalizer(config)
-            return normalizer.normalize_for_speech(data)
+            normalized = normalizer.normalize_for_speech(np.asarray(tuple(data.samples), dtype=np.float32))
+            return AudioSampleData(
+                samples=tuple(float(x) for x in normalized.tolist()),
+                sample_rate=data.sample_rate,
+                channels=data.channels,
+                data_type=AudioDataType.FLOAT32,
+                timestamp=data.timestamp,
+                duration=data.duration,
+                metadata=data.metadata,
+            )
                 
         except Exception as e:
             msg = f"Failed to normalize for speech: {e}"
             raise ValueError(msg)
 
-    def normalize_rms_based(self, data: np.ndarray, target_rms: float = 0.1) -> np.ndarray:
+    def normalize_rms_based(self, data: AudioSampleData, target_rms: float, current_rms: float | None = None) -> AudioSampleData:
         """Normalize audio data based on RMS.
         
         Args:
@@ -379,25 +392,35 @@ class AudioNormalizationService(AudioNormalizationServiceProtocol):
             RMS-normalized audio data
         """
         try:
-            if len(data) == 0:
+            if data.frame_count == 0:
                 return data
                 
             # Calculate current RMS
-            rms = np.sqrt(np.mean(np.square(data)))
+            np_data = np.asarray(tuple(data.samples), dtype=np.float32)
+            rms = np.sqrt(np.mean(np.square(np_data))) if current_rms is None else float(current_rms)
             
             if rms > 0:
                 # Normalize to target RMS
-                normalized = data * (target_rms / rms)
+                normalized = np_data * (target_rms / rms)
                 
                 # Clip to prevent overflow
-                return np.clip(normalized, -1.0, 1.0)
+                clipped = np.clip(normalized, -1.0, 1.0)
+                return AudioSampleData(
+                    samples=tuple(float(x) for x in clipped.tolist()),
+                    sample_rate=data.sample_rate,
+                    channels=data.channels,
+                    data_type=AudioDataType.FLOAT32,
+                    timestamp=data.timestamp,
+                    duration=data.duration,
+                    metadata=data.metadata,
+                )
             return data
                 
         except Exception as e:
             msg = f"Failed to normalize based on RMS: {e}"
             raise ValueError(msg)
 
-    def normalize_peak_based(self, data: np.ndarray, target_peak: float = 1.0) -> np.ndarray:
+    def normalize_peak_based(self, data: AudioSampleData, target_peak: float = 1.0) -> AudioSampleData:
         """Normalize audio data based on peak value.
         
         Args:
@@ -408,25 +431,35 @@ class AudioNormalizationService(AudioNormalizationServiceProtocol):
             Peak-normalized audio data
         """
         try:
-            if len(data) == 0:
+            if data.frame_count == 0:
                 return data
                 
             # Find peak value
-            peak = np.max(np.abs(data))
+            np_data = np.asarray(tuple(data.samples), dtype=np.float32)
+            peak = np.max(np.abs(np_data))
             
             if peak > 0:
                 # Normalize to target peak
-                normalized = data * (target_peak / peak)
+                normalized = np_data * (target_peak / peak)
                 
                 # Clip to prevent overflow
-                return np.clip(normalized, -1.0, 1.0)
+                clipped = np.clip(normalized, -1.0, 1.0)
+                return AudioSampleData(
+                    samples=tuple(float(x) for x in clipped.tolist()),
+                    sample_rate=data.sample_rate,
+                    channels=data.channels,
+                    data_type=AudioDataType.FLOAT32,
+                    timestamp=data.timestamp,
+                    duration=data.duration,
+                    metadata=data.metadata,
+                )
             return data
                 
         except Exception as e:
             msg = f"Failed to normalize based on peak: {e}"
             raise ValueError(msg)
 
-    def calculate_rms(self, data: np.ndarray) -> float:
+    def calculate_rms(self, data: AudioSampleData) -> float:
         """Calculate RMS value of audio data.
         
         Args:
@@ -436,10 +469,10 @@ class AudioNormalizationService(AudioNormalizationServiceProtocol):
             RMS value
         """
         try:
-            if len(data) == 0:
+            if data.frame_count == 0:
                 return 0.0
-                
-            return float(np.sqrt(np.mean(np.square(data))))
+            np_data = np.asarray(tuple(data.samples), dtype=np.float32)
+            return float(np.sqrt(np.mean(np.square(np_data))))
             
         except Exception as e:
             msg = f"Failed to calculate RMS: {e}"

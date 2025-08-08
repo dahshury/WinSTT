@@ -389,15 +389,15 @@ class FileSystemService:
             FileSystemError: If temp file can't be created
         """
         try:
-            temp_dir = None
+            temp_dir_str: str | None = None
             if directory:
-                temp_dir = Path(directory)
-                if not temp_dir.is_absolute():
-                    temp_dir = self.base_path / temp_dir
-                self.ensure_directory(temp_dir)
-                temp_dir = str(temp_dir)
+                dir_path = Path(directory)
+                if not dir_path.is_absolute():
+                    dir_path = self.base_path / dir_path
+                self.ensure_directory(dir_path)
+                temp_dir_str = str(dir_path)
 
-            return tempfile.mkstemp(suffix=suffix, prefix=prefix, dir=temp_dir)
+            return tempfile.mkstemp(suffix=suffix, prefix=prefix, dir=temp_dir_str)
         except Exception as e:
             msg = f"Failed to create temporary file: {e}"
             raise FileSystemError(msg)
@@ -418,15 +418,15 @@ class FileSystemService:
             FileSystemError: If temp directory can't be created
         """
         try:
-            temp_dir = None
+            temp_dir_str: str | None = None
             if directory:
-                temp_dir = Path(directory)
-                if not temp_dir.is_absolute():
-                    temp_dir = self.base_path / temp_dir
-                self.ensure_directory(temp_dir)
-                temp_dir = str(temp_dir)
+                dir_path = Path(directory)
+                if not dir_path.is_absolute():
+                    dir_path = self.base_path / dir_path
+                self.ensure_directory(dir_path)
+                temp_dir_str = str(dir_path)
 
-            return tempfile.mkdtemp(suffix=suffix, prefix=prefix, dir=temp_dir)
+            return tempfile.mkdtemp(suffix=suffix, prefix=prefix, dir=temp_dir_str)
         except Exception as e:
             msg = f"Failed to create temporary directory: {e}"
             raise FileSystemError(msg)

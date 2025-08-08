@@ -60,7 +60,7 @@ class EventData:
     timestamp: datetime
     correlation_id: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate event data."""
         if not self.event_id or not self.event_id.strip():
             msg = "Event ID cannot be empty"
@@ -108,7 +108,7 @@ class EventHandler:
     max_retries: int = 3
     timeout_seconds: float = 30.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate event handler."""
         if not self.handler_id or not self.handler_id.strip():
             msg = "Handler ID cannot be empty"
@@ -172,7 +172,7 @@ class EventFilter:
     payload_filters: dict[str, Any] | None = None
     enabled: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate event filter."""
         if not self.filter_id or not self.filter_id.strip():
             msg = "Filter ID cannot be empty"

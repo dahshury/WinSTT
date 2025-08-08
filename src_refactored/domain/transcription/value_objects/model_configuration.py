@@ -34,7 +34,7 @@ class ModelConfiguration(ValueObject):
     append_punctuations: str
     custom_parameters: dict[str, Any] = field(default_factory=dict)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate model configuration."""
         if self.beam_size < 1:
             msg = "Beam size must be at least 1"

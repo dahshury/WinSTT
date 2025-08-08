@@ -195,10 +195,15 @@ class EventEnvelope(Generic[E]):
         self.last_error = error
 
 
-class IEventHandler(Protocol[E]):
+from typing import TypeVar
+
+_E_contra = TypeVar("_E_contra", bound=DomainEvent, contravariant=True)
+
+
+class IEventHandler(Protocol[_E_contra]):
     """Protocol for event handlers."""
     
-    def handle(self, event: E, metadata: EventMetadata) -> None:
+    def handle(self, event: _E_contra, metadata: EventMetadata) -> None:
         """Handle an event.
         
         Args:
@@ -357,7 +362,7 @@ class EventBus(QObject, IEventBus):
         self._lock = RLock()
         
         # Statistics
-        self._stats = {
+        self._stats: dict[str, Any] = {
             "events_published": 0,
             "events_handled": 0,
             "events_failed": 0,
@@ -440,7 +445,7 @@ class EventBus(QObject, IEventBus):
                     handler_type = EventHandlerType.LAMBDA
                 
                 # Cast handler to the expected type for EventHandler
-                handler_func = cast("Callable[[event_type, EventMetadata], None]", handler)
+                handler_func = cast(Callable[[E, EventMetadata], None], handler)
                 event_handler = EventHandler(
                     handler_id=handler_id,
                     event_type=event_type,
@@ -448,7 +453,7 @@ class EventBus(QObject, IEventBus):
                     handler_type=handler_type,
                 )
             else:
-                event_handler = handler
+                event_handler = cast(EventHandler, handler)
             
             with self._lock:
                 # Check for duplicate subscription
@@ -789,7 +794,9 @@ class EventBusManager:
                 # Shutdown the bus
                 shutdown_result = bus.shutdown()
                 if not shutdown_result.is_success:
-                    self.logger.warning(f"Failed to shutdown bus '{bus_id}': {shutdown_result.error()}")
+                    self.logger.warning(
+                        f"Failed to shutdown bus '{bus_id}': {shutdown_result.get_error()}"
+                    )
                 
                 # Remove from registry
                 del self._buses[bus_id]
@@ -860,7 +867,7 @@ class EventBusManager:
             for bus_id in bus_ids:
                 result = self.remove_bus(bus_id)
                 if not result.is_success:
-                    self.logger.warning(f"Failed to remove bus '{bus_id}': {result.error()}")
+                    self.logger.warning(f"Failed to remove bus '{bus_id}': {result.get_error()}")
             
             self.logger.info("All event buses shutdown")
             return Result.success(None)

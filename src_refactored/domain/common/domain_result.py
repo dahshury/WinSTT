@@ -44,7 +44,7 @@ class DomainResult(Generic[T]):
         return cls(error=exception.error, is_success=False)
 
     @classmethod
-    def validation_error(cls, code: str, message: str, context: dict | None = None) -> DomainResult[T]:
+    def validation_error(cls, code: str, message: str, context: dict[str, object] | None = None) -> DomainResult[T]:
         """Create a validation error result."""
         error = DomainError(
             code=code,
@@ -56,7 +56,7 @@ class DomainResult(Generic[T]):
         return cls(error=error, is_success=False)
 
     @classmethod
-    def business_rule_error(cls, code: str, message: str, context: dict | None = None) -> DomainResult[T]:
+    def business_rule_error(cls, code: str, message: str, context: dict[str, object] | None = None) -> DomainResult[T]:
         """Create a business rule violation error result."""
         error = DomainError(
             code=code,
@@ -68,7 +68,7 @@ class DomainResult(Generic[T]):
         return cls(error=error, is_success=False)
 
     @classmethod
-    def resource_error(cls, code: str, message: str, context: dict | None = None) -> DomainResult[T]:
+    def resource_error(cls, code: str, message: str, context: dict[str, object] | None = None) -> DomainResult[T]:
         """Create a resource error result."""
         error = DomainError(
             code=code,
@@ -80,7 +80,7 @@ class DomainResult(Generic[T]):
         return cls(error=error, is_success=False)
 
     @classmethod
-    def operation_error(cls, code: str, message: str, context: dict | None = None) -> DomainResult[T]:
+    def operation_error(cls, code: str, message: str, context: dict[str, object] | None = None) -> DomainResult[T]:
         """Create an operation error result."""
         error = DomainError(
             code=code,
@@ -247,7 +247,7 @@ class DomainResult(Generic[T]):
         return self.error.severity if self.error else None
 
     @property
-    def error_context(self) -> dict | None:
+    def error_context(self) -> dict[str, object] | None:
         """Get the error context if failed."""
         return self.error.context if self.error else None
 
@@ -268,9 +268,9 @@ class DomainResult(Generic[T]):
         return f"DomainResult.failure({self.error!r})"
 
 
-def combine_domain_results(*results: DomainResult) -> DomainResult[tuple]:
+def combine_domain_results(*results: DomainResult[object]) -> DomainResult[tuple[object, ...]]:
     """Combine multiple results into a single result with tuple value."""
-    values = []
+    values: list[object] = []
     for result in results:
         if not result.is_success:
             return DomainResult.failure(result.error or DomainError(

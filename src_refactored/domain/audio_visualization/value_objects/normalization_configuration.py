@@ -23,7 +23,7 @@ class NormalizationConfig(ValueObject):
     noise_floor: float = 0.001
 
     def _get_equality_components(self,
-    ) -> tuple:
+    ) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.method,

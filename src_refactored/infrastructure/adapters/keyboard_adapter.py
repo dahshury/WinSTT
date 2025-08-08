@@ -5,6 +5,7 @@ expected by the presentation layer.
 """
 
 from collections.abc import Callable
+from typing import Any
 
 from src_refactored.domain.common.ports.logging_port import LoggingPort
 from src_refactored.domain.settings.value_objects.key_combination import KeyCombination

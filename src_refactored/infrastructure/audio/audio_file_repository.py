@@ -181,7 +181,7 @@ class AudioFileRepository:
                         request.progress_callback(progress)
 
             # Create AudioFile entity
-            file_size = FileSize(bytes=bytes_written)
+            file_size = FileSize(bytes=int(bytes_written))
             duration = Duration(seconds=request.audio_data.calculated_duration.total_seconds())
 
             audio_file = AudioFile(
@@ -302,9 +302,9 @@ class AudioFileRepository:
                 # Combine all chunks
                 audio_bytes = b"".join(frames_data)
 
-                # Convert to numpy array
+            # Convert to numpy array
                 if sample_width == 1:
-                    dtype = np.uint8
+                    dtype: Any = np.uint8
                 elif sample_width == 2:
                     dtype = np.int16
                 elif sample_width == 4:
@@ -329,13 +329,13 @@ class AudioFileRepository:
                 audio_format = AudioFormat(
                     format_type=AudioFormatType.WAV,
                     sample_rate=sample_rate,
-                    bit_depth=BitDepth(sample_width * 8),
                     channels=channels,
+                    bit_depth=int(BitDepth(sample_width * 8).value),
                     chunk_size=1024,  # Default chunk size for WAV files
                 )
 
-                # Convert to list for domain compatibility
-                samples = list(samples)
+                # Convert to list of float for domain compatibility
+                samples = samples.astype(float).tolist()
 
                 # Create AudioData
                 audio_data = AudioData(
@@ -348,7 +348,7 @@ class AudioFileRepository:
                 )
 
                 # Create AudioFile entity
-                file_size = FileSize(bytes=file_path.stat().st_size)
+                file_size = FileSize(bytes=int(file_path.stat().st_size))
                 duration = Duration(seconds=n_frames / sample_rate)
 
                 audio_file = AudioFile(
@@ -443,11 +443,13 @@ class AudioFileRepository:
                 wav_file.setframerate(audio_data.sample_rate.value)
 
                 # Convert samples to bytes
-                if audio_data.data.dtype != np.int16:
+                # Ensure numpy array for conversion
+                samples_np = np.asarray(audio_data.data)
+                if samples_np.dtype != np.int16:
                     # Convert to int16 if needed
-                    samples_int16 = (audio_data.data * 32767).astype(np.int16)
+                    samples_int16 = (samples_np * 32767).astype(np.int16)
                 else:
-                    samples_int16 = audio_data.data
+                    samples_int16 = samples_np
 
                 wav_file.writeframes(samples_int16.tobytes())
 

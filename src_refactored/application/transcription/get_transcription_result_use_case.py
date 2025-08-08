@@ -345,9 +345,8 @@ class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTr
         Returns:
             Converted result data
         """
-        segments = []
+        segments: list[TranscriptionSegment] = []
         if request.include_segments and transcription_result.segments:
-            # Convert entity segments to value object segments
             segments = [
                 TranscriptionSegment(
                     id=seg.entity_id,
@@ -356,32 +355,39 @@ class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTr
                     text=seg.text.content,
                     confidence=seg.confidence.value if seg.confidence else None,
                     language=seg.language_detected,
-                    metadata={
-                        "speaker_id": seg.speaker_id,
-                        "sequence_number": seg.sequence_number,
-                    } if seg.speaker_id or seg.sequence_number else None,
+                    metadata=(
+                        {"speaker_id": seg.speaker_id, "sequence_number": seg.sequence_number}
+                        if seg.speaker_id or seg.sequence_number
+                        else None
+                    ),
                 )
                 for seg in transcription_result.segments
             ]
 
-        # Convert status to TranscriptionState enum
         try:
             state = TranscriptionState(transcription_result.status.value)
         except ValueError:
-            # Fallback to IDLE if state is unknown
             state = TranscriptionState.IDLE
 
-        # Get full text from the entity
         full_text = transcription_result.get_full_text().content if transcription_result.segments else ""
 
-        # Get processing duration
-        processing_duration = transcription_result.processing_duration.seconds if transcription_result.processing_duration else 0.0
+        pd = getattr(transcription_result, "processing_duration", None)
+        if pd is None:
+            processing_duration = 0.0
+        else:
+            # Support either domain Duration or timedelta-like
+            total_seconds = getattr(pd, "total_seconds", None)
+            if callable(total_seconds):
+                processing_duration = float(total_seconds())
+            else:
+                processing_duration = float(getattr(pd, "seconds", 0.0))
 
-        # Get language code
         language_code = transcription_result.language.code.value if transcription_result.language else None
 
-        # Get confidence
         confidence = transcription_result.overall_confidence.value if transcription_result.overall_confidence else 0.0
+
+        created_at = transcription_result.started_at if isinstance(transcription_result.started_at, datetime) else datetime.now()
+        completed_at = transcription_result.completed_at if isinstance(transcription_result.completed_at, datetime) or transcription_result.completed_at is None else None
 
         return TranscriptionResultData(
             transcription_id=transcription_result.transcription_id,
@@ -390,8 +396,8 @@ class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTr
             confidence=confidence,
             processing_time=processing_duration,
             segments=segments,
-            created_at=transcription_result.started_at or datetime.now(),
-            completed_at=transcription_result.completed_at,
+            created_at=created_at,
+            completed_at=completed_at,
             state=state,
             error_message=transcription_result.error_message,
         )

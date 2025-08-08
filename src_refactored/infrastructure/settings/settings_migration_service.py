@@ -27,6 +27,11 @@ class SettingsMigrationService:
         self.progress_callback = progress_callback
         self._migration_handlers = self._get_migration_handlers()
 
+    def _notify(self, message: str) -> None:
+        """Notify progress via domain ProgressCallback signature."""
+        if self.progress_callback:
+            self.progress_callback(0, 0, message)
+
     def _get_migration_handlers(self) -> dict[str, Callable[[dict[str, Any]], dict[str, Any]]]:
         """Get migration handlers for different version transitions.
         
@@ -98,15 +103,13 @@ class SettingsMigrationService:
             MigrationError: If migration fails
         """
         if not self.needs_migration(settings):
-            if self.progress_callback:
-                self.progress_callback(txt="Settings are already up to date")
+            self._notify("Settings are already up to date")
             return settings
 
         current_version = settings.get("version", "0.1.0")
         migration_path = self.get_migration_path(current_version)
 
-        if self.progress_callback:
-            self.progress_callback(txt=f"Migrating settings from {current_version} to {self.CURRENT_VERSION}")
+        self._notify(f"Migrating settings from {current_version} to {self.CURRENT_VERSION}")
 
         migrated_settings = settings.copy()
 
@@ -115,8 +118,7 @@ class SettingsMigrationService:
                 msg = f"No migration handler for {transition}"
                 raise MigrationError(msg)
 
-            if self.progress_callback:
-                self.progress_callback(txt=f"Applying migration: {transition}")
+            self._notify(f"Applying migration: {transition}")
 
             try:
                 migrated_settings = self._migration_handlers[transition](migrated_settings)
@@ -128,8 +130,7 @@ class SettingsMigrationService:
         migrated_settings["version"] = self.CURRENT_VERSION
         migrated_settings["migration_date"] = datetime.now().isoformat()
 
-        if self.progress_callback:
-            self.progress_callback(txt="Settings migration completed successfully")
+        self._notify("Settings migration completed successfully")
 
         return migrated_settings
 
@@ -255,8 +256,7 @@ class SettingsMigrationService:
         with open(backup_file, "w", encoding="utf-8") as f:
             json.dump(settings, f, indent=2, ensure_ascii=False)
 
-        if self.progress_callback:
-            self.progress_callback(txt=f"Created migration backup: {backup_file.name}")
+        self._notify(f"Created migration backup: {backup_file.name}")
 
         return str(backup_file)
 
@@ -363,15 +363,13 @@ class SettingsMigrationService:
             if ui_controls:
                 self._apply_settings_to_ui(loaded_settings, ui_controls)
 
-            if self.progress_callback:
-                self.progress_callback(txt="Settings loaded successfully from JSON")
+            self._notify("Settings loaded successfully from JSON")
 
             return loaded_settings
 
         except Exception as e:
             error_msg = f"Error loading settings: {e}"
-            if self.progress_callback:
-                self.progress_callback(txt=error_msg)
+            self._notify(error_msg)
             return {}
 
     def _apply_settings_to_ui(self, settings: dict[str, Any], ui_controls: dict[str, Any]) -> None:
@@ -397,5 +395,4 @@ class SettingsMigrationService:
                 "You are a helpful assistant."))
 
         except Exception as e:
-            if self.progress_callback:
-                self.progress_callback(txt=f"Error applying settings to UI: {e}")
+            self._notify(f"Error applying settings to UI: {e}")

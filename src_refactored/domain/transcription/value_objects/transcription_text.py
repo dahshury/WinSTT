@@ -23,7 +23,7 @@ class TranscriptionText(ValueObject):
     is_final: bool = True
 
     def __post_init__(self,
-    ):
+    ) -> None:
         # Allow empty content for streaming scenarios
         if self.content is None:
             object.__setattr__(self, "content", "")

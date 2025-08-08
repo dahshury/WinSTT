@@ -53,7 +53,7 @@ class ValidationRule(ValueObject):
     validation_type: ValidationType
     parameters: dict[str, Any]
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.rule_id,
             self.name,
@@ -85,7 +85,7 @@ class ValidationIssue(ValueObject):
     expected_value: Any | None = None
     suggestion: str | None = None
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.rule_id,
             self.severity,
@@ -114,7 +114,7 @@ class ValidationResult(ValueObject):
     duration_ms: float
     metadata: dict[str, Any] | None = None
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.is_valid,
             tuple(self.issues),

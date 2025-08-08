@@ -48,7 +48,7 @@ class ListenerEventData(ValueObject):
     transcription_text: str | None = None
     metadata: dict[str, Any] | None = None
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.event_type,

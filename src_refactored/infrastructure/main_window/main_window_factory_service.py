@@ -117,7 +117,7 @@ class AuthenticMainWindowFactory:
         self,
         configuration_provider: IConfigurationProvider,
         resource_provider: IResourceProvider,
-    ) -> Result[object]:
+    ) -> Result[Any]:
         """Prohibit Infra from constructing Presentation windows.
 
         Returns a failure directing the composition root to use the Presentation factory.

@@ -74,7 +74,7 @@ class ModelInstance(Entity):
     """
     
     def __init__(self, entity_id: str, model_type: ModelType, quantization: Quantization, 
-                 cache_path: str, **kwargs):
+                 cache_path: str, **kwargs: Any) -> None:
         """Initialize ModelInstance entity."""
         super().__init__(entity_id)
         self.model_type = model_type
@@ -253,17 +253,17 @@ class ModelInstance(Entity):
     @property
     def is_ready(self) -> bool:
         """Check if model is ready for use."""
-        return self.state == ModelState.READY
+        return bool(self.state == ModelState.READY)
 
     @property
     def is_loading(self) -> bool:
         """Check if model is currently loading."""
-        return self.state in [ModelState.DOWNLOADING, ModelState.INITIALIZING]
+        return bool(self.state in [ModelState.DOWNLOADING, ModelState.INITIALIZING])
 
     @property
     def has_failed(self) -> bool:
         """Check if model loading has failed."""
-        return self.state == ModelState.FAILED
+        return bool(self.state == ModelState.FAILED)
 
     def get_model_cache_directory(self, file_system_port: FileSystemPort) -> str:
         """Get model cache directory path."""
@@ -358,7 +358,10 @@ class ModelInstance(Entity):
         # Helper function to join paths safely
         def safe_join(base: str, filename: str) -> str:
             result = file_system_port.join_paths(base, filename)
-            return result.value if result.is_success and result.value else f"{base}/{filename}"
+            joined: str = f"{base}/{filename}"
+            if result.is_success and result.value is not None:
+                joined = result.value
+            return joined
 
         return {
             "config": safe_join(base_dir, "config.json"),
@@ -376,13 +379,13 @@ class ModelInstance(Entity):
         for file_type, file_path in file_paths.items():
             # Check if file exists
             exists_result = file_system_port.file_exists(file_path)
-            if not exists_result.is_success or not exists_result.value:
+            if not (exists_result.is_success and bool(exists_result.value)):
                 return False
 
             # Basic size check for ONNX files
             if file_type in ["encoder", "decoder"]:
                 size_result = file_system_port.get_file_size(file_path)
-                if size_result.is_success and size_result.value is not None and size_result.value < 1000:
+                if size_result.is_success and size_result.value is not None and int(size_result.value) < 1000:
                     return False
 
         return True

@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 
 from src_refactored.domain.audio.value_objects.audio_configuration import RecordingConfiguration
-from src_refactored.domain.audio.value_objects.audio_data import RecordingMetadata
+from src_refactored.domain.audio.value_objects.audio_track import RecordingMetadata
 from src_refactored.infrastructure.audio.audio_recording_service import (
     AudioFileServiceProtocol,
 )

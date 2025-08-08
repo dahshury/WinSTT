@@ -13,6 +13,11 @@ from typing import Protocol
 import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from src_refactored.domain.audio.value_objects.audio_samples import (
+    AudioDataType,
+    AudioSampleData,
+    SampleRate,
+)
 from src_refactored.domain.audio_visualization.entities.audio_processor import (
     AudioProcessor,
     AudioProcessorConfig,
@@ -241,7 +246,14 @@ class VisualizationController(QObject):
             # Update shared buffer for the provider
             if self._buffer_service is not None:
                 with contextlib.suppress(Exception):
-                    self._buffer_service.update_buffer(data)
+                    sample_rate = SampleRate(self._processor.config.sample_rate) if self._processor else SampleRate.speech_standard()
+                    sample = AudioSampleData(
+                        samples=tuple(float(x) for x in data.tolist()),
+                        sample_rate=sample_rate,
+                        channels=1,
+                        data_type=AudioDataType.FLOAT32,
+                    )
+                    self._buffer_service.update_buffer(sample)
 
             # Emit signal for external listeners
             self.data_received.emit(self.visualizer.id, data)
@@ -382,7 +394,7 @@ class VisualizationControllerService:
         )
         
         # Store reference
-        self._active_controllers[visualizer.id] = controller
+        self._active_controllers[str(visualizer.id)] = controller
         
         self.logger.info(f"Created visualizer: {visualizer.id}")
         return visualizer
@@ -397,7 +409,7 @@ class VisualizationControllerService:
         Returns:
             True if started successfully, False otherwise
         """
-        controller = self._active_controllers.get(visualizer.id)
+        controller = self._active_controllers.get(str(visualizer.id))
         if not controller:
             self.logger.error(f"Controller not found: {visualizer.id}")
             return False
@@ -414,7 +426,7 @@ class VisualizationControllerService:
         Returns:
             True if stopped successfully, False otherwise
         """
-        controller = self._active_controllers.get(visualizer.id)
+        controller = self._active_controllers.get(str(visualizer.id))
         if not controller:
             self.logger.error(f"Controller not found: {visualizer.id}")
             return False
@@ -431,7 +443,7 @@ class VisualizationControllerService:
         Returns:
             True if active, False otherwise
         """
-        controller = self._active_controllers.get(visualizer.id)
+        controller = self._active_controllers.get(str(visualizer.id))
         if not controller:
             return False
 
@@ -448,7 +460,7 @@ class VisualizationControllerService:
             visualizer: Visualizer entity
             handler: Function to handle audio data updates
         """
-        controller = self._active_controllers.get(visualizer.id)
+        controller = self._active_controllers.get(str(visualizer.id))
         if controller:
             controller.add_data_handler(handler)
         else:
@@ -464,7 +476,7 @@ class VisualizationControllerService:
         Returns:
             Visualization controller or None if not found
         """
-        return self._active_controllers.get(visualizer.id)
+        return self._active_controllers.get(str(visualizer.id))
 
     def cleanup_visualizer(self, visualizer: Visualizer,
     ) -> None:
@@ -473,11 +485,11 @@ class VisualizationControllerService:
         Args:
             visualizer: Visualizer entity
         """
-        controller = self._active_controllers.get(visualizer.id)
+        controller = self._active_controllers.get(str(visualizer.id))
         if controller:
             try:
                 controller.cleanup()
-                del self._active_controllers[visualizer.id]
+                del self._active_controllers[str(visualizer.id)]
                 self.logger.info(f"Cleaned up visualizer: {visualizer.id}")
             except Exception as e:
                 self.logger.exception(f"Failed to cleanup visualizer {visualizer.id}: {e}")

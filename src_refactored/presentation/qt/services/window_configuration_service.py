@@ -71,11 +71,13 @@ class WindowConfigurationService(QObject):
     ) -> bool:
         try:
             resolved_icon_path = resource_path(icon_path)
-            if not os.path.exists(resolved_icon_path):
+            style = main_window.style()
+            if not os.path.exists(resolved_icon_path) or style is None:
                 self.logger.warning("Icon file not found: {resolved_icon_path}")
-                main_window.setWindowIcon(main_window.style().standardIcon(
-                    main_window.style().StandardPixmap.SP_ComputerIcon,
-                ))
+                if style is not None:
+                    main_window.setWindowIcon(style.standardIcon(
+                        style.StandardPixmap.SP_ComputerIcon,
+                    ))
                 return True
             icon = QIcon(resolved_icon_path)
             if icon.isNull():

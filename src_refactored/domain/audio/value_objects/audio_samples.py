@@ -39,7 +39,7 @@ class AudioSampleData(ValueObject):
     duration: timedelta | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             tuple(self.samples),
             self.sample_rate,
@@ -125,9 +125,11 @@ class AudioSampleData(ValueObject):
         if not self.samples:
             return 0.0
         
-        sum_squares = sum(sample * sample for sample in self.samples)
-        mean_square = sum_squares / len(self.samples)
-        return mean_square ** 0.5
+        # Make types explicit to satisfy type checker
+        sum_squares: float = float(sum(sample * sample for sample in self.samples))
+        mean_square: float = sum_squares / float(len(self.samples))
+        rms: float = mean_square ** 0.5
+        return rms
 
     def get_peak(self) -> float:
         """Get peak (maximum absolute) value."""
@@ -174,7 +176,7 @@ class AudioStatistics(ValueObject):
     sample_count: int
     duration_seconds: float
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.rms,
             self.peak,
@@ -228,7 +230,7 @@ class AudioValidationResult(ValueObject):
     integrity_score: float = 1.0  # 0.0 to 1.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.is_valid,
             self.error_messages,

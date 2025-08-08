@@ -1,18 +1,13 @@
 """State management service for UI state tracking and transitions (Presentation)."""
 
-import copy
-import json
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from PyQt6 import QtCore
-from PyQt6.QtCore import QObject, QSettings, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal
 
 from src_refactored.domain.ui_coordination.value_objects.ui_state_management import (
-    StateDefinition,
     StateTransition,
-    StateTransitionResult,
 )
 
 

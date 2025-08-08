@@ -40,7 +40,7 @@ class AudioData(ValueObject):
     duration: timedelta | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             tuple(self.data) if self.data is not None else None,
             self.sample_rate,
@@ -151,7 +151,7 @@ class AudioBuffer(ValueObject):
     created_at: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
 
     def _get_equality_components(self,
-    ) -> tuple:
+    ) -> tuple[object, ...]:
         return (
             self.buffer_id,
             tuple(self.data),
@@ -213,7 +213,7 @@ class StreamMetrics(ValueObject):
     last_update: datetime | None = None
 
     def _get_equality_components(self,
-    ) -> tuple:
+    ) -> tuple[object, ...]:
         return (
             self.frames_processed,
             self.frames_dropped,

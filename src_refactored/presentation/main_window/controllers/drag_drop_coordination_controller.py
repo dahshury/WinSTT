@@ -114,7 +114,7 @@ class DragDropCoordinationController:
             
             if not enable_result.is_success:
                 if self._logger:
-                    self._logger.log_error(f"Failed to enable drag drop: {enable_result.error}")
+                    self._logger.log_error(f"Failed to enable drag drop: {enable_result.get_error()}")
                 return False
             
             # Set accepted MIME types for audio/video files
@@ -130,7 +130,7 @@ class DragDropCoordinationController:
             )
             
             if not mime_result.is_success and self._logger:
-                self._logger.log_warning(f"Failed to set MIME types: {mime_result.error}")
+                self._logger.log_warning(f"Failed to set MIME types: {mime_result.get_error()}")
             
             # Set drop callback
             def handle_drop(zone_id: str, files: list[str], metadata: dict[str, Any]):
@@ -185,7 +185,7 @@ class DragDropCoordinationController:
             
             if not drop_callback_result.is_success:
                 if self._logger:
-                    self._logger.log_error(f"Failed to set drop callback: {drop_callback_result.error}")
+                    self._logger.log_error(f"Failed to set drop callback: {drop_callback_result.get_error()}")
                 return False
             
             # Set drag enter callback for visual feedback
@@ -208,7 +208,7 @@ class DragDropCoordinationController:
             
             if not enter_callback_result.is_success:
                 if self._logger:
-                    self._logger.log_warning(f"Failed to set drag enter callback: {enter_callback_result.error}")
+                    self._logger.log_warning(f"Failed to set drag enter callback: {enter_callback_result.get_error()}")
             
             # Set drag leave callback
             def handle_drag_leave(zone_id: str) -> None:
@@ -227,7 +227,7 @@ class DragDropCoordinationController:
             
             if not leave_callback_result.is_success:
                 if self._logger:
-                    self._logger.log_warning(f"Failed to set drag leave callback: {leave_callback_result.error}")
+                    self._logger.log_warning(f"Failed to set drag leave callback: {leave_callback_result.get_error()}")
             
             # Enable drag drop on the actual widget using the adapter's convenience method
             if hasattr(self._drag_drop_port, "enable_widget_drag_drop"):
@@ -306,10 +306,10 @@ class DragDropCoordinationController:
         try:
             result = self._drag_drop_port.get_active_drop_zones()
             if result.is_success:
-                return result.value
+                return result.get_value()
             else:
                 if self._logger:
-                    self._logger.log_error(f"Failed to get active zones: {result.error}")
+                    self._logger.log_error(f"Failed to get active zones: {result.get_error()}")
                 return []
         except Exception as e:
             if self._logger:
@@ -321,10 +321,10 @@ class DragDropCoordinationController:
         try:
             result = self._drag_drop_port.validate_drop_data(self._main_zone_id, files)
             if result.is_success:
-                return result.value
+                return result.get_value()
             else:
                 if self._logger:
-                    self._logger.log_warning(f"File validation failed: {result.error}")
+                    self._logger.log_warning(f"File validation failed: {result.get_error()}")
                 return []
         except Exception as e:
             if self._logger:

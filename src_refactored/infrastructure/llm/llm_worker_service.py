@@ -24,13 +24,18 @@ class LLMWorkerService:
             progress_callback: Optional callback for progress updates
         """
         self.progress_callback = progress_callback
-        self.model_type = None
-        self.quantization = None
+        self.model_type: str | None = None
+        self.quantization: str | None = None
         self.status = False
         self.inference_session = None
         self.tokenizer = None
         self.config = None
         self._initialized = False
+
+    def _notify(self, message: str) -> None:
+        """Notify progress via domain ProgressCallback signature."""
+        if self.progress_callback:
+            self.progress_callback(0, 0, message)
 
     def initialize_model(self, model_type: str = "gemma-3-1b-it",
                         quantization: str = "Full") -> None:
@@ -56,9 +61,7 @@ class LLMWorkerService:
             repo_id = f"onnx-community/{model_type}-ONNX"
 
             # Display downloading message
-            if self.progress_callback:
-                self.progress_callback(txt="Downloading Gemma model...",
-    )
+            self._notify("Downloading Gemma model...")
 
             # Load config, tokenizer, and session using the gemma_inference module
             self.config, self.tokenizer, self.inference_session = gemma_inference.load_model(
@@ -71,8 +74,7 @@ class LLMWorkerService:
             self.status = True
             self._initialized = True
 
-            if self.progress_callback:
-                self.progress_callback(txt=f"LLM Model Initialized: {model_type}")
+            self._notify(f"LLM Model Initialized: {model_type}")
 
         except Exception as e:
             error_msg = f"Failed to initialize LLM model: {e}"
@@ -92,7 +94,7 @@ class LLMWorkerService:
         def signal_adapter(txt=None, filename=None, percentage=None, hold=False, reset=None):
             """Adapter to convert display signal to progress callback."""
             if txt:
-                self.progress_callback(txt=txt)
+                self._notify(str(txt))
 
         return signal_adapter
 
@@ -181,8 +183,7 @@ class LLMWorkerService:
             self.status = False
             self._initialized = False
 
-            if self.progress_callback:
-                self.progress_callback(txt="LLM model resources cleaned up")
+            self._notify("LLM model resources cleaned up")
 
         except Exception as e:
             logger.warning(f"Error during LLM cleanup: {e}")

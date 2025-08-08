@@ -39,7 +39,7 @@ class StatusMessage:
     auto_clear: bool = True
     show_progress_bar: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate status message."""
         if self.type == StatusType.PROGRESS:
             if self.progress_value is None:

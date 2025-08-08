@@ -69,7 +69,7 @@ class MethodDelegationService(QObject):
             if config.auto_import:
                 import_result = self._import_source_module(config.source_module_path)
                 if not import_result.is_success:
-                    return Result.failure(f"Failed to import source module: {import_result.error()}")
+                    return Result.failure(f"Failed to import source module: {import_result.get_error()}")
 
             self.logger.debug(f"Registered delegation configuration for {config.target_class_name} with {len(config.methods)} methods")
             return Result.success(None)
@@ -87,7 +87,7 @@ class MethodDelegationService(QObject):
             if method_info.source_module not in self._source_modules:
                 import_result = self._import_source_module(method_info.source_module)
                 if not import_result.is_success:
-                    error_msg = f"Failed to import source module {method_info.source_module}: {import_result.error()}"
+                    error_msg = f"Failed to import source module {method_info.source_module}: {import_result.get_error()}"
                     self.delegation_failed.emit(method_info.name, target_instance.__class__.__name__, error_msg)
                     return Result.failure(error_msg)
 
@@ -141,14 +141,14 @@ class MethodDelegationService(QObject):
                 if result.is_success:
                     successful_delegations.append(method_info.name)
                 else:
-                    failed_delegations.append(f"{method_info.name}: {result.error()}")
+                    failed_delegations.append(f"{method_info.name}: {result.get_error()}")
                     if method_info.is_required:
                         error_msg = f"Required method delegation failed: {method_info.name}"
                         self.logger.error(error_msg)
                         return Result.failure(error_msg)
 
             if failed_delegations:
-                self.logger.warning("Some method delegations failed: {failed_delegations}")
+                self.logger.warning(f"Some method delegations failed: {failed_delegations}")
 
             self.logger.info(f"Successfully delegated {len(successful_delegations)} methods to {target_instance.__class__.__name__}")
             return Result.success(successful_delegations)
@@ -208,8 +208,7 @@ class MethodDelegationService(QObject):
         except Exception as e:
             error_msg = f"Failed to get delegated methods for {target_class_name}: {e!s}"
             self.logger.exception(error_msg)
-            return Result.failure(error_msg,
-    )
+            return Result.failure(error_msg)
 
     def remove_delegation(self, target_instance: Any, method_name: str,
     ) -> Result[None]:
@@ -236,7 +235,7 @@ class MethodDelegationService(QObject):
             module = importlib.import_module(module_path)
             self._source_modules[module_path] = module
 
-            self.logger.debug("Imported source module: {module_path}")
+            self.logger.debug(f"Imported source module: {module_path}")
             return Result.success(module)
 
         except ImportError as e:
@@ -250,8 +249,7 @@ class MethodDelegationService(QObject):
         def wrapper(*args, **kwargs):
             # Inject target instance as first argument if needed
             if inspect.signature(source_function).parameters:
-                first_param = next(iter(inspect.signature(source_function).parameters.keys()),
-        )
+                first_param = next(iter(inspect.signature(source_function).parameters.keys()), None)
                 if first_param == "self":
                     return source_function(target_instance, *args, **kwargs)
             return source_function(*args, **kwargs)

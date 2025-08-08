@@ -10,11 +10,11 @@ class ChannelCount(ValueObject):
     """Channel count value object for audio operations."""
     value: int
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (self.value,)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate the channel count value."""
         if self.value <= 0:
             msg = "Channel count must be positive"

@@ -10,7 +10,7 @@ from src_refactored.domain.common.ports.logging_port import LogLevel
 
 
 @dataclass
-class StartupConfiguration(Entity[str]):
+class StartupConfiguration(Entity):
     """Configuration for application startup.
     
     This entity encapsulates all the settings and preferences for how
@@ -26,7 +26,7 @@ class StartupConfiguration(Entity[str]):
     suppress_warnings: bool = True
     environment_variables: dict[str, str] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Generate ID based on app name and key settings
         config_id = f"{self.app_name}_{self.single_instance_port}_{self.log_level}"
         super().__init__(config_id)

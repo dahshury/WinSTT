@@ -35,7 +35,7 @@ class KeyInfo:
     key_type: KeyType
     display_name: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.display_name:
             self.display_name = self.name
 
@@ -51,7 +51,7 @@ class HotkeyBinding(Entity):
     _key_registry: dict[str, KeyInfo] = field(default_factory=dict, init=False)
     _on_combination_changed: Callable[[KeyCombination], None] | None = field(default=None, init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize the hotkey binding entity."""
         super().__post_init__()
         self._initialize_key_registry()

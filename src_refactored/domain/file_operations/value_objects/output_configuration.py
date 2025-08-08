@@ -22,7 +22,7 @@ class OutputConfiguration(ValueObject):
     auto_save: bool = True
     overwrite_existing: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate output configuration after initialization."""
         valid_formats = ["text", "json", "srt", "vtt", "csv", "docx", "pdf"]
         if self.format_type not in valid_formats:

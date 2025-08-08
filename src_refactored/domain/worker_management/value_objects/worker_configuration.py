@@ -30,7 +30,7 @@ class WorkerConfiguration(ValueObject):
     cleanup_on_failure: bool = True
     custom_parameters: dict[str, Any] = field(default_factory=dict)
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.worker_type,

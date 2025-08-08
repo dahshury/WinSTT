@@ -15,7 +15,7 @@ class TrayIconPath:
 
     path: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate tray icon path."""
         if not self.path or not self.path.strip():
             msg = "Tray icon path cannot be empty"
@@ -134,10 +134,12 @@ class TrayIconPath:
     def to_uri(self) -> str:
         """Convert path to file URI."""
         # Convert path to URI should be handled by infra; provide simple fallback
-        p: Final[str] = self.path.replace("\\", "/")
+        p_original: Final[str] = self.path.replace("\\", "/")
+        p = p_original
         if p.startswith("/") or (len(p) > 1 and p[1] == ":"):
             # naive file uri
             if ":" in p and not p.startswith("/"):
+                # Avoid reassigning a Final name by using a new variable
                 p = "/" + p
             return f"file://{p}"
         return f"file:///{p}"

@@ -85,7 +85,7 @@ class TransactionOptions(ValueObject):
         return cls()
     
     @classmethod
-    def read_only(cls) -> "TransactionOptions":
+    def create_read_only(cls) -> "TransactionOptions":
         """Create read-only transaction options.
         
         Returns:
@@ -241,6 +241,12 @@ class IUnitOfWork(Protocol):
         """Clear all pending changes."""
         ...
 
+    # Optional: provide counts and callback registration used by Qt manager
+    @property
+    def change_count(self) -> int: ...
+    def add_transaction_callback(self, callback: Callable[["TransactionInfo"], None]) -> None: ...
+    def add_change_callback(self, callback: Callable[["EntityChange"], None]) -> None: ...
+
 
 class EntityChangeType(Enum):
     """Enumeration of entity change types."""
@@ -383,7 +389,8 @@ class UnitOfWorkBase(IUnitOfWork):
                 begin_result = self._begin_transaction_impl(transaction_id, options)
                 if not begin_result.is_success:
                     self._transaction_info = None
-                    return begin_result
+                    # Map failure from Result[None] to Result[str] for the public API
+                    return Result.failure(begin_result.get_error())
                 
                 self.logger.debug(f"Started transaction {transaction_id}")
                 self._notify_transaction_callbacks()
@@ -404,17 +411,23 @@ class UnitOfWorkBase(IUnitOfWork):
             with self._lock:
                 if not self.has_active_transaction:
                     return Result.failure("No active transaction")
+                # mypy: guard transaction info
+                ti_current = self._transaction_info
+                assert ti_current is not None
                 
-                transaction_id = self._transaction_info.transaction_id
+                transaction_id = ti_current.transaction_id
                 
                 # Save all changes first
                 save_result = self._save_changes_impl()
                 if not save_result.is_success:
                     # Try to rollback
                     self._rollback_impl()
-                    self._transaction_info.state = TransactionState.FAILED
-                    self._transaction_info.completed_at = datetime.utcnow()
-                    self._transaction_info.error = save_result.error()
+                    # mypy: _transaction_info is non-None inside has_active_transaction branch
+                    ti_current = self._transaction_info
+                    assert ti_current is not None
+                    ti_current.state = TransactionState.FAILED
+                    ti_current.completed_at = datetime.utcnow()
+                    ti_current.error = save_result.get_error()
                     self._notify_transaction_callbacks()
                     return save_result
                 
@@ -423,15 +436,15 @@ class UnitOfWorkBase(IUnitOfWork):
                 if not commit_result.is_success:
                     # Try to rollback
                     self._rollback_impl()
-                    self._transaction_info.state = TransactionState.FAILED
-                    self._transaction_info.completed_at = datetime.utcnow()
-                    self._transaction_info.error = commit_result.error()
+                    ti_current.state = TransactionState.FAILED
+                    ti_current.completed_at = datetime.utcnow()
+                    ti_current.error = commit_result.get_error()
                     self._notify_transaction_callbacks()
                     return commit_result
                 
                 # Update transaction state
-                self._transaction_info.state = TransactionState.COMMITTED
-                self._transaction_info.completed_at = datetime.utcnow()
+                ti_current.state = TransactionState.COMMITTED
+                ti_current.completed_at = datetime.utcnow()
                 
                 # Clear changes
                 self.clear_changes()
@@ -446,9 +459,10 @@ class UnitOfWorkBase(IUnitOfWork):
             
             # Update transaction state
             if self._transaction_info:
-                self._transaction_info.state = TransactionState.FAILED
-                self._transaction_info.completed_at = datetime.utcnow()
-                self._transaction_info.error = error_msg
+                ti_err = self._transaction_info  # type: ignore[assignment]
+                ti_err.state = TransactionState.FAILED
+                ti_err.completed_at = datetime.utcnow()
+                ti_err.error = error_msg
                 self._notify_transaction_callbacks()
             
             return Result.failure(error_msg)
@@ -463,18 +477,21 @@ class UnitOfWorkBase(IUnitOfWork):
             with self._lock:
                 if not self.has_active_transaction:
                     return Result.failure("No active transaction")
+                # mypy: guard transaction info
+                ti_current = self._transaction_info
+                assert ti_current is not None
                 
-                transaction_id = self._transaction_info.transaction_id
+                transaction_id = ti_current.transaction_id
                 
                 # Rollback transaction in implementation
                 rollback_result = self._rollback_impl()
                 
                 # Update transaction state
-                self._transaction_info.state = TransactionState.ROLLED_BACK
-                self._transaction_info.completed_at = datetime.utcnow()
+                ti_current.state = TransactionState.ROLLED_BACK
+                ti_current.completed_at = datetime.utcnow()
                 
                 if not rollback_result.is_success:
-                    self._transaction_info.error = rollback_result.error()
+                    ti_current.error = rollback_result.get_error()
                 
                 # Clear changes
                 self.clear_changes()
@@ -489,9 +506,10 @@ class UnitOfWorkBase(IUnitOfWork):
             
             # Update transaction state
             if self._transaction_info:
-                self._transaction_info.state = TransactionState.FAILED
-                self._transaction_info.completed_at = datetime.utcnow()
-                self._transaction_info.error = error_msg
+                ti_err2 = self._transaction_info  # type: ignore[assignment]
+                ti_err2.state = TransactionState.FAILED
+                ti_err2.completed_at = datetime.utcnow()
+                ti_err2.error = error_msg
                 self._notify_transaction_callbacks()
             
             return Result.failure(error_msg)
@@ -673,12 +691,14 @@ class UnitOfWorkBase(IUnitOfWork):
     
     def _notify_transaction_callbacks(self) -> None:
         """Notify transaction callbacks."""
-        if self._transaction_info:
-            for callback in self._transaction_callbacks:
-                try:
-                    callback(self._transaction_info)
-                except Exception as e:
-                    self.logger.exception(f"Error in transaction callback: {e}")
+        ti = self._transaction_info
+        if ti is None:
+            return
+        for callback in self._transaction_callbacks:
+            try:
+                callback(ti)
+            except Exception as e:
+                self.logger.exception(f"Error in transaction callback: {e}")
     
     def _save_changes_impl(self) -> Result[None]:
         """Implementation-specific save changes.
@@ -945,20 +965,20 @@ class UnitOfWorkManager(QObject):
         """
         result = self.begin_transaction(options)
         if not result.is_success:
-            raise TransactionError(result.error())
+            raise TransactionError(result.get_error())
         
-        transaction_id = result.value()
+        transaction_id = result.get_value()
         
         try:
             yield transaction_id
             
             commit_result = self.commit()
             if not commit_result.is_success:
-                raise TransactionError(commit_result.error())
+                raise TransactionError(commit_result.get_error())
         except Exception:
             rollback_result = self.rollback()
             if not rollback_result.is_success:
-                self.logger.exception(f"Failed to rollback transaction: {rollback_result.error()}")
+                self.logger.exception(f"Failed to rollback transaction: {rollback_result.get_error()}")
             raise
 
 

@@ -64,7 +64,7 @@ class WindowMetrics:
         self.last_activity = current_time
 
 
-class MainWindow(AggregateRoot[str],
+class MainWindow(AggregateRoot,
     ):
     """Main window aggregate root.
     

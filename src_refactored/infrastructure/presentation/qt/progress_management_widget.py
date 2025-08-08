@@ -145,10 +145,12 @@ class ProgressManagementWidget(QWidget):
             self._store_original_progress_state(progress_bar)
 
             # Reparent progress bar to our dialog
-            progress_bar.setParent(self.progress_placeholder)
+            if self.progress_placeholder is not None:
+                progress_bar.setParent(self.progress_placeholder)
 
             # Add to our layout
-            self.progress_placeholder_layout.addWidget(progress_bar)
+            if self.progress_placeholder_layout is not None:
+                self.progress_placeholder_layout.addWidget(progress_bar)
 
             # Make sure it's visible
             progress_bar.setVisible(True)
@@ -156,7 +158,8 @@ class ProgressManagementWidget(QWidget):
 
             # Update to ensure it shows up
             progress_bar.update()
-            self.progress_placeholder.update()
+            if self.progress_placeholder is not None:
+                self.progress_placeholder.update()
 
             return True
 
@@ -175,6 +178,9 @@ class ProgressManagementWidget(QWidget):
         """
         try:
             # Remove from our layout first
+            if self.progress_placeholder_layout is None:
+                return False
+
             for i in range(self.progress_placeholder_layout.count()):
                 item = self.progress_placeholder_layout.itemAt(i)
                 if item and item.widget() == progress_bar:

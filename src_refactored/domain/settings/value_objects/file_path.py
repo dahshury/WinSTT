@@ -17,11 +17,11 @@ class FilePath(ValueObject):
 
     path: str
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (self.path,)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate file path after initialization."""
         if not self.path or not self.path.strip():
             msg = "File path cannot be empty"
@@ -91,7 +91,7 @@ class AudioFilePath(FilePath):
 
     SUPPORTED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate audio file path after initialization."""
         super().__post_init__()
 
@@ -115,7 +115,7 @@ class ModelFilePath(FilePath):
 
     SUPPORTED_EXTENSIONS = {".onnx", ".bin", ".pt", ".pth"}
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate model file path after initialization."""
         super().__post_init__()
 

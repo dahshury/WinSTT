@@ -34,6 +34,7 @@ class AudioToTextBridgeAdapter:
         recording_key: str = "F10",
         logger: LoggingPort | None = None,
         ui_callback: Callable[[str, Any, Any, Any, Any], None] | None = None,
+        text_paste_port: Any | None = None,
     ):
         """Initialize the bridge adapter.
         
@@ -51,11 +52,16 @@ class AudioToTextBridgeAdapter:
         self._recording_key = recording_key
         self._logger = logger
         self._ui_callback = ui_callback
+        self._text_paste = text_paste_port
         
         # Audio recording state
-        self._audio_to_text = None
+        self._audio_to_text: Any | None = None
         self._is_listening = False
         self._last_transcription = ""
+        # Keep original bound methods for restoration/use; types are Callable[..., Any]
+        self._original_start_recording: Callable[[], None] | None = None
+        self._original_stop_recording: Callable[[], None] | None = None
+        self._original_transcribe_and_paste: Callable[[bytes], None] | None = None
         
         # Initialize the AudioToText system
         self._initialize_audio_to_text()
@@ -97,15 +103,19 @@ class AudioToTextBridgeAdapter:
                 return
             
             # Override the transcription handler to sync state
-            original_transcribe_and_paste = self._audio_to_text.transcribe_and_paste
-            self._audio_to_text.transcribe_and_paste = self._bridged_transcribe_and_paste
+            att = self._audio_to_text
+            if att is None:
+                return
+            # Store original method references; assign via setattr to satisfy type checkers
+            original_transcribe_and_paste = att.transcribe_and_paste
+            setattr(att, "transcribe_and_paste", self._bridged_transcribe_and_paste)
             self._original_transcribe_and_paste = original_transcribe_and_paste
             
             # Override recording start/stop to sync state
-            original_start_recording = self._audio_to_text.start_recording
-            original_stop_recording = self._audio_to_text.stop_recording
-            self._audio_to_text.start_recording = self._bridged_start_recording
-            self._audio_to_text.stop_recording = self._bridged_stop_recording
+            original_start_recording = att.start_recording
+            original_stop_recording = att.stop_recording
+            setattr(att, "start_recording", self._bridged_start_recording)
+            setattr(att, "stop_recording", self._bridged_stop_recording)
             self._original_start_recording = original_start_recording
             self._original_stop_recording = original_stop_recording
             
@@ -158,7 +168,8 @@ class AudioToTextBridgeAdapter:
                 return
 
             # Call original start recording first to validate underlying audio stack
-            self._original_start_recording()
+            if self._original_start_recording:
+                self._original_start_recording()
 
             # Only update DDD entity state after successful low-level start
             self._audio_recorder.start_recording()
@@ -183,7 +194,8 @@ class AudioToTextBridgeAdapter:
         """Stop recording with state synchronization."""
         try:
             # Call original stop recording
-            self._original_stop_recording()
+            if self._original_stop_recording:
+                self._original_stop_recording()
             
             # Update DDD entity state
             self._audio_recorder.stop_recording()
@@ -230,6 +242,10 @@ class AudioToTextBridgeAdapter:
     def stop_recording_from_hotkey(self) -> bool:
         """Entry point for stopping recording initiated by a hotkey in the app layer."""
         try:
+            # Only stop if we were actually recording; otherwise signal no-op to prevent UI from showing
+            if not self.is_recording():
+                return False
+
             self._bridged_stop_recording()
             # If no exception, consider stop successful; transcription is handled async in AudioToText
             return True
@@ -252,6 +268,9 @@ class AudioToTextBridgeAdapter:
             
             # Create audio buffer for VAD
             with io.BytesIO(wav_bytes) as wav_buffer:
+                # Help pydub/ffmpeg infer format when reading from memory
+                with contextlib.suppress(Exception):
+                    wav_buffer.name = "audio.wav"
                 # Use real VAD to check for speech
                 if not self._vad_adapter.has_speech(wav_buffer):
                     error_msg = "No speech detected in the recording."
@@ -268,6 +287,9 @@ class AudioToTextBridgeAdapter:
                 if self._logger:
                     self._logger.log_debug("Starting transcription")
                 
+                # Ensure the buffer still has a helpful name for downstream libs
+                with contextlib.suppress(Exception):
+                    wav_buffer.name = "audio.wav"
                 transcription_result = self._transcription_adapter.transcribe(wav_buffer)
                 
                 if self._logger:
@@ -276,8 +298,15 @@ class AudioToTextBridgeAdapter:
                 # Store result
                 self._last_transcription = transcription_result
                 
-                # Paste the transcription (using original implementation)
-                self._audio_to_text.paste_transcription(transcription_result)
+                # Paste the transcription via port (hexagonal)
+                if self._text_paste is not None:
+                    try:
+                        self._text_paste.paste_text(transcription_result)
+                    except Exception as paste_exc:
+                        if self._logger:
+                            self._logger.log_error(f"Paste error: {paste_exc}")
+                elif self._audio_to_text is not None:
+                    self._audio_to_text.paste_transcription(transcription_result)
                 
                 # Show success message
                 if self._ui_callback:
@@ -399,12 +428,12 @@ class AudioToTextBridgeAdapter:
                             usable_input_devices += 1
                             if self._logger:
                                 self._logger.log_debug(
-                                    f"✓ Usable input device {i}: '{device_name}' (channels={max_input_channels}, rate={default_rate})"
+                                    f"✓ Usable input device {i}: '{device_name}' (channels={max_input_channels}, rate={default_rate})",
                                 )
                         except Exception as device_error:
                             if self._logger:
                                 self._logger.log_debug(
-                                    f"✗ Device {i} '{device_name}' reported as input but failed test: {device_error}"
+                                    f"✗ Device {i} '{device_name}' reported as input but failed test: {device_error}",
                                 )
                             continue
                             
@@ -441,7 +470,7 @@ class AudioToTextBridgeAdapter:
         PyAudio instance is reset with `close(reset=True)` after device detection failures.
         """
         try:
-            if self._audio_to_text and hasattr(self._audio_to_text, 'rec'):
+            if self._audio_to_text and hasattr(self._audio_to_text, "rec"):
                 # Reset the recorder's PyAudio instance following the original pattern
                 if self._logger:
                     self._logger.log_debug("Resetting AudioToText recorder PyAudio instance for device refresh")

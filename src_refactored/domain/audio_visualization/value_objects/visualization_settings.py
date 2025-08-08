@@ -85,7 +85,7 @@ class VisualizationSettings(ValueObject):
     normalization_target: float = 0.7
     silence_threshold: float = 0.01
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate visualization settings."""
         if self.width <= 0 or self.height <= 0:
             msg = "Width and height must be positive"

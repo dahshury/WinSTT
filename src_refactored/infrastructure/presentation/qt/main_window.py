@@ -16,13 +16,10 @@ from src_refactored.presentation.qt.services.drag_drop_integration_service impor
     DragDropIntegrationService,
 )
 from src_refactored.presentation.qt.services.event_filter_service import EventFilterService
+from src_refactored.presentation.qt.services.event_system_service import UIEventSystem
 from src_refactored.presentation.qt.services.geometry_management_service import (
     GeometryManagementService,
 )
-from src_refactored.presentation.qt.services.worker_thread_management_service import (
-    WorkerThreadManagementService,
-)
-from src_refactored.presentation.qt.services.event_system_service import UIEventSystem
 from src_refactored.presentation.qt.services.opacity_effects_service import OpacityEffectsService
 from src_refactored.presentation.qt.services.ui_layout_service import UILayoutService
 from src_refactored.presentation.qt.services.ui_text_management_service import (
@@ -34,6 +31,9 @@ from src_refactored.presentation.qt.services.visualization_integration_service i
 from src_refactored.presentation.qt.services.widget_layering_service import WidgetLayeringService
 from src_refactored.presentation.qt.services.window_configuration_service import (
     WindowConfigurationService,
+)
+from src_refactored.presentation.qt.services.worker_thread_management_service import (
+    WorkerThreadManagementService,
 )
 
 
@@ -121,7 +121,11 @@ class MainWindow(QMainWindow):
         self.logger.info("⚙️ Loading configuration...")
 
         try:
-            self.config = self.settings_service.load_settings()
+            # Load settings via Result API
+            load_result = self.settings_service.load_settings()
+            if not getattr(load_result, "is_success", False):
+                raise RuntimeError(getattr(load_result, "error", "Failed to load settings"))
+            self.config = load_result.value or {}
 
             # Apply configuration to UI
             self._apply_configuration()
@@ -135,20 +139,21 @@ class MainWindow(QMainWindow):
     def _apply_configuration(self) -> None:
         """Apply loaded configuration to the UI."""
         # Recording settings
-        self.enable_recording_sound = self.config.get("enable_sound", True)
-        self.start_sound = self.config.get("sound_path", "resources/splash.mp3")
-        self.current_output_srt = self.config.get("output_srt", False)
-        self.rec_key = self.config.get("rec_key", "CTRL+ALT+A")
+        cfg = self.config
+        self.enable_recording_sound = cfg.get("enable_sound", True)
+        self.start_sound = cfg.get("sound_path", "resources/splash.mp3")
+        self.current_output_srt = cfg.get("output_srt", False)
+        self.rec_key = cfg.get("rec_key", "CTRL+ALT+A")
 
         # Model settings
-        self.selected_model = self.config.get("model", "whisper-turbo")
-        self.selected_quantization = self.config.get("quantization", "Full")
+        self.selected_model = cfg.get("model", "whisper-turbo")
+        self.selected_quantization = cfg.get("quantization", "Full")
 
         # LLM settings
-        self.llm_enabled = self.config.get("llm_enabled", False)
-        self.llm_model = self.config.get("llm_model", "gemma-3-1b-it")
-        self.llm_quantization = self.config.get("llm_quantization", "Full")
-        self.llm_prompt = self.config.get("llm_prompt", "You are a helpful assistant.")
+        self.llm_enabled = cfg.get("llm_enabled", False)
+        self.llm_model = cfg.get("llm_model", "gemma-3-1b-it")
+        self.llm_quantization = cfg.get("llm_quantization", "Full")
+        self.llm_prompt = cfg.get("llm_prompt", "You are a helpful assistant.")
 
     def _get_default_configuration(self) -> dict:
         """Get default configuration values."""
@@ -180,7 +185,7 @@ class MainWindow(QMainWindow):
 
         # Initialize transcription state
         self.is_transcribing = False
-        self.transcription_queue = []
+        self.transcription_queue: list[str] = []
 
         self.logger.info("✅ Worker management initialized")
 

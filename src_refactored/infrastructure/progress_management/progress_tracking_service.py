@@ -141,7 +141,7 @@ class ProgressTrackingService(QObject):
                 filename=filename,
                 start_time=time.time(),
                 last_update=time.time(),
-                state=ProgressState.create_active(),
+                state=ProgressState.create_processing(),
             )
             self._last_emitted_percentage = -1
 
@@ -209,7 +209,7 @@ class ProgressTrackingService(QObject):
         """
         with self._lock:
             self._progress_info.error = error_message
-            self._progress_info.state = ProgressState.create_error()
+            self._progress_info.state = ProgressState.create_error(error_message)
             self._progress_info.is_completed = True
 
         self.progress_error.emit(error_message)
@@ -223,7 +223,7 @@ class ProgressTrackingService(QObject):
             
             # Only emit if percentage changed significantly
             if abs(percentage - self._last_emitted_percentage) >= 1.0 or self._progress_info.is_completed:
-                self._last_emitted_percentage = percentage
+                self._last_emitted_percentage = int(percentage)
                 self.progress_updated.emit(percentage, message)
 
     # General Progress Tracking Methods
@@ -247,7 +247,7 @@ class ProgressTrackingService(QObject):
             total=max_value,
             message=description,
             progress_type=progress_type,
-            state=ProgressState.create_active(),
+            state=ProgressState.create_processing(),
         )
 
         self.general_progress_started.emit(progress_id, description)
@@ -368,7 +368,7 @@ class ProgressTrackingService(QObject):
         progress_info = self.active_progress[progress_id]
         progress_info.error = error_message
         progress_info.is_completed = True
-        progress_info.state = ProgressState.create_error()
+        progress_info.state = ProgressState.create_error(error_message)
 
         # Call error callback if registered
         if progress_id in self.error_callbacks:
@@ -499,7 +499,7 @@ class ProgressTrackingService(QObject):
         """
         if progress_id is None:
             with self._lock:
-                return not self._progress_info.is_completed and self._progress_info.state.state_type == ProgressStateType.ACTIVE
+                return not self._progress_info.is_completed and self._progress_info.state.state_type in {ProgressStateType.DOWNLOADING, ProgressStateType.MOVING, ProgressStateType.PROCESSING}
         
         progress_info = self.active_progress.get(progress_id)
         return progress_info is not None and not progress_info.is_completed

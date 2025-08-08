@@ -81,7 +81,7 @@ class ManageDialogLifecycleResponse:
     message: str = ""
 
 
-class ManageDialogLifecycleUseCase(UseCase[ManageDialogLifecycleRequest, ManageDialogLifecycleResponse]):
+class ManageDialogLifecycleUseCase(UseCase[ManageDialogLifecycleRequest, Result[ManageDialogLifecycleResponse]]):
     """Use case for managing dialog lifecycle operations.
     
     This use case handles:

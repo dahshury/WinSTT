@@ -4,10 +4,22 @@ This module provides a factory for creating properly configured audio services
 with all their dependencies.
 """
 
+from typing import cast
+
 from .audio_device_service import AudioDeviceService
 from .audio_file_service import AudioFileService
-from .audio_playback_service import AudioPlaybackService
-from .audio_processing_service import AudioProcessingService
+from .audio_playback_service import (
+    AudioDeviceServiceProtocol as PlaybackDeviceProtocol,
+    AudioFileServiceProtocol as PlaybackFileProtocol,
+    AudioPlaybackService,
+    AudioProcessingServiceProtocol as PlaybackProcessingProtocol,
+    AudioStreamServiceProtocol as PlaybackStreamProtocol,
+)
+from .audio_processing_service import (
+    AudioProcessingService,
+    PlaybackAudioProcessingService,
+    VADAudioProcessingService,
+)
 from .audio_recording_service import AudioRecordingService
 from .audio_stream_service import AudioStreamService
 from .audio_validation_service import AudioValidationService
@@ -61,10 +73,10 @@ class AudioServiceFactory:
         logger_service = LoggerService()
 
         return AudioPlaybackService(
-            device_service=device_service,
-            stream_service=stream_service,
-            file_service=file_service,
-            processing_service=processing_service,
+            device_service=cast(PlaybackDeviceProtocol, device_service),
+            stream_service=cast(PlaybackStreamProtocol, stream_service),
+            file_service=cast(PlaybackFileProtocol, file_service),
+            processing_service=cast(PlaybackProcessingProtocol, processing_service),
             validation_service=validation_service,
             progress_tracking_service=progress_service,
             logger_service=logger_service,
@@ -75,7 +87,7 @@ class AudioServiceFactory:
         """Create a properly configured VADService."""
         # Create VAD-specific services
         model_service = VADModelService()
-        audio_processing_service = AudioProcessingService()
+        audio_processing_service = VADAudioProcessingService()
         validation_service = VADValidationService()
         calibration_service = VADCalibrationService()
         smoothing_service = VADSmoothingService()
@@ -99,15 +111,21 @@ class AudioServiceFactory:
         validation_service = AudioValidationService()
         device_management_service = AudioDeviceService()
         stream_management_service = AudioStreamService()
-        audio_data_service = AudioProcessingService()
+        audio_data_service = PlaybackAudioProcessingService()
         progress_service = ProgressTrackingService()
         logger_service = LoggerService()
 
+        from .pyaudio_service import (
+            AudioValidationServiceProtocol as P_Validation,
+            DeviceManagementServiceProtocol as P_Device,
+            StreamManagementServiceProtocol as P_Stream,
+            AudioDataServiceProtocol as P_Data,
+        )
         return PyAudioService(
-            validation_service=validation_service,
-            device_management_service=device_management_service,
-            stream_management_service=stream_management_service,
-            audio_data_service=audio_data_service,
+            validation_service=cast(P_Validation, validation_service),
+            device_management_service=cast(P_Device, device_management_service),
+            stream_management_service=cast(P_Stream, stream_management_service),
+            audio_data_service=cast(P_Data, audio_data_service),
             progress_tracking_service=progress_service,
             logger_service=logger_service,
         )

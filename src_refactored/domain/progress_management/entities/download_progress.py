@@ -35,7 +35,7 @@ class DownloadMetrics:
     estimated_time_remaining: float | None = None  # seconds
 
     def __post_init__(self,
-    ):
+    ) -> None:
         """Validate download metrics."""
         if not 0.0 <= self.percentage <= 100.0:
             msg = f"Percentage must be between 0 and 100, got: {self.percentage}"
@@ -61,15 +61,14 @@ class DownloadConfiguration:
     timeout_seconds: int = 30
     chunk_size: int = 8192
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate download configuration."""
         if not self.filename or not self.filename.strip():
             msg = "Filename cannot be empty"
             raise ValueError(msg)
         if not self.target_path or not self.target_path.strip():
             msg = "Target path cannot be empty"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
         if self.max_retries < 0:
             msg = f"Max retries cannot be negative, got: {self.max_retries}"
             raise ValueError(msg)

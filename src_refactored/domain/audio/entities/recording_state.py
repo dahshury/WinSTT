@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src_refactored.domain.common.abstractions import Entity
 from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
@@ -57,7 +57,7 @@ class RecordingState(Entity):
     extracted from AudioToText key handling logic.
     """
     
-    def __init__(self, entity_id: str, hotkey_combination: KeyCombination, **kwargs):
+    def __init__(self, entity_id: str, hotkey_combination: KeyCombination, **kwargs: Any) -> None:
         """Initialize recording state."""
         super().__init__(entity_id)
         self.hotkey_combination = hotkey_combination
@@ -199,8 +199,7 @@ class RecordingState(Entity):
         required_keys.add(normalized_key)
 
         # Check if all required keys are pressed
-        return required_keys.issubset(self.keys_currently_pressed,
-    )
+        return required_keys.issubset(self.keys_currently_pressed)
 
     def _normalize_key_name(self, key_name: str,
     ) -> str:
@@ -224,22 +223,22 @@ class RecordingState(Entity):
     @property
     def is_recording(self) -> bool:
         """Check if currently in a recording state."""
-        return self.current_phase in [
+        return bool(self.current_phase in [
             RecordingPhase.STARTING,
             RecordingPhase.ACTIVE,
             RecordingPhase.STOPPING,
             RecordingPhase.FINALIZING,
-        ]
+        ])
 
     @property
     def is_idle(self) -> bool:
         """Check if in idle state."""
-        return self.current_phase == RecordingPhase.IDLE
+        return bool(self.current_phase == RecordingPhase.IDLE)
 
     @property
     def can_start_recording(self) -> bool:
         """Check if recording can be started."""
-        return self.current_phase == RecordingPhase.KEY_PRESSED
+        return bool(self.current_phase == RecordingPhase.KEY_PRESSED)
 
     @property
     def time_since_last_change(self) -> float:
@@ -247,7 +246,7 @@ class RecordingState(Entity):
         if self._time_port is not None:
             ts = self._time_port.get_current_timestamp_ms()
             if ts.is_success and ts.value is not None:
-                return max(0.0, (ts.value / 1000.0) - float(self.last_state_change))
+                return max(0.0, (float(ts.value) / 1000.0) - float(self.last_state_change))
         return float(DomainIdentityGenerator.generate_timestamp() - float(self.last_state_change))
 
     @property
@@ -269,7 +268,9 @@ class RecordingState(Entity):
         # Debounce: Don't play sound too frequently using port if available
         if self._time_port is not None:
             ts = self._time_port.get_current_timestamp_ms()
-            now_val = (ts.value / 1000.0) if ts.is_success and ts.value is not None else DomainIdentityGenerator.generate_timestamp()
+            now_val: float = (
+                float(ts.value) / 1000.0 if ts.is_success and ts.value is not None else DomainIdentityGenerator.generate_timestamp()
+            )
         else:
             now_val = DomainIdentityGenerator.generate_timestamp()
         time_since_last = float(now_val - float(self.last_playback_time))

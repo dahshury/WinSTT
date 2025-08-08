@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 from src_refactored.domain.common import Entity
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src_refactored.domain.common.ports.file_system_port import FileSystemPort
     from src_refactored.domain.common.ports.serialization_port import SerializationPort
 
@@ -22,7 +24,7 @@ class SettingsConfiguration(Entity):
     _cached_settings: dict[str, Any] | None = field(default=None, init=False)
     _is_dirty: bool = field(default=False, init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize the settings configuration entity."""
         super().__post_init__()
         self._ensure_config_directory_exists()
@@ -184,7 +186,7 @@ class SettingsConfiguration(Entity):
     def _is_valid_setting_update(self, key: str, value: Any,
     ) -> bool:
         """Validate a setting key-value pair."""
-        validation_rules = {
+        validation_rules: dict[str, Callable[[Any], bool]] = {
             "model": lambda v: isinstance(v, str) and v in [
                 "whisper-turbo", "lite-whisper-turbo", "lite-whisper-turbo-fast",
             ],

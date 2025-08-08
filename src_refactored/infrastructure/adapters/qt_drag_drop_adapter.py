@@ -41,7 +41,7 @@ class QtDragDropAdapter(IDragDropPort):
         """Enable drag and drop for a zone using existing infrastructure services."""
         try:
             if zone_id in self._drop_zones:
-                return Result.success(True)  # Already enabled
+                return Result.success(None)  # Already enabled
             
             # Store zone information
             self._drop_zones[zone_id] = {
@@ -53,7 +53,7 @@ class QtDragDropAdapter(IDragDropPort):
             if self._logger:
                 self._logger.log_info(f"Enabled drag drop for zone: {zone_id}")
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error enabling drag drop for zone {zone_id}: {e}"
@@ -70,7 +70,7 @@ class QtDragDropAdapter(IDragDropPort):
                 if self._logger:
                     self._logger.log_info(f"Disabled drag drop for zone: {zone_id}")
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error disabling drag drop for zone {zone_id}: {e}"
@@ -108,7 +108,7 @@ class QtDragDropAdapter(IDragDropPort):
             if self._logger:
                 self._logger.log_debug(f"Set {len(mime_types)} MIME types for zone {zone_id}")
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error setting MIME types for zone {zone_id}: {e}"
@@ -147,7 +147,7 @@ class QtDragDropAdapter(IDragDropPort):
             
             self._drag_drop_service.files_dropped.connect(handle_files_dropped)
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error setting drop callback for zone {zone_id}: {e}"
@@ -185,7 +185,7 @@ class QtDragDropAdapter(IDragDropPort):
             
             self._drag_drop_service.drag_entered.connect(handle_drag_entered)
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error setting drag enter callback for zone {zone_id}: {e}"
@@ -222,7 +222,7 @@ class QtDragDropAdapter(IDragDropPort):
             
             self._drag_drop_service.drag_left.connect(handle_drag_left)
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error setting drag leave callback for zone {zone_id}: {e}"
@@ -334,7 +334,7 @@ class QtDragDropAdapter(IDragDropPort):
             if self._logger:
                 self._logger.log_info(f"Enabled widget drag drop for zone {zone_id}")
             
-            return Result.success(True)
+            return Result.success(None)
             
         except Exception as e:
             error_msg = f"Error enabling widget drag drop for zone {zone_id}: {e}"

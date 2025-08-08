@@ -20,7 +20,7 @@ class ResourceServiceAdapter:
         try:
             result = self._service.get_resource_path(resource_name)
             if result.is_success:
-                path = result.value
+                path = result.value or f"resources/{resource_name}"
                 if self._logger:
                     self._logger.log_debug(f"Resource path resolved: {resource_name} -> {path}")
                 return path
@@ -74,7 +74,7 @@ class ResourceServiceAdapter:
             result = self._service.get_resource_path(relative_path)
             if result.is_success:
                 import os
-                return os.path.exists(result.value)
+                return os.path.exists(result.value or "")
             return False
         except Exception:
             return False

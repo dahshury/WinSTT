@@ -17,7 +17,7 @@ class WindowShowRequestedEvent(DomainEvent):
     reason: str | None = None
     restore_geometry: bool = True
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -29,7 +29,7 @@ class WindowHideRequestedEvent(DomainEvent):
     reason: str | None = None
     minimize_to_tray: bool = False
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -40,7 +40,7 @@ class WindowShownEvent(DomainEvent):
     window_id: str
     geometry: WindowGeometry
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -51,7 +51,7 @@ class WindowHiddenEvent(DomainEvent):
     window_id: str
     was_minimized: bool = False
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -61,7 +61,7 @@ class WindowMaximizeRequestedEvent(DomainEvent):
     
     window_id: str
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -72,7 +72,7 @@ class WindowMinimizeRequestedEvent(DomainEvent):
     window_id: str
     to_tray: bool = False
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -83,7 +83,7 @@ class WindowRestoreRequestedEvent(DomainEvent):
     window_id: str
     from_tray: bool = False
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -95,7 +95,7 @@ class WindowGeometryChangedEvent(DomainEvent):
     new_geometry: WindowGeometry
     previous_geometry: WindowGeometry | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -107,7 +107,7 @@ class WindowTitleChangedEvent(DomainEvent):
     new_title: str
     previous_title: str | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -119,7 +119,7 @@ class WindowStateChangedEvent(DomainEvent):
     new_state: str  # normal, maximized, minimized, fullscreen
     previous_state: str | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -131,7 +131,7 @@ class WindowCloseRequestedEvent(DomainEvent):
     force_close: bool = False
     save_geometry: bool = True
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
 
 
@@ -142,5 +142,5 @@ class WindowFocusChangedEvent(DomainEvent):
     window_id: str
     has_focus: bool
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()

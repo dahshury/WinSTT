@@ -13,7 +13,7 @@ class ProgressPercentage(ValueObject):
 
     value: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate progress percentage after initialization."""
         if not isinstance(self.value, int | float):
             msg = f"Progress percentage must be a number, got: {type(self.value).__name__}"

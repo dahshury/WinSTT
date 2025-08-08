@@ -96,12 +96,12 @@ class RecordingMode(Enum):
     @property
     def is_automatic(self) -> bool:
         """Check if mode operates automatically."""
-        return self in [self.VOICE_ACTIVATED, self.SCHEDULED, self.TRIGGERED]
+        return self in [RecordingMode.VOICE_ACTIVATED, RecordingMode.SCHEDULED, RecordingMode.TRIGGERED]
 
     @property
     def requires_trigger(self) -> bool:
         """Check if mode requires external trigger."""
-        return self in [self.VOICE_ACTIVATED, self.TRIGGERED]
+        return self in [RecordingMode.VOICE_ACTIVATED, RecordingMode.TRIGGERED]
 
 
 class RecordingQuality(Enum):

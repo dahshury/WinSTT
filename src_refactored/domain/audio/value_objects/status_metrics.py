@@ -44,7 +44,7 @@ class RecordingStatus(ValueObject):
     last_update: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
 
     def _get_equality_components(self,
-    ) -> tuple:
+    ) -> tuple[object, ...]:
         return (
             self.is_recording,
             self.current_duration,
@@ -125,7 +125,7 @@ class PlaybackStatus(ValueObject):
     last_update: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
 
     def _get_equality_components(self,
-    ) -> tuple:
+    ) -> tuple[object, ...]:
         return (
             self.is_playing,
             self.current_position,
@@ -207,7 +207,7 @@ class RecordingMetrics(ValueObject):
     compression_ratio: float | None = None
 
     def _get_equality_components(self,
-    ) -> tuple:
+    ) -> tuple[object, ...]:
         return (
             self.total_duration,
             self.total_frames,
@@ -308,7 +308,7 @@ class PlaybackMetrics(ValueObject):
     error_count: int = 0
     warning_count: int = 0
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.total_duration,

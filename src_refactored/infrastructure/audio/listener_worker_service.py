@@ -49,7 +49,8 @@ class ListenerWorkerService(QObject):
         super().__init__()
         self._running: bool | None = None
         self.rec_key = rec_key
-        self.listener: object | None = None
+        # The adapter created exposes specific signals/methods; keep as Any for runtime-checked attributes
+        self.listener: Any | None = None
 
         # Store model and VAD for listener creation
         self.model = model
@@ -62,13 +63,19 @@ class ListenerWorkerService(QObject):
 
         # Create the PyQt adapter
         adapter_service = PyQtAudioAdapterService()
+        # Wrap bound signal into a callable adapter to satisfy typing
+        def _err_cb(*args: Any, **kwargs: Any) -> None:
+            with contextlib.suppress(Exception):
+                self.display_message_signal.emit(*args)
+
         self.listener = adapter_service.create_adapter_with_factory(
-            self.model, self.vad, self.rec_key, error_callback=self.display_message_signal,
+            self.model, self.vad, self.rec_key, error_callback=_err_cb,
         )
 
         # Connect signals from the adapter
-        self.listener.recording_started_signal.connect(self.recording_started.emit)
-        self.listener.recording_stopped_signal.connect(self.recording_stopped.emit)
+        if self.listener is not None:
+            self.listener.recording_started_signal.connect(self.recording_started.emit)  # type: ignore[attr-defined]
+            self.listener.recording_stopped_signal.connect(self.recording_stopped.emit)  # type: ignore[attr-defined]
 
     def _setup_recording_hooks(self) -> None:
         """Setup recording hooks.
@@ -90,7 +97,8 @@ class ListenerWorkerService(QObject):
                 self._create_listener()
 
             # Start capturing keys
-            self.listener.capture_keys(self.rec_key)
+            if self.listener is not None:
+                self.listener.capture_keys(self.rec_key)  # type: ignore[attr-defined]
             self.initialized.emit()
             self._running = True
 
@@ -110,7 +118,7 @@ class ListenerWorkerService(QObject):
         """Clean up listener resources."""
         if self.listener is not None:
             with contextlib.suppress(Exception):
-                self.listener.shutdown()
+                self.listener.shutdown()  # type: ignore[attr-defined]
             del self.listener
             self.listener = None
         gc.collect()

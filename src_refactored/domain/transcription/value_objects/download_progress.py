@@ -22,7 +22,7 @@ class DownloadProgress(ValueObject):
     is_complete: bool = False
     error_message: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate download progress data."""
         if not self.filename:
             msg = "Filename is required"

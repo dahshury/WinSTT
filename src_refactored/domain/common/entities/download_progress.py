@@ -18,7 +18,7 @@ class FileSize(ValueObject):
     """Value object for file sizes in bytes."""
     bytes: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.bytes < 0:
             msg = f"File size cannot be negative, got {self.bytes}"
             raise ValueError(msg)
@@ -54,7 +54,7 @@ class TransferRate(ValueObject):
     """Value object for transfer rates in bytes per second."""
     bytes_per_second: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.bytes_per_second < 0:
             msg = f"Transfer rate cannot be negative, got {self.bytes_per_second}"
             raise ValueError(msg)
@@ -78,7 +78,7 @@ class DownloadProgress:
     transfer_rate: TransferRate = field(default_factory=lambda: TransferRate(0.0))
     processing_status: ProcessingStatus = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.processing_status = ProcessingStatus(
             operation_id=f"download_{hash(self.url)}",
         )

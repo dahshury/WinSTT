@@ -27,7 +27,7 @@ class TranscriptionSession(AggregateRoot):
     transcription_results: list[TranscriptionResult] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__init__(self.session_id)
 
     def get_state(self) -> TranscriptionState:
@@ -51,7 +51,7 @@ class TranscriptionSession(AggregateRoot):
             return Result.failure("No transcriptions available")
         
         # Find the latest transcription based on started_at timestamp, fallback to 0 for comparison
-        latest = max(self.transcription_results, key=lambda r: r.started_at.timestamp() if r.started_at else 0.0)
+        latest = max(self.transcription_results, key=lambda r: (r.started_at or 0.0))
         return Result.success(latest)
     
     def get_transcription_result(self, transcription_id: str) -> Result[TranscriptionResult]:

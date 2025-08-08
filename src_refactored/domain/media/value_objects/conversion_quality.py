@@ -56,7 +56,7 @@ class ConversionQuality(ValueObject):
         },
     }
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.sample_rate,
@@ -66,7 +66,7 @@ class ConversionQuality(ValueObject):
             self.preset,
         )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate conversion quality settings."""
         if self.sample_rate <= 0:
             msg = "Sample rate must be positive"

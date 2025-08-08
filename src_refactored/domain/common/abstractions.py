@@ -24,7 +24,7 @@ from .domain_utils import DomainIdentityGenerator
 # Type Variables for Generic Patterns  
 T = TypeVar("T")
 TCommand = TypeVar("TCommand", bound="ICommand", contravariant=True)
-TQuery = TypeVar("TQuery", bound="IQuery", contravariant=True)
+TQuery = TypeVar("TQuery", bound="IQuery[Any]", contravariant=True)
 TResult = TypeVar("TResult", covariant=True)
 TState = TypeVar("TState")
 TEvent = TypeVar("TEvent", bound="DomainEvent")
@@ -240,7 +240,7 @@ class Entity:
     created_at: float = field(default=0.0)
     updated_at: float = field(default=0.0)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.entity_id:
             object.__setattr__(self, "entity_id", DomainIdentityGenerator.generate_domain_id("entity"))
         if not self.created_at:

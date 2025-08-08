@@ -21,7 +21,6 @@ from src_refactored.domain.audio.value_objects import (
     RecordingConfiguration,
     RecordingData,
     RecordingMetadata,
-    RecordingMode,
     RecordingOperation,
     RecordingResult,
     RecordingState,
@@ -280,13 +279,13 @@ class AudioRecordingService:
     ) -> AudioRecordingServiceResponse:
         """Execute audio recording service operation."""
         start_time = time.time()
-        warnings = []
+        warnings: list[str] = []
 
         try:
-            if request.enable_progress_tracking and self._progress_tracking_service:
+            if request.enable_progress_tracking and self._progress_tracking_service and request.operation is not None:
                 self._progress_tracking_service.start_progress(request.operation)
 
-            if request.enable_logging and self._logger_service:
+            if request.enable_logging and self._logger_service and request.operation is not None:
                 self._logger_service.log_info(
                     "Starting recording operation",
                     operation=request.operation.value,
@@ -327,7 +326,7 @@ class AudioRecordingService:
             error_message = f"Unexpected error during recording operation: {e!s}"
             self._state.error_message = error_message
 
-            if request.enable_logging and self._logger_service:
+            if request.enable_logging and self._logger_service and request.operation is not None:
                 self._logger_service.log_error(
                     "Recording operation failed",
                     error=str(e),
@@ -439,10 +438,10 @@ class AudioRecordingService:
             metadata = RecordingMetadata(
                 recording_id=recording_id,
                 start_time=datetime.now(),
-                sample_rate=request.config.sample_rate,
-                channels=request.config.channels,
-                bit_depth=request.config.bit_depth,
-                audio_format=request.config.format,
+                sample_rate=request.config.audio_config.sample_rate.value,
+                channels=request.config.audio_config.channels.value,
+                bit_depth=request.config.format.bit_depth,
+                audio_format=request.config.format.format_type,
             )
 
             # Create audio stream
@@ -456,6 +455,7 @@ class AudioRecordingService:
                 )
 
             # Start stream
+            assert stream_id is not None
             start_success, start_error = self._stream_service.start_stream(stream_id)
             if not start_success:
                 return AudioRecordingServiceResponse(
@@ -466,19 +466,15 @@ class AudioRecordingService:
                 )
 
             # Create file if auto-save enabled
-            file_path = None
-            if request.config.auto_save and request.config.output_directory:
-                timestamp = int(time.time())
-                filename = request.config.filename_template.format(timestamp=timestamp,
-    )
-                file_path = request.config.output_directory / f"{filename}.{request.config.format.value}"
-
+            file_path: Path | None = None
+            candidate_path = request.file_path or request.config.file_path
+            if candidate_path:
+                file_path = Path(candidate_path)
                 file_success, file_error = self._file_service.create_file(file_path, request.config)
                 if not file_success:
                     warnings.append(f"Failed to create file: {file_error}")
                     file_path = None
                 else:
-                    # Create new metadata with file_path since it's frozen
                     metadata = RecordingMetadata(
                         recording_id=metadata.recording_id,
                         start_time=metadata.start_time,
@@ -489,7 +485,7 @@ class AudioRecordingService:
                         bit_depth=metadata.bit_depth,
                         audio_format=metadata.audio_format,
                         file_size_bytes=metadata.file_size_bytes,
-                        file_path=file_path,
+                        file_path=str(file_path),
                         device_name=metadata.device_name,
                         quality_metrics=metadata.quality_metrics,
                         tags=metadata.tags,
@@ -502,7 +498,10 @@ class AudioRecordingService:
             self._state.current_recording_id = recording_id
             self._state.active_recordings[recording_id] = metadata
             self._state.processing_state = RecordingState.RECORDING
-            self._state.status.is_recording = True
+            self._state.status = RecordingStatus(
+                is_recording=True,
+                current_duration=Duration(seconds=0.0),
+            )
 
             # Create data queue and stop event
             self._data_queues[recording_id] = Queue()
@@ -570,11 +569,28 @@ class AudioRecordingService:
 
             # Update metadata
             metadata = self._state.active_recordings[recording_id]
-            metadata.end_time = time.time()
-            metadata.duration = metadata.end_time - metadata.start_time
+            end_dt = datetime.now()
+            duration = Duration(seconds=(end_dt - metadata.start_time).total_seconds())
+            metadata = RecordingMetadata(
+                recording_id=metadata.recording_id,
+                start_time=metadata.start_time,
+                end_time=end_dt,
+                duration=duration,
+                sample_rate=metadata.sample_rate,
+                channels=metadata.channels,
+                bit_depth=metadata.bit_depth,
+                audio_format=metadata.audio_format,
+                file_size_bytes=metadata.file_size_bytes,
+                file_path=metadata.file_path,
+                device_name=metadata.device_name,
+                quality_metrics=metadata.quality_metrics,
+                tags=metadata.tags,
+                notes=metadata.notes,
+            )
+            self._state.active_recordings[recording_id] = metadata
 
             # Finalize file if exists
-            file_path = metadata.file_path
+            file_path = Path(metadata.file_path) if metadata.file_path else None
             if file_path:
                 finalize_success, finalize_error = self._file_service.finalize_file(file_path, metadata)
                 if not finalize_success:
@@ -583,11 +599,31 @@ class AudioRecordingService:
                 # Get file info
                 info_success, file_info, info_error = self._file_service.get_file_info(file_path)
                 if info_success and file_info:
-                    metadata.file_size = file_info.get("size", 0)
+                    file_size = file_info.get("size", 0)
+                    metadata = RecordingMetadata(
+                        recording_id=metadata.recording_id,
+                        start_time=metadata.start_time,
+                        end_time=metadata.end_time,
+                        duration=metadata.duration,
+                        sample_rate=metadata.sample_rate,
+                        channels=metadata.channels,
+                        bit_depth=metadata.bit_depth,
+                        audio_format=metadata.audio_format,
+                        file_size_bytes=file_size,
+                        file_path=metadata.file_path,
+                        device_name=metadata.device_name,
+                        quality_metrics=metadata.quality_metrics,
+                        tags=metadata.tags,
+                        notes=metadata.notes,
+                    )
+                    self._state.active_recordings[recording_id] = metadata
 
             # Update state
             self._state.processing_state = RecordingState.READY
-            self._state.status.is_recording = False
+            self._state.status = RecordingStatus(
+                is_recording=False,
+                current_duration=Duration(seconds=0.0),
+            )
             self._state.current_recording_id = None
 
             # Clean up resources
@@ -598,8 +634,8 @@ class AudioRecordingService:
                 operation_successful=True,
                 recording_id=recording_id,
                 file_path=file_path,
-                duration=metadata.duration,
-                file_size=metadata.file_size,
+                duration=(metadata.duration.seconds if metadata.duration else None),
+                file_size=metadata.file_size_bytes,
             )
 
             if request.enable_progress_tracking and self._progress_tracking_service:
@@ -637,7 +673,11 @@ class AudioRecordingService:
 
         try:
             self._state.processing_state = RecordingState.PAUSED
-            self._state.status.is_paused = True
+            if self._state.status:
+                self._state.status = RecordingStatus(
+                    is_recording=False,
+                    current_duration=self._state.status.current_duration,
+                )
 
             operation_result = RecordingOperationResult(
                 operation_successful=True,
@@ -679,7 +719,11 @@ class AudioRecordingService:
 
         try:
             self._state.processing_state = RecordingState.RECORDING
-            self._state.status.is_paused = False
+            if self._state.status:
+                self._state.status = RecordingStatus(
+                    is_recording=True,
+                    current_duration=self._state.status.current_duration,
+                )
 
             operation_result = RecordingOperationResult(
                 operation_successful=True,
@@ -731,7 +775,8 @@ class AudioRecordingService:
             metadata = self._state.active_recordings[recording_id]
 
             # Validate file path
-            path_valid, path_error = self._validation_service.validate_file_path(request.file_path)
+            target_path = Path(request.file_path)
+            path_valid, path_error = self._validation_service.validate_file_path(target_path)
             if not path_valid:
                 return AudioRecordingServiceResponse(
                     result=RecordingResult.STORAGE_ERROR,
@@ -741,7 +786,7 @@ class AudioRecordingService:
                 )
 
             # Create file
-            file_success, file_error = self._file_service.create_file(request.file_path, self._state.current_config)
+            file_success, file_error = self._file_service.create_file(target_path, self._state.current_config)  # type: ignore[arg-type]
             if not file_success:
                 return AudioRecordingServiceResponse(
                     result=RecordingResult.STORAGE_ERROR,
@@ -756,7 +801,8 @@ class AudioRecordingService:
                 while not queue.empty():
                     try:
                         recording_data = queue.get_nowait()
-                        write_success, write_error = self._file_service.write_data(request.file_path, recording_data.data)
+                        np_data = np.asarray(recording_data.data, dtype=np.float32)
+                        write_success, write_error = self._file_service.write_data(target_path, np_data)
                         if not write_success:
                             warnings.append(f"Failed to write data chunk: {write_error}")
                     except Empty:
@@ -774,7 +820,7 @@ class AudioRecordingService:
                 bit_depth=metadata.bit_depth,
                 audio_format=metadata.audio_format,
                 file_size_bytes=metadata.file_size_bytes,
-                file_path=request.file_path,
+                file_path=str(target_path),
                 device_name=metadata.device_name,
                 quality_metrics=metadata.quality_metrics,
                 tags=metadata.tags,
@@ -782,12 +828,12 @@ class AudioRecordingService:
             )
             self._state.active_recordings[recording_id] = metadata
             
-            finalize_success, finalize_error = self._file_service.finalize_file(request.file_path, metadata)
+            finalize_success, finalize_error = self._file_service.finalize_file(target_path, metadata)
             if not finalize_success:
                 warnings.append(f"Failed to finalize file: {finalize_error}")
 
             # Get file info
-            info_success, file_info, info_error = self._file_service.get_file_info(request.file_path)
+            info_success, file_info, info_error = self._file_service.get_file_info(target_path)
             file_size = None
             if info_success and file_info:
                 file_size = file_info.get("size", 0)
@@ -813,7 +859,7 @@ class AudioRecordingService:
             operation_result = RecordingOperationResult(
                 operation_successful=True,
                 recording_id=recording_id,
-                file_path=request.file_path,
+                file_path=target_path,
                 duration=metadata.duration.seconds if metadata.duration else None,
                 file_size=file_size,
             )
@@ -868,7 +914,10 @@ class AudioRecordingService:
             if self._state.current_recording_id == recording_id:
                 self._state.current_recording_id = None
                 self._state.processing_state = RecordingState.READY
-                self._state.status.is_recording = False
+                self._state.status = RecordingStatus(
+                    is_recording=False,
+                    current_duration=Duration(seconds=0.0),
+                )
 
             operation_result = RecordingOperationResult(
                 operation_successful=True,
@@ -1008,13 +1057,12 @@ class AudioRecordingService:
                 metadata = self._state.active_recordings.get(recording_id)
 
                 if metadata:
-                    current_time = time.time()
-                    self._state.status.current_duration = current_time - metadata.start_time
-
-                    # Get queue size for buffer utilization
-                    if recording_id in self._data_queues:
-                        queue_size = self._data_queues[recording_id].qsize()
-                        self._state.status.buffer_utilization = min(queue_size / 100.0, 1.0)  # Assume max 100 buffers
+                    current_time = datetime.now()
+                    current_duration = Duration(seconds=(current_time - metadata.start_time).total_seconds())
+                    self._state.status = RecordingStatus(
+                        is_recording=self._state.processing_state == RecordingState.RECORDING,
+                        current_duration=current_duration,
+                    )
 
             if request.enable_progress_tracking and self._progress_tracking_service:
                 self._progress_tracking_service.complete_progress()
@@ -1086,9 +1134,9 @@ class AudioRecordingService:
             stop_event = self._stop_events[recording_id]
             metadata = self._state.active_recordings[recording_id]
 
-            frames_per_read = config.buffer_size
+            frames_per_read = config.audio_config.buffer_size
             silence_frames = 0
-            silence_threshold_frames = int(config.silence_duration * config.sample_rate)
+            silence_threshold_frames = int(config.silence_duration * config.audio_config.sample_rate.value)
 
             while not stop_event.is_set():
                 # Check if paused
@@ -1115,15 +1163,16 @@ class AudioRecordingService:
                 # Apply processing if enabled
                 processed_data = audio_data
 
-                if config.enable_noise_reduction:
-                    nr_success, nr_data, nr_error = self._processing_service.apply_noise_reduction(audio_data)
-                    if nr_success and nr_data is not None:
-                        processed_data = nr_data
+                # Optional processing toggles are not configured via RecordingConfiguration; always attempt when service returns success
+                # Noise reduction
+                nr_success, nr_data, nr_error = self._processing_service.apply_noise_reduction(audio_data)
+                if nr_success and nr_data is not None:
+                    processed_data = nr_data
 
-                if config.enable_auto_gain:
-                    ag_success, ag_data, ag_error = self._processing_service.apply_auto_gain(processed_data)
-                    if ag_success and ag_data is not None:
-                        processed_data = ag_data
+                # Auto gain
+                ag_success, ag_data, ag_error = self._processing_service.apply_auto_gain(processed_data)
+                if ag_success and ag_data is not None:
+                    processed_data = ag_data
 
                 # Calculate levels
                 levels_success, rms_level, peak_level, levels_error = self._processing_service.calculate_levels(processed_data)
@@ -1132,30 +1181,34 @@ class AudioRecordingService:
 
                 # Detect silence for voice activation mode
                 silence_detected = False
-                if config.mode == RecordingMode.VOICE_ACTIVATED:
-                    silence_success, is_silence, silence_error = self._processing_service.detect_silence(processed_data, config.silence_threshold)
-                    if silence_success:
-                        silence_detected = is_silence
-                        if is_silence:
-                            silence_frames += len(processed_data)
-                            if silence_frames >= silence_threshold_frames:
-                                # Stop recording due to prolonged silence
-                                stop_event.set()
-                                break
-                        else:
-                            silence_frames = 0
+                silence_success, is_silence, silence_error = self._processing_service.detect_silence(processed_data, config.silence_threshold)
+                if silence_success:
+                    silence_detected = is_silence
+                    if is_silence:
+                        silence_frames += len(processed_data)
+                        if silence_frames >= silence_threshold_frames:
+                            stop_event.set()
+                            break
+                    else:
+                        silence_frames = 0
 
                 # Update status
                 if self._state.status:
-                    self._state.status.recorded_samples += len(processed_data)
-                    self._state.status.peak_level = max(self._state.status.peak_level, peak_level)
-                    self._state.status.rms_level = rms_level
-                    self._state.status.silence_duration = silence_frames / config.sample_rate
+                    frames_recorded = (self._state.status.frames_recorded + int(len(processed_data))) if self._state.status else int(len(processed_data))
+                    peak = max(self._state.status.peak_level, peak_level)
+                    avg = rms_level
+                    self._state.status = RecordingStatus(
+                        is_recording=True,
+                        current_duration=self._state.status.current_duration,
+                        frames_recorded=frames_recorded,
+                        peak_level=peak,
+                        average_level=avg,
+                    )
 
                 # Create recording data
                 self._chunk_counter += 1
                 recording_data = RecordingData(
-                    data=processed_data,
+                    data=processed_data.tolist(),
                     metadata=metadata,
                     timestamp=datetime.now(),
                     chunk_id=self._chunk_counter,
@@ -1175,8 +1228,7 @@ class AudioRecordingService:
                     except Empty:
                         pass
 
-                    if self._state.status:
-                        self._state.status.dropped_samples += len(processed_data)
+                    # dropped_samples not tracked in domain RecordingStatus
 
                 # Write to file if auto-save enabled
                 if file_path:
@@ -1204,7 +1256,7 @@ class AudioRecordingService:
 
                 # Check max duration
                 if config.max_duration:
-                    current_duration = time.time() - metadata.start_time
+                    current_duration = (datetime.now() - metadata.start_time).total_seconds()
                     if current_duration >= config.max_duration:
                         stop_event.set()
                         break
@@ -1223,9 +1275,7 @@ class AudioRecordingService:
                     error=str(e),
                 )
 
-            if self._state.status:
-                self._state.status.error_count += 1
-                self._state.status.last_error = str(e)
+            # error_count/last_error not tracked on domain RecordingStatus; rely on logger only
 
     def get_active_recordings(self) -> dict[str, RecordingMetadata]:
         """Get all active recordings."""

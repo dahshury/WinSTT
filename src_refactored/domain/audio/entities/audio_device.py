@@ -34,7 +34,7 @@ class DeviceCapabilities(ValueObject):
     host_api: str | None = None
 
     def _get_equality_components(self,
-    ) -> tuple:
+    ) -> tuple[object, ...]:
         return (
             self.max_input_channels,
             self.max_output_channels,
@@ -89,7 +89,7 @@ class DeviceCapabilities(ValueObject):
 
 
 @dataclass
-class AudioDevice(Entity[int],
+class AudioDevice(Entity,
     ):
     """Audio device entity representing physical audio hardware."""
 
@@ -101,7 +101,7 @@ class AudioDevice(Entity[int],
     is_available: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__init__(self.device_id)
         self.validate()
 

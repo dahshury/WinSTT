@@ -3,7 +3,7 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "typer"
+name = "winstt"
 version = "0.1.0"
 description = "Voice typing application using Whisper"
 readme = "README.md"
@@ -82,11 +82,9 @@ build = [
   "twine>=4.0.0",
 ]
 
-# All development dependencies
-dev-all = [
-  "typer[dev]",
-  "typer[build]",
-]
+# All development dependencies (use with your package name if defining extras)
+# Leaving empty to avoid invalid extras resolution for unrelated packages
+dev-all = []
 
 # ---------------------------------------------------------------------------
 # Tool configuration
@@ -130,3 +128,9 @@ line-ending = "auto"
 dev-dependencies = [
     "types-requests>=2.32.4.20250611",
 ]
+
+# Limit package discovery to the application source tree to avoid
+# "Multiple top-level packages discovered in a flat-layout" errors
+# when uv/setuptools tries to build the project in editable mode.
+[tool.setuptools.packages.find]
+include = ["src_refactored*"]

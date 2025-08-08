@@ -21,11 +21,11 @@ class AudioStreamService(AudioStreamServiceProtocol):
 
     def __init__(self):
         """Initialize the audio stream service."""
-        self._pyaudio = None
-        self._streams = {}
+        self._pyaudio: pyaudio.PyAudio | None = None
+        self._streams: dict[str, pyaudio.Stream] = {}
         self._initialized = False
 
-    def _ensure_initialized(self):
+    def _ensure_initialized(self) -> None:
         """Ensure PyAudio is initialized."""
         if not self._initialized:
             try:

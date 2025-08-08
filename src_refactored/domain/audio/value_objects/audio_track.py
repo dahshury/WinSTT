@@ -33,7 +33,7 @@ class AudioTrack(ValueObject):
     metadata: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.track_id,
             self.title,
@@ -172,7 +172,7 @@ class RecordingMetadata(ValueObject):
     tags: list[str] = field(default_factory=list)
     notes: str | None = None
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             self.recording_id,
             self.start_time,
@@ -292,7 +292,7 @@ class RecordingData(ValueObject):
     peak_level: float | None = None
     silence_detected: bool = False
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         return (
             tuple(self.data) if self.data is not None else None,
             self.metadata,

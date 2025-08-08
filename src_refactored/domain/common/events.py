@@ -15,7 +15,7 @@ class DomainEvent:
     timestamp: float
     source: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.event_id:
             object.__setattr__(self, "event_id", DomainIdentityGenerator.generate_domain_id("event"))
         if not self.timestamp:
@@ -66,7 +66,7 @@ class RecordingStarted(DomainEvent):
     audio_device: str
     sample_rate: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "audio_session")
@@ -78,7 +78,7 @@ class RecordingStopped(DomainEvent):
     session_id: str
     duration_seconds: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "audio_session")
@@ -91,7 +91,7 @@ class TranscriptionStarted(DomainEvent):
     model_name: str
     language: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "transcription_service")
@@ -105,7 +105,7 @@ class TranscriptionCompleted(DomainEvent):
     confidence_score: float
     processing_time_ms: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "transcription_service")
@@ -118,7 +118,7 @@ class ProgressUpdated(DomainEvent):
     percentage: float
     message: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "progress_tracker")
@@ -131,7 +131,7 @@ class ErrorOccurred(DomainEvent):
     error_message: str
     error_type: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "error_handler")
@@ -145,7 +145,7 @@ class RecordingKeyChanged(DomainEvent):
     old_key: str
     new_key: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "user_preferences")
@@ -159,7 +159,7 @@ class ModelConfigurationChanged(DomainEvent):
     old_quantization: str
     new_quantization: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "user_preferences")
@@ -173,7 +173,7 @@ class LLMConfigurationChanged(DomainEvent):
     old_model: str
     new_model: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "user_preferences")
@@ -187,7 +187,7 @@ class AudioConfigurationChanged(DomainEvent):
     old_recording_sound_enabled: bool
     new_recording_sound_enabled: bool
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "user_preferences")
@@ -199,7 +199,7 @@ class OutputSRTToggled(DomainEvent):
     old_value: bool
     new_value: bool
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "user_preferences")
@@ -210,7 +210,7 @@ class LLMProcessingEnabled(DomainEvent):
     """Event raised when LLM processing is enabled."""
     model_name: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "user_preferences")
@@ -221,7 +221,7 @@ class LLMProcessingDisabled(DomainEvent):
     """Event raised when LLM processing is disabled."""
     model_name: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if not self.source:
             object.__setattr__(self, "source", "user_preferences")

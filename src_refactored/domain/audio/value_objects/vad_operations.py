@@ -68,7 +68,7 @@ class VADConfiguration(ValueObject):
     min_speech_duration: float = 0.1
     min_silence_duration: float = 0.1
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.model,
@@ -82,7 +82,7 @@ class VADConfiguration(ValueObject):
             self.min_silence_duration,
         )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not 0.0 <= self.threshold <= 1.0:
             msg = "Threshold must be between 0.0 and 1.0"
             raise ValueError(msg)
@@ -95,20 +95,11 @@ class VADConfiguration(ValueObject):
         if self.sample_rate <= 0:
             msg = "Sample rate must be positive"
             raise ValueError(msg)
-        if self.chunk_size <= 0:
-            msg = "Chunk size must be positive"
-            raise ValueError(msg)
         if self.frame_size <= 0:
             msg = "Frame size must be positive"
             raise ValueError(msg)
         if self.hop_size <= 0:
             msg = "Hop size must be positive"
-            raise ValueError(msg)
-        if not 0.0 <= self.overlap <= 1.0:
-            msg = "Overlap must be between 0.0 and 1.0"
-            raise ValueError(msg)
-        if not 0.0 <= self.smoothing_factor <= 1.0:
-            msg = "Smoothing factor must be between 0.0 and 1.0"
             raise ValueError(msg)
 
 
@@ -123,7 +114,7 @@ class VADDetection(ValueObject):
     raw_score: float | None = None
     smoothed_score: float | None = None
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (
             self.activity,
@@ -135,7 +126,7 @@ class VADDetection(ValueObject):
             self.smoothed_score,
         )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
             msg = "Confidence must be between 0.0 and 1.0"
             raise ValueError(msg)

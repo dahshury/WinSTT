@@ -11,7 +11,7 @@ from src_refactored.domain.window_management.value_objects import WindowState
 
 
 @dataclass
-class WindowInfo(Entity[str]):
+class WindowInfo(Entity):
     """Information about a window.
     
     This entity represents the core information about an application window,
@@ -27,7 +27,7 @@ class WindowInfo(Entity[str]):
     is_enabled: bool = True
     rect: tuple[int, int, int, int] | None = None  # (left, top, right, bottom)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Use title as the entity ID if no explicit ID is provided
         if not hasattr(self, "_id") or self._id is None:
             super().__init__(self.title)

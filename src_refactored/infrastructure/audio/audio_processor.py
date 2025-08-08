@@ -246,7 +246,7 @@ class AudioProcessor(QThread):
             )
 
             if not capture_result.is_success:
-                self.processing_error.emit(f"Failed to initialize audio capture: {capture_result.error()}")
+                self.processing_error.emit(f"Failed to initialize audio capture: {capture_result.get_error()}")
                 return
 
             # Start audio capture

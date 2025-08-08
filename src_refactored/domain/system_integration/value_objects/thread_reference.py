@@ -55,7 +55,7 @@ class ThreadReference:
     thread_name: str | None = None
     created_at: float | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate thread reference."""
         if not self.thread_id or not self.thread_id.strip():
             msg = "Thread ID cannot be empty"
@@ -199,7 +199,7 @@ class ThreadReference:
 class ThreadReferenceManager:
     """Manager for thread references with weak reference support."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize thread reference manager."""
         self._references: dict[str, ThreadReference] = {}
         self._weak_refs: dict[str, weakref.ref[Any]] = {}
@@ -213,7 +213,7 @@ class ThreadReferenceManager:
         if thread_object is not None:
             try:
                 # Create weak reference with cleanup callback
-                def cleanup_callback(ref):
+                def cleanup_callback(ref: object) -> None:
                     self._cleanup_reference(reference.thread_id)
 
                 self._weak_refs[reference.thread_id] = weakref.ref(thread_object, cleanup_callback)
@@ -250,9 +250,9 @@ class ThreadReferenceManager:
 
         # Check different thread types
         if hasattr(thread_obj, "is_alive"):
-            return thread_obj.is_alive()  # Python threading.Thread
+            return bool(thread_obj.is_alive())  # Python threading.Thread
         if hasattr(thread_obj, "isRunning"):
-            return thread_obj.isRunning()  # Qt QThread
+            return bool(thread_obj.isRunning())  # Qt QThread
 
         return True  # Assume alive if we can't determine
 

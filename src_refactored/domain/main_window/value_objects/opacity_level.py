@@ -10,6 +10,8 @@ from src_refactored.domain.common.value_object import ValueObject
 
 @dataclass(frozen=True)
 class OpacityLevel(ValueObject):
+    def _get_equality_components(self) -> tuple[object, ...]:
+        return (self.value,)
     """Value object representing an opacity level for UI elements."""
     
     value: float

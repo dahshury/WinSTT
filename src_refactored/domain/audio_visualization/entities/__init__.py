@@ -1,10 +1,13 @@
 """Audio visualization entities."""
 
+from src_refactored.domain.audio_visualization.value_objects.visualization_data import (
+    RenderStatistics,
+    VisualizationFrame,
+)
+
 from .audio_processor import AudioFormat, AudioProcessor, AudioProcessorConfig, ProcessorStatus
 from .visualizer import (
     RenderMode,
-    RenderStatistics,
-    VisualizationFrame,
     Visualizer,
     VisualizerStatus,
 )

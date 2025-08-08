@@ -37,14 +37,14 @@ class AudioDataConversionService(AudioDataConversionServiceProtocol):
                     return data
                 return np.array(data)
                     
-            if data_type == AudioDataType.BYTES:
+            if data_type == AudioDataType.RAW_BYTES:
                 # Convert bytes to numpy array
                 if isinstance(data, bytes):
                     # Assume 16-bit PCM for bytes
                     return np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
                 return np.array(data)
                     
-            if data_type in (AudioDataType.LIST, AudioDataType.TUPLE):
+            if data_type in (AudioDataType.FLOAT_ARRAY, AudioDataType.INT16_ARRAY, AudioDataType.INT32_ARRAY):
                 return np.array(data, dtype=np.float32)
                 
             # Fallback: try to convert to numpy array

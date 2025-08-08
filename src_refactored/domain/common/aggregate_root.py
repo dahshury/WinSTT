@@ -3,23 +3,20 @@
 from __future__ import annotations
 
 from abc import ABC
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING
 
 from .entity import Entity
 
 if TYPE_CHECKING:
     from .events import DomainEvent
 
-T = TypeVar("T")
-
-
-class AggregateRoot(Entity[T], ABC, Generic[T]):
+class AggregateRoot(Entity, ABC):
     """
     Base class for domain aggregate roots following DDD principles.
     Manages domain events and ensures consistency within aggregates.
     """
 
-    def __init__(self, entity_id: T,
+    def __init__(self, entity_id: str,
     ):
         super().__init__(entity_id)
         self._domain_events: list[DomainEvent] = []

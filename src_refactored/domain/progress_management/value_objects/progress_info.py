@@ -36,7 +36,7 @@ class ProgressInfo:
     estimated_completion: Union["Timestamp", None] = None
     metadata: dict[str, Any] | None = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate progress info values."""
         if not (0.0 <= self.percentage <= 100.0):
             msg = "Percentage must be between 0.0 and 100.0"

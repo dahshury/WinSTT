@@ -230,9 +230,13 @@ class GetTranscriptionHistoryUseCase(UseCase[GetTranscriptionHistoryRequest, Get
                         language=entity_result.language.code.value if entity_result.language else None,
                         confidence=entity_result.overall_confidence.value if entity_result.overall_confidence else 0.0,
                         state=entity_result.status.value,
-                        created_at=entity_result.started_at or datetime.now(),
-                        completed_at=entity_result.completed_at,
-                        processing_time=entity_result.processing_duration.seconds if entity_result.processing_duration else 0.0,
+                        created_at=entity_result.started_at if isinstance(entity_result.started_at, datetime) else datetime.now(),
+                        completed_at=entity_result.completed_at if isinstance(entity_result.completed_at, datetime) or entity_result.completed_at is None else None,
+                        processing_time=(
+                            float(getattr(entity_result.processing_duration, "seconds", 0.0))
+                            if entity_result.processing_duration
+                            else 0.0
+                        ),
                         segments=[],
                         error_message=entity_result.error_message,
                     )
@@ -260,9 +264,13 @@ class GetTranscriptionHistoryUseCase(UseCase[GetTranscriptionHistoryRequest, Get
                     language=entity_result.language.code.value if entity_result.language else None,
                     confidence=entity_result.overall_confidence.value if entity_result.overall_confidence else 0.0,
                     state=entity_result.status.value,
-                    created_at=entity_result.started_at or datetime.now(),
-                    completed_at=entity_result.completed_at,
-                    processing_time=entity_result.processing_duration.seconds if entity_result.processing_duration else 0.0,
+                    created_at=entity_result.started_at if isinstance(entity_result.started_at, datetime) else datetime.now(),
+                    completed_at=entity_result.completed_at if isinstance(entity_result.completed_at, datetime) or entity_result.completed_at is None else None,
+                    processing_time=(
+                        float(getattr(entity_result.processing_duration, "seconds", 0.0))
+                        if entity_result.processing_duration
+                        else 0.0
+                    ),
                     segments=[],
                     error_message=entity_result.error_message,
                 )

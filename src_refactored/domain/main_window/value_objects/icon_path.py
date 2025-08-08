@@ -15,6 +15,9 @@ class IconPath(ValueObject):
     
     path: str
     
+    def _get_equality_components(self) -> tuple[object, ...]:
+        return (self.path,)
+    
     @classmethod
     def from_string(cls, path: str) -> "IconPath":
         """Create IconPath from string path.

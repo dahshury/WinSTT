@@ -27,7 +27,7 @@ class TranscriptionResult(ValueObject):
     segments: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate the transcription result."""
         if not self.transcription_id:
             msg = "Transcription ID is required"

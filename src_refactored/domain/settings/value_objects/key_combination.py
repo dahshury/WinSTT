@@ -14,11 +14,11 @@ class KeyCombination(ValueObject):
     modifiers: list[str]
     key: str
 
-    def _get_equality_components(self) -> tuple:
+    def _get_equality_components(self) -> tuple[object, ...]:
         """Get components for equality comparison."""
         return (tuple(self.modifiers), self.key)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate key combination after initialization."""
         valid_modifiers = {"CTRL", "ALT", "SHIFT", "META", "CMD"}
 
@@ -32,8 +32,7 @@ class KeyCombination(ValueObject):
             raise ValueError(msg)
 
         # Ensure modifiers are unique and uppercase
-        unique_modifiers = list({mod.upper() for mod in self.modifiers},
-    )
+        unique_modifiers = list({mod.upper() for mod in self.modifiers})
         object.__setattr__(self, "modifiers", sorted(unique_modifiers))
         object.__setattr__(self, "key", self.key.upper())
 
@@ -76,9 +75,18 @@ class KeyCombination(ValueObject):
         return self.key
 
     def is_valid_for_recording(self) -> bool:
-        """Check if this key combination is valid for recording hotkey."""
-        # Must have at least one modifier for recording hotkeys
-        return len(self.modifiers) > 0
+        """Check if this key combination is valid for recording hotkey.
+
+        Allow either:
+        - At least one modifier (CTRL/ALT/SHIFT/META/CMD)
+        - Or standalone function keys (F1..F35) which are common for PTT
+        """
+        if len(self.modifiers) > 0:
+            return True
+        key_upper = self.key.upper().strip()
+        if key_upper.startswith("F") and key_upper[1:].isdigit():
+            return True
+        return False
 
     def has_modifier(self, modifier: str,
     ) -> bool:

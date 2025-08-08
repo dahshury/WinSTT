@@ -292,7 +292,7 @@ class InitializeWorkersUseCase:
             if request.strategy == InitializationStrategy.DEPENDENCY_BASED:
                 order_result = self._dependency_validation.get_initialization_order(worker_types)
                 if order_result.is_success:
-                    initialization_order = order_result.value
+                    initialization_order = order_result.value or worker_types
                 else:
                     initialization_order = worker_types
                     response.warnings.append(f"Could not determine optimal order: {order_result.error}",
@@ -306,7 +306,7 @@ class InitializeWorkersUseCase:
                 request.progress_callback)
             else:
                 init_result = self._initialize_workers_sequential(
-                    request.worker_configurations or [], initialization_order, request.progress_callback,
+                    request.worker_configurations, initialization_order or worker_types, request.progress_callback,
                 )
 
             response.worker_statuses = init_result.worker_statuses
