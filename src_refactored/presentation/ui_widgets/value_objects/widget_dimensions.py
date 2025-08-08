@@ -4,6 +4,111 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from src_refactored.domain.common.value_object import ValueObject
+
+
+@dataclass(frozen=True)
+class WidgetPosition(ValueObject):
+    """Value object representing widget position."""
+    
+    x: int
+    y: int
+    
+    def __post_init__(self) -> None:
+        """Validate position."""
+        # Allow negative positions for widgets that can be positioned outside their parent
+    
+    def move_by(self, dx: int, dy: int) -> WidgetPosition:
+        """Create a new position moved by the given offset."""
+        return WidgetPosition(x=self.x + dx, y=self.y + dy)
+    
+    def move_to(self, x: int, y: int) -> WidgetPosition:
+        """Create a new position at the given coordinates."""
+        return WidgetPosition(x=x, y=y)
+    
+    def distance_to(self, other: WidgetPosition) -> float:
+        """Calculate distance to another position."""
+        return ((self.x - other.x) ** 2 + (self.y - other.y) ** 2) ** 0.5
+    
+    def is_origin(self) -> bool:
+        """Check if position is at origin (0, 0)."""
+        return self.x == 0 and self.y == 0
+    
+    @classmethod
+    def origin(cls) -> WidgetPosition:
+        """Create a position at origin."""
+        return cls(x=0, y=0)
+    
+    @classmethod
+    def top_left(cls) -> WidgetPosition:
+        """Create a position at top-left (alias for origin)."""
+        return cls.origin()
+
+
+@dataclass(frozen=True)
+class WidgetSize(ValueObject):
+    """Value object representing widget size."""
+    
+    width: int
+    height: int
+    
+    def __post_init__(self) -> None:
+        """Validate size."""
+        if self.width <= 0:
+            msg = "Width must be positive"
+            raise ValueError(msg)
+        if self.height <= 0:
+            msg = "Height must be positive"
+            raise ValueError(msg)
+    
+    def scale(self, factor: float) -> WidgetSize:
+        """Create a new size scaled by the given factor."""
+        if factor <= 0:
+            msg = "Scale factor must be positive"
+            raise ValueError(msg)
+        
+        return WidgetSize(
+            width=int(self.width * factor),
+            height=int(self.height * factor),
+        )
+    
+    def resize_to(self, width: int, height: int) -> WidgetSize:
+        """Create a new size with given dimensions."""
+        return WidgetSize(width=width, height=height)
+    
+    def expand_by(self, dw: int, dh: int) -> WidgetSize:
+        """Create a new size expanded by the given amounts."""
+        return WidgetSize(width=self.width + dw, height=self.height + dh)
+    
+    def get_area(self) -> int:
+        """Calculate the area."""
+        return self.width * self.height
+    
+    def get_aspect_ratio(self) -> float:
+        """Calculate aspect ratio (width/height)."""
+        if self.height == 0:
+            msg = "Cannot calculate aspect ratio with zero height"
+            raise ValueError(msg)
+        return self.width / self.height
+    
+    def is_square(self) -> bool:
+        """Check if size represents a square."""
+        return self.width == self.height
+    
+    def fits_within(self, other: WidgetSize) -> bool:
+        """Check if this size fits within another size."""
+        return self.width <= other.width and self.height <= other.height
+    
+    @classmethod
+    def square(cls, size: int) -> WidgetSize:
+        """Create a square size."""
+        return cls(width=size, height=size)
+    
+    @classmethod
+    def minimum(cls) -> WidgetSize:
+        """Create minimum valid size."""
+        return cls(width=1, height=1)
+
 
 @dataclass(frozen=True)
 class WidgetDimensions:

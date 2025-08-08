@@ -1,34 +1,36 @@
 """UI infrastructure services package.
 
 This package provides infrastructure services for UI management,
-including message display, drag and drop, file dialogs, progress tracking,
+including message display, file dialogs, progress tracking,
 state management, and comprehensive event system.
+
+Note: Drag & Drop is provided via the adapter
+`src_refactored.infrastructure.adapters.qt_drag_drop_adapter.QtDragDropAdapter`
+which uses presentation-level services; it is not re-exported here.
 """
 
-from .drag_drop_service import DragDropManager, DragDropService
-from .event_system_service import UIEventSystem
-from .file_dialog_service import FileDialogManager, FileDialogResult, FileDialogService
-from .message_display_service import MessageDisplayManager, MessageDisplayService
-from .progress_ui_service import ProgressUIManager, ProgressUIService
-from .state_management_service import StateManagementManager, StateManagementService
+# Re-export selected presentation services through infrastructure namespace where appropriate
+from src_refactored.presentation.qt.services.event_system_service import UIEventSystem
+from src_refactored.presentation.qt.services.file_dialog_service import (
+    FileDialogResult,
+    FileDialogService,
+)
+from src_refactored.presentation.qt.services.message_display_service import (
+    MessageDisplayService,
+)
+from src_refactored.presentation.qt.services.progress_ui_service import ProgressUIService
+from src_refactored.presentation.qt.services.state_management_service import StateManagementService
 
 __all__ = [
-    "DragDropManager",
-    # Drag and Drop
-    "DragDropService",
-    "FileDialogManager",
-    "FileDialogResult",
-    # File Dialogs
-    "FileDialogService",
-    "MessageDisplayManager",
-    # Message Display
-    "MessageDisplayService",
-    "ProgressUIManager",
-    # Progress UI
-    "ProgressUIService",
-    "StateManagementManager",
-    # State Management
-    "StateManagementService",
     # Event System
     "UIEventSystem",
+    # File Dialogs
+    "FileDialogResult",
+    "FileDialogService",
+    # Message Display
+    "MessageDisplayService",
+    # Progress UI
+    "ProgressUIService",
+    # State Management
+    "StateManagementService",
 ]

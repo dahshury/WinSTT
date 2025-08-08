@@ -1,11 +1,7 @@
-"""UI Widgets domain."""
+"""UI Widgets domain.
 
-from .entities import ToggleWidget, WidgetState
-from .value_objects import WidgetDimensions, WidgetStyling
+Note: UI-specific widgets have been moved to the presentation layer.
+"""
 
-__all__ = [
-    "ToggleWidget",
-    "WidgetDimensions",
-    "WidgetState",
-    "WidgetStyling",
-]
+# All UI-specific widgets have been moved to presentation layer
+__all__: list[str] = []

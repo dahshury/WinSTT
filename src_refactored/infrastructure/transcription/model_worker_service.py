@@ -5,6 +5,7 @@ file processing, and progress tracking capabilities.
 """
 
 import io
+import logging
 from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -48,12 +49,9 @@ class ModelWorkerService(QObject):
         """
         try:
             # Log initialization attempt
-            try:
-                from logger import setup_logger
-                logger = setup_logger()
-                logger.debug(f"Initializing model type: {self.model_type} with quantization: {self.quantization}")
-            except ImportError:
-                pass
+            logging.getLogger(__name__).debug(
+                f"Initializing model type: {self.model_type} with quantization: {self.quantization}",
+            )
 
             # Import here to avoid circular dependencies
             from utils.transcribe import WhisperONNXTranscriber
@@ -71,13 +69,8 @@ class ModelWorkerService(QObject):
             error_msg = f"Failed to initialize model: {e}"
             self.error.emit(error_msg)
 
-            # Log the error if logger is available
-            try:
-                from logger import setup_logger
-                logger = setup_logger()
-                logger.exception(error_msg)
-            except ImportError:
-                pass
+            # Log the error
+            logging.getLogger(__name__).exception(error_msg)
 
     def toggle_status(self) -> None:
         """Toggle the model status.
@@ -114,30 +107,20 @@ class ModelWorkerService(QObject):
         """
         try:
             if not hasattr(self, "model") or self.model is None:
-                try:
-                    from logger import setup_logger
-                    logger = setup_logger()
-                    logger.error("Model not initialized")
-                except ImportError:
-                    pass
+                logging.getLogger(__name__).error("Model not initialized")
                 return None
 
             # Log transcription attempt
-            try:
-                from logger import setup_logger
-                logger = setup_logger()
-
-                if isinstance(file_path, io.BytesIO):
-                    # Check if we have the original filename stored on the BytesIO object
-                    if hasattr(file_path, "original_filename"):
-                        logger.debug(f"Transcribing memory buffer for: {file_path.original_filename}")
-                    else:
-                        logger.debug("Transcribing memory buffer")
+            logger = logging.getLogger(__name__)
+            if isinstance(file_path, io.BytesIO):
+                # Check if we have the original filename stored on the BytesIO object
+                if hasattr(file_path, "original_filename"):
+                    logger.debug(f"Transcribing memory buffer for: {file_path.original_filename}")
                 else:
-                    # Regular file path
-                    logger.debug(f"Transcribing file: {file_path}")
-            except ImportError:
-                pass
+                    logger.debug("Transcribing memory buffer")
+            else:
+                # Regular file path
+                logger.debug(f"Transcribing file: {file_path}")
 
             # Transcribe the file
             text = self.model.transcribe(file_path)
@@ -151,12 +134,7 @@ class ModelWorkerService(QObject):
                 "segments": segments,
             }
         except Exception as e:
-            try:
-                from logger import setup_logger
-                logger = setup_logger()
-                logger.exception(f"Error transcribing file: {e!s}")
-            except ImportError:
-                pass
+            logging.getLogger(__name__).exception(f"Error transcribing file: {e!s}")
             return None
 
     def cleanup(self) -> None:

@@ -1,21 +1,32 @@
-"""Visualizer entity for audio visualization."""
+"""Visualizer entity for audio visualization.
 
-import threading
-import time
+This domain entity manages the visualization workflow without knowing
+about implementation details like numpy arrays.
+"""
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
 
-import numpy as np
-
+from src_refactored.domain.audio_visualization.ports.audio_data_provider_port import (
+    AudioDataProviderPort,
+)
+from src_refactored.domain.audio_visualization.ports.visualization_renderer_port import (
+    VisualizationRendererPort,
+)
 from src_refactored.domain.audio_visualization.value_objects import (
     AudioBuffer,
     VisualizationSettings,
     WaveformData,
 )
+from src_refactored.domain.audio_visualization.value_objects.visualization_data import (
+    RenderStatistics,
+    VisualizationFrame,
+)
 from src_refactored.domain.common.entity import Entity
+from src_refactored.domain.common.ports.concurrency_management_port import ConcurrencyManagementPort
+from src_refactored.domain.common.ports.time_management_port import TimeManagementPort
 
 
 class VisualizerStatus(Enum):
@@ -35,55 +46,21 @@ class RenderMode(Enum):
     STATIC = "static"
 
 
-@dataclass
-class VisualizationFrame:
-    """A single frame of visualization data."""
-    timestamp: datetime
-    data: np.ndarray
-    settings: VisualizationSettings
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def get_age_ms(self) -> float:
-        """Get frame age in milliseconds."""
-        return (datetime.now() - self.timestamp).total_seconds() * 1000.0
-
-    def is_expired(self, max_age_ms: float,
-    ) -> bool:
-        """Check if frame is expired."""
-        return self.get_age_ms() > max_age_ms
-
-
-@dataclass
-class RenderStatistics:
-    """Statistics for visualization rendering."""
-    frames_rendered: int = 0
-    frames_dropped: int = 0
-    average_render_time_ms: float = 0.0
-    peak_render_time_ms: float = 0.0
-    current_fps: float = 0.0
-    target_fps: float = 0.0
-
-    def get_drop_rate(self) -> float:
-        """Get frame drop rate as percentage."""
-        total_frames = self.frames_rendered + self.frames_dropped
-        if total_frames == 0:
-            return 0.0
-        return (self.frames_dropped / total_frames) * 100.0
-
-    def get_efficiency(self) -> float:
-        """Get rendering efficiency (0.0 to 1.0,
-    )."""
-        if self.target_fps == 0:
-            return 1.0
-        return min(1.0, self.current_fps / self.target_fps)
+# VisualizationFrame and RenderStatistics are now imported from visualization_data module
 
 
 @dataclass
 class Visualizer(Entity):
     """Entity for rendering audio visualizations."""
 
-    # Configuration
+    # Required fields (no defaults) must come first
     settings: VisualizationSettings
+    concurrency_port: ConcurrencyManagementPort
+    time_port: TimeManagementPort
+    renderer_port: VisualizationRendererPort
+    data_provider_port: AudioDataProviderPort | None = None
+
+    # Optional fields (with defaults) come after
     render_mode: RenderMode = RenderMode.REAL_TIME
 
     # State
@@ -95,8 +72,7 @@ class Visualizer(Entity):
     max_frame_buffer_size: int = 10
 
     # Statistics
-    statistics: RenderStatistics = field(default_factory=RenderStatistics,
-    )
+    statistics: RenderStatistics = field(default_factory=RenderStatistics)
     last_render_time: datetime | None = None
 
     # Callbacks
@@ -104,63 +80,128 @@ class Visualizer(Entity):
     error_callback: Callable[[Exception], None] | None = None
     status_callback: Callable[[VisualizerStatus], None] | None = None
 
-    # Internal state
-    _render_thread: threading.Thread | None = field(default=None, init=False)
-    _stop_event: threading.Event = field(default_factory=threading.Event, init=False)
-    _pause_event: threading.Event = field(default_factory=threading.Event, init=False)
-    _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
-    _frame_times: list[float] = field(default_factory=list, init=False)
+    # Internal concurrency identifiers (managed by port)
+    _thread_context_id: str | None = field(default=None, init=False)
+    _stop_event_id: str | None = field(default=None, init=False)
+    _pause_event_id: str | None = field(default=None, init=False)
+    _lock_id: str | None = field(default=None, init=False)
+    _render_measurement_id: str | None = field(default=None, init=False)
 
     def __post_init__(self):
         """Initialize visualizer."""
         super().__post_init__()
-        self.statistics.target_fps = self.settings.update_rate_hz
+        # Update statistics with target FPS from settings
+        self.statistics = RenderStatistics(
+            frames_rendered=0,
+            frames_dropped=0,
+            average_render_time_ms=0.0,
+            peak_render_time_ms=0.0,
+            current_fps=0.0,
+            target_fps=self.settings.update_rate_hz,
+        )
+        
+        # Initialize concurrency resources
+        self._initialize_concurrency_resources()
+
+    def _initialize_concurrency_resources(self) -> None:
+        """Initialize concurrency resources through ports."""
+        # Create unique IDs for this visualizer instance
+        base_id = str(self.id)
+        
+        # Create thread context
+        result = self.concurrency_port.create_thread_context(f"{base_id}_thread")
+        if result.is_success:
+            self._thread_context_id = result.value
+        
+        # Create synchronization events
+        stop_result = self.concurrency_port.create_synchronization_event(f"{base_id}_stop")
+        if stop_result.is_success:
+            self._stop_event_id = stop_result.value
+            
+        pause_result = self.concurrency_port.create_synchronization_event(f"{base_id}_pause")
+        if pause_result.is_success:
+            self._pause_event_id = pause_result.value
+        
+        # Create lock
+        lock_result = self.concurrency_port.create_lock(f"{base_id}_lock")
+        if lock_result.is_success:
+            self._lock_id = lock_result.value
 
     def start(self) -> bool:
         """Start visualization rendering."""
-        with self._lock:
+        if not self._lock_id:
+            return False
+            
+        # Acquire lock
+        lock_result = self.concurrency_port.acquire_lock(self._lock_id, timeout_seconds=1.0)
+        if not lock_result.is_success or not lock_result.value:
+            return False
+            
+        try:
             if self.status in [VisualizerStatus.RUNNING, VisualizerStatus.STARTING]:
                 return True
 
             try:
                 self._change_status(VisualizerStatus.STARTING)
 
-                # Reset events
-                self._stop_event.clear()
-                self._pause_event.clear()
+                # Reset events through ports
+                if self._stop_event_id:
+                    self.concurrency_port.clear_event(self._stop_event_id)
+                if self._pause_event_id:
+                    self.concurrency_port.clear_event(self._pause_event_id)
 
-                # Start rendering thread
-                self._render_thread = threading.Thread(
-                    target=self._rendering_loop,
-                    daemon=True,
-                )
-                self._render_thread.start()
+                # Start background rendering task
+                if self._thread_context_id:
+                    start_result = self.concurrency_port.start_background_task(
+                        self._thread_context_id,
+                        self._rendering_loop,
+                        daemon=True,
+                    )
+                    
+                    if start_result.is_success:
+                        self._change_status(VisualizerStatus.RUNNING)
+                        return True
+                    self._change_status(VisualizerStatus.ERROR)
+                    return False
 
-                self._change_status(VisualizerStatus.RUNNING)
-                return True
+                return False
 
             except Exception as e:
                 self._change_status(VisualizerStatus.ERROR)
                 self._handle_error(e)
                 return False
+        finally:
+            # Release lock
+            self.concurrency_port.release_lock(self._lock_id)
 
     def stop(self) -> bool:
         """Stop visualization rendering."""
-        with self._lock:
+        if not self._lock_id:
+            return False
+            
+        # Acquire lock
+        lock_result = self.concurrency_port.acquire_lock(self._lock_id, timeout_seconds=1.0)
+        if not lock_result.is_success or not lock_result.value:
+            return False
+            
+        try:
             if self.status == VisualizerStatus.STOPPED:
                 return True
 
             try:
                 self._change_status(VisualizerStatus.STOPPING)
 
-                # Signal stop
-                self._stop_event.set()
+                # Signal stop through port
+                if self._stop_event_id:
+                    self.concurrency_port.set_event(self._stop_event_id)
 
-                # Wait for thread to finish
-                if self._render_thread and self._render_thread.is_alive():
-                    self._render_thread.join(timeout=2.0)
-
-                self._render_thread = None
+                # Wait for thread to finish through port
+                if self._thread_context_id:
+                    self.concurrency_port.join_background_task(
+                        self._thread_context_id, 
+                        timeout_seconds=2.0,
+                    )
+                    
                 self._change_status(VisualizerStatus.STOPPED)
                 return True
 
@@ -168,55 +209,101 @@ class Visualizer(Entity):
                 self._change_status(VisualizerStatus.ERROR)
                 self._handle_error(e)
                 return False
+        finally:
+            # Release lock
+            self.concurrency_port.release_lock(self._lock_id)
 
     def pause(self) -> bool:
         """Pause visualization rendering."""
-        with self._lock:
+        if not self._lock_id:
+            return False
+            
+        # Acquire lock
+        lock_result = self.concurrency_port.acquire_lock(self._lock_id, timeout_seconds=1.0)
+        if not lock_result.is_success or not lock_result.value:
+            return False
+            
+        try:
             if self.status != VisualizerStatus.RUNNING:
                 return False
 
-            self._pause_event.set()
+            if self._pause_event_id:
+                self.concurrency_port.set_event(self._pause_event_id)
             self._change_status(VisualizerStatus.PAUSED)
             return True
+        finally:
+            self.concurrency_port.release_lock(self._lock_id)
 
     def resume(self) -> bool:
         """Resume visualization rendering."""
-        with self._lock:
+        if not self._lock_id:
+            return False
+            
+        # Acquire lock
+        lock_result = self.concurrency_port.acquire_lock(self._lock_id, timeout_seconds=1.0)
+        if not lock_result.is_success or not lock_result.value:
+            return False
+            
+        try:
             if self.status != VisualizerStatus.PAUSED:
                 return False
 
-            self._pause_event.clear()
+            if self._pause_event_id:
+                self.concurrency_port.clear_event(self._pause_event_id)
             self._change_status(VisualizerStatus.RUNNING)
             return True
+        finally:
+            self.concurrency_port.release_lock(self._lock_id)
 
-    def render_waveform(self, waveform: WaveformData,
-    ) -> VisualizationFrame | None:
+    def render_waveform(self, waveform: WaveformData) -> VisualizationFrame | None:
         """Render a single waveform into a visualization frame."""
         try:
-            start_time = time.time()
+            start_time = self.time_port.get_current_time()
 
-            # Generate visualization data based on type
+            # Generate visualization data based on type using the renderer port
+            vis_data_result = None
             if self.settings.visualization_type.value == "waveform":
-                vis_data = self._render_waveform_data(waveform)
+                vis_data_result = self.renderer_port.render_waveform(waveform, self.settings)
             elif self.settings.visualization_type.value == "spectrum":
-                vis_data = self._render_spectrum_data(waveform)
+                vis_data_result = self.renderer_port.render_spectrum(waveform, self.settings)
             elif self.settings.visualization_type.value == "level_meter":
-                vis_data = self._render_level_meter_data(waveform)
+                vis_data_result = self.renderer_port.render_level_meter(waveform, self.settings)
             else:
-                vis_data = self._render_waveform_data(waveform)  # Default fallback
+                vis_data_result = self.renderer_port.render_waveform(waveform, self.settings)  # Default fallback
 
-            # Create frame
-            frame = VisualizationFrame(
-                timestamp=datetime.now(),
-                data=vis_data,
-                settings=self.settings,
-                metadata={
+            if not vis_data_result or not vis_data_result.is_success:
+                self.statistics = self.statistics.add_dropped_frame()
+                return None
+
+            vis_data = vis_data_result.value
+            
+            # Ensure we have valid visualization data
+            if not vis_data:
+                self.statistics = self.statistics.add_dropped_frame()
+                return None
+
+            # Create frame using the renderer port
+            frame_result = self.renderer_port.create_visualization_frame(
+                vis_data,
+                self.settings,
+                {
                     "waveform_duration": waveform.duration_ms,
                     "waveform_rms": waveform.rms_level,
                     "waveform_peak": waveform.peak_level,
                     "sample_count": len(waveform.samples),
                 },
             )
+
+            if not frame_result or not frame_result.is_success:
+                self.statistics = self.statistics.add_dropped_frame()
+                return None
+
+            frame = frame_result.value
+            
+            # Ensure we have a valid frame
+            if not frame:
+                self.statistics = self.statistics.add_dropped_frame()
+                return None
 
             # Update current frame
             self.current_frame = frame
@@ -226,9 +313,33 @@ class Visualizer(Entity):
                 self._add_to_frame_buffer(frame)
 
             # Update statistics
-            render_time_ms = (time.time() - start_time) * 1000.0
-            self._update_render_statistics(render_time_ms)
-            self.last_render_time = datetime.now()
+            end_time_result = self.time_port.get_current_time()
+            if start_time.is_success and end_time_result.is_success and start_time.value and end_time_result.value:
+                # Calculate render time by getting datetime values
+                try:
+                    if hasattr(start_time.value, "value") and isinstance(start_time.value.value, datetime):
+                        start_dt = start_time.value.value
+                    elif isinstance(start_time.value, datetime):
+                        start_dt = start_time.value
+                    else:
+                        start_dt = None
+                    if hasattr(end_time_result.value, "value") and isinstance(end_time_result.value.value, datetime):
+                        end_dt = end_time_result.value.value
+                    elif isinstance(end_time_result.value, datetime):
+                        end_dt = end_time_result.value
+                    else:
+                        end_dt = None
+                    if start_dt is not None and end_dt is not None:
+                        render_time_ms = (end_dt - start_dt).total_seconds() * 1000.0
+                        self._update_render_statistics(render_time_ms)
+                except (TypeError, AttributeError):
+                    # If we can't calculate render time, skip updating statistics
+                    pass
+            
+            # Update last render time
+            datetime_result = self.time_port.get_current_datetime()
+            if datetime_result.is_success and datetime_result.value:
+                self.last_render_time = datetime_result.value
 
             # Call frame callback
             if self.frame_callback:
@@ -240,7 +351,7 @@ class Visualizer(Entity):
             return frame
 
         except Exception as e:
-            self.statistics.frames_dropped += 1
+            self.statistics = self.statistics.add_dropped_frame()
             self._handle_error(e)
             return None
 
@@ -264,12 +375,21 @@ class Visualizer(Entity):
 
         return None
 
-    def update_settings(self, new_settings: VisualizationSettings,
-    ) -> None:
+    def update_settings(self, new_settings: VisualizationSettings) -> None:
         """Update visualization settings."""
-        with self._lock:
+        if not self._lock_id:
+            return
+            
+        # Acquire lock
+        lock_result = self.concurrency_port.acquire_lock(self._lock_id, timeout_seconds=1.0)
+        if not lock_result.is_success or not lock_result.value:
+            return
+            
+        try:
             self.settings = new_settings
-            self.statistics.target_fps = new_settings.update_rate_hz
+            self.statistics = self.statistics.update_target_fps(new_settings.update_rate_hz)
+        finally:
+            self.concurrency_port.release_lock(self._lock_id)
 
     def get_current_frame(self) -> VisualizationFrame | None:
         """Get the current visualization frame."""
@@ -281,8 +401,18 @@ class Visualizer(Entity):
 
     def clear_frame_buffer(self) -> None:
         """Clear the frame buffer."""
-        with self._lock:
+        if not self._lock_id:
+            return
+            
+        # Acquire lock
+        lock_result = self.concurrency_port.acquire_lock(self._lock_id, timeout_seconds=1.0)
+        if not lock_result.is_success or not lock_result.value:
+            return
+            
+        try:
             self.frame_buffer.clear()
+        finally:
+            self.concurrency_port.release_lock(self._lock_id)
 
     def get_statistics(self) -> RenderStatistics:
         """Get rendering statistics."""
@@ -304,163 +434,44 @@ class Visualizer(Entity):
         """Main rendering loop."""
         interval = 1.0 / self.settings.update_rate_hz
 
-        while not self._stop_event.is_set():
-            if self._pause_event.is_set():
-                time.sleep(0.1)
+        # Get stop and pause event references through the concurrency port
+        stop_event_set = False
+        pause_event_set = False
+        
+        while not stop_event_set:
+            # Check pause state
+            if self._pause_event_id:
+                pause_result = self.concurrency_port.is_event_set(self._pause_event_id)
+                if pause_result.is_success and pause_result.value is not None:
+                    pause_event_set = pause_result.value
+            
+            if pause_event_set:
+                self.time_port.sleep(0.1)
                 continue
 
             try:
-                # In real implementation, this would get data from audio processor
-                # For now, we'll create dummy data
-                if self.render_mode == RenderMode.REAL_TIME:
-                    # Generate dummy waveform for testing
-                    samples = np.random.normal(0, 0.1, self.settings.chunk_size).astype(np.float32)
-                    timestamp_ms = time.time() * 1000.0
-                    waveform = WaveformData.from_numpy_array(samples, self.settings.sample_rate, timestamp_ms)
-                    self.render_waveform(waveform)
+                # Pull waveform data via provider port when available
+                if self.render_mode == RenderMode.REAL_TIME and self.data_provider_port is not None:
+                    try:
+                        waveform_result = self.data_provider_port.get_next_waveform()
+                        if waveform_result and waveform_result.is_success and waveform_result.value:
+                            self.render_waveform(waveform_result.value)
+                    except Exception as e:
+                        self._handle_error(e)
 
-                time.sleep(interval)
+                self.time_port.sleep(interval)
+
+                # Check stop condition
+                if self._stop_event_id:
+                    stop_result = self.concurrency_port.is_event_set(self._stop_event_id)
+                    if stop_result.is_success and stop_result.value is not None:
+                        stop_event_set = stop_result.value
 
             except Exception as e:
                 self._handle_error(e)
                 break
 
-    def _render_waveform_data(self, waveform: WaveformData) -> np.ndarray:
-        """Render waveform visualization data."""
-        samples = waveform.to_numpy_array()
-
-        # Downsample if needed
-        target_points = self.settings.width
-        if len(samples) > target_points:
-            # Simple downsampling by taking every nth sample
-            step = len(samples) // target_points
-            samples = samples[::step][:target_points]
-        elif len(samples) < target_points:
-            # Upsample by interpolation
-            x_old = np.linspace(0, 1, len(samples))
-            x_new = np.linspace(0, 1, target_points)
-            samples = np.interp(x_new, x_old, samples)
-
-        # Apply sensitivity
-        samples = samples * self.settings.sensitivity
-
-        # Apply smoothing
-        if self.settings.smoothing_factor > 0 and hasattr(self, "_last_samples"):
-            alpha = self.settings.smoothing_factor
-            samples = alpha * self._last_samples + (1 - alpha) * samples
-
-        self._last_samples = samples
-
-        # Normalize to display range
-        if self.settings.auto_normalize:
-            max_val = np.max(np.abs(samples))
-            if max_val > 0:
-                samples = samples / max_val * self.settings.normalization_target
-
-        # Convert to screen coordinates
-        height = self.settings.height
-        y_coords = (samples + 1.0) * (height / 2.0,
-    )
-        return np.clip(y_coords, 0, height - 1)
-
-
-    def _render_spectrum_data(self, waveform: WaveformData) -> np.ndarray:
-        """Render spectrum visualization data."""
-        samples = waveform.to_numpy_array()
-
-        # Apply window function
-        if self.settings.window_function.value != "none":
-            if self.settings.window_function.value == "hann":
-                window = np.hanning(len(samples))
-            elif self.settings.window_function.value == "hamming":
-                window = np.hamming(len(samples))
-            elif self.settings.window_function.value == "blackman":
-                window = np.blackman(len(samples))
-            else:
-                window = np.ones(len(samples))
-
-            samples = samples * window
-
-        # Pad to FFT size
-        if len(samples,
-    ) < self.settings.fft_size:
-            samples = np.pad(samples, (0, self.settings.fft_size - len(samples)))
-        elif len(samples) > self.settings.fft_size:
-            samples = samples[:self.settings.fft_size]
-
-        # Compute FFT
-        fft = np.fft.rfft(samples)
-        magnitude = np.abs(fft)
-
-        # Convert to dB
-        magnitude = 20 * np.log10(magnitude + 1e-10,
-    )
-
-        # Apply frequency range filtering
-        freq_bins = np.fft.rfftfreq(self.settings.fft_size, 1.0 / self.settings.sample_rate)
-        freq_min, freq_max = self.settings.frequency_range
-
-        mask = (freq_bins >= freq_min) & (freq_bins <= freq_max)
-        magnitude = magnitude[mask]
-
-        # Downsample to display width
-        target_points = self.settings.width
-        if len(magnitude) > target_points:
-            # Bin averaging for downsampling
-            bin_size = len(magnitude) // target_points
-            magnitude = magnitude[:target_points * bin_size].reshape(-1, bin_size).mean(axis=1)
-
-        # Normalize to display range
-        magnitude = magnitude - np.min(magnitude)
-        max_val = np.max(magnitude)
-        if max_val > 0:
-            magnitude = magnitude / max_val
-
-        # Convert to screen coordinates
-        height = self.settings.height
-        y_coords = magnitude * height
-        return np.clip(y_coords, 0, height - 1)
-
-
-    def _render_level_meter_data(self, waveform: WaveformData,
-    ) -> np.ndarray:
-        """Render level meter visualization data."""
-        # Calculate RMS and peak levels
-        rms_level = waveform.rms_level
-        peak_level = waveform.peak_level
-
-        # Apply peak hold
-        if hasattr(self, "_held_peak"):
-            if peak_level > self._held_peak:
-                self._held_peak = peak_level
-                self._peak_hold_time = time.time()
-            elif time.time() - self._peak_hold_time > (self.settings.peak_hold_time_ms / 1000.0):
-                self._held_peak *= self.settings.decay_rate
-        else:
-            self._held_peak = peak_level
-            self._peak_hold_time = time.time()
-
-        # Create level meter data
-        height = self.settings.height
-
-        # RMS level bar
-        rms_height = int(rms_level * height)
-
-        # Peak level indicator
-        peak_height = int(self._held_peak * height)
-
-        # Create visualization array
-        vis_data = np.zeros(height)
-
-        # Fill RMS level
-        if rms_height > 0:
-            vis_data[:rms_height] = 1.0
-
-        # Add peak indicator
-        if peak_height < height:
-            vis_data[peak_height] = 1.0
-
-        return vis_data
+    # All rendering implementation has been moved to infrastructure layer via VisualizationRendererPort
 
     def _add_to_frame_buffer(self, frame: VisualizationFrame,
     ) -> None:
@@ -471,38 +482,52 @@ class Visualizer(Entity):
         while len(self.frame_buffer) > self.max_frame_buffer_size:
             self.frame_buffer.pop(0)
 
-    def _update_render_statistics(self, render_time_ms: float,
-    ) -> None:
+    def _update_render_statistics(self, render_time_ms: float) -> None:
         """Update rendering statistics."""
-        self.statistics.frames_rendered += 1
+        self.statistics = self.statistics.add_frame_rendered()
 
         # Update peak render time
-        self.statistics.peak_render_time_ms = max(self.statistics.peak_render_time_ms, render_time_ms)
+        self.statistics = self.statistics.update_peak_render_time(render_time_ms)
 
-        # Update average render time
+                # Update average render time
         alpha = 0.1  # Smoothing factor
         if self.statistics.average_render_time_ms == 0.0:
-            self.statistics.average_render_time_ms = render_time_ms
+            new_average = render_time_ms
         else:
-            self.statistics.average_render_time_ms = (
-                alpha * render_time_ms +
+            new_average = (
+                alpha * render_time_ms + 
                 (1 - alpha) * self.statistics.average_render_time_ms
             )
+        self.statistics = self.statistics.update_average_render_time(new_average)
 
-        # Update FPS calculation
-        current_time = time.time()
-        self._frame_times.append(current_time)
+        # Update FPS calculation using time port
+        current_time_result = self.time_port.get_current_time()
+        if current_time_result.is_success and current_time_result.value:
+            if not hasattr(self, "_frame_times"):
+                self._frame_times = []
 
-        # Keep only recent frame times (last second)
-        cutoff_time = current_time - 1.0
-        self._frame_times = [t for t in self._frame_times if t > cutoff_time]
+            # Extract timestamp value for arithmetic strictly via port-returned datetime
+            current_timestamp = None
+            if hasattr(current_time_result.value, "value") and isinstance(current_time_result.value.value, datetime):
+                current_timestamp = current_time_result.value.value.timestamp()
+            elif isinstance(current_time_result.value, datetime):
+                current_timestamp = current_time_result.value.timestamp()
 
-        # Calculate current FPS
-        if len(self._frame_times) > 1:
-            time_span = self._frame_times[-1] - self._frame_times[0]
-            if time_span > 0:
-                self.statistics.current_fps = (len(self._frame_times) - 1,
-    ) / time_span
+            if current_timestamp is None:
+                return
+
+            self._frame_times.append(current_timestamp)
+
+            # Keep only recent frame times (last second)
+            cutoff_time = current_timestamp - 1.0
+            self._frame_times = [t for t in self._frame_times if t > cutoff_time]
+
+            # Calculate current FPS
+            if len(self._frame_times) > 1:
+                time_span = self._frame_times[-1] - self._frame_times[0]
+                if time_span > 0:
+                    fps = (len(self._frame_times) - 1) / time_span
+                    self.statistics = self.statistics.update_fps(fps)
 
     def _change_status(self, new_status: VisualizerStatus,
     ) -> None:

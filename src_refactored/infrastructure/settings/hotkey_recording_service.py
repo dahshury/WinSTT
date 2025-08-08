@@ -4,12 +4,11 @@ This service handles hotkey recording, validation, and management,
 extracted from settings_dialog.py (lines 867-969).
 """
 
+import logging
 from collections.abc import Callable
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QKeyEvent
-
-from logger import setup_logger
 
 
 class HotkeyRecordingService(QObject):
@@ -28,7 +27,7 @@ class HotkeyRecordingService(QObject):
 
     def __init__(self):
         super().__init__()
-        self.logger = setup_logger()
+        self.logger = logging.getLogger(__name__)
 
         # Recording state
         self.recording_key = False

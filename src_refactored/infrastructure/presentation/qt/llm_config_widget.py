@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 from src_refactored.domain.settings.value_objects.llm_configuration import LLMConfiguration
 from src_refactored.domain.settings.value_objects.model_configuration import Quantization
 from src_refactored.infrastructure.common.resource_service import resource_path
-from src_refactored.infrastructure.presentation.qt.toggle_switch_widget import ToggleSwitch
+from src_refactored.presentation.qt.toggle_switch_widget import ToggleSwitch
 
 
 class LLMConfigWidget(QGroupBox):

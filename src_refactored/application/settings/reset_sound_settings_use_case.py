@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from src_refactored.domain.common import Result, UseCase
+from src_refactored.domain.common import UseCase
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -75,7 +75,7 @@ class ResetSoundSettingsUseCase(UseCase[ResetSoundSettingsRequest, ResetSoundSet
         """
         self._reset_port = reset_port
     
-    def execute(self, request: ResetSoundSettingsRequest) -> Result[ResetSoundSettingsResponse]:
+    def execute(self, request: ResetSoundSettingsRequest) -> ResetSoundSettingsResponse:
         """Execute the sound settings reset operation.
         
         Args:
@@ -134,28 +134,24 @@ class ResetSoundSettingsUseCase(UseCase[ResetSoundSettingsRequest, ResetSoundSet
             if request.completion_callback:
                 request.completion_callback(message)
             
-            response = ResetSoundSettingsResponse(
+            return ResetSoundSettingsResponse(
                 success=success,
                 reset_items=reset_items,
                 failed_items=failed_items,
                 message=message,
             )
             
-            return Result.success(response)
-            
         except Exception as e:
             error_msg = f"Failed to reset sound settings: {e!s}"
             if request.error_callback:
                 request.error_callback(error_msg)
             
-            response = ResetSoundSettingsResponse(
+            return ResetSoundSettingsResponse(
                 success=False,
                 reset_items=[],
                 failed_items=[],
                 message=error_msg,
             )
-            
-            return Result.failure(error_msg)
 
 
 def create_reset_sound_settings_use_case(

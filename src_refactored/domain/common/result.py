@@ -109,9 +109,11 @@ def combine_results(*results: Result,
 
 def sequence_results(results: list[Result[T]]) -> Result[list[T]]:
     """Convert a list of Results into a Result of list."""
-    values = []
+    values: list[T] = []
     for result in results:
         if not result.is_success:
             return Result.failure(result.error or "Unknown error")
+        if result.value is None:
+            return Result.failure("Successful result has None value")
         values.append(result.value)
     return Result.success(values)

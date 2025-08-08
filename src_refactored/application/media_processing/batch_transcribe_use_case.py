@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src_refactored.domain.common.ports.file_system_port import IFileSystemPort
-    from src_refactored.domain.common.ports.serialization_port import ISerializationPort
+    from src_refactored.domain.common.ports.file_system_port import FileSystemPort
+    from src_refactored.domain.common.ports.serialization_port import SerializationPort
 
 from src_refactored.domain.media.value_objects.transcription_operations import (
     FileType,
@@ -324,8 +324,8 @@ class BatchTranscribeUseCase:
         output_service: OutputServiceProtocol,
         progress_tracking_service: ProgressTrackingServiceProtocol,
         logger_service: LoggerServiceProtocol,
-        file_system_service: IFileSystemPort,
-        serialization_service: ISerializationPort,
+        file_system_service: FileSystemPort,
+        serialization_service: SerializationPort,
     ):
         """Initialize the use case.
         
@@ -637,8 +637,12 @@ class BatchTranscribeUseCase:
             if queue_item.audio_data_payload is None:
                 # Fallback: try to deserialize from file_path (legacy support)
                 try:
-                    data_dict = self._serialization_service.deserialize_json_to_dict(queue_item.file_path)
-                    audio_payload = AudioDataPayload.from_dict(data_dict)
+                    data_dict_result = self._serialization_service.deserialize_json_to_dict(queue_item.file_path)
+                    if not data_dict_result.is_success:
+                        return False, None, f"Failed to deserialize audio data: {data_dict_result.error}"
+                    if data_dict_result.value is None:
+                        return False, None, "Failed to deserialize audio data: no data"
+                    audio_payload = AudioDataPayload.from_dict(data_dict_result.value)
                 except (Exception, KeyError) as e:
                     return False, None, f"Invalid audio data format: {e!s}"
             else:
@@ -700,7 +704,14 @@ class BatchTranscribeUseCase:
                 return False, None, error_message
 
             # Save transcription
-            output_path = self._file_system_service.split_extension(file_path)[0]
+            split_result = self._file_system_service.split_extension(file_path)
+            if not split_result.is_success:
+                error_message = f"Failed to split file extension: {split_result.error}"
+                return False, None, error_message
+            if split_result.value is None:
+                error_message = "Failed to split file extension: no result"
+                return False, None, error_message
+            output_path = split_result.value[0]
             success = self._output_service.save_transcription(
                 transcript, output_path, request.configuration.output_format,
             )

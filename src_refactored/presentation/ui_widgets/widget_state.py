@@ -136,9 +136,9 @@ class WidgetStatePresenter:
         # Widget is enabled if not disabled - check visual state
         visual_state_result = self.get_visual_state()
         if not visual_state_result.is_success:
-            return visual_state_result
+            return Result.failure(visual_state_result.error or "Failed to get visual state")
         
-        is_enabled = visual_state_result.value() != VisualState.DISABLED
+        is_enabled = visual_state_result.value != VisualState.DISABLED
         return Result.success(is_enabled)
 
     def is_disabled(self) -> Result[bool]:
@@ -147,24 +147,24 @@ class WidgetStatePresenter:
         if not enabled_result.is_success:
             return enabled_result
         
-        return Result.success(not enabled_result.value())
+        return Result.success(not enabled_result.value)
 
     def is_in_error_state(self) -> Result[bool]:
         """Check if widget is in error state from application service."""
         visual_state_result = self.get_visual_state()
         if not visual_state_result.is_success:
-            return visual_state_result
+            return Result.failure(visual_state_result.error or "Failed to get visual state")
         
-        is_error = visual_state_result.value() == VisualState.ERROR
+        is_error = visual_state_result.value == VisualState.ERROR
         return Result.success(is_error)
 
     def is_processing(self) -> Result[bool]:
         """Check if widget is in processing state from application service."""
         interaction_state_result = self.get_interaction_state()
         if not interaction_state_result.is_success:
-            return interaction_state_result
+            return Result.failure(interaction_state_result.error or "Failed to get interaction state")
         
-        is_processing = interaction_state_result.value() == InteractionState.PROCESSING
+        is_processing = interaction_state_result.value == InteractionState.PROCESSING
         return Result.success(is_processing)
 
     # Presentation-specific styling methods (not delegated to application service)
@@ -176,9 +176,11 @@ class WidgetStatePresenter:
         """Get style properties for current visual state (presentation concern)."""
         visual_state_result = self.get_visual_state()
         if not visual_state_result.is_success:
-            return Result.failure(visual_state_result.error())
+            return Result.failure(visual_state_result.error or "Failed to get visual state")
         
-        current_state = visual_state_result.value()
+        current_state = visual_state_result.value
+        if current_state is None:
+            return Result.failure("Visual state is None")
         style = self._local_style_properties.get(current_state)
         return Result.success(style)
 

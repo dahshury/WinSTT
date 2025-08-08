@@ -10,7 +10,11 @@ from src_refactored.domain.settings.value_objects.audio_configuration import Aud
 from src_refactored.domain.settings.value_objects.file_path import AudioFilePath
 from src_refactored.domain.settings.value_objects.key_combination import KeyCombination
 from src_refactored.domain.settings.value_objects.llm_configuration import LLMConfiguration
-from src_refactored.domain.settings.value_objects.model_configuration import ModelConfiguration
+from src_refactored.domain.settings.value_objects.model_configuration import (
+    ModelConfiguration,
+    ModelType,
+    Quantization,
+)
 
 if TYPE_CHECKING:
     from src_refactored.domain.settings.entities.settings_configuration import SettingsConfiguration
@@ -69,7 +73,7 @@ class SaveSettingsUseCase(UseCase[SaveSettingsRequest, SaveSettingsResponse]):
         self._validation_service = validation_service
 
     def execute(self, request: SaveSettingsRequest,
-    ) -> Result[SaveSettingsResponse]:
+    ) -> SaveSettingsResponse:
         """Execute the save settings use case.
         
         Args:
@@ -86,51 +90,44 @@ class SaveSettingsUseCase(UseCase[SaveSettingsRequest, SaveSettingsResponse]):
             validation_errors = None
             if request.validate_before_save:
                 validation_result = self._validate_settings(settings_dict)
-                if not validation_result.is_success():
-                    validation_errors = validation_result.error
-                    return Result.success(
-                        SaveSettingsResponse(
-                            success=False,
-                            settings_saved={},
-                            validation_errors=validation_errors,
-                            message="Settings validation failed",
-                        ),
+                if not validation_result.is_success:
+                    # Convert error string back to dict format for response
+                    validation_errors = {"validation": validation_result.error or "Unknown validation error"}
+                    return SaveSettingsResponse(
+                        success=False,
+                        settings_saved={},
+                        validation_errors=validation_errors,
+                        message="Settings validation failed",
                     )
 
             # Create backup if requested
             backup_created = False
             if request.create_backup:
                 backup_result = self._create_backup()
-                backup_created = backup_result.is_success()
+                backup_created = backup_result.is_success
 
             # Save settings
             save_result = self._settings_config.save_configuration(settings_dict,
     )
 
             if save_result:
-                return Result.success(
-                    SaveSettingsResponse(
-                        success=True,
-                        settings_saved=settings_dict,
-                        backup_created=backup_created,
-                        message="Settings saved successfully",
-                    ),
+                return SaveSettingsResponse(
+                    success=True,
+                    settings_saved=settings_dict,
+                    backup_created=backup_created,
+                    message="Settings saved successfully",
                 )
-            return Result.success(
-                SaveSettingsResponse(
-                    success=False,
-                    settings_saved={},
-                    message="Failed to save settings to file",
-                ),
+            return SaveSettingsResponse(
+                success=False,
+                settings_saved={},
+                message="Failed to save settings to file",
             )
 
         except Exception as e:
-            return Result.success(
-                SaveSettingsResponse(
-                    success=False,
-                    settings_saved={},
-                    message=f"Error saving settings: {e!s}",
-                ),
+            return SaveSettingsResponse(
+                success=False,
+                settings_saved={},
+                message=f"Error saving settings: {e!s}",
             )
 
     def _prepare_settings_dict(self, request: SaveSettingsRequest,
@@ -169,9 +166,13 @@ class SaveSettingsUseCase(UseCase[SaveSettingsRequest, SaveSettingsResponse]):
 
         # Validate model configuration
         try:
+            model_str = settings.get("model", "whisper-turbo")
+            quantization_str = settings.get("quantization", "Full")
+            
             ModelConfiguration(
-                model_name=settings.get("model", ""),
-                quantization=settings.get("quantization", ""),
+                model_type=ModelType.from_string(model_str),
+                quantization=Quantization.from_string(quantization_str),
+                use_gpu=False,  # Default to CPU for validation
             )
         except Exception as e:
             errors["model"] = f"Invalid model configuration: {e!s}"
@@ -179,20 +180,28 @@ class SaveSettingsUseCase(UseCase[SaveSettingsRequest, SaveSettingsResponse]):
         # Validate LLM configuration if enabled
         if settings.get("llm_enabled", False):
             try:
+                llm_quantization_str = settings.get("llm_quantization", "Full")
+                
                 LLMConfiguration(
                     model_name=settings.get("llm_model", ""),
-                    quantization=settings.get("llm_quantization", ""),
-                    prompt=settings.get("llm_prompt", ""),
+                    quantization=Quantization.from_string(llm_quantization_str),
+                    system_prompt=settings.get("llm_prompt", ""),
                 )
             except Exception as e:
                 errors["llm"] = f"Invalid LLM configuration: {e!s}"
 
         # Validate audio configuration
         try:
+            sound_file_path = settings.get("sound_file_path", "")
+            audio_file_path = AudioFilePath(sound_file_path) if sound_file_path else None
+            
             AudioConfiguration(
+                sample_rate=16000,  # Default audio settings for validation
+                channels=1,
+                bit_depth=16,
+                buffer_size=1024,
                 recording_sound_enabled=settings.get("recording_sound_enabled", False),
-                sound_file_path=AudioFilePath(settings.get("sound_file_path", "")),
-                output_srt=settings.get("output_srt", False),
+                recording_sound_path=audio_file_path,
             )
         except Exception as e:
             errors["audio"] = f"Invalid audio configuration: {e!s}"
@@ -204,7 +213,8 @@ class SaveSettingsUseCase(UseCase[SaveSettingsRequest, SaveSettingsResponse]):
             errors["recording_key"] = f"Invalid recording key: {e!s}"
 
         if errors:
-            return Result.failure(errors)
+            error_message = "; ".join([f"{key}: {value}" for key, value in errors.items()])
+            return Result.failure(error_message)
 
         return Result.success(None)
 

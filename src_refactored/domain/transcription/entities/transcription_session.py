@@ -5,13 +5,14 @@ transcription sessions and their lifecycle.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from src_refactored.domain.common.abstractions import AggregateRoot
 from src_refactored.domain.common.result import Result
-from src_refactored.domain.transcription.value_objects import (
+from src_refactored.domain.transcription.entities.transcription_result import (
     TranscriptionResult,
+)
+from src_refactored.domain.transcription.value_objects import (
     TranscriptionState,
 )
 
@@ -21,13 +22,14 @@ class TranscriptionSession(AggregateRoot):
     """Transcription session entity for managing transcription operations."""
     
     session_id: str
-    created_at: datetime
-    updated_at: datetime
     state: TranscriptionState = TranscriptionState.IDLE
     current_transcription_id: str | None = None
     transcription_results: list[TranscriptionResult] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
-    
+
+    def __post_init__(self):
+        super().__init__(self.session_id)
+
     def get_state(self) -> TranscriptionState:
         """Get current session state."""
         return self.state
@@ -48,7 +50,8 @@ class TranscriptionSession(AggregateRoot):
         if not self.transcription_results:
             return Result.failure("No transcriptions available")
         
-        latest = max(self.transcription_results, key=lambda r: r.created_at)
+        # Find the latest transcription based on started_at timestamp, fallback to 0 for comparison
+        latest = max(self.transcription_results, key=lambda r: r.started_at.timestamp() if r.started_at else 0.0)
         return Result.success(latest)
     
     def get_transcription_result(self, transcription_id: str) -> Result[TranscriptionResult]:
@@ -79,9 +82,9 @@ class TranscriptionSession(AggregateRoot):
         """Cancel transcription."""
         for result in self.transcription_results:
             if result.transcription_id == transcription_id:
-                result.state = TranscriptionState.CANCELLED
-                result.error_message = reason
-                self.mark_as_updated()
+                # Cancel the transcription using proper entity method
+                result.cancel_transcription(reason)
+                self.increment_version()
                 return Result.success(None)
         
         return Result.failure(f"Transcription {transcription_id} not found")
@@ -94,3 +97,43 @@ class TranscriptionSession(AggregateRoot):
         """Get current model configuration."""
         # Implementation would return current model config
         return None
+    
+    def get_session_id(self) -> str:
+        """Get the session ID."""
+        return self.session_id
+    
+    def start_transcription(self, audio_data: Any, language: str | None = None, task: str = "transcribe") -> Result[str]:
+        """Start a new transcription."""
+        from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
+        from src_refactored.domain.transcription.entities.transcription_result import (
+            TranscriptionResult,
+            TranscriptionStatus,
+        )
+        
+        # Generate a new transcription ID
+        transcription_id = DomainIdentityGenerator.generate_domain_id("transcription")
+        
+        # Create new transcription result entity
+
+        from src_refactored.domain.transcription.value_objects.language import Language
+        
+        # Create language object if provided
+        language_obj = Language.from_code(language) if language else Language.from_code("en")
+        
+        # Create new transcription result
+        transcription_result = TranscriptionResult(
+            transcription_id=transcription_id,
+            source_audio_id=DomainIdentityGenerator.generate_domain_id("audio"),
+            language=language_obj,
+            status=TranscriptionStatus.PENDING,
+            started_at=None,
+            completed_at=None,
+        )
+        
+        # Add to session
+        self.transcription_results.append(transcription_result)
+        self.current_transcription_id = transcription_id
+        self.state = TranscriptionState.PROCESSING
+        self.increment_version()
+        
+        return Result.success(transcription_id)

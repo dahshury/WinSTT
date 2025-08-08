@@ -4,12 +4,10 @@ This module defines value objects for audio tracks and recordings
 in the domain.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 from src_refactored.domain.common.value_object import ValueObject
 
@@ -30,7 +28,7 @@ class AudioTrack(ValueObject):
     channels: int = 2
     bit_depth: int = 16
     audio_format: AudioFormatType = AudioFormatType.WAV
-    file_path: Path | None = None
+    file_path: str | None = None
     file_size_bytes: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
@@ -68,7 +66,7 @@ class AudioTrack(ValueObject):
         if self.file_size_bytes is not None and self.file_size_bytes < 0:
             msg = "File size cannot be negative"
             raise ValueError(msg)
-        if self.duration and self.duration.total_seconds <= 0:
+        if self.duration and self.duration.total_seconds() <= 0:
             msg = "Duration must be positive"
             raise ValueError(msg)
 
@@ -109,7 +107,9 @@ class AudioTrack(ValueObject):
                 return f"{self.artist} - {self.title}"
             return self.title
         if self.file_path:
-            return self.file_path.stem
+            filename = self.file_path.replace("\\", "/").rsplit("/", 1)[-1]
+            dot = filename.rfind(".")
+            return filename[:dot] if dot != -1 else filename
         return self.track_id
 
     def with_metadata(self, **metadata: Any,
@@ -166,7 +166,7 @@ class RecordingMetadata(ValueObject):
     bit_depth: int = 16
     audio_format: AudioFormatType = AudioFormatType.WAV
     file_size_bytes: int | None = None
-    file_path: Path | None = None
+    file_path: str | None = None
     device_name: str | None = None
     quality_metrics: dict[str, float] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
@@ -209,7 +209,7 @@ class RecordingMetadata(ValueObject):
         if self.end_time and self.end_time < self.start_time:
             msg = "End time cannot be before start time"
             raise ValueError(msg)
-        if self.duration and self.duration.total_seconds <= 0:
+        if self.duration and self.duration.total_seconds() <= 0:
             msg = "Duration must be positive"
             raise ValueError(msg)
 
@@ -283,7 +283,7 @@ class RecordingMetadata(ValueObject):
 class RecordingData(ValueObject):
     """Audio recording data chunk."""
 
-    data: np.ndarray
+    data: Sequence[float]
     metadata: RecordingMetadata
     timestamp: datetime
     chunk_id: int
@@ -294,7 +294,7 @@ class RecordingData(ValueObject):
 
     def _get_equality_components(self) -> tuple:
         return (
-            self.data.tobytes() if self.data is not None else None,
+            tuple(self.data) if self.data is not None else None,
             self.metadata,
             self.timestamp,
             self.chunk_id,
@@ -321,9 +321,8 @@ class RecordingData(ValueObject):
     @property
     def frame_count(self) -> int:
         """Get number of audio frames in this chunk."""
-        if len(self.data.shape) == 1:
-            return len(self.data) // self.metadata.channels
-        return self.data.shape[0]
+        # For interleaved audio data, divide by channels
+        return len(self.data) // self.metadata.channels
 
     @property
     def duration_seconds(self) -> float:
@@ -332,8 +331,8 @@ class RecordingData(ValueObject):
 
     @property
     def size_bytes(self) -> int:
-        """Get size of data in bytes."""
-        return self.data.nbytes
+        """Get size of data in bytes (assuming 4 bytes per float)."""
+        return len(self.data) * 4  # 32-bit float = 4 bytes
 
     @property
     def is_clipping(self) -> bool:

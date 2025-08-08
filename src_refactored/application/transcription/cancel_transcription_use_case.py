@@ -6,7 +6,6 @@ This module contains the use case for cancelling ongoing transcriptions.
 from dataclasses import dataclass
 
 from src_refactored.domain.common.abstractions import UseCase
-from src_refactored.domain.common.result import Result
 from src_refactored.domain.transcription.entities.transcription_session import TranscriptionSession
 from src_refactored.domain.transcription.value_objects.transcription_state import TranscriptionState
 
@@ -62,7 +61,7 @@ class CancelTranscriptionUseCase(UseCase[CancelTranscriptionRequest, CancelTrans
         self._cleanup_service = cleanup_service
 
     def execute(self, request: CancelTranscriptionRequest,
-    ) -> Result[CancelTranscriptionResponse]:
+    ) -> CancelTranscriptionResponse:
         """Execute the cancel transcription use case.
         
         Args:
@@ -75,31 +74,52 @@ class CancelTranscriptionUseCase(UseCase[CancelTranscriptionRequest, CancelTrans
             # Resolve transcription ID
             transcription_id = self._resolve_transcription_id(request)
             if not transcription_id:
-                return Result.failure("No transcription ID provided or found in session")
+                return CancelTranscriptionResponse(
+                    success=False,
+                    error_message="No transcription ID provided or found in session",
+                )
 
             # Get current transcription state
             current_result = self._transcription_session.get_transcription_result(transcription_id)
-            if current_result.is_failure():
-                return Result.failure(f"Failed to get transcription state: {current_result.error}")
+            if not current_result.is_success:
+                return CancelTranscriptionResponse(
+                    success=False,
+                    error_message=f"Failed to get transcription state: {current_result.error}",
+                )
 
             transcription_result = current_result.value
-            was_processing = transcription_result.state == TranscriptionState.PROCESSING
+            if transcription_result is None:
+                return CancelTranscriptionResponse(
+                    success=False,
+                    error_message="Transcription result not found",
+                )
+                
+            was_processing = transcription_result.status == TranscriptionState.PROCESSING
 
             # Check if cancellation is possible
             if not self._can_cancel_transcription(transcription_result, request.force_cancel):
-                state_name = transcription_result.state.value if hasattr(transcription_result.state,
-                "value") else str(transcription_result.state)
-                return Result.failure(f"Transcription not cancellable in state: {state_name}")
+                state_name = transcription_result.status.value if hasattr(transcription_result.status,
+                "value") else str(transcription_result.status)
+                return CancelTranscriptionResponse(
+                    success=False,
+                    error_message=f"Transcription not cancellable in state: {state_name}",
+                )
 
             # Stop model processing if available and transcription is processing
             if was_processing and self._model_service:
                 try:
                     stop_result = self._model_service.stop_transcription(transcription_id)
-                    if stop_result.is_failure() and not request.force_cancel:
-                        return Result.failure(f"Failed to stop model processing: {stop_result.error}")
+                    if not stop_result.is_success and not request.force_cancel:
+                        return CancelTranscriptionResponse(
+                            success=False,
+                            error_message=f"Failed to stop model processing: {stop_result.error}",
+                        )
                 except Exception as e:
                     if not request.force_cancel:
-                        return Result.failure(f"Error stopping model processing: {e!s}")
+                        return CancelTranscriptionResponse(
+                            success=False,
+                            error_message=f"Error stopping model processing: {e!s}",
+                        )
 
             # Check for partial results before cancellation
             partial_result_available = self._check_partial_result_availability(
@@ -112,8 +132,11 @@ class CancelTranscriptionUseCase(UseCase[CancelTranscriptionRequest, CancelTrans
                 transcription_id, cancel_reason,
             )
 
-            if cancel_result.is_failure():
-                return Result.failure(f"Failed to cancel transcription: {cancel_result.error}")
+            if not cancel_result.is_success:
+                return CancelTranscriptionResponse(
+                    success=False,
+                    error_message=f"Failed to cancel transcription: {cancel_result.error}",
+                )
 
             # Perform cleanup if requested
             cleanup_completed = False
@@ -135,19 +158,20 @@ class CancelTranscriptionUseCase(UseCase[CancelTranscriptionRequest, CancelTrans
                     # Notification failure shouldn't affect cancellation result
                     pass
 
-            return Result.success(
-                CancelTranscriptionResponse(
-                    success=True,
-                    transcription_id=transcription_id,
-                    was_processing=was_processing,
-                    cleanup_completed=cleanup_completed,
-                    partial_result_available=partial_result_available,
-                ),
+            return CancelTranscriptionResponse(
+                success=True,
+                transcription_id=transcription_id,
+                was_processing=was_processing,
+                cleanup_completed=cleanup_completed,
+                partial_result_available=partial_result_available,
             )
 
         except Exception as e:
             error_msg = f"Unexpected error cancelling transcription: {e!s}"
-            return Result.failure(error_msg)
+            return CancelTranscriptionResponse(
+                success=False,
+                error_message=error_msg,
+            )
 
     def _resolve_transcription_id(self, request: CancelTranscriptionRequest,
     ) -> str | None:
@@ -165,12 +189,12 @@ class CancelTranscriptionUseCase(UseCase[CancelTranscriptionRequest, CancelTrans
         if request.session_id:
             # Get current transcription from session
             current_result = self._transcription_session.get_current_transcription()
-            if current_result.is_success():
+            if current_result.is_success and current_result.value is not None:
                 return current_result.value.transcription_id
 
         # Try to get latest transcription from session
         latest_result = self._transcription_session.get_latest_transcription()
-        if latest_result.is_success():
+        if latest_result.is_success and latest_result.value is not None:
             return latest_result.value.transcription_id
 
         return None
@@ -245,7 +269,7 @@ class CancelTranscriptionUseCase(UseCase[CancelTranscriptionRequest, CancelTrans
                     transcription_id=transcription_id,
                     preserve_partial_results=preserve_partial_results,
                 )
-                cleanup_success = cleanup_result.is_success()
+                cleanup_success = cleanup_result.is_success
             except Exception:
                 cleanup_success = False
 

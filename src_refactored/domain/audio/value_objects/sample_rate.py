@@ -9,9 +9,12 @@ from src_refactored.domain.common.value_object import ValueObject
 
 @dataclass(frozen=True)
 class SampleRate(ValueObject):
-    """Value object for audio sample rate with validation."""
-
+    """Sample rate value object for audio operations."""
     value: int
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.value,)
 
     # Standard audio sample rates
     SUPPORTED_RATES: frozenset[int] = frozenset({

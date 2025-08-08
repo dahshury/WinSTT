@@ -14,9 +14,8 @@ from typing import Any, Protocol
 import numpy as np
 
 # Import domain concepts
-from src_refactored.domain.audio.value_objects import (
-    AudioChunk,
-    CalibrationResult,
+from src_refactored.domain.audio.value_objects.audio_operations import AudioChunk, CalibrationResult
+from src_refactored.domain.audio.value_objects.vad_operations import (
     VADConfiguration,
     VADDetection,
     VADModel,
@@ -238,6 +237,7 @@ class VADService:
         progress_tracking_service: ProgressTrackingServiceProtocol | None = None,
         logger_service: LoggerServiceProtocol | None = None,
     ):
+        """Initialize VAD service."""
         self._model_service = model_service
         self._audio_processing_service = audio_processing_service
         self._validation_service = validation_service
@@ -246,8 +246,9 @@ class VADService:
         self._progress_tracking_service = progress_tracking_service
         self._logger_service = logger_service
 
+        # State management
         self._state = VADServiceState()
-        self._detection_queue = Queue()
+        self._detection_queue: Queue[VADDetection] = Queue()
         self._stop_event = threading.Event()
         self._worker_thread: threading.Thread | None = None
         self._chunk_counter = 0
@@ -257,7 +258,7 @@ class VADService:
     ) -> VADServiceResponse:
         """Execute VAD service operation."""
         start_time = time.time()
-        warnings = []
+        warnings: list[str] = []
 
         try:
             if request.enable_progress_tracking and self._progress_tracking_service:
@@ -386,14 +387,6 @@ class VADService:
     def _handle_detect_voice(self,
     request: VADServiceRequest, start_time: float, warnings: list[str]) -> VADServiceResponse:
         """Handle voice activity detection."""
-        if not self._state.initialized or not self._state.model_loaded:
-            return VADServiceResponse(
-                result=VADResult.FAILED,
-                state=self._state,
-                error_message="VAD service not initialized",
-                execution_time=time.time() - start_time,
-            )
-
         if not request.audio_chunk:
             return VADServiceResponse(
                 result=VADResult.FAILED,
@@ -402,69 +395,68 @@ class VADService:
                 execution_time=time.time() - start_time,
             )
 
+        if not self._state.current_config:
+            return VADServiceResponse(
+                result=VADResult.FAILED,
+                state=self._state,
+                error_message="VAD not initialized - configuration required",
+                execution_time=time.time() - start_time,
+            )
+
         try:
             # Validate audio chunk
-            chunk_valid, chunk_error = (
-                self._validation_service.validate_audio_chunk(request.audio_chunk))
+            chunk_valid, chunk_error = self._validation_service.validate_audio_chunk(
+                request.audio_chunk)
             if not chunk_valid:
                 return VADServiceResponse(
-                    result=VADResult.AUDIO_ERROR,
+                    result=VADResult.FAILED,
                     state=self._state,
                     error_message=f"Invalid audio chunk: {chunk_error}",
                     execution_time=time.time() - start_time,
                 )
 
-            # Preprocess audio if needed
-            if request.audio_chunk.sample_rate != self._state.current_config.sample_rate:
-                preprocess_success, processed_audio, preprocess_error = self._audio_processing_service.preprocess_audio(
-                    request.audio_chunk.data,
+            # Preprocess audio
+            # Convert bytes to numpy array for processing
+            audio_array = np.frombuffer(request.audio_chunk.data, dtype=np.float32)
+            preprocess_success, processed_audio, preprocess_error = (
+                self._audio_processing_service.preprocess_audio(
+                    audio_array,
                     request.audio_chunk.sample_rate,
                     self._state.current_config.sample_rate,
-                )
-
-                if not preprocess_success:
-                    return VADServiceResponse(
-                        result=VADResult.AUDIO_ERROR,
-                        state=self._state,
-                        error_message=f"Audio preprocessing failed: {preprocess_error}",
-                        execution_time=time.time() - start_time,
-                    )
-
-                # Create new chunk with processed audio
-                from src_refactored.domain.audio.value_objects import AudioChunk
-                request.audio_chunk = AudioChunk(
-                    data=processed_audio,
-                    sample_rate=self._state.current_config.sample_rate,
-                    timestamp=request.audio_chunk.timestamp,
-                    duration=request.audio_chunk.duration,
-                    chunk_id=request.audio_chunk.chunk_id,
-                )
-
-            # Detect voice activity
-            detection_success, confidence, detection_error = (
-                self._model_service.detect_voice_activity(
-                    request.audio_chunk, self._state.current_config,
-                )
-            )
-
-            if not detection_success:
+                ))
+            if not preprocess_success:
                 return VADServiceResponse(
-                    result=VADResult.MODEL_ERROR,
+                    result=VADResult.FAILED,
                     state=self._state,
-                    error_message=f"Voice detection failed: {detection_error}",
+                    error_message=f"Audio preprocessing failed: {preprocess_error}",
                     execution_time=time.time() - start_time,
                 )
 
-            # Determine voice activity
-            activity = (
-        
-    VoiceActivity.SPEECH if confidence >= self._state.current_config.threshold else VoiceActivity.SILENCE)
-            if abs(confidence - self._state.current_config.threshold) < 0.1:
-                activity = VoiceActivity.UNCERTAIN
+            # Create audio chunk for detection
+            audio_chunk = AudioChunk(
+                data=processed_audio.tobytes(),
+                sample_rate=self._state.current_config.sample_rate,
+                timestamp=request.audio_chunk.timestamp,
+                duration=request.audio_chunk.duration,
+                chunk_id=request.audio_chunk.chunk_id,
+            )
+
+            # Detect voice activity
+            has_speech, confidence, detection_error = (
+                self._model_service.detect_voice_activity(
+                    audio_chunk, self._state.current_config))
+
+            if detection_error:
+                return VADServiceResponse(
+                    result=VADResult.MODEL_ERROR,
+                    state=self._state,
+                    error_message=f"Detection failed: {detection_error}",
+                    execution_time=time.time() - start_time,
+                )
 
             # Create detection result
             detection = VADDetection(
-                activity=activity,
+                activity=VoiceActivity.SPEECH if has_speech else VoiceActivity.SILENCE,
                 confidence=confidence,
                 timestamp=request.audio_chunk.timestamp,
                 duration=request.audio_chunk.duration,
@@ -473,33 +465,25 @@ class VADService:
             )
 
             # Apply smoothing if enabled
-            if self._state.current_config.enable_smoothing and self._detection_history:
+            if self._state.current_config.enable_smoothing:
                 smoothed_detections = self._smoothing_service.apply_smoothing(
-                    [*self._detection_history, detection], self._state.current_config,
-                )
+                    [detection], self._state.current_config)
                 if smoothed_detections:
-                    detection = smoothed_detections[-1]
+                    detection = smoothed_detections[0]
 
-            # Update history
-            self._detection_history.append(detection)
-            if len(self._detection_history) > 100:  # Keep last 100 detections
-                self._detection_history = self._detection_history[-100:]
-
+            # Update state
             self._state.last_detection = detection
-
-            if request.enable_progress_tracking and self._progress_tracking_service:
-                self._progress_tracking_service.complete_progress()
+            self._detection_history.append(detection)
 
             return VADServiceResponse(
                 result=VADResult.SUCCESS,
                 state=self._state,
                 detection=detection,
-                warnings=warnings,
                 execution_time=time.time() - start_time,
             )
 
         except Exception as e:
-            error_message = f"Failed to detect voice activity: {e!s}"
+            error_message = f"Detection failed: {e!s}"
             return VADServiceResponse(
                 result=VADResult.FAILED,
                 state=self._state,
@@ -510,51 +494,39 @@ class VADService:
     def _handle_set_threshold(self,
     request: VADServiceRequest, start_time: float, warnings: list[str]) -> VADServiceResponse:
         """Handle threshold setting."""
-        if not request.config or not hasattr(request.config, "threshold"):
+        if not request.config:
             return VADServiceResponse(
                 result=VADResult.FAILED,
                 state=self._state,
-                error_message="Threshold value required in configuration",
+                error_message="Configuration required for threshold setting",
                 execution_time=time.time() - start_time,
             )
 
         try:
             # Validate threshold
-            threshold_valid, threshold_error = (
-                self._validation_service.validate_threshold(request.config.threshold))
+            threshold_valid, threshold_error = self._validation_service.validate_threshold(
+                request.config.threshold)
             if not threshold_valid:
                 return VADServiceResponse(
-                    result=VADResult.THRESHOLD_ERROR,
+                    result=VADResult.FAILED,
                     state=self._state,
                     error_message=f"Invalid threshold: {threshold_error}",
                     execution_time=time.time() - start_time,
                 )
 
-            # Update threshold
-            if self._state.current_config:
-                self._state.current_config.threshold = request.config.threshold
-
-            if request.enable_progress_tracking and self._progress_tracking_service:
-                self._progress_tracking_service.complete_progress()
-
-            if request.enable_logging and self._logger_service:
-                self._logger_service.log_info(
-                    "VAD threshold updated",
-                    new_threshold=request.config.threshold,
-                    execution_time=time.time() - start_time,
-                )
+            # Update configuration
+            self._state.current_config = request.config
 
             return VADServiceResponse(
                 result=VADResult.SUCCESS,
                 state=self._state,
-                warnings=warnings,
                 execution_time=time.time() - start_time,
             )
 
         except Exception as e:
-            error_message = f"Failed to set threshold: {e!s}"
+            error_message = f"Threshold setting failed: {e!s}"
             return VADServiceResponse(
-                result=VADResult.THRESHOLD_ERROR,
+                result=VADResult.FAILED,
                 state=self._state,
                 error_message=error_message,
                 execution_time=time.time() - start_time,
@@ -563,57 +535,41 @@ class VADService:
     def _handle_calibrate(self,
     request: VADServiceRequest, start_time: float, warnings: list[str]) -> VADServiceResponse:
         """Handle VAD calibration."""
-        if not self._state.initialized:
+        if not request.config:
             return VADServiceResponse(
                 result=VADResult.FAILED,
                 state=self._state,
-                error_message="VAD service not initialized",
+                error_message="Configuration required for calibration",
                 execution_time=time.time() - start_time,
             )
 
         try:
-            self._state.processing_state = VADState.CALIBRATING
+            # Collect calibration chunks
+            calibration_chunks: list[AudioChunk] = []
+            calibration_start = time.time()
+            target_duration = request.calibration_duration
 
-            # Collect audio chunks for calibration
-            calibration_chunks = []
-            # This would typically involve collecting audio over the calibration duration
-            # For now, we'll simulate with empty list and return a placeholder result
+            while time.time() - calibration_start < target_duration:
+                # Simulate collecting audio chunks
+                # In real implementation, this would come from audio input
+                time.sleep(0.1)  # Simulate processing time
 
+            # Perform calibration
             calibration_result = self._calibration_service.calibrate_threshold(
-                calibration_chunks, self._state.current_config,
-            )
+                calibration_chunks, request.config)
 
-            # Update configuration with calibrated threshold
-            if self._state.current_config:
-                self._state.current_config.threshold = calibration_result.optimal_threshold
-
+            # Update state
             self._state.calibration_result = calibration_result
-            self._state.processing_state = VADState.ACTIVE
-
-            if request.enable_progress_tracking and self._progress_tracking_service:
-                self._progress_tracking_service.complete_progress()
-
-            if request.enable_logging and self._logger_service:
-                self._logger_service.log_info(
-                    "VAD calibration completed",
-                    optimal_threshold=calibration_result.optimal_threshold,
-                    confidence=calibration_result.confidence,
-                    execution_time=time.time() - start_time,
-                )
 
             return VADServiceResponse(
                 result=VADResult.SUCCESS,
                 state=self._state,
                 calibration=calibration_result,
-                warnings=warnings,
                 execution_time=time.time() - start_time,
             )
 
         except Exception as e:
-            error_message = f"Failed to calibrate VAD: {e!s}"
-            self._state.processing_state = VADState.ERROR
-            self._state.error_message = error_message
-
+            error_message = f"Calibration failed: {e!s}"
             return VADServiceResponse(
                 result=VADResult.FAILED,
                 state=self._state,

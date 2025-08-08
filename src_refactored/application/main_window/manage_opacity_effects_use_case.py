@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol
 
-from src_refactored.domain.main_window.value_objects.opacity_effects import (
+from src_refactored.domain.ui_coordination.value_objects.opacity_effects import (
     EffectType,
     ManagePhase,
     ManageResult,
@@ -337,8 +337,8 @@ class ManageOpacityEffectsUseCase:
             warnings=[],
         )
 
-        effects_applied = []
-        animations_setup = []
+        effects_applied: list[EffectApplication] = []
+        animations_setup: list[AnimationSetup] = []
         backup_created = False
 
         try:
@@ -360,7 +360,7 @@ class ManageOpacityEffectsUseCase:
             if not validation_result:
                 return self._create_error_response(
                     request.operation_id, ManageResult.VALIDATION_ERROR,
-                    "Validation failed", state, effects_applied, animations_setup,
+                    "Validation failed", state, [], [],
                     backup_created, time.time() - start_time,
                 )
 
@@ -371,9 +371,10 @@ class ManageOpacityEffectsUseCase:
             backup_result = self._create_state_backup(request, state)
             if backup_result:
                 backup_created = True
+                backup_id = state.state_backup.backup_id if state.state_backup else "unknown"
                 self._logger.log_info("State backup created successfully",
                     operation_id=request.operation_id,
-                    backup_id=state.state_backup.backup_id,
+                    backup_id=backup_id,
                     )
 
             # Phase 3: Effect Setup
@@ -384,7 +385,7 @@ class ManageOpacityEffectsUseCase:
             if not setup_result:
                 return self._create_error_response(
                     request.operation_id, ManageResult.EFFECT_ERROR,
-                    "Effect setup failed", state, effects_applied, animations_setup,
+                    "Effect setup failed", state, [], [],
                     backup_created, time.time() - start_time,
                 )
 

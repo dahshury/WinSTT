@@ -69,14 +69,14 @@ class ResetSettingsUseCase(UseCase[ResetSettingsRequest, ResetSettingsResponse])
         self._default_settings = default_settings or self._get_default_settings()
 
     def execute(self, request: ResetSettingsRequest,
-    ) -> Result[ResetSettingsResponse]:
+    ) -> ResetSettingsResponse:
         """Execute the reset settings use case.
         
         Args:
             request: Reset settings request
             
         Returns:
-            Result containing reset settings response
+            Reset settings response with results or error information
         """
         try:
             # Load current settings
@@ -86,7 +86,7 @@ class ResetSettingsUseCase(UseCase[ResetSettingsRequest, ResetSettingsResponse])
             backup_created = False
             if request.create_backup:
                 backup_result = self._create_backup(current_settings)
-                backup_created = backup_result.is_success()
+                backup_created = backup_result.is_success
 
             # Determine what to reset
             keys_to_reset = self._determine_reset_keys(request)
@@ -97,8 +97,7 @@ class ResetSettingsUseCase(UseCase[ResetSettingsRequest, ResetSettingsResponse])
 
             for key in keys_to_reset:
                 if key in self._default_settings:
-                    old_value = current_settings.get(key,
-    )
+                    old_value = current_settings.get(key)
                     new_value = self._default_settings[key]
 
                     if old_value != new_value:
@@ -116,16 +115,14 @@ class ResetSettingsUseCase(UseCase[ResetSettingsRequest, ResetSettingsResponse])
             validation_errors = None
             if request.validate_after_reset:
                 validation_result = self._validate_settings(updated_settings)
-                if not validation_result.is_success():
-                    validation_errors = validation_result.error
-                    return Result.success(
-                        ResetSettingsResponse(
-                            success=False,
-                            reset_items=[],
-                            backup_created=backup_created,
-                            validation_errors=validation_errors,
-                            message="Settings validation failed after reset",
-                        ),
+                if not validation_result.is_success:
+                    validation_errors = {"validation": validation_result.error or "Unknown validation error"}
+                    return ResetSettingsResponse(
+                        success=False,
+                        reset_items=[],
+                        backup_created=backup_created,
+                        validation_errors=validation_errors,
+                        message="Settings validation failed after reset",
                     )
 
             # Save updated settings
@@ -133,30 +130,24 @@ class ResetSettingsUseCase(UseCase[ResetSettingsRequest, ResetSettingsResponse])
 
             if save_result:
                 message = self._generate_reset_message(request.scope, len(reset_items))
-                return Result.success(
-                    ResetSettingsResponse(
-                        success=True,
-                        reset_items=reset_items,
-                        backup_created=backup_created,
-                        message=message,
-                    ),
-                )
-            return Result.success(
-                ResetSettingsResponse(
-                    success=False,
-                    reset_items=[],
+                return ResetSettingsResponse(
+                    success=True,
+                    reset_items=reset_items,
                     backup_created=backup_created,
-                    message="Failed to save reset settings",
-                ),
+                    message=message,
+                )
+            return ResetSettingsResponse(
+                success=False,
+                reset_items=[],
+                backup_created=backup_created,
+                message="Failed to save reset settings",
             )
 
         except Exception as e:
-            return Result.success(
-                ResetSettingsResponse(
-                    success=False,
-                    reset_items=[],
-                    message=f"Error resetting settings: {e!s}",
-                ),
+            return ResetSettingsResponse(
+                success=False,
+                reset_items=[],
+                message=f"Error resetting settings: {e!s}",
             )
 
     def _determine_reset_keys(self, request: ResetSettingsRequest,
@@ -174,12 +165,11 @@ class ResetSettingsUseCase(UseCase[ResetSettingsRequest, ResetSettingsResponse])
 
         scope_mappings = {
             ResetScope.ALL: set(self._default_settings.keys()),
-            ResetScope.MODEL: {"model"},
-            ResetScope.QUANTIZATION: {"quantization"},
+            ResetScope.MODEL: {"model", "quantization"},
             ResetScope.AUDIO: {"recording_sound_enabled", "sound_file_path"},
             ResetScope.HOTKEY: {"recording_key"},
-            ResetScope.LLM: {"llm_enabled", "llm_model", "llm_quantization", "llm_prompt"},
-            ResetScope.OUTPUT: {"output_srt"},
+            ResetScope.ADVANCED: {"llm_enabled", "llm_model", "llm_quantization", "llm_prompt"},
+            ResetScope.EXPORT: {"output_srt"},
         }
 
         return scope_mappings.get(request.scope, set())
@@ -226,11 +216,10 @@ class ResetSettingsUseCase(UseCase[ResetSettingsRequest, ResetSettingsResponse])
         scope_messages = {
             ResetScope.ALL: f"All settings reset to defaults ({items_count} items)",
             ResetScope.MODEL: "Model settings reset to defaults",
-            ResetScope.QUANTIZATION: "Quantization settings reset to defaults",
             ResetScope.AUDIO: "Audio settings reset to defaults",
             ResetScope.HOTKEY: "Hotkey settings reset to defaults",
-            ResetScope.LLM: "LLM settings reset to defaults",
-            ResetScope.OUTPUT: "Output settings reset to defaults",
+            ResetScope.ADVANCED: "Advanced settings reset to defaults",
+            ResetScope.EXPORT: "Export settings reset to defaults",
         }
 
         return scope_messages.get(scope, f"{items_count} settings reset to defaults")
@@ -275,7 +264,8 @@ class ResetSettingsUseCase(UseCase[ResetSettingsRequest, ResetSettingsResponse])
                 errors[key] = f"Setting '{key}' must be of type {expected_type.__name__}"
 
         if errors:
-            return Result.failure(errors)
+            error_message = "; ".join([f"{key}: {value}" for key, value in errors.items()])
+            return Result.failure(error_message)
 
         return Result.success(None)
 

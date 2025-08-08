@@ -143,7 +143,7 @@ class ValidateModelUseCase(UseCase[ValidateModelRequest, ValidateModelResponse])
             # Validate model file if requested
             if request.check_model_file:
                 model_validation = self._validate_model_file(model_config)
-                if model_validation.is_success():
+                if model_validation.is_success and model_validation.value is not None:
                     model_info, file_issues = model_validation.value
                     validation_issues.extend(file_issues)
                 else:
@@ -156,7 +156,7 @@ class ValidateModelUseCase(UseCase[ValidateModelRequest, ValidateModelResponse])
             # Validate system requirements if requested
             if request.check_system_requirements:
                 system_validation = self._validate_system_requirements(model_config)
-                if system_validation.is_success():
+                if system_validation.is_success and system_validation.value is not None:
                     system_info, system_issues = system_validation.value
                     validation_issues.extend(system_issues)
                 else:
@@ -293,7 +293,7 @@ class ValidateModelUseCase(UseCase[ValidateModelRequest, ValidateModelResponse])
                     default_path_result = self._model_service.get_default_model_path(
                         config.model_type, config.model_size,
                     )
-                    if default_path_result.is_success():
+                    if default_path_result.is_success:
                         model_path = default_path_result.value
 
             if not model_path:
@@ -349,7 +349,7 @@ class ValidateModelUseCase(UseCase[ValidateModelRequest, ValidateModelResponse])
             if self._model_service and model_accessible:
                 try:
                     format_result = self._model_service.validate_model_format(model_path)
-                    if format_result.is_success():
+                    if format_result.is_success:
                         format_info = format_result.value
                         model_format_valid = format_info.get("valid", True)
                         model_version = format_info.get("version")
@@ -433,7 +433,7 @@ class ValidateModelUseCase(UseCase[ValidateModelRequest, ValidateModelResponse])
             if self._system_service:
                 try:
                     system_info = self._system_service.get_system_info()
-                    if system_info.is_success():
+                    if system_info.is_success:
                         info = system_info.value
                         device_memory = info.get("memory")
                         compute_capability = info.get("compute_capability")
@@ -484,7 +484,7 @@ class ValidateModelUseCase(UseCase[ValidateModelRequest, ValidateModelResponse])
             if self._dependency_service:
                 try:
                     dep_result = self._dependency_service.check_dependencies(config)
-                    if dep_result.is_success():
+                    if dep_result.is_success:
                         dep_info = dep_result.value
                         dependencies_satisfied = dep_info.get("satisfied", True)
                         missing_dependencies = dep_info.get("missing", [])
@@ -610,7 +610,7 @@ class ValidateModelUseCase(UseCase[ValidateModelRequest, ValidateModelResponse])
                 lang_result = self._model_service.is_language_supported(
                     config.model_type, config.language,
                 )
-                if lang_result.is_success() and not lang_result.value:
+                if lang_result.is_success and not lang_result.value:
                     issues.append(ValidationIssue(
                         severity="warning",
                         category="configuration",
@@ -638,7 +638,7 @@ class ValidateModelUseCase(UseCase[ValidateModelRequest, ValidateModelResponse])
         if self._performance_service:
             try:
                 perf_result = self._performance_service.test_model_performance(config)
-                if perf_result.is_success():
+                if perf_result.is_success:
                     perf_info = perf_result.value
 
                     if perf_info.get("load_time", 0) > 30:
@@ -684,7 +684,9 @@ class ValidateModelUseCase(UseCase[ValidateModelRequest, ValidateModelResponse])
             ModelSize.LARGE: 8.0,
         }
 
-        base_memory = size_memory_map.get(config.model_size, 2.0)
+        # Ensure we have a valid ModelSize enum
+        model_size = config.model_size if isinstance(config.model_size, ModelSize) else ModelSize.BASE
+        base_memory = size_memory_map.get(model_size, 2.0)
 
         # Adjust for compute type
         if config.compute_type == "float32":

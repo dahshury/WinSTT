@@ -32,7 +32,6 @@ from .start_transcription_use_case import (
     StartTranscriptionRequest,
     StartTranscriptionResponse,
     StartTranscriptionUseCase,
-    TranscriptionOptions,
 )
 from .validate_model_use_case import (
     ModelValidationInfo,

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.value_object import ValueObject
 
 from .audio_format import AudioFormat
@@ -40,7 +41,7 @@ class RecordingStatus(ValueObject):
     sample_rate: SampleRate | None = None
     channels: int = 1
     audio_format: AudioFormat | None = None
-    last_update: datetime = field(default_factory=datetime.now)
+    last_update: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
 
     def _get_equality_components(self,
     ) -> tuple:
@@ -77,13 +78,13 @@ class RecordingStatus(ValueObject):
     @property
     def estimated_bitrate(self) -> int | None:
         """Estimate current bitrate in bits per second."""
-        if not self.sample_rate or self.current_duration.total_seconds <= 0:
+        if not self.sample_rate or self.current_duration.total_seconds() <= 0:
             return None
 
         bits_per_sample = 16  # Default assumption
         if self.audio_format:
             # Map format to bit depth (simplified)
-            bits_per_sample = self.audio_format.bit_depth.value
+            bits_per_sample = self.audio_format.bit_depth
 
         return int(self.sample_rate.value * self.channels * bits_per_sample)
 
@@ -121,7 +122,7 @@ class PlaybackStatus(ValueObject):
     playback_rate: float = 1.0
     frames_played: int = 0
     buffer_health: float = 100.0
-    last_update: datetime = field(default_factory=datetime.now)
+    last_update: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
 
     def _get_equality_components(self,
     ) -> tuple:
@@ -150,21 +151,21 @@ class PlaybackStatus(ValueObject):
         if self.buffer_health < 0 or self.buffer_health > 100:
             msg = "Buffer health must be between 0 and 100"
             raise ValueError(msg)
-        if self.current_position.total_seconds > self.total_duration.total_seconds:
+        if self.current_position.total_seconds() > self.total_duration.total_seconds():
             msg = "Current position cannot exceed total duration"
             raise ValueError(msg)
 
     @property
     def progress_percent(self) -> float:
         """Get playback progress as percentage."""
-        if self.total_duration.total_seconds <= 0:
+        if self.total_duration.total_seconds() <= 0:
             return 0.0
-        return (self.current_position.total_seconds / self.total_duration.total_seconds) * 100
+        return (self.current_position.total_seconds() / self.total_duration.total_seconds()) * 100
 
     @property
     def remaining_duration(self) -> Duration:
         """Get remaining playback duration."""
-        remaining_seconds = max(0, self.total_duration.total_seconds - self.current_position.total_seconds)
+        remaining_seconds = max(0, self.total_duration.total_seconds() - self.current_position.total_seconds())
         return Duration(seconds=remaining_seconds)
 
     @property
@@ -182,9 +183,11 @@ class PlaybackStatus(ValueObject):
         """Estimate when playback will complete."""
         if not self.is_playing or self.playback_rate <= 0:
             return None
-
-        remaining_seconds = self.remaining_duration.total_seconds / self.playback_rate
-        return datetime.now() + timedelta(seconds=remaining_seconds)
+        # Use last_update as reference if available to avoid fetching current system time
+        if self.last_update is None:
+            return None
+        remaining_seconds = self.remaining_duration.total_seconds() / self.playback_rate
+        return self.last_update + timedelta(seconds=remaining_seconds)
 
 
 @dataclass(frozen=True)
@@ -265,8 +268,8 @@ class RecordingMetrics(ValueObject):
         score -= self.drop_rate_percent * 2
 
         # Penalize for clipping
-        if self.total_duration.total_seconds > 0:
-            clipping_rate = self.clipping_events / self.total_duration.total_seconds
+        if self.total_duration.total_seconds() > 0:
+            clipping_rate = self.clipping_events / self.total_duration.total_seconds()
             score -= min(clipping_rate * 10, 30)
 
         # Penalize for low signal level
@@ -302,9 +305,11 @@ class PlaybackMetrics(ValueObject):
     peak_latency_ms: float = 0.0
     cpu_usage_percent: float = 0.0
     memory_usage_bytes: int = 0
+    error_count: int = 0
+    warning_count: int = 0
 
-    def _get_equality_components(self,
-    ) -> tuple:
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
         return (
             self.total_duration,
             self.frames_played,
@@ -314,9 +319,14 @@ class PlaybackMetrics(ValueObject):
             self.peak_latency_ms,
             self.cpu_usage_percent,
             self.memory_usage_bytes,
+            self.error_count,
+            self.warning_count,
         )
 
     def __invariants__(self) -> None:
+        if self.total_duration.total_seconds() <= 0:
+            msg = "Total duration must be positive"
+            raise ValueError(msg)
         if self.frames_played < 0:
             msg = "Frames played cannot be negative"
             raise ValueError(msg)
@@ -338,6 +348,12 @@ class PlaybackMetrics(ValueObject):
         if self.memory_usage_bytes < 0:
             msg = "Memory usage cannot be negative"
             raise ValueError(msg)
+        if self.error_count < 0:
+            msg = "Error count cannot be negative"
+            raise ValueError(msg)
+        if self.warning_count < 0:
+            msg = "Warning count cannot be negative"
+            raise ValueError(msg)
 
     @property
     def skip_rate_percent(self) -> float:
@@ -357,8 +373,8 @@ class PlaybackMetrics(ValueObject):
         score -= self.skip_rate_percent * 3
 
         # Penalize for buffer underruns
-        if self.total_duration.total_seconds > 0:
-            underrun_rate = self.buffer_underruns / self.total_duration.total_seconds
+        if self.total_duration.total_seconds() > 0:
+            underrun_rate = self.buffer_underruns / self.total_duration.total_seconds()
             score -= min(underrun_rate * 20, 40)
 
         # Penalize for high latency
@@ -379,3 +395,8 @@ class PlaybackMetrics(ValueObject):
             self.buffer_underruns == 0 and
             self.average_latency_ms < 50
         )
+
+    @property
+    def is_healthy(self) -> bool:
+        """Check if the status is healthy."""
+        return self.error_count == 0 and self.warning_count <= 2

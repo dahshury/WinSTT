@@ -7,13 +7,13 @@ from src_refactored.domain.common.value_object import ValueObject
 
 @dataclass(frozen=True)
 class ChannelCount(ValueObject):
-    """Channel count value object for audio configuration.
-    
-    Represents the number of audio channels (mono, stereo, etc.).
-    """
-    
+    """Channel count value object for audio operations."""
     value: int
-    
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.value,)
+
     def __post_init__(self):
         """Validate the channel count value."""
         if self.value <= 0:

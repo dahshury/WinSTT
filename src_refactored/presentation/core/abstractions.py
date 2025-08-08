@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
-# Import Result pattern from domain layer to avoid duplication
 from src_refactored.domain.common.result import Result
 
 if TYPE_CHECKING:
@@ -87,7 +86,7 @@ class IQuery(Protocol, Generic[TResult]):
 # OBSERVER PATTERN
 # ============================================================================
 
-class IObserver(Protocol, Generic[TEvent]):
+class IObserver(Protocol, Generic[TEvent]):  # type: ignore[misc]
     """Observer interface for event handling."""
     
     def notify(self, event: TEvent) -> None:
@@ -151,7 +150,7 @@ class IServiceProvider(Protocol):
 # UI COMPONENT PATTERNS (FRAMEWORK-AGNOSTIC)
 # ============================================================================
 
-class IUIComponent(Protocol, Generic[TWidget]):
+class IUIComponent(Protocol, Generic[TWidget]):  # type: ignore[misc]
     """Base interface for UI components - framework agnostic."""
     
     @property
@@ -231,7 +230,7 @@ class IPresenter(Protocol):
 # STRATEGY PATTERN
 # ============================================================================
 
-class IStrategy(Protocol, Generic[T, TResult]):
+class IStrategy(Protocol, Generic[T, TResult]):  # type: ignore[misc]
     """Strategy interface for algorithm encapsulation."""
     
     def execute(self, context: T) -> Result[TResult]:

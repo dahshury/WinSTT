@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from src_refactored.domain.common.entity import Entity
 from src_refactored.presentation.ui_coordination.value_objects import (

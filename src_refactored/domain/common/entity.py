@@ -5,6 +5,8 @@ from __future__ import annotations
 from abc import ABC
 from typing import Generic, TypeVar
 
+from .domain_utils import DomainIdentityGenerator
+
 T = TypeVar("T")
 
 
@@ -36,7 +38,7 @@ class Entity(ABC, Generic[T]):
         """Mark entity as updated."""
         self._updated_at = self._current_timestamp()
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         """Entities are equal if they have the same ID and type."""
         if not isinstance(other, Entity):
             return False
@@ -49,8 +51,7 @@ class Entity(ABC, Generic[T]):
     @staticmethod
     def _current_timestamp() -> float:
         """Get current timestamp."""
-        import time
-        return time.time()
+        return DomainIdentityGenerator.generate_timestamp()
 
     def __invariants__(self) -> None:
         """Override in subclasses to define entity invariants."""

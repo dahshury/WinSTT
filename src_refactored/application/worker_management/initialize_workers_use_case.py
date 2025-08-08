@@ -26,6 +26,15 @@ from src_refactored.domain.worker_management.value_objects.worker_operations imp
     WorkerType,
 )
 
+
+@dataclass
+class WorkerInitResult:
+    """Result of worker initialization operation with detailed status."""
+    result: InitializationResult
+    worker_statuses: list[WorkerInitializationStatus] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    total_time_ms: int = 0
+
 # WorkerConfiguration is now imported from domain layer
 
 
@@ -68,6 +77,7 @@ class InitializeWorkersResponse:
     warnings: list[str] = field(default_factory=list,
     )
     error_message: str | None = None
+    error: str | None = None
     cleanup_performed: bool = False
     dependencies_validated: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -258,7 +268,7 @@ class InitializeWorkersUseCase:
                 validation_result = self._validate_all_dependencies(request.worker_configurations,
     )
                 if not validation_result.is_success:
-                    response.error_message = f"Dependency validation failed: {validation_result.error_message}"
+                    response.error_message = f"Dependency validation failed: {validation_result.error}"
                     response.result = InitializationResult.DEPENDENCY_FAILED
                     return response
                 response.dependencies_validated = True
@@ -275,7 +285,7 @@ class InitializeWorkersUseCase:
                     response.cleanup_performed = True
                     self._worker_cleanup.force_garbage_collection()
                 else:
-                    response.warnings.append(f"Cleanup failed: {cleanup_result.error_message}")
+                    response.warnings.append(f"Cleanup failed: {cleanup_result.error}")
 
             # Determine initialization order
             worker_types = [config.worker_type for config in request.worker_configurations]
@@ -285,7 +295,7 @@ class InitializeWorkersUseCase:
                     initialization_order = order_result.value
                 else:
                     initialization_order = worker_types
-                    response.warnings.append(f"Could not determine optimal order: {order_result.error_message}",
+                    response.warnings.append(f"Could not determine optimal order: {order_result.error}",
     )
             else:
                 initialization_order = worker_types
@@ -296,7 +306,7 @@ class InitializeWorkersUseCase:
                 request.progress_callback)
             else:
                 init_result = self._initialize_workers_sequential(
-                    request.worker_configurations, initialization_order, request.progress_callback,
+                    request.worker_configurations or [], initialization_order, request.progress_callback,
                 )
 
             response.worker_statuses = init_result.worker_statuses
@@ -316,7 +326,7 @@ class InitializeWorkersUseCase:
                 response.result = InitializationResult.PARTIAL_SUCCESS
             else:
                 response.result = InitializationResult.FAILED
-                response.error_message = "All worker initializations failed"
+                response.error = "All worker initializations failed"
 
             # Phase 12: Complete
             if not self._update_progress(request.progress_callback, InitializationPhase.COMPLETED, 100):
@@ -348,7 +358,7 @@ class InitializeWorkersUseCase:
 
         except Exception as e:
             self._logger.log_error(f"Unexpected error during worker initialization: {e!s}")
-            response.error_message = f"Unexpected error: {e!s}"
+            response.error = f"Unexpected error: {e!s}"
             response.result = InitializationResult.FAILED
 
         return response
@@ -360,7 +370,7 @@ class InitializeWorkersUseCase:
                 if config.enabled:
                     validation_result = self._dependency_validation.validate_worker_dependencies(config.worker_type, config)
                     if not validation_result.is_success:
-                        return Result.failure(f"Validation failed for {config.worker_type.value}: {validation_result.error_message}")
+                        return Result.failure(f"Validation failed for {config.worker_type.value}: {validation_result.error}")
             return Result.success(None)
         except Exception as e:
             return Result.failure(f"Dependency validation error: {e!s}")
@@ -370,7 +380,7 @@ class InitializeWorkersUseCase:
         configurations: list[WorkerConfiguration],
         initialization_order: list[WorkerType],
         progress_callback: ProgressCallback | None,
-    ) -> "InitializationResult":
+    ) -> WorkerInitResult:
         """Initialize workers sequentially"""
         worker_statuses = []
         warnings = []
@@ -410,16 +420,25 @@ class InitializeWorkersUseCase:
             if not status.initialized and not config.cleanup_on_failure:
                 warnings.append(f"Worker {worker_type.value} failed but cleanup was skipped")
 
-        return type("InitializationResult", (), {
-            "worker_statuses": worker_statuses,
-            "warnings": warnings,
-        })()
+        # Determine overall result
+        if all(status.initialized for status in worker_statuses):
+            overall_result = InitializationResult.SUCCESS
+        elif any(status.initialized for status in worker_statuses):
+            overall_result = InitializationResult.PARTIAL_SUCCESS
+        else:
+            overall_result = InitializationResult.FAILED
+            
+        return WorkerInitResult(
+            result=overall_result,
+            worker_statuses=worker_statuses,
+            warnings=warnings,
+        )
 
     def _initialize_workers_parallel(
         self,
         configurations: list[WorkerConfiguration],
         progress_callback: ProgressCallback | None,
-    ) -> "InitializationResult":
+    ) -> WorkerInitResult:
         """Initialize workers in parallel (simplified implementation)"""
         # For this implementation, we'll fall back to sequential
         # A full parallel implementation would use threading or async
@@ -441,7 +460,7 @@ class InitializeWorkersUseCase:
             # Create worker based on type
             worker_result = self._create_worker_by_type(config)
             if not worker_result.is_success:
-                status.error_message = f"Worker creation failed: {worker_result.error_message}"
+                status.error_message = f"Worker creation failed: {worker_result.error}"
                 return status
 
             worker = worker_result.value
@@ -449,7 +468,7 @@ class InitializeWorkersUseCase:
             # Create and setup thread
             thread_result = self._thread_management.create_thread(f"{config.worker_type.value}_thread")
             if not thread_result.is_success:
-                status.error_message = f"Thread creation failed: {thread_result.error_message}"
+                status.error_message = f"Thread creation failed: {thread_result.error}"
                 return status
 
             thread = thread_result.value
@@ -457,13 +476,13 @@ class InitializeWorkersUseCase:
             # Move worker to thread
             move_result = self._thread_management.move_worker_to_thread(worker, thread)
             if not move_result.is_success:
-                status.error_message = f"Failed to move worker to thread: {move_result.error_message}"
+                status.error_message = f"Failed to move worker to thread: {move_result.error}"
                 return status
 
             # Connect signals
             signal_result = self._signal_connection.connect_worker_signals(worker, config.worker_type)
             if not signal_result.is_success:
-                status.error_message = f"Signal connection failed: {signal_result.error_message}"
+                status.error_message = f"Signal connection failed: {signal_result.error}"
                 return status
 
             # Start thread if auto_start is enabled
@@ -472,7 +491,7 @@ class InitializeWorkersUseCase:
                 if start_result.is_success:
                     status.started = True
                 else:
-                    status.error_message = f"Thread start failed: {start_result.error_message}"
+                    status.error_message = f"Thread start failed: {start_result.error}"
                     return status
 
             # Mark as successful

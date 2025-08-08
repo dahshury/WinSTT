@@ -6,7 +6,6 @@ processing from the transcription queue with progress tracking.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
@@ -386,7 +385,6 @@ class ProcessNextFileUseCase:
             total_files = self._batch_management_service.get_total_files_count()
 
             file_count_text = f" ({current_file_index}/{total_files})"
-            os.path.basename(queue_item.file_path)
 
             # Calculate progress percentage
             progress_percentage = self._progress_tracking_service.get_batch_progress_percentage(
@@ -478,7 +476,7 @@ class ProcessNextFileUseCase:
         """
         try:
             video_path = queue_item.file_path
-            base_name = os.path.basename(video_path)
+            base_name = video_path.replace("\\", "/").split("/")[-1]
 
             # Update progress for video conversion
             message = f"Converting video: {base_name}{file_count_text}"
@@ -551,8 +549,20 @@ class ProcessNextFileUseCase:
             ProcessNextFileResponse with processing results
         """
         try:
-            # Parse audio data from file path (stored as tuple)
-            audio_data = eval(queue_item.file_path)  # Note: In real implementation, use proper serialization
+            # Parse audio data from a structured VO transported by the queue service
+            # Expectation: queue_item.metadata contains a dict with keys: data_type, audio_bytes, output_base_path
+            if not queue_item.metadata or not isinstance(queue_item.metadata, dict):
+                msg = "Missing or invalid metadata for memory audio queue item"
+                raise ValueError(msg)
+            required_keys = {"data_type", "audio_bytes", "output_base_path"}
+            if not required_keys.issubset(queue_item.metadata.keys()):
+                msg = "Incomplete memory audio metadata; expected data_type, audio_bytes, output_base_path"
+                raise ValueError(msg)
+            audio_data = (
+                queue_item.metadata["data_type"],
+                queue_item.metadata["audio_bytes"],
+                queue_item.metadata["output_base_path"],
+            )
 
             return self._transcribe_audio_data(
                 audio_data, request, file_count_text, FileType.MEMORY_AUDIO,
@@ -589,7 +599,7 @@ class ProcessNextFileUseCase:
         """
         try:
             file_path = queue_item.file_path
-            base_name = os.path.basename(file_path)
+            base_name = file_path.replace("\\", "/").split("/")[-1]
 
             # Update progress for transcription
             message = f"Transcribing: {base_name}{file_count_text}"
@@ -628,7 +638,8 @@ class ProcessNextFileUseCase:
                 )
 
             # Save transcription
-            output_path = os.path.splitext(file_path)[0]
+            dot_index = file_path.rfind(".")
+            output_path = file_path[:dot_index] if dot_index != -1 else file_path
             success = self._output_service.save_transcription(
                 transcript, output_path, request.configuration.output_format,
             )
@@ -636,7 +647,7 @@ class ProcessNextFileUseCase:
             if success:
                 extension = request.configuration.output_format.value
                 full_output_path = f"{output_path}.{extension}"
-                success_message = f"Saved transcript to: {os.path.basename(full_output_path)}{file_count_text}"
+                success_message = f"Saved transcript to: {full_output_path.replace('\\', '/').split('/')[-1]}{file_count_text}"
 
                 if request.progress_callback:
                     request.progress_callback(success_message, progress_percentage + 10)
@@ -694,7 +705,7 @@ class ProcessNextFileUseCase:
         """
         try:
             data_type, audio_bytes, output_base_path = audio_data
-            filename = os.path.basename(output_base_path)
+            filename = output_base_path.replace("\\", "/").split("/")[-1]
 
             # Update progress for transcription
             message = f"Transcribing: {filename}{file_count_text}"
@@ -741,7 +752,7 @@ class ProcessNextFileUseCase:
             if success:
                 extension = request.configuration.output_format.value
                 full_output_path = f"{output_base_path}.{extension}"
-                success_message = f"Saved transcript to: {os.path.basename(full_output_path)}{file_count_text}"
+                success_message = f"Saved transcript to: {full_output_path.replace('\\', '/').split('/')[-1]}{file_count_text}"
 
                 if request.progress_callback:
                     request.progress_callback(success_message, 90.0)

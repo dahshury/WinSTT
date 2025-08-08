@@ -6,7 +6,6 @@ behavior of the application, including instance detection and window activation.
 
 import logging
 import socket
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -16,6 +15,7 @@ from src_refactored.domain.application_lifecycle.value_objects import (
     InstanceCheckMethod,
     InstanceCheckResult,
 )
+from src_refactored.domain.common.ports.time_port import ITimePort
 from src_refactored.domain.window_management.value_objects import (
     ActivationMethod as WindowActivationMethod,
 )
@@ -116,13 +116,15 @@ class CheckSingleInstanceUseCase:
         window_activator: WindowActivatorProtocol | None = None,
         process_manager: ProcessManagerProtocol | None = None,
         logger: logging.Logger | None = None,
+        time_port: ITimePort | None = None,
     ):
         self.socket_manager = socket_manager
         self.file_lock_manager = file_lock_manager
         self.window_activator = window_activator
         self.process_manager = process_manager
         self.logger = logger
-        self._lock_resource = None
+        self._lock_resource: Any | None = None
+        self._time = time_port
 
     def execute(self, request: CheckSingleInstanceRequest,
     ) -> CheckSingleInstanceResponse:
@@ -264,7 +266,10 @@ class CheckSingleInstanceUseCase:
         for attempt in range(config.retry_attempts):
             try:
                 if attempt > 0:
-                    time.sleep(config.retry_delay_seconds)
+                    if self._time is None:
+                        msg = "ITimePort is required for retry delays"
+                        raise ValueError(msg)
+                    self._time.sleep(config.retry_delay_seconds)
 
                 # Find the window
                 window_handle = self.window_activator.find_window(request.window_title)
@@ -282,7 +287,7 @@ class CheckSingleInstanceUseCase:
                 elif config.activation_method == WindowActivationMethod.QT_NATIVE:
                     success = self._activate_via_qt(window_handle, response)
                 else:
-                    success = self.window_activator.activate_window(window_handle)
+                    success = self.window_activator.activate_window(window_handle) if self.window_activator else False
 
                 if success:
                     if request.activation_callback:
@@ -304,6 +309,8 @@ class CheckSingleInstanceUseCase:
     ) -> bool:
         """Activate window using Win32 API."""
         try:
+            if not self.window_activator:
+                return False
             # First try to activate
             if not self.window_activator.activate_window(window_handle):
                 return False
@@ -319,6 +326,8 @@ class CheckSingleInstanceUseCase:
     ) -> bool:
         """Activate window using Qt methods."""
         try:
+            if not self.window_activator:
+                return False
             return self.window_activator.activate_window(window_handle)
 
         except Exception as e:

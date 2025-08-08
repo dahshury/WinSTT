@@ -4,6 +4,7 @@ This module provides LLM worker functionality with PyQt threading,
 model initialization, and text generation capabilities.
 """
 
+import logging
 from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -51,13 +52,8 @@ class LLMPyQtWorkerService(QObject):
         """
         try:
             # Log initialization
-            try:
-                from logger import setup_logger
-                logger = setup_logger()
-                logger.debug(f"Initializing LLM model: {self.model_type} with quantization: {self.quantization}",
-    )
-            except ImportError:
-                pass
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Initializing LLM model: {self.model_type} with quantization: {self.quantization}")
 
             # Import gemma inference module
             from . import gemma_inference_service as gemma_inference
@@ -83,13 +79,8 @@ class LLMPyQtWorkerService(QObject):
             error_msg = f"Failed to initialize LLM model: {e}"
             self.error.emit(error_msg)
 
-            # Log the error if logger is available
-            try:
-                from logger import setup_logger
-                logger = setup_logger()
-                logger.exception(error_msg)
-            except ImportError:
-                pass
+            # Log the error
+            logging.getLogger(__name__).exception(error_msg)
 
     def toggle_status(self,
     ) -> None:
@@ -113,14 +104,8 @@ class LLMPyQtWorkerService(QObject):
             if not self.inference_session or not self.tokenizer or not self.config:
                 error_msg = "Error: LLM model not initialized"
 
-                # Log the error if logger is available
-                try:
-                    from logger import setup_logger
-                    logger = setup_logger()
-                    logger.error("LLM model not initialized",
-    )
-                except ImportError:
-                    pass
+                # Log the error
+                logging.getLogger(__name__).error("LLM model not initialized")
 
                 return error_msg
 
@@ -144,13 +129,8 @@ class LLMPyQtWorkerService(QObject):
         except Exception as e:
             error_msg = f"Error generating response: {e!s}"
 
-            # Log the error if logger is available
-            try:
-                from logger import setup_logger
-                logger = setup_logger()
-                logger.exception(f"Error generating LLM response: {e!s}")
-            except ImportError:
-                pass
+            # Log the error
+            logging.getLogger(__name__).exception(f"Error generating LLM response: {e!s}")
 
             return error_msg
 

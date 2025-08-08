@@ -6,7 +6,6 @@ workflows with progress tracking and error handling.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
@@ -380,7 +379,7 @@ class ProcessMediaFilesUseCase:
 
                     # Update progress
                     progress = self._progress_tracking_service.get_progress_percentage(i, len(valid_files))
-                    message = f"Processing: {os.path.basename(file_path)}"
+                    message = f"Processing: {file_path.replace('\\', '/').split('/')[-1]}"
 
                     if request.progress_callback:
                         request.progress_callback(message, progress)

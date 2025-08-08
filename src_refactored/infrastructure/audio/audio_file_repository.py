@@ -8,9 +8,10 @@ Extracted from utils/listener.py file persistence logic.
 import io
 import os
 import threading
+import uuid
 import wave
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -18,12 +19,14 @@ import numpy as np
 
 from src_refactored.domain.audio.entities.audio_file import (
     AudioFile,
+    Duration,
     FilePath,
     FileSize,
     FileSource,
 )
 from src_refactored.domain.audio.value_objects.audio_data import AudioData
-from src_refactored.domain.audio.value_objects.audio_format import AudioFormat, Duration
+from src_refactored.domain.audio.value_objects.audio_format import AudioFormat
+from src_refactored.domain.audio.value_objects.sample_rate import SampleRate
 from src_refactored.domain.file_operations.value_objects.file_operations import (
     FileOperationResult,
     FileOperationType,
@@ -155,7 +158,7 @@ class AudioFileRepository:
                     operation_type=FileOperationType.SAVE,
                     file_path=str(file_path),
                     bytes_processed=0,
-                    total_bytes=total_bytes,
+                    total_bytes=len(wav_bytes),
                     percentage=0.0,
                     start_time=start_time,
                     current_phase="Writing file",
@@ -178,10 +181,11 @@ class AudioFileRepository:
                         request.progress_callback(progress)
 
             # Create AudioFile entity
-            file_size = FileSize(bytes_written)
+            file_size = FileSize(bytes=bytes_written)
             duration = Duration(seconds=request.audio_data.calculated_duration.total_seconds())
 
             audio_file = AudioFile(
+                entity_id=str(uuid.uuid4()),
                 file_path=request.file_path,
                 audio_format=request.audio_format,
                 duration=duration,
@@ -330,25 +334,29 @@ class AudioFileRepository:
                     chunk_size=1024,  # Default chunk size for WAV files
                 )
 
+                # Convert to list for domain compatibility
+                samples = list(samples)
+
                 # Create AudioData
-                from src_refactored.domain.audio.value_objects.sample_rate import SampleRate
                 audio_data = AudioData(
                     data=samples,
                     sample_rate=SampleRate(sample_rate),
                     channels=channels,
                     audio_format=audio_format,
+                    timestamp=datetime.now(),
+                    duration=timedelta(seconds=n_frames / sample_rate),
                 )
 
                 # Create AudioFile entity
-                duration_seconds = n_frames / sample_rate
-                file_size_obj = FileSize(file_size)
-                duration = Duration(seconds=duration_seconds)
+                file_size = FileSize(bytes=file_path.stat().st_size)
+                duration = Duration(seconds=n_frames / sample_rate)
 
                 audio_file = AudioFile(
+                    entity_id=str(uuid.uuid4()),
                     file_path=request.file_path,
                     audio_format=audio_format,
                     duration=duration,
-                    file_size=file_size_obj,
+                    file_size=file_size,
                     source=FileSource.UPLOAD,
                 )
 
@@ -364,7 +372,7 @@ class AudioFileRepository:
                     result=FileOperationResult.SUCCESS,
                     audio_file=audio_file,
                     audio_data=audio_data,
-                    bytes_processed=file_size,
+                    bytes_processed=file_path.stat().st_size,
                     operation_time=operation_time,
                 )
 

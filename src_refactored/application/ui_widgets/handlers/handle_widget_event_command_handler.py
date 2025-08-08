@@ -7,6 +7,14 @@ focusing purely on business logic without UI concerns.
 import time
 from typing import Protocol
 
+from src_refactored.application.events.application_events import (
+    WidgetEventHandlingCompleted,
+    WidgetEventHandlingFailed,
+    WidgetEventHandlingStarted,
+)
+from src_refactored.application.ui_widgets.commands.handle_widget_event_command import (
+    HandleWidgetEventCommand,
+)
 from src_refactored.domain.common.abstractions import ICommandHandler
 from src_refactored.domain.common.events import DomainEvent
 from src_refactored.domain.common.result import Result
@@ -14,48 +22,6 @@ from src_refactored.domain.ui_widget_operations import (
     HandlePhase,
     HandleResult,
 )
-
-from ..commands.handle_widget_event_command import HandleWidgetEventCommand
-
-
-# Domain Events for Widget Event Handling
-class WidgetEventHandlingStarted(DomainEvent):
-    """Event raised when widget event handling starts."""
-    def __init__(self, widget_id: str, event_type: str, widget_type: str):
-        super().__init__(
-            event_id=f"widget_event_handling_started_{widget_id}_{time.time()}",
-            timestamp=time.time(),
-            source="widget_event_service",
-        )
-        self.widget_id = widget_id
-        self.event_type = event_type
-        self.widget_type = widget_type
-
-
-class WidgetEventHandlingCompleted(DomainEvent):
-    """Event raised when widget event handling completes."""
-    def __init__(self, widget_id: str, result: HandleResult, duration: float):
-        super().__init__(
-            event_id=f"widget_event_handling_completed_{widget_id}_{time.time()}",
-            timestamp=time.time(),
-            source="widget_event_service",
-        )
-        self.widget_id = widget_id
-        self.result = result
-        self.duration = duration
-
-
-class WidgetEventHandlingFailed(DomainEvent):
-    """Event raised when widget event handling fails."""
-    def __init__(self, widget_id: str, error: str, phase: HandlePhase):
-        super().__init__(
-            event_id=f"widget_event_handling_failed_{widget_id}_{time.time()}",
-            timestamp=time.time(),
-            source="widget_event_service",
-        )
-        self.widget_id = widget_id
-        self.error = error
-        self.phase = phase
 
 
 # Service Protocols (Ports)
@@ -142,13 +108,13 @@ class HandleWidgetEventCommandHandler(ICommandHandler[HandleWidgetEventCommand])
             # Phase 1: Event Validation
             validation_result = self._validate_event(command)
             if not validation_result.is_success:
-                self._publish_failure_event(widget_id, validation_result.error, HandlePhase.EVENT_VALIDATION)
+                self._publish_failure_event(widget_id, validation_result.get_error(), HandlePhase.EVENT_VALIDATION)
                 return validation_result
 
             # Phase 2: Widget Validation
             widget_validation_result = self._validate_widget(command, widget_id)
             if not widget_validation_result.is_success:
-                self._publish_failure_event(widget_id, widget_validation_result.error, HandlePhase.WIDGET_VALIDATION)
+                self._publish_failure_event(widget_id, widget_validation_result.get_error(), HandlePhase.WIDGET_VALIDATION)
                 return widget_validation_result
 
             # Phase 3: Event Processing
@@ -158,18 +124,18 @@ class HandleWidgetEventCommandHandler(ICommandHandler[HandleWidgetEventCommand])
                 command.configuration,
             )
             if not processing_result.is_success:
-                self._publish_failure_event(widget_id, processing_result.error, HandlePhase.EVENT_PROCESSING)
-                return Result.failure(processing_result.error)
+                self._publish_failure_event(widget_id, processing_result.get_error(), HandlePhase.EVENT_PROCESSING)
+                return Result.failure(processing_result.get_error())
 
             # Phase 4: Response Coordination
-            if command.configuration.enable_response_coordination:
+            if command.configuration.enable_response_coordination and processing_result.value is not None:
                 coordination_result = self._event_processing.coordinate_response(
                     processing_result.value,
                     command.configuration,
                 )
                 if not coordination_result.is_success:
-                    self._publish_failure_event(widget_id, coordination_result.error, HandlePhase.RESPONSE_COORDINATION)
-                    return Result.failure(coordination_result.error)
+                    self._publish_failure_event(widget_id, coordination_result.get_error(), HandlePhase.RESPONSE_COORDINATION)
+                    return Result.failure(coordination_result.get_error())
 
             # Publish success event
             duration = time.time() - start_time
@@ -189,14 +155,28 @@ class HandleWidgetEventCommandHandler(ICommandHandler[HandleWidgetEventCommand])
 
             # Call completion callback if provided
             if command.completion_callback:
-                command.completion_callback(True, "Event handled successfully")
+                # Callback signature: Callable[[bool, str], None]
+                success = True
+                message = "Event handled successfully"
+                command.completion_callback(success, message)
 
             return Result.success(None)
             
-        except Exception as e:
+        except (ValueError, TypeError, AttributeError, RuntimeError) as e:
             error_msg = f"Unexpected error in widget event handling: {e!s}"
             self._logger.log_error(error_msg, widget_id=widget_id)
-            self._publish_failure_event(widget_id, error_msg, HandlePhase.EXECUTION)
+            self._publish_failure_event(widget_id, error_msg, HandlePhase.EVENT_PROCESSING)
+            
+            # Call error callback if provided
+            if command.error_callback:
+                command.error_callback(error_msg, e)
+            
+            return Result.failure(error_msg)
+        except Exception as e:
+            # Last resort for any other unexpected exceptions
+            error_msg = f"Critical error in widget event handling: {e!s}"
+            self._logger.log_error(error_msg, widget_id=widget_id)
+            self._publish_failure_event(widget_id, error_msg, HandlePhase.EVENT_PROCESSING)
             
             # Call error callback if provided
             if command.error_callback:

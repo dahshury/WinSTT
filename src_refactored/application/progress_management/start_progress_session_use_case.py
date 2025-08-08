@@ -75,10 +75,10 @@ class StartProgressSessionRequest:
     """Request for starting progress session."""
     session_id: str
     parent_window: Any  # QMainWindow
-    target_widget: Any | None = None  # QWidget for progress placement
     configuration: ProgressSessionConfiguration
     context_data: dict[str, Any]
     timestamp: datetime
+    target_widget: Any | None = None  # QWidget for progress placement
 
 
 @dataclass

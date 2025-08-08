@@ -38,6 +38,17 @@ class ZOrderCategory(Enum):
     SYSTEM_LAYER = "system"
 
 
+class ZOrderType(Enum):
+    """Types of z-order operations and behaviors."""
+    ABSOLUTE = "absolute"  # Set absolute z-order value
+    RELATIVE = "relative"  # Set relative to another element
+    BRING_TO_FRONT = "bring_to_front"  # Bring to front of all elements
+    SEND_TO_BACK = "send_to_back"  # Send to back of all elements
+    RAISE_ABOVE = "raise_above"  # Raise above specific element
+    LOWER_BELOW = "lower_below"  # Lower below specific element
+    AUTO = "auto"  # Automatically determine based on context
+
+
 @dataclass(frozen=True)
 class ZOrderLevel(ValueObject):
     """Z-order level value object.

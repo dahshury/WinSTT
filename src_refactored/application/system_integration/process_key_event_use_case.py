@@ -7,14 +7,25 @@ events in the system integration layer.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src_refactored.domain.ui_coordination.value_objects.key_event_data import (
-        KeyEventData,
-    )
+
+@dataclass
+class KeyEventData:
+    """Key event data container."""
+    key: str
+    modifiers: list[str] | None = None
+    event_type: str = "key_press"
+    context: dict[str, Any] | None = None
+    
+    def __post_init__(self):
+        if self.modifiers is None:
+            self.modifiers = []
+        if self.context is None:
+            self.context = {}
 
 
 class IKeyEventProcessingPort(Protocol):

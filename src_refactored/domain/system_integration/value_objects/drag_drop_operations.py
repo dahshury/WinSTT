@@ -6,7 +6,6 @@ including drop actions, file types, and operation configurations.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 
 
 class DropAction(Enum):
@@ -24,6 +23,15 @@ class FileType(Enum):
     TEXT = "text"
     DIRECTORY = "directory"
     ALL = "all"
+
+
+class DropZoneType(Enum):
+    """Types of drop zones."""
+    FILE_AREA = "file_area"
+    TEXT_AREA = "text_area"
+    MAIN_WINDOW = "main_window"
+    PLAYLIST = "playlist"
+    CUSTOM = "custom"
 
 
 @dataclass
@@ -52,7 +60,7 @@ class DragDropConfig:
 class DropResult:
     """Result of a drop operation."""
     success: bool
-    files_processed: list[Path]
-    directories_processed: list[Path]
+    files_processed: list[str]
+    directories_processed: list[str]
     errors: list[str]
     total_files: int

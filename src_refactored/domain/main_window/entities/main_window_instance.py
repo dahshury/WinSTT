@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
+
 
 @dataclass
 class WindowGeometry:
@@ -27,7 +29,7 @@ class MainWindowInstance:
     is_visible: bool = False
     is_maximized: bool = False
     is_minimized: bool = False
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
     properties: dict[str, Any] = field(default_factory=dict)
     
     def show(self) -> None:

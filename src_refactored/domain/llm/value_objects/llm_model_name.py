@@ -64,6 +64,48 @@ class LLMModelName:
         parts = self.value.lower().split("-")
         return parts[0] if parts else "unknown"
     
+    def get_memory_requirements(self) -> int:
+        """Get estimated memory requirements in MB for this LLM model."""
+        model_lower = self.value.lower()
+        
+        # Estimated memory requirements for common LLM models
+        if "gemma" in model_lower:
+            if "2b" in model_lower:
+                return 2000    # ~2GB for Gemma 2B
+            if "7b" in model_lower:
+                return 7000    # ~7GB for Gemma 7B
+            return 4000    # Default for Gemma models
+        
+        if "whisper" in model_lower:
+            if "large" in model_lower:
+                return 6000    # ~6GB for large Whisper
+            if "medium" in model_lower:
+                return 2500    # ~2.5GB for medium Whisper
+            if "small" in model_lower:
+                return 1200    # ~1.2GB for small Whisper
+            if "base" in model_lower:
+                return 500     # ~500MB for base Whisper
+            return 2000    # Default for Whisper models
+        
+        if any(size in model_lower for size in ["7b", "7B"]):
+            return 7000        # ~7GB for 7B parameter models
+        if any(size in model_lower for size in ["3b", "3B"]):
+            return 3000        # ~3GB for 3B parameter models
+        if any(size in model_lower for size in ["1b", "1B"]):
+            return 1000        # ~1GB for 1B parameter models
+        
+        # Default fallback based on model family
+        family = self.model_family
+        family_defaults = {
+            "llama": 4000,
+            "mistral": 4000,
+            "gpt": 3000,
+            "bert": 1000,
+            "t5": 2000,
+        }
+        
+        return family_defaults.get(family, 2000)  # 2GB default
+    
     @classmethod
     def from_string(cls, value: str) -> LLMModelName:
         """Create LLMModelName from string."""

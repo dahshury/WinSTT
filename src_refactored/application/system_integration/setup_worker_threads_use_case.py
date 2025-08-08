@@ -8,9 +8,9 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from threading import Thread
 from typing import Any, Protocol
 
+from src_refactored.domain.common.ports.threading_port import IThreadHandle
 from src_refactored.domain.system_integration.value_objects.system_operations import (
     SetupPhase,
     SetupResult,
@@ -139,7 +139,7 @@ class ThreadSetupResult:
     thread_id: str
     thread_created: bool
     thread_started: bool
-    thread_object: Thread | None = None
+    thread_object: IThreadHandle | None = None
     current_state: ThreadState = ThreadState.CREATED
     error_message: str | None = None
     setup_time: float = 0.0
@@ -243,16 +243,16 @@ class ThreadCreationServiceProtocol(Protocol):
     """Protocol for thread creation service."""
 
     def create_thread(self, config: ThreadConfiguration,
-    ) -> tuple[bool, Thread | None, str | None]:
+    ) -> tuple[bool, IThreadHandle | None, str | None]:
         """Create a worker thread."""
         ...
 
-    def start_thread(self, thread: Thread, timeout: float,
+    def start_thread(self, thread: IThreadHandle, timeout: float,
     ) -> tuple[bool, str | None]:
         """Start a thread with timeout."""
         ...
 
-    def configure_thread_priority(self, thread: Thread, priority: ThreadPriority,
+    def configure_thread_priority(self, thread: IThreadHandle, priority: ThreadPriority,
     ) -> tuple[bool, str | None]:
         """Configure thread priority."""
         ...
@@ -262,12 +262,12 @@ class CoordinationServiceProtocol(Protocol):
     """Protocol for thread coordination service."""
 
     def setup_coordination(self,
-    config: CoordinationConfiguration, threads: list[Thread]) -> tuple[bool, Any, str | None]:
+    config: CoordinationConfiguration, threads: list[IThreadHandle]) -> tuple[bool, Any, str | None]:
         """Setup thread coordination."""
         ...
 
     def establish_dependencies(self,
-    dependencies: dict[str, list[str]], threads: dict[str, Thread]) -> tuple[bool, int, str | None]:
+    dependencies: dict[str, list[str]], threads: dict[str, IThreadHandle]) -> tuple[bool, int, str | None]:
         """Establish thread dependencies."""
         ...
 
@@ -287,19 +287,19 @@ class LifecycleManagementServiceProtocol(Protocol):
     """Protocol for thread lifecycle management service."""
 
     def setup_lifecycle_management(self,
-    config: LifecycleConfiguration, threads: list[Thread]) -> tuple[bool, Any, str | None]:
+    config: LifecycleConfiguration, threads: list[IThreadHandle]) -> tuple[bool, Any, str | None]:
         """Setup lifecycle management."""
         ...
 
-    def install_shutdown_handlers(self, threads: list[Thread]) -> tuple[bool, str | None]:
+    def install_shutdown_handlers(self, threads: list[IThreadHandle]) -> tuple[bool, str | None]:
         """Install shutdown handlers."""
         ...
 
-    def install_cleanup_handlers(self, threads: list[Thread]) -> tuple[bool, str | None]:
+    def install_cleanup_handlers(self, threads: list[IThreadHandle]) -> tuple[bool, str | None]:
         """Install cleanup handlers."""
         ...
 
-    def setup_exception_handling(self, threads: list[Thread]) -> tuple[bool, str | None]:
+    def setup_exception_handling(self, threads: list[IThreadHandle]) -> tuple[bool, str | None]:
         """Setup exception handling."""
         ...
 
@@ -310,15 +310,15 @@ class MonitoringServiceProtocol(Protocol):
     def setup_monitoring(
     self,
     config: MonitoringConfiguration,
-    threads: list[Thread]) -> tuple[bool, Any, str | None]:
+    threads: list[IThreadHandle]) -> tuple[bool, Any, str | None]:
         """Setup thread monitoring."""
         ...
 
-    def enable_health_checks(self, threads: list[Thread]) -> tuple[bool, str | None]:
+    def enable_health_checks(self, threads: list[IThreadHandle]) -> tuple[bool, str | None]:
         """Enable health checks for threads."""
         ...
 
-    def setup_performance_tracking(self, threads: list[Thread]) -> tuple[bool, str | None]:
+    def setup_performance_tracking(self, threads: list[IThreadHandle]) -> tuple[bool, str | None]:
         """Setup performance tracking."""
         ...
 
@@ -695,14 +695,14 @@ class SetupWorkerThreadsUseCase:
 
             # Determine result
             if state.failed_threads == 0:
-                result = SetupResult.SUCCESS if not warnings else SetupResult.PARTIAL_SUCCESS
+                final_result = SetupResult.SUCCESS if not warnings else SetupResult.PARTIAL_SUCCESS
             elif state.active_threads > 0:
-                result = SetupResult.PARTIAL_SUCCESS
+                final_result = SetupResult.PARTIAL_SUCCESS
             else:
-                result = SetupResult.FAILED
+                final_result = SetupResult.FAILED
 
             return SetupWorkerThreadsResponse(
-                result=result,
+                result=final_result,
                 state=state,
                 thread_manager=lifecycle_manager if lifecycle_setup else None,
                 coordinator=coordinator if coord_setup else None,

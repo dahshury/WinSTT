@@ -11,10 +11,10 @@ from PyQt6.QtGui import QColor, QIcon, QPalette
 from PyQt6.QtWidgets import QMainWindow, QSizePolicy
 
 from src_refactored.domain.ui_coordination.value_objects.ui_state_management import UIState
-from src_refactored.infrastructure.main_window.window_configuration_service import (
+from src_refactored.infrastructure.system.resource_path_service import ResourcePathService
+from src_refactored.presentation.qt.services.window_configuration_service import (
     WindowConfigurationService,
 )
-from src_refactored.infrastructure.system.resource_path_service import ResourcePathService
 
 
 class WindowConfigComponent:

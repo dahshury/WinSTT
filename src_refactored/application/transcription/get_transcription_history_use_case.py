@@ -126,25 +126,31 @@ class GetTranscriptionHistoryUseCase(UseCase[GetTranscriptionHistoryRequest, Get
         self._statistics_service = statistics_service
 
     def execute(self, request: GetTranscriptionHistoryRequest,
-    ) -> Result[GetTranscriptionHistoryResponse]:
+    ) -> GetTranscriptionHistoryResponse:
         """Execute the get transcription history use case.
         
         Args:
             request: The get transcription history request
             
         Returns:
-            Result containing the transcription history response
+            Transcription history response with results or error information
         """
         try:
             # Get raw transcription history
             history_result = self._get_raw_history(request)
-            if history_result.is_failure():
-                return Result.failure(f"Failed to retrieve history: {history_result.error}")
+            if not history_result.is_success:
+                return GetTranscriptionHistoryResponse(
+                success=False,
+                items=[],
+                total_count=0,
+                has_more=False,
+                error_message=f"Failed to retrieve history: {history_result.error}",
+            )
 
             raw_history = history_result.value
 
             # Apply filters
-            filtered_history = self._apply_filters(raw_history, request)
+            filtered_history = self._apply_filters(raw_history or [], request)
 
             # Apply search if specified
             if request.search_text:
@@ -172,22 +178,24 @@ class GetTranscriptionHistoryUseCase(UseCase[GetTranscriptionHistoryRequest, Get
                 statistics = self._calculate_statistics(filtered_history)
 
             # Determine if there are more items
-            has_more = (request.offset + len(history_items)
-    ) < total_count
+            has_more = (request.offset + len(history_items)) < total_count
 
-            return Result.success(
-                GetTranscriptionHistoryResponse(
-                    success=True,
-                    items=history_items,
-                    total_count=total_count,
-                    has_more=has_more,
-                    statistics=statistics,
-                ),
+            return GetTranscriptionHistoryResponse(
+                success=True,
+                items=history_items,
+                total_count=total_count,
+                has_more=has_more,
+                statistics=statistics,
             )
 
         except Exception as e:
             error_msg = f"Unexpected error retrieving transcription history: {e!s}"
-            return Result.failure(error_msg)
+            return GetTranscriptionHistoryResponse(
+                success=False,
+                items=[],
+                total_count=0,
+                has_more=False,
+                error_message=error_msg)
 
     def _get_raw_history(self, request: GetTranscriptionHistoryRequest,
     ) -> Result[list[TranscriptionResult]]:
@@ -202,11 +210,35 @@ class GetTranscriptionHistoryUseCase(UseCase[GetTranscriptionHistoryRequest, Get
         try:
             # Use history service if available
             if self._history_service:
-                return self._history_service.get_transcription_history(
+                history_result = self._history_service.get_transcription_history(
                     session_id=request.session_id,
                     date_from=request.date_from,
                     date_to=request.date_to,
                 )
+                
+                if not history_result.is_success:
+                    return history_result
+                
+                # Convert entity objects to value objects if needed
+                entity_results = history_result.value or []
+                value_objects = []
+                for entity_result in entity_results:
+                    # Convert entity to value object
+                    value_object = TranscriptionResult(
+                        transcription_id=entity_result.transcription_id,
+                        text=entity_result.get_full_text().content if entity_result.segments else "",
+                        language=entity_result.language.code.value if entity_result.language else None,
+                        confidence=entity_result.overall_confidence.value if entity_result.overall_confidence else 0.0,
+                        state=entity_result.status.value,
+                        created_at=entity_result.started_at or datetime.now(),
+                        completed_at=entity_result.completed_at,
+                        processing_time=entity_result.processing_duration.seconds if entity_result.processing_duration else 0.0,
+                        segments=[],
+                        error_message=entity_result.error_message,
+                    )
+                    value_objects.append(value_object)
+                
+                return Result.success(value_objects)
 
             # Fallback to session history
             if request.session_id:
@@ -214,14 +246,32 @@ class GetTranscriptionHistoryUseCase(UseCase[GetTranscriptionHistoryRequest, Get
             else:
                 session_history = self._transcription_session.get_all_history()
 
-            if session_history.is_failure():
-                return session_history
+            if not session_history.is_success:
+                return Result.failure(session_history.error or "Failed to retrieve session history")
 
-            return Result.success(session_history.value)
+            # Convert entity objects to value objects
+            entity_results = session_history.value or []
+            value_objects = []
+            for entity_result in entity_results:
+                # Convert entity to value object
+                value_object = TranscriptionResult(
+                    transcription_id=entity_result.transcription_id,
+                    text=entity_result.get_full_text().content if entity_result.segments else "",
+                    language=entity_result.language.code.value if entity_result.language else None,
+                    confidence=entity_result.overall_confidence.value if entity_result.overall_confidence else 0.0,
+                    state=entity_result.status.value,
+                    created_at=entity_result.started_at or datetime.now(),
+                    completed_at=entity_result.completed_at,
+                    processing_time=entity_result.processing_duration.seconds if entity_result.processing_duration else 0.0,
+                    segments=[],
+                    error_message=entity_result.error_message,
+                )
+                value_objects.append(value_object)
+            
+            return Result.success(value_objects)
 
         except Exception as e:
-            return Result.failure(f"Error retrieving raw history: {e!s}",
-    )
+            return Result.failure(f"Error retrieving raw history: {e!s}")
 
     def _apply_filters(
         self,
@@ -354,7 +404,7 @@ class GetTranscriptionHistoryUseCase(UseCase[GetTranscriptionHistoryRequest, Get
         if self._search_service:
             try:
                 search_result = self._search_service.search_transcriptions(history, search_text)
-                if search_result.is_success():
+                if search_result.is_success:
                     return search_result.value
             except Exception:
                 pass
@@ -529,7 +579,7 @@ class GetTranscriptionHistoryUseCase(UseCase[GetTranscriptionHistoryRequest, Get
         if self._statistics_service:
             try:
                 stats_result = self._statistics_service.calculate_history_statistics(history)
-                if stats_result.is_success():
+                if stats_result.is_success:
                     return stats_result.value
             except Exception:
                 pass

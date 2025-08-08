@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import QMainWindow, QWidget
 from src_refactored.domain.audio.value_objects.recording_state import RecordingState
 from src_refactored.domain.common.entities.processing_status import ProcessingState
 from src_refactored.domain.ui_coordination.value_objects.ui_state_management import UIState
-from src_refactored.infrastructure.main_window.ui_text_management_service import (
+from src_refactored.presentation.qt.services.ui_text_management_service import (
     UITextManagementService,
 )
 

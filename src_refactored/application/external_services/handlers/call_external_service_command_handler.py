@@ -4,11 +4,21 @@ This module implements the command handler for external service calls,
 abstracting service interactions from use cases.
 """
 
-import time
 from typing import Any, Protocol
 
+from src_refactored.application.events.application_events import (
+    ExternalServiceErrorOccurred as ExternalServiceCallFailed,
+)
+from src_refactored.application.events.application_events import (
+    ExternalServiceIntegrationRequested as ExternalServiceCallStarted,
+)
+from src_refactored.application.events.application_events import (
+    ExternalServiceResponseReceived as ExternalServiceCallCompleted,
+)
 from src_refactored.domain.common.abstractions import ICommandHandler
 from src_refactored.domain.common.events import DomainEvent
+from src_refactored.domain.common.ports.cache_key_port import ICacheKeyPort
+from src_refactored.domain.common.ports.time_port import ITimePort
 from src_refactored.domain.common.result import Result
 
 from ..commands.call_external_service_command import (
@@ -16,62 +26,6 @@ from ..commands.call_external_service_command import (
     CancelServiceCallCommand,
     ServiceType,
 )
-
-
-# Domain Events for External Service Calls
-class ExternalServiceCallStarted(DomainEvent):
-    """Event raised when external service call starts."""
-    def __init__(self, correlation_id: str, service_name: str, operation_name: str, service_type: ServiceType):
-        super().__init__(
-            event_id=f"external_service_call_started_{correlation_id}",
-            timestamp=time.time(),
-            source="external_service_handler",
-        )
-        self.correlation_id = correlation_id
-        self.service_name = service_name
-        self.operation_name = operation_name
-        self.service_type = service_type
-
-
-class ExternalServiceCallCompleted(DomainEvent):
-    """Event raised when external service call completes."""
-    def __init__(self, correlation_id: str, service_name: str, duration: float, result_size: int):
-        super().__init__(
-            event_id=f"external_service_call_completed_{correlation_id}",
-            timestamp=time.time(),
-            source="external_service_handler",
-        )
-        self.correlation_id = correlation_id
-        self.service_name = service_name
-        self.duration = duration
-        self.result_size = result_size
-
-
-class ExternalServiceCallFailed(DomainEvent):
-    """Event raised when external service call fails."""
-    def __init__(self, correlation_id: str, service_name: str, error: str, retry_count: int):
-        super().__init__(
-            event_id=f"external_service_call_failed_{correlation_id}",
-            timestamp=time.time(),
-            source="external_service_handler",
-        )
-        self.correlation_id = correlation_id
-        self.service_name = service_name
-        self.error = error
-        self.retry_count = retry_count
-
-
-class ExternalServiceCallCancelled(DomainEvent):
-    """Event raised when external service call is cancelled."""
-    def __init__(self, correlation_id: str, service_name: str, reason: str):
-        super().__init__(
-            event_id=f"external_service_call_cancelled_{correlation_id}",
-            timestamp=time.time(),
-            source="external_service_handler",
-        )
-        self.correlation_id = correlation_id
-        self.service_name = service_name
-        self.reason = reason
 
 
 # Service Protocols (Ports)
@@ -111,9 +65,9 @@ class DomainEventPublisherProtocol(Protocol):
 
 class LoggerServiceProtocol(Protocol):
     """Protocol for logging service."""
-    def log_info(self, message: str, **kwargs) -> None: ...
-    def log_error(self, message: str, **kwargs) -> None: ...
-    def log_warning(self, message: str, **kwargs) -> None: ...
+    def log_info(self, message: str, **kwargs: Any) -> None: ...
+    def log_error(self, message: str, **kwargs: Any) -> None: ...
+    def log_warning(self, message: str, **kwargs: Any) -> None: ...
 
 
 class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceCommand]):
@@ -131,6 +85,8 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
         metrics_service: MetricsServiceProtocol,
         event_publisher: DomainEventPublisherProtocol,
         logger_service: LoggerServiceProtocol,
+        time_port: ITimePort,
+        cache_key_port: ICacheKeyPort | None = None,
     ):
         self._service_registry = service_registry
         self._circuit_breaker = circuit_breaker
@@ -139,8 +95,10 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
         self._event_publisher = event_publisher
         self._logger = logger_service
         self._active_calls: dict[str, bool] = {}
+        self._time = time_port
+        self._cache_key = cache_key_port
 
-    def handle(self, command: CallExternalServiceCommand) -> Result[dict[str, Any]]:
+    def handle(self, command: CallExternalServiceCommand) -> Result[None]:
         """Handle external service call command.
         
         Args:
@@ -149,7 +107,7 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
         Returns:
             Result containing service response or error
         """
-        start_time = time.time()
+        start_time = self._time.get_current_time()
         
         try:
             # Mark call as active
@@ -158,10 +116,10 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
             # Publish domain event for call started
             self._event_publisher.publish(
                 ExternalServiceCallStarted(
-                    command.correlation_id,
+                    command.service_type,
                     command.service_name,
                     command.operation_name,
-                    command.service_type,
+                    command.correlation_id,
                 ),
             )
             
@@ -180,12 +138,15 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
             # Check cache if enabled
             if command.configuration.enable_caching:
                 cache_result = self._check_cache(command)
-                if cache_result.is_success:
+                if cache_result.is_success and cache_result.value is not None:
                     self._logger.log_info(
                         "Service call result retrieved from cache",
                         correlation_id=command.correlation_id,
                     )
-                    return cache_result
+                    # Call success callback with cached data
+                    if command.success_callback:
+                        command.success_callback(cache_result.value)
+                    return Result.success(None)
 
             # Check circuit breaker
             if command.configuration.enable_circuit_breaker:
@@ -203,9 +164,10 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
             # Execute service call with retry logic
             result = self._execute_with_retry(command)
             
-            if result.is_success:
+            if result.is_success and result.value is not None:
                 # Record success metrics
-                duration = time.time() - start_time
+                end_time = self._time.get_current_time()
+                duration = end_time - start_time
                 self._record_success_metrics(command, duration, result.value)
                 
                 # Cache result if enabled
@@ -218,8 +180,8 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
                     ExternalServiceCallCompleted(
                         command.correlation_id,
                         command.service_name,
-                        duration,
                         result_size,
+                        duration,
                     ),
                 )
                 
@@ -232,15 +194,16 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
                     correlation_id=command.correlation_id,
                     duration=duration,
                 )
-            else:
-                # Record failure metrics
-                self._record_failure_metrics(command, result.error)
-                
-                # Call error callback if provided
-                if command.error_callback:
-                    command.error_callback(result.error, Exception(result.error))
+                return Result.success(None)
+            # Record failure metrics
+            error_msg = result.error or "Unknown error"
+            self._record_failure_metrics(command, error_msg)
 
-            return result
+            # Call error callback if provided
+            if command.error_callback:
+                command.error_callback(error_msg, Exception(error_msg))
+
+            return Result.failure(error_msg)
             
         except Exception as e:
             error_msg = f"Unexpected error in external service call: {e!s}"
@@ -289,7 +252,11 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
                     if command.configuration.enable_circuit_breaker:
                         self._circuit_breaker.record_success(command.service_name)
                     
-                    return Result.success(result)
+                    # Ensure result is a dict
+                    if isinstance(result, dict):
+                        return Result.success(result)
+                    # Convert to dict if it's not already
+                    return Result.success({"result": result})
                 return Result.failure(f"Operation {command.operation_name} not found on service {command.service_name}")
                     
             except Exception as e:
@@ -309,7 +276,7 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
                 
                 # Wait before retry (except on last attempt)
                 if attempt < command.configuration.retry_count:
-                    time.sleep(command.configuration.retry_delay_seconds)
+                    self._time.sleep(command.configuration.retry_delay_seconds)
         
         # All retries exhausted
         self._publish_failure_event(command, last_error, command.configuration.retry_count)
@@ -332,17 +299,23 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
         self._cache_service.set(cache_key, result, command.configuration.cache_ttl_seconds)
 
     def _generate_cache_key(self, command: CallExternalServiceCommand) -> str:
-        """Generate cache key for service call."""
+        """Generate cache key for service call using injected strategy when available."""
+        if self._cache_key is not None:
+            return self._cache_key.generate_key(
+                service_name=command.service_name,
+                operation_name=command.operation_name,
+                parameters=command.parameters,
+            )
+        # Fallback: stable JSON + blake2b to avoid insecure hashes
         import hashlib
         import json
-        
         key_data = {
             "service_name": command.service_name,
             "operation": command.operation_name,
             "parameters": command.parameters,
         }
-        key_string = json.dumps(key_data, sort_keys=True)
-        return hashlib.md5(key_string.encode()).hexdigest()
+        key_string = json.dumps(key_data, sort_keys=True, separators=(",", ":"))
+        return hashlib.blake2b(key_string.encode(), digest_size=16).hexdigest()
 
     def _record_success_metrics(self, command: CallExternalServiceCommand, duration: float, result: dict[str, Any]) -> None:
         """Record success metrics."""
@@ -378,8 +351,8 @@ class CallExternalServiceCommandHandler(ICommandHandler[CallExternalServiceComma
             ExternalServiceCallFailed(
                 command.correlation_id,
                 command.service_name,
+                "service_error",
                 error,
-                retry_count,
             ),
         )
 
@@ -405,10 +378,12 @@ class CancelServiceCallCommandHandler(ICommandHandler[CancelServiceCallCommand])
                 self._call_handler._active_calls[command.correlation_id] = False
                 
                 # Publish cancellation event
+                # Emit a generic error event to signal cancellation in the central events module
                 self._event_publisher.publish(
-                    ExternalServiceCallCancelled(
+                    ExternalServiceCallFailed(
                         command.correlation_id,
-                        "unknown",  # Service name not available in cancellation
+                        "unknown",
+                        "cancelled",
                         command.reason,
                     ),
                 )

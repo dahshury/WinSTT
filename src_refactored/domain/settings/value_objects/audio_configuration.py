@@ -27,6 +27,18 @@ class AudioConfiguration(ValueObject):
     noise_suppression: bool = False
     voice_activity_detection: bool = False
 
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (
+            self.sample_rate,
+            self.channels,
+            self.bit_depth,
+            self.buffer_size,
+            self.enable_noise_reduction,
+            self.recording_sound_enabled,
+            self.recording_sound_path,
+        )
+
     def __post_init__(self,
     ):
         """Validate audio configuration after initialization."""
@@ -59,9 +71,8 @@ class AudioConfiguration(ValueObject):
             msg = "Recording sound path must be provided when recording sound is enabled"
             raise ValueError(msg)
 
-        if self.recording_sound_path is not None and not self.recording_sound_path.exists():
-            msg = f"Recording sound file does not exist: {self.recording_sound_path}"
-            raise ValueError(msg)
+        # File existence/access checks must be performed via application services
+        # using FileSystemPort, not within the domain value object.
 
     @classmethod
     def create_default(cls,

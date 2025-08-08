@@ -66,7 +66,7 @@ class DefaultWorkerFactory(WorkerFactory):
         worker_class = self._get_worker_class(config)
 
         # Merge initialization parameters
-        init_params = {**config.initialization_params, **kwargs}
+        init_params = {**(config.initialization_params or {}), **kwargs}
 
         # Create and return worker instance
         return worker_class(**init_params)
@@ -247,7 +247,7 @@ class WorkerImportsConfiguration:
         if config is None:
             return False
 
-        for dependency in config.dependencies:
+        for dependency in config.dependencies or []:
             try:
                 __import__(dependency)
             except ImportError:

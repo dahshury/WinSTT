@@ -7,12 +7,12 @@ to class instances in the WinSTT application.
 
 import importlib
 import inspect
+import logging
 from collections.abc import Callable
 from typing import Any, Protocol
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from logger import setup_logger
 from src_refactored.domain.common.result import Result
 from src_refactored.domain.system_integration.value_objects.method_delegation import (
     DelegationConfiguration,
@@ -51,7 +51,7 @@ class MethodDelegationService(QObject):
 
     def __init__(self):
         super().__init__()
-        self.logger = setup_logger()
+        self.logger = logging.getLogger(__name__)
         self._delegated_methods: dict[str, dict[str, MethodInfo]] = {}  # class_name -> {method_name -> MethodInfo}
         self._source_modules: dict[str, Any] = {}  # module_path -> module_object
 
@@ -322,7 +322,8 @@ class MethodDelegationService(QObject):
 
         config = DelegationConfiguration(
             target_class_name="MainWindow",
-            source_module_path="src.ui.window_methods",
+            # Legacy module path replaced with presentation entry point; to be implemented
+            source_module_path="src_refactored.presentation.main_window.window_methods",
             methods=main_window_methods,
             auto_import=True,
             validate_signatures=False,

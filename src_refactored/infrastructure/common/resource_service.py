@@ -28,8 +28,8 @@ class ResourceService:
             current_file = os.path.abspath(__file__)
             # From infrastructure/common/resource_service.py -> infrastructure/common -> infrastructure -> src_refactored -> project_root
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file))))
-            # Resources are in src/resources relative to project root
-            self._base_path = os.path.join(project_root, "src")
+            # Resources are in project root for now
+            self._base_path = project_root
     
     def get_resource_path(self, relative_path: str) -> Result[str]:
         """Get absolute path to resource.
@@ -50,15 +50,28 @@ class ResourceService:
         
         # Check if resource exists
         if not os.path.exists(full_path):
-            # Try alternative path (in case we're in the src directory)
+            # Try multiple fallback locations
             current_file = os.path.abspath(__file__)
-            alt_base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file))))
-            alt_path = os.path.join(alt_base, relative_path)
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file))))
             
-            if os.path.exists(alt_path):
-                return Result.success(alt_path)
+            # List of possible resource directories
+            resource_dirs = [
+                "src/resources",    # src/resources/file.png
+                "media",           # media/file.png  
+                "src",             # src/file.png
+                "",                # project_root/file.png
+            ]
             
-            return Result.failure(f"Resource not found: {full_path}")
+            for resource_dir in resource_dirs:
+                if resource_dir:
+                    alt_path = os.path.join(project_root, resource_dir, relative_path.replace("resources/", ""))
+                else:
+                    alt_path = os.path.join(project_root, relative_path.replace("resources/", ""))
+                
+                if os.path.exists(alt_path):
+                    return Result.success(alt_path)
+            
+            return Result.failure(f"Resource not found: {full_path}, tried multiple locations")
         
         return Result.success(full_path)
     
@@ -92,6 +105,6 @@ def resource_path(relative_path: str) -> str:
     result = service.get_resource_path(relative_path)
     
     if not result.is_success:
-        raise FileNotFoundError(result.error())
+        raise FileNotFoundError(result.get_error())
     
-    return result.value()
+    return result.get_value()

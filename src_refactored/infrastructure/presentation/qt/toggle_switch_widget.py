@@ -1,8 +1,5 @@
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QSlider
-
-from src_refactored.domain.services.ui_interaction_service import UIInteractionService
-from src_refactored.domain.services.widget_styling_service import WidgetStylingService
 
 
 class ToggleSwitch(QSlider):
@@ -16,18 +13,24 @@ class ToggleSwitch(QSlider):
     - Visual feedback for state changes
     """
 
+    # Signal emitted when value changes
+    valueChanged = pyqtSignal(bool)
+
     def __init__(self, parent=None):
         super().__init__(Qt.Orientation.Horizontal, parent)
-
-        # Services
-        self.styling_service = WidgetStylingService()
-        self.interaction_service = UIInteractionService()
 
         # Configure slider properties
         self._setup_slider_properties()
 
         # Apply initial styling
         self._apply_initial_styling()
+        
+        # Connect value changed signal
+        super().valueChanged.connect(self._on_value_changed)
+    
+    def _on_value_changed(self, value: int) -> None:
+        """Handle internal value changes and emit boolean signal."""
+        self.valueChanged.emit(value == 1)
 
     def _setup_slider_properties(self) -> None:
         """
@@ -183,8 +186,7 @@ class ToggleSwitch(QSlider):
             "visible": self.isVisible(),
         }
 
-    def apply_theme_styling(self, theme_config: dict,
-    ) -> None:
+    def apply_theme_styling(self, theme_config: dict) -> None:
         """
         Apply theme-specific styling to the toggle switch.
         
@@ -226,8 +228,7 @@ class ToggleSwitch(QSlider):
             # Fallback to default styling if theme application fails
             self._apply_initial_styling()
 
-    def set_interaction_enabled(self, enabled: bool,
-    ) -> None:
+    def set_interaction_enabled(self, enabled: bool) -> None:
         """
         Enable or disable user interaction with the toggle switch.
         

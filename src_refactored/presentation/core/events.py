@@ -101,8 +101,8 @@ class UIEventSystem(IObservable[UIEvent], IMediator):
             "errors_occurred": 0,
         }
     
-    def subscribe(self, 
-                  observer: IObserver[TEvent], 
+    def subscribe(self,  # type: ignore[override]
+                  observer: IObserver[TEvent],
                   event_type: type[TEvent],
                   priority: EventPriority = EventPriority.NORMAL,
                   filter_func: Callable[[TEvent], bool] | None = None,

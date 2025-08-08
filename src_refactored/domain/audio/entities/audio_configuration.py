@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src_refactored.domain.common.abstractions import Entity
+from src_refactored.domain.common.value_object import ValueObject
 
 if TYPE_CHECKING:
     from src_refactored.domain.audio.value_objects import (
@@ -20,8 +20,8 @@ if TYPE_CHECKING:
     )
 
 
-@dataclass
-class AudioRecorderConfiguration(Entity):
+@dataclass(frozen=True)
+class AudioRecorderConfiguration(ValueObject):
     """
     Audio recorder configuration entity for managing recording settings.
     
@@ -40,7 +40,8 @@ class AudioRecorderConfiguration(Entity):
     max_duration: float = 300.0  # 5 minutes default
     
     def __post_init__(self):
-        super().__post_init__()
+        # Validation can be added here if needed
+        pass
     
     def is_valid(self) -> bool:
         """Check if the configuration is valid."""

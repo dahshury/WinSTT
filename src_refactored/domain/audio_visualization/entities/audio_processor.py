@@ -1,20 +1,21 @@
 """Audio processor entity for audio visualization."""
 
-import threading
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any
 
-import numpy as np
-
+from src_refactored.domain.audio.value_objects.audio_samples import (
+    AudioSampleData,
+)
 from src_refactored.domain.audio_visualization.value_objects import (
     AudioBuffer,
     WaveformData,
 )
 from src_refactored.domain.common.entity import Entity
+from src_refactored.domain.common.ports.concurrency_management_port import ConcurrencyManagementPort
+from src_refactored.domain.common.ports.time_management_port import TimeManagementPort
 
 
 class ProcessorStatus(Enum):
@@ -80,9 +81,12 @@ class AudioProcessorConfig:
 class AudioProcessor(Entity):
     """Entity for processing audio data for visualization."""
 
+    # Ports (injected dependencies) - must come first as they have no defaults
+    concurrency_port: ConcurrencyManagementPort
+    time_port: TimeManagementPort
+
     # Configuration
-    config: AudioProcessorConfig = field(default_factory=AudioProcessorConfig,
-    )
+    config: AudioProcessorConfig = field(default_factory=AudioProcessorConfig)
 
     # State
     status: ProcessorStatus = ProcessorStatus.STOPPED
@@ -100,11 +104,12 @@ class AudioProcessor(Entity):
     error_callback: Callable[[Exception], None] | None = None
     status_callback: Callable[[ProcessorStatus], None] | None = None
 
-    # Internal state
-    _processing_thread: threading.Thread | None = field(default=None, init=False)
-    _stop_event: threading.Event = field(default_factory=threading.Event, init=False)
-    _pause_event: threading.Event = field(default_factory=threading.Event, init=False)
-    _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
+    # Internal concurrency identifiers (managed by port)
+    _thread_context_id: str | None = field(default=None, init=False)
+    _stop_event_id: str | None = field(default=None, init=False)
+    _pause_event_id: str | None = field(default=None, init=False)
+    _lock_id: str | None = field(default=None, init=False)
+    _processing_measurement_id: str | None = field(default=None, init=False)
 
     def __post_init__(self):
         """Initialize audio processor."""
@@ -117,130 +122,225 @@ class AudioProcessor(Entity):
             sample_rate=self.config.sample_rate,
             chunk_size=self.config.chunk_size,
         )
+        
+        # Initialize concurrency resources
+        self._initialize_concurrency_resources()
+
+    def _initialize_concurrency_resources(self) -> None:
+        """Initialize concurrency resources through ports."""
+        # Create unique IDs for this processor instance
+        base_id = str(self.id)
+        
+        # Create thread context
+        result = self.concurrency_port.create_thread_context(f"{base_id}_processor")
+        if result.is_success:
+            self._thread_context_id = result.value
+        
+        # Create synchronization events
+        stop_result = self.concurrency_port.create_synchronization_event(f"{base_id}_stop")
+        if stop_result.is_success:
+            self._stop_event_id = stop_result.value
+            
+        pause_result = self.concurrency_port.create_synchronization_event(f"{base_id}_pause")
+        if pause_result.is_success:
+            self._pause_event_id = pause_result.value
+        
+        # Create lock
+        lock_result = self.concurrency_port.create_lock(f"{base_id}_lock")
+        if lock_result.is_success:
+            self._lock_id = lock_result.value
 
     def start(self) -> bool:
         """Start audio processing."""
-        with self._lock:
+        if not self._lock_id:
+            return False
+            
+        # Acquire lock
+        lock_result = self.concurrency_port.acquire_lock(self._lock_id, timeout_seconds=1.0)
+        if not lock_result.is_success or not lock_result.value:
+            return False
+            
+        try:
             if self.status in [ProcessorStatus.RUNNING, ProcessorStatus.STARTING]:
                 return True
 
             try:
                 self._change_status(ProcessorStatus.STARTING)
 
-                # Reset events
-                self._stop_event.clear()
-                self._pause_event.clear()
+                # Reset events through ports
+                if self._stop_event_id:
+                    self.concurrency_port.clear_event(self._stop_event_id)
+                if self._pause_event_id:
+                    self.concurrency_port.clear_event(self._pause_event_id)
 
-                # Start processing thread
-                self._processing_thread = threading.Thread(
-                    target=self._processing_loop,
-                    daemon=True,
-                )
-                self._processing_thread.start()
+                # Start background processing task
+                if self._thread_context_id:
+                    start_result = self.concurrency_port.start_background_task(
+                        self._thread_context_id,
+                        self._processing_loop,
+                        daemon=True,
+                    )
+                    
+                    if start_result.is_success:
+                        self._change_status(ProcessorStatus.RUNNING)
+                        return True
+                    self._change_status(ProcessorStatus.ERROR)
+                    return False
 
-                self._change_status(ProcessorStatus.RUNNING)
-                return True
+                return False
 
             except Exception as e:
                 self._change_status(ProcessorStatus.ERROR)
                 self._handle_error(e)
                 return False
+        finally:
+            # Release lock
+            self.concurrency_port.release_lock(self._lock_id)
 
     def stop(self) -> bool:
         """Stop audio processing."""
-        with self._lock:
+        if not self._lock_id:
+            return False
+            
+        # Acquire lock
+        lock_result = self.concurrency_port.acquire_lock(self._lock_id, timeout_seconds=1.0)
+        if not lock_result.is_success or not lock_result.value:
+            return False
+            
+        try:
             if self.status == ProcessorStatus.STOPPED:
                 return True
 
             try:
                 self._change_status(ProcessorStatus.STOPPING)
 
-                # Signal stop
-                self._stop_event.set()
+                # Signal stop through port
+                if self._stop_event_id:
+                    self.concurrency_port.set_event(self._stop_event_id)
 
-                # Wait for thread to finish
-                if self._processing_thread and self._processing_thread.is_alive():
-                    self._processing_thread.join(timeout=2.0)
+                # Stop background task
+                if self._thread_context_id:
+                    stop_result = self.concurrency_port.stop_background_task(
+                        self._thread_context_id, 
+                        timeout_seconds=2.0,
+                    )
+                    
+                    if stop_result.is_success:
+                        self._change_status(ProcessorStatus.STOPPED)
+                        return True
+                    self._change_status(ProcessorStatus.ERROR)
+                    return False
 
-                self._processing_thread = None
-                self._change_status(ProcessorStatus.STOPPED)
-                return True
+                return False
 
             except Exception as e:
                 self._change_status(ProcessorStatus.ERROR)
                 self._handle_error(e)
                 return False
+        finally:
+            # Release lock
+            self.concurrency_port.release_lock(self._lock_id)
 
     def pause(self) -> bool:
         """Pause audio processing."""
-        with self._lock:
+        if not self._lock_id:
+            return False
+            
+        # Acquire lock
+        lock_result = self.concurrency_port.acquire_lock(self._lock_id, timeout_seconds=1.0)
+        if not lock_result.is_success or not lock_result.value:
+            return False
+            
+        try:
             if self.status != ProcessorStatus.RUNNING:
                 return False
 
-            self._pause_event.set()
+            if self._pause_event_id:
+                self.concurrency_port.set_event(self._pause_event_id)
+            
             self._change_status(ProcessorStatus.PAUSED)
             return True
+        finally:
+            self.concurrency_port.release_lock(self._lock_id)
 
     def resume(self) -> bool:
         """Resume audio processing."""
-        with self._lock:
+        if not self._lock_id:
+            return False
+            
+        # Acquire lock
+        lock_result = self.concurrency_port.acquire_lock(self._lock_id, timeout_seconds=1.0)
+        if not lock_result.is_success or not lock_result.value:
+            return False
+            
+        try:
             if self.status != ProcessorStatus.PAUSED:
                 return False
 
-            self._pause_event.clear()
+            if self._pause_event_id:
+                self.concurrency_port.clear_event(self._pause_event_id)
+            
             self._change_status(ProcessorStatus.RUNNING)
             return True
+        finally:
+            self.concurrency_port.release_lock(self._lock_id)
 
-    def process_samples(self, samples: np.ndarray) -> WaveformData | None:
+    def process_samples(self, samples: AudioSampleData) -> WaveformData | None:
         """Process raw audio samples."""
         try:
-            start_time = time.time()
+            # Start timing measurement
+            measurement_result = self.time_port.measure_execution_time(f"process_{self.id}")
+            measurement_id = measurement_result.value if measurement_result.is_success else None
 
-            # Convert to float32 if needed
-            if samples.dtype != np.float32:
-                if samples.dtype == np.int16:
-                    samples = samples.astype(np.float32) / 32768.0
-                elif samples.dtype == np.int32:
-                    samples = samples.astype(np.float32) / 2147483648.0
-                else:
-                    samples = samples.astype(np.float32)
-
-            # Handle stereo to mono conversion
-            if len(samples.shape) > 1 and samples.shape[1] > 1:
-                samples = np.mean(samples, axis=1)
+            # Convert to mono if stereo
+            processed_samples = samples
+            if samples.channels > 1:
+                processed_samples = samples.to_mono()
 
             # Apply gain
             if self.config.gain_factor != 1.0:
-                samples = samples * self.config.gain_factor
+                processed_samples = self._apply_gain(processed_samples, self.config.gain_factor)
 
             # Apply noise reduction if enabled
             if self.config.enable_noise_reduction:
-                samples = self._apply_noise_reduction(samples)
+                processed_samples = self._apply_noise_reduction(processed_samples)
 
             # Apply auto gain if enabled
             if self.config.enable_auto_gain:
-                samples = self._apply_auto_gain(samples,
-    )
+                processed_samples = self._apply_auto_gain(processed_samples)
 
             # Clip to prevent overflow
-            samples = np.clip(samples, -1.0, 1.0)
+            processed_samples = self._clip_samples(processed_samples)
+
+            # Get current timestamp
+            timestamp_result = self.time_port.get_current_timestamp_ms()
+            timestamp_ms = timestamp_result.value if timestamp_result.is_success and timestamp_result.value is not None else 0.0
 
             # Create waveform data
-            timestamp_ms = time.time() * 1000.0
-            waveform = WaveformData.from_numpy_array(samples, self.config.sample_rate, timestamp_ms)
+            waveform = WaveformData.from_audio_sample_data(processed_samples, timestamp_ms)
 
             # Update buffer
             if self.buffer:
-                self.buffer = self.buffer.add_waveform(waveform)
+                self.buffer = self.buffer.add_audio_sample_data(processed_samples, timestamp_ms)
 
             # Update statistics
-            self.total_samples_processed += len(samples)
+            self.total_samples_processed += len(processed_samples.samples)
             self.total_chunks_processed += 1
-            self.last_processing_time = datetime.now()
+            
+            # Get current time for statistics
+            current_time_result = self.time_port.get_current_time()
+            if current_time_result.is_success and current_time_result.value:
+                # Convert Timestamp to datetime if needed; otherwise leave None
+                if hasattr(current_time_result.value, "value") and isinstance(current_time_result.value.value, datetime):
+                    self.last_processing_time = current_time_result.value.value
+                elif isinstance(current_time_result.value, datetime):
+                    self.last_processing_time = current_time_result.value
 
             # Update average processing time
-            processing_time_ms = (time.time() - start_time) * 1000.0
-            self._update_average_processing_time(processing_time_ms)
+            if measurement_id:
+                processing_time_result = self.time_port.stop_measurement(measurement_id)
+                if processing_time_result.is_success and processing_time_result.value is not None:
+                    self._update_average_processing_time(processing_time_result.value)
 
             # Call data callback
             if self.data_callback:
@@ -306,36 +406,78 @@ class AudioProcessor(Entity):
         # Concrete implementations should override this method
         interval = self.config.callback_interval_ms / 1000.0
 
-        while not self._stop_event.is_set():
-            if self._pause_event.is_set():
-                time.sleep(0.1)
+        if not (self._stop_event_id and self._pause_event_id):
+            return
+
+        # Check for stop event
+        stop_result = self.concurrency_port.wait_for_event(self._stop_event_id, timeout_seconds=0.0)
+        while not (stop_result.is_success and stop_result.value):
+            # Check for pause event
+            pause_result = self.concurrency_port.wait_for_event(self._pause_event_id, timeout_seconds=0.0)
+            if pause_result.is_success and pause_result.value:
+                # Sleep while paused
+                self.time_port.sleep(0.1)
+                stop_result = self.concurrency_port.wait_for_event(self._stop_event_id, timeout_seconds=0.0)
                 continue
 
             try:
-                # Generate dummy audio data for testing
-                samples = np.random.normal(0, 0.1, self.config.chunk_size).astype(np.float32)
-                self.process_samples(samples)
-
-                time.sleep(interval)
-
+                # No domain-side dummy generation. Concrete implementations should override
+                # this method or feed data via application/infrastructure.
+                self.time_port.sleep(interval)
             except Exception as e:
                 self._handle_error(e)
                 break
+            
+            # Check for stop event again
+            stop_result = self.concurrency_port.wait_for_event(self._stop_event_id, timeout_seconds=0.0)
 
-    def _apply_noise_reduction(self, samples: np.ndarray) -> np.ndarray:
+    # Removed dummy audio generation from domain. Provide real data via adapters.
+
+    def _apply_gain(self, samples: AudioSampleData, gain_factor: float) -> AudioSampleData:
+        """Apply gain to audio samples."""
+        if gain_factor == 1.0:
+            return samples
+            
+        # Apply gain to all samples
+        gained_samples = [sample * gain_factor for sample in samples.samples]
+        
+        return AudioSampleData(
+            samples=gained_samples,
+            sample_rate=samples.sample_rate,
+            channels=samples.channels,
+            data_type=samples.data_type,
+            timestamp=samples.timestamp,
+            duration=samples.duration,
+        )
+
+    def _apply_noise_reduction(self, samples: AudioSampleData) -> AudioSampleData:
         """Apply basic noise reduction."""
-        # Simple noise gate
+        # Simple noise gate - threshold below which samples are set to zero
         threshold = 0.01
-        mask = np.abs(samples) > threshold
-        return samples * mask
+        
+        # Apply noise gate
+        filtered_samples = [
+            sample if abs(sample) > threshold else 0.0 
+            for sample in samples.samples
+        ]
+        
+        return AudioSampleData(
+            samples=filtered_samples,
+            sample_rate=samples.sample_rate,
+            channels=samples.channels,
+            data_type=samples.data_type,
+            timestamp=samples.timestamp,
+            duration=samples.duration,
+        )
 
-    def _apply_auto_gain(self, samples: np.ndarray) -> np.ndarray:
+    def _apply_auto_gain(self, samples: AudioSampleData) -> AudioSampleData:
         """Apply automatic gain control."""
-        if len(samples) == 0:
+        if len(samples.samples) == 0:
             return samples
 
-        # Calculate RMS level
-        rms = np.sqrt(np.mean(samples ** 2))
+        # Calculate RMS level manually
+        sum_squares = sum(sample * sample for sample in samples.samples)
+        rms = (sum_squares / len(samples.samples)) ** 0.5
 
         if rms > 0:
             # Target RMS level
@@ -343,11 +485,35 @@ class AudioProcessor(Entity):
             gain = target_rms / rms
 
             # Limit gain to prevent excessive amplification
-            gain = np.clip(gain, 0.1, 10.0)
+            gain = max(0.1, min(10.0, gain))
 
-            return samples * gain
+            # Apply gain
+            gained_samples = [sample * gain for sample in samples.samples]
+            
+            return AudioSampleData(
+                samples=gained_samples,
+                sample_rate=samples.sample_rate,
+                channels=samples.channels,
+                data_type=samples.data_type,
+                timestamp=samples.timestamp,
+                duration=samples.duration,
+            )
 
         return samples
+
+    def _clip_samples(self, samples: AudioSampleData) -> AudioSampleData:
+        """Clip samples to prevent overflow."""
+        # Clip samples to [-1.0, 1.0] range
+        clipped_samples = [max(-1.0, min(1.0, sample)) for sample in samples.samples]
+        
+        return AudioSampleData(
+            samples=clipped_samples,
+            sample_rate=samples.sample_rate,
+            channels=samples.channels,
+            data_type=samples.data_type,
+            timestamp=samples.timestamp,
+            duration=samples.duration,
+        )
 
     def _update_average_processing_time(self, processing_time_ms: float,
     ) -> None:

@@ -11,30 +11,30 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QApplication, QMainWindow, QSystemTrayIcon
 
-from src_refactored.infrastructure.main_window.opacity_effects_service import OpacityEffectsService
-from src_refactored.infrastructure.main_window.ui_layout_service import UILayoutService
-from src_refactored.infrastructure.main_window.ui_text_management_service import (
-    UITextManagementService,
-)
-from src_refactored.infrastructure.main_window.visualization_integration_service import (
-    VisualizationIntegrationService,
-)
-from src_refactored.infrastructure.main_window.widget_layering_service import WidgetLayeringService
-from src_refactored.infrastructure.main_window.window_configuration_service import (
-    WindowConfigurationService,
-)
 from src_refactored.infrastructure.settings.json_settings_repository import JSONSettingsRepository
-from src_refactored.infrastructure.system_integration.drag_drop_integration_service import (
+from src_refactored.presentation.qt.services.drag_drop_integration_service import (
     DragDropIntegrationService,
 )
-from src_refactored.infrastructure.system_integration.event_filter_service import EventFilterService
-from src_refactored.infrastructure.system_integration.geometry_management_service import (
+from src_refactored.presentation.qt.services.event_filter_service import EventFilterService
+from src_refactored.presentation.qt.services.geometry_management_service import (
     GeometryManagementService,
 )
-from src_refactored.infrastructure.system_integration.worker_thread_management_service import (
+from src_refactored.presentation.qt.services.worker_thread_management_service import (
     WorkerThreadManagementService,
 )
-from src_refactored.infrastructure.ui.event_system_service import UIEventSystem
+from src_refactored.presentation.qt.services.event_system_service import UIEventSystem
+from src_refactored.presentation.qt.services.opacity_effects_service import OpacityEffectsService
+from src_refactored.presentation.qt.services.ui_layout_service import UILayoutService
+from src_refactored.presentation.qt.services.ui_text_management_service import (
+    UITextManagementService,
+)
+from src_refactored.presentation.qt.services.visualization_integration_service import (
+    VisualizationIntegrationService,
+)
+from src_refactored.presentation.qt.services.widget_layering_service import WidgetLayeringService
+from src_refactored.presentation.qt.services.window_configuration_service import (
+    WindowConfigurationService,
+)
 
 
 class MainWindow(QMainWindow):
@@ -249,7 +249,7 @@ class MainWindow(QMainWindow):
 
     def start_recording(self) -> None:
         """Start audio recording."""
-        self.logger.info("🎤 Starting recording...")
+        self.logger.info("Starting recording...")
         self.recording_toggled.emit(True)
 
         # Apply recording visual effects

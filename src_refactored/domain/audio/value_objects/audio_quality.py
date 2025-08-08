@@ -22,14 +22,20 @@ class QualityLevel(Enum):
 
 @dataclass(frozen=True)
 class AudioQuality(ValueObject):
-    """
-    Value object for audio quality configuration.
-    Combines sample rate, bit depth, and compression settings.
-    """
-    level: QualityLevel
+    """Audio quality value object."""
+    quality_level: QualityLevel
     sample_rate: int
     bit_depth: int
-    compression_ratio: float
+    compression_ratio: float | None = None
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (
+            self.quality_level,
+            self.sample_rate,
+            self.bit_depth,
+            self.compression_ratio,
+        )
 
     def __post_init__(self):
         if not 0.0 <= self.compression_ratio <= 1.0:
@@ -39,8 +45,7 @@ class AudioQuality(ValueObject):
         valid_sample_rates = [8000, 16000, 22050, 44100, 48000, 96000]
         if self.sample_rate not in valid_sample_rates:
             msg = f"Invalid sample rate: {self.sample_rate}"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
         valid_bit_depths = [8, 16, 24, 32]
         if self.bit_depth not in valid_bit_depths:
@@ -53,19 +58,23 @@ class AudioQuality(ValueObject):
         return self.compression_ratio == 0.0
 
     @property
+    def effective_compression_ratio(self) -> float:
+        """Get the effective compression ratio."""
+        if self.compression_ratio is None:
+            return 1.0
+        return self.compression_ratio
+
+    @property
     def estimated_bitrate_kbps(self) -> float:
-        """Estimate bitrate in kbps for stereo audio."""
-        base_bitrate = (self.sample_rate * self.bit_depth * 2) / 1000  # stereo
-        if self.is_lossless:
-            return base_bitrate
-        return base_bitrate * (1.0 - self.compression_ratio)
+        """Calculate estimated bitrate in kbps."""
+        base_bitrate = self.sample_rate * self.bit_depth / 1000
+        return base_bitrate * self.effective_compression_ratio
 
     @classmethod
-    def for_speech_recognition(cls,
-    ) -> AudioQuality:
+    def for_speech_recognition(cls) -> AudioQuality:
         """Create quality settings optimized for speech recognition."""
         return cls(
-            level=QualityLevel.MEDIUM,
+            quality_level=QualityLevel.MEDIUM,
             sample_rate=16000,
             bit_depth=16,
             compression_ratio=0.0,  # Lossless for accuracy
@@ -75,7 +84,7 @@ class AudioQuality(ValueObject):
     def for_low_bandwidth(cls) -> AudioQuality:
         """Create quality settings for low bandwidth scenarios."""
         return cls(
-            level=QualityLevel.LOW,
+            quality_level=QualityLevel.LOW,
             sample_rate=8000,
             bit_depth=16,
             compression_ratio=0.3,
@@ -85,10 +94,40 @@ class AudioQuality(ValueObject):
     def for_archival(cls) -> AudioQuality:
         """Create quality settings for archival/preservation."""
         return cls(
-            level=QualityLevel.ULTRA,
+            quality_level=QualityLevel.ULTRA,
             sample_rate=48000,
             bit_depth=24,
             compression_ratio=0.0,
+        )
+
+    @classmethod
+    def create_high_quality(cls, sample_rate: int, bit_depth: int) -> AudioQuality:
+        """Create a high quality audio configuration."""
+        return cls(
+            quality_level=QualityLevel.HIGH,
+            sample_rate=sample_rate,
+            bit_depth=bit_depth,
+            compression_ratio=None,
+        )
+
+    @classmethod
+    def create_medium_quality(cls, sample_rate: int, bit_depth: int) -> AudioQuality:
+        """Create a medium quality audio configuration."""
+        return cls(
+            quality_level=QualityLevel.MEDIUM,
+            sample_rate=sample_rate,
+            bit_depth=bit_depth,
+            compression_ratio=0.8,
+        )
+
+    @classmethod
+    def create_low_quality(cls, sample_rate: int, bit_depth: int) -> AudioQuality:
+        """Create a low quality audio configuration."""
+        return cls(
+            quality_level=QualityLevel.LOW,
+            sample_rate=sample_rate,
+            bit_depth=bit_depth,
+            compression_ratio=0.6,
         )
 
 

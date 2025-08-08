@@ -4,9 +4,11 @@ This module defines value objects for progress tracking and status reporting.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any, Union
+
+if TYPE_CHECKING:
+    from src_refactored.domain.common.value_objects import Timestamp
 
 
 class ProgressStatus(Enum):
@@ -30,8 +32,8 @@ class ProgressInfo:
     total_steps: int | None = None
     current_step_number: int | None = None
     message: str | None = None
-    start_time: datetime | None = None
-    estimated_completion: datetime | None = None
+    start_time: Union["Timestamp", None] = None
+    estimated_completion: Union["Timestamp", None] = None
     metadata: dict[str, Any] | None = None
     
     def __post_init__(self):
@@ -66,8 +68,11 @@ class ProgressInfo:
         operation_id: str,
         message: str | None = None,
         total_steps: int | None = None,
+        time_provider: "Timestamp | None" = None,
     ) -> "ProgressInfo":
         """Create progress info for started operation."""
+        from src_refactored.domain.common.value_objects import Timestamp
+        
         return cls(
             operation_id=operation_id,
             percentage=0.0,
@@ -75,7 +80,7 @@ class ProgressInfo:
             message=message,
             total_steps=total_steps,
             current_step_number=1 if total_steps else None,
-            start_time=datetime.utcnow(),
+            start_time=time_provider or Timestamp.now(),
         )
     
     @classmethod

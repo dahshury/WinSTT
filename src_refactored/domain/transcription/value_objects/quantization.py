@@ -32,6 +32,13 @@ class Quantization(Enum):
         if self == Quantization.FULL:
             return "Higher quality, slower inference"
         return "Lower quality, faster inference"
+    
+    @property
+    def requires_gpu(self) -> bool:
+        """Check if this quantization level requires GPU for optimal performance."""
+        # Full precision models typically benefit from GPU acceleration
+        # Quantized models can run efficiently on CPU
+        return self == Quantization.FULL
 
     @classmethod
     def from_string(cls, value: str,

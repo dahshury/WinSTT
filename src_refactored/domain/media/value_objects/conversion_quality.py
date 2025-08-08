@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from src_refactored.domain.common.value_object import ValueObject
 
@@ -25,7 +26,10 @@ class ConversionQuality(ValueObject):
     preset: QualityPreset
 
     # Quality presets
-    PRESETS = {
+    @classmethod
+    def get_presets(cls) -> dict[QualityPreset, dict[str, Any]]:
+        """Get quality presets mapping."""
+        return {
         QualityPreset.LOW: {
             "sample_rate": 8000,
             "channels": 1,
@@ -51,6 +55,16 @@ class ConversionQuality(ValueObject):
             "format": "wav",
         },
     }
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (
+            self.sample_rate,
+            self.channels,
+            self.bit_rate,
+            self.format,
+            self.preset,
+        )
 
     def __post_init__(self):
         """Validate conversion quality settings."""
@@ -78,16 +92,17 @@ class ConversionQuality(ValueObject):
     def from_preset(cls, preset: QualityPreset,
     ) -> "ConversionQuality":
         """Create conversion quality from a preset."""
-        if preset not in cls.PRESETS:
+        presets = cls.get_presets()
+        if preset not in presets:
             msg = f"Unknown preset: {preset}"
             raise ValueError(msg)
-
-        settings = cls.PRESETS[preset]
+        
+        settings = presets[preset]
         return cls(
-            sample_rate=settings["sample_rate"],
-            channels=settings["channels"],
-            bit_rate=settings["bit_rate"],
-            format=settings["format"],
+            sample_rate=int(settings["sample_rate"]),
+            channels=int(settings["channels"]),
+            bit_rate=int(settings["bit_rate"]),
+            format=str(settings["format"]),
             preset=preset,
         )
 
@@ -125,7 +140,7 @@ class ConversionQuality(ValueObject):
         """Estimate output file size in MB based on duration and quality."""
         if self.format == "wav":
             # Uncompressed WAV: sample_rate * channels * 2 bytes per sample
-            bytes_per_second = self.sample_rate * self.channels * 2
+            bytes_per_second = float(self.sample_rate * self.channels * 2)
         else:
             # Compressed format: use bit rate
             bytes_per_second = (self.bit_rate * 1000) / 8
@@ -200,10 +215,17 @@ class ConversionQuality(ValueObject):
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "ConversionQuality":
         """Create from dictionary representation."""
+        # Type-safe extraction with defaults
+        sample_rate_val = data.get("sample_rate", 44100)
+        channels_val = data.get("channels", 2)
+        bit_rate_val = data.get("bit_rate", 128000)
+        format_val = data.get("format", "mp3")
+        preset_val = data.get("preset", QualityPreset.HIGH.value)
+        
         return cls(
-            sample_rate=data["sample_rate"],
-            channels=data["channels"],
-            bit_rate=data["bit_rate"],
-            format=data["format"],
-            preset=QualityPreset(data["preset"]),
+            sample_rate=int(sample_rate_val) if isinstance(sample_rate_val, int | str) else 44100,
+            channels=int(channels_val) if isinstance(channels_val, int | str) else 2,
+            bit_rate=int(bit_rate_val) if isinstance(bit_rate_val, int | str) else 128000,
+            format=str(format_val) if format_val is not None else "mp3",
+            preset=QualityPreset(preset_val) if preset_val is not None else QualityPreset.HIGH,
         )

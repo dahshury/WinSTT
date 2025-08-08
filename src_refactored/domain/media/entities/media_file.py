@@ -1,11 +1,12 @@
 """Media file entity for handling media files."""
 
-import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.entity import Entity
+from src_refactored.domain.common.ports.file_system_port import FileSystemPort
 from src_refactored.domain.media.value_objects import ConversionQuality, FileFormat, MediaDuration
 
 
@@ -16,9 +17,9 @@ class MediaFile(Entity):
     file_path: str
     file_format: FileFormat
     file_size: int  # bytes
+    file_system_port: FileSystemPort
     duration: MediaDuration | None = None
-    created_at: datetime = field(default_factory=datetime.now,
-    )
+    file_created_at: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
     last_modified: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -26,26 +27,37 @@ class MediaFile(Entity):
         """Initialize the media file after creation."""
         super().__post_init__()
 
-        # Validate file exists
-        if not os.path.exists(self.file_path):
+        # Validate file exists through port
+        exists_result = self.file_system_port.file_exists(self.file_path)
+        if not exists_result.is_success or not exists_result.value:
             msg = f"File does not exist: {self.file_path}"
             raise ValueError(msg)
 
-        # Get file modification time
-        stat = os.stat(self.file_path)
-        self.last_modified = datetime.fromtimestamp(stat.st_mtime)
+        # Get file modification time through port
+        mod_time_result = self.file_system_port.get_modification_time(self.file_path)
+        if mod_time_result.is_success:
+            self.last_modified = mod_time_result.value
 
     @classmethod
-    def from_file_path(cls, file_path: str,
-    ) -> "MediaFile":
+    def from_file_path(cls, file_path: str, file_system_port: FileSystemPort) -> "MediaFile":
         """Create a MediaFile from a file path."""
-        if not os.path.exists(file_path):
+        # Validate file exists through port
+        exists_result = file_system_port.file_exists(file_path)
+        if not exists_result.is_success or not exists_result.value:
             msg = f"File does not exist: {file_path}"
             raise ValueError(msg)
 
-        # Get file info
-        stat = os.stat(file_path)
-        file_size = stat.st_size
+        # Get file info through port
+        file_info_result = file_system_port.get_file_info(file_path)
+        if not file_info_result.is_success:
+            msg = f"Could not get file info for: {file_path}"
+            raise ValueError(msg)
+        
+        file_info = file_info_result.value
+        if file_info is None:
+            msg = f"Could not get file info for {file_path}"
+            raise ValueError(msg)
+        file_size = file_info.size_bytes
 
         # Determine file format
         file_format = FileFormat.from_file_path(file_path)
@@ -54,19 +66,26 @@ class MediaFile(Entity):
             file_path=file_path,
             file_format=file_format,
             file_size=file_size,
+            file_system_port=file_system_port,
         )
 
     def get_filename(self) -> str:
         """Get the filename without path."""
-        return os.path.basename(self.file_path)
+        filename_result = self.file_system_port.get_file_name(self.file_path)
+        return filename_result.value if filename_result.is_success and filename_result.value else ""
 
     def get_filename_without_extension(self) -> str:
         """Get the filename without extension."""
-        return os.path.splitext(self.get_filename())[0]
+        filename = self.get_filename()
+        # Simple extension removal for domain layer
+        if "." in filename:
+            return filename.rsplit(".", 1)[0]
+        return filename
 
     def get_directory(self) -> str:
         """Get the directory containing the file."""
-        return os.path.dirname(self.file_path)
+        directory_result = self.file_system_port.get_directory_name(self.file_path)
+        return directory_result.value if directory_result.is_success and directory_result.value else ""
 
     def get_file_size_mb(self) -> float:
         """Get file size in megabytes."""
@@ -161,20 +180,29 @@ class MediaFile(Entity):
 
     def refresh_file_info(self) -> None:
         """Refresh file information from disk."""
-        if not os.path.exists(self.file_path):
+        # Check if file exists through port
+        exists_result = self.file_system_port.file_exists(self.file_path)
+        if not exists_result.is_success or not exists_result.value:
             msg = f"File no longer exists: {self.file_path}"
             raise ValueError(msg)
 
-        stat = os.stat(self.file_path)
-        self.file_size = stat.st_size
-        self.last_modified = datetime.fromtimestamp(stat.st_mtime)
+        # Get updated file info through port
+        file_info_result = self.file_system_port.get_file_info(self.file_path)
+        if file_info_result.is_success and file_info_result.value:
+            file_info = file_info_result.value
+            self.file_size = file_info.size_bytes
+            self.last_modified = file_info.modified_at
 
     def validate_file_integrity(self) -> bool:
         """Validate that the file still exists and is accessible."""
-        try:
-            return os.path.exists(self.file_path) and os.access(self.file_path, os.R_OK)
-        except OSError:
+        # Check file existence and get info through port
+        exists_result = self.file_system_port.file_exists(self.file_path)
+        if not exists_result.is_success or not exists_result.value:
             return False
+        
+        # Get file info to verify accessibility
+        file_info_result = self.file_system_port.get_file_info(self.file_path)
+        return bool(file_info_result.is_success and file_info_result.value and file_info_result.value.exists)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
@@ -189,7 +217,7 @@ class MediaFile(Entity):
             },
             "file_size": self.file_size,
             "duration": self.duration.to_seconds() if self.duration else None,
-            "created_at": self.created_at.isoformat(),
+            "created_at": datetime.fromtimestamp(self.created_at).isoformat(),
             "last_modified": self.last_modified.isoformat() if self.last_modified else None,
             "metadata": self.metadata,
         }

@@ -5,6 +5,8 @@ with PyQt threading and lifecycle management.
 """
 
 
+import logging
+
 from PyQt6.QtCore import QObject, pyqtSignal
 
 
@@ -45,13 +47,8 @@ class VadWorkerService(QObject):
             error_msg = f"Failed to initialize VAD: {e}"
             self.error.emit(error_msg)
 
-            # Log the error if logger is available
-            try:
-                from logger import setup_logger
-                logger = setup_logger()
-                logger.debug(error_msg)
-            except ImportError:
-                pass
+            # Log the error
+            logging.getLogger(__name__).debug(error_msg)
 
     def toggle_status(self) -> None:
         """Toggle the VAD status.

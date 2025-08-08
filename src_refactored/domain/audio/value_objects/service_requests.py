@@ -7,9 +7,9 @@ and responses in the domain.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.value_object import ValueObject
 
 from .audio_configuration import (
@@ -55,8 +55,7 @@ class AudioServiceRequest(ValueObject):
 
     request_id: str
     request_type: RequestType
-    timestamp: datetime = field(default_factory=datetime.now,
-    )
+    timestamp: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
     timeout_seconds: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -86,7 +85,7 @@ class AudioRecordingServiceRequest(AudioServiceRequest):
     configuration: RecordingConfiguration | None = None
     device_id: int | None = None
     recording_id: str | None = None
-    file_path: Path | None = None
+    file_path: str | None = None
     enable_progress_tracking: bool = False
     enable_logging: bool = False
     enable_real_time_callback: bool = False
@@ -111,7 +110,7 @@ class AudioPlaybackServiceRequest(AudioServiceRequest):
     device_id: int | None = None
     audio_data: bytes | None = None
     track: AudioTrack | None = None
-    file_path: Path | None = None
+    file_path: str | None = None
     position: float | None = None
     volume: float | None = None
     speed: float | None = None
@@ -184,8 +183,7 @@ class ServiceOperationResult(ValueObject):
     request_id: str
     result: OperationResult
     message: str
-    timestamp: datetime = field(default_factory=datetime.now,
-    )
+    timestamp: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
     error_code: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
 

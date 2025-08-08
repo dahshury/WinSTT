@@ -1,12 +1,13 @@
 """UI coordination domain."""
 
-from .entities import (
-    AnimationController,
-    AnimationGroup,
-    AnimationInstance,
-    AnimationStatus,
-    UICoordinator,
-)
+# Note: UI coordination entities moved to presentation layer
+# from .entities import (
+#     AnimationController,
+#     AnimationGroup,
+#     AnimationInstance,
+#     AnimationStatus,
+#     UICoordinator,
+# )
 from .value_objects import (
     AnimationEasing,
     AnimationState,
@@ -23,13 +24,15 @@ from .value_objects import (
 
 __all__ = [
     # Entities
-    "AnimationController",
-    "AnimationEasing",
-    "AnimationGroup",
-    "AnimationInstance",
+    # Note: Entities moved to presentation layer
+    # "AnimationController",
+    # "AnimationGroup", 
+    # "AnimationInstance",
+    # "AnimationStatus",
+    # "UICoordinator",
     # Value Objects
+    "AnimationEasing",
     "AnimationState",
-    "AnimationStatus",
     "AnimationType",
     "DisplayBehavior",
     "ElementType",
@@ -37,7 +40,6 @@ __all__ = [
     "MessageDisplay",
     "MessagePriority",
     "MessageType",
-    "UICoordinator",
     "UIElementState",
     "VisibilityState",
 ]

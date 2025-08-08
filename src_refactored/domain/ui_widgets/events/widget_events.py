@@ -10,7 +10,7 @@ from ...common.events import DomainEvent
 from ..value_objects.widget_operations import WidgetType
 
 
-@dataclass
+@dataclass(frozen=True)
 class WidgetCreationRequestedEvent(DomainEvent):
     """Event raised when widget creation is requested."""
     
@@ -23,7 +23,7 @@ class WidgetCreationRequestedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WidgetCreatedEvent(DomainEvent):
     """Event raised when widget is created."""
     
@@ -35,7 +35,7 @@ class WidgetCreatedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WidgetDestroyRequestedEvent(DomainEvent):
     """Event raised when widget destruction is requested."""
     
@@ -46,7 +46,7 @@ class WidgetDestroyRequestedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WidgetDestroyedEvent(DomainEvent):
     """Event raised when widget is destroyed."""
     
@@ -56,7 +56,7 @@ class WidgetDestroyedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WidgetConfigurationChangedEvent(DomainEvent):
     """Event raised when widget configuration changes."""
     
@@ -68,7 +68,7 @@ class WidgetConfigurationChangedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WidgetStateChangedEvent(DomainEvent):
     """Event raised when widget state changes."""
     
@@ -81,7 +81,7 @@ class WidgetStateChangedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WidgetValueChangedEvent(DomainEvent):
     """Event raised when widget value changes."""
     
@@ -94,7 +94,7 @@ class WidgetValueChangedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WidgetEventTriggeredEvent(DomainEvent):
     """Event raised when widget triggers a business event."""
     
@@ -106,7 +106,7 @@ class WidgetEventTriggeredEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class ToggleWidgetToggledEvent(DomainEvent):
     """Event raised when toggle widget is toggled."""
     
@@ -119,7 +119,7 @@ class ToggleWidgetToggledEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WidgetValidationFailedEvent(DomainEvent):
     """Event raised when widget validation fails."""
     
@@ -131,7 +131,7 @@ class WidgetValidationFailedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WidgetFocusChangedEvent(DomainEvent):
     """Event raised when widget focus changes."""
     
@@ -142,7 +142,7 @@ class WidgetFocusChangedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WidgetVisibilityChangedEvent(DomainEvent):
     """Event raised when widget visibility changes."""
     

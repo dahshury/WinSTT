@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from src_refactored.domain.common import ValueObject
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from src_refactored.domain.common.ports.file_system_port import FileSystemPort
 
 
 @dataclass(frozen=True)
@@ -17,7 +17,7 @@ class OutputConfiguration(ValueObject):
 
     format_type: str
     include_timestamps: bool
-    output_directory: Path | None = None
+    output_directory: str | None = None
     filename_template: str = "transcription_{timestamp}"
     auto_save: bool = True
     overwrite_existing: bool = False
@@ -29,17 +29,23 @@ class OutputConfiguration(ValueObject):
             msg = f"Invalid format type: {self.format_type}. Must be one of {valid_formats}."
             raise ValueError(msg)
 
-        if self.output_directory is not None:
-            if not self.output_directory.exists():
-                msg = f"Output directory does not exist: {self.output_directory}"
-                raise ValueError(msg)
-            if not self.output_directory.is_dir():
-                msg = f"Output path is not a directory: {self.output_directory}"
-                raise ValueError(msg)
-
         if not self.filename_template or not self.filename_template.strip():
             msg = "Filename template cannot be empty"
             raise ValueError(msg)
+
+    def validate_directory(self, file_system_port: FileSystemPort) -> bool:
+        """Validate that the output directory exists and is accessible."""
+        if self.output_directory is None:
+            return True
+        
+        # Check directory exists
+        dir_exists_result = file_system_port.directory_exists(self.output_directory)
+        if not dir_exists_result.is_success or not dir_exists_result.value:
+            return False
+        
+        # Get directory info to verify it's actually a directory
+        dir_info_result = file_system_port.get_directory_info(self.output_directory)
+        return bool(dir_info_result.is_success and dir_info_result.value and dir_info_result.value.exists)
 
     @classmethod
     def create_default(cls) -> OutputConfiguration:
@@ -54,7 +60,7 @@ class OutputConfiguration(ValueObject):
         )
 
     @classmethod
-    def create_for_format(cls, format_type: str, output_dir: Path | None = None) -> OutputConfiguration:
+    def create_for_format(cls, format_type: str, output_dir: str | None = None) -> OutputConfiguration:
         """Create configuration for specific format."""
         return cls(
             format_type=format_type,
@@ -65,7 +71,7 @@ class OutputConfiguration(ValueObject):
             overwrite_existing=False,
         )
 
-    def with_directory(self, directory: Path) -> OutputConfiguration:
+    def with_directory(self, directory: str) -> OutputConfiguration:
         """Create new configuration with different output directory."""
         return OutputConfiguration(
             format_type=self.format_type,

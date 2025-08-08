@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from threading import Lock, RLock
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar, cast
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
@@ -440,7 +440,6 @@ class EventBus(QObject, IEventBus):
                     handler_type = EventHandlerType.LAMBDA
                 
                 # Cast handler to the expected type for EventHandler
-                from typing import cast
                 handler_func = cast("Callable[[event_type, EventMetadata], None]", handler)
                 event_handler = EventHandler(
                     handler_id=handler_id,

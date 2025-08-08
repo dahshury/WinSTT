@@ -7,7 +7,7 @@ Follows DDD principles with equality and validation support.
 
 from __future__ import annotations
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 
@@ -20,22 +20,34 @@ class ValueObject(ABC):
     They should contain validation logic in __post_init__.
     """
 
+    @abstractmethod
+    def _get_equality_components(self) -> tuple:
+        """Get components used for equality comparison.
+        
+        Returns:
+            Tuple of components for equality comparison
+        """
+
     def __eq__(self, other: object,
     ) -> bool:
         """Value objects are equal if all their attributes are equal."""
         if not isinstance(other, self.__class__):
             return False
-        return self.__dict__ == other.__dict__
+        return self._get_equality_components() == other._get_equality_components()
 
     def __hash__(self) -> int:
         """Hash based on all attributes for immutable value objects."""
-        return hash(tuple(sorted(self.__dict__.items())))
+        return hash(self._get_equality_components())
 
 
 @dataclass(frozen=True)
 class ProgressPercentage(ValueObject):
     """Value object for progress percentage with validation (0-100)."""
     value: float
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.value,)
 
     def __post_init__(self):
         if not 0.0 <= self.value <= 100.0:

@@ -1,7 +1,8 @@
-"""Advanced Design Patterns for UI Components
+"""Advanced Design Patterns for UI Components (Refactored)
 
 This module implements sophisticated design patterns specifically tailored
-for UI components, following enterprise-level architectural practices.
+for UI components, following enterprise-level architectural practices and
+hexagonal architecture principles by using framework-agnostic abstractions.
 """
 
 from __future__ import annotations
@@ -11,12 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic
 
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton, QWidget
-
 from .abstractions import (
-    IStrategy,
     IUIComponent,
     IUIFactory,
     Result,
@@ -25,9 +21,25 @@ from .abstractions import (
     UIPosition,
     UISize,
 )
+from .ui_abstractions import (
+    FontDescriptor,
+    IAnimationStrategy,
+    IButton,
+    IDialog,
+    IFontFactory,
+    ILabel,
+    ITextInput,
+    IUIWidgetFactory,
+    IWidget,
+    IWidgetStyler,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from src_refactored.application.interfaces.animation_service import (
+        IAnimationCoordinationService,
+    )
 
 # ============================================================================
 # FACTORY PATTERNS
@@ -57,37 +69,48 @@ class WidgetConfiguration:
         if self.properties is None:
             self.properties = {}
 
-class IWidgetFactory(IUIFactory[QWidget]):
+class IWidgetFactory(IUIFactory[IWidget]):
     """Abstract factory for creating UI widgets."""
     
     @abstractmethod
-    def create_button(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def create_button(self, config: WidgetConfiguration) -> Result[IButton]:
         """Create a button widget."""
     
     @abstractmethod
-    def create_label(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def create_label(self, config: WidgetConfiguration) -> Result[ILabel]:
         """Create a label widget."""
     
     @abstractmethod
-    def create_input(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def create_input(self, config: WidgetConfiguration) -> Result[ITextInput]:
         """Create an input widget."""
     
     @abstractmethod
-    def create_dialog(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def create_dialog(self, config: WidgetConfiguration) -> Result[IDialog]:
         """Create a dialog widget."""
 
 class UIWidgetFactory(IWidgetFactory):
-    """Concrete factory for creating standard UI widgets."""
+    """Concrete factory for creating standard UI widgets using framework-agnostic abstractions."""
     
-    def __init__(self):
-        self._widget_creators: dict[WidgetType, Callable[[WidgetConfiguration], Result[QWidget]]] = {
-            WidgetType.BUTTON: self._create_button,
-            WidgetType.LABEL: self._create_label,
-            WidgetType.INPUT: self._create_input,
-            WidgetType.DIALOG: self._create_dialog,
+    def __init__(self, widget_factory: IUIWidgetFactory, font_factory: IFontFactory, styler: IWidgetStyler):
+        """Initialize with injected dependencies.
+        
+        Args:
+            widget_factory: Framework-specific widget factory
+            font_factory: Framework-specific font factory  
+            styler: Framework-specific widget styler
+        """
+        self._widget_factory = widget_factory
+        self._font_factory = font_factory
+        self._styler = styler
+        
+        self._widget_creators: dict[WidgetType, Callable[[WidgetConfiguration], Result[IWidget]]] = {
+            WidgetType.BUTTON: self._create_button,  # type: ignore[dict-item]
+            WidgetType.LABEL: self._create_label,    # type: ignore[dict-item]
+            WidgetType.INPUT: self._create_input,    # type: ignore[dict-item]
+            WidgetType.DIALOG: self._create_dialog,  # type: ignore[dict-item]
         }
     
-    def create(self, **kwargs) -> Result[QWidget]:
+    def create(self, **kwargs) -> Result[IWidget]:
         """Create a widget based on configuration."""
         config = kwargs.get("config")
         if not isinstance(config, WidgetConfiguration):
@@ -99,109 +122,131 @@ class UIWidgetFactory(IWidgetFactory):
         
         return creator(config)
     
-    def create_button(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def create_button(self, config: WidgetConfiguration) -> Result[IButton]:
         """Create a button widget."""
         return self._create_button(config)
     
-    def create_label(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def create_label(self, config: WidgetConfiguration) -> Result[ILabel]:
         """Create a label widget."""
         return self._create_label(config)
     
-    def create_input(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def create_input(self, config: WidgetConfiguration) -> Result[ITextInput]:
         """Create an input widget."""
         return self._create_input(config)
     
-    def create_dialog(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def create_dialog(self, config: WidgetConfiguration) -> Result[IDialog]:
         """Create a dialog widget."""
         return self._create_dialog(config)
     
-    def _create_button(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def _create_button(self, config: WidgetConfiguration) -> Result[IButton]:
         """Internal button creation logic."""
         try:
-            button = QPushButton()
-            text = config.properties.get("text", "Button")
-            button.setText(text)
+            # Extract properties
+            properties = {
+                "text": config.properties.get("text", "Button"),
+                "enabled": config.properties.get("enabled", True),
+            }
             
-            if config.properties.get("enabled") is not None:
-                button.setEnabled(config.properties["enabled"])
+            # Create button using framework factory
+            result = self._widget_factory.create_button(**properties)
+            if not result.is_success:
+                return result
             
+            button = result.value
+            if button is None:
+                return Result.failure("Button creation returned None")
             self._apply_base_configuration(button, config)
             return Result.success(button)
-        except Exception as e:
+        except (ValueError, TypeError, RuntimeError) as e:
             return Result.failure(f"Failed to create button: {e!s}")
     
-    def _create_label(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def _create_label(self, config: WidgetConfiguration) -> Result[ILabel]:
         """Internal label creation logic."""
         try:
-            label = QLabel()
-            text = config.properties.get("text", "Label")
-            label.setText(text)
+            # Extract properties
+            properties = {
+                "text": config.properties.get("text", "Label"),
+                "word_wrap": config.properties.get("word_wrap", False),
+                "alignment": config.properties.get("alignment", "left"),
+            }
             
-            if config.properties.get("word_wrap") is not None:
-                label.setWordWrap(config.properties["word_wrap"])
+            # Create label using framework factory
+            result = self._widget_factory.create_label(**properties)
+            if not result.is_success:
+                return result
             
-            if config.properties.get("alignment") is not None:
-                label.setAlignment(config.properties["alignment"])
-            
+            label = result.value
+            if label is None:
+                return Result.failure("Label creation returned None")
             self._apply_base_configuration(label, config)
             return Result.success(label)
-        except Exception as e:
+        except (ValueError, TypeError, RuntimeError) as e:
             return Result.failure(f"Failed to create label: {e!s}")
     
-    def _create_input(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def _create_input(self, config: WidgetConfiguration) -> Result[ITextInput]:
         """Internal input creation logic."""
         try:
-            input_widget = QLineEdit()
+            # Extract properties
+            properties = {
+                "placeholder": config.properties.get("placeholder", ""),
+                "max_length": config.properties.get("max_length", 32767),
+                "read_only": config.properties.get("read_only", False),
+            }
             
-            if config.properties.get("placeholder") is not None:
-                input_widget.setPlaceholderText(config.properties["placeholder"])
+            # Create input using framework factory
+            result = self._widget_factory.create_text_input(**properties)
+            if not result.is_success:
+                return result
             
-            if config.properties.get("max_length") is not None:
-                input_widget.setMaxLength(config.properties["max_length"])
-            
-            if config.properties.get("read_only") is not None:
-                input_widget.setReadOnly(config.properties["read_only"])
-            
-            self._apply_base_configuration(input_widget, config)
-            return Result.success(input_widget)
-        except Exception as e:
+            text_input = result.value
+            if text_input is None:
+                return Result.failure("Text input creation returned None")
+            self._apply_base_configuration(text_input, config)
+            return Result.success(text_input)
+        except (ValueError, TypeError, RuntimeError) as e:
             return Result.failure(f"Failed to create input: {e!s}")
     
-    def _create_dialog(self, config: WidgetConfiguration) -> Result[QWidget]:
+    def _create_dialog(self, config: WidgetConfiguration) -> Result[IDialog]:
         """Internal dialog creation logic."""
         try:
-            dialog = QDialog()
+            # Extract properties
+            properties = {
+                "title": config.properties.get("title", "Dialog"),
+                "modal": config.properties.get("modal", True),
+            }
             
-            title = config.properties.get("title", "Dialog")
-            dialog.setWindowTitle(title)
+            # Create dialog using framework factory
+            result = self._widget_factory.create_dialog(**properties)
+            if not result.is_success:
+                return result
             
-            if config.properties.get("modal") is not None:
-                dialog.setModal(config.properties["modal"])
-            
+            dialog = result.value
+            if dialog is None:
+                return Result.failure("Dialog creation returned None")
             self._apply_base_configuration(dialog, config)
             return Result.success(dialog)
-        except Exception as e:
+        except (ValueError, TypeError, RuntimeError) as e:
             return Result.failure(f"Failed to create dialog: {e!s}")
     
-    def _apply_base_configuration(self, widget: QWidget, config: WidgetConfiguration) -> None:
+    def _apply_base_configuration(self, widget: IWidget, config: WidgetConfiguration) -> None:
         """Apply base configuration to any widget."""
         if config.position:
-            widget.move(config.position.x, config.position.y)
+            widget.set_position(config.position.x, config.position.y)
         
         if config.size:
-            widget.resize(config.size.width, config.size.height)
+            widget.set_size(config.size.width, config.size.height)
         
         if config.style_class:
-            widget.setProperty("class", config.style_class)
+            self._styler.set_property(widget, "class", config.style_class)
         
         # Apply font if specified
         if "font_family" in config.properties or "font_size" in config.properties:
-            font = QFont()
-            if "font_family" in config.properties:
-                font.setFamily(config.properties["font_family"])
-            if "font_size" in config.properties:
-                font.setPointSize(config.properties["font_size"])
-            widget.setFont(font)
+            font_descriptor = FontDescriptor(
+                family=config.properties.get("font_family"),
+                size=config.properties.get("font_size"),
+            )
+            font = self._font_factory.create_font(font_descriptor)
+            self._styler.apply_font(widget, font)
 
 # ============================================================================
 # BUILDER PATTERN
@@ -210,13 +255,15 @@ class UIWidgetFactory(IWidgetFactory):
 class UIComponentBuilder(Generic[T]):
     """Builder for creating complex UI components with fluent interface."""
     
-    def __init__(self, component_type: type[T]):
+    def __init__(self, component_type: type[T], widget_factory: IUIWidgetFactory):
+        """Initialize builder with component type and widget factory."""
         self._component_type = component_type
+        self._widget_factory = widget_factory
         self._position: UIPosition | None = None
         self._size: UISize | None = None
         self._style_class: str | None = None
         self._properties: dict[str, Any] = {}
-        self._children: list[QWidget] = []
+        self._children: list[IWidget] = []
         self._event_handlers: dict[str, Callable] = {}
         self._validators: list[Callable] = []
     
@@ -251,7 +298,7 @@ class UIComponentBuilder(Generic[T]):
         self._properties.update(properties)
         return self
     
-    def add_child(self, child: QWidget) -> UIComponentBuilder[T]:
+    def add_child(self, child: IWidget) -> UIComponentBuilder[T]:
         """Add a child widget."""
         self._children.append(child)
         return self
@@ -275,143 +322,150 @@ class UIComponentBuilder(Generic[T]):
             else:
                 return Result.failure(f"Cannot instantiate {self._component_type.__name__}")
             
-            # Apply configuration if it's a QWidget
-            if isinstance(component, QWidget):
-                self._apply_widget_configuration(component)
+            # Apply configuration if it's a widget component
+            if hasattr(component, "widget") and hasattr(component.widget, "set_geometry"):
+                self._apply_widget_configuration(component.widget)
             
             # Apply custom properties
             for key, value in self._properties.items():
                 if hasattr(component, f"set_{key}"):
                     getattr(component, f"set_{key}")(value)
-                else:
-                    component.setProperty(key, value)
-            
-            # Add children
-            for child in self._children:
-                if hasattr(component, "layout") and component.layout():
-                    component.layout().addWidget(child)
-                else:
-                    child.setParent(component)
-            
-            # Connect event handlers
-            for event_name, handler in self._event_handlers.items():
-                if hasattr(component, event_name):
-                    signal = getattr(component, event_name)
-                    if hasattr(signal, "connect"):
-                        signal.connect(handler)
             
             return Result.success(component)
         
-        except Exception as e:
+        except (ValueError, TypeError, RuntimeError) as e:
             return Result.failure(f"Failed to build component: {e!s}")
     
-    def _apply_widget_configuration(self, widget: QWidget) -> None:
+    def _apply_widget_configuration(self, widget: IWidget) -> None:
         """Apply widget-specific configuration."""
         if self._position:
-            widget.move(self._position.x, self._position.y)
+            widget.set_position(self._position.x, self._position.y)
         
         if self._size:
-            widget.resize(self._size.width, self._size.height)
-        
-        if self._style_class:
-            widget.setProperty("class", self._style_class)
-        
-        # Apply font configuration
-        if "font_family" in self._properties or "font_size" in self._properties:
-            font = QFont()
-            if "font_family" in self._properties:
-                font.setFamily(self._properties["font_family"])
-            if "font_size" in self._properties:
-                font.setPointSize(self._properties["font_size"])
-            widget.setFont(font)
+            widget.set_size(self._size.width, self._size.height)
 
 # ============================================================================
 # STRATEGY PATTERN FOR ANIMATIONS
 # ============================================================================
 
-class AnimationStrategy(IStrategy[QWidget, None]):
-    """Abstract strategy for widget animations."""
+class AnimationStrategy(IAnimationStrategy):
+    """Abstract strategy for widget animations using framework-agnostic abstractions."""
     
-    @abstractmethod
-    def execute(self, context: QWidget) -> Result[None]:
-        """Execute the animation strategy."""
+    def __init__(self, animation_coordination_service: IAnimationCoordinationService):
+        """Initialize with animation coordination service dependency."""
+        self._animation_coordination = animation_coordination_service
 
 class FadeInStrategy(AnimationStrategy):
     """Strategy for fade-in animation."""
     
-    def __init__(self, duration: int = 500):
+    def __init__(
+        self, 
+        animation_coordination_service: IAnimationCoordinationService, 
+        duration: int = 500,
+    ):
+        """Initialize fade-in strategy.
+        
+        Args:
+            animation_coordination_service: Service for coordinating animations
+            duration: Animation duration in milliseconds
+        """
+        super().__init__(animation_coordination_service)
         self.duration = duration
     
-    def execute(self, context: QWidget) -> Result[None]:
-        """Execute fade-in animation."""
+    def execute(self, widget: IWidget) -> Result[None]:
+        """Execute fade-in animation by delegating to application service."""
         try:
-            from PyQt6.QtCore import QPropertyAnimation
-            from PyQt6.QtWidgets import QGraphicsOpacityEffect
+            # Import here to avoid circular imports
+            from src_refactored.application.interfaces.animation_service import FadeAnimationRequest
             
-            effect = QGraphicsOpacityEffect()
-            context.setGraphicsEffect(effect)
+            # Get widget identifier (assuming it has an id property or we can generate one)
+            widget_id = getattr(widget, "id", f"widget_{id(widget)}")
             
-            animation = QPropertyAnimation(effect, b"opacity")
-            animation.setDuration(self.duration)
-            animation.setStartValue(0.0)
-            animation.setEndValue(1.0)
-            animation.start()
+            # Create fade animation request
+            fade_request = FadeAnimationRequest(
+                duration_ms=self.duration,
+                start_opacity=0.0,
+                end_opacity=1.0,
+            )
             
-            return Result.success(None)
-        except Exception as e:
+            # Delegate to application service
+            return self._animation_coordination.start_fade_animation(widget_id, fade_request)
+            
+        except (ValueError, TypeError, RuntimeError) as e:
             return Result.failure(f"Fade-in animation failed: {e!s}")
 
 class SlideInStrategy(AnimationStrategy):
     """Strategy for slide-in animation."""
     
-    def __init__(self, direction: str = "left", duration: int = 500):
+    def __init__(
+        self, 
+        animation_coordination_service: IAnimationCoordinationService, 
+        direction: str = "left", 
+        duration: int = 500,
+    ):
+        """Initialize slide-in strategy.
+        
+        Args:
+            animation_coordination_service: Service for coordinating animations
+            direction: Direction of slide animation ("left", "right", "top", "bottom")
+            duration: Animation duration in milliseconds
+        """
+        super().__init__(animation_coordination_service)
         self.direction = direction
         self.duration = duration
     
-    def execute(self, context: QWidget) -> Result[None]:
-        """Execute slide-in animation."""
+    def execute(self, widget: IWidget) -> Result[None]:
+        """Execute slide-in animation by delegating to application service."""
         try:
-            original_geometry = context.geometry()
+            # Import here to avoid circular imports
+            from src_refactored.application.interfaces.animation_service import (
+                AnimationBounds,
+                AnimationDimensions,
+                AnimationPosition,
+                SlideAnimationRequest,
+            )
             
-            # Calculate start position based on direction
-            if self.direction == "left":
-                start_x = -original_geometry.width()
-                start_y = original_geometry.y()
-            elif self.direction == "right":
-                parent = context.parent()
-                start_x = parent.width() if parent and hasattr(parent, "width") else 800
-                start_y = original_geometry.y()
-            elif self.direction == "top":
-                start_x = original_geometry.x()
-                start_y = -original_geometry.height()
-            else:  # bottom
-                parent = context.parent()
-                start_x = original_geometry.x()
-                start_y = parent.height() if parent and hasattr(parent, "height") else 600
+            # Get widget identifier
+            widget_id = getattr(widget, "id", f"widget_{id(widget)}")
             
-            # Set initial position
-            context.setGeometry(start_x, start_y, original_geometry.width(), original_geometry.height())
+            # Get current widget bounds
+            if hasattr(widget, "get_geometry"):
+                geometry = widget.get_geometry()  # type: ignore[attr-defined]
+                current_bounds = AnimationBounds(
+                    position=AnimationPosition(x=geometry.x, y=geometry.y),
+                    dimensions=AnimationDimensions(width=geometry.width, height=geometry.height),
+                )
+            else:
+                # Fallback bounds if geometry is not available
+                current_bounds = AnimationBounds(
+                    position=AnimationPosition(x=0, y=0),
+                    dimensions=AnimationDimensions(width=100, height=100),
+                )
             
-            # Create animation
-            animation = QPropertyAnimation(context, b"geometry")
-            animation.setDuration(self.duration)
-            animation.setStartValue(QRect(start_x, start_y, original_geometry.width(), original_geometry.height()))
-            animation.setEndValue(original_geometry)
-            animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-            animation.start()
+            # Create slide animation request
+            slide_request = SlideAnimationRequest(
+                direction=self.direction,
+                current_bounds=current_bounds,
+                screen_bounds=AnimationBounds(  # This will be calculated by the service
+                    position=AnimationPosition(x=0, y=0),
+                    dimensions=AnimationDimensions(width=0, height=0),
+                ),
+            )
             
-            return Result.success(None)
-        except Exception as e:
+            # Delegate to application service
+            return self._animation_coordination.start_slide_animation(widget_id, slide_request)
+            
+        except (ValueError, TypeError, RuntimeError) as e:
             return Result.failure(f"Slide-in animation failed: {e!s}")
 
 class AnimationContext:
     """Context for animation strategies."""
     
-    def __init__(self, widget: QWidget):
+    def __init__(self, widget: IWidget):
         self._widget = widget
-        self._strategy: AnimationStrategy | None = None
+        self._strategy: IAnimationStrategy | None = None
     
-    def set_strategy(self, strategy: AnimationStrategy) -> None:
+    def set_strategy(self, strategy: IAnimationStrategy) -> None:
         """Set the animation strategy."""
         self._strategy = strategy
     
@@ -433,7 +487,7 @@ class UIComponentDecorator(IUIComponent):
         self._component = component
     
     @property
-    def widget(self) -> QWidget:
+    def widget(self) -> IWidget:
         """Get the decorated widget."""
         return self._component.widget
     
@@ -448,23 +502,25 @@ class UIComponentDecorator(IUIComponent):
 class TooltipDecorator(UIComponentDecorator):
     """Decorator that adds tooltip functionality."""
     
-    def __init__(self, component: IUIComponent, tooltip_text: str):
+    def __init__(self, component: IUIComponent, tooltip_text: str, styler: IWidgetStyler):
         super().__init__(component)
         self._tooltip_text = tooltip_text
+        self._styler = styler
     
     def initialize(self) -> Result[None]:
         """Initialize with tooltip."""
         result = super().initialize()
         if result.is_success:
-            self.widget.setToolTip(self._tooltip_text)
+            self._styler.set_property(self.widget, "toolTip", self._tooltip_text)
         return result
 
 class ValidationDecorator(UIComponentDecorator):
     """Decorator that adds validation functionality."""
     
-    def __init__(self, component: IUIComponent, validator: Callable[[Any], bool]):
+    def __init__(self, component: IUIComponent, validator: Callable[[Any], bool], styler: IWidgetStyler):
         super().__init__(component)
         self._validator = validator
+        self._styler = styler
         self._is_valid = True
     
     def validate(self, value: Any) -> bool:
@@ -475,11 +531,10 @@ class ValidationDecorator(UIComponentDecorator):
     
     def _update_visual_state(self) -> None:
         """Update visual state based on validation."""
-        if hasattr(self.widget, "setStyleSheet"):
-            if self._is_valid:
-                self.widget.setStyleSheet("")
-            else:
-                self.widget.setStyleSheet("border: 2px solid red;")
+        if self._is_valid:
+            self._styler.set_property(self.widget, "styleSheet", "")
+        else:
+            self._styler.set_property(self.widget, "styleSheet", "border: 2px solid red;")
 
 class LoggingDecorator(UIComponentDecorator):
     """Decorator that adds logging functionality."""
@@ -550,10 +605,10 @@ class ShowComponentCommand(UICommand):
             if not self.can_execute():
                 return Result.failure("Command already executed")
             
-            self._component.widget.show()
+            self._component.widget.set_visible(True)
             self._executed = True
             return Result.success(None)
-        except Exception as e:
+        except (ValueError, TypeError, RuntimeError) as e:
             return Result.failure(f"Failed to show component: {e!s}")
     
     def undo(self) -> Result[Any]:
@@ -562,10 +617,10 @@ class ShowComponentCommand(UICommand):
             if not self.can_undo():
                 return Result.failure("Command not executed yet")
             
-            self._component.widget.hide()
+            self._component.widget.set_visible(False)
             self._executed = False
             return Result.success(None)
-        except Exception as e:
+        except (ValueError, TypeError, RuntimeError) as e:
             return Result.failure(f"Failed to hide component: {e!s}")
 
 class UICommandInvoker:

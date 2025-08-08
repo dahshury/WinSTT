@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src_refactored.domain.audio_visualization.value_objects.visualization_config import (
-        VisualizationConfig,
+    from src_refactored.domain.audio_visualization.value_objects.visualization_configuration import (
+        VisualizationConfiguration,
     )
     from src_refactored.domain.audio_visualization.value_objects.waveform_data import (
         WaveformData,
@@ -36,7 +36,7 @@ class IWaveformUpdatePort(Protocol):
 class UpdateWaveformRequest:
     """Request for updating waveform data."""
     waveform_data: WaveformData
-    config: VisualizationConfig
+    config: VisualizationConfiguration
     clear_previous: bool = False
     progress_callback: Callable[[str, float], None] | None = None
     completion_callback: Callable[[bool], None] | None = None

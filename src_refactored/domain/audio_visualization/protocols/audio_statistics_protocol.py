@@ -5,41 +5,44 @@ This module defines the protocol for audio statistics services.
 
 from typing import Protocol
 
-import numpy as np
+from src_refactored.domain.audio.value_objects.audio_samples import (
+    AudioSampleData,
+    AudioStatistics,
+)
 
 
 class AudioStatisticsServiceProtocol(Protocol):
     """Protocol for audio statistics service."""
 
-    def calculate_rms(self, data: np.ndarray) -> float:
+    def calculate_rms(self, data: AudioSampleData) -> float:
         """Calculate RMS value of audio data.
         
         Args:
-            data: Audio data array
+            data: Audio sample data
             
         Returns:
             RMS value
         """
         ...
 
-    def calculate_peak(self, data: np.ndarray) -> float:
+    def calculate_peak(self, data: AudioSampleData) -> float:
         """Calculate peak value of audio data.
         
         Args:
-            data: Audio data array
+            data: Audio sample data
             
         Returns:
             Peak value
         """
         ...
 
-    def calculate_statistics(self, data: np.ndarray) -> dict[str, float]:
+    def calculate_statistics(self, data: AudioSampleData) -> AudioStatistics:
         """Calculate comprehensive statistics.
         
         Args:
-            data: Audio data array
+            data: Audio sample data
             
         Returns:
-            Dictionary with statistics
+            Audio statistics value object
         """
         ...

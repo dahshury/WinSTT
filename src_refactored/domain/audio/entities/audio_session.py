@@ -8,22 +8,24 @@ Extracted from utils/listener.py AudioToText class.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from src_refactored.domain.audio.value_objects.audio_format import AudioFormat, Duration
-from src_refactored.domain.common.abstractions import AggregateRoot, DomainEvent
+from src_refactored.domain.common.abstractions import AggregateRoot
 from src_refactored.domain.common.errors import (
     AudioDomainException,
     DomainError,
     ErrorCategory,
     ErrorSeverity,
 )
+from src_refactored.domain.common.events import DomainEvent
 from src_refactored.domain.common.value_object import ProgressPercentage
 
 if TYPE_CHECKING:
     from src_refactored.domain.audio.value_objects.audio_quality import AudioQuality
+    from src_refactored.domain.common.ports.time_management_port import TimeManagementPort
+    from src_refactored.domain.common.value_objects import Timestamp
 
 
 class SessionState(Enum):
@@ -80,9 +82,10 @@ class AudioSession(AggregateRoot):
     session_id: str
     audio_format: AudioFormat
     quality_settings: AudioQuality
+    time_provider: TimeManagementPort
     state: SessionState = SessionState.IDLE
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
+    started_at: Timestamp | None = None
+    completed_at: Timestamp | None = None
     recorded_data_size: int = 0
     minimum_duration: Duration = field(default_factory=lambda: Duration(0.5))
     maximum_duration: Duration = field(default_factory=lambda: Duration(300.0))  # 5 minutes
@@ -107,7 +110,18 @@ class AudioSession(AggregateRoot):
             raise AudioDomainException(error)
 
         self.state = SessionState.PREPARING
-        self.started_at = datetime.now()
+        current_time_result = self.time_provider.get_current_time()
+        if current_time_result.is_success is False:
+            error = DomainError(
+                code="AUDIO_SESSION_TIME_ERROR",
+                message="Failed to get current time",
+                category=ErrorCategory.OPERATION,
+                severity=ErrorSeverity.ERROR,
+                context={"session_id": self.session_id},
+            )
+            raise AudioDomainException(error)
+        
+        self.started_at = current_time_result.value
         self.recorded_data_size = 0
         self.error_message = None
 
@@ -168,7 +182,17 @@ class AudioSession(AggregateRoot):
 
         # Calculate actual duration
         if self.started_at:
-            duration_seconds = (datetime.now() - self.started_at).total_seconds()
+            current_time_result = self.time_provider.get_current_time()
+            if current_time_result.is_success is False:
+                self.fail_session("Failed to get current time for duration calculation")
+                return
+            
+            current_time = current_time_result.value
+            if self.started_at is None:
+                return  # Can't calculate duration without start time
+            if current_time is None or self.started_at is None:
+                return
+            duration_seconds = (current_time.value - self.started_at.value).total_seconds()
             actual_duration = Duration(duration_seconds)
 
             # Business rule: Check minimum duration
@@ -183,7 +207,9 @@ class AudioSession(AggregateRoot):
                 return
 
             # Success - complete the session
-            self.completed_at = datetime.now()
+            completion_time_result = self.time_provider.get_current_time()
+            if completion_time_result.is_success:
+                self.completed_at = completion_time_result.value
             self.state = SessionState.COMPLETED
 
             # Raise domain event
@@ -202,7 +228,9 @@ class AudioSession(AggregateRoot):
         """Fail the session with an error."""
         self.state = SessionState.FAILED
         self.error_message = error_message
-        self.completed_at = datetime.now()
+        completion_time_result = self.time_provider.get_current_time()
+        if completion_time_result.is_success:
+            self.completed_at = completion_time_result.value
 
         # Raise domain event
         event = SessionFailedEvent(
@@ -229,7 +257,9 @@ class AudioSession(AggregateRoot):
             raise AudioDomainException(error)
 
         self.state = SessionState.CANCELLED
-        self.completed_at = datetime.now()
+        completion_time_result = self.time_provider.get_current_time()
+        if completion_time_result.is_success:
+            self.completed_at = completion_time_result.value
         self.increment_version()
 
     @property
@@ -238,8 +268,16 @@ class AudioSession(AggregateRoot):
         if not self.started_at:
             return None
 
-        end_time = self.completed_at or datetime.now()
-        duration_seconds = (end_time - self.started_at).total_seconds()
+        end_time = self.completed_at
+        if not end_time:
+            current_time_result = self.time_provider.get_current_time()
+            if current_time_result.is_success is False:
+                return None
+            end_time = current_time_result.value
+        
+        if self.started_at is None or end_time is None:
+            return None
+        duration_seconds = (end_time.value - self.started_at.value).total_seconds()
         return Duration(duration_seconds)
 
     @property

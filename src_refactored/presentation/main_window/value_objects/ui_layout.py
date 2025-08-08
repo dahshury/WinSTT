@@ -328,10 +328,14 @@ class UILayout(ValueObject):
         )
         
         if not main_layout_result.is_success:
-            return Result.failure(main_layout_result.error())
+            return Result.failure(main_layout_result.error or "Failed to create main layout")
+        
+        main_layout = main_layout_result.value
+        if main_layout is None:
+            return Result.failure("Main layout result was None")
         
         components = {
-            ComponentRole.MAIN_CONTENT: main_layout_result.value(),
+            ComponentRole.MAIN_CONTENT: main_layout,
         }
         
         return cls.create(components, direction)

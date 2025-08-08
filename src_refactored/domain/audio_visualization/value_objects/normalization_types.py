@@ -6,10 +6,8 @@ including normalization methods, results, and phases.
 
 from enum import Enum
 
-from src_refactored.domain.common.value_object import ValueObject
 
-
-class NormalizationMethod(ValueObject, Enum):
+class NormalizationMethod(Enum):
     """Enumeration of normalization methods."""
     RMS_BASED = "rms_based"
     PEAK_BASED = "peak_based"
@@ -19,7 +17,7 @@ class NormalizationMethod(ValueObject, Enum):
     CUSTOM = "custom"
 
 
-class NormalizationResult(ValueObject, Enum):
+class NormalizationResult(Enum):
     """Enumeration of normalization results."""
     SUCCESS = "success"
     FAILURE = "failure"
@@ -30,17 +28,24 @@ class NormalizationResult(ValueObject, Enum):
     CANCELLED = "cancelled"
 
 
-class NormalizationPhase(ValueObject, Enum):
+class NormalizationPhase(Enum):
     """Audio normalization phases"""
     INITIALIZING = "initializing"
+    VALIDATING_DATA = "validating_data"
+    CALCULATING_RMS = "calculating_rms"
+    APPLYING_SCALING = "applying_scaling"
+    APPLYING_CLIPPING = "applying_clipping"
+    CENTERING_DATA = "centering_data"
     ANALYZING_AUDIO = "analyzing_audio"
     CALCULATING_PARAMETERS = "calculating_parameters"
     APPLYING_NORMALIZATION = "applying_normalization"
     VALIDATING_OUTPUT = "validating_output"
+    COMPLETING = "completing"
     COMPLETED = "completed"
+    ERROR_HANDLING = "error_handling"
 
 
-class ScalingStrategy(ValueObject, Enum):
+class ScalingStrategy(Enum):
     """Enumeration of scaling strategies."""
     FIXED_FACTOR = "fixed_factor"
     ADAPTIVE = "adaptive"

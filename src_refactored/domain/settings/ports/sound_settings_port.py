@@ -1,7 +1,7 @@
 """Sound Settings Port for managing sound configuration."""
 
 from abc import ABC, abstractmethod
-from pathlib import Path
+from typing import Any
 
 from src_refactored.domain.common.result import Result
 
@@ -10,11 +10,11 @@ class ISoundSettingsManager(ABC):
     """Port interface for sound settings management."""
     
     @abstractmethod
-    def update_sound_settings(self, sound_path: Path, enabled: bool) -> Result[None]:
+    def update_sound_settings(self, sound_path: str, enabled: bool) -> Result[None]:
         """Update sound settings.
         
         Args:
-            sound_path: Path to sound file
+            sound_path: Path to sound file as string
             enabled: Whether sound is enabled
             
         Returns:
@@ -32,7 +32,7 @@ class ISoundSettingsManager(ABC):
         ...
     
     @abstractmethod
-    def get_sound_settings(self) -> Result[dict[str, any]]:
+    def get_sound_settings(self) -> Result[dict[str, Any]]:
         """Get current sound settings.
         
         Returns:
@@ -41,11 +41,11 @@ class ISoundSettingsManager(ABC):
         ...
     
     @abstractmethod
-    def validate_sound_file(self, sound_path: Path) -> Result[bool]:
+    def validate_sound_file(self, sound_path: str) -> Result[bool]:
         """Validate a sound file.
         
         Args:
-            sound_path: Path to sound file to validate
+            sound_path: Path to sound file to validate as string
             
         Returns:
             Result containing validation result

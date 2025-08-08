@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
 from typing import Any
 
 from src_refactored.domain.common import Entity
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 
 
 class ProgressBarState(Enum):
@@ -114,7 +114,7 @@ class ProgressBarLifecycle(Entity[str],
         self._current_parent: ParentContext | None = None
         self._original_parent: ParentContext | None = None
         self._target_parent: ParentContext | None = None
-        self._operation_start_time: datetime | None = None
+        self._operation_start_time: float | None = None
         self._last_operation: ReparentingOperation | None = None
         self._error_message: str | None = None
         self._is_moving = False
@@ -145,7 +145,7 @@ class ProgressBarLifecycle(Entity[str],
         self._state = ProgressBarState.REPARENTING
         self._target_parent = target_parent
         self._last_operation = operation
-        self._operation_start_time = datetime.now()
+        self._operation_start_time = DomainIdentityGenerator.generate_timestamp()
         self._is_moving = True
         self._operation_count += 1
 
@@ -181,7 +181,7 @@ class ProgressBarLifecycle(Entity[str],
         self._state = ProgressBarState.RESTORING
         self._target_parent = self._original_parent
         self._last_operation = ReparentingOperation.RESTORE_TO_PARENT
-        self._operation_start_time = datetime.now()
+        self._operation_start_time = DomainIdentityGenerator.generate_timestamp()
         self._is_moving = True
         self._operation_count += 1
 
@@ -304,7 +304,7 @@ class ProgressBarLifecycle(Entity[str],
         if not self._operation_start_time:
             return None
 
-        return (datetime.now() - self._operation_start_time).total_seconds()
+        return float(DomainIdentityGenerator.generate_timestamp() - self._operation_start_time)
 
     def is_operation_timeout(self) -> bool:
         """Check if current operation has timed out."""

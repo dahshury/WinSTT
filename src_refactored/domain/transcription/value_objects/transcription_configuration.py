@@ -47,4 +47,4 @@ class TranscriptionConfiguration(ValueObject):
     @property
     def language_code(self) -> str | None:
         """Get the language code if language is specified."""
-        return self.language.code if self.language else None
+        return self.language.code.value if self.language else None

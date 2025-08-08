@@ -7,6 +7,7 @@ Extracted from src/ui/voice_visualizer.py lines 155-193.
 
 import contextlib
 from collections.abc import Callable
+from datetime import datetime
 from typing import Protocol
 
 import numpy as np
@@ -15,12 +16,21 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from src_refactored.domain.audio_visualization.entities.audio_processor import (
     AudioProcessor,
     AudioProcessorConfig,
-    ProcessorStatus,
 )
 from src_refactored.domain.audio_visualization.entities.visualizer import (
-    RenderMode,
     Visualizer,
-    VisualizerStatus,
+)
+from src_refactored.domain.audio_visualization.ports.visualization_renderer_port import (
+    VisualizationRendererPort,
+)
+from src_refactored.domain.audio_visualization.value_objects.visualization_settings import (
+    VisualizationSettings,
+)
+from src_refactored.domain.common.ports.concurrency_management_port import ConcurrencyManagementPort
+from src_refactored.domain.common.ports.time_management_port import TimeManagementPort
+from src_refactored.infrastructure.audio.audio_buffer_service import AudioBufferService
+from src_refactored.infrastructure.audio_visualization.audio_data_provider_service import (
+    AudioDataProviderService,
 )
 from src_refactored.infrastructure.audio_visualization.audio_processor_service import (
     AudioProcessorService,
@@ -77,7 +87,8 @@ class VisualizationController(QObject):
     def __init__(self,
                  visualizer: Visualizer,
                  audio_processor_service: AudioProcessorService,
-                 parent: QObject | None = None):
+                 parent: QObject | None = None,
+                 buffer_service: AudioBufferService | None = None):
         """Initialize the visualization controller.
         
         Args:
@@ -89,6 +100,7 @@ class VisualizationController(QObject):
         self.visualizer = visualizer
         self.audio_processor_service = audio_processor_service
         self.logger = LoggingService().get_logger("VisualizationController")
+        self._buffer_service = buffer_service
 
         # Internal state
         self._processor: AudioProcessor | None = None
@@ -103,7 +115,7 @@ class VisualizationController(QObject):
             True if started successfully, False otherwise
         """
         if self._is_active and self._processor:
-            self.logger.warning("Visualization already active: {self.visualizer.visualizer_id}")
+            self.logger.warning("Visualization already active: {self.visualizer.id}")
             return True
 
         try:
@@ -129,15 +141,15 @@ class VisualizationController(QObject):
             if self._processor and self.audio_processor_service.start_processor(self._processor):
                 self._is_active = True
                 self.visualizer.start()
-                self.visualization_started.emit(self.visualizer.visualizer_id)
-                self.logger.info("Started visualization: {self.visualizer.visualizer_id}")
+                self.visualization_started.emit(self.visualizer.id)
+                self.logger.info("Started visualization: {self.visualizer.id}")
                 return True
-            self.logger.error("Failed to start processor for: {self.visualizer.visualizer_id}")
+            self.logger.error("Failed to start processor for: {self.visualizer.id}")
             return False
 
         except Exception as e:
-            self.logger.exception(f"Error starting visualization {self.visualizer.visualizer_id}: {e}")
-            self.error_occurred.emit(self.visualizer.visualizer_id, str(e))
+            self.logger.exception(f"Error starting visualization {self.visualizer.id}: {e}")
+            self.error_occurred.emit(self.visualizer.id, str(e))
             return False
 
     def stop_processing(self) -> bool:
@@ -147,7 +159,7 @@ class VisualizationController(QObject):
             True if stopped successfully, False otherwise
         """
         if not self._is_active:
-            self.logger.debug("Visualization already inactive: {self.visualizer.visualizer_id}")
+            self.logger.debug("Visualization already inactive: {self.visualizer.id}")
             return True
 
         try:
@@ -158,17 +170,17 @@ class VisualizationController(QObject):
                 success = self.audio_processor_service.stop_processor(self._processor)
                 if success:
                     self.visualizer.stop()
-                    self.visualization_stopped.emit(self.visualizer.visualizer_id)
-                    self.logger.info("Stopped visualization: {self.visualizer.visualizer_id}")
+                    self.visualization_stopped.emit(self.visualizer.id)
+                    self.logger.info("Stopped visualization: {self.visualizer.id}")
                     return True
-                self.logger.error("Failed to stop processor for: {self.visualizer.visualizer_id}")
+                self.logger.error("Failed to stop processor for: {self.visualizer.id}")
                 return False
 
             return True
 
         except Exception as e:
-            self.logger.exception(f"Error stopping visualization {self.visualizer.visualizer_id}: {e}")
-            self.error_occurred.emit(self.visualizer.visualizer_id, str(e))
+            self.logger.exception(f"Error stopping visualization {self.visualizer.id}: {e}")
+            self.error_occurred.emit(self.visualizer.id, str(e))
             return False
 
     def cleanup(self) -> None:
@@ -183,10 +195,10 @@ class VisualizationController(QObject):
                 self._pyaudio_processor = None
 
             self._data_handlers.clear()
-            self.logger.info("Cleaned up visualization: {self.visualizer.visualizer_id}")
+            self.logger.info("Cleaned up visualization: {self.visualizer.id}")
 
         except Exception as e:
-            self.logger.exception(f"Error cleaning up visualization {self.visualizer.visualizer_id}: {e}")
+            self.logger.exception(f"Error cleaning up visualization {self.visualizer.id}: {e}")
 
     def add_data_handler(self, handler: Callable[[np.ndarray], None]) -> None:
         """Add a data handler for visualization updates.
@@ -196,7 +208,7 @@ class VisualizationController(QObject):
         """
         if handler not in self._data_handlers:
             self._data_handlers.append(handler)
-            self.logger.debug("Added data handler for: {self.visualizer.visualizer_id}")
+            self.logger.debug("Added data handler for: {self.visualizer.id}")
 
     def remove_data_handler(self, handler: Callable[[np.ndarray], None]) -> None:
         """Remove a data handler.
@@ -206,7 +218,7 @@ class VisualizationController(QObject):
         """
         if handler in self._data_handlers:
             self._data_handlers.remove(handler)
-            self.logger.debug("Removed data handler for: {self.visualizer.visualizer_id}")
+            self.logger.debug("Removed data handler for: {self.visualizer.id}")
 
     def is_processing(self) -> bool:
         """Check if the visualizer is currently processing audio.
@@ -226,8 +238,13 @@ class VisualizationController(QObject):
             return
 
         try:
+            # Update shared buffer for the provider
+            if self._buffer_service is not None:
+                with contextlib.suppress(Exception):
+                    self._buffer_service.update_buffer(data)
+
             # Emit signal for external listeners
-            self.data_received.emit(self.visualizer.visualizer_id, data)
+            self.data_received.emit(self.visualizer.id, data)
 
             # Call registered data handlers
             for handler in self._data_handlers:
@@ -235,7 +252,7 @@ class VisualizationController(QObject):
                     handler(data)
 
         except Exception as e:
-            self.logger.exception(f"Error handling audio data for {self.visualizer.visualizer_id}: {e}")
+            self.logger.exception(f"Error handling audio data for {self.visualizer.id}: {e}")
 
     def _handle_error(self, error_message: str,
     ) -> None:
@@ -244,8 +261,8 @@ class VisualizationController(QObject):
         Args:
             error_message: Error message from processor
         """
-        self.logger.error(f"Audio processor error for {self.visualizer.visualizer_id}: {error_message}")
-        self.error_occurred.emit(self.visualizer.visualizer_id, error_message)
+        self.logger.error(f"Audio processor error for {self.visualizer.id}: {error_message}")
+        self.error_occurred.emit(self.visualizer.id, error_message)
 
     def _handle_status_change(self, status: str,
     ) -> None:
@@ -254,15 +271,13 @@ class VisualizationController(QObject):
         Args:
             status: New processor status
         """
-        self.logger.debug("Processor status changed for {self.visualizer.visualizer_id}: {status}")
+        self.logger.debug("Processor status changed for {self.visualizer.id}: {status}")
 
-        # Update visualizer status based on processor status
-        if status == ProcessorStatus.RUNNING.value:
-            self.visualizer.update_status(VisualizerStatus.RUNNING)
-        elif status == ProcessorStatus.STOPPED.value:
-            self.visualizer.update_status(VisualizerStatus.STOPPED)
-        elif status == ProcessorStatus.ERROR.value:
-            self.visualizer.update_status(VisualizerStatus.ERROR)
+        # Update visualizer status
+        if self.visualizer:
+            self.visualizer.update_settings(self.visualizer.settings)
+            self.visualizer.update_settings(self.visualizer.settings)
+            self.visualizer.update_settings(self.visualizer.settings)
 
 
 class VisualizationControllerService:
@@ -296,29 +311,80 @@ class VisualizationControllerService:
         Returns:
             Visualizer entity
         """
-        visualizer_id = f"visualizer_{len(self._active_controllers)}"
+        f"visualizer_{len(self._active_controllers)}"
 
         # Create visualizer entity
-        from src_refactored.domain.audio_visualization.value_objects.visualization_settings import (
-            VisualizationSettings,
-        )
+        
+        # Create simple mock implementations for now
+        
+        class MockConcurrencyPort(ConcurrencyManagementPort):
+            def create_thread_context(self, name): return type("Result", (), {"is_success": True, "value": "mock_thread"})()
+            def create_synchronization_event(self, name): return type("Result", (), {"is_success": True, "value": "mock_event"})()
+            def create_lock(self, name): return type("Result", (), {"is_success": True, "value": "mock_lock"})()
+            def acquire_lock(self, lock_id, timeout_seconds): return type("Result", (), {"is_success": True, "value": True})()
+            def release_lock(self, lock_id): pass
+            def start_background_task(self, thread_id, func, daemon): return type("Result", (), {"is_success": True})()
+            def stop_background_task(self, thread_id, timeout_seconds): return type("Result", (), {"is_success": True})()
+            def join_background_task(self, thread_id, timeout_seconds): pass
+            def clear_event(self, event_id): pass
+            def set_event(self, event_id): pass
+            def wait_for_event(self, event_id, timeout_seconds): return type("Result", (), {"is_success": True, "value": False})()
+            def is_event_set(self, event_id): return type("Result", (), {"is_success": True, "value": False})()
+            def cleanup_thread_context(self, thread_id): pass
+            def get_thread_state(self, thread_id): return type("Result", (), {"is_success": True, "value": "running"})()
+        
+        class MockTimePort(TimeManagementPort):
+            def get_current_time(self): return type("Result", (), {"is_success": True, "value": type("MockTime", (), {"value": datetime.now()})()})()
+            def get_current_datetime(self): return type("Result", (), {"is_success": True, "value": datetime.now()})()
+            def get_current_timestamp_ms(self): return type("Result", (), {"is_success": True, "value": 0.0})()
+            def measure_execution_time(self, name): return type("Result", (), {"is_success": True, "value": "mock_measurement"})()
+            def stop_measurement(self, measurement_id): return type("Result", (), {"is_success": True, "value": 1.0})()
+            def sleep(self, seconds): pass
+            def get_execution_time_ms(self, measurement_id): return type("Result", (), {"is_success": True, "value": 1.0})()
+        
+        class MockRendererPort(VisualizationRendererPort):
+            def render_waveform(self, waveform, settings): return type("Result", (), {"is_success": True, "value": type("MockVisData", (), {})()})()
+            def render_spectrum(self, waveform, settings): return type("Result", (), {"is_success": True, "value": type("MockVisData", (), {})()})()
+            def render_level_meter(self, waveform, settings): return type("Result", (), {"is_success": True, "value": type("MockVisData", (), {})()})()
+            def create_visualization_frame(self, vis_data, settings, metadata): return type("Result", (), {"is_success": True, "value": type("MockFrame", (), {})()})()
+            def supports_visualization_type(self, vis_type): return True
+        
         settings = VisualizationSettings.default_waveform()
-        visualizer = Visualizer(
-            settings,
-            render_mode=RenderMode.REAL_TIME,
-            status=VisualizerStatus.STOPPED,
+        
+        # Create concrete implementations of the ports
+        concurrency_port = MockConcurrencyPort()
+        time_port = MockTimePort()
+        renderer_port = MockRendererPort()
+        
+        # Create an infrastructure audio buffer and provider to feed the visualizer
+        buffer_service = AudioBufferService(max_size=config.buffer_size)
+        frame_window_ms = 1000.0 / max(1, settings.update_rate_hz)
+        data_provider = AudioDataProviderService(
+            buffer_service=buffer_service,
+            sample_rate=config.sample_rate,
+            frame_window_ms=frame_window_ms,
         )
 
+        # Create the visualizer entity wired with the data provider port
+        visualizer = Visualizer(
+            settings=settings,
+            concurrency_port=concurrency_port,
+            time_port=time_port,
+            renderer_port=renderer_port,
+            data_provider_port=data_provider,
+        )
+        
         # Create controller
         controller = VisualizationController(
             visualizer=visualizer,
             audio_processor_service=self.audio_processor_service,
+            buffer_service=buffer_service,
         )
-
+        
         # Store reference
-        self._active_controllers[visualizer_id] = controller
-
-        self.logger.info("Created visualizer: {visualizer_id}")
+        self._active_controllers[visualizer.id] = controller
+        
+        self.logger.info(f"Created visualizer: {visualizer.id}")
         return visualizer
 
     def start_visualization(self, visualizer: Visualizer,
@@ -350,7 +416,7 @@ class VisualizationControllerService:
         """
         controller = self._active_controllers.get(visualizer.id)
         if not controller:
-            self.logger.error("Controller not found: {visualizer.visualizer_id}")
+            self.logger.error(f"Controller not found: {visualizer.id}")
             return False
 
         return controller.stop_processing()
@@ -386,7 +452,7 @@ class VisualizationControllerService:
         if controller:
             controller.add_data_handler(handler)
         else:
-            self.logger.error("Controller not found: {visualizer.visualizer_id}")
+            self.logger.error(f"Controller not found: {visualizer.id}")
 
     def get_controller(self, visualizer: Visualizer,
     ) -> VisualizationController | None:

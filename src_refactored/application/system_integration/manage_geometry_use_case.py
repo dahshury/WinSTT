@@ -594,6 +594,14 @@ class ManageGeometryUseCase:
                 self._progress_tracking_service.update_progress(ManagePhase.CONSTRAINT_CHECKING, 0.0)
 
             # Get current geometry for constraint checking
+            if self._geometry_application_service is None:
+                state.error_message = "Geometry application service is required but not provided"
+                return ManageGeometryResponse(
+                    result=ManageResult.FAILED,
+                    state=state,
+                    error_message=state.error_message,
+                    execution_time=time.time() - start_time,
+                )
             current_geometry = self._geometry_application_service.get_current_geometry(request.target_widget)
 
             # Check constraints against current geometry
@@ -706,6 +714,16 @@ class ManageGeometryUseCase:
 
             if not use_animation:
                 # Apply geometry directly
+                if self._geometry_application_service is None:
+                    state.error_message = "Geometry application service is required but not provided"
+                    return ManageGeometryResponse(
+                        result=ManageResult.FAILED,
+                        state=state,
+                        error_message=state.error_message,
+                        warnings=warnings,
+                        execution_time=time.time() - start_time,
+                        phase_times=phase_times,
+                    )
                 geometry_applied, final_geometry, application_error = self._geometry_application_service.apply_geometry(
                     request.target_widget,
                     geometry_calculation.calculated_geometry,

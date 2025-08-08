@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from .domain_utils import DomainIdentityGenerator
 from .value_object import ValueObject
 
 
@@ -17,15 +18,17 @@ class Timestamp(ValueObject):
     """Value object for timestamps with timezone awareness."""
     value: datetime
     
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.value,)
+    
     def __post_init__(self):
         if self.value is None:
             msg = "Timestamp value cannot be None"
             raise ValueError(msg)
     
-    @classmethod
-    def now(cls) -> Timestamp:
-        """Create timestamp for current time."""
-        return cls(datetime.utcnow())
+    # Domain should not directly fetch system time. Prefer passing a timestamp
+    # from the application layer or use a time/clock port in application services.
     
     @classmethod
     def from_iso_string(cls, iso_string: str) -> Timestamp:
@@ -55,6 +58,10 @@ class Identifier(ValueObject):
     """Value object for unique identifiers."""
     value: str
     
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.value,)
+    
     def __post_init__(self):
         if not self.value or not self.value.strip():
             msg = "Identifier value cannot be empty"
@@ -67,8 +74,7 @@ class Identifier(ValueObject):
     @classmethod
     def generate(cls) -> Identifier:
         """Generate a new unique identifier."""
-        import uuid
-        return cls(str(uuid.uuid4()))
+        return cls(DomainIdentityGenerator.generate_domain_id("identifier"))
     
     def __str__(self) -> str:
         return self.value
@@ -80,6 +86,10 @@ class Version(ValueObject):
     major: int
     minor: int
     patch: int
+    
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.major, self.minor, self.patch)
     
     def __post_init__(self):
         if self.major < 0 or self.minor < 0 or self.patch < 0:
@@ -102,20 +112,16 @@ class Version(ValueObject):
             raise ValueError(msg) from e
     
     def to_string(self) -> str:
-        """Convert to string representation."""
+        """Convert to string format."""
         return f"{self.major}.{self.minor}.{self.patch}"
     
     def is_compatible_with(self, other: Version) -> bool:
-        """Check if this version is compatible with another (same major version)."""
+        """Check if this version is compatible with another."""
         return self.major == other.major
     
     def is_newer_than(self, other: Version) -> bool:
         """Check if this version is newer than another."""
-        if self.major != other.major:
-            return self.major > other.major
-        if self.minor != other.minor:
-            return self.minor > other.minor
-        return self.patch > other.patch
+        return (self.major, self.minor, self.patch) > (other.major, other.minor, other.patch)
     
     def __str__(self) -> str:
         return self.to_string()

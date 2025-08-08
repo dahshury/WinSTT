@@ -28,9 +28,9 @@ class ModelType(Enum):
     def get_display_name(self) -> str:
         """Get human-readable display name."""
         display_names = {
-            self.WHISPER_TURBO: "Whisper Turbo",
-            self.LITE_WHISPER_TURBO: "Lite Whisper Turbo",
-            self.LITE_WHISPER_TURBO_FAST: "Lite Whisper Turbo Fast",
+            ModelType.WHISPER_TURBO: "Whisper Turbo",
+            ModelType.LITE_WHISPER_TURBO: "Lite Whisper Turbo",
+            ModelType.LITE_WHISPER_TURBO_FAST: "Lite Whisper Turbo Fast",
         }
         return display_names.get(self, self.value)
 
@@ -60,6 +60,15 @@ class ModelConfiguration(ValueObject):
     quantization: Quantization
     use_gpu: bool
     max_memory: int | None = None
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (
+            self.model_type,
+            self.quantization,
+            self.use_gpu,
+            self.max_memory,
+        )
 
     def __post_init__(self):
         """Validate model configuration after initialization."""

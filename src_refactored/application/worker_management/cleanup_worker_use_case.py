@@ -70,6 +70,13 @@ class WorkerCleanupStatus:
 
 
 @dataclass
+class CleanupWorkersResult:
+    """Result from cleaning up multiple workers"""
+    worker_statuses: list[WorkerCleanupStatus] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
 class CleanupWorkerResponse:
     """Response from cleanup worker operation"""
     result: CleanupResult
@@ -319,7 +326,7 @@ class CleanupWorkerUseCase:
             # Verify cleanup was successful
             verification_result = self._verify_cleanup_completion(response.worker_statuses)
             if not verification_result.is_success:
-                response.warnings.append(f"Cleanup verification failed: {verification_result.error_message}")
+                response.warnings.append(f"Cleanup verification failed: {verification_result.get_error()}")
 
             # Determine overall result
             if len(response.failed_cleanups) == 0:
@@ -383,7 +390,7 @@ class CleanupWorkerUseCase:
             if not configurations and cleanup_all_if_empty:
                 # Get all active workers
                 active_workers_result = self._worker_registry.get_active_workers()
-                if active_workers_result.is_success:
+                if active_workers_result.is_success and active_workers_result.value is not None:
                     for worker in active_workers_result.value:
                         # Create default configuration for each worker
                         default_config = WorkerCleanupConfiguration(worker_type=WorkerType.ALL)
@@ -395,7 +402,7 @@ class CleanupWorkerUseCase:
                         if config.worker_type == WorkerType.ALL:
                             active_workers_result = self._worker_registry.get_active_workers(
                             )
-                            if active_workers_result.is_success:
+                            if active_workers_result.is_success and active_workers_result.value is not None:
                                 for worker in active_workers_result.value:
                                     workers_to_cleanup.append((worker, config))
                         else:
@@ -415,7 +422,7 @@ class CleanupWorkerUseCase:
         workers_to_cleanup: list[tuple[WorkerInstance, WorkerCleanupConfiguration]],
         strategy: CleanupStrategy,
         progress_callback: ProgressCallback | None,
-    ) -> "CleanupResult":
+    ) -> "CleanupWorkersResult":
         """Clean up workers based on strategy"""
         worker_statuses = []
         warnings = []
@@ -446,10 +453,10 @@ class CleanupWorkerUseCase:
             if status.result != CleanupResult.SUCCESS:
                 warnings.append(f"Worker {config.worker_type.value} cleanup failed: {status.error_message}")
 
-        return type("CleanupResult", (), {
-            "worker_statuses": worker_statuses,
-            "warnings": warnings,
-        })()
+        return CleanupWorkersResult(
+            worker_statuses=worker_statuses,
+            warnings=warnings,
+        )
 
     def _cleanup_single_worker(
         self,
@@ -473,7 +480,7 @@ class CleanupWorkerUseCase:
                 if signal_result.is_success:
                     status.signals_disconnected = True
                 else:
-                    self._logger.log_warning(f"Failed to disconnect signals: {signal_result.error_message}",
+                    self._logger.log_warning(f"Failed to disconnect signals: {signal_result.get_error()}",
                     )
 
             # Step 2: Stop worker
@@ -492,7 +499,7 @@ class CleanupWorkerUseCase:
             if stop_result.is_success:
                 status.worker_stopped = True
             else:
-                self._logger.log_warning(f"Failed to stop worker: {stop_result.error_message}")
+                self._logger.log_warning(f"Failed to stop worker: {stop_result.get_error()}")
 
             # Step 3: Stop thread
             thread_result = self._worker_registry.get_worker_thread(worker)
@@ -521,14 +528,14 @@ class CleanupWorkerUseCase:
                         wait_result = (
                             self._thread_management.wait_for_thread(thread, config.graceful_timeout_ms))
                         if not wait_result.is_success:
-                            self._logger.log_warning(f"Thread did not complete within timeout: {wait_result.error_message}")
+                            self._logger.log_warning(f"Thread did not complete within timeout: {wait_result.get_error()}")
 
                     # Clean up thread resources
                     cleanup_result = self._thread_management.cleanup_thread(thread)
                     if not cleanup_result.is_success:
-                        self._logger.log_warning(f"Thread cleanup failed: {cleanup_result.error_message}")
+                        self._logger.log_warning(f"Thread cleanup failed: {cleanup_result.get_error()}")
                 else:
-                    self._logger.log_warning(f"Failed to stop thread: {thread_stop_result.error_message}")
+                    self._logger.log_warning(f"Failed to stop thread: {thread_stop_result.get_error()}")
 
             # Step 4: Clean up resources
             if config.cleanup_resources:
@@ -537,24 +544,24 @@ class CleanupWorkerUseCase:
                 if resource_result.is_success:
                     status.resources_cleaned = True
                 else:
-                    self._logger.log_warning(f"Resource cleanup failed: {resource_result.error_message}")
+                    self._logger.log_warning(f"Resource cleanup failed: {resource_result.get_error()}")
 
                 # Clean up temporary files
                 temp_cleanup_result = (
                     self._resource_management.cleanup_temporary_files(config.worker_type))
                 if not temp_cleanup_result.is_success:
-                    self._logger.log_warning(f"Temporary file cleanup failed: {temp_cleanup_result.error_message}")
+                    self._logger.log_warning(f"Temporary file cleanup failed: {temp_cleanup_result.get_error()}")
 
                 # Release GPU memory if applicable
                 gpu_cleanup_result = (
                     self._resource_management.release_gpu_memory(config.worker_type))
                 if not gpu_cleanup_result.is_success:
-                    self._logger.log_debug(f"GPU memory cleanup not applicable or failed: {gpu_cleanup_result.error_message}")
+                    self._logger.log_debug(f"GPU memory cleanup not applicable or failed: {gpu_cleanup_result.get_error()}")
 
             # Step 5: Remove from registry
             registry_result = self._worker_registry.remove_worker(worker, config.worker_type)
             if not registry_result.is_success:
-                self._logger.log_warning(f"Failed to remove worker from registry: {registry_result.error_message}")
+                self._logger.log_warning(f"Failed to remove worker from registry: {registry_result.get_error()}")
 
             # Step 6: Force garbage collection if requested
             if config.force_garbage_collection:
@@ -562,7 +569,7 @@ class CleanupWorkerUseCase:
                 if gc_result.is_success:
                     status.memory_freed_mb = gc_result.value
                 else:
-                    self._logger.log_warning(f"Garbage collection failed: {gc_result.error_message}")
+                    self._logger.log_warning(f"Garbage collection failed: {gc_result.get_error()}")
 
             # Determine success
             if status.signals_disconnected and status.worker_stopped and status.thread_stopped and status.resources_cleaned:

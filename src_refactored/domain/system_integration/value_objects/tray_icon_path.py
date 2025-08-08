@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from src_refactored.domain.common.ports.file_system_port import FileSystemPort
 
 
 @dataclass(frozen=True)
@@ -19,18 +21,18 @@ class TrayIconPath:
             msg = "Tray icon path cannot be empty"
             raise ValueError(msg)
 
-        # Validate file extension
+        # Validate file extension using domain logic
         valid_extensions = {".png", ".ico", ".jpg", ".jpeg", ".bmp", ".gif", ".svg"}
-        path_obj = Path(self.path)
+        
+        # Extract extension using string operations
+        extension = "." + self.path.split(".")[-1].lower() if "." in self.path else ""
 
-        if path_obj.suffix.lower() not in valid_extensions:
+        if extension not in valid_extensions:
             msg = (
-                f"Invalid tray icon file extension: {path_obj.suffix}. "
+                f"Invalid tray icon file extension: {extension}. "
                 f"Supported extensions: {', '.join(sorted(valid_extensions))}"
             )
-            raise ValueError(
-                msg,
-            )
+            raise ValueError(msg)
 
     @classmethod
     def from_resource(cls, resource_path: str,
@@ -51,13 +53,14 @@ class TrayIconPath:
             msg = "Absolute path cannot be empty"
             raise ValueError(msg)
 
-        path_obj = Path(absolute_path)
-        if not path_obj.is_absolute():
+        # Validate absolute path using string heuristics only
+        p: Final[str] = absolute_path
+        is_abs = p.startswith(("/", "\\")) or (len(p) > 1 and p[1] == ":")
+        if not is_abs:
             msg = f"Path must be absolute: {absolute_path}"
             raise ValueError(msg)
 
-        return cls(path=str(path_obj),
-    )
+        return cls(path=p)
 
     @classmethod
     def from_relative_path(cls, relative_path: str, base_dir: str | None = None) -> TrayIconPath:
@@ -66,44 +69,60 @@ class TrayIconPath:
             msg = "Relative path cannot be empty"
             raise ValueError(msg)
 
-        full_path = Path(base_dir) / relative_path if base_dir else Path.cwd() / relative_path
+        # Avoid using current working directory in domain; just join
+        if base_dir:
+            sep = "/" if "/" in base_dir or "/" in relative_path else "\\"
+            base = base_dir.rstrip("/\\")
+            return cls(path=f"{base}{sep}{relative_path}")
+        # Without a base, keep relative as-is; infra can resolve
+        return cls(path=relative_path)
 
-        return cls(path=str(full_path.resolve()))
-
-    def exists(self) -> bool:
+    def exists(self, file_system_port: FileSystemPort) -> bool:
         """Check if the tray icon file exists."""
         try:
-            return Path(self.path).exists()
-        except (OSError, ValueError):
+            exists_result = file_system_port.file_exists(self.path)
+            return exists_result.is_success and bool(exists_result.value)
+        except Exception:
             return False
 
-    def is_absolute(self) -> bool:
+    def is_absolute(self, file_system_port: FileSystemPort) -> bool:
         """Check if the path is absolute."""
         try:
-            return Path(self.path).is_absolute()
-        except (OSError, ValueError):
+            absolute_result = file_system_port.is_absolute_path(self.path)
+            return absolute_result.is_success and bool(absolute_result.value)
+        except Exception:
             return False
 
     def get_filename(self) -> str:
         """Get the filename from the path."""
-        return Path(self.path).name
+        # Extract filename using string operations
+        if "/" in self.path:
+            return self.path.split("/")[-1]
+        if "\\" in self.path:
+            return self.path.split("\\")[-1]
+        return self.path
 
     def get_extension(self) -> str:
         """Get the file extension."""
-        return Path(self.path).suffix.lower()
+        if "." in self.path:
+            return "." + self.path.split(".")[-1].lower()
+        return ""
 
     def get_directory(self) -> str:
         """Get the directory containing the icon file."""
-        return str(Path(self.path).parent)
+        # Extract directory using string operations
+        if "/" in self.path:
+            return "/".join(self.path.split("/")[:-1])
+        if "\\" in self.path:
+            return "\\".join(self.path.split("\\")[:-1])
+        return ""
 
-    def get_size_bytes(self) -> int | None:
+    def get_size_bytes(self, file_system_port: FileSystemPort) -> int | None:
         """Get file size in bytes, None if file doesn't exist."""
         try:
-            path_obj = Path(self.path)
-            if path_obj.exists():
-                return path_obj.stat().st_size
-            return None
-        except (OSError, ValueError):
+            size_result = file_system_port.get_file_size(self.path)
+            return size_result.value if size_result.is_success else None
+        except Exception:
             return None
 
     def is_supported_format(self) -> bool:
@@ -114,17 +133,19 @@ class TrayIconPath:
 
     def to_uri(self) -> str:
         """Convert path to file URI."""
-        path_obj = Path(self.path)
-        return path_obj.as_uri()
+        # Convert path to URI should be handled by infra; provide simple fallback
+        p: Final[str] = self.path.replace("\\", "/")
+        if p.startswith("/") or (len(p) > 1 and p[1] == ":"):
+            # naive file uri
+            if ":" in p and not p.startswith("/"):
+                p = "/" + p
+            return f"file://{p}"
+        return f"file:///{p}"
 
     def resolve(self) -> TrayIconPath:
         """Resolve the path to absolute form."""
-        try:
-            resolved_path = Path(self.path).resolve()
-            return TrayIconPath(path=str(resolved_path))
-        except (OSError, ValueError) as e:
-            msg = f"Cannot resolve path '{self.path}': {e}"
-            raise ValueError(msg)
+        # Domain should not resolve paths; return self
+        return TrayIconPath(path=self.path)
 
     def with_suffix(self, suffix: str,
     ) -> TrayIconPath:
@@ -132,78 +153,88 @@ class TrayIconPath:
         if not suffix.startswith("."):
             suffix = "." + suffix
 
-        path_obj = Path(self.path)
-        new_path = path_obj.with_suffix(suffix)
-        return TrayIconPath(path=str(new_path))
+        base = self.path
+        dot = base.rfind(".")
+        if dot != -1:
+            base = base[:dot]
+        return TrayIconPath(path=f"{base}{suffix}")
 
     def with_name(self, name: str,
     ) -> TrayIconPath:
         """Create new TrayIconPath with different filename."""
-        path_obj = Path(self.path)
-        new_path = path_obj.with_name(name)
-        return TrayIconPath(path=str(new_path))
+        # Replace final segment name using string ops
+        parts = self.path.replace("\\", "/").split("/")
+        if not parts:
+            return TrayIconPath(path=name)
+        parts[-1] = name
+        return TrayIconPath(path="/".join(parts))
 
     def relative_to(self, base_path: str,
     ) -> str:
         """Get path relative to base path."""
-        try:
-            path_obj = Path(self.path)
-            base_obj = Path(base_path)
-            return str(path_obj.relative_to(base_obj))
-        except (OSError, ValueError) as e:
-            msg = f"Cannot make path relative to '{base_path}': {e}"
-            raise ValueError(msg)
+        # Simple relative computation using strings (best-effort); infra should handle robustly
+        path_norm = self.path.replace("\\", "/")
+        base_norm = base_path.replace("\\", "/").rstrip("/")
+        if path_norm.startswith(base_norm + "/"):
+            return path_norm[len(base_norm) + 1 :]
+        return path_norm
 
-    def validate_accessibility(self) -> bool:
+    def validate_accessibility(self, file_system_port: FileSystemPort) -> bool:
         """Validate that the icon file is accessible for reading."""
         try:
-            path_obj = Path(self.path)
-
             # Check if file exists
-            if not path_obj.exists():
+            exists_result = file_system_port.file_exists(self.path)
+            if not exists_result.is_success or not exists_result.value:
                 return False
 
-            # Check if it's a file (not directory)
-            if not path_obj.is_file():
+            # Get file info to check if it's a file
+            file_info_result = file_system_port.get_file_info(self.path)
+            if not file_info_result.is_success:
                 return False
+            
+            file_info = file_info_result.value
+            if file_info is None:
+                return False
+            return file_info.is_file and file_info.exists
 
-            # Check read permissions
-            return os.access(self.path, os.R_OK)
-
-        except (OSError, ValueError):
+        except Exception:
             return False
 
-    def get_validation_errors(self) -> list[str]:
+    def get_validation_errors(self, file_system_port: FileSystemPort) -> list[str]:
         """Get list of validation errors for the icon path."""
         errors = []
 
         try:
-            path_obj = Path(self.path)
-
             # Check if path is empty
             if not self.path.strip():
                 errors.append("Path cannot be empty")
                 return errors
 
-            # Check file extension
+            # Check file extension using domain logic
             valid_extensions = {".png", ".ico", ".jpg", ".jpeg", ".bmp", ".gif", ".svg"}
-            if path_obj.suffix.lower() not in valid_extensions:
-                errors.append(f"Unsupported file extension: {path_obj.suffix}")
+            extension = "." + self.path.split(".")[-1].lower() if "." in self.path else ""
+            
+            if extension not in valid_extensions:
+                errors.append(f"Unsupported file extension: {extension}")
 
-            # Check if file exists
-            if not path_obj.exists():
+            # Check if file exists through port
+            exists_result = file_system_port.file_exists(self.path)
+            if not exists_result.is_success or not exists_result.value:
                 errors.append(f"File does not exist: {self.path}")
-            elif not path_obj.is_file():
-                errors.append(f"Path is not a file: {self.path}")
-            elif not os.access(self.path, os.R_OK):
-                errors.append(f"File is not readable: {self.path}")
+            else:
+                # Check if it's a file
+                file_info_result = file_system_port.get_file_info(self.path)
+                if file_info_result.is_success:
+                    file_info = file_info_result.value
+                    if file_info is None or not file_info.is_file:
+                        errors.append(f"Path is not a file: {self.path}")
 
             # Check file size (warn if too large for tray icon)
-            size = self.get_size_bytes()
+            size = self.get_size_bytes(file_system_port)
             if size and size > 1024 * 1024:  # 1MB
                 errors.append(f"File size is large for tray icon: {size} bytes")
 
-        except (OSError, ValueError) as e:
+        except Exception as e:
             errors.append(f"Path validation error: {e}")
 
         return errors

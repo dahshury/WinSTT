@@ -8,15 +8,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from src_refactored.domain.main_window.value_objects.window_operations import (
+from src_refactored.domain.ui_coordination.value_objects.ui_abstractions import (
+    IUIWidget,
+    IUIWindow,
+)
+from src_refactored.domain.ui_coordination.value_objects.window_operations import (
     ComponentType,
     InitializePhase,
     InitializeResult,
     WindowType,
-)
-from src_refactored.domain.ui_coordination.value_objects.ui_abstractions import (
-    IUIWidget,
-    IUIWindow,
 )
 
 
@@ -74,7 +74,7 @@ class InitializeMainWindowRequest:
 class InitializedComponent:
     """Information about initialized component."""
     component_type: ComponentType
-    widget: IUIWidget
+    widget: IUIWidget | None
     configuration: ComponentConfiguration
     initialization_successful: bool
     error_message: str | None = None
@@ -294,7 +294,11 @@ class InitializeMainWindowUseCase:
             request_errors = self.validation_service.validate_initialization_request(request)
             if request_errors:
                 return self._create_error_response(
-                    InitializeResult.VALIDATION_ERROR,
+                    InitializeResult(
+                        success=False,
+                        phase=InitializePhase.CONFIGURATION_VALIDATION,
+                        error_message=f"Request validation failed: {'; '.join(request_errors)}",
+                    ),
                     InitializePhase.CONFIGURATION_VALIDATION,
                     14.3,
                     f"Request validation failed: {'; '.join(request_errors)}",
@@ -305,7 +309,11 @@ class InitializeMainWindowUseCase:
             window_errors = self.validation_service.validate_window_configuration(request.window_configuration)
             if window_errors:
                 return self._create_error_response(
-                    InitializeResult.CONFIGURATION_ERROR,
+                    InitializeResult(
+                        success=False,
+                        phase=InitializePhase.CONFIGURATION_VALIDATION,
+                        error_message=f"Window configuration validation failed: {'; '.join(window_errors)}",
+                    ),
                     InitializePhase.CONFIGURATION_VALIDATION,
                     14.3,
                     f"Window configuration validation failed: {'; '.join(window_errors)}",
@@ -318,7 +326,11 @@ class InitializeMainWindowUseCase:
             )
             if component_errors:
                 return self._create_error_response(
-                    InitializeResult.CONFIGURATION_ERROR,
+                    InitializeResult(
+                        success=False,
+                        phase=InitializePhase.CONFIGURATION_VALIDATION,
+                        error_message=f"Component configuration validation failed: {'; '.join(component_errors)}",
+                    ),
                     InitializePhase.CONFIGURATION_VALIDATION,
                     14.3,
                     f"Component configuration validation failed: {'; '.join(component_errors)}",
@@ -337,7 +349,11 @@ class InitializeMainWindowUseCase:
 
                 if not main_window:
                     return self._create_error_response(
-                        InitializeResult.WINDOW_CREATION_FAILED,
+                        InitializeResult(
+                            success=False,
+                            phase=InitializePhase.WINDOW_CREATION,
+                            error_message="Failed to create main window",
+                        ),
                         InitializePhase.WINDOW_CREATION,
                         28.6,
                         "Failed to create main window",
@@ -364,7 +380,11 @@ class InitializeMainWindowUseCase:
 
             except Exception as e:
                 return self._create_error_response(
-                    InitializeResult.WINDOW_CREATION_FAILED,
+                    InitializeResult(
+                        success=False,
+                        phase=InitializePhase.WINDOW_CREATION,
+                        error_message=f"Window creation failed: {e!s}",
+                    ),
                     InitializePhase.WINDOW_CREATION,
                     28.6,
                     f"Window creation failed: {e!s}",
@@ -467,15 +487,16 @@ class InitializeMainWindowUseCase:
                         if (component_config.component_type in initialized_components and
                             initialized_components[component_config.component_type].widget):
 
-                            component = initialized_components[component_config.component_type].widget
-                            if not self.layout_service.configure_component_layout(
-                                component,
-                                component_config.layout_constraints,
-                            ):
-                                self.logger_service.log_warning(
-                                    f"Failed to configure layout for {component_config.component_type.value}",
-                                    {"component_type": component_config.component_type.value},
-                                )
+                            layout_component: IUIWidget | None = initialized_components[component_config.component_type].widget
+                            if layout_component is not None:  # Type guard
+                                if not self.layout_service.configure_component_layout(
+                                    layout_component,
+                                    component_config.layout_constraints,
+                                ):
+                                    self.logger_service.log_warning(
+                                        f"Failed to configure layout for {component_config.component_type.value}",
+                                        {"component_type": component_config.component_type.value},
+                                    )
 
                     # Validate layout integrity
                     if not self.layout_service.validate_layout_integrity(main_window):
@@ -491,7 +512,11 @@ class InitializeMainWindowUseCase:
 
             except Exception as e:
                 return self._create_error_response(
-                    InitializeResult.LAYOUT_SETUP_FAILED,
+                    InitializeResult(
+                        success=False,
+                        phase=InitializePhase.LAYOUT_CONFIGURATION,
+                        error_message=f"Layout configuration failed: {e!s}",
+                    ),
                     InitializePhase.LAYOUT_CONFIGURATION,
                     57.2,
                     f"Layout configuration failed: {e!s}",
@@ -569,19 +594,35 @@ class InitializeMainWindowUseCase:
 
             # Determine result
             if component_creation_errors and not any(comp.initialization_successful for comp in initialized_components.values()):
-                result = InitializeResult.COMPONENT_INITIALIZATION_FAILED
+                result = InitializeResult(
+                    success=False,
+                    phase=InitializePhase.COMPONENT_SETUP,
+                    error_message="Some components failed to initialize",
+                )
             elif not layout_configured:
-                result = InitializeResult.LAYOUT_SETUP_FAILED
+                result = InitializeResult(
+                    success=False,
+                    phase=InitializePhase.LAYOUT_SETUP,
+                    error_message="Layout configuration incomplete",
+                )
             elif not signals_connected:
-                result = InitializeResult.SIGNAL_CONNECTION_FAILED
+                result = InitializeResult(
+                    success=False,
+                    phase=InitializePhase.SIGNAL_CONNECTION,
+                    error_message="Signal connections incomplete",
+                )
             else:
-                result = InitializeResult.SUCCESS
+                result = InitializeResult(
+                    success=True,
+                    phase=InitializePhase.FINALIZATION,
+                    error_message="Main window initialization successful",
+                )
 
             self.logger_service.log_info(
                 "Main window initialization completed",
                 {
                     "window_title": request.window_configuration.title,
-                    "result": result.value,
+                    "result": result.success,
                     "execution_time_ms": execution_time,
                     "components_created": len([c for c in initialized_components.values() if c.widget]),
                     "layout_configured": layout_configured,
@@ -611,7 +652,11 @@ class InitializeMainWindowUseCase:
             )
 
             return self._create_error_response(
-                InitializeResult.INTERNAL_ERROR,
+                InitializeResult(
+                    success=False,
+                    phase=InitializePhase.INITIALIZATION,
+                    error_message=f"Unexpected error: {e!s}",
+                ),
                 InitializePhase.INITIALIZATION,
                 0.0,
                 f"Unexpected error: {e!s}",

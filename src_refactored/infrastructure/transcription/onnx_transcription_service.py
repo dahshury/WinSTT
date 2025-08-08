@@ -24,7 +24,6 @@ from pydub import AudioSegment
 from PyQt6.QtCore import QObject, pyqtSignal
 from transformers import WhisperFeatureExtractor, WhisperTokenizerFast
 
-from logger import setup_logger
 from src_refactored.domain.transcription.entities.transcription_result import TranscriptionResult
 from src_refactored.domain.transcription.entities.transcription_segment import TranscriptionSegment
 from src_refactored.domain.transcription.value_objects.language import Language
@@ -45,7 +44,7 @@ from src_refactored.domain.transcription.value_objects.transcription_status impo
 # Suppress transformers logging
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
-custom_logger = setup_logger()
+custom_logger = logging.getLogger(__name__)
 
 
 def resource_path(relative_path: str) -> str:

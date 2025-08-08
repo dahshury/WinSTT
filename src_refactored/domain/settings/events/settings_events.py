@@ -14,9 +14,6 @@ class SettingsUpdatedEvent(DomainEvent):
     setting_types: list[SettingType]
     changes_count: int
     restart_required: bool = False
-    event_id: str = ""
-    timestamp: float = 0.0
-    source: str = "settings_service"
     
     def __post_init__(self):
         super().__post_init__()
@@ -29,9 +26,6 @@ class SettingsApplyProgressEvent(DomainEvent):
     percentage: int
     message: str
     current_step: str
-    event_id: str = ""
-    timestamp: float = 0.0
-    source: str = "settings_service"
     
     def __post_init__(self):
         super().__post_init__()
@@ -43,9 +37,6 @@ class SettingsValidationFailedEvent(DomainEvent):
     
     failed_settings: list[str]
     error_messages: list[str]
-    event_id: str = ""
-    timestamp: float = 0.0
-    source: str = "settings_validator"
     
     def __post_init__(self):
         super().__post_init__()
@@ -57,9 +48,6 @@ class WorkerReinitializationRequestedEvent(DomainEvent):
     
     worker_types: list[str]
     reason: str
-    event_id: str = ""
-    timestamp: float = 0.0
-    source: str = "worker_manager"
     
     def __post_init__(self):
         super().__post_init__()
@@ -71,9 +59,6 @@ class ApplicationRestartRequestedEvent(DomainEvent):
     
     reason: str
     changes: list[str]
-    event_id: str = ""
-    timestamp: float = 0.0
-    source: str = "application_lifecycle"
     
     def __post_init__(self):
         super().__post_init__()
@@ -86,9 +71,6 @@ class SettingsErrorEvent(DomainEvent):
     error_type: str
     error_message: str
     context: dict[str, Any]
-    event_id: str = ""
-    timestamp: float = 0.0
-    source: str = "settings_service"
     
     def __post_init__(self):
         super().__post_init__()

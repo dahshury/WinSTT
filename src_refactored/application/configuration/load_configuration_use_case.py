@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from src_refactored.domain.common.progress_callback import ProgressCallback
 from src_refactored.domain.common.result import Result
+from src_refactored.domain.common.value_object import ProgressPercentage
 from src_refactored.domain.settings.entities.user_preferences import UserPreferences
 from src_refactored.domain.settings.value_objects.configuration_operations import (
     ConfigurationSource,
@@ -95,6 +96,16 @@ class FileSystemServiceProtocol(Protocol):
     def resolve_config_path(self, relative_path: str,
     ) -> Result[str]:
         """Resolve configuration file path"""
+        ...
+
+    def is_absolute_path(self, path: str,
+    ) -> bool:
+        """Check if path is absolute"""
+        ...
+
+    def join_path(self, base_path: str, relative_path: str,
+    ) -> str:
+        """Join base path with relative path"""
         ...
 
 
@@ -187,7 +198,7 @@ class LoadConfigurationUseCase:
         cache_service: CacheServiceProtocol,
         configuration_factory: ConfigurationFactoryProtocol,
         logger_service: LoggerServiceProtocol,
-    ):
+    ) -> None:
         self._file_system = file_system_service
         self._environment = environment_service
         self._validation = validation_service
@@ -224,9 +235,10 @@ class LoadConfigurationUseCase:
                     response.load_duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
                     # Still create user preferences from cached config
-                    prefs_result = self._factory.create_user_preferences(response.loaded_config)
-                    if prefs_result.is_success:
-                        response.user_preferences = prefs_result.value
+                    if response.loaded_config is not None:
+                        prefs_result = self._factory.create_user_preferences(response.loaded_config)
+                        if prefs_result.is_success:
+                            response.user_preferences = prefs_result.value
 
                     self._logger.log_info("Configuration loaded from cache")
 
@@ -247,15 +259,15 @@ class LoadConfigurationUseCase:
             config_data_result = self._load_from_sources(config_locations, request)
             if not config_data_result.is_success:
                 if request.configuration.fallback_to_defaults:
-                    self._logger.log_warning(f"Failed to load configuration, using defaults: {config_data_result.error_message}")
+                    self._logger.log_warning(f"Failed to load configuration, using defaults: {config_data_result.error}")
                     config_data = self._factory.get_default_configuration()
                     response.fallback_values_used = config_data.copy()
                     response.result = LoadResult.FALLBACK_USED
                 else:
-                    response.error_message = config_data_result.error_message
+                    response.error_message = config_data_result.error
                     return response
             else:
-                config_data = config_data_result.value
+                config_data = config_data_result.value or {}
 
             # Phase 4: Parse and merge configuration
             if not self._update_progress(request.progress_callback, LoadPhase.PARSING_CONFIG, 50):
@@ -271,7 +283,7 @@ class LoadConfigurationUseCase:
                         env_config_result.value,
                         MergeStrategy.OVERLAY,
                     )
-                    if merge_result.is_success:
+                    if merge_result.is_success and merge_result.value is not None:
                         config_data = merge_result.value
                         response.sources_used.append(ConfigurationSource.ENVIRONMENT)
 
@@ -282,10 +294,10 @@ class LoadConfigurationUseCase:
 
             if request.configuration.validate_after_load:
                 validation_result = self._validation.validate_configuration(config_data)
-                if validation_result.is_success:
+                if validation_result.is_success and validation_result.value is not None:
                     response.validation_warnings = validation_result.value
                 else:
-                    response.error_message = f"Configuration validation failed: {validation_result.error_message}"
+                    response.error_message = f"Configuration validation failed: {validation_result.error}"
                     if not request.configuration.fallback_to_defaults:
                         response.result = LoadResult.VALIDATION_FAILED
                         return response
@@ -303,15 +315,18 @@ class LoadConfigurationUseCase:
             )
 
             if not final_config_result.is_success:
-                response.error_message = f"Failed to merge with defaults: {final_config_result.error_message}"
+                response.error_message = f"Failed to merge with defaults: {final_config_result.error}"
                 return response
 
             final_config = final_config_result.value
 
             # Phase 7: Create user preferences
-            prefs_result = self._factory.create_user_preferences(final_config)
+            if final_config is not None:
+                prefs_result = self._factory.create_user_preferences(final_config)
+            else:
+                prefs_result = Result.failure("No final configuration available")
             if not prefs_result.is_success:
-                response.error_message = f"Failed to create user preferences: {prefs_result.error_message}"
+                response.error_message = f"Failed to create user preferences: {prefs_result.error}"
                 return response
 
             # Phase 8: Finalize
@@ -320,13 +335,13 @@ class LoadConfigurationUseCase:
                 return response
 
             # Cache the configuration if enabled
-            if request.configuration.cache_loaded_config:
+            if request.configuration.cache_loaded_config and final_config is not None:
                 cache_result = self._cache.cache_config(cache_key, final_config)
                 if not cache_result.is_success:
-                    response.validation_warnings.append(f"Failed to cache configuration: {cache_result.error_message}")
+                    response.validation_warnings.append(f"Failed to cache configuration: {cache_result.error}")
 
             # Phase 9: Complete
-            if not self._update_progress(request.progress_callback, LoadPhase.COMPLETED, 100):
+            if not self._update_progress(request.progress_callback, LoadPhase.FINALIZING, 100):
                 response.result = LoadResult.CANCELLED
                 return response
 
@@ -386,7 +401,7 @@ class LoadConfigurationUseCase:
     locations: list[ConfigurationLocation], request: LoadConfigurationRequest,
     ) -> Result[dict[str, Any]]:
         """Load configuration from multiple sources"""
-        merged_config = {}
+        merged_config: dict[str, Any] = {}
         sources_used = []
 
         for location in locations:
@@ -401,19 +416,19 @@ class LoadConfigurationUseCase:
                     self._logger.log_warning(f"Unsupported configuration source: {location.source}")
                     continue
 
-                if config_result.is_success:
+                if config_result.is_success and config_result.value is not None:
                     merge_result = self._factory.merge_configurations(
                         merged_config,
                         config_result.value,
                         request.configuration.merge_strategy,
                     )
-                    if merge_result.is_success:
+                    if merge_result.is_success and merge_result.value is not None:
                         merged_config = merge_result.value
                         sources_used.append(location.source)
                     else:
-                        self._logger.log_warning(f"Failed to merge config from {location.source}: {merge_result.error_message}")
+                        self._logger.log_warning(f"Failed to merge config from {location.source}: {merge_result.error}")
                 else:
-                    self._logger.log_warning(f"Failed to load config from {location.source}: {config_result.error_message}")
+                    self._logger.log_warning(f"Failed to load config from {location.source}: {config_result.error}")
 
             except Exception as e:
                 self._logger.log_error(f"Error loading from {location.source}: {e!s}")
@@ -432,10 +447,10 @@ class LoadConfigurationUseCase:
         # Resolve relative path
         if not self._file_system.is_absolute_path(location.path.path):
             root_result = self._file_system.get_project_root()
-            if root_result.is_success:
+            if root_result.is_success and root_result.value is not None:
                 file_path = self._file_system.join_path(root_result.value, location.path.path)
             else:
-                return Result.failure(f"Could not resolve project root: {root_result.error_message}")
+                return Result.failure(f"Could not resolve project root: {root_result.error}")
         else:
             file_path = location.path.path
 
@@ -465,9 +480,10 @@ class LoadConfigurationUseCase:
     ) -> bool:
         """Update progress and check for cancellation"""
         if callback:
-            return callback(
-                percentage=percentage,
+            result = callback(
+                progress=ProgressPercentage(percentage),
                 message=f"Load phase: {phase.value}",
                 error=None,
             )
+            return result if result is not None else True
         return True

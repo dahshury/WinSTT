@@ -27,6 +27,8 @@ class UpdatePhase(Enum):
     TEXT_PREPARATION = "text_preparation"
     TRANSLATION = "translation"
     FORMATTING = "formatting"
+    TEXT_FORMATTING = "text_formatting"
+    EXECUTION = "execution"
     WIDGET_UPDATE = "widget_update"
     VALIDATION_POST = "validation_post"
     FINALIZATION = "finalization"

@@ -1,9 +1,8 @@
 import gc
+import logging
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import QDialog
-
-from logger import setup_logger
 
 
 class ResourceManagementComponent(QObject):
@@ -24,7 +23,7 @@ class ResourceManagementComponent(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.logger = setup_logger()
+        self.logger = logging.getLogger(__name__)
 
         # Resource tracking
         self._workers = {}

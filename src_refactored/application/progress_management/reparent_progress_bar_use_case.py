@@ -90,7 +90,7 @@ class ReparentProgressBarRequest:
     direction: ReparentDirection = ReparentDirection.TO_TARGET
     configuration: ReparentConfiguration = field(default_factory=ReparentConfiguration)
     context_data: dict[str, Any] | None = None
-    timestamp: datetime = field(default_factory=datetime.now(UTC))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self):
         if self.timestamp is None:

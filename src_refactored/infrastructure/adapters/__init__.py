@@ -1,1 +1,1 @@
-"""Infrastructure Adapters Module."""
+"""Infrastructure adapters package."""

@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
-import threading
 import weakref
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol
+
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
+
+
+class ThreadLikeProtocol(Protocol):
+    """Protocol for thread-like objects."""
+    
+    @property
+    def ident(self) -> int | None:
+        """Thread identifier."""
+        ...
+    
+    @property 
+    def name(self) -> str:
+        """Thread name."""
+        ...
+    
+    def is_alive(self) -> bool:
+        """Check if thread is alive."""
+        ...
 
 
 class ThreadReferenceType(Enum):
@@ -35,7 +53,7 @@ class ThreadReference:
     thread_id: str
     reference_type: ThreadReferenceType
     thread_name: str | None = None
-    created_at: datetime | None = None
+    created_at: float | None = None
 
     def __post_init__(self):
         """Validate thread reference."""
@@ -45,13 +63,14 @@ class ThreadReference:
 
         # Set default created_at if not provided
         if self.created_at is None:
-            object.__setattr__(self, "created_at", datetime.now())
+            object.__setattr__(self, "created_at", DomainIdentityGenerator.generate_timestamp())
 
     @classmethod
-    def from_python_thread(cls, thread: threading.Thread) -> ThreadReference:
-        """Create thread reference from Python threading.Thread."""
-        if not isinstance(thread, threading.Thread):
-            msg = "Expected threading.Thread instance"
+    def from_thread_like(cls, thread: ThreadLikeProtocol) -> ThreadReference:
+        """Create thread reference from any thread-like object."""
+        if not (hasattr(thread, "ident") and hasattr(thread, "name") and 
+                hasattr(thread, "is_alive")):
+            msg = "Expected thread-like object with ident, name, and is_alive attributes"
             raise ValueError(msg)
 
         thread_id = str(thread.ident) if thread.ident else f"thread_{id(thread)}"
@@ -60,26 +79,20 @@ class ThreadReference:
             thread_id=thread_id,
             reference_type=ThreadReferenceType.PYTHON_THREAD,
             thread_name=thread.name,
-            created_at=datetime.now(),
+            created_at=DomainIdentityGenerator.generate_timestamp(),
         )
+
+    @classmethod  
+    def from_python_thread(cls, thread: Any) -> ThreadReference:
+        """Create thread reference from Python threading.Thread.
+        
+        This method maintains backward compatibility while avoiding direct
+        dependency on the threading module in the domain layer.
+        """
+        return cls.from_thread_like(thread)
 
     @classmethod
-    def from_qt_thread(cls, thread: Any, thread_name: str | None = None) -> ThreadReference:
-        """Create thread reference from Qt QThread."""
-        # Note: We use Any type to avoid Qt dependency in domain layer
-        if not hasattr(thread, "isRunning"):
-            msg = "Expected Qt QThread-like object"
-            raise ValueError(msg)
-
-        thread_id = f"qt_thread_{id(thread)}"
-
-        return cls(
-            thread_id=thread_id,
-            reference_type=ThreadReferenceType.QT_THREAD,
-            thread_name=thread_name or getattr(thread, "objectName", lambda: None,
-    )(),
-            created_at=datetime.now(),
-        )
+    # Qt-specific mapping removed from domain; map QThreads in infrastructure adapters.
 
     @classmethod
     def from_worker(cls, worker: Any, thread_name: str | None = None) -> ThreadReference:
@@ -94,7 +107,7 @@ class ThreadReference:
             thread_id=thread_id,
             reference_type=ThreadReferenceType.WORKER_THREAD,
             thread_name=thread_name or getattr(worker, "__class__", type).__name__,
-            created_at=datetime.now(),
+            created_at=DomainIdentityGenerator.generate_timestamp(),
         )
 
     @classmethod
@@ -104,7 +117,7 @@ class ThreadReference:
             thread_id=thread_id,
             reference_type=ThreadReferenceType.CUSTOM_THREAD,
             thread_name=thread_name,
-            created_at=datetime.now(),
+            created_at=DomainIdentityGenerator.generate_timestamp(),
         )
 
     def get_display_name(self) -> str:
@@ -137,8 +150,8 @@ class ThreadReference:
 
     def get_age_seconds(self) -> float:
         """Get age of thread reference in seconds."""
-        if self.created_at:
-            return (datetime.now() - self.created_at).total_seconds()
+        if self.created_at is not None:
+            return float(DomainIdentityGenerator.generate_timestamp() - self.created_at)
         return 0.0
 
     def get_age_minutes(self) -> float:
@@ -151,16 +164,14 @@ class ThreadReference:
             "thread_id": self.thread_id,
             "reference_type": self.reference_type.value,
             "thread_name": self.thread_name,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": self.created_at,
             "age_seconds": self.get_age_seconds(),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ThreadReference:
         """Create thread reference from dictionary."""
-        created_at = None
-        if data.get("created_at"):
-            created_at = datetime.fromisoformat(data["created_at"])
+        created_at = data.get("created_at")
 
         return cls(
             thread_id=data["thread_id"],
@@ -191,7 +202,7 @@ class ThreadReferenceManager:
     def __init__(self):
         """Initialize thread reference manager."""
         self._references: dict[str, ThreadReference] = {}
-        self._weak_refs: dict[str, weakref.ref] = {}
+        self._weak_refs: dict[str, weakref.ref[Any]] = {}
         self._lifecycle_states: dict[str, ThreadLifecycleState] = {}
 
     def add_reference(self, reference: ThreadReference, thread_object: Any | None = None) -> None:

@@ -7,9 +7,9 @@ Represents the status of long-running operations with progress tracking.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.value_object import ProgressPercentage, ValueObject
 
 
@@ -40,9 +40,8 @@ class ProcessingStatusData(ValueObject):
 class ProcessingStatus:
     """Entity representing the status of a processing operation."""
     operation_id: str
-    started_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now,
-    )
+    started_at: float = field(default_factory=DomainIdentityGenerator.generate_timestamp)
+    updated_at: float = field(default_factory=DomainIdentityGenerator.generate_timestamp)
     data: ProcessingStatusData = field(default_factory=lambda: ProcessingStatusData(
         state=ProcessingState.PENDING,
         progress=ProgressPercentage(0.0),
@@ -57,7 +56,7 @@ class ProcessingStatus:
             progress=progress,
             message=message,
         )
-        self.updated_at = datetime.now()
+        self.updated_at = DomainIdentityGenerator.generate_timestamp()
 
     def complete(self, message: str = "Completed successfully",
     ) -> None:
@@ -67,7 +66,7 @@ class ProcessingStatus:
             progress=ProgressPercentage(100.0),
             message=message,
         )
-        self.updated_at = datetime.now()
+        self.updated_at = DomainIdentityGenerator.generate_timestamp()
 
     def fail(self, error: str,
     ) -> None:
@@ -78,7 +77,7 @@ class ProcessingStatus:
             message=f"Failed: {error}",
             error=error,
         )
-        self.updated_at = datetime.now()
+        self.updated_at = DomainIdentityGenerator.generate_timestamp()
 
     def cancel(self, message: str = "Operation cancelled",
     ) -> None:
@@ -88,7 +87,7 @@ class ProcessingStatus:
             progress=self.data.progress,
             message=message,
         )
-        self.updated_at = datetime.now()
+        self.updated_at = DomainIdentityGenerator.generate_timestamp()
 
     @property
     def is_active(self) -> bool:

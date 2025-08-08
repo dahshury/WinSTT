@@ -293,15 +293,13 @@ class FileSystemService:
                 file_path = self.base_path / file_path
 
             # Ensure directory exists
-            self.ensure_directory(file_path.parent,
-    )
+            self.ensure_directory(file_path.parent)
 
             with open(file_path, "w", encoding=encoding) as f:
                 f.write(content)
         except Exception as e:
             msg = f"Failed to write file {path}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def read_json_file(self, path: str | Path) -> dict[str, Any]:
         """Read JSON content from a file.
@@ -323,8 +321,7 @@ class FileSystemService:
             raise FileSystemError(msg)
         except Exception as e:
             msg = f"Failed to read JSON file {path}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def write_json_file(self, path: str | Path, data: dict[str, Any],
                        indent: int = 2,
@@ -344,8 +341,7 @@ class FileSystemService:
             self.write_text_file(path, content)
         except Exception as e:
             msg = f"Failed to write JSON file {path}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def get_file_hash(self, path: str | Path, algorithm: str = "md5",
     ) -> str:
@@ -366,8 +362,7 @@ class FileSystemService:
             if not file_path.is_absolute():
                 file_path = self.base_path / file_path
 
-            hash_obj = hashlib.new(algorithm,
-    )
+            hash_obj = hashlib.new(algorithm)
 
             with open(file_path, "rb") as f:
                 for chunk in iter(lambda: f.read(4096), b""):
@@ -376,8 +371,7 @@ class FileSystemService:
             return hash_obj.hexdigest()
         except Exception as e:
             msg = f"Failed to calculate hash for {path}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def create_temp_file(self, suffix: str | None = None, prefix: str | None = None,
                         directory: str | Path | None = None) -> tuple[int, str]:
@@ -401,14 +395,12 @@ class FileSystemService:
                 if not temp_dir.is_absolute():
                     temp_dir = self.base_path / temp_dir
                 self.ensure_directory(temp_dir)
-                temp_dir = str(temp_dir,
-    )
+                temp_dir = str(temp_dir)
 
             return tempfile.mkstemp(suffix=suffix, prefix=prefix, dir=temp_dir)
         except Exception as e:
             msg = f"Failed to create temporary file: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def create_temp_directory(self, suffix: str | None = None, prefix: str | None = None,
                              directory: str | Path | None = None) -> str:
@@ -432,14 +424,12 @@ class FileSystemService:
                 if not temp_dir.is_absolute():
                     temp_dir = self.base_path / temp_dir
                 self.ensure_directory(temp_dir)
-                temp_dir = str(temp_dir,
-    )
+                temp_dir = str(temp_dir)
 
             return tempfile.mkdtemp(suffix=suffix, prefix=prefix, dir=temp_dir)
         except Exception as e:
             msg = f"Failed to create temporary directory: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
 
     def get_disk_usage(self, path: str | Path | None = None) -> tuple[int, int, int]:
         """Get disk usage statistics.
@@ -458,13 +448,53 @@ class FileSystemService:
             if not check_path.is_absolute():
                 check_path = self.base_path / check_path
 
-            usage = shutil.disk_usage(check_path,
-    )
+            usage = shutil.disk_usage(check_path)
             return usage.total, usage.used, usage.free
         except Exception as e:
             msg = f"Failed to get disk usage for {path or self.base_path}: {e}"
-            raise FileSystemError(msg,
-    )
+            raise FileSystemError(msg)
+
+    def is_absolute_path(self, path: str) -> bool:
+        """Check if path is absolute.
+        
+        Args:
+            path: Path to check
+            
+        Returns:
+            True if path is absolute, False otherwise
+        """
+        return Path(path).is_absolute()
+
+    def join_path(self, base_path: str, relative_path: str) -> str:
+        """Join base path with relative path.
+        
+        Args:
+            base_path: Base path
+            relative_path: Relative path to join
+            
+        Returns:
+            Joined path as string
+        """
+        return str(Path(base_path) / relative_path)
+
+    def get_project_root(self) -> str:
+        """Get project root directory.
+        
+        Returns:
+            Project root directory path
+        """
+        return str(self.base_path)
+
+    def resolve_config_path(self, relative_path: str) -> str:
+        """Resolve configuration file path.
+        
+        Args:
+            relative_path: Relative path to resolve
+            
+        Returns:
+            Resolved absolute path
+        """
+        return str(self.base_path / relative_path)
 
     def cleanup_temp_files(self, pattern: str = "winstt_*", max_age_hours: int = 24) -> int:
         """Clean up temporary files older than specified age.

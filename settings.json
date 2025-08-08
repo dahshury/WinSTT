@@ -1,10 +1,10 @@
 {
     "model": "lite-whisper-turbo",
     "quantization": "Full",
-    "enable_sound": true,
+    "rec_key": "A+ALT+CTRL",
     "sound_path": "media/splash.mp3",
+    "recording_sound": true,
     "output_srt": false,
-    "rec_key": "CTRL+ALT+A",
     "llm_enabled": false,
     "llm_model": "gemma-3-1b-it",
     "llm_quantization": "Full",

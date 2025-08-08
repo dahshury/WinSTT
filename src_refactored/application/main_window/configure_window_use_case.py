@@ -9,9 +9,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Protocol
 
-from src_refactored.domain.main_window.value_objects.window_operations import (
+from src_refactored.domain.ui_coordination.value_objects.window_operations import (
     ConfigurePhase,
     ConfigureResult,
+    ConfigureResultStatus,
     PropertyType,
 )
 
@@ -357,9 +358,9 @@ class ConfigureWindowUseCase:
             # Validate window exists
             if not self.validation_service.validate_window_exists(request.window):
                 return self._create_error_response(
-                    ConfigureResult.WINDOW_NOT_FOUND,
+                    ConfigureResultStatus.WINDOW_NOT_FOUND,
                     ConfigurePhase.VALIDATION,
-                    16.7,
+                    0.0,
                     "Window not found or invalid",
                     start_time,
                 )
@@ -384,7 +385,7 @@ class ConfigureWindowUseCase:
 
             if validation_errors and request.validate_all_changes:
                 return self._create_error_response(
-                    ConfigureResult.VALIDATION_ERROR,
+                    ConfigureResultStatus.VALIDATION_ERROR,
                     ConfigurePhase.VALIDATION,
                     16.7,
                     f"Validation failed: {'; '.join(validation_errors)}",
@@ -704,17 +705,71 @@ class ConfigureWindowUseCase:
             total_updates = len(request.property_updates) + len(request.geometry_updates) + len(request.style_updates)
 
             if total_failures == 0:
-                result = ConfigureResult.SUCCESS
+                result = ConfigureResult(
+                    success=True,
+                    phase=ConfigurePhase.FINALIZATION,
+                    error_message=None,
+                    details={
+                        "status": ConfigureResultStatus.SUCCESS.value,
+                        "execution_time_ms": execution_time,
+                        "progress_percentage": 100.0,
+                    },
+                )
             elif property_failures and not geometry_failures and not style_failures:
-                result = ConfigureResult.PROPERTY_UPDATE_FAILED
+                result = ConfigureResult(
+                    success=False,
+                    phase=ConfigurePhase.PROPERTY_UPDATE,
+                    error_message=f"Property updates failed: {'; '.join(property_failures)}",
+                    details={
+                        "status": ConfigureResultStatus.PROPERTY_UPDATE_FAILED.value,
+                        "execution_time_ms": execution_time,
+                        "progress_percentage": 100.0,
+                    },
+                )
             elif geometry_failures and not property_failures and not style_failures:
-                result = ConfigureResult.GEOMETRY_UPDATE_FAILED
+                result = ConfigureResult(
+                    success=False,
+                    phase=ConfigurePhase.GEOMETRY_UPDATE,
+                    error_message=f"Geometry updates failed: {'; '.join(geometry_failures)}",
+                    details={
+                        "status": ConfigureResultStatus.GEOMETRY_UPDATE_FAILED.value,
+                        "execution_time_ms": execution_time,
+                        "progress_percentage": 100.0,
+                    },
+                )
             elif style_failures and not property_failures and not geometry_failures:
-                result = ConfigureResult.STYLE_UPDATE_FAILED
+                result = ConfigureResult(
+                    success=False,
+                    phase=ConfigurePhase.STYLE_UPDATE,
+                    error_message=f"Style updates failed: {'; '.join(style_failures)}",
+                    details={
+                        "status": ConfigureResultStatus.STYLE_UPDATE_FAILED.value,
+                        "execution_time_ms": execution_time,
+                        "progress_percentage": 100.0,
+                    },
+                )
             elif total_failures == total_updates:
-                result = ConfigureResult.INTERNAL_ERROR
+                result = ConfigureResult(
+                    success=False,
+                    phase=ConfigurePhase.INITIALIZATION,
+                    error_message="Internal error during configuration",
+                    details={
+                        "status": ConfigureResultStatus.INTERNAL_ERROR.value,
+                        "execution_time_ms": execution_time,
+                        "progress_percentage": 0.0,
+                    },
+                )
             else:
-                result = ConfigureResult.SUCCESS  # Partial success
+                result = ConfigureResult(
+                    success=True,
+                    phase=ConfigurePhase.FINALIZATION,
+                    error_message=None,
+                    details={
+                        "status": ConfigureResultStatus.SUCCESS.value,
+                        "execution_time_ms": execution_time,
+                        "progress_percentage": 100.0,
+                    },
+                )
 
             # Collect warnings
             warnings.extend(validation_errors)
@@ -725,7 +780,7 @@ class ConfigureWindowUseCase:
             self.logger_service.log_info(
                 "Window configuration completed",
                 {
-                    "result": result.value,
+                    "result": result.details.get("status", "unknown") if result.details else "unknown",
                     "execution_time_ms": execution_time,
                     "total_updates": total_updates,
                     "successful_updates": total_updates - total_failures,
@@ -752,7 +807,7 @@ class ConfigureWindowUseCase:
             )
 
             return self._create_error_response(
-                ConfigureResult.INTERNAL_ERROR,
+                ConfigureResultStatus.INTERNAL_ERROR,
                 ConfigurePhase.INITIALIZATION,
                 0.0,
                 f"Unexpected error: {e!s}",
@@ -761,7 +816,7 @@ class ConfigureWindowUseCase:
 
     def _create_error_response(
         self,
-        result: ConfigureResult,
+        status: ConfigureResultStatus,
         phase: ConfigurePhase,
         progress: float,
         error_message: str,
@@ -769,6 +824,17 @@ class ConfigureWindowUseCase:
     ) -> ConfigureWindowResponse:
         """Create an error response with timing information."""
         execution_time = (datetime.utcnow() - start_time).total_seconds() * 1000
+
+        result = ConfigureResult(
+            success=False,
+            phase=phase,
+            error_message=error_message,
+            details={
+                "status": status.value,
+                "execution_time_ms": execution_time,
+                "progress_percentage": progress,
+            },
+        )
 
         return ConfigureWindowResponse(
             result=result,

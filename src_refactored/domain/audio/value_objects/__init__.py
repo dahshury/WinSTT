@@ -71,11 +71,6 @@ from .validation import (
     ValidationSeverity,
 )
 from .validation_operations import (
-    ValidationCategory,
-    ValidationIssue,
-    ValidationResult,
-    ValidationRule,
-    ValidationSeverity,
     ValidationType,
 )
 
@@ -151,14 +146,9 @@ __all__ = [
     "VADState",
     # Validation concepts
     "ValidationCategory",
-    "ValidationCategory",
-    "ValidationIssue",
-    "ValidationIssue",
-    "ValidationResult",
+    "ValidationIssue", 
     "ValidationResult",
     "ValidationRule",
-    "ValidationRule",
-    "ValidationSeverity",
     "ValidationSeverity",
     # Validation operations
     "ValidationType",

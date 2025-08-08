@@ -110,12 +110,12 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             thread.start()
             self.worker_status[worker_id].is_running = True
             
-            self.logger.info(f"VAD worker created with ID: {worker_id}")
+            self.logger.log_info(f"VAD worker created with ID: {worker_id}")
             return Result.success(worker_id)
             
         except Exception as e:
             error_msg = f"Failed to create VAD worker: {e}"
-            self.logger.exception(error_msg)
+            self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
     
     def create_model_worker(self, model_type: str, quantization: str) -> Result[str]:
@@ -149,12 +149,12 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             thread.start()
             self.worker_status[worker_id].is_running = True
             
-            self.logger.info(f"Model worker created with ID: {worker_id} for model: {model_type}")
+            self.logger.log_info(f"Model worker created with ID: {worker_id} for model: {model_type}")
             return Result.success(worker_id)
             
         except Exception as e:
             error_msg = f"Failed to create model worker: {e}"
-            self.logger.exception(error_msg)
+            self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
     
     def create_listener_worker(self, model: Any, vad: Any, rec_key: str) -> Result[str]:
@@ -191,12 +191,12 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             thread.start()
             self.worker_status[worker_id].is_running = True
             
-            self.logger.info(f"Listener worker created with ID: {worker_id}")
+            self.logger.log_info(f"Listener worker created with ID: {worker_id}")
             return Result.success(worker_id)
             
         except Exception as e:
             error_msg = f"Failed to create listener worker: {e}"
-            self.logger.exception(error_msg)
+            self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
     
     def create_llm_worker(self, model_type: str, quantization: str) -> Result[str]:
@@ -231,12 +231,12 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             thread.start()
             self.worker_status[worker_id].is_running = True
             
-            self.logger.info(f"LLM worker created with ID: {worker_id} for model: {model_type}")
+            self.logger.log_info(f"LLM worker created with ID: {worker_id} for model: {model_type}")
             return Result.success(worker_id)
             
         except Exception as e:
             error_msg = f"Failed to create LLM worker: {e}"
-            self.logger.exception(error_msg)
+            self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
     
     def stop_worker(self, worker_id: str) -> Result[None]:
@@ -262,12 +262,12 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             if worker_id in self.worker_status:
                 self.worker_status[worker_id].is_running = False
             
-            self.logger.info(f"Worker {worker_id} stopped")
+            self.logger.log_info(f"Worker {worker_id} stopped")
             return Result.success(None)
             
         except Exception as e:
             error_msg = f"Failed to stop worker {worker_id}: {e}"
-            self.logger.exception(error_msg)
+            self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
     
     def stop_all_workers(self) -> Result[None]:
@@ -277,12 +277,12 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             for worker_id in worker_ids:
                 self.stop_worker(worker_id)
             
-            self.logger.info("All workers stopped")
+            self.logger.log_info("All workers stopped")
             return Result.success(None)
             
         except Exception as e:
             error_msg = f"Failed to stop all workers: {e}"
-            self.logger.exception(error_msg)
+            self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
     
     def get_worker_status(self, worker_id: str) -> WorkerStatus | None:
@@ -303,7 +303,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             self.worker_status[worker_id].is_initialized = True
         
         self.worker_initialized.emit(worker_id, worker_type)
-        self.logger.info(f"Worker {worker_id} ({worker_type}) initialized")
+        self.logger.log_info(f"Worker {worker_id} ({worker_type}) initialized")
     
     def _on_worker_error(self, worker_id: str, error_message: str) -> None:
         """Handle worker error."""
@@ -312,7 +312,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
         
         self.worker_error.emit(worker_id, error_message)
         self.progress_service.notify_error(f"Worker {worker_id}: {error_message}")
-        self.logger.error(f"Worker {worker_id} error: {error_message}")
+        self.logger.log_error(f"Worker {worker_id} error: {error_message}")
     
     def _on_progress_update(self, txt=None, filename=None, percentage=None, hold=False, reset=None) -> None:
         """Handle progress update from workers."""
@@ -339,7 +339,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             gc.collect()
             
         except Exception as e:
-            self.logger.exception(f"Error during periodic cleanup: {e}")
+            self.logger.log_error(f"Error during periodic cleanup: {e}", exception=e)
     
     def _cleanup_worker(self, worker_id: str) -> None:
         """Cleanup a finished worker."""
@@ -359,10 +359,10 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             if worker_id in self.worker_status:
                 del self.worker_status[worker_id]
             
-            self.logger.debug(f"Cleaned up worker {worker_id}")
+            self.logger.log_debug(f"Cleaned up worker {worker_id}")
             
         except Exception as e:
-            self.logger.exception(f"Error cleaning up worker {worker_id}: {e}")
+            self.logger.log_error(f"Error cleaning up worker {worker_id}: {e}", exception=e)
     
     def handle_event(self, event: UIEvent) -> Result[None]:
         """Handle UI events."""
@@ -370,20 +370,24 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             if event.event_type == UIEventType.WORKER_START_REQUESTED:
                 worker_type = event.data.get("worker_type")
                 if worker_type == "vad":
-                    return self.create_vad_worker()
+                    result = self.create_vad_worker()
+                    return Result.success(None) if result.is_success else Result.failure(result.get_error())
                 if worker_type == "model":
                     model_type = event.data.get("model_type", "whisper-turbo")
                     quantization = event.data.get("quantization", "Full")
-                    return self.create_model_worker(model_type, quantization)
+                    result = self.create_model_worker(model_type, quantization)
+                    return Result.success(None) if result.is_success else Result.failure(result.get_error())
                 if worker_type == "listener":
                     model = event.data.get("model")
                     vad = event.data.get("vad")
                     rec_key = event.data.get("rec_key", "CTRL+ALT+A")
-                    return self.create_listener_worker(model, vad, rec_key)
+                    result = self.create_listener_worker(model, vad, rec_key)
+                    return Result.success(None) if result.is_success else Result.failure(result.get_error())
                 if worker_type == "llm":
                     model_type = event.data.get("model_type", "gemma-3-1b-it")
                     quantization = event.data.get("quantization", "Full")
-                    return self.create_llm_worker(model_type, quantization)
+                    result = self.create_llm_worker(model_type, quantization)
+                    return Result.success(None) if result.is_success else Result.failure(result.get_error())
             
             elif event.event_type == UIEventType.WORKER_STOP_REQUESTED:
                 worker_id = event.data.get("worker_id")
@@ -395,17 +399,17 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
             
         except Exception as e:
             error_msg = f"Failed to handle event {event.event_type}: {e}"
-            self.logger.exception(error_msg)
+            self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
     
     def initialize(self) -> Result[None]:
         """Initialize the orchestrator."""
         try:
-            self.logger.info("Worker integration orchestrator initialized")
+            self.logger.log_info("Worker integration orchestrator initialized")
             return Result.success(None)
         except Exception as e:
             error_msg = f"Failed to initialize worker orchestrator: {e}"
-            self.logger.exception(error_msg)
+            self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
     
     def cleanup(self) -> None:
@@ -419,7 +423,7 @@ class WorkerIntegrationOrchestrator(QObject, IUIComponent, IUIEventHandler):
                 self._cleanup_worker(worker_id)
             
             gc.collect()
-            self.logger.info("Worker integration orchestrator cleaned up")
+            self.logger.log_info("Worker integration orchestrator cleaned up")
             
         except Exception as e:
-            self.logger.exception(f"Error during orchestrator cleanup: {e}")
+            self.logger.log_error(f"Error during orchestrator cleanup: {e}", exception=e)

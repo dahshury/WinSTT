@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from src_refactored.domain.common.progress_callback import ProgressCallback
 from src_refactored.domain.common.result import Result
+from src_refactored.domain.common.value_object import ProgressPercentage
 from src_refactored.domain.settings.value_objects.update_operations import (
     ModelCompatibility,
     UpdatePhase,
@@ -161,7 +162,7 @@ class UpdateModelConfigUseCase:
         worker_management_service: WorkerManagementServiceProtocol,
         configuration_service: ConfigurationServiceProtocol,
         logger_service: LoggerServiceProtocol,
-    ):
+    ) -> None:
         self._model_validation = model_validation_service
         self._worker_management = worker_management_service
         self._configuration = configuration_service
@@ -177,8 +178,7 @@ class UpdateModelConfigUseCase:
             self._logger.log_info(
                 "Starting model configuration update",
                 new_model=request.update.model_name.value if request.update.model_name else None,
-new_quantization = (
-    request.update.quantization_level.value if request.update.quantization_level else None,),
+                new_quantization=request.update.quantization_level.value if request.update.quantization_level else None,
             )
 
             # Store current configuration for rollback
@@ -207,7 +207,7 @@ new_quantization = (
                 model_validation = self._model_validation.validate_model_name(model_to_update,
     )
                 if not model_validation.is_success:
-                    response.error_message = f"Invalid model: {model_validation.error_message}"
+                    response.error_message = f"Invalid model: {model_validation.error}"
                     response.result = UpdateResult.MODEL_NOT_AVAILABLE
                     return response
 
@@ -219,7 +219,7 @@ new_quantization = (
             if request.update.validate_compatibility:
                 quantization_validation = self._model_validation.validate_quantization_level(quantization_to_update)
                 if not quantization_validation.is_success:
-                    response.error_message = f"Invalid quantization: {quantization_validation.error_message}"
+                    response.error_message = f"Invalid quantization: {quantization_validation.error}"
                     response.result = UpdateResult.QUANTIZATION_NOT_SUPPORTED
                     return response
 
@@ -242,7 +242,7 @@ new_quantization = (
                     backup_path = backup_result.value
                     response.backup_config_path = backup_path
                 else:
-                    response.warnings.append(f"Failed to backup configuration: {backup_result.error_message}")
+                    response.warnings.append(f"Failed to backup configuration: {backup_result.error}")
 
             # Phase 5: Stop current worker if needed
             if not self._update_progress(request.progress_callback, UpdatePhase.STOPPING_CURRENT_WORKER, 30):
@@ -253,7 +253,7 @@ new_quantization = (
             if worker_was_running and request.update.force_restart_worker:
                 stop_result = self._worker_management.stop_current_worker()
                 if not stop_result.is_success:
-                    response.warnings.append(f"Failed to stop current worker: {stop_result.error_message}")
+                    response.warnings.append(f"Failed to stop current worker: {stop_result.error}")
 
             # Phase 6: Update configuration
             if not self._update_progress(request.progress_callback, UpdatePhase.UPDATING_CONFIGURATION, 50):
@@ -262,12 +262,12 @@ new_quantization = (
 
             config_update_result = self._configuration.update_model_config(model_to_update, quantization_to_update)
             if not config_update_result.is_success:
-                response.error_message = f"Failed to update configuration: {config_update_result.error_message}"
+                response.error_message = f"Failed to update configuration: {config_update_result.error}"
                 # Try to restore backup if available
                 if backup_path:
                     restore_result = self._configuration.restore_configuration(backup_path)
                     if not restore_result.is_success:
-                        response.warnings.append(f"Failed to restore backup: {restore_result.error_message}")
+                        response.warnings.append(f"Failed to restore backup: {restore_result.error}")
                 return response
 
             # Phase 7: Save configuration
@@ -280,7 +280,7 @@ new_quantization = (
                 if save_result.is_success:
                     response.configuration_saved = True
                 else:
-                    response.warnings.append(f"Failed to save configuration: {save_result.error_message}")
+                    response.warnings.append(f"Failed to save configuration: {save_result.error}")
                     response.result = UpdateResult.CONFIGURATION_SAVE_FAILED
 
             # Phase 8: Restart worker
@@ -293,17 +293,15 @@ new_quantization = (
                 if worker_start_result.is_success:
                     response.worker_restarted = True
                 else:
-                    response.error_message = f"Failed to restart worker: {worker_start_result.error_message}"
+                    response.error_message = f"Failed to restart worker: {worker_start_result.error}"
                     response.result = UpdateResult.WORKER_RESTART_FAILED
                     # Try to restore backup if available
                     if backup_path:
-                        restore_result = self._configuration.restore_configuration(backup_path,
-    )
+                        restore_result = self._configuration.restore_configuration(backup_path)
                         if restore_result.is_success:
                             # Try to restart with old config
                             if request.current_model and request.current_quantization:
-                                self._worker_management.start_worker_with_config(request.current_model,
-                                request.current_quantization)
+                                self._worker_management.start_worker_with_config(request.current_model, request.current_quantization)
                     return response
 
             # Phase 9: Verify update
@@ -313,9 +311,10 @@ new_quantization = (
 
             # Verify the configuration was applied
             current_config_result = self._configuration.get_current_model_config()
-            if current_config_result.is_success:
+            if current_config_result.is_success and current_config_result.value is not None:
                 current_config = current_config_result.value
-                if (current_config.get("model") == model_to_update.value and
+                if (current_config and 
+                    current_config.get("model") == model_to_update.value and
                     current_config.get("quantization") == quantization_to_update.value):
                     response.updated_model = model_to_update
                     response.updated_quantization = quantization_to_update
@@ -362,9 +361,10 @@ new_quantization = (
     ) -> bool:
         """Update progress and check for cancellation"""
         if callback:
-            return callback(
-                percentage=percentage,
+            result = callback(
+                progress=ProgressPercentage(percentage),
                 message=f"Update phase: {phase.value}",
                 error=None,
             )
+            return bool(result) if result is not None else True
         return True

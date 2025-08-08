@@ -361,9 +361,9 @@ class UpdateUITextUseCase:
             warnings=[],
         )
 
-        text_updates = []
-        translation_results = []
-        formatting_results = []
+        text_updates: list[TextUpdate] = []
+        translation_results: list[TranslationResult] = []
+        formatting_results: list[FormattingResult] = []
 
         try:
             self._logger.log_info(
@@ -406,7 +406,9 @@ class UpdateUITextUseCase:
             self._progress_tracking.update_progress(request.operation_id, 3, "Processing translations")
 
             if request.translation_config and request.translation_config.mode != TranslationMode.NONE:
-                translation_results = self._process_translations(request, state)
+                translated = self._process_translations(request, state)
+                if translated is not None:
+                    translation_results = translated
 
             # Phase 4: Formatting
             state.current_phase = UpdatePhase.FORMATTING
@@ -546,7 +548,7 @@ class UpdateUITextUseCase:
     def _process_translations(self, request: UpdateUITextRequest, state: UITextUpdateState,
     ) -> list[TranslationResult] | None:
         """Process text translations."""
-        translation_results = []
+        translation_results: list[TranslationResult] = []
 
         if not request.translation_config:
             return translation_results
@@ -618,7 +620,7 @@ class UpdateUITextUseCase:
     def _apply_formatting(self, request: UpdateUITextRequest, state: UITextUpdateState,
     ) -> list[FormattingResult]:
         """Apply text formatting."""
-        formatting_results = []
+        formatting_results: list[FormattingResult] = []
 
         if not request.formatting_config:
             return formatting_results

@@ -1,9 +1,15 @@
 """Waveform data value object for audio visualization."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from math import sqrt
 
-import numpy as np
-
+from src_refactored.domain.audio.value_objects.audio_samples import (
+    AudioDataType,
+    AudioSampleData,
+)
+from src_refactored.domain.audio.value_objects.sample_rate import SampleRate
 from src_refactored.domain.common.value_object import ValueObject
 
 
@@ -42,30 +48,60 @@ class WaveformData(ValueObject):
 
         if len(self.samples) == 0:
             msg = "Samples cannot be empty"
-            raise ValueError(msg,
-    )
-
-    @classmethod
-    def from_numpy_array(cls, data: np.ndarray, sample_rate: int,
-                        timestamp_ms: float,
-    ) -> "WaveformData":
-        """Create waveform data from numpy array."""
-        if len(data) == 0:
-            msg = "Data array cannot be empty"
             raise ValueError(msg)
 
-        # Calculate metrics
-        rms_level = float(np.sqrt(np.mean(np.square(data))))
-        peak_level = float(np.max(np.abs(data)))
-        duration_ms = (len(data) / sample_rate,
-    ) * 1000
+    @classmethod
+    def from_audio_sample_data(
+        cls, audio_data: AudioSampleData, timestamp_ms: float,
+    ) -> "WaveformData":
+        """Create waveform data from AudioSampleData."""
+        samples = tuple(audio_data.samples)
+        duration_ms = audio_data.calculated_duration.total_seconds() * 1000
+        
+        # Calculate RMS and peak
+        rms_level = audio_data.get_rms()
+        peak_level = audio_data.get_peak()
+        
+        # Ensure levels are within valid range
+        rms_level = min(rms_level, 1.0)
+        peak_level = min(peak_level, 1.0)
+
+        return cls(
+            samples=samples,
+            sample_rate=audio_data.sample_rate.value,
+            duration_ms=duration_ms,
+            rms_level=rms_level,
+            peak_level=peak_level,
+            timestamp_ms=timestamp_ms,
+        )
+
+    @classmethod
+    def from_samples_list(
+        cls, samples: Sequence[float], sample_rate: int, timestamp_ms: float,
+    ) -> "WaveformData":
+        """Create waveform data from a list of samples."""
+        if len(samples) == 0:
+            msg = "Samples cannot be empty"
+            raise ValueError(msg)
+
+        # Calculate metrics using pure math
+        samples_tuple = tuple(samples)
+        duration_ms = (len(samples_tuple) / sample_rate) * 1000
+
+        # Calculate RMS
+        sum_squares = sum(sample * sample for sample in samples_tuple)
+        mean_square = sum_squares / len(samples_tuple)
+        rms_level = sqrt(mean_square)
+
+        # Calculate peak
+        peak_level = max(abs(sample) for sample in samples_tuple)
 
         # Ensure levels are within valid range
         rms_level = min(rms_level, 1.0)
         peak_level = min(peak_level, 1.0)
 
         return cls(
-            samples=tuple(float(sample) for sample in data),
+            samples=samples_tuple,
             sample_rate=sample_rate,
             duration_ms=duration_ms,
             rms_level=rms_level,
@@ -74,9 +110,7 @@ class WaveformData(ValueObject):
         )
 
     @classmethod
-    def silence(cls, duration_ms: float, sample_rate: int,
-               timestamp_ms: float,
-    ) -> "WaveformData":
+    def silence(cls, duration_ms: float, sample_rate: int, timestamp_ms: float) -> "WaveformData":
         """Create silent waveform data."""
         num_samples = int((duration_ms / 1000) * sample_rate)
         samples = tuple(0.0 for _ in range(max(1, num_samples)))
@@ -90,20 +124,26 @@ class WaveformData(ValueObject):
             timestamp_ms=timestamp_ms,
         )
 
-    def to_numpy_array(self) -> np.ndarray:
-        """Convert to numpy array."""
-        return np.array(self.samples, dtype=np.float32)
+    def to_audio_sample_data(self) -> AudioSampleData:
+        """Convert to domain AudioSampleData."""
+        # Using naive datetime for domain layer (timezone handling in infrastructure)
+        timestamp = datetime.fromtimestamp(self.timestamp_ms / 1000.0)
+        duration = timedelta(milliseconds=self.duration_ms)
+        
+        return AudioSampleData(
+            samples=self.samples,
+            sample_rate=SampleRate(self.sample_rate),
+            channels=1,  # Waveform data is typically mono for visualization
+            data_type=AudioDataType.FLOAT32,
+            timestamp=timestamp,
+            duration=duration,
+        )
 
     def get_sample_count(self) -> int:
         """Get the number of samples."""
         return len(self.samples)
 
-    def get_time_axis(self) -> np.ndarray:
-        """Get time axis for plotting."""
-        return np.linspace(0, self.duration_ms, len(self.samples))
-
-    def downsample(self, factor: int,
-    ) -> "WaveformData":
+    def downsample(self, factor: int) -> "WaveformData":
         """Downsample the waveform data by the given factor."""
         if factor <= 1:
             return self
@@ -112,10 +152,14 @@ class WaveformData(ValueObject):
         new_sample_rate = self.sample_rate // factor
         new_duration = (len(downsampled_samples) / new_sample_rate) * 1000
 
-        # Recalculate metrics for downsampled data
-        data_array = np.array(downsampled_samples)
-        new_rms = float(np.sqrt(np.mean(np.square(data_array)))) if len(data_array) > 0 else 0.0
-        new_peak = float(np.max(np.abs(data_array))) if len(data_array) > 0 else 0.0
+        # Recalculate metrics for downsampled data using pure math
+        if downsampled_samples:
+            sum_squares = sum(sample * sample for sample in downsampled_samples)
+            new_rms = sqrt(sum_squares / len(downsampled_samples))
+            new_peak = max(abs(sample) for sample in downsampled_samples)
+        else:
+            new_rms = 0.0
+            new_peak = 0.0
 
         return WaveformData(
             samples=downsampled_samples,
@@ -143,26 +187,30 @@ class WaveformData(ValueObject):
             timestamp_ms=self.timestamp_ms,
         )
 
-    def apply_window(self, window_type: str = "hann") -> "WaveformData":
-        """Apply a window function to the waveform."""
-        data_array = np.array(self.samples)
-
+    def apply_simple_window(self, window_type: str = "hann") -> "WaveformData":
+        """Apply a simplified window function to the waveform."""
+        n = len(self.samples)
+        
         if window_type == "hann":
-            window = np.hanning(len(data_array))
+            # Simplified Hann window calculation
+            window = tuple(0.5 * (1 - cos(2 * 3.14159 * i / (n - 1))) for i in range(n))
         elif window_type == "hamming":
-            window = np.hamming(len(data_array))
-        elif window_type == "blackman":
-            window = np.blackman(len(data_array))
+            # Simplified Hamming window calculation  
+            window = tuple(0.54 - 0.46 * cos(2 * 3.14159 * i / (n - 1)) for i in range(n))
         else:
             # No windowing
-            window = np.ones(len(data_array))
+            window = tuple(1.0 for _ in range(n))
 
-        windowed_data = data_array * window
-        windowed_samples = tuple(float(sample) for sample in windowed_data)
+        windowed_samples = tuple(sample * window[i] for i, sample in enumerate(self.samples))
 
-        # Recalculate metrics
-        new_rms = float(np.sqrt(np.mean(np.square(windowed_data))))
-        new_peak = float(np.max(np.abs(windowed_data)))
+        # Recalculate metrics using pure math
+        if windowed_samples:
+            sum_squares = sum(sample * sample for sample in windowed_samples)
+            new_rms = sqrt(sum_squares / len(windowed_samples))
+            new_peak = max(abs(sample) for sample in windowed_samples)
+        else:
+            new_rms = 0.0
+            new_peak = 0.0
 
         return WaveformData(
             samples=windowed_samples,
@@ -173,8 +221,7 @@ class WaveformData(ValueObject):
             timestamp_ms=self.timestamp_ms,
         )
 
-    def is_silence(self, threshold: float = 0.01,
-    ) -> bool:
+    def is_silence(self, threshold: float = 0.01) -> bool:
         """Check if the waveform represents silence."""
         return self.rms_level < threshold
 
@@ -189,3 +236,43 @@ class WaveformData(ValueObject):
     def get_dynamic_range(self) -> float:
         """Get dynamic range (peak - RMS)."""
         return self.peak_level - self.rms_level
+    
+    @property
+    def peak_amplitude(self) -> float:
+        """Alias for peak_level to maintain compatibility."""
+        return self.peak_level
+    
+    @property
+    def rms_amplitude(self) -> float:
+        """Alias for rms_level to maintain compatibility."""
+        return self.rms_level
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (
+            self.samples,
+            self.sample_rate,
+            self.duration_ms,
+            self.rms_level,
+            self.peak_level,
+            self.timestamp_ms,
+        )
+
+
+def cos(x: float) -> float:
+    """Simple cosine approximation for windowing functions."""
+    pi = 3.14159
+    two_pi = 2 * pi
+    
+    # Taylor series approximation for cosine (good enough for windowing)
+    x = x % two_pi  # Normalize to 0-2π
+    if x > pi:
+        x = two_pi - x
+        sign = -1
+    else:
+        sign = 1
+    
+    # Taylor series: cos(x) ≈ 1 - x²/2! + x⁴/4! - x⁶/6!
+    x2 = x * x
+    result = 1.0 - x2/2.0 + x2*x2/24.0 - x2*x2*x2/720.0
+    return sign * result

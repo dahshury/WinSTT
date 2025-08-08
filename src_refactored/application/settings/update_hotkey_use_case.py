@@ -44,7 +44,7 @@ class UpdateHotkeyResponse:
     success: bool
     recording_state: HotkeyRecordingState
     current_hotkey: str | None = None
-    pressed_keys: set[str] = None
+    pressed_keys: set[str] | None = None
     validation_error: str | None = None
     message: str | None = None
     requires_ui_update: bool = False
@@ -81,14 +81,14 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
         self._current_hotkey = self._get_current_hotkey()
 
     def execute(self, request: UpdateHotkeyRequest,
-    ) -> Result[UpdateHotkeyResponse]:
+    ) -> UpdateHotkeyResponse:
         """Execute the update hotkey use case.
         
         Args:
             request: Update hotkey request
             
         Returns:
-            Result containing update hotkey response
+            Update hotkey response with results or error information
         """
         try:
             # Handle different request types
@@ -105,16 +105,14 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
             return self._get_current_state()
 
         except Exception as e:
-            return Result.success(
-                UpdateHotkeyResponse(
-                    success=False,
-                    recording_state=self._recording_state,
-                    message=f"Error updating hotkey: {e!s}",
-                ),
+            return UpdateHotkeyResponse(
+                success=False,
+                recording_state=self._recording_state,
+                message=f"Error updating hotkey: {e!s}",
             )
 
     def add_pressed_key(self, key: str,
-    ) -> Result[UpdateHotkeyResponse]:
+    ) -> UpdateHotkeyResponse:
         """Add a pressed key to the current combination.
         
         Args:
@@ -124,12 +122,10 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
             Result containing updated state
         """
         if self._recording_state != HotkeyRecordingState.RECORDING:
-            return Result.failure(
-                UpdateHotkeyResponse(
-                    success=False,
-                    recording_state=self._recording_state,
-                    message="Not currently recording hotkey",
-                ),
+            return UpdateHotkeyResponse(
+                success=False,
+                recording_state=self._recording_state,
+                message="Not currently recording hotkey",
             )
 
         self._pressed_keys.add(key.upper())
@@ -144,17 +140,15 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
             )
             self._progress_callback(progress)
 
-        return Result.success(
-            UpdateHotkeyResponse(
-                success=True,
-                recording_state=self._recording_state,
-                pressed_keys=self._pressed_keys.copy(),
-                current_hotkey=self._format_key_combination(self._pressed_keys),
-                requires_ui_update=True,
-            ),
+        return UpdateHotkeyResponse(
+            success=True,
+            recording_state=self._recording_state,
+            pressed_keys=self._pressed_keys.copy(),
+            current_hotkey=self._format_key_combination(self._pressed_keys),
+            requires_ui_update=True,
         )
 
-    def _start_recording(self) -> Result[UpdateHotkeyResponse]:
+    def _start_recording(self) -> UpdateHotkeyResponse:
         """Start hotkey recording.
         
         Returns:
@@ -172,18 +166,16 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
             )
             self._progress_callback(progress)
 
-        return Result.success(
-            UpdateHotkeyResponse(
-                success=True,
-                recording_state=self._recording_state,
-                pressed_keys=set(),
-                message="Started recording hotkey",
-                requires_ui_update=True,
-            ),
+        return UpdateHotkeyResponse(
+            success=True,
+            recording_state=self._recording_state,
+            pressed_keys=set(),
+            message="Started recording hotkey",
+            requires_ui_update=True,
         )
 
     def _stop_recording(self, validate: bool = True,
-    ) -> Result[UpdateHotkeyResponse]:
+    ) -> UpdateHotkeyResponse:
         """Stop hotkey recording and apply the combination.
         
         Args:
@@ -193,21 +185,17 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
             Result containing recording stop response
         """
         if self._recording_state != HotkeyRecordingState.RECORDING:
-            return Result.success(
-                UpdateHotkeyResponse(
-                    success=False,
-                    recording_state=self._recording_state,
-                    message="Not currently recording",
-                ),
+            return UpdateHotkeyResponse(
+                success=False,
+                recording_state=self._recording_state,
+                message="Not currently recording",
             )
 
         if not self._pressed_keys:
-            return Result.success(
-                UpdateHotkeyResponse(
-                    success=False,
-                    recording_state=self._recording_state,
-                    message="No keys recorded",
-                ),
+            return UpdateHotkeyResponse(
+                success=False,
+                recording_state=self._recording_state,
+                message="No keys recorded",
             )
 
         # Format the key combination
@@ -216,15 +204,13 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
         # Validate if requested
         if validate:
             validation_result = self._validate_key_combination(new_combination)
-            if not validation_result.is_success():
+            if not validation_result.is_success:
                 self._recording_state = HotkeyRecordingState.IDLE
-                return Result.success(
-                    UpdateHotkeyResponse(
-                        success=False,
-                        recording_state=self._recording_state,
-                        validation_error=validation_result.error,
-                        message=f"Invalid hotkey: {validation_result.error}",
-                    ),
+                return UpdateHotkeyResponse(
+                    success=False,
+                    recording_state=self._recording_state,
+                    validation_error=validation_result.error,
+                    message=f"Invalid hotkey: {validation_result.error}",
                 )
 
         # Apply the new hotkey
@@ -233,13 +219,11 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
 
         # Save to settings
         save_result = self._save_hotkey(new_combination)
-        if not save_result.is_success():
-            return Result.success(
-                UpdateHotkeyResponse(
-                    success=False,
-                    recording_state=self._recording_state,
-                    message=f"Failed to save hotkey: {save_result.error}",
-                ),
+        if not save_result.is_success:
+            return UpdateHotkeyResponse(
+                success=False,
+                recording_state=self._recording_state,
+                message=f"Failed to save hotkey: {save_result.error}",
             )
 
         # Notify progress
@@ -256,17 +240,15 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
         self._pressed_keys.clear()
         self._recording_state = HotkeyRecordingState.IDLE
 
-        return Result.success(
-            UpdateHotkeyResponse(
-                success=True,
-                recording_state=HotkeyRecordingState.IDLE,
-                current_hotkey=new_combination,
-                message=f"Hotkey updated to: {new_combination}",
-                requires_ui_update=True,
-            ),
+        return UpdateHotkeyResponse(
+            success=True,
+            recording_state=HotkeyRecordingState.IDLE,
+            current_hotkey=new_combination,
+            message=f"Hotkey updated to: {new_combination}",
+            requires_ui_update=True,
         )
 
-    def _cancel_recording(self) -> Result[UpdateHotkeyResponse]:
+    def _cancel_recording(self) -> UpdateHotkeyResponse:
         """Cancel hotkey recording.
         
         Returns:
@@ -287,17 +269,15 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
         # Reset to idle
         self._recording_state = HotkeyRecordingState.IDLE
 
-        return Result.success(
-            UpdateHotkeyResponse(
-                success=True,
-                recording_state=HotkeyRecordingState.IDLE,
-                current_hotkey=self._current_hotkey,
-                message="Recording cancelled",
-                requires_ui_update=True,
-            ),
+        return UpdateHotkeyResponse(
+            success=True,
+            recording_state=HotkeyRecordingState.IDLE,
+            current_hotkey=self._current_hotkey,
+            message="Recording cancelled",
+            requires_ui_update=True,
         )
 
-    def _reset_to_default(self) -> Result[UpdateHotkeyResponse]:
+    def _reset_to_default(self) -> UpdateHotkeyResponse:
         """Reset hotkey to default value.
         
         Returns:
@@ -309,29 +289,25 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
 
         # Save to settings
         save_result = self._save_hotkey(self._default_hotkey)
-        if not save_result.is_success():
-            return Result.failure(
-                UpdateHotkeyResponse(
-                    success=False,
-                    recording_state=self._recording_state,
-                    message=f"Failed to save default hotkey: {save_result.error}",
-                ),
+        if not save_result.is_success:
+            return UpdateHotkeyResponse(
+                success=False,
+                recording_state=self._recording_state,
+                message=f"Failed to save default hotkey: {save_result.error}",
             )
 
-        return Result.success(
-            UpdateHotkeyResponse(
-                success=True,
-                recording_state=self._recording_state,
-                current_hotkey=self._default_hotkey,
-                message=f"Hotkey reset to default: {self._default_hotkey}",
-                requires_ui_update=True,
-            ),
+        return UpdateHotkeyResponse(
+            success=True,
+            recording_state=self._recording_state,
+            current_hotkey=self._default_hotkey,
+            message=f"Hotkey reset to default: {self._default_hotkey}",
+            requires_ui_update=True,
         )
 
     def _update_hotkey(
     self,
     combination: str,
-    validate: bool = True) -> Result[UpdateHotkeyResponse]:
+    validate: bool = True) -> UpdateHotkeyResponse:
         """Update hotkey with a specific combination.
         
         Args:
@@ -343,52 +319,44 @@ class UpdateHotkeyUseCase(UseCase[UpdateHotkeyRequest, UpdateHotkeyResponse]):
         """
         if validate:
             validation_result = self._validate_key_combination(combination)
-            if not validation_result.is_success():
-                return Result.success(
-                    UpdateHotkeyResponse(
-                        success=False,
-                        recording_state=self._recording_state,
-                        validation_error=validation_result.error,
-                        message=f"Invalid hotkey: {validation_result.error}",
-                    ),
+            if not validation_result.is_success:
+                return UpdateHotkeyResponse(
+                    success=False,
+                    recording_state=self._recording_state,
+                    validation_error=validation_result.error,
+                    message=f"Invalid hotkey: {validation_result.error}",
                 )
 
         self._current_hotkey = combination
 
         # Save to settings
         save_result = self._save_hotkey(combination)
-        if not save_result.is_success():
-            return Result.success(
-                UpdateHotkeyResponse(
-                    success=False,
-                    recording_state=self._recording_state,
-                    message=f"Failed to save hotkey: {save_result.error}",
-                ),
+        if not save_result.is_success:
+            return UpdateHotkeyResponse(
+                success=False,
+                recording_state=self._recording_state,
+                message=f"Failed to save hotkey: {save_result.error}",
             )
 
-        return Result.success(
-            UpdateHotkeyResponse(
-                success=True,
-                recording_state=self._recording_state,
-                current_hotkey=combination,
-                message=f"Hotkey updated to: {combination}",
-                requires_ui_update=True,
-            ),
+        return UpdateHotkeyResponse(
+            success=True,
+            recording_state=self._recording_state,
+            current_hotkey=combination,
+            message=f"Hotkey updated to: {combination}",
+            requires_ui_update=True,
         )
 
-    def _get_current_state(self) -> Result[UpdateHotkeyResponse]:
+    def _get_current_state(self) -> UpdateHotkeyResponse:
         """Get current hotkey state.
         
         Returns:
             Result containing current state
         """
-        return Result.success(
-            UpdateHotkeyResponse(
-                success=True,
-                recording_state=self._recording_state,
-                current_hotkey=self._current_hotkey,
-                pressed_keys=self._pressed_keys.copy() if self._pressed_keys else set(),
-            ),
+        return UpdateHotkeyResponse(
+            success=True,
+            recording_state=self._recording_state,
+            current_hotkey=self._current_hotkey,
+            pressed_keys=self._pressed_keys.copy() if self._pressed_keys else set(),
         )
 
     def _validate_key_combination(self, combination: str,

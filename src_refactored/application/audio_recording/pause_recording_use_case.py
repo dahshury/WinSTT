@@ -91,7 +91,7 @@ class PauseRecordingUseCase(UseCase[PauseRecordingRequest, PauseRecordingRespons
             if request.save_partial_data:
                 try:
                     save_result = self._audio_recorder.save_partial_recording()
-                    partial_data_saved = save_result.is_success()
+                    partial_data_saved = save_result.is_success
 
                     if not partial_data_saved and self._error_callback_service:
                         self._error_callback_service.notify_warning(
@@ -107,7 +107,7 @@ class PauseRecordingUseCase(UseCase[PauseRecordingRequest, PauseRecordingRespons
             # Pause the recording
             pause_result = self._audio_recorder.pause_recording()
 
-            if pause_result.is_failure():
+            if not pause_result.is_success:
                 if self._error_callback_service:
                     self._error_callback_service.notify_error(
                         f"Failed to pause recording: {pause_result.error}",

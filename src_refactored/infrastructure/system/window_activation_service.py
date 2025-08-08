@@ -73,7 +73,7 @@ class WindowActivationService:
         if not self.win32_available:
             return []
 
-        windows = []
+        windows: list[WindowInfo] = []
 
         def enum_callback(hwnd: int, result_list: list[WindowInfo]) -> bool:
             try:
@@ -388,7 +388,7 @@ class WindowActivationService:
 
         try:
             # Find window by title using enumeration
-            hwnd_list = []
+            hwnd_list: list[int] = []
 
             def enum_windows_callback(hwnd: int, result_list: list[int]) -> bool:
                 try:

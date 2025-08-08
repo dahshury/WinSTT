@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from src_refactored.domain.common import AggregateRoot
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.settings.value_objects.audio_configuration import AudioConfiguration
 from src_refactored.domain.settings.value_objects.file_path import AudioFilePath
 from src_refactored.domain.settings.value_objects.key_combination import KeyCombination
@@ -76,8 +75,8 @@ class UserPreferences(AggregateRoot):
         # Add domain event
         from src_refactored.domain.common.events import RecordingKeyChanged
         self.add_domain_event(RecordingKeyChanged(
-            event_id=str(uuid.uuid4()),
-            timestamp=datetime.now().timestamp(),
+            event_id=DomainIdentityGenerator.generate_domain_id("event"),
+            timestamp=DomainIdentityGenerator.generate_timestamp(),
             source="user_preferences",
             old_key=old_key.to_string(),
             new_key=new_key.to_string(),
@@ -94,8 +93,8 @@ class UserPreferences(AggregateRoot):
         # Add domain event
         from src_refactored.domain.common.events import ModelConfigurationChanged
         self.add_domain_event(ModelConfigurationChanged(
-            event_id=str(uuid.uuid4()),
-            timestamp=datetime.now().timestamp(),
+            event_id=DomainIdentityGenerator.generate_domain_id("event"),
+            timestamp=DomainIdentityGenerator.generate_timestamp(),
             source="user_preferences",
             old_model=old_config.model_type.value,
             new_model=new_config.model_type.value,
@@ -114,8 +113,8 @@ class UserPreferences(AggregateRoot):
         # Add domain event
         from src_refactored.domain.common.events import LLMConfigurationChanged
         self.add_domain_event(LLMConfigurationChanged(
-            event_id=str(uuid.uuid4()),
-            timestamp=datetime.now().timestamp(),
+            event_id=DomainIdentityGenerator.generate_domain_id("event"),
+            timestamp=DomainIdentityGenerator.generate_timestamp(),
             source="user_preferences",
             old_enabled=old_config.enabled,
             new_enabled=new_config.enabled,
@@ -134,8 +133,8 @@ class UserPreferences(AggregateRoot):
         # Add domain event
         from src_refactored.domain.common.events import AudioConfigurationChanged
         self.add_domain_event(AudioConfigurationChanged(
-            event_id=str(uuid.uuid4()),
-            timestamp=datetime.now().timestamp(),
+            event_id=DomainIdentityGenerator.generate_domain_id("event"),
+            timestamp=DomainIdentityGenerator.generate_timestamp(),
             source="user_preferences",
             old_sample_rate=old_config.sample_rate,
             new_sample_rate=new_config.sample_rate,
@@ -153,8 +152,8 @@ class UserPreferences(AggregateRoot):
         # Add domain event
         from src_refactored.domain.common.events import OutputSRTToggled
         self.add_domain_event(OutputSRTToggled(
-            event_id=str(uuid.uuid4()),
-            timestamp=datetime.now().timestamp(),
+            event_id=DomainIdentityGenerator.generate_domain_id("event"),
+            timestamp=DomainIdentityGenerator.generate_timestamp(),
             source="user_preferences",
             old_value=old_value,
             new_value=self.output_srt_enabled,
@@ -170,8 +169,8 @@ class UserPreferences(AggregateRoot):
             # Add domain event
             from src_refactored.domain.common.events import LLMProcessingEnabled
             self.add_domain_event(LLMProcessingEnabled(
-                event_id=str(uuid.uuid4()),
-                timestamp=datetime.now().timestamp(),
+                event_id=DomainIdentityGenerator.generate_domain_id("event"),
+                timestamp=DomainIdentityGenerator.generate_timestamp(),
                 source="user_preferences",
                 model_name=self.llm_config.model_name,
             ))
@@ -186,8 +185,8 @@ class UserPreferences(AggregateRoot):
             # Add domain event
             from src_refactored.domain.common.events import LLMProcessingDisabled
             self.add_domain_event(LLMProcessingDisabled(
-                event_id=str(uuid.uuid4()),
-                timestamp=datetime.now().timestamp(),
+                event_id=DomainIdentityGenerator.generate_domain_id("event"),
+                timestamp=DomainIdentityGenerator.generate_timestamp(),
                 source="user_preferences",
                 model_name=self.llm_config.model_name,
             ))

@@ -18,13 +18,20 @@ from .media_conversion_service import (
     MediaConversionService,
 )
 from .media_scanner_service import MediaScannerService
-from .progress_tracking_service import (
-    ProgressInfo,
-    ProgressState,
-    ProgressTrackingError,
-    ProgressTrackingManager,
-    ProgressTrackingService,
-)
+
+# Progress tracking service temporarily disabled - module not found
+# from .progress_tracking_service import (
+#     ProgressInfo,
+#     ProgressState,
+#     ProgressTrackingError,
+#     ProgressTrackingManager,
+#     ProgressTrackingService,
+# )
+ProgressInfo = None
+ProgressState = None
+ProgressTrackingError = Exception
+ProgressTrackingManager = None
+ProgressTrackingService = None
 from .video_conversion_service import VideoConversionService
 
 __all__ = [
@@ -40,10 +47,10 @@ __all__ = [
     "MediaScannerService",
     "ProcessingItem",
     "ProcessingStatus",
-    "ProgressInfo",
-    "ProgressState",
-    "ProgressTrackingError",
-    "ProgressTrackingManager",
-    "ProgressTrackingService",
+    # "ProgressInfo",
+    # "ProgressState",
+    # "ProgressTrackingError",
+    # "ProgressTrackingManager",
+    # "ProgressTrackingService",
     "VideoConversionService",
 ]

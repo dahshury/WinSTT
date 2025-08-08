@@ -9,7 +9,7 @@ from ...common.events import DomainEvent
 from ..entities.main_window_instance import WindowGeometry
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowShowRequestedEvent(DomainEvent):
     """Event raised when window show is requested."""
     
@@ -21,7 +21,7 @@ class WindowShowRequestedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowHideRequestedEvent(DomainEvent):
     """Event raised when window hide is requested."""
     
@@ -33,7 +33,7 @@ class WindowHideRequestedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowShownEvent(DomainEvent):
     """Event raised when window is shown."""
     
@@ -44,7 +44,7 @@ class WindowShownEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowHiddenEvent(DomainEvent):
     """Event raised when window is hidden."""
     
@@ -55,7 +55,7 @@ class WindowHiddenEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowMaximizeRequestedEvent(DomainEvent):
     """Event raised when window maximize is requested."""
     
@@ -65,7 +65,7 @@ class WindowMaximizeRequestedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowMinimizeRequestedEvent(DomainEvent):
     """Event raised when window minimize is requested."""
     
@@ -76,7 +76,7 @@ class WindowMinimizeRequestedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowRestoreRequestedEvent(DomainEvent):
     """Event raised when window restore is requested."""
     
@@ -87,7 +87,7 @@ class WindowRestoreRequestedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowGeometryChangedEvent(DomainEvent):
     """Event raised when window geometry changes."""
     
@@ -99,7 +99,7 @@ class WindowGeometryChangedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowTitleChangedEvent(DomainEvent):
     """Event raised when window title changes."""
     
@@ -111,7 +111,7 @@ class WindowTitleChangedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowStateChangedEvent(DomainEvent):
     """Event raised when window state changes."""
     
@@ -123,7 +123,7 @@ class WindowStateChangedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowCloseRequestedEvent(DomainEvent):
     """Event raised when window close is requested."""
     
@@ -135,7 +135,7 @@ class WindowCloseRequestedEvent(DomainEvent):
         super().__post_init__()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindowFocusChangedEvent(DomainEvent):
     """Event raised when window focus changes."""
     

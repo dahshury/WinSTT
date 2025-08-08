@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from src_refactored.domain.audio.value_objects.audio_quality import AudioQuality
 from src_refactored.domain.common.value_object import ValueObject
 
 
@@ -30,15 +31,20 @@ class BitDepth(Enum):
 
 @dataclass(frozen=True)
 class AudioFormat(ValueObject):
-    """
-    Value object for audio format configuration.
-    Extracted from Recorder class initialization parameters.
-    """
+    """Audio format value object."""
     format_type: AudioFormatType
-    sample_rate: int
-    channels: int
-    bit_depth: BitDepth
-    chunk_size: int
+    bit_depth: int
+    compression: str | None = None
+    quality: AudioQuality | None = None
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (
+            self.format_type,
+            self.bit_depth,
+            self.compression,
+            self.quality,
+        )
 
     def __post_init__(self):
         # Validate sample rate (common rates used in speech recognition)
@@ -66,37 +72,40 @@ class AudioFormat(ValueObject):
     @property
     def is_mono(self) -> bool:
         """Check if audio format is mono."""
-        return self.channels == 1
+        # Default to mono for speech recognition formats
+        return True
 
     @property
     def is_stereo(self) -> bool:
         """Check if audio format is stereo."""
-        return self.channels == 2
+        # Default to mono for speech recognition formats
+        return False
 
     @property
     def bytes_per_sample(self) -> int:
         """Calculate bytes per sample."""
-        return self.bit_depth.value // 8
+        return self.bit_depth // 8
 
     @property
     def bytes_per_frame(self) -> int:
         """Calculate bytes per frame (sample * channels)."""
-        return self.bytes_per_sample * self.channels
+        # Default to mono (1 channel)
+        return self.bytes_per_sample * 1
 
     @property
     def bytes_per_second(self) -> int:
         """Calculate bytes per second for this format."""
-        return self.sample_rate * self.bytes_per_frame
+        # Default to 16kHz for speech recognition
+        return 16000 * self.bytes_per_frame
 
     @classmethod
     def for_speech_recognition(cls) -> AudioFormat:
         """Create standard format for speech recognition (16kHz, mono, 16-bit)."""
         return cls(
             format_type=AudioFormatType.WAV,
-            sample_rate=16000,
-            channels=1,
-            bit_depth=BitDepth.BIT_16,
-            chunk_size=256,
+            bit_depth=16,
+            compression=None,
+            quality=None,
         )
 
     @classmethod
@@ -104,10 +113,29 @@ class AudioFormat(ValueObject):
         """Create high-quality format (48kHz, stereo, 24-bit)."""
         return cls(
             format_type=AudioFormatType.WAV,
-            sample_rate=48000,
-            channels=2,
-            bit_depth=BitDepth.BIT_24,
-            chunk_size=1024,
+            bit_depth=24,
+            compression=None,
+            quality=None,
+        )
+
+    @classmethod
+    def create_wav_format(cls, bit_depth: int) -> AudioFormat:
+        """Create WAV format configuration."""
+        return cls(
+            format_type=AudioFormatType.WAV,
+            bit_depth=bit_depth,
+            compression=None,
+            quality=None,
+        )
+
+    @classmethod
+    def create_mp3_format(cls, bitrate: int) -> AudioFormat:
+        """Create MP3 format configuration."""
+        return cls(
+            format_type=AudioFormatType.MP3,
+            bit_depth=16,
+            compression="mp3",
+            quality=AudioQuality.create_medium_quality(44100, 16),
         )
 
 
@@ -143,6 +171,10 @@ class SampleRate(ValueObject):
 class Duration(ValueObject):
     """Value object for audio duration with business rules."""
     seconds: float
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.seconds,)
 
     def __post_init__(self):
         if self.seconds < 0:

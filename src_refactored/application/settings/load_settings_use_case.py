@@ -132,10 +132,10 @@ class LoadSettingsUseCase:
     ) -> LoadSettingsResponse:
         """Execute the load settings use case."""
         try:
-            source_results = []
-            merged_settings = None
-            merged_from_sources = []
-            warnings = []
+            source_results: list[SourceLoadResult] = []
+            merged_settings: SettingsConfiguration | None = None
+            merged_from_sources: list[LoadSource] = []
+            warnings: list[str] = []
             created_default_config = False
 
             # Load from each source
@@ -182,7 +182,8 @@ class LoadSettingsUseCase:
                     )
 
                 # Collect warnings
-                warnings.extend(result.warnings)
+                if result.warnings:
+                    warnings.extend(result.warnings)
 
             # If no settings loaded and fallback is allowed, create defaults
             if merged_settings is None and request.strategy != LoadStrategy.STRICT:

@@ -7,12 +7,16 @@ Extracted from utils/listener.py key handling and recording logic.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from src_refactored.domain.common.abstractions import DomainEvent, Entity
+from src_refactored.domain.common.abstractions import Entity
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
+from src_refactored.domain.common.events import DomainEvent
+
+if TYPE_CHECKING:
+    from src_refactored.domain.common.ports.time_management_port import TimeManagementPort
 
 if TYPE_CHECKING:
     from src_refactored.domain.settings.value_objects.key_combination import KeyCombination
@@ -45,7 +49,6 @@ class HotkeyDetectedEvent(DomainEvent):
     keys_pressed: set[str]
 
 
-@dataclass
 class RecordingState(Entity):
     """
     Entity representing the current state of audio recording.
@@ -53,15 +56,19 @@ class RecordingState(Entity):
     Manages key combination detection and recording phase transitions
     extracted from AudioToText key handling logic.
     """
-    hotkey_combination: KeyCombination
-    current_phase: RecordingPhase = RecordingPhase.IDLE
-    keys_currently_pressed: set[str] = field(default_factory=set)
-    last_state_change: datetime = field(default_factory=datetime.now)
-    recording_session_id: str | None = None
-    sound_enabled: bool = True
-    paste_enabled: bool = True
-    last_playback_time: datetime = field(default_factory=datetime.now,
-    )
+    
+    def __init__(self, entity_id: str, hotkey_combination: KeyCombination, **kwargs):
+        """Initialize recording state."""
+        super().__init__(entity_id)
+        self.hotkey_combination = hotkey_combination
+        self.current_phase = kwargs.get("current_phase", RecordingPhase.IDLE)
+        self.keys_currently_pressed = kwargs.get("keys_currently_pressed", set())
+        self.last_state_change = kwargs.get("last_state_change", DomainIdentityGenerator.generate_timestamp())
+        self.recording_session_id = kwargs.get("recording_session_id")
+        self.sound_enabled = kwargs.get("sound_enabled", True)
+        self.paste_enabled = kwargs.get("paste_enabled", True)
+        self.last_playback_time = kwargs.get("last_playback_time", DomainIdentityGenerator.generate_timestamp())
+        self._time_port: TimeManagementPort | None = kwargs.get("time_port")
 
     def handle_key_down(self, key_name: str,
     ) -> None:
@@ -162,7 +169,7 @@ class RecordingState(Entity):
         """Transition to a new recording phase."""
         old_phase = self.current_phase
         self.current_phase = new_phase
-        self.last_state_change = datetime.now()
+        self.last_state_change = DomainIdentityGenerator.generate_timestamp()
         self.update_timestamp()
 
         # Raise state change event
@@ -237,7 +244,11 @@ class RecordingState(Entity):
     @property
     def time_since_last_change(self) -> float:
         """Get time in seconds since last state change."""
-        return (datetime.now() - self.last_state_change).total_seconds()
+        if self._time_port is not None:
+            ts = self._time_port.get_current_timestamp_ms()
+            if ts.is_success and ts.value is not None:
+                return max(0.0, (ts.value / 1000.0) - float(self.last_state_change))
+        return float(DomainIdentityGenerator.generate_timestamp() - float(self.last_state_change))
 
     @property
     def hotkey_display_string(self) -> str:
@@ -255,10 +266,15 @@ class RecordingState(Entity):
         if self.current_phase != RecordingPhase.STARTING:
             return False
 
-        # Debounce: Don't play sound too frequently
-        time_since_last = (datetime.now() - self.last_playback_time).total_seconds()
-        return time_since_last > 1.0  # Minimum 1 second between sounds
+        # Debounce: Don't play sound too frequently using port if available
+        if self._time_port is not None:
+            ts = self._time_port.get_current_timestamp_ms()
+            now_val = (ts.value / 1000.0) if ts.is_success and ts.value is not None else DomainIdentityGenerator.generate_timestamp()
+        else:
+            now_val = DomainIdentityGenerator.generate_timestamp()
+        time_since_last = float(now_val - float(self.last_playback_time))
+        return time_since_last > 1.0
 
     def mark_sound_played(self) -> None:
         """Mark that start sound was played."""
-        self.last_playback_time = datetime.now()
+        self.last_playback_time = DomainIdentityGenerator.generate_timestamp()

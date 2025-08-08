@@ -8,6 +8,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from src_refactored.domain.common import Entity
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -79,7 +80,7 @@ class ThreadMetrics:
         if self.start_time is None:
             return None
 
-        end_time = self.stop_time or datetime.now()
+        end_time = self.stop_time or datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
         return (end_time - self.start_time).total_seconds()
 
     def get_error_rate(self) -> float:
@@ -99,13 +100,14 @@ class WorkerThreadCoordination(Entity):
         max_threads: int = 10,
     ):
         """Initialize worker thread coordination."""
-        super().__init__()
+        super().__init__(coordination_id)
         self._coordination_id = coordination_id
         self._max_threads = max_threads
         self._threads: dict[str, ThreadConfiguration] = {}
         self._thread_states: dict[str, ThreadState] = {}
         self._thread_metrics: dict[str, ThreadMetrics] = {}
-        self._thread_references: dict[str, Any] = {}  # Actual thread objects
+        # Store only opaque IDs in domain; real thread objects belong to infra
+        self._thread_references: dict[str, str] = {}  # thread_id -> opaque handle/id
         self._worker_classes: dict[ThreadType, type] = {}
         self._state_change_callbacks: dict[str, Callable[[str, ThreadState], None]] = {}
         self._global_state_callback: Callable[[dict[str, ThreadState]], None] | None = None
@@ -207,17 +209,22 @@ class WorkerThreadCoordination(Entity):
 
     def set_thread_reference(self, thread_id: str, thread_reference: Any,
     ) -> None:
-        """Set reference to actual thread object."""
+        """Set reference as opaque ID only (no concrete objects in domain)."""
         if thread_id not in self._threads:
             msg = f"Thread with ID '{thread_id}' does not exist"
             raise ValueError(msg,
     )
 
-        self._thread_references[thread_id] = thread_reference
+        # Accept string or object with 'id' attribute from infra and store as string
+        if isinstance(thread_reference, str):
+            opaque_id = thread_reference
+        else:
+            opaque_id = getattr(thread_reference, "id", None) or f"ref_{id(thread_reference)}"
+        self._thread_references[thread_id] = str(opaque_id)
 
     def get_thread_reference(self, thread_id: str,
-    ) -> Any | None:
-        """Get reference to actual thread object."""
+    ) -> str | None:
+        """Get opaque thread handle/id."""
         return self._thread_references.get(thread_id)
 
     def start_thread(self, thread_id: str,
@@ -237,7 +244,7 @@ class WorkerThreadCoordination(Entity):
 
         # Update metrics
         metrics = self._thread_metrics[thread_id]
-        metrics.start_time = datetime.now()
+        metrics.start_time = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
         metrics.stop_time = None
 
     def stop_thread(self, thread_id: str,
@@ -306,7 +313,7 @@ class WorkerThreadCoordination(Entity):
 
         # Update metrics
         metrics = self._thread_metrics[thread_id]
-        metrics.stop_time = datetime.now()
+        metrics.stop_time = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
 
     def mark_thread_error(self, thread_id: str, error_message: str,
     ) -> None:
@@ -322,7 +329,7 @@ class WorkerThreadCoordination(Entity):
         metrics = self._thread_metrics[thread_id]
         metrics.error_count += 1
         metrics.last_error = error_message
-        metrics.last_error_time = datetime.now()
+        metrics.last_error_time = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
 
         # Check if we should restart
         config = self._threads[thread_id]
@@ -357,7 +364,7 @@ class WorkerThreadCoordination(Entity):
         # Update metrics
         metrics = self._thread_metrics[thread_id]
         if metrics.stop_time is None:
-            metrics.stop_time = datetime.now()
+            metrics.stop_time = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
 
     def _update_thread_state(self, thread_id: str, new_state: ThreadState,
     ) -> None:

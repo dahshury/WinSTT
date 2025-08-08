@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from src_refactored.domain.common import ValueObject
+from src_refactored.domain.common.value_object import ValueObject
 
 
 class BorderStyle(Enum):
@@ -432,3 +432,17 @@ class WidgetStyling(ValueObject):
                 if not isinstance(value, str):
                     msg = "Custom property values must be strings"
                     raise ValueError(msg)
+
+
+class WidgetTheme(Enum):
+    """Widget theme enumeration."""
+    LIGHT = "light"
+    DARK = "dark"
+    HIGH_CONTRAST = "high_contrast"
+    SYSTEM = "system"
+    CUSTOM = "custom"
+
+
+# Alias for backward compatibility
+WidgetColor = ColorValue
+WidgetStyle = WidgetStyling

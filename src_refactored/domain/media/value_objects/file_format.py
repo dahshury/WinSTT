@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Optional
 
 from src_refactored.domain.common.value_object import ValueObject
@@ -39,6 +38,15 @@ class FileFormat(ValueObject):
         ".wmv": ("video/x-ms-wmv", "WMV Video"),
     }
 
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (
+            self.extension,
+            self.media_type,
+            self.mime_type,
+            self.description,
+        )
+
     def __post_init__(self):
         """Validate the file format after initialization."""
         if not self.extension.startswith("."):
@@ -47,14 +55,14 @@ class FileFormat(ValueObject):
 
         if self.media_type not in MediaType:
             msg = f"Invalid media type: {self.media_type}"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)
 
     @classmethod
     def from_file_path(cls, file_path: str,
     ) -> "FileFormat":
         """Create a FileFormat from a file path."""
-        extension = Path(file_path).suffix.lower()
+        # Extract extension using string operations
+        extension = "." + file_path.split(".")[-1].lower() if "." in file_path else ""
 
         if extension in cls.AUDIO_FORMATS:
             mime_type, description = cls.AUDIO_FORMATS[extension]

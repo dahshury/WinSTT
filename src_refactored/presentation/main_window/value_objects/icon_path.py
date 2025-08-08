@@ -6,43 +6,62 @@ This module contains the IconPath value object for managing window icon paths.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from src_refactored.domain.common.result import Result
 from src_refactored.domain.common.value_object import ValueObject
 
 
+class IconSize(Enum):
+    """Standard icon sizes for the application."""
+    SMALL = "16x16"
+    MEDIUM = "32x32"
+    LARGE = "48x48"
+    EXTRA_LARGE = "64x64"
+    SYSTEM_TRAY = "16x16"
+    TOOLBAR = "24x24"
+    MENU = "16x16"
+    DIALOG = "32x32"
+
+
+class IconTheme(Enum):
+    """Icon themes for different UI contexts."""
+    LIGHT = "light"
+    DARK = "dark"
+    SYSTEM = "system"
+    HIGH_CONTRAST = "high_contrast"
+    COLORFUL = "colorful"
+
+
+@dataclass(frozen=True)
 class IconPath(ValueObject):
     """Icon path value object.
     
     Represents a file path to an icon with validation.
     """
+    
+    value: str
 
     SUPPORTED_EXTENSIONS = {".ico", ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".svg"}
 
-    def __init__(self, path: str,
-    ):
-        """Initialize icon path.
-        
-        Args:
-            path: The file path to the icon
-            
-        Raises:
-            ValueError: If path is invalid
-        """
-        if not path or not isinstance(path, str):
+    def __post_init__(self):
+        """Validate icon path after initialization."""
+        if not self.value or not isinstance(self.value, str):
             msg = "Icon path must be a non-empty string"
             raise ValueError(msg)
 
         # Normalize path
-        normalized_path = os.path.normpath(path.strip())
+        normalized_path = os.path.normpath(self.value.strip())
 
         # Validate path format
         if not self._is_valid_path_format(normalized_path):
             msg = f"Invalid icon path format: {normalized_path}"
             raise ValueError(msg)
 
-        super().__init__(normalized_path)
+        # Update the normalized path
+        object.__setattr__(self, "value", normalized_path)
 
     @classmethod
     def from_string(cls, path: str,
@@ -56,7 +75,7 @@ class IconPath(ValueObject):
             Result containing IconPath or error
         """
         try:
-            return Result.success(cls(path))
+            return Result.success(cls(value=path))
         except ValueError as e:
             return Result.failure(str(e))
 

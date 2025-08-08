@@ -1,13 +1,13 @@
 """Batch processing session entity for handling multiple media files."""
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.entity import Entity
+from src_refactored.domain.common.ports.file_system_port import FileSystemPort
 from src_refactored.domain.media.value_objects import ConversionQuality, MediaDuration
 
 from .conversion_job import ConversionJob, ConversionStatus
@@ -29,15 +29,16 @@ class BatchProcessingSession(Entity):
     """Entity representing a batch processing session for multiple media files."""
 
     name: str
+    file_system_port: FileSystemPort
     media_files: list[MediaFile] = field(default_factory=list)
     conversion_jobs: list[ConversionJob] = field(default_factory=list)
     transcription_queue: list[str] = field(default_factory=list)  # File paths or job IDs
     status: SessionStatus = SessionStatus.PENDING
     current_file_index: int = 0
     total_files_count: int = 0
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    paused_at: datetime | None = None
+    started_at: float | None = None
+    completed_at: float | None = None
+    paused_at: float | None = None
     error_message: str | None = None
     progress_callback: Callable[[float, str], None] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -48,44 +49,58 @@ class BatchProcessingSession(Entity):
         self.total_files_count = len(self.media_files)
 
     @classmethod
-    def create_from_file_paths(cls, name: str, file_paths: list[str]) -> "BatchProcessingSession":
+    def create_from_file_paths(cls, name: str, file_paths: list[str], file_system_port: FileSystemPort) -> "BatchProcessingSession":
         """Create a session from a list of file paths."""
         media_files = []
 
         for file_path in file_paths:
             try:
-                media_file = MediaFile.from_file_path(file_path)
+                media_file = MediaFile.from_file_path(file_path, file_system_port)
                 if media_file.is_supported():
-                    media_files.append(media_file,
-    )
+                    media_files.append(media_file)
             except (ValueError, OSError):
                 # Skip invalid files but could log the error
                 continue
 
         return cls(
             name=name,
+            file_system_port=file_system_port,
             media_files=media_files,
             total_files_count=len(media_files),
         )
 
     @classmethod
-    def create_from_folder(cls, name: str, folder_path: str, recursive: bool = True,
-    ) -> "BatchProcessingSession":
+    def create_from_folder(cls, name: str, folder_path: str, file_system_port: FileSystemPort, recursive: bool = True) -> "BatchProcessingSession":
         """Create a session by scanning a folder for media files."""
         file_paths = []
 
         if recursive:
-            for root, _, files in os.walk(folder_path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    file_paths.append(file_path)
+            # For recursive directory traversal, we'd need to implement this in the infrastructure layer
+            # For now, we'll scan the immediate directory only to avoid complex domain logic
+            directory_result = file_system_port.list_directory(folder_path)
+            if directory_result.is_success and directory_result.value:
+                for file_name in directory_result.value:
+                    join_result = file_system_port.join_paths(folder_path, file_name)
+                    if join_result.is_success:
+                        file_path = join_result.value if join_result.value else ""
+                        # Check if it's a file
+                        file_info_result = file_system_port.get_file_info(file_path)
+                        if file_info_result.is_success and file_info_result.value and file_info_result.value.is_file:
+                            file_paths.append(file_path)
         else:
-            for file in os.listdir(folder_path):
-                file_path = os.path.join(folder_path, file)
-                if os.path.isfile(file_path):
-                    file_paths.append(file_path)
+            # Non-recursive directory listing
+            directory_result = file_system_port.list_directory(folder_path)
+            if directory_result.is_success and directory_result.value:
+                for file_name in directory_result.value:
+                    join_result = file_system_port.join_paths(folder_path, file_name)
+                    if join_result.is_success:
+                        file_path = join_result.value if join_result.value else ""
+                        # Check if it's a file
+                        file_info_result = file_system_port.get_file_info(file_path)
+                        if file_info_result.is_success and file_info_result.value and file_info_result.value.is_file:
+                            file_paths.append(file_path)
 
-        return cls.create_from_file_paths(name, file_paths)
+        return cls.create_from_file_paths(name, file_paths, file_system_port)
 
     def add_media_file(self, media_file: MediaFile,
     ) -> None:
@@ -131,7 +146,8 @@ class BatchProcessingSession(Entity):
             elif media_file.requires_conversion(
     ):
                 # Create conversion job for video files
-                conversion_job = ConversionJob.create_with_quality(media_file, conversion_quality)
+                job_id = f"conversion_{len(self.conversion_jobs)}"
+                conversion_job = ConversionJob.create_with_quality(job_id, media_file, conversion_quality, self.file_system_port)
                 self.conversion_jobs.append(conversion_job)
                 self.transcription_queue.append(f"conversion_job:{conversion_job.id}")
 
@@ -146,7 +162,7 @@ class BatchProcessingSession(Entity):
             raise ValueError(msg)
 
         self.status = SessionStatus.IN_PROGRESS
-        self.started_at = datetime.now()
+        self.started_at = DomainIdentityGenerator.generate_timestamp()
         self.current_file_index = 0
         self.progress_callback = progress_callback
 
@@ -161,7 +177,7 @@ class BatchProcessingSession(Entity):
             raise ValueError(msg)
 
         self.status = SessionStatus.PAUSED
-        self.paused_at = datetime.now()
+        self.paused_at = DomainIdentityGenerator.generate_timestamp()
 
     def resume(self) -> None:
         """Resume the processing session."""
@@ -180,7 +196,7 @@ class BatchProcessingSession(Entity):
             raise ValueError(msg)
 
         self.status = SessionStatus.COMPLETED
-        self.completed_at = datetime.now()
+        self.completed_at = DomainIdentityGenerator.generate_timestamp()
         self.current_file_index = self.total_files_count
 
         if self.progress_callback:
@@ -194,7 +210,7 @@ class BatchProcessingSession(Entity):
             raise ValueError(msg)
 
         self.status = SessionStatus.FAILED
-        self.completed_at = datetime.now()
+        self.completed_at = DomainIdentityGenerator.generate_timestamp()
         self.error_message = error_message
 
         if self.progress_callback:
@@ -212,7 +228,7 @@ class BatchProcessingSession(Entity):
                 job.cancel()
 
         self.status = SessionStatus.CANCELLED
-        self.completed_at = datetime.now()
+        self.completed_at = DomainIdentityGenerator.generate_timestamp()
 
         if self.progress_callback:
             self.progress_callback(self.get_progress_percentage(), "Processing cancelled")
@@ -311,8 +327,8 @@ class BatchProcessingSession(Entity):
         if not self.started_at:
             return None
 
-        end_time = self.completed_at or datetime.now()
-        duration_seconds = (end_time - self.started_at).total_seconds()
+        end_value = self.completed_at or DomainIdentityGenerator.generate_timestamp()
+        duration_seconds = float(end_value - self.started_at)
         return MediaDuration.from_seconds(duration_seconds)
 
     def is_empty(self) -> bool:
@@ -352,7 +368,7 @@ class BatchProcessingSession(Entity):
             "error_message": self.error_message,
             "media_files": [f.to_dict() for f in self.media_files],
             "conversion_jobs": [j.to_dict() for j in self.conversion_jobs],
-            "session_duration": self.get_session_duration().to_seconds() if self.get_session_duration() else None,
+            "session_duration": (lambda d: d.to_seconds() if d else None)(self.get_session_duration()),
             "estimated_remaining_time": self.estimate_remaining_processing_time().to_seconds(),
             "metadata": self.metadata,
         }

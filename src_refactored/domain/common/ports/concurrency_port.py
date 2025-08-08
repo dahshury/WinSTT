@@ -2,23 +2,98 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, TypeVar
 
 from src_refactored.domain.common.result import Result
+
+T = TypeVar("T")
+
+
+class AsyncLock:
+    """Async lock interface."""
+    async def __aenter__(self) -> None: ...
+    async def __aexit__(self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any) -> None: ...
+
+
+class AsyncSemaphore:
+    """Async semaphore interface."""
+    async def __aenter__(self) -> None: ...
+    async def __aexit__(self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any) -> None: ...
 
 
 class IConcurrencyPort(ABC):
     """Port interface for concurrency operations."""
     
     @abstractmethod
-    async def create_lock(self, lock_id: str) -> Result[None]:
+    def create_lock(self, lock_id: str | None = None) -> AsyncLock:
         """Create an async lock.
         
         Args:
-            lock_id: Unique identifier for the lock
+            lock_id: Optional unique identifier for the lock
             
         Returns:
-            Result indicating success or failure
+            Async lock object
+        """
+        ...
+    
+    @abstractmethod
+    def create_semaphore(self, value: int) -> AsyncSemaphore:
+        """Create an async semaphore.
+        
+        Args:
+            value: Maximum number of permits
+            
+        Returns:
+            Async semaphore object
+        """
+        ...
+    
+    @abstractmethod
+    async def to_thread(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        """Run a function in a thread pool.
+        
+        Args:
+            func: Function to run
+            *args: Positional arguments
+            **kwargs: Keyword arguments
+            
+        Returns:
+            Function result
+        """
+        ...
+    
+    @abstractmethod
+    async def gather(self, *awaitables: Awaitable[T], return_exceptions: bool = False) -> list[T]:
+        """Gather multiple awaitables.
+        
+        Args:
+            *awaitables: Awaitables to gather
+            return_exceptions: Whether to return exceptions
+            
+        Returns:
+            List of results
+        """
+        ...
+    
+    @abstractmethod
+    async def wait_for(self, awaitable: Awaitable[T], timeout: float) -> T:
+        """Wait for an awaitable with timeout.
+        
+        Args:
+            awaitable: Awaitable to wait for
+            timeout: Timeout in seconds
+            
+        Returns:
+            Awaitable result
+        """
+        ...
+    
+    @abstractmethod
+    async def sleep(self, duration: float) -> None:
+        """Sleep for specified duration.
+        
+        Args:
+            duration: Sleep duration in seconds
         """
         ...
     
@@ -81,55 +156,5 @@ class IConcurrencyPort(ABC):
             
         Returns:
             Result indicating success or failure
-        """
-        ...
-
-
-class ITimePort(ABC):
-    """Port interface for time operations."""
-    
-    @abstractmethod
-    def get_current_time(self) -> Result[float]:
-        """Get current time in seconds since epoch.
-        
-        Returns:
-            Result containing current time
-        """
-        ...
-    
-    @abstractmethod
-    def get_elapsed_time(self, start_time: float) -> Result[float]:
-        """Get elapsed time since start time.
-        
-        Args:
-            start_time: Start time in seconds since epoch
-            
-        Returns:
-            Result containing elapsed time in seconds
-        """
-        ...
-    
-    @abstractmethod
-    def format_time(self, timestamp: float, format_string: str) -> Result[str]:
-        """Format timestamp as string.
-        
-        Args:
-            timestamp: Time in seconds since epoch
-            format_string: Format string (e.g., '%Y-%m-%d %H:%M:%S')
-            
-        Returns:
-            Result containing formatted time string
-        """
-        ...
-    
-    @abstractmethod
-    def sleep(self, duration_ms: int) -> Result[None]:
-        """Sleep for specified duration.
-        
-        Args:
-            duration_ms: Duration in milliseconds
-            
-        Returns:
-            Result indicating completion
         """
         ...

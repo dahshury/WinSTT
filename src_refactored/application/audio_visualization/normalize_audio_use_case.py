@@ -19,8 +19,7 @@ from src_refactored.domain.audio_visualization.value_objects.normalization_types
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import numpy as np
-
+    from src_refactored.domain.audio.value_objects.audio_samples import AudioSampleData
     from src_refactored.domain.audio_visualization.protocols import (
         AudioDataValidationServiceProtocol,
         AudioNormalizationServiceProtocol,
@@ -49,7 +48,7 @@ class NormalizationConfiguration:
 @dataclass
 class NormalizeAudioRequest:
     """Request for normalizing audio data."""
-    audio_data: np.ndarray
+    audio_data: AudioSampleData
     configuration: NormalizationConfiguration
     progress_callback: Callable[[str, float], None] | None = None
     completion_callback: Callable[[NormalizationResult], None] | None = None
@@ -76,7 +75,7 @@ class AudioStatistics:
 class NormalizeAudioResponse:
     """Response from normalizing audio data."""
     result: NormalizationResult
-    normalized_data: np.ndarray | None = None
+    normalized_data: AudioSampleData | None = None
     statistics: AudioStatistics | None = None
     processing_time: float | None = None
     error_message: str | None = None
@@ -135,7 +134,7 @@ class NormalizeAudioUseCase:
                 "Starting audio normalization",
                 phase=NormalizationPhase.INITIALIZING.value,
                 method=request.configuration.method.value,
-                data_shape=request.audio_data.shape,
+                data_shape=(len(request.audio_data.samples), request.audio_data.channels),
             )
 
             if request.progress_callback:
@@ -151,7 +150,7 @@ class NormalizeAudioUseCase:
                 if request.progress_callback:
                     request.progress_callback("Validating data...", 20.0)
 
-                if not self._validation_service.validate_audio_array(request.audio_data):
+                if not self._validation_service.validate_audio_data(request.audio_data):
                     error_message = "Invalid audio data provided"
                     self._logger_service.log_error("Audio data validation failed")
 
@@ -165,7 +164,7 @@ class NormalizeAudioUseCase:
                     )
 
                 # Check for empty data
-                if len(request.audio_data) == 0:
+                if len(request.audio_data.samples) == 0:
                     error_message = "Empty audio data provided"
                     self._logger_service.log_error("Empty audio data")
 
@@ -189,13 +188,12 @@ class NormalizeAudioUseCase:
                 request.progress_callback("Calculating statistics...", 30.0)
 
             try:
-                original_stats = self._statistics_service.calculate_statistics(request.audio_data,
-    )
-                original_rms = original_stats["rms"]
-                original_peak = original_stats["peak"]
-                original_mean = original_stats["mean"]
-                original_std = original_stats["std"]
-                original_range = (original_stats["min"], original_stats["max"])
+                original_stats = self._statistics_service.calculate_statistics(request.audio_data)
+                original_rms = original_stats.rms
+                original_peak = original_stats.peak
+                original_mean = original_stats.mean
+                original_std = 0.0  # Calculate if needed
+                original_range = (original_stats.min_value, original_stats.max_value)
 
                 # Check for zero RMS
                 if original_rms < request.configuration.rms_threshold:
@@ -248,27 +246,28 @@ class NormalizeAudioUseCase:
 
                 elif request.configuration.method == NormalizationMethod.RMS_BASED:
                     normalized_data = self._normalization_service.normalize_rms_based(
-                        request.audio_data, request.configuration.target_rms, original_rms,
+                        request.audio_data, request.configuration.target_rms,
                     )
                     scaling_applied = (
                         request.configuration.target_rms / original_rms if original_rms > 0 else 0.0)
 
                 elif request.configuration.method == NormalizationMethod.PEAK_BASED:
                     normalized_data = self._normalization_service.normalize_peak_based(
-                        request.audio_data, request.configuration.target_peak, original_peak,
+                        request.audio_data, request.configuration.target_peak,
                     )
                     scaling_applied = (
                         request.configuration.target_peak / original_peak if original_peak > 0 else 0.0)
 
                 elif request.configuration.method == NormalizationMethod.Z_SCORE:
                     normalized_data = self._normalization_service.apply_z_score_normalization(
-                        request.audio_data,
+                        request.audio_data, original_mean, original_std,
                     )
                     scaling_applied = 1.0 / original_std if original_std > 0 else 0.0
 
                 elif request.configuration.method == NormalizationMethod.MIN_MAX:
+                    min_val, max_val = original_range
                     normalized_data = self._normalization_service.apply_min_max_normalization(
-                        request.audio_data, -1.0, 1.0,
+                        request.audio_data, min_val, max_val,
                     )
                     data_range = original_range[1] - original_range[0]
                     scaling_applied = 2.0 / data_range if data_range > 0 else 0.0
@@ -304,11 +303,12 @@ class NormalizeAudioUseCase:
                 if request.progress_callback:
                     request.progress_callback("Applying clipping...", 70.0)
 
-                normalized_data, clipping_occurred = self._processing_service.apply_clipping(
+                clipping_result = self._processing_service.apply_clipping(
                     normalized_data, request.configuration.clip_threshold,
                 )
+                normalized_data = clipping_result.processed_data
 
-                if clipping_occurred:
+                if clipping_result.processing_applied:
                     self._logger_service.log_debug("Clipping was applied to audio data")
 
             # Phase 6: Apply centering if enabled
@@ -330,9 +330,9 @@ class NormalizeAudioUseCase:
                 request.progress_callback("Calculating final statistics...", 90.0)
 
             final_stats = self._statistics_service.calculate_statistics(normalized_data)
-            normalized_rms = final_stats["rms"]
-            normalized_peak = final_stats["peak"]
-            normalized_range = (final_stats["min"], final_stats["max"])
+            normalized_rms = final_stats.rms
+            normalized_peak = final_stats.peak
+            normalized_range = (final_stats.min_value, final_stats.max_value)
 
             # Phase 8: Complete normalization
             processing_time = time.time() - start_time

@@ -6,7 +6,6 @@ including cleanup registration, graceful shutdown, and error handling.
 
 import atexit
 import contextlib
-import sys
 from collections.abc import Callable
 from typing import Any
 
@@ -116,8 +115,8 @@ class ApplicationLifecycleService:
         """
         self._exit_code = exit_code
         self._perform_cleanup()
-        sys.exit(exit_code,
-    )
+        # Defer termination to caller (application orchestrator) to avoid hard exit in Infra
+        self._exit_code = exit_code
 
     def shutdown_immediately(self, exit_code: int = 1) -> None:
         """Perform immediate shutdown without cleanup.
@@ -125,7 +124,8 @@ class ApplicationLifecycleService:
         Args:
             exit_code: Exit code to use when exiting
         """
-        sys.exit(exit_code)
+        # Defer termination to caller; store exit code
+        self._exit_code = exit_code
 
     def is_shutdown_in_progress(self,
     ) -> bool:

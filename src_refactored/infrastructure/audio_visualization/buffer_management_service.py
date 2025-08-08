@@ -100,7 +100,19 @@ class RollingAudioBuffer:
 
                 # Roll the buffer and add new data
                 self._buffer = np.roll(self._buffer, -len(new_data))
-                self._buffer[-len(new_data):] = new_data
+                # Ensure the new data is flattened and has the correct shape
+                flattened_data = new_data.astype(np.float32).flatten()
+                # Ensure the buffer slice has the same shape as the data
+                slice_size = min(len(flattened_data), len(self._buffer))
+                # Reshape the buffer to ensure it's 1-dimensional
+                self._buffer = self._buffer.reshape(-1)
+                # Ensure the buffer has the correct shape for assignment
+                if len(self._buffer) >= slice_size:
+                    # Use a temporary array to avoid type issues
+                    temp_buffer = self._buffer.copy()
+                    temp_buffer[-slice_size:] = flattened_data[:slice_size]
+                    # Explicitly cast to the expected type
+                    self._buffer = np.array(temp_buffer, dtype=np.float32)
 
                 return True
 
@@ -436,8 +448,9 @@ class BufferManagementService:
         Returns:
             Updated audio buffer
         """
-        # Add samples to the buffer using the domain method
-        return buffer.add_samples(new_data)
+        # Add samples to buffer
+        samples_list = new_data.tolist()
+        return buffer.add_samples_list(samples_list, 0)
 
     def get_buffer_data(self, buffer: AudioBuffer,
     ) -> np.ndarray:
@@ -454,7 +467,9 @@ class BufferManagementService:
         
         # Concatenate all waveform data
         concatenated = buffer.concatenate_all()
-        return concatenated.to_numpy_array() if concatenated else np.array([])
+        if concatenated:
+            return np.array(concatenated.samples, dtype=np.float32)
+        return np.array([])
 
     def clear_buffer(self, buffer: AudioBuffer,
     ) -> AudioBuffer:

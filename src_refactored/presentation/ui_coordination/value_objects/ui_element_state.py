@@ -1,39 +1,13 @@
 """UI element state value object for UI coordination."""
 
 from dataclasses import dataclass
-from enum import Enum
 
 from src_refactored.domain.common.value_object import ValueObject
-
-
-class ElementType(Enum):
-    """Types of UI elements."""
-    LABEL = "label"
-    BUTTON = "button"
-    PROGRESS_BAR = "progress_bar"
-    VISUALIZER = "visualizer"
-    LOGO = "logo"
-    TITLE = "title"
-    INSTRUCTION = "instruction"
-    SETTINGS = "settings"
-    TRAY_ICON = "tray_icon"
-
-
-class VisibilityState(Enum):
-    """Visibility states for UI elements."""
-    VISIBLE = "visible"
-    HIDDEN = "hidden"
-    DIMMED = "dimmed"
-    FADING_IN = "fading_in"
-    FADING_OUT = "fading_out"
-
-
-class InteractionState(Enum):
-    """Interaction states for UI elements."""
-    ENABLED = "enabled"
-    DISABLED = "disabled"
-    BLOCKED = "blocked"
-    LOADING = "loading"
+from src_refactored.presentation.ui_coordination.value_objects.element_type import (
+    ElementType,
+    InteractionState,
+    VisibilityState,
+)
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QAction, QIcon
-from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 
 
 class TrayIconService(QObject):
@@ -22,6 +22,7 @@ class TrayIconService(QObject):
     # Signals for tray icon events
     tray_activated = pyqtSignal(QSystemTrayIcon.ActivationReason)
     show_window_requested = pyqtSignal()
+    settings_requested = pyqtSignal()
     close_app_requested = pyqtSignal()
 
     def __init__(self, app_name: str = "WinSTT", icon_path: str | None = None):
@@ -47,8 +48,9 @@ class TrayIconService(QObject):
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return False
 
-        # Create tray icon
-        self.tray_icon = QSystemTrayIcon()
+        # Create tray icon with a stable parent (the QApplication instance) to ensure lifetime
+        app = QApplication.instance()
+        self.tray_icon = QSystemTrayIcon(app)
 
         # Set icon
         icon = self._load_icon()
@@ -60,6 +62,10 @@ class TrayIconService(QObject):
 
         # Create context menu
         self._create_tray_menu()
+
+        # Ensure context menu is set before showing
+        if self.tray_menu:
+            self.tray_icon.setContextMenu(self.tray_menu)
 
         # Connect signals
         self.tray_icon.activated.connect(self._on_tray_activated)
@@ -77,6 +83,18 @@ class TrayIconService(QObject):
 
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return False
+
+        # Ensure menu is properly attached before showing
+        if not self.tray_menu:
+            self._create_tray_menu()
+            
+        if self.tray_menu:
+            self.tray_icon.setContextMenu(self.tray_menu)
+            # Verify menu is actually attached
+            attached_menu = self.tray_icon.contextMenu()
+            if attached_menu != self.tray_menu:
+                # Try setting it again
+                self.tray_icon.setContextMenu(self.tray_menu)
 
         self.tray_icon.show()
         self._is_visible = True
@@ -165,11 +183,16 @@ class TrayIconService(QObject):
 
         # Insert before the separator (before Show/Close actions)
         actions = self.tray_menu.actions()
-        if len(actions) >= 2:  # Show and Close actions exist
+        min_default_actions = 2  # Show and Close actions
+        if len(actions) >= min_default_actions:
             self.tray_menu.insertAction(actions[-2], action)
             self.tray_menu.insertSeparator(actions[-2])
         else:
             self.tray_menu.addAction(action)
+
+        # Ensure menu is attached to tray icon
+        if self.tray_icon and self.tray_menu:
+            self.tray_icon.setContextMenu(self.tray_menu)
 
         return action
 
@@ -194,22 +217,26 @@ class TrayIconService(QObject):
 
     def _create_tray_menu(self) -> None:
         """Create the context menu for the tray icon."""
+        from PyQt6.QtWidgets import QMenu
+        
         self.tray_menu = QMenu()
 
-        # Show action
-        show_action = QAction("Show")
+        # Show action (like the old implementation)
+        show_action = QAction("Show", self.tray_menu)
         show_action.triggered.connect(self._on_show_requested)
         self.tray_menu.addAction(show_action)
 
-        # Separator
-        self.tray_menu.addSeparator()
+        # Settings action (like the old implementation)
+        settings_action = QAction("Settings", self.tray_menu)
+        settings_action.triggered.connect(self._on_settings_requested)
+        self.tray_menu.addAction(settings_action)
 
-        # Close action
-        close_action = QAction("Close")
+        # Close action (renamed to "Exit" like old implementation)
+        close_action = QAction("Exit", self.tray_menu)
         close_action.triggered.connect(self._on_close_requested)
         self.tray_menu.addAction(close_action)
 
-        # Set menu to tray icon
+        # Set menu to tray icon immediately
         if self.tray_icon:
             self.tray_icon.setContextMenu(self.tray_menu)
 
@@ -258,15 +285,34 @@ class TrayIconService(QObject):
         Args:
             reason: The reason for activation (click, double-click, etc.)
         """
-        self.tray_activated.emit(reason)
+        from contextlib import suppress
+        
+        with suppress(Exception):
+            # Convert enum to int for signal emission to avoid type conversion issues
+            self.tray_activated.emit(int(reason))
 
-        # Default behavior: show window on double-click or trigger
-        if reason in (QSystemTrayIcon.ActivationReason.DoubleClick, QSystemTrayIcon.ActivationReason.Trigger):
+        # Ensure right-click shows context menu reliably
+        if reason == QSystemTrayIcon.ActivationReason.Context:
+            if self.tray_menu:
+                try:
+                    from PyQt6.QtGui import QCursor
+                    # Use exec for modal context menu on Windows
+                    self.tray_menu.exec(QCursor.pos())
+                except Exception:
+                    # Fallback: ensure menu is attached; Qt should handle display
+                    if self.tray_icon and self.tray_menu:
+                        self.tray_icon.setContextMenu(self.tray_menu)
+        # Double-click shows window, matching domain default behavior
+        elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self._on_show_requested()
 
     def _on_show_requested(self) -> None:
         """Handle show window request from tray menu."""
         self.show_window_requested.emit()
+
+    def _on_settings_requested(self) -> None:
+        """Handle settings request from tray menu."""
+        self.settings_requested.emit()
 
     def _on_close_requested(self) -> None:
         """Handle close application request from tray menu."""

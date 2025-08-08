@@ -4,6 +4,8 @@ This module provides a simplified application orchestrator that delegates
 to application services for the actual workflow coordination.
 """
 
+from typing import Any
+
 from src_refactored.domain.common.ports.logger_port import ILoggerPort
 from src_refactored.domain.common.result import Result
 
@@ -29,22 +31,22 @@ class ApplicationOrchestrator:
             # Initialize application
             init_result = self._startup_service.initialize_application()
             if not init_result.is_success:
-                self.logger.error(f"Application initialization failed: {init_result.error()}")
+                self.logger.error(f"Application initialization failed: {init_result.error or 'Unknown error'}")
                 return 1
             
             # Check for single instance
             instance_result = self._startup_service.check_single_instance()
             if not instance_result.is_success:
-                self.logger.error(f"Single instance check failed: {instance_result.error()}")
+                self.logger.error(f"Single instance check failed: {instance_result.error or 'Unknown error'}")
                 return 1
                 
-            if not instance_result.value():
+            if not instance_result.value:
                 return 0  # Another instance exists, exit gracefully
             
             # Create and show main window
             window_result = self._startup_service.create_and_show_main_window()
             if not window_result.is_success:
-                self.logger.error(f"Main window creation failed: {window_result.error()}")
+                self.logger.error(f"Main window creation failed: {window_result.error or 'Unknown error'}")
                 return 1
             
             self.logger.info("WinSTT application started successfully")
@@ -56,9 +58,9 @@ class ApplicationOrchestrator:
             self.logger.exception(f"Failed to start application: {e}")
             return 1
     
-    def shutdown_application(self) -> Result[None]:
+    def shutdown_application(self, config: Any = None) -> Result[None]:
         """Perform graceful application shutdown."""
-        return self._startup_service.shutdown_application()
+        return self._startup_service.shutdown_application(config)
 
 
 def create_application_orchestrator(startup_service: IApplicationStartupService, logger: ILoggerPort) -> ApplicationOrchestrator:

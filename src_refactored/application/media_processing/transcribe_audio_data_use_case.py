@@ -6,7 +6,6 @@ of audio data in memory with progress tracking and error handling.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
@@ -344,7 +343,7 @@ class TranscribeAudioDataUseCase:
                     )
 
             # Phase 3: Prepare output path and progress
-            filename = os.path.basename(request.audio_data_info.output_base_path)
+            filename = request.audio_data_info.output_base_path.replace("\\", "/").split("/")[-1]
 
             # Get file count text if in batch processing
             file_count_text = ""
@@ -439,7 +438,7 @@ class TranscribeAudioDataUseCase:
 
             # Phase 6: Complete and update final progress
             full_output_path = f"{request.audio_data_info.output_base_path}.{extension}"
-            success_message = f"Saved transcript to: {os.path.basename(full_output_path)}{file_count_text}"
+            success_message = f"Saved transcript to: {full_output_path.replace('\\', '/').split('/')[-1]}{file_count_text}"
 
             if request.progress_callback:
                 request.progress_callback(success_message, 90.0)
@@ -507,11 +506,11 @@ class TranscribeAudioDataUseCase:
         """
         try:
             self._progress_tracking_service.update_transcription_progress(message, percentage)
-            self._logger_service.log_debug("Progress updated", message=message, percentage=percentage)
+            self._logger_service.log_debug("Progress updated", progress_message=message, percentage=percentage)
         except Exception as e:
             self._logger_service.log_warning(
                 "Failed to update progress display",
                 error=str(e),
-                message=message,
+                progress_message=message,
                 percentage=percentage,
             )

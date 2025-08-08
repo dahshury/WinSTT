@@ -97,7 +97,7 @@ class ResumeRecordingUseCase(UseCase[ResumeRecordingRequest, ResumeRecordingResp
             if request.validate_continuity:
                 try:
                     validation_result = self._audio_recorder.validate_recording_continuity()
-                    continuity_validated = validation_result.is_success()
+                    continuity_validated = validation_result.is_success
 
                     if not continuity_validated:
                         if self._error_callback_service:
@@ -117,7 +117,7 @@ class ResumeRecordingUseCase(UseCase[ResumeRecordingRequest, ResumeRecordingResp
             # Resume the recording
             resume_result = self._audio_recorder.resume_recording()
 
-            if resume_result.is_failure():
+            if not resume_result.is_success:
                 if self._error_callback_service:
                     self._error_callback_service.notify_error(
                         f"Failed to resume recording: {resume_result.error}",

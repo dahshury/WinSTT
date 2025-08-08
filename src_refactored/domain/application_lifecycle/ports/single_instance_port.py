@@ -66,3 +66,14 @@ class SingleInstancePort(ABC):
         Returns:
             True if this instance is registered, False otherwise
         """
+
+    @abstractmethod
+    def check_single_instance(self, config: SingleInstanceConfiguration) -> InstanceCheckResult:
+        """Check if this is a single instance (legacy method).
+        
+        Args:
+            config: Configuration for instance checking
+            
+        Returns:
+            Result indicating instance status
+        """

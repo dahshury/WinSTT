@@ -6,6 +6,7 @@ recording management, and cleanup capabilities.
 
 import contextlib
 import gc
+import logging
 from typing import Any
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -100,13 +101,8 @@ class ListenerWorkerService(QObject):
             error_msg = f"Listener Error: {e}"
             self.error.emit(error_msg)
 
-            # Log the error if logger is available
-            try:
-                from logger import setup_logger
-                logger = setup_logger()
-                logger.debug(error_msg)
-            except ImportError:
-                pass
+            # Log the error
+            logging.getLogger(__name__).debug(error_msg)
         finally:
             self._cleanup_listener()
 

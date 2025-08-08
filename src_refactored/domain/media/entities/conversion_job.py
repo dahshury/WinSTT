@@ -1,12 +1,11 @@
 """Conversion job entity for media file conversion."""
 
-import os
-from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.entity import Entity
+from src_refactored.domain.common.ports.file_system_port import FileSystemPort
 from src_refactored.domain.media.value_objects import ConversionQuality, MediaDuration
 
 from .media_file import MediaFile
@@ -21,26 +20,27 @@ class ConversionStatus(Enum):
     CANCELLED = "cancelled"
 
 
-@dataclass
 class ConversionJob(Entity):
     """Entity representing a media file conversion job."""
 
-    source_file: MediaFile
-    target_quality: ConversionQuality
-    status: ConversionStatus = ConversionStatus.PENDING
-    progress_percentage: float = 0.0
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    error_message: str | None = None
-    output_data: bytes | None = None  # For in-memory conversion
-    output_file_path: str | None = None  # For file-based conversion
-    estimated_duration: MediaDuration | None = None
-    actual_duration: MediaDuration | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self):
+    def __init__(self, entity_id: str, source_file: MediaFile, target_quality: ConversionQuality, 
+                 file_system_port: FileSystemPort, **kwargs):
         """Initialize the conversion job."""
-        super().__post_init__()
+        super().__init__(entity_id)
+        
+        self.source_file = source_file
+        self.target_quality = target_quality
+        self.file_system_port = file_system_port
+        self.status = kwargs.get("status", ConversionStatus.PENDING)
+        self.progress_percentage = kwargs.get("progress_percentage", 0.0)
+        self.started_at = kwargs.get("started_at")
+        self.completed_at = kwargs.get("completed_at")
+        self.error_message = kwargs.get("error_message")
+        self.output_data = kwargs.get("output_data")
+        self.output_file_path = kwargs.get("output_file_path")
+        self.estimated_duration = kwargs.get("estimated_duration")
+        self.actual_duration = kwargs.get("actual_duration")
+        self.metadata = kwargs.get("metadata", {})
 
         # Validate that source file requires conversion
         if not self.source_file.requires_conversion():
@@ -48,22 +48,26 @@ class ConversionJob(Entity):
             raise ValueError(msg)
 
     @classmethod
-    def create_for_transcription(cls, source_file: MediaFile,
+    def create_for_transcription(cls, entity_id: str, source_file: MediaFile, file_system_port: FileSystemPort,
     ) -> "ConversionJob":
         """Create a conversion job optimized for transcription."""
         quality = ConversionQuality.create_default()
         return cls(
+            entity_id=entity_id,
             source_file=source_file,
             target_quality=quality,
+            file_system_port=file_system_port,
         )
 
     @classmethod
-    def create_with_quality(cls, source_file: MediaFile, quality: ConversionQuality,
+    def create_with_quality(cls, entity_id: str, source_file: MediaFile, quality: ConversionQuality, file_system_port: FileSystemPort,
     ) -> "ConversionJob":
         """Create a conversion job with specific quality settings."""
         return cls(
+            entity_id=entity_id,
             source_file=source_file,
             target_quality=quality,
+            file_system_port=file_system_port,
         )
 
     def start(self) -> None:
@@ -73,7 +77,7 @@ class ConversionJob(Entity):
             raise ValueError(msg)
 
         self.status = ConversionStatus.IN_PROGRESS
-        self.started_at = datetime.now()
+        self.started_at = DomainIdentityGenerator.generate_timestamp()
         self.progress_percentage = 0.0
 
     def update_progress(self, percentage: float,
@@ -97,34 +101,35 @@ class ConversionJob(Entity):
             raise ValueError(msg)
 
         self.status = ConversionStatus.COMPLETED
-        self.completed_at = datetime.now()
+        self.completed_at = DomainIdentityGenerator.generate_timestamp()
         self.progress_percentage = 100.0
         self.output_data = output_data
 
         # Calculate actual duration
-        if self.started_at:
-            duration_seconds = (self.completed_at - self.started_at).total_seconds()
+        if self.started_at and self.completed_at:
+            duration_seconds = float(self.completed_at - self.started_at)
             self.actual_duration = MediaDuration.from_seconds(duration_seconds)
 
-    def complete_with_file(self, output_file_path: str,
-    ) -> None:
+    def complete_with_file(self, output_file_path: str) -> None:
         """Mark the job as completed with file output."""
         if self.status != ConversionStatus.IN_PROGRESS:
             msg = f"Cannot complete job in status: {self.status}"
             raise ValueError(msg)
 
-        if not os.path.exists(output_file_path):
+        # Check if output file exists through port
+        exists_result = self.file_system_port.file_exists(output_file_path)
+        if not exists_result.is_success or not exists_result.value:
             msg = f"Output file does not exist: {output_file_path}"
             raise ValueError(msg)
 
         self.status = ConversionStatus.COMPLETED
-        self.completed_at = datetime.now()
+        self.completed_at = DomainIdentityGenerator.generate_timestamp()
         self.progress_percentage = 100.0
         self.output_file_path = output_file_path
 
         # Calculate actual duration
-        if self.started_at:
-            duration_seconds = (self.completed_at - self.started_at).total_seconds()
+        if self.started_at and self.completed_at:
+            duration_seconds = float(self.completed_at - self.started_at)
             self.actual_duration = MediaDuration.from_seconds(duration_seconds)
 
     def fail(self, error_message: str,
@@ -135,12 +140,12 @@ class ConversionJob(Entity):
             raise ValueError(msg)
 
         self.status = ConversionStatus.FAILED
-        self.completed_at = datetime.now()
+        self.completed_at = DomainIdentityGenerator.generate_timestamp()
         self.error_message = error_message
 
         # Calculate actual duration if started
-        if self.started_at:
-            duration_seconds = (self.completed_at - self.started_at).total_seconds()
+        if self.started_at and self.completed_at:
+            duration_seconds = float(self.completed_at - self.started_at)
             self.actual_duration = MediaDuration.from_seconds(duration_seconds)
 
     def cancel(self,
@@ -151,11 +156,11 @@ class ConversionJob(Entity):
             raise ValueError(msg)
 
         self.status = ConversionStatus.CANCELLED
-        self.completed_at = datetime.now()
+        self.completed_at = DomainIdentityGenerator.generate_timestamp()
 
         # Calculate actual duration if started
-        if self.started_at:
-            duration_seconds = (self.completed_at - self.started_at).total_seconds()
+        if self.started_at and self.completed_at:
+            duration_seconds = float(self.completed_at - self.started_at)
             self.actual_duration = MediaDuration.from_seconds(duration_seconds)
 
     def is_pending(self) -> bool:
@@ -189,14 +194,26 @@ class ConversionJob(Entity):
 
     def has_output_file(self) -> bool:
         """Check if job has file output."""
-        return self.output_file_path is not None and os.path.exists(self.output_file_path)
+        if self.output_file_path is None:
+            return False
+        
+        # Check file existence through port
+        exists_result = self.file_system_port.file_exists(self.output_file_path)
+        return bool(exists_result.is_success and exists_result.value)
 
     def get_output_size_mb(self) -> float | None:
         """Get output size in MB."""
         if self.output_data:
             return len(self.output_data) / (1024 * 1024)
-        if self.output_file_path and os.path.exists(self.output_file_path):
-            return os.path.getsize(self.output_file_path) / (1024 * 1024)
+        
+        if self.output_file_path:
+            # Check file exists and get size through port
+            exists_result = self.file_system_port.file_exists(self.output_file_path)
+            if exists_result.is_success and exists_result.value:
+                size_result = self.file_system_port.get_file_size(self.output_file_path)
+                if size_result.is_success and size_result.value is not None:
+                    return size_result.value / (1024 * 1024)
+        
         return None
 
     def estimate_processing_time(self) -> MediaDuration:

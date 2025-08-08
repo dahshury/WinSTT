@@ -8,6 +8,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.worker_management.value_objects.worker_operations import WorkerType
 
 
@@ -29,7 +30,7 @@ class WorkerInstance:
     worker_type: WorkerType
     name: str
     state: WorkerState = WorkerState.INACTIVE
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
     started_at: datetime | None = None
     stopped_at: datetime | None = None
     properties: dict[str, Any] = field(default_factory=dict)
@@ -38,14 +39,14 @@ class WorkerInstance:
     def start(self) -> None:
         """Mark worker as started."""
         self.state = WorkerState.RUNNING
-        self.started_at = datetime.utcnow()
+        self.started_at = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
         self.stopped_at = None
         self.error_message = None
     
     def stop(self) -> None:
         """Mark worker as stopped."""
         self.state = WorkerState.STOPPED
-        self.stopped_at = datetime.utcnow()
+        self.stopped_at = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
     
     def set_error(self, error_message: str) -> None:
         """Set worker error state.
@@ -55,7 +56,7 @@ class WorkerInstance:
         """
         self.state = WorkerState.ERROR
         self.error_message = error_message
-        self.stopped_at = datetime.utcnow()
+        self.stopped_at = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
     
     def set_stopping(self) -> None:
         """Mark worker as stopping."""
@@ -90,7 +91,7 @@ class WorkerInstance:
         if not self.started_at:
             return 0.0
         
-        end_time = self.stopped_at or datetime.utcnow()
+        end_time = self.stopped_at or datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
         return (end_time - self.started_at).total_seconds()
     
     def set_property(self, key: str, value: Any) -> None:

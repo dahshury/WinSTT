@@ -7,10 +7,12 @@ focusing on read-only operations without side effects.
 import time
 from typing import Any, Protocol
 
+from src_refactored.application.main_window.queries.get_ui_text_state_query import (
+    GetUITextStateQuery,
+    UITextStateResult,
+)
 from src_refactored.domain.common.abstractions import IQueryHandler
 from src_refactored.domain.common.result import Result
-
-from ..queries.get_ui_text_state_query import GetUITextStateQuery, UITextStateResult
 
 
 # Service Protocols (Ports)
@@ -71,9 +73,10 @@ class GetUITextStateQueryHandler(IQueryHandler[GetUITextStateQuery, UITextStateR
                 return Result.failure(f"Failed to get widget states: {widget_states_result.error}")
 
             # Initialize result
+            widget_states = widget_states_result.value or {}
             result = UITextStateResult(
                 operation_id=query.operation_id,
-                widget_states=widget_states_result.value,
+                widget_states=widget_states,
                 timestamp=time.time(),
             )
 

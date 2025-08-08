@@ -6,7 +6,6 @@ workflows with progress tracking and error handling.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
@@ -45,7 +44,7 @@ class ConversionConfiguration:
     channels: int = 1
     bitrate: int | None = None
     quality: str | None = None
-    strategy: ConversionStrategy = ConversionStrategy.MEMORY_BASED
+    strategy: ConversionStrategy = ConversionStrategy.BALANCED
     buffer_size: int = 10**8
     timeout_seconds: float | None = None
     preserve_metadata: bool = False
@@ -334,7 +333,9 @@ class ConvertVideoUseCase:
                 phase=ConversionPhase.VALIDATING_INPUT.value,
             )
 
-            if not os.path.exists(request.video_path):
+            # Delegate existence check to validation service to avoid direct FS dependency
+            is_valid, validation_error = self._video_validation_service.validate_video(request.video_path)
+            if not is_valid and (validation_error or "not found" in (validation_error or "").lower()):
                 error_message = f"Video file not found: {request.video_path}"
                 return self._create_error_response(
                     ConversionResult.INVALID_INPUT,
@@ -342,9 +343,7 @@ class ConvertVideoUseCase:
                     start_time,
                     request,
                 )
-
-            # Validate video file
-            is_valid, validation_error = self._video_validation_service.validate_video(request.video_path)
+            # Validate video file (already checked existence, proceed with full validation)
             if not is_valid:
                 return self._create_error_response(
                     ConversionResult.INVALID_INPUT,
@@ -388,9 +387,11 @@ class ConvertVideoUseCase:
 
             # Prepare output path
             if request.output_path:
-                output_base_path = os.path.splitext(request.output_path)[0]
+                dot_index = request.output_path.rfind(".")
+                output_base_path = request.output_path[:dot_index] if dot_index != -1 else request.output_path
             else:
-                output_base_path = os.path.splitext(request.video_path)[0]
+                dot_index = request.video_path.rfind(".")
+                output_base_path = request.video_path[:dot_index] if dot_index != -1 else request.video_path
 
             # Update progress
             self._progress_tracking_service.update_progress(2, "Conversion preparation complete")
@@ -404,7 +405,7 @@ class ConvertVideoUseCase:
                 phase=ConversionPhase.EXTRACTING_AUDIO.value,
             )
 
-            base_name = os.path.basename(request.video_path)
+            base_name = request.video_path.replace("\\", "/").split("/")[-1]
             if request.progress_callback:
                 request.progress_callback(f"Converting {base_name} to audio...", 40.0)
 

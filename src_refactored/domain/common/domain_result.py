@@ -285,12 +285,19 @@ def combine_domain_results(*results: DomainResult) -> DomainResult[tuple]:
 
 def sequence_domain_results(results: list[DomainResult[T]]) -> DomainResult[list[T]]:
     """Convert a list of results into a result of list."""
-    values = []
+    values: list[T] = []
     for result in results:
         if not result.is_success:
             return DomainResult.failure(result.error or DomainError(
                 code="UNKNOWN_ERROR",
                 message="Unknown error occurred",
+                category=ErrorCategory.OPERATION,
+                severity=ErrorSeverity.ERROR,
+            ))
+        if result.value is None:
+            return DomainResult.failure(DomainError(
+                code="NULL_VALUE_ERROR",
+                message="Successful result has None value",
                 category=ErrorCategory.OPERATION,
                 severity=ErrorSeverity.ERROR,
             ))

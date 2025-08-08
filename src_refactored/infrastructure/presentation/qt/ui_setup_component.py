@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (
 )
 
 from src_refactored.domain.ui_coordination.value_objects.ui_state_management import UIState
-from src_refactored.infrastructure.main_window.ui_layout_service import UILayoutService
-from src_refactored.infrastructure.main_window.window_configuration_service import (
+from src_refactored.presentation.qt.services.ui_layout_service import UILayoutService
+from src_refactored.presentation.qt.services.window_configuration_service import (
     WindowConfigurationService,
 )
 

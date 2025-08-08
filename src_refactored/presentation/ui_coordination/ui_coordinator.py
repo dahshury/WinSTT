@@ -7,12 +7,15 @@ Replaces the previous UICoordinator entity that violated hexagonal architecture.
 from dataclasses import dataclass
 
 from src_refactored.application.interfaces.ui_coordination_service import (
-    ElementType,
+    ElementType as AppElementType,
+)
+from src_refactored.application.interfaces.ui_coordination_service import (
     IUICoordinationService,
 )
 from src_refactored.domain.common.result import Result
 from src_refactored.presentation.ui_coordination.value_objects import (
     AnimationState,
+    ElementType,
     InteractionState,
     MessageDisplay,
     UIElementState,
@@ -57,12 +60,17 @@ class UICoordinatorPresenter:
         # Special states for specific elements
         self._local_element_states[ElementType.VISUALIZER] = UIElementState.hidden(ElementType.VISUALIZER)
         self._local_element_states[ElementType.PROGRESS_BAR] = UIElementState.hidden(ElementType.PROGRESS_BAR)
+    
+    def _convert_to_app_element_type(self, element_type: ElementType) -> AppElementType:
+        """Convert presentation ElementType to application ElementType."""
+        # Both enums have the same values, so we can convert by value
+        return AppElementType(element_type.value)
 
     def start_recording_mode(self) -> Result[dict[ElementType, AnimationState]]:
         """Start recording mode with coordinated animations through application service."""
         service_result = self._coordination_service.start_recording_mode(self._coordinator_id)
         if not service_result.is_success:
-            return service_result
+            return Result.failure(service_result.error or "Failed to start recording mode")
 
         # Update local presentation states for immediate UI feedback
         animations = {}
@@ -87,7 +95,7 @@ class UICoordinatorPresenter:
         """Stop recording mode and restore UI elements through application service."""
         service_result = self._coordination_service.stop_recording_mode(self._coordinator_id)
         if not service_result.is_success:
-            return service_result
+            return Result.failure(service_result.error or "Failed to stop recording mode")
 
         # Update local presentation states for immediate UI feedback
         animations = {}
@@ -220,9 +228,10 @@ class UICoordinatorPresenter:
 
     def get_element_state(self, element_type: ElementType) -> Result[UIElementState | None]:
         """Get current state of a UI element from application service."""
-        service_result = self._coordination_service.get_element_state(self._coordinator_id, element_type)
+        app_element_type = self._convert_to_app_element_type(element_type)
+        service_result = self._coordination_service.get_element_state(self._coordinator_id, app_element_type)
         if not service_result.is_success:
-            return service_result
+            return Result.failure(service_result.error or "Failed to get element state")
 
         # Return local presentation state as fallback
         local_state = self._local_element_states.get(element_type)

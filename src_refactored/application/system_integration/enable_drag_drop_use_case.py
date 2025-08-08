@@ -419,13 +419,13 @@ class EnableDragDropUseCase:
                     warnings.append(f"Widget {config.zone_id} may not support drag and drop: {widget_error}")
 
             # Validate file type configurations
-            for config in request.file_types:
+            for file_type_config in request.file_types:
                 file_type_valid, file_type_error = (
-                    self._validation_service.validate_file_type_configuration(config)
+                    self._validation_service.validate_file_type_configuration(file_type_config)
                 )
                 if not file_type_valid:
                     state.error_message = (
-                        f"Invalid file type configuration for {config.file_type}: {file_type_error}"
+                        f"Invalid file type configuration for {file_type_config.file_type}: {file_type_error}"
                     )
                     return EnableDragDropResponse(
                         result=EnableResult.VALIDATION_ERROR,
@@ -454,7 +454,7 @@ class EnableDragDropUseCase:
                     self._widget_configuration_service.configure_drop_zone(config)
                 )
 
-                result = DropZoneSetupResult(
+                zone_result = DropZoneSetupResult(
                     zone_id=config.zone_id,
                     zone_configured=zone_configured,
                     widget_enabled=False,
@@ -474,7 +474,7 @@ class EnableDragDropUseCase:
                     if not actions_set:
                         warnings.append(f"Failed to set accepted actions for {config.zone_id}: {actions_error}")
                     else:
-                        result.widget_enabled = True
+                        zone_result.widget_enabled = True
 
                     # Apply visual feedback
                     if config.visual_feedback:
@@ -486,13 +486,13 @@ class EnableDragDropUseCase:
                         if not feedback_applied:
                             warnings.append(f"Failed to apply visual feedback for {config.zone_id}: {feedback_error}")
                         else:
-                            result.visual_feedback_applied = True
+                            zone_result.visual_feedback_applied = True
 
                     state.enabled_zones += 1
                 else:
                     state.failed_zones += 1
 
-                state.drop_zone_results.append(result)
+                state.drop_zone_results.append(zone_result)
 
                 if request.enable_progress_tracking and self._progress_tracking_service:
                     progress = (i + 1) / len(request.drop_zones)
@@ -545,7 +545,7 @@ class EnableDragDropUseCase:
 
             # Update file type results
             for file_type_config in request.file_types:
-                result = FileTypeSetupResult(
+                file_type_result = FileTypeSetupResult(
                     file_type=file_type_config.file_type,
                     extensions_registered=(
                         len(file_type_config.extensions) if types_registered else 0
@@ -560,7 +560,7 @@ class EnableDragDropUseCase:
                         file_type_config.validation_required and validators_installed
                     ),
                 )
-                state.file_type_results.append(result)
+                state.file_type_results.append(file_type_result)
 
             state.handler_setup = HandlerSetupResult(
                 handlers_installed=handler_setup,
@@ -672,14 +672,14 @@ class EnableDragDropUseCase:
 
             # Determine result
             if state.failed_zones == 0:
-                result = EnableResult.SUCCESS if not warnings else EnableResult.PARTIAL_SUCCESS
+                final_result = EnableResult.SUCCESS if not warnings else EnableResult.PARTIAL_SUCCESS
             elif state.enabled_zones > 0:
-                result = EnableResult.PARTIAL_SUCCESS
+                final_result = EnableResult.PARTIAL_SUCCESS
             else:
-                result = EnableResult.FAILED
+                final_result = EnableResult.FAILED
 
             return EnableDragDropResponse(
-                result=result,
+                result=final_result,
                 state=state,
                 drop_manager=None,  # Would be created by a drop manager service
                 file_handler=file_handler if handler_setup else None,

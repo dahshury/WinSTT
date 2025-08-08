@@ -7,10 +7,10 @@ separated from command operations following CQRS pattern.
 from dataclasses import dataclass
 from typing import Any
 
-from src_refactored.domain.common.abstractions import IQuery
-from src_refactored.domain.main_window.value_objects.ui_text import (
+from src_refactored.application.main_window.update_ui_text_use_case import (
     WidgetTextTarget,
 )
+from src_refactored.domain.common.abstractions import IQuery
 
 
 @dataclass

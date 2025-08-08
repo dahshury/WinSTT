@@ -9,8 +9,8 @@ from typing import Any
 
 from src_refactored.domain.common.value_object import ValueObject
 from src_refactored.domain.llm.value_objects.llm_model_name import LLMModelName
+from src_refactored.domain.llm.value_objects.llm_quantization_level import LLMQuantizationLevel
 from src_refactored.domain.transcription.value_objects.model_name import ModelName
-from src_refactored.domain.transcription.value_objects.quantization import Quantization
 from src_refactored.domain.transcription.value_objects.quantization_level import QuantizationLevel
 from src_refactored.domain.worker_management.value_objects.worker_operations import WorkerType
 
@@ -23,7 +23,7 @@ class WorkerConfiguration(ValueObject):
     model_name: ModelName | None = None
     quantization_level: QuantizationLevel | None = None
     llm_model_name: LLMModelName | None = None
-    llm_quantization_level: Quantization | None = None
+    llm_quantization_level: LLMQuantizationLevel | None = None
     auto_start: bool = True
     timeout_seconds: int = 30
     retry_count: int = 3
@@ -68,11 +68,19 @@ class WorkerConfiguration(ValueObject):
 
     def requires_gpu(self) -> bool:
         """Check if this worker configuration requires GPU resources."""
-        return (
-            self.worker_type == WorkerType.LLM
-            or (self.quantization_level and self.quantization_level.requires_gpu())
-            or (self.llm_quantization_level and self.llm_quantization_level.requires_gpu())
-        )
+        # Check all conditions that would require GPU
+        conditions = [
+            # LLM workers generally benefit from GPU
+            self.worker_type == WorkerType.LLM,
+            
+            # Check transcription model quantization
+            self.quantization_level is not None and getattr(self.quantization_level, "requires_gpu", False),
+            
+            # Check LLM quantization
+            self.llm_quantization_level is not None and getattr(self.llm_quantization_level, "requires_gpu", False),
+        ]
+        
+        return any(conditions)
 
     def get_memory_requirements(self) -> int:
         """Get estimated memory requirements in MB."""

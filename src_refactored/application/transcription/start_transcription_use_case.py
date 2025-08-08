@@ -92,7 +92,7 @@ class StartTranscriptionUseCase(UseCase[StartTranscriptionRequest, StartTranscri
 
             # Validate audio data
             audio_validation = self._validate_audio_data(request.audio_data)
-            if audio_validation.is_failure():
+            if not audio_validation.is_success:
                 return StartTranscriptionResponse(
                     success=False,
                     error_message=f"Invalid audio data: {audio_validation.error}",
@@ -101,7 +101,7 @@ class StartTranscriptionUseCase(UseCase[StartTranscriptionRequest, StartTranscri
             # Apply model configuration if provided
             if request.model_configuration:
                 config_result = self._transcription_session.configure_model(request.model_configuration)
-                if config_result.is_failure():
+                if not config_result.is_success:
                     return StartTranscriptionResponse(
                         success=False,
                         error_message=f"Model configuration failed: {config_result.error}",
@@ -112,7 +112,7 @@ class StartTranscriptionUseCase(UseCase[StartTranscriptionRequest, StartTranscri
                 model_validation = self._model_service.validate_model_availability(
                     self._transcription_session.get_model_configuration(),
                 )
-                if model_validation.is_failure():
+                if not model_validation.is_success:
                     return StartTranscriptionResponse(
                         success=False,
                         error_message=f"Model validation failed: {model_validation.error}",
@@ -146,7 +146,7 @@ class StartTranscriptionUseCase(UseCase[StartTranscriptionRequest, StartTranscri
                 task=request.task,
             )
 
-            if start_result.is_failure():
+            if not start_result.is_success:
                 if self._error_callback_service:
                     self._error_callback_service.notify_error(
                         f"Failed to start transcription: {start_result.error}",
@@ -164,13 +164,19 @@ class StartTranscriptionUseCase(UseCase[StartTranscriptionRequest, StartTranscri
             processing_started = False
             if request.async_processing and self._model_service:
                 try:
+                    if transcription_id is None:
+                        return StartTranscriptionResponse(
+                            success=False,
+                            error_message="Failed to get transcription ID",
+                        )
+                    
                     processing_result = self._start_background_processing(
                         transcription_id,
                         request.audio_data,
                         request.language,
                         request.task,
                     )
-                    processing_started = processing_result.is_success()
+                    processing_started = processing_result.is_success
 
                     if not processing_started and self._error_callback_service:
                         self._error_callback_service.notify_warning(
@@ -222,7 +228,7 @@ class StartTranscriptionUseCase(UseCase[StartTranscriptionRequest, StartTranscri
         Returns:
             Result indicating validation success or failure
         """
-        if not audio_data or not audio_data.samples.size:
+        if not audio_data or not len(audio_data.samples):
             return Result.failure("Audio data cannot be empty")
 
         if audio_data.duration_seconds < 0.1:

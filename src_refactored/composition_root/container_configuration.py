@@ -13,23 +13,23 @@ from src_refactored.application.application_config import (
     ApplicationConfiguration,
     create_default_configuration,
 )
-from src_refactored.application.application_lifecycle.shutdown_application_use_case import (
-    ShutdownApplicationUseCase,
-    ShutdownManager,
-    create_shutdown_manager,
-    create_shutdown_use_case,
-)
-from src_refactored.application.application_lifecycle.startup_application_use_case import (
-    StartupApplicationUseCase,
-    create_startup_use_case,
-)
 from src_refactored.application.application_orchestrator import (
     ApplicationOrchestrator,
     create_application_orchestrator,
 )
 
-# Import domain ports
-from src_refactored.domain.common.ports.logging_port import LoggingPort
+# Note: Shutdown use case temporarily disabled due to missing implementation
+# from src_refactored.application.application_lifecycle.shutdown_application_use_case import (
+#     ShutdownApplicationUseCase,
+#     create_shutdown_use_case,
+# )
+from src_refactored.application.services.application_startup_service import (
+    ApplicationStartupService,
+    IApplicationStartupService,
+)
+
+# Import domain ports  
+from src_refactored.domain.common.ports.logger_port import ILoggerPort
 
 # Import infrastructure adapters
 from src_refactored.infrastructure.adapters.logging_adapter import PythonLoggingAdapter
@@ -50,19 +50,22 @@ from src_refactored.infrastructure.common.task_manager import (
 from src_refactored.infrastructure.common.unit_of_work import (
     create_in_memory_unit_of_work,
 )
-from src_refactored.infrastructure.presentation.qt.ui_core_abstractions import (
+from src_refactored.presentation.core.container import (
+    EnterpriseContainer,
+    EnterpriseContainerBuilder,
+)
+from src_refactored.presentation.infrastructure_bridge.ui_core_abstractions import (
     UIEventBus as UIEventBusCore,
 )
-from src_refactored.infrastructure.presentation.qt.ui_core_abstractions import (
+from src_refactored.presentation.infrastructure_bridge.ui_core_abstractions import (
     UILifecycleManager,
 )
-from src_refactored.infrastructure.presentation.qt.ui_core_patterns import (
+from src_refactored.presentation.infrastructure_bridge.ui_core_patterns import (
     UIAnimationManager,
     UILayoutManager,
     UIPatternRegistry,
     UIThemeManager,
 )
-from src_refactored.presentation.core.container import UIContainer, UIContainerBuilder
 
 T = TypeVar("T")
 
@@ -70,16 +73,16 @@ T = TypeVar("T")
 class ContainerConfiguration:
     """Configuration class for setting up the UIContainer with all services."""
     
-    def __init__(self):
+    def __init__(self) -> None:
         self.logger = PythonLoggingAdapter()
-        self._container: UIContainer | None = None
-        self._builder: UIContainerBuilder | None = None
+        self._container: EnterpriseContainer | None = None
+        self._builder: EnterpriseContainerBuilder | None = None
     
-    def configure_container(self) -> UIContainer:
+    def configure_container(self) -> EnterpriseContainer:
         """Configure and build the UIContainer with all services.
         
         Returns:
-            Configured UIContainer instance
+            Configured EnterpriseContainer instance
         """
         if self._container is not None:
             return self._container
@@ -87,20 +90,23 @@ class ContainerConfiguration:
         self.logger.info("Configuring UIContainer with all services")
         
         # Create container builder
-        self._builder = UIContainerBuilder()
+        self._builder = EnterpriseContainerBuilder()
         
         # Register all service categories
         self._register_core_services()
         self._register_domain_services()
         self._register_application_services()
         self._register_infrastructure_services()
-        register_worker_services(self._builder)
-        register_ui_patterns(self._builder)
-        self._register_ui_pattern_services()
-        register_presentation_services(self._builder)
+        if self._builder is not None:
+            register_worker_services(self._builder)
+            register_ui_adapters(self._builder)
+            register_ui_patterns(self._builder)
+            self._register_ui_pattern_services()
+            register_presentation_services(self._builder)
         
         # Build the container
-        self._container = self._builder.build()
+        if self._builder is not None:
+            self._container = self._builder.build()
         
         self.logger.info("UIContainer configuration completed")
         return self._container
@@ -110,125 +116,137 @@ class ContainerConfiguration:
         self.logger.debug("Registering core services")
         
         # Logging Service (Singleton)
-        self._builder.register_singleton(
-            LoggingPort,
-            lambda: PythonLoggingAdapter(),
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                ILoggerPort,
+                lambda: PythonLoggingAdapter(),
+            )
         
         # Application Configuration (Singleton)
-        self._builder.register_singleton(
-            ApplicationConfiguration,
-            lambda: create_default_configuration(),
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                ApplicationConfiguration,
+                lambda: create_default_configuration(),
+            )
         
         # Application Orchestrator (Singleton)
-        self._builder.register_singleton(
-            ApplicationOrchestrator,
-            lambda: create_application_orchestrator(),
-        )
+        if self._builder is not None:
+            def create_orchestrator() -> ApplicationOrchestrator:
+                logger = PythonLoggingAdapter()
+                startup_service = self._create_application_startup_service()
+                return create_application_orchestrator(startup_service, logger)
+            
+            self._builder.add_singleton(
+                ApplicationOrchestrator,
+                create_orchestrator,
+            )
     
     def _register_domain_services(self) -> None:
         """Register domain services using UIContainer."""
         self.logger.debug("Registering domain services")
         
         # Progress Management (Singleton)
-        self._builder.register_singleton(
-            ProgressCallbackManager,
-            lambda: ProgressCallbackManager(),
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                ProgressCallbackManager,
+                lambda: ProgressCallbackManager(),
+            )
         
         # Task Management (Singleton)
-        self._builder.register_singleton(
-            TaskManager,
-            lambda: create_task_manager(),
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                TaskManager,
+                lambda: create_task_manager(),
+            )
         
         # Event Bus (Singleton)
-        self._builder.register_singleton(
-            EventBus,
-            lambda: create_event_bus("default", set_as_default=True).value,
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                EventBus,
+                lambda: create_event_bus("default", set_as_default=True).value,
+            )
         
-        self._builder.register_singleton(
-            EventBusManager,
-            lambda: EventBusManager(),
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                EventBusManager,
+                lambda: EventBusManager(),
+            )
     
     def _register_application_services(self) -> None:
         """Register application use cases using UIContainer."""
         self.logger.debug("Registering application use cases")
         
-        # Startup Use Case (Transient)
-        self._builder.register_transient(
-            StartupApplicationUseCase,
-            lambda: create_startup_use_case(),
-        )
+        # Application Startup Service (Transient)
+        if self._builder is not None:
+            self._builder.add_transient(
+                IApplicationStartupService,
+                lambda: self._create_application_startup_service(),
+            )
         
-        # Shutdown Use Case (Transient)
-        self._builder.register_transient(
-            ShutdownApplicationUseCase,
-            lambda: create_shutdown_use_case(),
-        )
+        # Note: Shutdown Use Case temporarily removed until proper implementation
         
-        # Shutdown Manager (Singleton)
-        self._builder.register_singleton(
-            ShutdownManager,
-            lambda: create_shutdown_manager(),
-        )
+        # Note: ShutdownManager removed as it's not implemented in the use case module
     
     def _register_infrastructure_services(self) -> None:
         """Register infrastructure services using UIContainer."""
         self.logger.debug("Registering infrastructure services")
         
         # Unit of Work Services (Transient for stateless operations)
-        self._builder.add_transient(
-            "InMemoryUnitOfWork",
-            lambda: create_in_memory_unit_of_work(),
-        )
+        if self._builder is not None:
+            self._builder.add_transient(
+                "InMemoryUnitOfWork",
+                lambda: create_in_memory_unit_of_work(),
+            )
     
     def _register_ui_pattern_services(self) -> None:
         """Register existing UI patterns from patterns.py using UIContainer."""
         self.logger.debug("Registering UI pattern services")
         
         # UI Pattern Registry (Singleton)
-        self._builder.register_singleton(
-            UIPatternRegistry,
-            lambda: UIPatternRegistry(),
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                UIPatternRegistry,
+                lambda: UIPatternRegistry(),
+            )
         
         # UI Layout Manager (Singleton)
-        self._builder.register_singleton(
-            UILayoutManager,
-            lambda: UILayoutManager(),
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                UILayoutManager,
+                lambda: UILayoutManager(),
+            )
         
         # UI Theme Manager (Singleton)
-        self._builder.register_singleton(
-            UIThemeManager,
-            lambda: UIThemeManager(),
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                UIThemeManager,
+                lambda: UIThemeManager(),
+            )
         
         # UI Animation Manager (Singleton)
-        self._builder.register_singleton(
-            UIAnimationManager,
-            lambda: UIAnimationManager(),
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                UIAnimationManager,
+                lambda: UIAnimationManager(),
+            )
     
     def _register_presentation_services(self) -> None:
         """Register presentation layer services using UIContainer."""
         self.logger.debug("Registering presentation layer services")
         
         # UI Lifecycle Manager (Singleton)
-        self._builder.register_singleton(
-            UILifecycleManager,
-            lambda: UILifecycleManager(),
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                UILifecycleManager,
+                lambda: UILifecycleManager(),
+            )
         
         # UI Event Bus Core (Singleton)
-        self._builder.register_singleton(
-            UIEventBusCore,
-            lambda: UIEventBusCore(),
-        )
+        if self._builder is not None:
+            self._builder.add_singleton(
+                UIEventBusCore,
+                lambda: UIEventBusCore(),
+            )
     
     def auto_register_from_modules(self, *module_paths: str) -> None:
         """Auto-register services from modules using decorators.
@@ -241,7 +259,8 @@ class ContainerConfiguration:
         for module_path in module_paths:
             try:
                 # Use the existing auto_register_from_module functionality
-                self._builder.auto_register_from_module(module_path)
+                if self._builder is not None:
+                    self._builder.auto_register_from_module(module_path)
                 self.logger.debug(f"Auto-registered services from {module_path}")
             except Exception as e:
                 self.logger.warning(f"Failed to auto-register from {module_path}: {e}")
@@ -263,23 +282,38 @@ class ContainerConfiguration:
             msg = "Container builder not initialized"
             raise RuntimeError(msg)
         
+        if self._builder is None:
+            msg = "Container builder not initialized"
+            raise RuntimeError(msg)
+        
         if lifetime == "singleton":
-            self._builder.register_singleton(service_type, factory_func)
+            self._builder.add_singleton(service_type, factory_func)
         elif lifetime == "transient":
-            self._builder.register_transient(service_type, factory_func)
+            self._builder.add_transient(service_type, factory_func)
         elif lifetime == "scoped":
-            self._builder.register_scoped(service_type, factory_func)
+            self._builder.add_scoped(service_type, factory_func)
         else:
             msg = f"Unknown lifetime: {lifetime}"
             raise ValueError(msg)
         
         self.logger.debug(f"Registered custom service {service_type.__name__} with {lifetime} lifetime")
+    
+    def _create_application_startup_service(self) -> ApplicationStartupService:
+        """Create an ApplicationStartupService with required dependencies."""
+        from src_refactored.infrastructure.adapters.logging_adapter import PythonLoggingAdapter
+        from src_refactored.infrastructure.adapters.minimal_adapters import (
+            create_minimal_startup_service,
+        )
+        
+        # Create logger and startup service with minimal adapters
+        logger = PythonLoggingAdapter()
+        return create_minimal_startup_service(logger)
 
 
 class ServiceRegistrationHelper:
     """Helper class for service registration operations."""
     
-    def __init__(self, container: UIContainer):
+    def __init__(self, container: EnterpriseContainer) -> None:
         self.container = container
         self.logger = PythonLoggingAdapter()
     
@@ -293,7 +327,7 @@ class ServiceRegistrationHelper:
             Service instance
         """
         try:
-            return self.container.resolve(service_type)
+            return self.container.get_service(service_type)
         except Exception as e:
             self.logger.exception(f"Failed to resolve service {service_type.__name__}: {e}")
             raise
@@ -308,7 +342,10 @@ class ServiceRegistrationHelper:
             Service instance
         """
         try:
-            return self.container.resolve(service_name)
+            # Note: EnterpriseContainer doesn't have resolve by name, we'll need to implement this
+            # For now, this will raise an exception
+            msg = f"Service resolution by name '{service_name}' not implemented yet"
+            raise NotImplementedError(msg)
         except Exception as e:
             self.logger.exception(f"Failed to resolve service '{service_name}': {e}")
             raise
@@ -323,8 +360,7 @@ class ServiceRegistrationHelper:
             True if service is registered, False otherwise
         """
         try:
-            self.container.resolve(service_type)
-            return True
+            return self.container.is_registered(service_type)
         except:
             return False
     
@@ -337,18 +373,20 @@ class ServiceRegistrationHelper:
         # This would depend on the UIContainer implementation
         # For now, return an empty dict as a placeholder
         return {}
+    
+
 
 
 # Global container instance
-_global_container: UIContainer | None = None
+_global_container: EnterpriseContainer | None = None
 _global_helper: ServiceRegistrationHelper | None = None
 
 
-def configure_global_container() -> UIContainer:
+def configure_global_container() -> EnterpriseContainer:
     """Configure and return the global container instance.
     
     Returns:
-        Configured UIContainer instance
+        Configured EnterpriseContainer instance
     """
     global _global_container, _global_helper
     
@@ -360,11 +398,11 @@ def configure_global_container() -> UIContainer:
     return _global_container
 
 
-def get_global_container() -> UIContainer:
+def get_global_container() -> EnterpriseContainer:
     """Get the global container instance.
     
     Returns:
-        Global UIContainer instance
+        Global EnterpriseContainer instance
         
     Raises:
         RuntimeError: If container is not configured
@@ -406,7 +444,7 @@ def get_service_by_name(service_name: str) -> Any:
     return _global_helper.get_service_by_name(service_name)
 
 
-def register_worker_services(builder: UIContainerBuilder) -> None:
+def register_worker_services(builder: EnterpriseContainerBuilder) -> None:
     """Register PyQt worker services with the container."""
     from src.workers.worker_classes import (
         ListenerWorker,
@@ -424,7 +462,32 @@ def register_worker_services(builder: UIContainerBuilder) -> None:
     builder.add_transient(LLMWorker, LLMWorker)
 
 
-def register_ui_patterns(builder: UIContainerBuilder) -> None:
+def register_ui_adapters(builder: EnterpriseContainerBuilder) -> None:
+    """Register framework-agnostic UI adapters with the container."""
+    from src_refactored.infrastructure.adapters.pyqt6.widget_adapters import (
+        QtAnimationFactory,
+        QtEffectsFactory,
+        QtFontFactory,
+        QtUIWidgetFactory,
+        QtWidgetStyler,
+    )
+    from src_refactored.presentation.core.ui_abstractions import (
+        IAnimationFactory,
+        IEffectsFactory,
+        IFontFactory,
+        IUIWidgetFactory,
+        IWidgetStyler,
+    )
+    
+    # Register PyQt6 adapters as singletons
+    builder.add_singleton(IUIWidgetFactory, QtUIWidgetFactory)
+    builder.add_singleton(IFontFactory, QtFontFactory)
+    builder.add_singleton(IAnimationFactory, QtAnimationFactory)
+    builder.add_singleton(IEffectsFactory, QtEffectsFactory)
+    builder.add_singleton(IWidgetStyler, QtWidgetStyler)
+
+
+def register_ui_patterns(builder: EnterpriseContainerBuilder) -> None:
     """Register existing UI patterns from patterns.py with the container."""
     from src_refactored.presentation.core.patterns import (
         AnimationContext,
@@ -440,7 +503,7 @@ def register_ui_patterns(builder: UIContainerBuilder) -> None:
         ValidationDecorator,
     )
     
-    # Factory patterns
+    # Factory patterns - UIWidgetFactory now requires dependencies
     builder.add_singleton(IWidgetFactory, UIWidgetFactory)
     
     # Builder patterns - register as transient for stateful building
@@ -461,7 +524,7 @@ def register_ui_patterns(builder: UIContainerBuilder) -> None:
     builder.add_singleton(UICommandInvoker, UICommandInvoker)
 
 
-def register_presentation_services(builder: UIContainerBuilder) -> None:
+def register_presentation_services(builder: EnterpriseContainerBuilder) -> None:
     """Register presentation layer services with the container."""
     # Note: These would be implemented as part of the refactoring
     # Main window presenters and view models

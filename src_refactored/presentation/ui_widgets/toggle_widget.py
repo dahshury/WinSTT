@@ -70,7 +70,7 @@ class ToggleWidgetPresenter:
                 widget_id, config.width, config.height,
             )
             if not init_result.is_success:
-                return Result.failure(f"Failed to initialize toggle widget: {init_result.error()}")
+                return Result.failure(f"Failed to initialize toggle widget: {init_result.error}")
                 
             return Result.success(presenter)
         except Exception as e:
@@ -115,15 +115,15 @@ class ToggleWidgetPresenter:
         """Check if toggle is in ON state from application service."""
         state_result = self.get_state()
         if not state_result.is_success:
-            return Result.failure(state_result.error())
-        return Result.success(state_result.value() == ToggleState.ON)
+            return Result.failure(state_result.error or "Failed to get toggle state")
+        return Result.success(state_result.value == ToggleState.ON)
 
     def is_off(self) -> Result[bool]:
         """Check if toggle is in OFF state from application service."""
         state_result = self.get_state()
         if not state_result.is_success:
-            return Result.failure(state_result.error())
-        return Result.success(state_result.value() == ToggleState.OFF)
+            return Result.failure(state_result.error or "Failed to get toggle state")
+        return Result.success(state_result.value == ToggleState.OFF)
 
     def is_enabled(self) -> Result[bool]:
         """Check if widget is enabled from application service."""

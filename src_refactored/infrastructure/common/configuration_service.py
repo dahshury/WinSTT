@@ -117,10 +117,10 @@ def get_config() -> dict[str, Any]:
     result = service.load_config()
     
     if not result.is_success:
-        print(f"⚠️  {result.error()}")
+        print(f"⚠️  {result.get_error()}")
         return service._get_default_config()
     
-    return result.value()
+    return result.get_value()
 
 
 def save_config(config: dict[str, Any]) -> None:
@@ -133,4 +133,4 @@ def save_config(config: dict[str, Any]) -> None:
     result = service.save_config(config)
     
     if not result.is_success:
-        print(f"⚠️  {result.error()}")
+        print(f"⚠️  {result.get_error()}")

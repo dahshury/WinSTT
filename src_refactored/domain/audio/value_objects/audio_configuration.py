@@ -4,40 +4,41 @@ This module defines audio configuration value objects that represent
 business concepts for audio system configuration.
 """
 
-from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
+from src_refactored.domain.audio.value_objects.audio_format import AudioFormat
+from src_refactored.domain.audio.value_objects.audio_quality import AudioQuality
+from src_refactored.domain.audio.value_objects.channel_count import ChannelCount
+from src_refactored.domain.audio.value_objects.sample_rate import SampleRate
 from src_refactored.domain.common.value_object import ValueObject
-
-from .audio_format import AudioFormatType
-from .playback_mode import PlaybackMode, VolumeMode
-from .recording_state import RecordingMode, RecordingQuality
 
 
 @dataclass(frozen=True)
 class AudioConfiguration(ValueObject):
-    """Base audio configuration value object."""
+    """Audio configuration value object."""
+    sample_rate: SampleRate
+    channels: ChannelCount
+    format: AudioFormat
+    chunk_size: int
+    buffer_size: int
+    device_id: str | None = None
+    input_device_id: str | None = None
+    output_device_id: str | None = None
 
-    sample_rate: int = 44100
-    channels: int = 1
-    format: AudioFormatType = AudioFormatType.WAV
-    chunk_size: int = 1024
-    device_index: int | None = None
-    latency: float | None = None
-
-    def _get_equality_components(self,
-    ) -> tuple:
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
         return (
             self.sample_rate,
             self.channels,
             self.format,
             self.chunk_size,
-            self.device_index,
-            self.latency,
+            self.buffer_size,
+            self.device_id,
+            self.input_device_id,
+            self.output_device_id,
         )
 
-    def __invariants__(self) -> None:
+    def __post_init__(self):
         if self.sample_rate not in [8000, 16000, 22050, 44100, 48000, 96000]:
             msg = "Unsupported sample rate"
             raise ValueError(msg)
@@ -51,51 +52,30 @@ class AudioConfiguration(ValueObject):
 
 @dataclass(frozen=True)
 class RecordingConfiguration(ValueObject):
-    """Configuration for audio recording operations."""
-
-    device_id: int | None = None
-    sample_rate: int = 44100
-    channels: int = 1
-    bit_depth: int = 16
-    format: AudioFormatType = AudioFormatType.WAV
-    quality: RecordingQuality = RecordingQuality.MEDIUM
-    mode: RecordingMode = RecordingMode.MANUAL
-    max_duration: float | None = None  # seconds
-    auto_save: bool = False
-    output_directory: Path | None = None
-    filename_template: str = "recording_{timestamp}"
-    enable_compression: bool = False
-    compression_level: int = 5  # 0-9 for applicable formats
-    enable_noise_reduction: bool = False
-    enable_auto_gain: bool = False
+    """Recording configuration value object."""
+    audio_config: AudioConfiguration
+    format: AudioFormat
+    quality: AudioQuality
+    file_path: str | None = None
+    max_duration: float | None = None
+    auto_stop: bool = True
     silence_threshold: float = 0.01
-    silence_duration: float = 2.0  # seconds of silence to stop voice activation
-    buffer_size: int = 4096
+    silence_duration: float = 2.0
 
-    def _get_equality_components(self,
-    ) -> tuple:
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
         return (
-            self.device_id,
-            self.sample_rate,
-            self.channels,
-            self.bit_depth,
+            self.audio_config,
             self.format,
             self.quality,
-            self.mode,
+            self.file_path,
             self.max_duration,
-            self.auto_save,
-            self.output_directory,
-            self.filename_template,
-            self.enable_compression,
-            self.compression_level,
-            self.enable_noise_reduction,
-            self.enable_auto_gain,
+            self.auto_stop,
             self.silence_threshold,
             self.silence_duration,
-            self.buffer_size,
         )
 
-    def __invariants__(self) -> None:
+    def __post_init__(self):
         if self.sample_rate not in [8000, 16000, 22050, 44100, 48000, 96000]:
             msg = "Unsupported sample rate"
             raise ValueError(msg)
@@ -121,51 +101,28 @@ class RecordingConfiguration(ValueObject):
 
 @dataclass(frozen=True)
 class PlaybackConfiguration(ValueObject):
-    """Configuration for audio playback operations."""
+    """Playback configuration value object."""
+    audio_config: AudioConfiguration
+    volume: float = 1.0
+    speed: float = 1.0
+    loop: bool = False
+    auto_play: bool = True
+    fade_in: float = 0.0
+    fade_out: float = 0.0
 
-    device_id: int | None = None
-    sample_rate: int = 44100
-    channels: int = 2
-    bit_depth: int = 16
-    format: AudioFormatType = AudioFormatType.WAV
-    mode: PlaybackMode = PlaybackMode.NORMAL
-    volume: float = 1.0  # 0.0 to 1.0
-    speed: float = 1.0   # 0.5 to 2.0
-    volume_mode: VolumeMode = VolumeMode.MEDIUM
-    enable_crossfade: bool = False
-    crossfade_duration: float = 0.5  # seconds
-    enable_equalizer: bool = False
-    equalizer_bands: list[float] | None = None
-    enable_effects: bool = False
-    effects_chain: list[str] | None = None
-    buffer_size: int = 4096
-    prebuffer_size: int = 8192
-    enable_gapless: bool = False
-
-    def _get_equality_components(self,
-    ) -> tuple:
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
         return (
-            self.device_id,
-            self.sample_rate,
-            self.channels,
-            self.bit_depth,
-            self.format,
-            self.mode,
+            self.audio_config,
             self.volume,
             self.speed,
-            self.volume_mode,
-            self.enable_crossfade,
-            self.crossfade_duration,
-            self.enable_equalizer,
-            tuple(self.equalizer_bands) if self.equalizer_bands else None,
-            self.enable_effects,
-            tuple(self.effects_chain) if self.effects_chain else None,
-            self.buffer_size,
-            self.prebuffer_size,
-            self.enable_gapless,
+            self.loop,
+            self.auto_play,
+            self.fade_in,
+            self.fade_out,
         )
 
-    def __invariants__(self) -> None:
+    def __post_init__(self):
         if self.sample_rate not in [8000, 16000, 22050, 44100, 48000, 96000]:
             msg = "Unsupported sample rate"
             raise ValueError(msg)
@@ -194,47 +151,24 @@ class PlaybackConfiguration(ValueObject):
 
 @dataclass(frozen=True)
 class StreamConfiguration(ValueObject):
-    """Configuration for audio streaming operations."""
+    """Stream configuration value object."""
+    audio_config: AudioConfiguration
+    stream_type: str
+    buffer_size: int = 4096
+    latency: float = 0.1
+    auto_start: bool = True
 
-    input_device_id: int | None = None
-    output_device_id: int | None = None
-    sample_rate: int = 44100
-    channels: int = 1
-    format: AudioFormatType = AudioFormatType.WAV
-    frames_per_buffer: int = 1024
-    buffer_size: int = 8192
-    enable_echo_cancellation: bool = False
-    enable_noise_suppression: bool = False
-    enable_auto_gain: bool = False
-    latency: float = 0.1  # seconds
-    non_blocking: bool = False
-    timeout: float = 1.0
-    callback: Callable[[bytes, int], None] | None = None
-    error_callback: Callable[[str], None] | None = None
-    audio_config: AudioConfiguration | None = None
-
-    def _get_equality_components(self,
-    ) -> tuple:
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
         return (
-            self.input_device_id,
-            self.output_device_id,
-            self.sample_rate,
-            self.channels,
-            self.format,
-            self.frames_per_buffer,
-            self.buffer_size,
-            self.enable_echo_cancellation,
-            self.enable_noise_suppression,
-            self.enable_auto_gain,
-            self.latency,
-            self.non_blocking,
-            self.timeout,
-            self.callback,
-            self.error_callback,
             self.audio_config,
+            self.stream_type,
+            self.buffer_size,
+            self.latency,
+            self.auto_start,
         )
 
-    def __invariants__(self) -> None:
+    def __post_init__(self):
         if self.sample_rate not in [8000, 16000, 22050, 44100, 48000, 96000]:
             msg = "Unsupported sample rate"
             raise ValueError(msg)

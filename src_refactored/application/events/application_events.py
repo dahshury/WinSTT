@@ -7,10 +7,12 @@ implementing event-driven architecture patterns.
 import time
 from typing import Any
 
+from src_refactored.application.external_services.commands.call_external_service_command import (
+    ServiceType,
+)
 from src_refactored.domain.common.events import DomainEvent
-from src_refactored.domain.ui_widget_operations import WidgetType
-
-from ..external_services.commands.call_external_service_command import ServiceType
+from src_refactored.domain.ui_text import UpdatePhase, UpdateResult
+from src_refactored.domain.ui_widget_operations import HandlePhase, HandleResult, WidgetType
 
 
 # UI-related Domain Events
@@ -25,6 +27,46 @@ class UITextUpdateRequested(DomainEvent):
         self.widget_id = widget_id
         self.text_content = text_content
         self.update_type = update_type
+
+
+# UI Text Update Events (centralized)
+class UITextUpdateStarted(DomainEvent):
+    """Event raised when UI text update starts."""
+    def __init__(self, operation_id: str, text_count: int, widget_count: int):
+        super().__init__(
+            event_id=f"ui_text_update_started_{operation_id}",
+            timestamp=time.time(),
+            source="ui_text_service",
+        )
+        self.operation_id = operation_id
+        self.text_count = text_count
+        self.widget_count = widget_count
+
+
+class UITextUpdateCompleted(DomainEvent):
+    """Event raised when UI text update completes."""
+    def __init__(self, operation_id: str, result: UpdateResult, duration: float):
+        super().__init__(
+            event_id=f"ui_text_update_completed_{operation_id}",
+            timestamp=time.time(),
+            source="ui_text_service",
+        )
+        self.operation_id = operation_id
+        self.result = result
+        self.duration = duration
+
+
+class UITextUpdateFailed(DomainEvent):
+    """Event raised when UI text update fails."""
+    def __init__(self, operation_id: str, error: str, phase: UpdatePhase):
+        super().__init__(
+            event_id=f"ui_text_update_failed_{operation_id}",
+            timestamp=time.time(),
+            source="ui_text_service",
+        )
+        self.operation_id = operation_id
+        self.error = error
+        self.phase = phase
 
 
 class UITextValidationCompleted(DomainEvent):
@@ -65,6 +107,46 @@ class WidgetStateChanged(DomainEvent):
         self.widget_type = widget_type
         self.old_state = old_state
         self.new_state = new_state
+
+
+# Widget Event Handling (centralized)
+class WidgetEventHandlingStarted(DomainEvent):
+    """Event raised when widget event handling starts."""
+    def __init__(self, widget_id: str, event_type: str, widget_type: str):
+        super().__init__(
+            event_id=f"widget_event_handling_started_{widget_id}_{time.time()}",
+            timestamp=time.time(),
+            source="widget_event_service",
+        )
+        self.widget_id = widget_id
+        self.event_type = event_type
+        self.widget_type = widget_type
+
+
+class WidgetEventHandlingCompleted(DomainEvent):
+    """Event raised when widget event handling completes."""
+    def __init__(self, widget_id: str, result: HandleResult, duration: float):
+        super().__init__(
+            event_id=f"widget_event_handling_completed_{widget_id}_{time.time()}",
+            timestamp=time.time(),
+            source="widget_event_service",
+        )
+        self.widget_id = widget_id
+        self.result = result
+        self.duration = duration
+
+
+class WidgetEventHandlingFailed(DomainEvent):
+    """Event raised when widget event handling fails."""
+    def __init__(self, widget_id: str, error: str, phase: HandlePhase):
+        super().__init__(
+            event_id=f"widget_event_handling_failed_{widget_id}_{time.time()}",
+            timestamp=time.time(),
+            source="widget_event_service",
+        )
+        self.widget_id = widget_id
+        self.error = error
+        self.phase = phase
 
 
 class WidgetEventProcessed(DomainEvent):

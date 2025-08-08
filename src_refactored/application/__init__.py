@@ -6,28 +6,11 @@ and coordinates with infrastructure.
 """
 
 from .audio_recording import (
-    AudioConfigurationInfo,
-    ConfigureAudioRequest,
-    ConfigureAudioResponse,
     ConfigureAudioUseCase,
-    GetRecordingStatusRequest,
-    GetRecordingStatusResponse,
     GetRecordingStatusUseCase,
-    PauseRecordingRequest,
-    PauseRecordingResponse,
     PauseRecordingUseCase,
-    # Audio recording data classes
-    RecordingMetrics,
-    ResumeRecordingRequest,
-    ResumeRecordingResponse,
     ResumeRecordingUseCase,
-    # Audio recording request/response classes
-    StartRecordingRequest,
-    StartRecordingResponse,
-    # Audio recording use cases
     StartRecordingUseCase,
-    StopRecordingRequest,
-    StopRecordingResponse,
     StopRecordingUseCase,
 )
 from .transcription import (
@@ -57,7 +40,6 @@ from .transcription import (
     SystemValidationInfo,
     TranscriptionHistoryItem,
     # Transcription data classes
-    TranscriptionOptions,
     TranscriptionResultData,
     ValidateModelRequest,
     ValidateModelResponse,
@@ -65,19 +47,14 @@ from .transcription import (
 )
 
 __all__ = [
-    "AudioConfigurationInfo",
     "CancelTranscriptionRequest",
     "CancelTranscriptionResponse",
     "CancelTranscriptionUseCase",
-    "ConfigureAudioRequest",
-    "ConfigureAudioResponse",
     "ConfigureAudioUseCase",
     "ConfigureModelRequest",
     "ConfigureModelResponse",
     "ConfigureModelUseCase",
     "FilterCriteria",
-    "GetRecordingStatusRequest",
-    "GetRecordingStatusResponse",
     "GetRecordingStatusUseCase",
     "GetTranscriptionHistoryRequest",
     "GetTranscriptionHistoryResponse",
@@ -88,32 +65,16 @@ __all__ = [
     "HistoryStatistics",
     "ModelConfigurationInfo",
     "ModelValidationInfo",
-    "PauseRecordingRequest",
-    "PauseRecordingResponse",
     "PauseRecordingUseCase",
-    # Audio recording data classes
-    "RecordingMetrics",
-    "ResumeRecordingRequest",
-    "ResumeRecordingResponse",
     "ResumeRecordingUseCase",
-    # Transcription enums
     "SortOrder",
-    # Audio recording request/response classes
-    "StartRecordingRequest",
-    "StartRecordingResponse",
-    # Audio recording use cases
     "StartRecordingUseCase",
-    # Transcription request/response classes
     "StartTranscriptionRequest",
     "StartTranscriptionResponse",
-    # Transcription use cases
     "StartTranscriptionUseCase",
-    "StopRecordingRequest",
-    "StopRecordingResponse",
     "StopRecordingUseCase",
     "SystemValidationInfo",
     "TranscriptionHistoryItem",
-    # Transcription data classes
     "TranscriptionOptions",
     "TranscriptionResultData",
     "ValidateModelRequest",

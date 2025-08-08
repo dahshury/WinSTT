@@ -167,7 +167,7 @@ class UILayout(Entity[str]):
             for widget_name, geometry, z_order in default_widgets:
                 widget_result = layout.add_widget(widget_name, geometry, z_order)
                 if not widget_result.is_success:
-                    return Result.failure(f"Failed to add widget {widget_name}: {widget_result.error()}")
+                    return Result.failure(f"Failed to add widget {widget_name}: {widget_result.error}")
 
             return Result.success(layout)
         except Exception as e:
@@ -250,7 +250,7 @@ class UILayout(Entity[str]):
         for child_name in widget.children.copy():
             child_result = self.remove_widget(child_name)
             if not child_result.is_success:
-                return Result.failure(f"Failed to remove child widget {child_name}: {child_result.error()}")
+                return Result.failure(f"Failed to remove child widget {child_name}: {child_result.error}")
 
         # Remove from widgets and z-order stack
         del self._widgets[name]
@@ -307,8 +307,7 @@ class UILayout(Entity[str]):
         # Update z-order value
         max_z = max((w.z_order.value for w in self._widgets.values()), default=0)
         new_z_order = ZOrderLevel.from_value(max_z + 1)
-        if new_z_order.is_success:
-            self._widgets[name].z_order = new_z_order.value
+        self._widgets[name].z_order = new_z_order
 
         self.mark_as_updated()
         return Result.success(None)

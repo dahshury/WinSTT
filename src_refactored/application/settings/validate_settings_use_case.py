@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src_refactored.domain.common import Result, UseCase
+from src_refactored.domain.common import UseCase
 from src_refactored.domain.settings.value_objects.key_combination import KeyCombination
 from src_refactored.domain.settings.value_objects.settings_operations import (
     ValidationCategory,
@@ -86,14 +86,14 @@ class ValidateSettingsUseCase(UseCase[ValidateSettingsRequest, ValidateSettingsR
         self._available_quantizations = available_quantizations or self._get_default_quantizations()
         self._validation_rules = self._initialize_validation_rules()
 
-    def execute(self, request: ValidateSettingsRequest) -> Result[ValidateSettingsResponse]:
+    def execute(self, request: ValidateSettingsRequest) -> ValidateSettingsResponse:
         """Execute the validate settings use case.
         
         Args:
             request: Validate settings request
             
         Returns:
-            Result containing validation response
+            Validation response with results or error information
         """
         try:
             # Get settings to validate
@@ -133,20 +133,27 @@ class ValidateSettingsUseCase(UseCase[ValidateSettingsRequest, ValidateSettingsR
             # Generate message
             message = self._generate_validation_message(is_valid, errors_count, warnings_count, info_count)
 
-            return Result.success(
-                ValidateSettingsResponse(
-                    is_valid=is_valid,
-                    issues=issues,
-                    errors_count=errors_count,
-                    warnings_count=warnings_count,
-                    info_count=info_count,
-                    validated_settings=settings,
-                    message=message,
-                ),
+            return ValidateSettingsResponse(
+                is_valid=is_valid,
+                issues=issues,
+                errors_count=errors_count,
+                warnings_count=warnings_count,
+                info_count=info_count,
+                validated_settings=settings,
+                message=message,
             )
 
         except Exception as e:
-            return Result.failure(f"Validation error: {e!s}")
+            # Return response indicating validation failure
+            return ValidateSettingsResponse(
+                is_valid=False,
+                issues=[],
+                errors_count=1,
+                warnings_count=0,
+                info_count=0,
+                validated_settings={},
+                message=f"Validation error: {e!s}",
+            )
 
     def _validate_structure(
     self,

@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 
 from src_refactored.infrastructure.common.configuration_service import get_config, save_config
 from src_refactored.infrastructure.common.resource_service import resource_path
-from src_refactored.infrastructure.presentation.qt.toggle_switch_widget import ToggleSwitch
+from src_refactored.presentation.qt.toggle_switch_widget import ToggleSwitch
 
 
 class SettingsDialog(QDialog):
@@ -74,8 +74,13 @@ class SettingsDialog(QDialog):
         # Load current values
         self.current_model = config.get("model", "whisper-turbo")
         self.current_quantization = config.get("quantization", "Full")
-        self.current_rec_key = config.get("recording_key", "F2")
-        self.current_sound_path = config.get("sound_path", resource_path("resources/start_sound.wav"))
+        self.current_rec_key = config.get("rec_key", "F9")
+        # Use a safer fallback for sound path
+        try:
+            default_sound = resource_path("resources/splash.mp3")
+        except FileNotFoundError:
+            default_sound = "resources/splash.mp3"
+        self.current_sound_path = config.get("sound_path", default_sound)
         self.enable_rec_sound = config.get("recording_sound", True)
         self.current_output_srt = config.get("output_srt", False)
 
@@ -88,8 +93,12 @@ class SettingsDialog(QDialog):
         # Default values
         self.default_model = "whisper-turbo"
         self.default_quantization = "Full"
-        self.default_rec_key = "F2"
-        self.default_sound_path = resource_path("resources/start_sound.wav")
+        self.default_rec_key = "F9"
+        # Use a safer fallback for default sound path
+        try:
+            self.default_sound_path = resource_path("resources/splash.mp3")
+        except FileNotFoundError:
+            self.default_sound_path = "resources/splash.mp3"
         self.default_recording_sound = True
         self.default_output_srt = False
         self.default_llm_enabled = False
@@ -671,7 +680,7 @@ class SettingsDialog(QDialog):
         config = {
             "model": self.current_model,
             "quantization": self.current_quantization,
-            "recording_key": self.current_rec_key,
+            "rec_key": self.current_rec_key,
             "sound_path": self.current_sound_path,
             "recording_sound": self.enable_rec_sound,
             "output_srt": self.current_output_srt,

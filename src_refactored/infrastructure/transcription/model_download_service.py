@@ -7,13 +7,13 @@ Extracted from: utils/transcribe.py
 """
 
 import json
+import logging
 import os
 from pathlib import Path
 
 import requests
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from logger import setup_logger
 from src_refactored.domain.transcription.value_objects.download_progress import DownloadProgress
 from src_refactored.domain.transcription.value_objects.model_download_config import (
     ModelDownloadConfig,
@@ -38,7 +38,7 @@ class ModelDownloadService(QObject):
     ):
         super().__init__()
         self.config = config
-        self.logger = setup_logger()
+        self.logger = logging.getLogger(__name__)
 
         # Create cache directories
         self.cache_path = Path(config.cache_path)

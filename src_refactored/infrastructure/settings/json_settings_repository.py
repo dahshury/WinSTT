@@ -12,32 +12,27 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QObject, pyqtSignal
-
-from logger import setup_logger
+# Removed PyQt dependencies to keep repository headless and infra-safe
+from src_refactored.domain.common.ports.logging_port import LoggingPort
 from src_refactored.domain.common.result import Result
 
 from .settings_repository import SettingsRepository
 
 
-class JSONSettingsRepository(QObject, SettingsRepository):
+class JSONSettingsRepository(SettingsRepository):
     """JSON-based implementation of SettingsRepository.
     
     Provides file-based settings persistence using JSON format with
     validation, backup, and error handling capabilities.
     """
 
-    # PyQt signals for settings events
-    settings_loaded = pyqtSignal(dict)
-    settings_saved = pyqtSignal(dict)
-    settings_error = pyqtSignal(str)
-    backup_created = pyqtSignal(str)  # backup_path
+    # Events are returned via Result; UI concerns moved to Application/EventPublisher
 
-    def __init__(self, config_path: Path, auto_backup: bool = True):
+    def __init__(self, config_path: Path, auto_backup: bool = True, logger: LoggingPort | None = None):
         super().__init__()
         self.config_path = Path(config_path)
         self.auto_backup = auto_backup
-        self.logger = setup_logger()
+        self.logger = logger
 
         # Cache for loaded settings
         self._cached_settings: dict[str, Any] | None = None
@@ -62,7 +57,8 @@ class JSONSettingsRepository(QObject, SettingsRepository):
                 return Result.success(self._cached_settings.copy())
 
             if not self.config_path.exists():
-                self.logger.warning("Settings file not found: {self.config_path}")
+                if self.logger:
+                    self.logger.log_warning(f"Settings file not found: {self.config_path}")
                 default_settings = self._get_default_settings()
                 self._cached_settings = default_settings
                 self._cache_timestamp = datetime.now().timestamp()
@@ -74,7 +70,8 @@ class JSONSettingsRepository(QObject, SettingsRepository):
             # Validate loaded settings
             validation_result = self.validate_settings(settings)
             if not validation_result.is_success:
-                self.logger.error("Settings validation failed: {validation_result.error()}")
+                if self.logger:
+                    self.logger.log_error(f"Settings validation failed: {validation_result.error()}")
                 # Return default settings on validation failure
                 default_settings = self._get_default_settings()
                 self._cached_settings = default_settings
@@ -85,21 +82,24 @@ class JSONSettingsRepository(QObject, SettingsRepository):
             self._cached_settings = settings
             self._cache_timestamp = self.config_path.stat().st_mtime
 
-            self.settings_loaded.emit(settings)
-            self.logger.debug("Settings loaded successfully from {self.config_path}")
+            # Event publication is responsibility of Application layer
+            if self.logger:
+                self.logger.log_debug(f"Settings loaded successfully from {self.config_path}")
 
             return Result.success(settings)
 
         except json.JSONDecodeError as e:
             error_msg = f"Invalid JSON in settings file: {e}"
-            self.logger.exception(error_msg)
-            self.settings_error.emit(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
+            # Event publication is responsibility of Application layer
             return Result.failure(error_msg)
 
         except Exception as e:
             error_msg = f"Failed to load settings: {e}"
-            self.logger.exception(error_msg)
-            self.settings_error.emit(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
+            # Event publication is responsibility of Application layer
             return Result.failure(error_msg,
     )
 
@@ -117,16 +117,15 @@ class JSONSettingsRepository(QObject, SettingsRepository):
             validation_result = self.validate_settings(settings)
             if not validation_result.is_success:
                 error_msg = f"Settings validation failed: {validation_result.error()}"
-                self.logger.error(error_msg)
-                self.settings_error.emit(error_msg)
+                if self.logger:
+                    self.logger.log_error(error_msg)
                 return Result.failure(error_msg)
 
             # Create backup if auto_backup is enabled
             if self.auto_backup and self.config_path.exists():
                 backup_result = self.backup_settings()
-                if not backup_result.is_success:
-                    self.logger.warning("Failed to create backup: {backup_result.error()}",
-    )
+                if self.logger and not backup_result.is_success:
+                    self.logger.log_warning(f"Failed to create backup: {backup_result.error()}")
 
             # Ensure directory exists
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -139,15 +138,17 @@ class JSONSettingsRepository(QObject, SettingsRepository):
             self._cached_settings = settings.copy()
             self._cache_timestamp = self.config_path.stat().st_mtime
 
-            self.settings_saved.emit(settings)
-            self.logger.debug("Settings saved successfully to {self.config_path}")
+            # Event publication is responsibility of Application layer
+            if self.logger:
+                self.logger.log_debug(f"Settings saved successfully to {self.config_path}")
 
             return Result.success(None)
 
         except Exception as e:
             error_msg = f"Failed to save settings: {e}"
-            self.logger.exception(error_msg)
-            self.settings_error.emit(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
+            # Event publication is responsibility of Application layer
             return Result.failure(error_msg,
     )
 
@@ -173,7 +174,8 @@ class JSONSettingsRepository(QObject, SettingsRepository):
 
         except Exception as e:
             error_msg = f"Failed to get setting '{key}': {e}"
-            self.logger.exception(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg,
     )
 
@@ -200,7 +202,8 @@ class JSONSettingsRepository(QObject, SettingsRepository):
 
         except Exception as e:
             error_msg = f"Failed to set setting '{key}': {e}"
-            self.logger.exception(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg,
     )
 
@@ -226,7 +229,8 @@ class JSONSettingsRepository(QObject, SettingsRepository):
 
         except Exception as e:
             error_msg = f"Failed to check setting '{key}': {e}"
-            self.logger.exception(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg,
     )
 
@@ -256,7 +260,8 @@ class JSONSettingsRepository(QObject, SettingsRepository):
 
         except Exception as e:
             error_msg = f"Failed to delete setting '{key}': {e}"
-            self.logger.exception(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
 
     def get_all_keys(self) -> Result[list[str]]:
@@ -277,7 +282,8 @@ class JSONSettingsRepository(QObject, SettingsRepository):
 
         except Exception as e:
             error_msg = f"Failed to get setting keys: {e}"
-            self.logger.exception(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
 
     def clear_all_settings(self) -> Result[None]:
@@ -290,9 +296,8 @@ class JSONSettingsRepository(QObject, SettingsRepository):
             # Create backup before clearing
             if self.auto_backup and self.config_path.exists():
                 backup_result = self.backup_settings()
-                if not backup_result.is_success:
-                    self.logger.warning("Failed to create backup before clearing: {backup_result.err\
-    or()}")
+                if self.logger and not backup_result.is_success:
+                    self.logger.log_warning(f"Failed to create backup before clearing: {backup_result.error()}")
 
             # Save empty settings
             empty_settings = self._get_default_settings()
@@ -300,7 +305,8 @@ class JSONSettingsRepository(QObject, SettingsRepository):
 
         except Exception as e:
             error_msg = f"Failed to clear settings: {e}"
-            self.logger.exception(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg,
     )
 
@@ -329,14 +335,16 @@ class JSONSettingsRepository(QObject, SettingsRepository):
             # Copy settings file to backup location
             shutil.copy2(self.config_path, backup_path)
 
-            self.backup_created.emit(str(backup_path))
-            self.logger.info("Settings backup created: {backup_path}")
+            # Event publication is responsibility of Application layer
+            if self.logger:
+                self.logger.log_info(f"Settings backup created: {backup_path}")
 
             return Result.success(backup_path)
 
         except Exception as e:
             error_msg = f"Failed to create backup: {e}"
-            self.logger.exception(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg,
     )
 
@@ -365,20 +373,22 @@ class JSONSettingsRepository(QObject, SettingsRepository):
             # Create backup of current settings before restoring
             if self.config_path.exists():
                 current_backup_result = self.backup_settings()
-                if not current_backup_result.is_success:
-                    self.logger.warning("Failed to backup current settings: {current_backup_result.error()}")
+                if self.logger and not current_backup_result.is_success:
+                    self.logger.log_warning(f"Failed to backup current settings: {current_backup_result.error()}")
 
             # Restore settings
             return self.save_settings(backup_settings)
 
         except json.JSONDecodeError as e:
             error_msg = f"Invalid JSON in backup file: {e}"
-            self.logger.exception(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
 
         except Exception as e:
             error_msg = f"Failed to restore settings: {e}"
-            self.logger.exception(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg,
     )
 
@@ -436,7 +446,8 @@ class JSONSettingsRepository(QObject, SettingsRepository):
 
         except Exception as e:
             error_msg = f"Settings validation error: {e}"
-            self.logger.exception(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
 
     def get_settings_info(self,
@@ -473,7 +484,8 @@ class JSONSettingsRepository(QObject, SettingsRepository):
 
         except Exception as e:
             error_msg = f"Failed to get settings info: {e}"
-            self.logger.exception(error_msg)
+            if self.logger:
+                self.logger.log_error(error_msg, exception=e)
             return Result.failure(error_msg)
 
     def _is_cache_valid(self) -> bool:
@@ -495,9 +507,11 @@ class JSONSettingsRepository(QObject, SettingsRepository):
         try:
             default_settings = self._get_default_settings()
             self.save_settings(default_settings)
-            self.logger.info("Created default settings file: {self.config_path}")
+            if self.logger:
+                self.logger.log_info(f"Created default settings file: {self.config_path}")
         except Exception as e:
-            self.logger.exception(f"Failed to create default config: {e}")
+            if self.logger:
+                self.logger.log_error(f"Failed to create default config: {e}", exception=e)
 
     def _get_default_settings(self,
     ) -> dict[str, Any]:

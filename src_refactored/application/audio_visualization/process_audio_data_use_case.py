@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from src_refactored.domain.audio.value_objects.audio_samples import AudioDataType, AudioSampleData
+from src_refactored.domain.audio.value_objects.sample_rate import SampleRate
 from src_refactored.domain.audio_visualization.value_objects.normalization_types import (
     NormalizationMethod,
 )
 from src_refactored.domain.audio_visualization.value_objects.processing_types import (
-    AudioDataType,
     ProcessingPhase,
     ProcessingResult,
 )
@@ -154,7 +155,14 @@ class ProcessAudioDataUseCase:
                 if request.progress_callback:
                     request.progress_callback("Validating data...", 20.0)
 
-                if not self._validation_service.validate_raw_data(request.raw_data, request.data_type):
+                # Convert raw data to AudioSampleData for validation
+                audio_data = AudioSampleData(
+                    samples=request.raw_data,
+                    sample_rate=SampleRate(16000),  # Default rate, should come from request
+                    channels=1,
+                    data_type=request.data_type,
+                )
+                if not self._validation_service.validate_audio_data(audio_data):
                     error_message = "Invalid audio data provided"
                     self._logger_service.log_error("Audio data validation failed")
 
@@ -177,6 +185,7 @@ class ProcessAudioDataUseCase:
                 request.progress_callback("Converting data...", 40.0)
 
             try:
+                # Convert raw data to numpy array 
                 numpy_data = self._conversion_service.convert_to_numpy(
                     request.raw_data, request.data_type,
                 )
@@ -213,21 +222,62 @@ class ProcessAudioDataUseCase:
 
                 # Apply normalization based on method
                 if request.configuration.normalization_method == NormalizationMethod.SPEECH_OPTIMIZED:
-                    normalized_data = self._normalization_service.normalize_for_speech(
-                        numpy_data, request.configuration.scaling_factor,
+                    # Convert numpy array to AudioSampleData for normalization
+                    
+                    audio_data = AudioSampleData(
+                        samples=numpy_data.tolist(),
+                        sample_rate=SampleRate(16000),  # Default rate, should come from request
+                        channels=1,
+                        data_type=AudioDataType.FLOAT32,
                     )
+                    normalized_audio_data = self._normalization_service.normalize_for_speech(
+                        audio_data, request.configuration.scaling_factor,
+                    )
+                    # Convert back to numpy
+                    normalized_data = np.array(normalized_audio_data.samples)
                 elif request.configuration.normalization_method == NormalizationMethod.RMS_BASED:
-                    normalized_data = self._normalization_service.normalize_rms_based(numpy_data,
-    )
-                elif request.configuration.normalization_method == NormalizationMethod.PEAK_BASED:
-                    normalized_data = self._normalization_service.normalize_peak_based(
-                        numpy_data, request.configuration.max_amplitude,
+                    # Convert numpy array to AudioSampleData for normalization
+                    
+                    audio_data = AudioSampleData(
+                        samples=numpy_data.tolist(),
+                        sample_rate=SampleRate(16000),  # Default rate, should come from request
+                        channels=1,
+                        data_type=AudioDataType.FLOAT32,
                     )
+                    # Need target_rms parameter
+                    target_rms = 0.1  # Default value, should come from configuration
+                    normalized_audio_data = self._normalization_service.normalize_rms_based(
+                        audio_data, target_rms,
+                    )
+                    # Convert back to numpy
+                    normalized_data = np.array(normalized_audio_data.samples)
+                elif request.configuration.normalization_method == NormalizationMethod.PEAK_BASED:
+                    # Convert numpy array to AudioSampleData for normalization
+                    audio_data = AudioSampleData(
+                        samples=numpy_data.tolist(),
+                        sample_rate=SampleRate(16000),  # Default rate, should come from request
+                        channels=1,
+                        data_type=AudioDataType.FLOAT32,
+                    )
+                    normalized_audio_data = self._normalization_service.normalize_peak_based(
+                        audio_data, request.configuration.max_amplitude,
+                    )
+                    # Convert back to numpy
+                    normalized_data = np.array(normalized_audio_data.samples)
                 else:
                     # Default to speech optimized
-                    normalized_data = self._normalization_service.normalize_for_speech(
-                        numpy_data, request.configuration.scaling_factor,
+                    # Convert numpy array to AudioSampleData for normalization
+                    audio_data = AudioSampleData(
+                        samples=numpy_data.tolist(),
+                        sample_rate=SampleRate(16000),  # Default rate, should come from request
+                        channels=1,
+                        data_type=AudioDataType.FLOAT32,
                     )
+                    normalized_audio_data = self._normalization_service.normalize_for_speech(
+                        audio_data, request.configuration.scaling_factor,
+                    )
+                    # Convert back to numpy
+                    normalized_data = np.array(normalized_audio_data.samples)
 
                 # Apply clipping if enabled
                 if request.configuration.enable_clipping:
@@ -239,8 +289,7 @@ class ProcessAudioDataUseCase:
 
                 # Apply centering if enabled
                 if request.configuration.enable_centering:
-                    normalized_data = normalized_data - np.mean(normalized_data,
-    )
+                    normalized_data = normalized_data - np.mean(normalized_data)
 
             except Exception as e:
                 error_message = f"Failed to normalize audio data: {e!s}"
@@ -266,11 +315,19 @@ class ProcessAudioDataUseCase:
 
             buffer_updated = False
             try:
-                buffer_updated = self._buffer_service.update_buffer(normalized_data)
+                # Convert numpy data back to AudioSampleData for buffer
+                audio_data_for_buffer = AudioSampleData(
+                    samples=normalized_data.tolist(),
+                    sample_rate=SampleRate(16000),  # Default rate, should come from request
+                    channels=1,
+                    data_type=AudioDataType.FLOAT32,
+                )
+                # Add audio data to buffer
+                self._buffer_service.add_to_buffer(audio_data_for_buffer)
+                buffer_updated = True
                 if not buffer_updated:
                     warning_message = "Failed to update audio buffer"
-                    self._logger_service.log_warning(warning_message,
-    )
+                    self._logger_service.log_warning(warning_message)
             except Exception as e:
                 warning_message = f"Error updating buffer: {e!s}"
                 self._logger_service.log_warning("Buffer update error", error=str(e))
@@ -292,13 +349,23 @@ class ProcessAudioDataUseCase:
                         request.data_ready_callback(normalized_data)
                         signal_emitted = True
                     else:
-                        signal_emitted = self._signal_service.emit_data_ready(normalized_data)
+                        # Convert numpy data to AudioSampleData for signal emission
+                        audio_data_for_signal = AudioSampleData(
+                            samples=normalized_data.tolist(),
+                            sample_rate=SampleRate(16000),  # Default rate, should come from request
+                            channels=1,
+                            data_type=AudioDataType.FLOAT32,
+                        )
+                        self._signal_service.emit_data_ready(audio_data_for_signal)
+                        signal_emitted = True
 
                     # Also emit buffer update if buffer was updated
                     if buffer_updated:
                         buffer_data = self._buffer_service.get_buffer_data()
-                        self._signal_service.emit_buffer_updated(buffer_data,
-    )
+                        buffer_info = {"size": self._buffer_service.get_buffer_size()}
+                        # Emit buffer update signal with metadata
+                        if buffer_data:
+                            self._signal_service.emit_data_processed(buffer_data, buffer_info)
 
                 except Exception as e:
                     warning_message = f"Error emitting signals: {e!s}"
@@ -328,7 +395,7 @@ class ProcessAudioDataUseCase:
                 "Audio data processing completed",
                 phase=ProcessingPhase.COMPLETING.value,
                 processing_time=processing_time,
-                data_shape=normalized_data.shape,
+                data_shape=numpy_data.shape,
                 rms_value=original_rms,
                 peak_value=original_peak,
             )

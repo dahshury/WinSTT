@@ -11,6 +11,10 @@ class MediaDuration(ValueObject):
 
     total_seconds: float
 
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.total_seconds,)
+
     def __post_init__(self):
         """Validate duration after initialization."""
         if self.total_seconds < 0:

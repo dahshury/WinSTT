@@ -8,6 +8,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from src_refactored.domain.common import Entity
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -92,7 +93,7 @@ class DownloadProgress(Entity):
         error_callback: Callable[[str], None] | None = None,
     ):
         """Initialize download progress entity."""
-        super().__init__()
+        super().__init__(download_id)
         self._download_id = download_id
         self._configuration = configuration
         self._state = DownloadState.IDLE
@@ -176,7 +177,7 @@ class DownloadProgress(Entity):
             raise ValueError(msg)
 
         self._state = DownloadState.STARTING
-        self._start_time = datetime.now()
+        self._start_time = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
         self._end_time = None
         self._error_message = None
         self._metrics = DownloadMetrics()
@@ -242,7 +243,7 @@ class DownloadProgress(Entity):
             raise ValueError(msg)
 
         self._state = DownloadState.COMPLETED
-        self._end_time = datetime.now()
+        self._end_time = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
         self._metrics = DownloadMetrics(
             percentage=100.0,
             bytes_downloaded=self._metrics.bytes_downloaded,
@@ -266,7 +267,7 @@ class DownloadProgress(Entity):
             raise ValueError(msg)
 
         self._state = DownloadState.FAILED
-        self._end_time = datetime.now()
+        self._end_time = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
         self._error_message = error_message
 
         # Trigger error callback
@@ -284,7 +285,7 @@ class DownloadProgress(Entity):
             raise ValueError(msg)
 
         self._state = DownloadState.CANCELLED
-        self._end_time = datetime.now()
+        self._end_time = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
 
     def retry_download(self) -> None:
         """Retry the failed download."""
@@ -311,7 +312,7 @@ class DownloadProgress(Entity):
         if self._start_time is None:
             return None
 
-        end_time = self._end_time or datetime.now()
+        end_time = self._end_time or datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
         return (end_time - self._start_time).total_seconds()
 
     def get_average_speed(self) -> float | None:

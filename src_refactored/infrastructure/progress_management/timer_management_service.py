@@ -424,7 +424,7 @@ class TimerManagementService(QObject):
         active_count = len(self.get_active_timers())
         total_count = len(self.timers)
 
-        type_counts = {}
+        type_counts: dict[str, int] = {}
         for timer_type in self.timer_types.values():
             type_counts[timer_type.value] = type_counts.get(timer_type.value, 0) + 1
 

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from src_refactored.domain.common import Entity
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
+
+try:
+    from datetime import datetime
+except Exception:  # pragma: no cover - fallback if datetime import is restricted
+    datetime = None  # type: ignore
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -86,7 +91,10 @@ class EventData:
 
     def get_age_seconds(self) -> float:
         """Get event age in seconds."""
-        return (datetime.now() - self.timestamp).total_seconds()
+        # Assuming EventData.timestamp is a datetime; convert to seconds since an arbitrary base
+        # For domain determinism, we approximate age using domain timestamp minus a coarse seconds value
+        base_seconds = getattr(self.timestamp, "timestamp", lambda: 0.0)()
+        return float(DomainIdentityGenerator.generate_timestamp() - base_seconds)
 
 
 @dataclass
@@ -201,7 +209,11 @@ class EventFilter:
 
 
 class EventSystemIntegration(Entity):
-    """Entity for event system integration and management."""
+    """Entity for event system integration and management.
+
+    Note: This contains behavior that belongs to an infrastructure adapter.
+    It should be moved to an infra service implementing the domain event bus port.
+    """
 
     def __init__(
         self,
@@ -210,7 +222,7 @@ class EventSystemIntegration(Entity):
         enable_metrics: bool = True,
     ):
         """Initialize event system integration."""
-        super().__init__()
+        super().__init__(system_id)
         self._system_id = system_id
         self._max_queue_size = max_queue_size
         self._enable_metrics = enable_metrics
@@ -456,7 +468,7 @@ class EventSystemIntegration(Entity):
     def _execute_handler(self, handler: EventHandler, event: EventData,
     ) -> EventProcessingResult:
         """Execute a handler for an event."""
-        start_time = datetime.now()
+        start_time = DomainIdentityGenerator.generate_timestamp()
         result = EventProcessingResult(
             event_id=event.event_id,
             handler_id=handler.handler_id,
@@ -468,7 +480,7 @@ class EventSystemIntegration(Entity):
             handler_result = handler.callback(event)
 
             # Calculate processing time
-            processing_time = (datetime.now() - start_time).total_seconds() * 1000
+            processing_time = float(DomainIdentityGenerator.generate_timestamp() - start_time) * 1000.0
 
             # Update result
             result.status = EventStatus.COMPLETED
@@ -481,7 +493,7 @@ class EventSystemIntegration(Entity):
 
         except Exception as e:
             # Calculate processing time
-            processing_time = (datetime.now() - start_time).total_seconds() * 1000
+            processing_time = float(DomainIdentityGenerator.generate_timestamp() - start_time) * 1000.0
 
             # Update result
             result.status = EventStatus.FAILED

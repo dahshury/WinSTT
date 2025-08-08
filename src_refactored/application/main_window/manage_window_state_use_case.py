@@ -124,7 +124,7 @@ class ManageWindowStateRequest:
     persistence_config: PersistenceConfiguration | None = None
     validation_config: ValidationConfiguration | None = None
     context_data: dict[str, Any] | None = None
-    timestamp: datetime = field(default_factory=datetime.now(UTC))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self):
         if self.timestamp is None:
@@ -450,7 +450,7 @@ class ManageWindowStateUseCase:
             validation_errors.extend(transition_errors)
 
             # Validate geometry if custom geometry is provided
-            if request.transition_config.custom_geometry:
+            if request.transition_config.custom_geometry and request.validation_config:
                 geometry_errors = self.validation_service.validate_geometry_bounds(
                     request.transition_config.custom_geometry,
                     request.validation_config,
@@ -567,7 +567,7 @@ class ManageWindowStateUseCase:
                             final_geometry = transition_result.new_geometry  # Fallback to transition geometry
 
                 # Validate final geometry
-                if request.validation_config.validate_geometry_bounds:
+                if request.validation_config and request.validation_config.validate_geometry_bounds:
                     final_geometry_errors = self.validation_service.validate_geometry_bounds(
                         final_geometry,
                         request.validation_config,

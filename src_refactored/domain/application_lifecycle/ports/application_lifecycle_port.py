@@ -83,3 +83,11 @@ class ApplicationLifecyclePort(ABC):
             version: Application version
             organization: Organization name
         """
+
+    @abstractmethod
+    def run_application(self) -> int:
+        """Run the application event loop.
+        
+        Returns:
+            Exit code from the application
+        """

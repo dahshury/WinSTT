@@ -1,24 +1,33 @@
-"""Apply Settings Use Case.
+"""Apply Settings Use Case for WinSTT Application."""
 
-This module implements the use case for applying settings changes to the application,
-including parent window communication and worker reinitialization.
-"""
+from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from datetime import datetime
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Protocol
 
-from src_refactored.domain.common.ports.event_publisher_port import IEventPublisher
-from src_refactored.domain.common.ports.file_system_port import IFileSystemPort
-from src_refactored.domain.settings.entities.settings_configuration import SettingsConfiguration
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.settings.events.settings_events import (
     SettingsApplyProgressEvent,
     SettingsUpdatedEvent,
     WorkerReinitializationRequestedEvent,
 )
-from src_refactored.domain.settings.value_objects.settings_operations import (
-    ApplicationState,
-    SettingType,
-)
+from src_refactored.domain.settings.value_objects.settings_operations import SettingType
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from src_refactored.domain.common.ports.event_publisher_port import IEventPublisher
+    from src_refactored.domain.common.ports.file_system_port import FileSystemPort
+    from src_refactored.domain.settings.entities.settings_configuration import SettingsConfiguration
+
+
+class ApplicationState(Enum):
+    """Application state during settings application."""
+    IDLE = "idle"
+    APPLYING = "applying"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -39,6 +48,8 @@ class ApplySettingsRequest:
     changes: list[SettingChange]
     immediate_apply: bool = True
     show_progress: bool = True
+    progress_callback: Callable[[int, str], None] | None = None
+    message_callback: Callable[[str], None] | None = None
 
 
 @dataclass
@@ -50,14 +61,11 @@ class ApplySettingsResponse:
     final_state: ApplicationState
     restart_required: bool
     error_message: str | None = None
-    warnings: list[str] = field()
+    warnings: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         if self.warnings is None:
             self.warnings = []
-
-
-# Removed ParentWindowProtocol - UI concerns moved to presentation layer via domain events
 
 
 class WorkerManagerProtocol(Protocol):
@@ -67,13 +75,11 @@ class WorkerManagerProtocol(Protocol):
         """Reinitialize all workers."""
         ...
 
-    def update_listener_settings(self, settings: SettingsConfiguration,
-    ) -> bool:
+    def update_listener_settings(self, settings: SettingsConfiguration) -> bool:
         """Update listener worker settings."""
         ...
 
-    def update_model_settings(self, settings: SettingsConfiguration,
-    ) -> bool:
+    def update_model_settings(self, settings: SettingsConfiguration) -> bool:
         """Update model worker settings."""
         ...
 
@@ -82,15 +88,14 @@ class DownloadManagerProtocol(Protocol):
     """Protocol for download management."""
 
     def start_model_download(
-    self,
-    model_name: str,
-    progress_callback: Callable[[int],
-    None]) -> bool:
+        self,
+        model_name: str,
+        progress_callback: Callable[[int, str], None],
+    ) -> bool:
         """Start model download."""
         ...
 
-    def is_download_required(self, model_name: str,
-    ) -> bool:
+    def is_download_required(self, model_name: str) -> bool:
         """Check if download is required for model."""
         ...
 
@@ -103,7 +108,7 @@ class ApplySettingsUseCase:
         event_publisher: IEventPublisher,
         worker_manager: WorkerManagerProtocol | None = None,
         download_manager: DownloadManagerProtocol | None = None,
-        file_system_service: IFileSystemPort | None = None,
+        file_system_service: FileSystemPort | None = None,
     ):
         self.event_publisher = event_publisher
         self.worker_manager = worker_manager
@@ -111,8 +116,7 @@ class ApplySettingsUseCase:
         self.file_system_service = file_system_service
         self.current_state = ApplicationState.IDLE
 
-    def execute(self, request: ApplySettingsRequest,
-    ) -> ApplySettingsResponse:
+    def execute(self, request: ApplySettingsRequest) -> ApplySettingsResponse:
         """Execute the apply settings use case."""
         try:
             self.current_state = ApplicationState.APPLYING
@@ -133,6 +137,9 @@ class ApplySettingsUseCase:
                     if request.show_progress:
                         progress = int((i / total_changes) * 100)
                         progress_event = SettingsApplyProgressEvent(
+                            event_id=DomainIdentityGenerator.generate_domain_id("event"),
+                            timestamp=datetime.now().timestamp(),
+                            source="apply_settings_use_case",
                             percentage=progress,
                             message=f"Applying {change.setting_type.value}...",
                             current_step=f"Step {i+1} of {total_changes}",
@@ -146,52 +153,112 @@ class ApplySettingsUseCase:
                         applied_changes.append(change)
                         if warning:
                             warnings.append(warning)
-
-                        # Check if restart is required
-                        if change.requires_restart:
-                            restart_required = True
                     else:
                         failed_changes.append(change)
 
+                    # Check if restart is required
+                    if change.requires_restart:
+                        restart_required = True
+
                 except Exception as e:
                     failed_changes.append(change)
-                    warnings.append(f"Failed to apply {change.setting_type.value}: {e!s}")
+                    warnings.append(f"Error applying {change.setting_type.value}: {e}")
 
-            # Final progress update
-            if request.progress_callback:
-                request.progress_callback(100, "Settings applied successfully")
+            # Publish final settings updated event
+            if applied_changes:
+                settings_event = SettingsUpdatedEvent(
+                    event_id=DomainIdentityGenerator.generate_domain_id("event"),
+                    timestamp=datetime.now().timestamp(),
+                    source="apply_settings_use_case",
+                    setting_types=[change.setting_type for change in applied_changes],
+                    changes_count=len(applied_changes),
+                    restart_required=restart_required,
+                )
+                self.event_publisher.publish(settings_event)
 
-            # Determine final state
-            if failed_changes:
-                final_state = ApplicationState.ERROR if not applied_changes else ApplicationState.COMPLETED
-            else:
-                final_state = ApplicationState.COMPLETED
+            # Reinitialize workers if needed
+            if self.worker_manager and any(change.requires_worker_reinit for change in applied_changes):
+                worker_types = []
+                for change in applied_changes:
+                    if change.requires_worker_reinit:
+                        if change.setting_type == SettingType.MODEL:
+                            worker_types.append("model_worker")
+                        elif change.setting_type == SettingType.AUDIO:
+                            worker_types.append("audio_worker")
 
-            self.current_state = final_state
+                if worker_types:
+                    worker_event = WorkerReinitializationRequestedEvent(
+                        event_id=DomainIdentityGenerator.generate_domain_id("event"),
+                        timestamp=datetime.now().timestamp(),
+                        source="apply_settings_use_case",
+                        worker_types=worker_types,
+                        reason="Settings changes require worker reinitialization",
+                    )
+                    self.event_publisher.publish(worker_event)
+
+                    # Actually reinitialize workers
+                    if self.worker_manager.reinitialize_workers():
+                        settings_event = SettingsUpdatedEvent(
+                            event_id=DomainIdentityGenerator.generate_domain_id("event"),
+                            timestamp=datetime.now().timestamp(),
+                            source="apply_settings_use_case",
+                            setting_types=[SettingType.SYSTEM],
+                            changes_count=1,
+                            restart_required=False,
+                        )
+                        self.event_publisher.publish(settings_event)
+                    else:
+                        warnings.append("Failed to reinitialize workers")
+
+            # Handle model downloads
+            if self.download_manager:
+                for change in applied_changes:
+                    if change.requires_download and change.setting_type == SettingType.MODEL:
+                        model_name = str(change.new_value)
+                        if self.download_manager.is_download_required(model_name):
+                            def download_progress(percentage: int, message: str):
+                                if request.progress_callback:
+                                    request.progress_callback(percentage, message)
+
+                            if self.download_manager.start_model_download(model_name, download_progress):
+                                worker_event = WorkerReinitializationRequestedEvent(
+                                    event_id=DomainIdentityGenerator.generate_domain_id("event"),
+                                    timestamp=datetime.now().timestamp(),
+                                    source="apply_settings_use_case",
+                                    worker_types=["model_worker"],
+                                    reason="Model download completed",
+                                )
+                                self.event_publisher.publish(worker_event)
+                            else:
+                                warnings.append(f"Failed to download model: {model_name}")
+
+            success = len(failed_changes) == 0
+            self.current_state = ApplicationState.IDLE
 
             return ApplySettingsResponse(
-                success=len(failed_changes) == 0,
+                success=success,
                 applied_changes=applied_changes,
                 failed_changes=failed_changes,
-                final_state=final_state,
+                final_state=self.current_state,
                 restart_required=restart_required,
+                error_message=None if success else f"Failed to apply {len(failed_changes)} changes",
                 warnings=warnings,
             )
 
         except Exception as e:
-            self.current_state = ApplicationState.ERROR
+            self.current_state = ApplicationState.IDLE
             return ApplySettingsResponse(
                 success=False,
                 applied_changes=[],
                 failed_changes=request.changes,
-                final_state=ApplicationState.ERROR,
+                final_state=self.current_state,
                 restart_required=False,
-                error_message=str(e),
+                error_message=f"Unexpected error: {e}",
+                warnings=warnings,
             )
 
     def _sort_changes_by_priority(self, changes: list[SettingChange]) -> list[SettingChange]:
-        """Sort changes by application priority."""
-        # Priority order: downloads first, then worker reinits, then simple changes
+        """Sort changes by priority (downloads first, then worker reinits)."""
         def priority_key(change: SettingChange) -> int:
             if change.requires_download:
                 return 0
@@ -201,10 +268,8 @@ class ApplySettingsUseCase:
 
         return sorted(changes, key=priority_key)
 
-    def _apply_single_change(self, change: SettingChange, request: ApplySettingsRequest,
-    ) -> tuple[bool, str | None]:
+    def _apply_single_change(self, change: SettingChange, request: ApplySettingsRequest) -> tuple[bool, str | None]:
         """Apply a single setting change."""
-
         try:
             if change.setting_type == SettingType.MODEL:
                 return self._apply_model_change(change, request)
@@ -225,206 +290,87 @@ class ApplySettingsUseCase:
             return False, f"Unknown setting type: {change.setting_type}"
 
         except Exception as e:
-            return False, f"Error applying {change.setting_type.value}: {e!s}"
+            return False, f"Error applying {change.setting_type.value}: {e}"
 
-    def _apply_model_change(self, change: SettingChange, request: ApplySettingsRequest,
-    ) -> tuple[bool, str | None]:
-        """Apply model change."""
+    def _apply_model_change(self, change: SettingChange, request: ApplySettingsRequest) -> tuple[bool, str | None]:
+        """Apply model configuration change."""
         try:
-            # Check if download is required
-            if self.download_manager and change.requires_download:
-                self.current_state = ApplicationState.DOWNLOADING
-
-                def download_progress(percentage: int):
-                    if request.progress_callback:
-                        request.progress_callback(percentage, f"Downloading {change.new_value}...")
-
-                success = self.download_manager.start_model_download(change.new_value, download_progress)
-                if not success:
-                    return False, f"Failed to download model {change.new_value}"
-
-            # Publish settings updated event
-            settings_event = SettingsUpdatedEvent(
-                setting_types=[change.setting_type],
-                changes_count=1,
-                restart_required=change.requires_restart,
-            )
-            self.event_publisher.publish(settings_event)
-
-            # Request worker reinitialization if required
-            if change.requires_worker_reinit:
-                self.current_state = ApplicationState.REINITIALIZING
-                if self.worker_manager:
-                    success = self.worker_manager.reinitialize_workers()
-                    if not success:
-                        return False, "Failed to reinitialize workers"
-                else:
-                    # Publish worker reinitialization event
-                    worker_event = WorkerReinitializationRequestedEvent(
-                        worker_types=["model_worker", "listener_worker"],
-                        reason=f"Model changed to {change.new_value}",
-                    )
-                    self.event_publisher.publish(worker_event)
-
+            # Update the settings configuration
+            request.settings.update_setting("model", change.new_value)
             return True, None
-
         except Exception as e:
-            return False, str(e)
+            return False, f"Failed to apply model change: {e}"
 
-    def _apply_quantization_change(self,
-    change: SettingChange, request: ApplySettingsRequest,
-    ) -> tuple[bool, str | None]:
+    def _apply_quantization_change(self, change: SettingChange, request: ApplySettingsRequest) -> tuple[bool, str | None]:
         """Apply quantization change."""
         try:
-            # Publish settings updated event
-            settings_event = SettingsUpdatedEvent(
-                setting_types=[change.setting_type],
-                changes_count=1,
-                restart_required=change.requires_restart,
-            )
-            self.event_publisher.publish(settings_event)
-
-            # Request worker reinitialization if required
-            if change.requires_worker_reinit:
-                if self.worker_manager:
-                    self.worker_manager.reinitialize_workers()
-                else:
-                    # Publish worker reinitialization event
-                    worker_event = WorkerReinitializationRequestedEvent(
-                        worker_types=["model_worker"],
-                        reason=f"Quantization changed to {change.new_value}",
-                    )
-                    self.event_publisher.publish(worker_event)
-
+            # Update the settings configuration
+            request.settings.update_setting("quantization", change.new_value)
             return True, None
-
         except Exception as e:
-            return False, str(e)
+            return False, f"Failed to apply quantization change: {e}"
 
-    def _apply_recording_sound_change(self,
-    change: SettingChange, request: ApplySettingsRequest,
-    ) -> tuple[bool, str | None]:
+    def _apply_recording_sound_change(self, change: SettingChange, request: ApplySettingsRequest) -> tuple[bool, str | None]:
         """Apply recording sound change."""
         try:
-            # Publish settings updated event
-            settings_event = SettingsUpdatedEvent(
-                setting_types=[change.setting_type],
-                changes_count=1,
-                restart_required=change.requires_restart,
-            )
-            self.event_publisher.publish(settings_event)
-
-            # Update listener worker if available
-            if self.worker_manager:
-                self.worker_manager.update_listener_settings(request.settings)
-
-            # Show message
-            if request.message_callback:
-                if change.new_value and self.file_system_service:
-                    filename = self.file_system_service.get_basename(change.new_value)
-                else:
-                    filename = "None"
-                request.message_callback(f"Sound path updated to {filename}")
-
+            # Update the settings configuration
+            request.settings.update_setting("recording_sound_enabled", change.new_value)
             return True, None
-
         except Exception as e:
-            return False, str(e)
+            return False, f"Failed to apply recording sound change: {e}"
 
-    def _apply_srt_output_change(self,
-    change: SettingChange, request: ApplySettingsRequest,
-    ) -> tuple[bool, str | None]:
+    def _apply_srt_output_change(self, change: SettingChange, request: ApplySettingsRequest) -> tuple[bool, str | None]:
         """Apply SRT output change."""
         try:
-            # Publish settings updated event
-            settings_event = SettingsUpdatedEvent(
-                setting_types=[change.setting_type],
-                changes_count=1,
-                restart_required=change.requires_restart,
-            )
-            self.event_publisher.publish(settings_event)
-
+            # Update the settings configuration
+            request.settings.update_setting("output_srt", change.new_value)
             return True, None
-
         except Exception as e:
-            return False, str(e)
+            return False, f"Failed to apply SRT output change: {e}"
 
-    def _apply_hotkey_change(self, change: SettingChange, request: ApplySettingsRequest,
-    ) -> tuple[bool, str | None]:
+    def _apply_hotkey_change(self, change: SettingChange, request: ApplySettingsRequest) -> tuple[bool, str | None]:
         """Apply hotkey change."""
         try:
-            # Update listener worker if available
-            if self.worker_manager:
-                self.worker_manager.update_listener_settings(request.settings)
-
-            # Show message
-            if request.message_callback:
-                request.message_callback(f"Hotkey updated to {change.new_value}")
-
+            # Update the settings configuration
+            request.settings.update_setting("recording_key", change.new_value)
             return True, None
-
         except Exception as e:
-            return False, str(e)
+            return False, f"Failed to apply hotkey change: {e}"
 
-    def _apply_llm_settings_change(self,
-    change: SettingChange, request: ApplySettingsRequest,
-    ) -> tuple[bool, str | None]:
+    def _apply_llm_settings_change(self, change: SettingChange, request: ApplySettingsRequest) -> tuple[bool, str | None]:
         """Apply LLM settings change."""
         try:
-            # LLM settings typically don't require immediate application
-            # They are applied when the LLM is next used
-
-            # Show message
-            if request.message_callback:
-                request.message_callback("LLM settings updated")
-
+            # Update the settings configuration
+            request.settings.update_setting("llm_enabled", change.new_value)
             return True, None
-
         except Exception as e:
-            return False, str(e)
+            return False, f"Failed to apply LLM settings change: {e}"
 
-    def _apply_audio_settings_change(self,
-    change: SettingChange, request: ApplySettingsRequest,
-    ) -> tuple[bool, str | None]:
+    def _apply_audio_settings_change(self, change: SettingChange, request: ApplySettingsRequest) -> tuple[bool, str | None]:
         """Apply audio settings change."""
         try:
-            # Update worker settings if available
-            if self.worker_manager:
-                self.worker_manager.update_listener_settings(request.settings)
-
-            # Show message
-            if request.message_callback:
-                request.message_callback("Audio settings updated")
-
+            # Update the settings configuration
+            request.settings.update_setting("recording_sound_enabled", change.new_value)
             return True, None
-
         except Exception as e:
-            return False, str(e)
+            return False, f"Failed to apply audio settings change: {e}"
 
-    def _apply_ui_settings_change(self,
-    change: SettingChange, request: ApplySettingsRequest,
-    ) -> tuple[bool, str | None]:
+    def _apply_ui_settings_change(self, change: SettingChange, request: ApplySettingsRequest) -> tuple[bool, str | None]:
         """Apply UI settings change."""
         try:
-            # UI settings typically require restart or immediate UI updates
-            # This would be handled by the UI layer
-
-            # Show message
-            if request.message_callback:
-                request.message_callback("UI settings updated")
-
+            # Update the settings configuration - UI settings are handled differently
+            # For now, we'll just log that UI settings were changed
             return True, None
-
         except Exception as e:
-            return False, str(e)
+            return False, f"Failed to apply UI settings change: {e}"
 
     def get_current_state(self) -> ApplicationState:
         """Get the current application state."""
         return self.current_state
 
     def cancel_operation(self) -> bool:
-        """Cancel the current operation if possible."""
-        if self.current_state in [ApplicationState.DOWNLOADING, ApplicationState.APPLYING]:
-            self.current_state = ApplicationState.IDLE
+        """Cancel the current operation."""
+        if self.current_state == ApplicationState.APPLYING:
+            self.current_state = ApplicationState.CANCELLED
             return True
         return False

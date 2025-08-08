@@ -8,12 +8,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-
-import numpy as np
+from typing import TYPE_CHECKING
 
 from src_refactored.domain.common.entity import Entity
 from src_refactored.domain.common.result import Result
 from src_refactored.domain.main_window.value_objects.opacity_level import OpacityLevel
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from src_refactored.domain.audio_visualization.value_objects.waveform_data import WaveformData
 
 
 class VisualizationState(Enum):
@@ -72,39 +76,7 @@ class VisualizationSettings:
         return Result.success(None)
 
 
-@dataclass
-class WaveformData:
-    """Waveform data for visualization."""
-    samples: np.ndarray
-    sample_rate: int
-    timestamp: float
-
-    def __post_init__(self):
-        """Validate waveform data."""
-        if self.samples is None or len(self.samples) == 0:
-            msg = "Samples cannot be empty"
-            raise ValueError(msg)
-        if self.sample_rate <= 0:
-            msg = "Sample rate must be positive"
-            raise ValueError(msg)
-        if self.timestamp < 0:
-            msg = "Timestamp cannot be negative"
-            raise ValueError(msg)
-
-    @property
-    def duration(self) -> float:
-        """Get duration in seconds."""
-        return len(self.samples) / self.sample_rate
-
-    @property
-    def peak_amplitude(self) -> float:
-        """Get peak amplitude."""
-        return float(np.max(np.abs(self.samples)))
-
-    @property
-    def rms_amplitude(self) -> float:
-        """Get RMS amplitude."""
-        return float(np.sqrt(np.mean(self.samples ** 2)))
+# WaveformData is now imported from audio_visualization.value_objects.waveform_data
 
 
 class VisualizationIntegration(Entity[str],
@@ -125,7 +97,7 @@ class VisualizationIntegration(Entity[str],
         self._current_data: WaveformData | None = None
         self._data_history: list[WaveformData] = []
         self._is_visible = False
-        self._background_opacity = OpacityLevel.from_value(0.0).value
+        self._background_opacity = OpacityLevel.from_value(0.0)
         self._max_history_size = 100
         self.validate()
 
@@ -158,7 +130,7 @@ class VisualizationIntegration(Entity[str],
         validation_result = self._settings.validate()
         if not validation_result.is_success:
             self._state = VisualizationState.ERROR
-            return Result.failure(f"Settings validation failed: {validation_result.error()}")
+            return Result.failure(f"Settings validation failed: {validation_result.error}")
 
         self._state = VisualizationState.READY
         self.mark_as_updated()
@@ -254,7 +226,7 @@ class VisualizationIntegration(Entity[str],
         self.mark_as_updated()
         return Result.success(None)
 
-    def get_display_data(self) -> np.ndarray | None:
+    def get_display_data(self) -> Sequence[float] | None:
         """Get data for display rendering."""
         if not self._current_data:
             return None
@@ -268,13 +240,13 @@ class VisualizationIntegration(Entity[str],
             return self._process_bars_data()
         return self._current_data.samples
 
-    def _process_waveform_data(self) -> np.ndarray:
+    def _process_waveform_data(self) -> Sequence[float]:
         """Process data for waveform display."""
         if not self._current_data:
-            return np.array([])
+            return []
 
         # Downsample if needed for display
-        samples = self._current_data.samples
+        samples = list(self._current_data.samples)
         target_points = 400  # Match widget width
 
         if len(samples) > target_points:
@@ -284,44 +256,58 @@ class VisualizationIntegration(Entity[str],
 
         return samples
 
-    def _process_spectrum_data(self) -> np.ndarray:
+    def _process_spectrum_data(self) -> Sequence[float]:
         """Process data for spectrum display."""
         if not self._current_data:
-            return np.array([])
+            return []
 
-        # Compute FFT for spectrum
-        fft = np.fft.fft(self._current_data.samples)
-        magnitude = np.abs(fft[:len(fft)//2])
-
-        # Downsample for display
+        # Note: FFT processing would be implemented in infrastructure layer
+        # For now, return a simplified visualization based on amplitude levels
+        samples = list(self._current_data.samples)
+        
+        # Create simple frequency-like representation using amplitude windows
         target_points = 200
-        if len(magnitude) > target_points:
-            step = len(magnitude) // target_points
-            magnitude = magnitude[::step][:target_points]
+        window_size = max(1, len(samples) // target_points)
+        
+        spectrum_data = []
+        for i in range(0, len(samples), window_size):
+            window = samples[i:i + window_size]
+            if window:
+                # Use RMS as a simple frequency magnitude approximation
+                rms = (sum(s * s for s in window) / len(window)) ** 0.5
+                spectrum_data.append(rms)
+        
+        return spectrum_data[:target_points]
 
-        return magnitude
-
-    def _process_bars_data(self) -> np.ndarray:
+    def _process_bars_data(self) -> Sequence[float]:
         """Process data for bars display."""
         if not self._current_data:
-            return np.array([])
+            return []
 
-        # Create frequency bins for bar display
-        fft = np.fft.fft(self._current_data.samples)
-        magnitude = np.abs(fft[:len(fft)//2])
-
-        # Group into frequency bands
+        # Note: True frequency analysis would be implemented in infrastructure layer
+        # For now, create simplified frequency bands using amplitude grouping
+        samples = list(self._current_data.samples)
         num_bars = 32
-        bar_size = len(magnitude) // num_bars
+        
+        if not samples:
+            return [0.0] * num_bars
+        
+        window_size = max(1, len(samples) // num_bars)
         bars = []
-
+        
         for i in range(num_bars):
-            start = i * bar_size
-            end = start + bar_size
-            bar_value = np.mean(magnitude[start:end]) if end <= len(magnitude) else 0
-            bars.append(bar_value)
-
-        return np.array(bars)
+            start = i * window_size
+            end = min(start + window_size, len(samples))
+            
+            if start < len(samples):
+                window = samples[start:end]
+                # Use RMS as bar height
+                bar_value = (sum(s * s for s in window) / len(window)) ** 0.5 if window else 0.0
+                bars.append(bar_value)
+            else:
+                bars.append(0.0)
+        
+        return bars
 
     # Properties
     @property

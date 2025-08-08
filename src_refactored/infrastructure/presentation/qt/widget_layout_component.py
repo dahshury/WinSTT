@@ -21,11 +21,11 @@ from PyQt6.QtWidgets import (
 )
 
 from src_refactored.domain.ui_coordination.value_objects.ui_state_management import UIState
-from src_refactored.infrastructure.main_window.ui_layout_service import UILayoutService
-from src_refactored.infrastructure.main_window.ui_text_management_service import (
+from src_refactored.presentation.qt.services.ui_layout_service import UILayoutService
+from src_refactored.presentation.qt.services.ui_text_management_service import (
     UITextManagementService,
 )
-from src_refactored.infrastructure.main_window.widget_layering_service import WidgetLayeringService
+from src_refactored.presentation.qt.services.widget_layering_service import WidgetLayeringService
 
 
 class WidgetLayoutComponent:

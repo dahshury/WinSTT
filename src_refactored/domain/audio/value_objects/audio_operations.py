@@ -50,6 +50,7 @@ class AudioChunk(ValueObject):
     chunk_id: int
 
     def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
         return (
             self.data,
             self.timestamp,
@@ -58,7 +59,7 @@ class AudioChunk(ValueObject):
             self.chunk_id,
         )
 
-    def __invariants__(self) -> None:
+    def __post_init__(self):
         if not self.data:
             msg = "Audio chunk data cannot be empty"
             raise ValueError(msg)
@@ -80,21 +81,23 @@ class CalibrationResult(ValueObject):
     noise_level: float
     speech_level: float
     calibration_duration: float
-    samples_processed: int
     confidence: float
+    samples_processed: int
+    calibration_method: str
 
-    def _get_equality_components(self,
-    ) -> tuple:
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
         return (
             self.optimal_threshold,
             self.noise_level,
             self.speech_level,
             self.calibration_duration,
-            self.samples_processed,
             self.confidence,
+            self.samples_processed,
+            self.calibration_method,
         )
 
-    def __invariants__(self) -> None:
+    def __post_init__(self):
         if self.optimal_threshold < 0 or self.optimal_threshold > 1:
             msg = "Optimal threshold must be between 0 and 1"
             raise ValueError(msg)
@@ -106,5 +109,4 @@ class CalibrationResult(ValueObject):
             raise ValueError(msg)
         if self.calibration_duration <= 0:
             msg = "Calibration duration must be positive"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)

@@ -7,12 +7,15 @@ configuration, and UI state management.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from src_refactored.domain.common.aggregate_root import AggregateRoot
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.result import Result
+
+if TYPE_CHECKING:
+    from src_refactored.domain.common.ports.time_management_port import TimeManagementPort
 
 if TYPE_CHECKING:
     from src_refactored.domain.main_window.value_objects.opacity_level import OpacityLevel
@@ -47,18 +50,18 @@ class WindowMetrics:
     """Window metrics data."""
     minimize_count: int = 0
     total_sessions: int = 0
-    last_activity: datetime | None = None
+    last_activity: object | None = None
     uptime_seconds: float = 0.0
 
-    def record_minimize(self) -> None:
+    def record_minimize(self, current_time: object | None = None) -> None:
         """Record a window minimize event."""
         self.minimize_count += 1
-        self.last_activity = datetime.utcnow()
+        self.last_activity = current_time
 
-    def record_session(self) -> None:
+    def record_session(self, current_time: object | None = None) -> None:
         """Record a transcription session."""
         self.total_sessions += 1
-        self.last_activity = datetime.utcnow()
+        self.last_activity = current_time
 
 
 class MainWindow(AggregateRoot[str],
@@ -74,17 +77,23 @@ class MainWindow(AggregateRoot[str],
         configuration: WindowConfiguration,
         ui_layout: UILayout,
         visualization: VisualizationIntegration,
+        time_port: TimeManagementPort | None = None,
+        created_at: float | None = None,
     ):
         super().__init__(window_id)
         self._configuration = configuration
         self._ui_layout = ui_layout
         self._visualization = visualization
+        self._time_port = time_port
         self._state = WindowState.INITIALIZING
         self._mode = WindowMode.NORMAL
         self._metrics = WindowMetrics()
         self._is_transcribing = False
         self._opacity_effects: dict[str, OpacityLevel] = {}
-        self._created_at = datetime.utcnow()
+        # Use deterministic domain timestamp if not provided by the application layer
+        self._created_at = (
+            created_at if created_at is not None else DomainIdentityGenerator.generate_timestamp()
+        )
         self.validate()
 
     @classmethod
@@ -93,11 +102,19 @@ class MainWindow(AggregateRoot[str],
         configuration: WindowConfiguration,
         ui_layout: UILayout,
         visualization: VisualizationIntegration,
+        time_port: TimeManagementPort | None = None,
     ) -> Result[MainWindow]:
         """Create a new main window."""
         try:
-            window_id = f"main_window_{datetime.utcnow().timestamp()}"
-            window = cls(window_id, configuration, ui_layout, visualization)
+            window_id = DomainIdentityGenerator.generate_domain_id("main_window")
+            window = cls(
+                window_id,
+                configuration,
+                ui_layout,
+                visualization,
+                time_port=time_port,
+                created_at=DomainIdentityGenerator.generate_timestamp(),
+            )
             return Result.success(window)
         except Exception as e:
             return Result.failure(f"Failed to create main window: {e!s}")
@@ -110,12 +127,12 @@ class MainWindow(AggregateRoot[str],
         # Initialize UI layout
         layout_result = self._ui_layout.initialize()
         if not layout_result.is_success:
-            return Result.failure(f"Failed to initialize UI layout: {layout_result.error()}")
+            return Result.failure(f"Failed to initialize UI layout: {layout_result.error}")
 
         # Initialize visualization
         viz_result = self._visualization.initialize()
         if not viz_result.is_success:
-            return Result.failure(f"Failed to initialize visualization: {viz_result.error()}")
+            return Result.failure(f"Failed to initialize visualization: {viz_result.error}")
 
         self._state = WindowState.READY
         self.mark_as_updated()
@@ -129,11 +146,11 @@ class MainWindow(AggregateRoot[str],
         # Update visualization for recording
         viz_result = self._visualization.start_recording()
         if not viz_result.is_success:
-            return Result.failure(viz_result.error())
+            return Result.failure(viz_result.error or "Visualization start failed")
 
         self._state = WindowState.RECORDING
         self._is_transcribing = True
-        self._metrics.record_session()
+        self._metrics.record_session(self._get_current_datetime())
         self.mark_as_updated()
         return Result.success(None)
 
@@ -145,7 +162,7 @@ class MainWindow(AggregateRoot[str],
         # Update visualization for stopped recording
         viz_result = self._visualization.stop_recording()
         if not viz_result.is_success:
-            return Result.failure(viz_result.error())
+            return Result.failure(viz_result.error or "Visualization stop failed")
 
         self._state = WindowState.TRANSCRIBING
         self.mark_as_updated()
@@ -185,7 +202,7 @@ class MainWindow(AggregateRoot[str],
             return Result.failure("Cannot minimize closing window")
 
         self._state = WindowState.MINIMIZED
-        self._metrics.record_minimize()
+        self._metrics.record_minimize(self._get_current_datetime())
         self.mark_as_updated()
         return Result.success(None)
 
@@ -278,9 +295,16 @@ class MainWindow(AggregateRoot[str],
         return self._state == WindowState.DOWNLOADING
 
     @property
-    def created_at(self) -> datetime:
+    def created_at(self) -> float:
         """Get creation timestamp."""
         return self._created_at
+
+    # Internal helpers
+    def _get_current_datetime(self) -> object | None:
+        if self._time_port is None:
+            return None
+        result = self._time_port.get_current_datetime()
+        return result.value if result.is_success else None
 
     def __invariants__(self) -> None:
         """Validate main window invariants."""

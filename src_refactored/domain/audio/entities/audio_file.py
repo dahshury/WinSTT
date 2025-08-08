@@ -7,17 +7,17 @@ Supports various audio file operations and validation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src_refactored.domain.common.abstractions import Entity
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.value_object import ValueObject
 
 if TYPE_CHECKING:
     from src_refactored.domain.audio.value_objects.audio_format import AudioFormat, Duration
+    from src_refactored.domain.common.ports.file_system_port import FileSystemPort
 
 
 class FileSource(Enum):
@@ -30,43 +30,57 @@ class FileSource(Enum):
 
 @dataclass(frozen=True)
 class FilePath(ValueObject):
-    """Value object for file paths with validation."""
+    """File path value object."""
     path: str
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.path,)
 
     def __post_init__(self):
         if not self.path.strip():
             msg = "File path cannot be empty"
             raise ValueError(msg)
 
-        # Basic path validation
-        try:
-            path_obj = Path(self.path)
-            if path_obj.is_absolute() and not path_obj.parent.exists():
-                # Allow non-existent absolute paths for future creation
-                pass
-        except (OSError, ValueError) as e:
-            msg = f"Invalid file path: {self.path} - {e}"
+        # Basic path validation - ensure it's a reasonable string
+        if any(char in self.path for char in ["<", ">", "|", "?", "*"]):
+            msg = f"Invalid characters in file path: {self.path}"
             raise ValueError(msg)
 
     @property
     def file_name(self) -> str:
         """Get the file name without directory."""
-        return Path(self.path).name
+        # Extract filename using string operations
+        if "/" in self.path:
+            return self.path.split("/")[-1]
+        if "\\" in self.path:
+            return self.path.split("\\")[-1]
+        return self.path
 
     @property
     def file_stem(self) -> str:
         """Get the file name without extension."""
-        return Path(self.path).stem
+        filename = self.file_name
+        if "." in filename:
+            return filename.rsplit(".", 1)[0]
+        return filename
 
     @property
     def file_extension(self) -> str:
         """Get the file extension."""
-        return Path(self.path).suffix.lower()
+        if "." in self.path:
+            return "." + self.path.split(".")[-1].lower()
+        return ""
 
     @property
     def directory(self) -> str:
         """Get the directory path."""
-        return str(Path(self.path).parent)
+        # Extract directory using string operations
+        if "/" in self.path:
+            return "/".join(self.path.split("/")[:-1])
+        if "\\" in self.path:
+            return "\\".join(self.path.split("\\")[:-1])
+        return ""
 
     @property
     def is_audio_file(self,
@@ -75,21 +89,27 @@ class FilePath(ValueObject):
         audio_extensions = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".mp4", ".webm"}
         return self.file_extension in audio_extensions
 
-    def with_extension(self, new_extension: str,
-    ) -> FilePath:
+    def with_extension(self, new_extension: str) -> FilePath:
         """Create new FilePath with different extension."""
         if not new_extension.startswith("."):
             new_extension = "." + new_extension
 
-        path_obj = Path(self.path)
-        new_path = path_obj.with_suffix(new_extension)
-        return FilePath(str(new_path))
+        # Remove current extension and add new one
+        current_path = self.path
+        if "." in current_path:
+            current_path = current_path.rsplit(".", 1)[0]
+        
+        return FilePath(current_path + new_extension)
 
 
 @dataclass(frozen=True)
 class FileSize(ValueObject):
-    """Value object for file sizes."""
+    """File size value object."""
     bytes: int
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.bytes,)
 
     def __post_init__(self):
         if self.bytes < 0:
@@ -122,28 +142,56 @@ class FileSize(ValueObject):
         return f"{self.gb:.1f} GB"
 
 
-@dataclass
-class AudioFile(Entity,
-    ):
+class Duration(ValueObject):
+    """Duration value object."""
+    seconds: float
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.seconds,)
+
+    def __post_init__(self):
+        if self.seconds < 0:
+            msg = f"Duration cannot be negative: {self.seconds}"
+            raise ValueError(msg)
+
+    @property
+    def is_minimum_duration(self) -> bool:
+        """Check if duration is at least 0.5 seconds."""
+        return self.seconds >= 0.5
+
+    def format_human_readable(self) -> str:
+        """Format duration as a human-readable string."""
+        if self.seconds < 60:
+            return f"{self.seconds:.1f}s"
+        if self.seconds < 3600:
+            return f"{self.seconds / 60:.1f}m"
+        return f"{self.seconds / 3600:.1f}h"
+
+
+class AudioFile(Entity):
     """
     Entity representing an audio file with metadata and operations.
     
     Manages audio file information, validation, and business rules
     for file handling operations.
     """
-    file_path: FilePath
-    audio_format: AudioFormat
-    duration: Duration
-    file_size: FileSize
-    source: FileSource
-    created_at: datetime = field(default_factory=datetime.now)
-    last_accessed: datetime = field(default_factory=datetime.now)
-    title: str | None = None
-    description: str | None = None
-    tags: list[str] = field(default_factory=list)
-
-    def __post_init__(self):
-        super().__post_init__()
+    
+    def __init__(self, entity_id: str, file_path: FilePath, audio_format: AudioFormat, 
+                 duration: Duration, file_size: FileSize, source: FileSource, **kwargs):
+        """Initialize AudioFile entity."""
+        super().__init__(entity_id)
+        self.file_path = file_path
+        self.audio_format = audio_format
+        self.duration = duration
+        self.file_size = file_size
+        self.source = source
+        
+        # Set optional fields from kwargs
+        self.last_accessed = kwargs.get("last_accessed", DomainIdentityGenerator.generate_timestamp())
+        self.title = kwargs.get("title")
+        self.description = kwargs.get("description")
+        self.tags = kwargs.get("tags", [])
 
         # Validate file path for audio
         if not self.file_path.is_audio_file:
@@ -152,7 +200,7 @@ class AudioFile(Entity,
 
     def update_access_time(self) -> None:
         """Update last accessed timestamp."""
-        self.last_accessed = datetime.now()
+        self.last_accessed = DomainIdentityGenerator.generate_timestamp()
         self.update_timestamp()
 
     def add_tag(self, tag: str,
@@ -263,12 +311,26 @@ class AudioFile(Entity,
         # Check audio format compatibility
         return not self.audio_format.sample_rate < 8000
 
-    def create_transcription_filename(self, output_format: str = "txt") -> FilePath:
-        """Create filename for transcription output."""
-        base_name = self.file_path.file_stem
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{base_name}_transcription_{timestamp}.{output_format}"
+    def create_transcription_filename(self, output_format: str = "txt", file_system_port: FileSystemPort | None = None) -> FilePath:
+        """Create filename for transcription output.
 
-        output_path = Path(self.file_path.directory) / filename
-        return FilePath(str(output_path),
-    )
+        Note: Domain only composes a name; actual time-based prefixing should happen in infra via a naming service.
+        """
+        base_name = self.file_path.file_stem
+        suffix = DomainIdentityGenerator.generate_domain_id("transcription")
+        filename = f"{base_name}_{suffix}.{output_format}"
+
+        # Join paths using string operations
+        directory = self.file_path.directory
+        if directory and file_system_port is not None:
+            jp = file_system_port.join_paths(directory, filename)
+            if jp.is_success and jp.value:
+                output_path = jp.value
+            else:
+                # Fallback to safe string join based on existing path style
+                separator = "/" if "/" in self.file_path.path else "\\"
+                output_path = f"{directory}{separator}{filename}"
+        else:
+            output_path = filename
+            
+        return FilePath(output_path)

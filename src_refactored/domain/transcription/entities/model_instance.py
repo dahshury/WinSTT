@@ -7,14 +7,17 @@ Extracted from WhisperONNXTranscriber model management logic.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from src_refactored.domain.common.abstractions import DomainEvent, Entity
+from src_refactored.domain.common.abstractions import Entity
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
+from src_refactored.domain.common.events import DomainEvent
 from src_refactored.domain.settings.value_objects.model_configuration import ModelType, Quantization
+
+if TYPE_CHECKING:
+    from src_refactored.domain.common.ports.file_system_port import FileSystemPort
 
 
 class ModelState(Enum):
@@ -62,7 +65,6 @@ class ModelFailedEvent(DomainEvent):
     error_code: str
 
 
-@dataclass
 class ModelInstance(Entity):
     """
     Entity representing a transcription model instance.
@@ -70,21 +72,25 @@ class ModelInstance(Entity):
     Manages model configuration, state, and lifecycle including
     downloading, loading, and validation.
     """
-    model_type: ModelType
-    quantization: Quantization
-    cache_path: str
-    state: ModelState = ModelState.UNINITIALIZED
-    language: str = "auto"
-    task: str = "transcribe"
-    loaded_at: datetime | None = None
-    last_used: datetime | None = None
-    version: str = ""
-    config_parameters: dict[str, Any] = field(default_factory=dict)
-    download_progress: float = 0.0
-    error_message: str | None = None
-
-    def __post_init__(self):
-        super().__post_init__()
+    
+    def __init__(self, entity_id: str, model_type: ModelType, quantization: Quantization, 
+                 cache_path: str, **kwargs):
+        """Initialize ModelInstance entity."""
+        super().__init__(entity_id)
+        self.model_type = model_type
+        self.quantization = quantization
+        self.cache_path = cache_path
+        
+        # Set optional fields from kwargs
+        self.state = kwargs.get("state", ModelState.UNINITIALIZED)
+        self.language = kwargs.get("language", "auto")
+        self.task = kwargs.get("task", "transcribe")
+        self.loaded_at = kwargs.get("loaded_at")
+        self.last_used = kwargs.get("last_used")
+        self.version = kwargs.get("version", "")
+        self.config_parameters = kwargs.get("config_parameters", {})
+        self.download_progress = kwargs.get("download_progress", 0.0)
+        self.error_message = kwargs.get("error_message")
 
         # Validate task
         if self.task not in ["transcribe", "translate"]:
@@ -162,14 +168,14 @@ class ModelInstance(Entity):
             raise ValueError(msg)
 
         self.state = ModelState.READY
-        self.loaded_at = datetime.now()
+        self.loaded_at = DomainIdentityGenerator.generate_timestamp()
         self.version = version
         self.config_parameters = config_params.copy()
         self.error_message = None
         self.update_timestamp()
 
         # Calculate load time
-        load_time = (datetime.now() - self.created_at).total_seconds() if hasattr(self, "created_at") else 0.0
+        load_time = float(DomainIdentityGenerator.generate_timestamp() - self.created_at)
 
         # Raise domain event
         ModelLoadedEvent(
@@ -206,7 +212,7 @@ class ModelInstance(Entity):
             msg = f"Cannot use model in state: {self.state}"
             raise ValueError(msg)
 
-        self.last_used = datetime.now()
+        self.last_used = DomainIdentityGenerator.generate_timestamp()
         self.update_timestamp()
 
     def start_update(self) -> None:
@@ -259,8 +265,7 @@ class ModelInstance(Entity):
         """Check if model loading has failed."""
         return self.state == ModelState.FAILED
 
-    @property
-    def model_cache_directory(self) -> Path:
+    def get_model_cache_directory(self, file_system_port: FileSystemPort) -> str:
         """Get model cache directory path."""
         if self.model_type == ModelType.LITE_WHISPER_TURBO:
             model_dir = "lite-whisper-turbo"
@@ -269,12 +274,21 @@ class ModelInstance(Entity):
         else:
             model_dir = "whisper-turbo"
 
-        return Path(self.cache_path) / "models" / model_dir
+        # Join paths using file system port
+        models_path_result = file_system_port.join_paths(self.cache_path, "models")
+        if not models_path_result.is_success:
+            return self.cache_path
+        
+        if models_path_result.value is None:
+            return ""
+        final_path_result = file_system_port.join_paths(models_path_result.value, model_dir)
+        return final_path_result.value if final_path_result.is_success and final_path_result.value else (models_path_result.value or "")
 
-    @property
-    def onnx_directory(self) -> Path:
+    def get_onnx_directory(self, file_system_port: FileSystemPort) -> str:
         """Get ONNX files directory."""
-        return self.model_cache_directory / "onnx"
+        cache_dir = self.get_model_cache_directory(file_system_port)
+        onnx_path_result = file_system_port.join_paths(cache_dir, "onnx")
+        return onnx_path_result.value if onnx_path_result.is_success and onnx_path_result.value else cache_dir
 
     @property
     def estimated_memory_usage_mb(self) -> float:
@@ -336,31 +350,40 @@ class ModelInstance(Entity):
             return "decoder_model_merged.onnx"
         return f"decoder_model_merged_{self.quantization.value.lower()}.onnx"
 
-    def get_file_paths(self) -> dict[str, Path]:
+    def get_file_paths(self, file_system_port: FileSystemPort) -> dict[str, str]:
         """Get all required file paths for the model."""
-        base_dir = self.model_cache_directory
-        onnx_dir = self.onnx_directory
+        base_dir = self.get_model_cache_directory(file_system_port)
+        onnx_dir = self.get_onnx_directory(file_system_port)
+
+        # Helper function to join paths safely
+        def safe_join(base: str, filename: str) -> str:
+            result = file_system_port.join_paths(base, filename)
+            return result.value if result.is_success and result.value else f"{base}/{filename}"
 
         return {
-            "config": base_dir / "config.json",
-            "generation_config": base_dir / "generation_config.json",
-            "preprocessor_config": base_dir / "preprocessor_config.json",
-            "tokenizer": base_dir / "tokenizer.json",
-            "encoder": onnx_dir / self.encoder_filename,
-            "decoder": onnx_dir / self.decoder_filename,
+            "config": safe_join(base_dir, "config.json"),
+            "generation_config": safe_join(base_dir, "generation_config.json"),
+            "preprocessor_config": safe_join(base_dir, "preprocessor_config.json"),
+            "tokenizer": safe_join(base_dir, "tokenizer.json"),
+            "encoder": safe_join(onnx_dir, self.encoder_filename),
+            "decoder": safe_join(onnx_dir, self.decoder_filename),
         }
 
-    def validate_files_exist(self) -> bool:
+    def validate_files_exist(self, file_system_port: FileSystemPort) -> bool:
         """Validate that all required model files exist."""
-        file_paths = self.get_file_paths()
+        file_paths = self.get_file_paths(file_system_port)
 
         for file_type, file_path in file_paths.items():
-            if not file_path.exists():
+            # Check if file exists
+            exists_result = file_system_port.file_exists(file_path)
+            if not exists_result.is_success or not exists_result.value:
                 return False
 
             # Basic size check for ONNX files
-            if file_type in ["encoder", "decoder"] and file_path.stat().st_size < 1000:
-                return False
+            if file_type in ["encoder", "decoder"]:
+                size_result = file_system_port.get_file_size(file_path)
+                if size_result.is_success and size_result.value is not None and size_result.value < 1000:
+                    return False
 
         return True
 
@@ -368,8 +391,8 @@ class ModelInstance(Entity):
     def usage_statistics(self) -> dict[str, Any]:
         """Get usage statistics for the model."""
         return {
-            "total_usage_time": (datetime.now() - self.loaded_at).total_seconds() if self.loaded_at else 0,
-            "last_used": self.last_used.isoformat() if self.last_used else None,
+            "total_usage_time": (float(DomainIdentityGenerator.generate_timestamp() - self.loaded_at) if self.loaded_at else 0.0),
+            "last_used": self.last_used,
             "state": self.state.value,
             "language": self.language,
             "task": self.task,

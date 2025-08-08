@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from enum import Enum
 from typing import Any
 
 from src_refactored.domain.common import AggregateRoot
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 
 
 class ProgressSessionState(Enum):
@@ -106,9 +107,9 @@ class ProgressSession(AggregateRoot[str],
         self._configuration = configuration
         self._state = ProgressSessionState.IDLE
         self._metrics = ProgressMetrics()
-        self._start_time: datetime | None = None
-        self._end_time: datetime | None = None
-        self._last_update_time: datetime | None = None
+        self._start_time: float | None = None
+        self._end_time: float | None = None
+        self._last_update_time: float | None = None
         self._error_message: str | None = None
         self._custom_data: dict[str, Any] = {}
         self._is_debouncing = False
@@ -121,7 +122,7 @@ class ProgressSession(AggregateRoot[str],
             return False
 
         self._state = ProgressSessionState.ACTIVE
-        self._start_time = datetime.now()
+        self._start_time = DomainIdentityGenerator.generate_timestamp()
         self._end_time = None
         self._last_update_time = self._start_time
         self._error_message = None
@@ -158,7 +159,7 @@ class ProgressSession(AggregateRoot[str],
         if current_value < 0 or current_value > self._metrics.total_value:
             return False
 
-        now = datetime.now()
+        now = DomainIdentityGenerator.generate_timestamp()
 
         # Apply debouncing if configured
         if self._is_debouncing:
@@ -171,7 +172,7 @@ class ProgressSession(AggregateRoot[str],
 
         # Calculate speed and ETA if enabled
         if self._configuration.enable_speed_calculation and self._last_update_time:
-            time_diff = (now - self._last_update_time).total_seconds()
+            time_diff = float(now - self._last_update_time)
             if time_diff > 0:
                 value_diff = current_value - old_value
                 self._metrics.average_speed = value_diff / time_diff
@@ -221,7 +222,7 @@ class ProgressSession(AggregateRoot[str],
             return False
 
         self._state = ProgressSessionState.ACTIVE
-        self._last_update_time = datetime.now()
+        self._last_update_time = DomainIdentityGenerator.generate_timestamp()
         self.mark_as_updated()
         return True
 
@@ -231,7 +232,7 @@ class ProgressSession(AggregateRoot[str],
             return False
 
         self._state = ProgressSessionState.COMPLETED
-        self._end_time = datetime.now()
+        self._end_time = DomainIdentityGenerator.generate_timestamp()
         self._metrics.current_value = self._metrics.total_value
         self._metrics.percentage = 100.0
 
@@ -247,7 +248,7 @@ class ProgressSession(AggregateRoot[str],
             return False
 
         self._state = ProgressSessionState.CANCELLED
-        self._end_time = datetime.now()
+        self._end_time = DomainIdentityGenerator.generate_timestamp()
 
         if reason:
             self._custom_data["cancellation_reason"] = reason
@@ -262,7 +263,7 @@ class ProgressSession(AggregateRoot[str],
             return False
 
         self._state = ProgressSessionState.ERROR
-        self._end_time = datetime.now()
+        self._end_time = DomainIdentityGenerator.generate_timestamp()
         self._error_message = error_message
 
         self.mark_as_updated()
@@ -298,8 +299,8 @@ class ProgressSession(AggregateRoot[str],
         if not self._start_time:
             return None
 
-        end_time = self._end_time or datetime.now()
-        return end_time - self._start_time
+        end_val = self._end_time or DomainIdentityGenerator.generate_timestamp()
+        return timedelta(seconds=float(end_val - (self._start_time or end_val)))
 
     def get_average_update_rate(self) -> float | None:
         """Get average update rate (updates per second)."""
@@ -345,17 +346,17 @@ class ProgressSession(AggregateRoot[str],
         return self._metrics
 
     @property
-    def start_time(self) -> datetime | None:
+    def start_time(self) -> float | None:
         """Get session start time."""
         return self._start_time
 
     @property
-    def end_time(self) -> datetime | None:
+    def end_time(self) -> float | None:
         """Get session end time."""
         return self._end_time
 
     @property
-    def last_update_time(self) -> datetime | None:
+    def last_update_time(self) -> float | None:
         """Get last update time."""
         return self._last_update_time
 

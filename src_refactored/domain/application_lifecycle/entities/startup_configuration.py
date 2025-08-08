@@ -3,10 +3,10 @@
 This module contains the StartupConfiguration entity for application startup settings.
 """
 
-import logging
 from dataclasses import dataclass, field
 
 from src_refactored.domain.common.entity import Entity
+from src_refactored.domain.common.ports.logging_port import LogLevel
 
 
 @dataclass
@@ -22,7 +22,7 @@ class StartupConfiguration(Entity[str]):
     single_instance_port: int = 47123
     quit_on_last_window_closed: bool = False
     enable_logging: bool = True
-    log_level: int = logging.INFO
+    log_level: LogLevel = LogLevel.INFO
     suppress_warnings: bool = True
     environment_variables: dict[str, str] = field(default_factory=dict)
 
@@ -44,7 +44,7 @@ class StartupConfiguration(Entity[str]):
 
     def is_debug_mode(self) -> bool:
         """Check if debug logging is enabled."""
-        return self.log_level <= logging.DEBUG
+        return self.log_level.value <= LogLevel.DEBUG.value
 
     def has_custom_icon(self) -> bool:
         """Check if custom icon path is configured."""
@@ -77,8 +77,8 @@ class StartupConfiguration(Entity[str]):
         if self.single_instance_port <= 0 or self.single_instance_port > 65535:
             msg = "Single instance port must be between 1 and 65535"
             raise ValueError(msg)
-        if self.log_level < 0:
-            msg = "Log level cannot be negative"
+        if not isinstance(self.log_level, LogLevel):
+            msg = "Log level must be a valid LogLevel enum value"
             raise ValueError(msg)
         if self.app_icon_path is not None and self.app_icon_path.strip() == "":
             msg = "App icon path cannot be empty string"

@@ -25,7 +25,7 @@ from src_refactored.domain.settings_management.value_objects.sound_configuration
     SoundConfiguration,
 )
 from src_refactored.infrastructure.common.resource_service import resource_path
-from src_refactored.infrastructure.presentation.qt.toggle_switch_widget import ToggleSwitch
+from src_refactored.presentation.qt.toggle_switch_widget import ToggleSwitch
 
 
 class SoundConfigWidget(QGroupBox):

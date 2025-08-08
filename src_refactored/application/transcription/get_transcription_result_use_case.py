@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from src_refactored.domain.common.abstractions import UseCase
-from src_refactored.domain.transcription.entities.transcription_session import TranscriptionSession
-from src_refactored.domain.transcription.value_objects.transcription_result import (
+from src_refactored.domain.common.ports.time_port import ITimePort
+from src_refactored.domain.transcription.entities.transcription_result import (
     TranscriptionResult,
 )
+from src_refactored.domain.transcription.entities.transcription_session import TranscriptionSession
 from src_refactored.domain.transcription.value_objects.transcription_segment import (
     TranscriptionSegment,
 )
@@ -69,6 +70,7 @@ class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTr
         transcription_session: TranscriptionSession,
         progress_service=None,
         cache_service=None,
+        time_port: ITimePort | None = None,
     ):
         """Initialize the get transcription result use case.
         
@@ -80,6 +82,7 @@ class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTr
         self._transcription_session = transcription_session
         self._progress_service = progress_service
         self._cache_service = cache_service
+        self._time = time_port
 
     def execute(self, request: GetTranscriptionResultRequest,
     ) -> GetTranscriptionResultResponse:
@@ -112,7 +115,7 @@ class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTr
             # Get transcription result from session
             result_response = self._transcription_session.get_transcription_result(transcription_id)
 
-            if result_response.is_failure():
+            if not result_response.is_success:
                 return GetTranscriptionResultResponse(
                     success=False,
                     error_message=f"Failed to retrieve transcription: {result_response.error}",
@@ -120,17 +123,23 @@ class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTr
 
             transcription_result = result_response.value
 
-            # Handle different transcription states
-            if transcription_result.state == TranscriptionState.PROCESSING:
+            # Handle different transcription states - check if result exists
+            if transcription_result is None:
+                return GetTranscriptionResultResponse(
+                    success=False,
+                    error_message="Transcription result not found",
+                )
+
+            if transcription_result.status == TranscriptionState.PROCESSING:
                 return self._handle_processing_state(transcription_result, request)
 
-            if transcription_result.state == TranscriptionState.COMPLETED:
+            if transcription_result.status == TranscriptionState.COMPLETED:
                 return self._handle_completed_state(transcription_result, request)
 
-            if transcription_result.state == TranscriptionState.FAILED:
+            if transcription_result.status == TranscriptionState.FAILED:
                 return self._handle_failed_state(transcription_result, request)
 
-            if transcription_result.state == TranscriptionState.CANCELLED:
+            if transcription_result.status == TranscriptionState.CANCELLED:
                 return GetTranscriptionResultResponse(
                     success=True,
                     result=self._convert_to_result_data(transcription_result, request),
@@ -139,7 +148,7 @@ class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTr
 
             return GetTranscriptionResultResponse(
                 success=False,
-                error_message=f"Unknown transcription state: {transcription_result.state}",
+                error_message=f"Unknown transcription state: {transcription_result.status}",
             )
 
         except Exception as e:
@@ -165,12 +174,12 @@ class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTr
         if request.session_id:
             # Get latest transcription from session
             latest_result = self._transcription_session.get_latest_transcription()
-            if latest_result.is_success():
+            if latest_result.is_success and latest_result.value is not None:
                 return latest_result.value.transcription_id
 
         # Try to get current transcription from session
         current_result = self._transcription_session.get_current_transcription()
-        if current_result.is_success():
+        if current_result.is_success and current_result.value is not None:
             return current_result.value.transcription_id
 
         return None
@@ -283,35 +292,36 @@ class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTr
         Returns:
             GetTranscriptionResultResponse with final transcription status
         """
-        import time
-
-        start_time = time.time()
+        if self._time is None:
+            msg = "ITimePort is required for wait_for_completion"
+            raise ValueError(msg)
+        start_time = self._time.get_current_time()
         timeout = request.timeout_seconds
         poll_interval = 0.5  # Poll every 500ms
 
-        while time.time() - start_time < timeout:
+        while self._time.get_current_time() - start_time < timeout:
             # Get updated result
             updated_result = self._transcription_session.get_transcription_result(
                 transcription_result.transcription_id,
             )
 
-            if updated_result.is_success():
+            if updated_result.is_success:
                 current_result = updated_result.value
 
-                if current_result.state == TranscriptionState.COMPLETED:
+                if current_result is not None and current_result.status == TranscriptionState.COMPLETED:
                     return self._handle_completed_state(current_result, request)
 
-                if current_result.state == TranscriptionState.FAILED:
+                if current_result is not None and current_result.status == TranscriptionState.FAILED:
                     return self._handle_failed_state(current_result, request)
 
-                if current_result.state == TranscriptionState.CANCELLED:
+                if current_result is not None and current_result.status == TranscriptionState.CANCELLED:
                     return GetTranscriptionResultResponse(
                         success=True,
                         result=self._convert_to_result_data(current_result, request),
                         error_message="Transcription was cancelled",
                     )
 
-            time.sleep(poll_interval)
+            self._time.sleep(poll_interval)
 
         # Timeout reached
         return GetTranscriptionResultResponse(
@@ -337,35 +347,50 @@ class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTr
         """
         segments = []
         if request.include_segments and transcription_result.segments:
-            # Convert dict segments to TranscriptionSegment objects
+            # Convert entity segments to value object segments
             segments = [
                 TranscriptionSegment(
-                    id=seg.get("id", ""),
-                    start=seg.get("start", 0.0),
-                    end=seg.get("end", 0.0),
-                    text=seg.get("text", ""),
-                    confidence=seg.get("confidence"),
-                    language=seg.get("language"),
-                    metadata=seg.get("metadata"),
+                    id=seg.entity_id,
+                    start=seg.start_time.seconds,
+                    end=seg.end_time.seconds,
+                    text=seg.text.content,
+                    confidence=seg.confidence.value if seg.confidence else None,
+                    language=seg.language_detected,
+                    metadata={
+                        "speaker_id": seg.speaker_id,
+                        "sequence_number": seg.sequence_number,
+                    } if seg.speaker_id or seg.sequence_number else None,
                 )
                 for seg in transcription_result.segments
             ]
 
-        # Convert string state to TranscriptionState enum
+        # Convert status to TranscriptionState enum
         try:
-            state = TranscriptionState(transcription_result.state)
+            state = TranscriptionState(transcription_result.status.value)
         except ValueError:
             # Fallback to IDLE if state is unknown
             state = TranscriptionState.IDLE
 
+        # Get full text from the entity
+        full_text = transcription_result.get_full_text().content if transcription_result.segments else ""
+
+        # Get processing duration
+        processing_duration = transcription_result.processing_duration.seconds if transcription_result.processing_duration else 0.0
+
+        # Get language code
+        language_code = transcription_result.language.code.value if transcription_result.language else None
+
+        # Get confidence
+        confidence = transcription_result.overall_confidence.value if transcription_result.overall_confidence else 0.0
+
         return TranscriptionResultData(
             transcription_id=transcription_result.transcription_id,
-            text=transcription_result.text or "",
-            language=transcription_result.language,
-            confidence=transcription_result.confidence,
-            processing_time=transcription_result.processing_time,
+            text=full_text,
+            language=language_code,
+            confidence=confidence,
+            processing_time=processing_duration,
             segments=segments,
-            created_at=transcription_result.created_at,
+            created_at=transcription_result.started_at or datetime.now(),
             completed_at=transcription_result.completed_at,
             state=state,
             error_message=transcription_result.error_message,

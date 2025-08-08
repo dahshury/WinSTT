@@ -11,7 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TypeVar
 
-from src_refactored.domain.common.ports.logging_port import LoggingPort
+from src_refactored.domain.common.ports.logger_port import ILoggerPort
 
 from ...presentation.core.container import UIContainerBuilder
 
@@ -56,7 +56,7 @@ class ServiceMetadata:
 class ServiceRegistry:
     """Registry for managing service metadata and registration."""
     
-    def __init__(self, logger: LoggingPort):
+    def __init__(self, logger: ILoggerPort | None = None):
         self.logger = logger
         self._services: dict[type, ServiceMetadata] = {}
         self._named_services: dict[str, ServiceMetadata] = {}
@@ -267,7 +267,8 @@ class AutoServiceRegistrar:
     
     def __init__(self, registry: ServiceRegistry | None = None):
         self.registry = registry or _global_registry
-        self.logger = setup_logger()
+        # Logger should be injected by composition; avoid global setup here
+        self.logger = self.registry.logger if hasattr(self.registry, "logger") else None
     
     def register_from_module(self, module_name: str) -> None:
         """Register all decorated services from a module.
@@ -278,9 +279,11 @@ class AutoServiceRegistrar:
         try:
             module = importlib.import_module(module_name)
             self._scan_module(module)
-            self.logger.info(f"Auto-registered services from module: {module_name}")
+            if self.logger:
+                self.logger.info(f"Auto-registered services from module: {module_name}")
         except Exception as e:
-            self.logger.exception(f"Failed to auto-register from module {module_name}: {e}")
+            if self.logger:
+                self.logger.exception(f"Failed to auto-register from module {module_name}: {e}")
             msg = f"Failed to register from module {module_name}"
             raise ServiceRegistrationError(msg) from e
     
@@ -300,9 +303,11 @@ class AutoServiceRegistrar:
             else:
                 self._scan_package(package_path, package_name)
             
-            self.logger.info(f"Auto-registered services from package: {package_name}")
+            if self.logger:
+                self.logger.info(f"Auto-registered services from package: {package_name}")
         except Exception as e:
-            self.logger.exception(f"Failed to auto-register from package {package_name}: {e}")
+            if self.logger:
+                self.logger.exception(f"Failed to auto-register from package {package_name}: {e}")
             msg = f"Failed to register from package {package_name}"
             raise ServiceRegistrationError(msg) from e
     
@@ -313,7 +318,8 @@ class AutoServiceRegistrar:
             
             if inspect.isclass(obj) and hasattr(obj, "_service_metadata"):
                 # Service already registered via decorator
-                self.logger.debug(f"Found decorated service: {obj.__name__}")
+                if self.logger:
+                    self.logger.debug(f"Found decorated service: {obj.__name__}")
     
     def _scan_package(self, package_path: Path, package_name: str) -> None:
         """Scan a package for Python modules."""
@@ -344,7 +350,8 @@ class ServiceRegistrationBuilder:
     def __init__(self, container_builder: UIContainerBuilder, registry: ServiceRegistry | None = None):
         self.container_builder = container_builder
         self.registry = registry or _global_registry
-        self.logger = setup_logger()
+        # Logger should be injected by composition; avoid global setup here
+        self.logger = self.registry.logger if hasattr(self.registry, "logger") else None
     
     def register_all_services(self) -> None:
         """Register all services from the registry with the container builder."""
@@ -353,7 +360,8 @@ class ServiceRegistrationBuilder:
         for metadata in services:
             self._register_service_metadata(metadata)
         
-        self.logger.info(f"Registered {len(services)} services with container")
+        if self.logger:
+            self.logger.info(f"Registered {len(services)} services with container")
     
     def register_services_by_tag(self, tag: str) -> None:
         """Register services with a specific tag.
@@ -366,7 +374,8 @@ class ServiceRegistrationBuilder:
         for metadata in services:
             self._register_service_metadata(metadata)
         
-        self.logger.info(f"Registered {len(services)} services with tag '{tag}'")
+        if self.logger:
+            self.logger.info(f"Registered {len(services)} services with tag '{tag}'")
     
     def _register_service_metadata(self, metadata: ServiceMetadata) -> None:
         """Register a single service metadata with the container builder."""
@@ -383,7 +392,8 @@ class ServiceRegistrationBuilder:
         elif metadata.lifetime == ServiceLifetime.SCOPED:
             self.container_builder.register_scoped(metadata.service_type, factory_func)
         
-        self.logger.debug(f"Registered {metadata.service_type.__name__} as {metadata.lifetime.value}")
+        if self.logger:
+            self.logger.debug(f"Registered {metadata.service_type.__name__} as {metadata.lifetime.value}")
 
 
 # Convenience functions

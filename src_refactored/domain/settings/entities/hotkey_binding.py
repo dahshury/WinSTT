@@ -267,17 +267,17 @@ class HotkeyBinding(Entity):
         """Get validation errors for the current combination."""
         errors = []
 
-        if not self.current_combination.keys:
+        if not self.current_combination.key:
             errors.append("No keys specified in combination")
             return errors
 
         # Check for at least one modifier
         modifier_keys = {"CTRL", "ALT", "SHIFT", "META"}
-        if not any(key in modifier_keys for key in self.current_combination.keys):
+        if not any(key in modifier_keys for key in self.current_combination.modifiers):
             errors.append("Combination must include at least one modifier key (Ctrl, Alt, Shift, or Meta)")
 
         # Check for invalid keys
-        for key in self.current_combination.keys:
+        for key in [*self.current_combination.modifiers, self.current_combination.key]:
             if not self._is_valid_key(key):
                 errors.append(f"Unsupported key: {key}")
 

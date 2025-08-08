@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from src_refactored.domain.audio.entities import AudioRecorder, AudioRecorderConfiguration
 from src_refactored.domain.audio.value_objects import RecordingState
+from src_refactored.domain.audio.value_objects.duration import Duration
 from src_refactored.domain.audio.value_objects.status_metrics import RecordingMetrics
 from src_refactored.domain.common.abstractions import UseCase
 
@@ -82,9 +83,25 @@ class GetRecordingStatusUseCase(UseCase[GetRecordingStatusRequest, GetRecordingS
             if request.include_metrics:
                 metrics = self._get_recording_metrics()
 
+            # Convert entity RecordingState to value object RecordingState if needed
+            from src_refactored.domain.audio.value_objects.recording_state import (
+                RecordingState as VoRecordingState,
+            )
+            
+            value_object_state = None
+            if state is not None:
+                # Map entity state to value object state
+                state_mapping = {
+                    "idle": VoRecordingState.IDLE,
+                    "recording": VoRecordingState.RECORDING,
+                    "paused": VoRecordingState.PAUSED,
+                    "stopped": VoRecordingState.STOPPED,
+                }
+                value_object_state = state_mapping.get(state.value, VoRecordingState.IDLE)
+
             return GetRecordingStatusResponse(
                 success=True,
-                state=state,
+                state=value_object_state,
                 recording_id=recording_id,
                 configuration=configuration,
                 metrics=metrics,
@@ -139,15 +156,17 @@ class GetRecordingStatusUseCase(UseCase[GetRecordingStatusRequest, GetRecordingS
                     # Metrics service failure shouldn't break status retrieval
                     pass
 
+            # Create duration object, defaulting to minimum if None or invalid
+            total_duration = Duration(max(duration or 0.1, 0.1))
+            
             return RecordingMetrics(
-                duration=duration,
-                start_time=start_time,
-                data_size=data_size,
-                sample_count=sample_count,
-                peak_amplitude=peak_amplitude,
-                average_amplitude=average_amplitude,
+                total_duration=total_duration,
+                total_frames=sample_count or 0,
+                peak_level=peak_amplitude or 0.0,
+                average_level=average_amplitude or 0.0,
+                file_size_bytes=data_size or 0,
             )
 
         except Exception:
             # Return empty metrics on error
-            return RecordingMetrics()
+            return RecordingMetrics(total_duration=Duration(0.1))

@@ -4,9 +4,10 @@ This module defines the domain entity for thread instances.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from typing import Any
+
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 
 
 class ThreadState(Enum):
@@ -28,16 +29,16 @@ class ThreadInstance:
     name: str
     is_daemon: bool = False
     state: ThreadState = ThreadState.NOT_STARTED
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
+    created_at: float = field(default_factory=DomainIdentityGenerator.generate_timestamp)
+    started_at: float | None = None
+    finished_at: float | None = None
     properties: dict[str, Any] = field(default_factory=dict)
     error_message: str | None = None
     
     def start(self) -> None:
         """Mark thread as started."""
         self.state = ThreadState.RUNNING
-        self.started_at = datetime.utcnow()
+        self.started_at = DomainIdentityGenerator.generate_timestamp()
         self.finished_at = None
         self.error_message = None
     
@@ -45,12 +46,12 @@ class ThreadInstance:
         """Mark thread as stopped."""
         self.state = ThreadState.STOPPED
         if not self.finished_at:
-            self.finished_at = datetime.utcnow()
+            self.finished_at = DomainIdentityGenerator.generate_timestamp()
     
     def finish(self) -> None:
         """Mark thread as finished normally."""
         self.state = ThreadState.FINISHED
-        self.finished_at = datetime.utcnow()
+        self.finished_at = DomainIdentityGenerator.generate_timestamp()
     
     def set_error(self, error_message: str) -> None:
         """Set thread error state.
@@ -60,7 +61,7 @@ class ThreadInstance:
         """
         self.state = ThreadState.ERROR
         self.error_message = error_message
-        self.finished_at = datetime.utcnow()
+        self.finished_at = DomainIdentityGenerator.generate_timestamp()
     
     def set_stopping(self) -> None:
         """Mark thread as stopping."""
@@ -103,8 +104,8 @@ class ThreadInstance:
         if not self.started_at:
             return 0.0
         
-        end_time = self.finished_at or datetime.utcnow()
-        return (end_time - self.started_at).total_seconds()
+        end_value = self.finished_at or DomainIdentityGenerator.generate_timestamp()
+        return float(end_value - (self.started_at or end_value))
     
     def set_property(self, key: str, value: Any) -> None:
         """Set thread property.

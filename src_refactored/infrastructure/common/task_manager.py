@@ -232,7 +232,7 @@ class Task(Generic[T]):
     
     def __init__(self, task_id: str, name: str, func: Callable[..., T], 
                  args: tuple = (), kwargs: dict | None = None, 
-                 config: TaskConfiguration = None):
+                 config: TaskConfiguration | None = None):
         """Initialize task.
         
         Args:
@@ -613,18 +613,21 @@ class TaskExecutor(QObject):
             task = self._tasks.get(task_id)
             return task.status if task else None
     
-    def get_task_result(self, task_id: str) -> TaskResult | None:
+    def get_task_result(self, task_id: str) -> TaskResult[Any] | None:
         """Get task result.
         
         Args:
             task_id: Task identifier
             
         Returns:
-            Task result or None if not found
+            Task result or None
         """
         with self._lock:
             task = self._tasks.get(task_id)
-            return task.get_result() if task else None
+            if not task:
+                return None
+            
+            return task.get_result()
     
     def get_running_tasks(self) -> list[str]:
         """Get list of running task IDs.
@@ -819,7 +822,7 @@ class TaskManager(QObject):
     
     def submit_task(self, name: str, func: Callable[..., T], 
                    args: tuple = (), kwargs: dict | None = None,
-                   config: TaskConfiguration = None,
+                   config: TaskConfiguration | None = None,
                    task_id: str | None = None) -> Result[str]:
         """Submit a task for execution.
         
@@ -942,7 +945,7 @@ class TaskManager(QObject):
         """
         return self._executor.get_task_status(task_id)
     
-    def get_task_result(self, task_id: str) -> TaskResult | None:
+    def get_task_result(self, task_id: str) -> TaskResult[Any] | None:
         """Get task result.
         
         Args:
@@ -1103,7 +1106,7 @@ def create_task_manager(max_workers: int = 4) -> TaskManager:
 
 def create_task(task_id: str, name: str, func: Callable[..., T],
                args: tuple = (), kwargs: dict | None = None,
-               config: TaskConfiguration = None) -> Task[T]:
+               config: TaskConfiguration | None = None) -> Task[T]:
     """Create a task.
     
     Args:

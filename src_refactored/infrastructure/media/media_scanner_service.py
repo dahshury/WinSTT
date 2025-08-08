@@ -41,7 +41,7 @@ class MediaScannerService:
         Returns:
             List of paths to discovered media files
         """
-        media_files = []
+        media_files: list[str] = []
 
         try:
             folder_path_obj = Path(folder_path)
@@ -74,8 +74,7 @@ class MediaScannerService:
 
                     # Update progress
                     if self.progress_callback and total_files > 0:
-                        progress = (processed_files / total_files,
-    ) * 100
+                        progress = (processed_files / total_files) * 100
                         relative_path = os.path.relpath(file_path, folder_path)
                         self.progress_callback(f"Scanning: {relative_path}", progress)
 
@@ -106,8 +105,7 @@ class MediaScannerService:
 
         for i, folder_path in enumerate(folder_paths):
             if self.progress_callback:
-                folder_progress = (i / total_folders,
-    ) * 100 if total_folders > 0 else 0
+                folder_progress = (i / total_folders) * 100 if total_folders > 0 else 0
                 self.progress_callback(f"Scanning folder {i+1}/{total_folders}", folder_progress)
 
             media_files = self.scan_folder_for_media(folder_path)
@@ -128,7 +126,7 @@ class MediaScannerService:
         Returns:
             List of paths to discovered media files
         """
-        media_files = []
+        media_files: list[str] = []
 
         try:
             directory_path_obj = Path(directory_path)
@@ -151,8 +149,7 @@ class MediaScannerService:
             for i, file_path in enumerate(files):
                 if file_path.is_file():
                     if self.progress_callback and total_files > 0:
-                        progress = ((i + 1) / total_files,
-    ) * 100
+                        progress = ((i + 1) / total_files) * 100
                         self.progress_callback(f"Checking: {file_path.name}", progress)
 
                     if self._is_supported_media_file(str(file_path)):

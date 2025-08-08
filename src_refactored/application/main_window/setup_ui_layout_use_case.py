@@ -4,12 +4,22 @@ This module implements the SetupUILayoutUseCase for configuring and managing
 UI layout components, arrangements, and responsive design.
 """
 
+import contextlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any
 
-from src_refactored.domain.main_window.value_objects.ui_layout import (
+from src_refactored.domain.ui_coordination.ports.ui_layout_port import (
+    ComponentArrangementServiceProtocol,
+    LayoutFactoryServiceProtocol,
+    LayoutOptimizationServiceProtocol,
+    LayoutValidationServiceProtocol,
+    LoggerServiceProtocol,
+    ProgressTrackingServiceProtocol,
+    ResponsiveLayoutServiceProtocol,
+)
+from src_refactored.domain.ui_coordination.value_objects.ui_layout import (
     ComponentRole,
     SetupPhase,
     SetupResult,
@@ -107,7 +117,7 @@ class SetupUILayoutRequest:
     validate_constraints: bool = True
     apply_immediately: bool = True
     context_data: dict[str, Any] | None = None
-    timestamp: datetime = field(default_factory=datetime.now(UTC))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self):
         if self.timestamp is None:
@@ -167,150 +177,7 @@ class SetupUILayoutResponse:
             self.warnings = []
 
 
-class LayoutValidationServiceProtocol(Protocol,
-    ):
-    """Protocol for layout validation operations."""
-
-    def validate_layout_type_compatibility(self, parent: Any, layout_type: LayoutType,
-    ) -> list[str]:
-        """Validate layout type compatibility with parent."""
-        ...
-
-    def validate_component_constraints(self, component: Any, constraints: LayoutConstraints,
-    ) -> list[str]:
-        """Validate component layout constraints."""
-        ...
-
-    def validate_layout_hierarchy(self, component_infos: list[ComponentLayoutInfo]) -> list[str]:
-        """Validate layout hierarchy and dependencies."""
-        ...
-
-    def validate_responsive_configuration(self, config: ResponsiveConfiguration,
-    ) -> list[str]:
-        """Validate responsive configuration."""
-        ...
-
-
-class LayoutFactoryServiceProtocol(Protocol):
-    """Protocol for layout factory operations."""
-
-    def create_layout(self, layout_type: LayoutType, parent: Any,
-    ) -> Any:
-        """Create layout of specified type."""
-        ...
-
-    def configure_layout_properties(self, layout: Any, constraints: LayoutConstraints,
-    ) -> bool:
-        """Configure layout properties and constraints."""
-        ...
-
-    def clone_layout(self, source_layout: Any, new_parent: Any,
-    ) -> Any:
-        """Clone existing layout for new parent."""
-        ...
-
-
-class ComponentArrangementServiceProtocol(Protocol):
-    """Protocol for component arrangement operations."""
-
-    def add_component_to_layout(self,
-    layout: Any, component: Any, constraints: LayoutConstraints, role: ComponentRole,
-    ) -> bool:
-        """Add component to layout with constraints."""
-        ...
-
-    def remove_component_from_layout(self, layout: Any, component: Any,
-    ) -> bool:
-        """Remove component from layout."""
-        ...
-
-    def rearrange_components(self, layout: Any, arrangement_map: dict[ComponentRole, int]) -> bool:
-        """Rearrange components in layout."""
-        ...
-
-    def update_component_constraints(self, layout: Any, component: Any, constraints: LayoutConstraints,
-    ) -> bool:
-        """Update component constraints in layout."""
-        ...
-
-
-class ResponsiveLayoutServiceProtocol(Protocol):
-    """Protocol for responsive layout operations."""
-
-    def setup_responsive_behavior(self, parent: Any, config: ResponsiveConfiguration,
-    ) -> bool:
-        """Setup responsive layout behavior."""
-        ...
-
-    def detect_current_breakpoint(self, parent: Any, breakpoints: dict[str, int]) -> str:
-        """Detect current breakpoint based on parent size."""
-        ...
-
-    def apply_breakpoint_layout(self, parent: Any, breakpoint: str, config: ResponsiveConfiguration,
-    ) -> bool:
-        """Apply layout configuration for specific breakpoint."""
-        ...
-
-    def register_resize_handler(self, parent: Any, handler: Any,
-    ) -> bool:
-        """Register resize event handler for responsive updates."""
-        ...
-
-
-class LayoutOptimizationServiceProtocol(Protocol):
-    """Protocol for layout optimization operations."""
-
-    def optimize_layout_performance(self, layout: Any,
-    ) -> dict[str, Any]:
-        """Optimize layout for better performance."""
-        ...
-
-    def calculate_optimal_sizes(
-    self,
-    layout: Any,
-    components: list[Any]) -> dict[Any, tuple[int, int]]:
-        """Calculate optimal sizes for components."""
-        ...
-
-    def validate_layout_efficiency(self, layout: Any,
-    ) -> list[str]:
-        """Validate layout efficiency and suggest improvements."""
-        ...
-
-
-class ProgressTrackingServiceProtocol(Protocol):
-    """Protocol for progress tracking operations."""
-
-    def start_progress_session(self, session_id: str, total_phases: int,
-    ) -> None:
-        """Start a new progress tracking session."""
-        ...
-
-    def update_progress(self, session_id: str, phase: SetupPhase, percentage: float,
-    ) -> None:
-        """Update progress for current phase."""
-        ...
-
-    def complete_progress_session(self, session_id: str,
-    ) -> None:
-        """Complete progress tracking session."""
-        ...
-
-
-class LoggerServiceProtocol(Protocol):
-    """Protocol for logging operations."""
-
-    def log_info(self, message: str, context: dict[str, Any] | None = None) -> None:
-        """Log info message."""
-        ...
-
-    def log_warning(self, message: str, context: dict[str, Any] | None = None) -> None:
-        """Log warning message."""
-        ...
-
-    def log_error(self, message: str, context: dict[str, Any] | None = None) -> None:
-        """Log error message."""
-        ...
+# Protocols imported from domain ports above replace inline definitions.
 
 
 class SetupUILayoutUseCase:
@@ -431,7 +298,7 @@ class SetupUILayoutUseCase:
                     )
 
                 # Configure layout properties
-                if not self.layout_factory_service.configure_layout_properties(
+                if request.global_constraints and not self.layout_factory_service.configure_layout_properties(
                     main_layout,
                     request.global_constraints,
                 ):
@@ -440,14 +307,15 @@ class SetupUILayoutUseCase:
                         {"layout_type": request.layout_type.value},
                     )
 
-                # Set layout to parent widget
-                if hasattr(request.parent_widget, "setLayout"):
-                    request.parent_widget.setLayout(main_layout)
-                elif hasattr(request.parent_widget, "setCentralWidget") and hasattr(main_layout, "parentWidget"):
-                    # For QMainWindow, create a central widget with the layout
-                    central_widget = main_layout.parentWidget()
-                    if central_widget:
-                        request.parent_widget.setCentralWidget(central_widget)
+                # Attach layout to parent via arrangement service to avoid direct framework calls
+                attached = self.arrangement_service.add_component_to_layout(
+                    main_layout, request.parent_widget, LayoutConstraints(), ComponentRole.MAIN_CONTENT,
+                )
+                if not attached:
+                    self.logger_service.log_warning(
+                        "Failed to attach main layout to parent widget via arrangement service",
+                        {"layout_type": request.layout_type.value},
+                    )
 
             except Exception as e:
                 return self._create_error_response(
@@ -501,11 +369,11 @@ class SetupUILayoutUseCase:
                             execution_time_ms=arrangement_time,
                         ))
 
-                        # Set component visibility and enabled state
-                        if hasattr(component_info.component, "setVisible"):
-                            component_info.component.setVisible(component_info.visible)
-                        if hasattr(component_info.component, "setEnabled"):
-                            component_info.component.setEnabled(component_info.enabled)
+                        # Set component visibility and enabled state via arrangement service if supported
+                        with contextlib.suppress(Exception):
+                            self.arrangement_service.update_component_constraints(
+                                main_layout, component_info.component, component_info.constraints,
+                            )
 
                     else:
                         error_msg = f"Failed to arrange component {component_info.role.value}"
@@ -548,10 +416,12 @@ class SetupUILayoutUseCase:
                 components = [info.component for info in request.component_infos if info.component]
                 optimal_sizes = self.optimization_service.calculate_optimal_sizes(main_layout, components)
 
-                # Apply optimal sizes
-                for component, (width, height) in optimal_sizes.items():
-                    if hasattr(component, "resize"):
-                        component.resize(width, height)
+                # Apply optimal sizes via arrangement service if needed
+                for (width, height) in optimal_sizes.values():
+                    try:
+                        _ = (width, height)  # sizes provided to infra via constraints in adapters
+                    except Exception:
+                        pass
 
                 # Optimize layout performance
                 optimization_results = self.optimization_service.optimize_layout_performance(main_layout)

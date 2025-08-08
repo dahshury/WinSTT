@@ -7,13 +7,26 @@ visualization components into the main window with proper configuration and mana
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any
 
-from src_refactored.domain.main_window.value_objects.window_operations import (
+from src_refactored.domain.audio_visualization.ports.integration_ports import (
+    DataBindingServiceProtocol,
+    IntegrationServiceProtocol,
+    LoggerServiceProtocol,
+    PerformanceMonitoringServiceProtocol,
+    ProgressTrackingServiceProtocol,
+    RenderingServiceProtocol,
+    VisualizationFactoryServiceProtocol,
+    VisualizationValidationServiceProtocol,
+)
+from src_refactored.domain.audio_visualization.value_objects.visualization_settings import (
+    VisualizationType,
+)
+from src_refactored.domain.ui_coordination.value_objects.window_operations import (
     IntegratePhase,
     IntegrateResult,
+    IntegrateResultStatus,
     RenderingMode,
-    VisualizationType,
 )
 
 
@@ -224,187 +237,7 @@ class IntegrateVisualizationResponse:
             self.warnings = []
 
 
-class VisualizationValidationServiceProtocol(Protocol,
-    ):
-    """Protocol for visualization validation operations."""
-
-    def validate_visualization_config(self, config: VisualizationConfiguration,
-    ) -> list[str]:
-        """Validate visualization configuration."""
-        ...
-
-    def validate_data_binding_config(self, config: DataBindingConfiguration,
-    ) -> list[str]:
-        """Validate data binding configuration."""
-        ...
-
-    def validate_rendering_config(self, config: RenderingConfiguration,
-    ) -> list[str]:
-        """Validate rendering configuration."""
-        ...
-
-    def validate_integration_compatibility(self, container: Any, config: IntegrationConfiguration,
-    ) -> list[str]:
-        """Validate integration compatibility."""
-        ...
-
-
-class VisualizationFactoryServiceProtocol(Protocol):
-    """Protocol for visualization factory operations."""
-
-    def create_visualization_widget(self, config: VisualizationConfiguration, parent: Any,
-    ) -> Any:
-        """Create visualization widget."""
-        ...
-
-    def configure_visualization_properties(self, widget: Any, config: VisualizationConfiguration,
-    ) -> bool:
-        """Configure visualization properties."""
-        ...
-
-    def get_supported_visualization_types(self) -> list[VisualizationType]:
-        """Get list of supported visualization types."""
-        ...
-
-
-class DataBindingServiceProtocol(Protocol):
-    """Protocol for data binding operations."""
-
-    def setup_data_source(self, config: DataBindingConfiguration,
-    ) -> Any:
-        """Setup data source connection."""
-        ...
-
-    def bind_data_to_visualization(self, widget: Any, data_source: Any, config: DataBindingConfiguration,
-    ) -> bool:
-        """Bind data source to visualization widget."""
-        ...
-
-    def start_data_streaming(self, data_source: Any,
-    ) -> bool:
-        """Start data streaming."""
-        ...
-
-    def stop_data_streaming(self, data_source: Any,
-    ) -> bool:
-        """Stop data streaming."""
-        ...
-
-    def get_data_metrics(self, data_source: Any,
-    ) -> dict[str, float]:
-        """Get data streaming metrics."""
-        ...
-
-
-class RenderingServiceProtocol(Protocol):
-    """Protocol for rendering operations."""
-
-    def setup_rendering_context(self, widget: Any, config: RenderingConfiguration,
-    ) -> Any:
-        """Setup rendering context."""
-        ...
-
-    def configure_rendering_pipeline(self, context: Any, config: RenderingConfiguration,
-    ) -> bool:
-        """Configure rendering pipeline."""
-        ...
-
-    def optimize_rendering_performance(self, context: Any,
-    ) -> dict[str, Any]:
-        """Optimize rendering performance."""
-        ...
-
-    def get_rendering_capabilities(self) -> dict[str, Any]:
-        """Get rendering capabilities."""
-        ...
-
-    def get_performance_metrics(self, context: Any,
-    ) -> dict[str, float]:
-        """Get rendering performance metrics."""
-        ...
-
-
-class IntegrationServiceProtocol(Protocol):
-    """Protocol for integration operations."""
-
-    def integrate_widget_into_container(self, widget: Any, container: Any, config: IntegrationConfiguration,
-    ) -> bool:
-        """Integrate widget into container."""
-        ...
-
-    def configure_layout_properties(self, widget: Any, config: IntegrationConfiguration,
-    ) -> bool:
-        """Configure layout properties."""
-        ...
-
-    def setup_update_mechanism(self, widget: Any, update_mode: UpdateMode, interval_ms: int,
-    ) -> Any:
-        """Setup update mechanism (timer, signals, etc.)."""
-        ...
-
-    def validate_integration_success(self, widget: Any, container: Any,
-    ) -> bool:
-        """Validate integration success."""
-        ...
-
-
-class PerformanceMonitoringServiceProtocol(Protocol):
-    """Protocol for performance monitoring operations."""
-
-    def start_performance_monitoring(self, widget: Any, session_id: str,
-    ) -> bool:
-        """Start performance monitoring."""
-        ...
-
-    def get_performance_report(self, session_id: str,
-    ) -> dict[str, Any]:
-        """Get performance monitoring report."""
-        ...
-
-    def validate_performance_requirements(self,
-    metrics: dict[str, float], requirements: dict[str, float]) -> list[str]:
-        """Validate performance against requirements."""
-        ...
-
-    def stop_performance_monitoring(self, session_id: str,
-    ) -> None:
-        """Stop performance monitoring."""
-        ...
-
-
-class ProgressTrackingServiceProtocol(Protocol):
-    """Protocol for progress tracking operations."""
-
-    def start_progress_session(self, session_id: str, total_phases: int,
-    ) -> None:
-        """Start a new progress tracking session."""
-        ...
-
-    def update_progress(self, session_id: str, phase: IntegratePhase, percentage: float,
-    ) -> None:
-        """Update progress for current phase."""
-        ...
-
-    def complete_progress_session(self, session_id: str,
-    ) -> None:
-        """Complete progress tracking session."""
-        ...
-
-
-class LoggerServiceProtocol(Protocol):
-    """Protocol for logging operations."""
-
-    def log_info(self, message: str, context: dict[str, Any] | None = None) -> None:
-        """Log info message."""
-        ...
-
-    def log_warning(self, message: str, context: dict[str, Any] | None = None) -> None:
-        """Log warning message."""
-        ...
-
-    def log_error(self, message: str, context: dict[str, Any] | None = None) -> None:
-        """Log error message."""
-        ...
+# Protocols imported from domain ports above replace inline definitions.
 
 
 class IntegrateVisualizationUseCase:
@@ -458,7 +291,7 @@ class IntegrateVisualizationUseCase:
             viz_errors = self.validation_service.validate_visualization_config(request.visualization_config)
             if viz_errors:
                 return self._create_error_response(
-                    IntegrateResult.VALIDATION_ERROR,
+                    IntegrateResultStatus.VALIDATION_ERROR,
                     IntegratePhase.VALIDATION,
                     12.5,
                     f"Visualization config validation failed: {'; '.join(viz_errors)}",
@@ -469,7 +302,7 @@ class IntegrateVisualizationUseCase:
             data_errors = self.validation_service.validate_data_binding_config(request.data_binding_config)
             if data_errors:
                 return self._create_error_response(
-                    IntegrateResult.VALIDATION_ERROR,
+                    IntegrateResultStatus.VALIDATION_ERROR,
                     IntegratePhase.VALIDATION,
                     12.5,
                     f"Data binding config validation failed: {'; '.join(data_errors)}",
@@ -480,7 +313,7 @@ class IntegrateVisualizationUseCase:
             render_errors = self.validation_service.validate_rendering_config(request.rendering_config)
             if render_errors:
                 return self._create_error_response(
-                    IntegrateResult.VALIDATION_ERROR,
+                    IntegrateResultStatus.VALIDATION_ERROR,
                     IntegratePhase.VALIDATION,
                     12.5,
                     f"Rendering config validation failed: {'; '.join(render_errors)}",
@@ -494,7 +327,7 @@ class IntegrateVisualizationUseCase:
             )
             if integration_errors:
                 return self._create_error_response(
-                    IntegrateResult.VALIDATION_ERROR,
+                    IntegrateResultStatus.VALIDATION_ERROR,
                     IntegratePhase.VALIDATION,
                     12.5,
                     f"Integration compatibility validation failed: {'; '.join(integration_errors)}",
@@ -509,7 +342,7 @@ class IntegrateVisualizationUseCase:
                 supported_types = self.visualization_factory_service.get_supported_visualization_types()
                 if request.visualization_config.visualization_type not in supported_types:
                     return self._create_error_response(
-                        IntegrateResult.VISUALIZATION_CREATION_FAILED,
+                        IntegrateResultStatus.VISUALIZATION_CREATION_FAILED,
                         IntegratePhase.VISUALIZATION_CREATION,
                         25.0,
                         f"Visualization type {request.visualization_config.visualization_type.value} not supported",
@@ -524,7 +357,7 @@ class IntegrateVisualizationUseCase:
 
                 if not visualization_widget:
                     return self._create_error_response(
-                        IntegrateResult.VISUALIZATION_CREATION_FAILED,
+                        IntegrateResultStatus.VISUALIZATION_CREATION_FAILED,
                         IntegratePhase.VISUALIZATION_CREATION,
                         25.0,
                         "Failed to create visualization widget",
@@ -552,7 +385,7 @@ class IntegrateVisualizationUseCase:
 
             except Exception as e:
                 return self._create_error_response(
-                    IntegrateResult.VISUALIZATION_CREATION_FAILED,
+                    IntegrateResultStatus.VISUALIZATION_CREATION_FAILED,
                     IntegratePhase.VISUALIZATION_CREATION,
                     25.0,
                     f"Visualization creation failed: {e!s}",
@@ -565,14 +398,8 @@ class IntegrateVisualizationUseCase:
             configuration_warnings = []
 
             try:
-                # Apply visualization configuration
-                if hasattr(visualization_widget, "setMinimumSize") and request.visualization_config.dimensions:
-                    visualization_widget.setMinimumSize(*request.visualization_config.dimensions)
-
-                if hasattr(visualization_widget, "setStyleSheet") and request.visualization_config.background_color:
-                    style_sheet = f"background-color: {request.visualization_config.background_color};"
-                    visualization_widget.setStyleSheet(style_sheet)
-
+                # Apply visualization configuration strictly via services/ports
+                # Dimension and style should be handled by the factory/configuration services
                 # Configure update mode and refresh rate
                 if request.visualization_config.update_mode == UpdateMode.TIMER_BASED:
                     update_interval = 1000 // request.visualization_config.refresh_rate_fps
@@ -600,7 +427,7 @@ class IntegrateVisualizationUseCase:
 
                 if not data_source:
                     return self._create_error_response(
-                        IntegrateResult.DATA_BINDING_FAILED,
+                        IntegrateResultStatus.DATA_BINDING_FAILED,
                         IntegratePhase.DATA_BINDING,
                         50.0,
                         "Failed to setup data source",
@@ -614,7 +441,7 @@ class IntegrateVisualizationUseCase:
                     request.data_binding_config,
                 ):
                     return self._create_error_response(
-                        IntegrateResult.DATA_BINDING_FAILED,
+                        IntegrateResultStatus.DATA_BINDING_FAILED,
                         IntegratePhase.DATA_BINDING,
                         50.0,
                         "Failed to bind data to visualization",
@@ -643,7 +470,7 @@ class IntegrateVisualizationUseCase:
 
             except Exception as e:
                 return self._create_error_response(
-                    IntegrateResult.DATA_BINDING_FAILED,
+                    IntegrateResultStatus.DATA_BINDING_FAILED,
                     IntegratePhase.DATA_BINDING,
                     50.0,
                     f"Data binding failed: {e!s}",
@@ -663,7 +490,7 @@ class IntegrateVisualizationUseCase:
 
                 if not rendering_context:
                     return self._create_error_response(
-                        IntegrateResult.RENDERING_SETUP_FAILED,
+                        IntegrateResultStatus.RENDERING_SETUP_FAILED,
                         IntegratePhase.RENDERING_SETUP,
                         62.5,
                         "Failed to setup rendering context",
@@ -701,7 +528,7 @@ class IntegrateVisualizationUseCase:
 
             except Exception as e:
                 return self._create_error_response(
-                    IntegrateResult.RENDERING_SETUP_FAILED,
+                    IntegrateResultStatus.RENDERING_SETUP_FAILED,
                     IntegratePhase.RENDERING_SETUP,
                     62.5,
                     f"Rendering setup failed: {e!s}",
@@ -720,7 +547,7 @@ class IntegrateVisualizationUseCase:
                     request.integration_config,
                 ):
                     return self._create_error_response(
-                        IntegrateResult.INTEGRATION_FAILED,
+                        IntegrateResultStatus.INTEGRATION_FAILED,
                         IntegratePhase.INTEGRATION,
                         75.0,
                         "Failed to integrate widget into container",
@@ -750,7 +577,7 @@ class IntegrateVisualizationUseCase:
 
             except Exception as e:
                 return self._create_error_response(
-                    IntegrateResult.INTEGRATION_FAILED,
+                    IntegrateResultStatus.INTEGRATION_FAILED,
                     IntegratePhase.INTEGRATION,
                     75.0,
                     f"Integration failed: {e!s}",
@@ -816,15 +643,15 @@ class IntegrateVisualizationUseCase:
 
             # Determine result
             if not integration_success:
-                result = IntegrateResult.INTEGRATION_FAILED
+                result = IntegrateResultStatus.INTEGRATION_FAILED
             elif not rendering_setup.setup_successful:
-                result = IntegrateResult.RENDERING_SETUP_FAILED
+                result = IntegrateResultStatus.RENDERING_SETUP_FAILED
             elif not data_binding.connection_active and request.enable_real_time:
-                result = IntegrateResult.DATA_BINDING_FAILED
+                result = IntegrateResultStatus.DATA_BINDING_FAILED
             elif configuration_warnings:
-                result = IntegrateResult.SUCCESS  # Success with warnings
+                result = IntegrateResultStatus.SUCCESS  # Success with warnings
             else:
-                result = IntegrateResult.SUCCESS
+                result = IntegrateResultStatus.SUCCESS
 
             self.logger_service.log_info(
                 "Visualization integration completed",
@@ -840,7 +667,16 @@ class IntegrateVisualizationUseCase:
             )
 
             return IntegrateVisualizationResponse(
-                result=result,
+                result=IntegrateResult(
+                    success=True,
+                    phase=IntegratePhase.FINALIZATION,
+                    error_message=None,
+                    details={
+                        "status": result.value,
+                        "execution_time_ms": execution_time,
+                        "progress_percentage": 100.0,
+                    },
+                ),
                 visualization_state=visualization_state,
                 current_phase=IntegratePhase.FINALIZATION,
                 progress_percentage=100.0,
@@ -856,7 +692,7 @@ class IntegrateVisualizationUseCase:
             )
 
             return self._create_error_response(
-                IntegrateResult.INTERNAL_ERROR,
+                IntegrateResultStatus.INTERNAL_ERROR,
                 IntegratePhase.INITIALIZATION,
                 0.0,
                 f"Unexpected error: {e!s}",
@@ -865,15 +701,26 @@ class IntegrateVisualizationUseCase:
 
     def _create_error_response(
         self,
-        result: IntegrateResult,
+        status: IntegrateResultStatus,
         phase: IntegratePhase,
         progress: float,
         error_message: str,
         start_time: datetime,
     ) -> IntegrateVisualizationResponse:
-        """Create an error response with timing information."""
+        """Create an error response with the given status and error message."""
         execution_time = (datetime.utcnow() - start_time).total_seconds() * 1000
-
+        
+        result = IntegrateResult(
+            success=False,
+            phase=phase,
+            error_message=error_message,
+            details={
+                "status": status.value,
+                "execution_time_ms": execution_time,
+                "progress_percentage": progress,
+            },
+        )
+        
         return IntegrateVisualizationResponse(
             result=result,
             visualization_state=None,

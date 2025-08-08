@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from src_refactored.domain.ui_widget_operations import (
+from src_refactored.presentation.ui_widgets.value_objects import (
     CreatePhase,
     CreateResult,
     ToggleSize,

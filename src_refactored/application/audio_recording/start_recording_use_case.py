@@ -5,17 +5,51 @@ This module contains the use case for starting audio recording.
 
 import time
 from dataclasses import dataclass
+from typing import Protocol
 
 from src_refactored.domain.audio.entities import AudioRecorder, AudioRecorderConfiguration
 from src_refactored.domain.audio.value_objects import RecordingState
 from src_refactored.domain.common.abstractions import UseCase
-from src_refactored.domain.common.domain_result import DomainResult
-from src_refactored.domain.common.errors import (
-    AudioDomainException,
-    DomainError,
-    ErrorCategory,
-    ErrorSeverity,
-)
+from src_refactored.domain.common.errors import AudioDomainException
+
+
+class ErrorCallbackServiceProtocol(Protocol):
+    """Protocol for error callback services."""
+    
+    def notify_error(self, message: str) -> None:
+        """Notify about an error."""
+        ...
+    
+    def notify_warning(self, message: str) -> None:
+        """Notify about a warning."""
+        ...
+
+
+class SoundPlayerServiceProtocol(Protocol):
+    """Protocol for sound player services."""
+    
+    def play_start_sound(self) -> None:
+        """Play the start recording sound."""
+        ...
+
+
+class DefaultErrorCallbackService:
+    """Default implementation of error callback service."""
+    
+    def notify_error(self, message: str) -> None:
+        """Default error notification - logs to stderr."""
+        print(f"ERROR: {message}", file=__import__("sys").stderr)
+    
+    def notify_warning(self, message: str) -> None:
+        """Default warning notification - logs to stderr."""
+        print(f"WARNING: {message}", file=__import__("sys").stderr)
+
+
+class DefaultSoundPlayerService:
+    """Default implementation of sound player service."""
+    
+    def play_start_sound(self) -> None:
+        """Default sound player - no-op."""
 
 
 @dataclass
@@ -70,37 +104,31 @@ class StartRecordingUseCase(UseCase[StartRecordingRequest, StartRecordingRespons
         return DefaultErrorCallbackService()
 
     def execute(self, request: StartRecordingRequest,
-    ) -> DomainResult[StartRecordingResponse]:
+    ) -> StartRecordingResponse:
         """Execute the start recording use case.
         
         Args:
             request: The start recording request
             
         Returns:
-            DomainResult containing StartRecordingResponse or domain error
+            StartRecordingResponse containing the result
         """
         try:
             # Validate current state
             if self._audio_recorder.get_state() == RecordingState.RECORDING:
-                error = DomainError(
-                    message="Recording is already in progress",
-                    category=ErrorCategory.BUSINESS_RULE_VIOLATION,
-                    severity=ErrorSeverity.WARNING,
-                    context={"current_state": RecordingState.RECORDING.value},
+                return StartRecordingResponse(
+                    success=False,
+                    error_message="Recording is already in progress",
                 )
-                return DomainResult.failure_from_error(error)
 
             # Apply configuration if provided
             if request.configuration:
                 config_result = self._audio_recorder.configure(request.configuration)
                 if config_result.is_failure():
-                    error = DomainError(
-                        message=f"Configuration failed: {config_result.error}",
-                        category=ErrorCategory.VALIDATION_ERROR,
-                        severity=ErrorSeverity.ERROR,
-                        context={"configuration": str(request.configuration)},
+                    return StartRecordingResponse(
+                        success=False,
+                        error_message=f"Configuration failed: {config_result.error}",
                     )
-                    return DomainResult.failure_from_error(error)
 
             # Start recording
             start_time = time.time()
@@ -113,13 +141,10 @@ class StartRecordingUseCase(UseCase[StartRecordingRequest, StartRecordingRespons
                         f"Cannot start recording: {start_result.error}",
                     )
 
-                error = DomainError(
-                    message=f"Failed to start recording: {start_result.error}",
-                    category=ErrorCategory.EXTERNAL_SERVICE_ERROR,
-                    severity=ErrorSeverity.ERROR,
-                    context={"start_time": start_time},
+                return StartRecordingResponse(
+                    success=False,
+                    error_message=f"Failed to start recording: {start_result.error}",
                 )
-                return DomainResult.failure_from_error(error)
 
             # Play start sound if requested and service available
             if request.play_start_sound and self._sound_player_service:
@@ -137,39 +162,37 @@ class StartRecordingUseCase(UseCase[StartRecordingRequest, StartRecordingRespons
 
             recording_id = self._audio_recorder.get_recording_id()
 
-            response = StartRecordingResponse(
+            return StartRecordingResponse(
                 success=True,
                 recording_id=recording_id,
                 start_time=start_time,
             )
-            return DomainResult.success(response)
 
         except AudioDomainException as e:
             # Handle domain-specific audio errors
             if self._error_callback_service:
-                self._error_callback_service.notify_error(e.domain_error.message)
-            return DomainResult.failure_from_exception(e)
+                self._error_callback_service.notify_error(e.error.message)
+            return StartRecordingResponse(
+                success=False,
+                error_message=e.error.message,
+            )
 
         except RuntimeError as e:
             # Handle specific runtime errors (device issues, etc.)
-            error = DomainError(
-                message=f"Runtime error during recording start: {e!s}",
-                category=ErrorCategory.EXTERNAL_SERVICE_ERROR,
-                severity=ErrorSeverity.ERROR,
-                context={"exception_type": "RuntimeError"},
-            )
+            error_message = f"Runtime error during recording start: {e!s}"
             if self._error_callback_service:
-                self._error_callback_service.notify_error(error.message)
-            return DomainResult.failure_from_error(error)
+                self._error_callback_service.notify_error(error_message)
+            return StartRecordingResponse(
+                success=False,
+                error_message=error_message,
+            )
 
         except Exception as e:
             # Handle unexpected errors
-            error = DomainError(
-                message=f"Unexpected error during recording start: {e!s}",
-                category=ErrorCategory.SYSTEM_ERROR,
-                severity=ErrorSeverity.CRITICAL,
-                context={"exception_type": type(e).__name__},
-            )
+            error_message = f"Unexpected error during recording start: {e!s}"
             if self._error_callback_service:
-                self._error_callback_service.notify_error(error.message)
-            return DomainResult.failure_from_error(error)
+                self._error_callback_service.notify_error(error_message)
+            return StartRecordingResponse(
+                success=False,
+                error_message=error_message,
+            )

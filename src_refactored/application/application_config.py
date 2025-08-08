@@ -1,13 +1,11 @@
 """Application Configuration for WinSTT
 
-This module provides application-level configuration management,
-including environment setup, logging configuration, and warning suppression.
+This module provides application-level configuration management.
+Per hexagonal architecture, it avoids direct process/env/logging mutations
+and delegates those concerns to injected ports/adapters.
 """
 
 import logging
-import os
-import sys
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,17 +23,14 @@ class LoggingConfiguration:
     qt_logging_rules: str = "qt.gui.imageio=false;*.debug=false;qt.qpa.*=false"
     
     def apply(self, environment_service: IEnvironmentPort | None = None) -> None:
-        """Apply logging configuration.
-        
-        Args:
-            environment_service: Optional environment service for setting variables
+        """Apply logging-related environment configuration via ports only.
+
+        Note: Actual logger level changes should be handled by infrastructure
+        adapters implementing the logging port. The application layer does not
+        call logging APIs directly.
         """
-        logging.getLogger("transformers").setLevel(self.transformers_level)
         if environment_service:
             environment_service.set_variable("QT_LOGGING_RULES", self.qt_logging_rules)
-        else:
-            # Fallback for backward compatibility
-            os.environ["QT_LOGGING_RULES"] = self.qt_logging_rules
 
 
 @dataclass(frozen=True)
@@ -54,10 +49,6 @@ class EnvironmentConfiguration:
         if environment_service:
             environment_service.set_variable("PYGAME_HIDE_SUPPORT_PROMPT", self.pygame_hide_support_prompt)
             environment_service.set_variable("PYTHONWARNINGS", self.python_warnings)
-        else:
-            # Fallback for backward compatibility
-            os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = self.pygame_hide_support_prompt
-            os.environ["PYTHONWARNINGS"] = self.python_warnings
 
 
 @dataclass(frozen=True)
@@ -70,18 +61,12 @@ class WarningConfiguration:
     pkg_resources_warnings: bool = True
     
     def apply(self) -> None:
-        """Apply warning suppression configuration."""
-        if self.syntax_warnings:
-            warnings.filterwarnings("ignore", category=SyntaxWarning)
+        """No-op in application layer.
+
+        Warning filtering must be implemented in infrastructure adapters.
+        """
+        # intentionally empty
         
-        if self.pygame_warnings:
-            warnings.filterwarnings("ignore", category=UserWarning, module="pygame")
-        
-        if self.pydub_warnings:
-            warnings.filterwarnings("ignore", category=UserWarning, module="pydub")
-        
-        if self.pkg_resources_warnings:
-            warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
 
 @dataclass(frozen=True)
@@ -127,10 +112,8 @@ class PathConfiguration:
         )
     
     def setup_python_path(self) -> None:
-        """Setup Python path for imports."""
-        root_str = str(self.root_path)
-        if root_str not in sys.path:
-            sys.path.insert(0, root_str)
+        """No-op in app layer. Import path management belongs to infra/bootstrap."""
+        # intentionally does nothing
 
 
 class ApplicationConfiguration:

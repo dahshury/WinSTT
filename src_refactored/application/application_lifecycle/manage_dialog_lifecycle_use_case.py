@@ -124,7 +124,7 @@ class ManageDialogLifecycleUseCase(UseCase[ManageDialogLifecycleRequest, ManageD
                 # Validate state transition
                 validation_result = self._validate_operation(request.operation, previous_state)
                 if not validation_result.is_success:
-                    return Result.failure(validation_result.error())
+                    return Result.failure(validation_result.error or "Unknown validation error")
             
             # Report progress
             if request.progress_callback:
@@ -133,7 +133,7 @@ class ManageDialogLifecycleUseCase(UseCase[ManageDialogLifecycleRequest, ManageD
             # Execute the operation
             operation_result = self._execute_operation(request.dialog_id, request.operation)
             if not operation_result.is_success:
-                error_msg = f"Failed to {request.operation.value} dialog {request.dialog_id}: {operation_result.error()}"
+                error_msg = f"Failed to {request.operation.value} dialog {request.dialog_id}: {operation_result.error or 'Unknown error'}"
                 if request.error_callback:
                     request.error_callback(error_msg)
                 return Result.failure(error_msg)

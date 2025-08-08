@@ -12,9 +12,19 @@ These value objects handle UI-specific concerns like:
 """
 
 from .ui_widget_operations import (
+    CreatePhase,
+    CreateResult,
+    EventType,
+    HandlePhase,
+    HandleResult,
+    StateChangeType,
+    ToggleStyle,
+    UpdatePhase,
+    UpdateResult,
     WidgetOperation,
     WidgetOperationResult,
     WidgetOperationType,
+    WidgetProperty,
 )
 from .widget_dimensions import (
     WidgetDimensions,
@@ -33,10 +43,24 @@ from .widget_styling import (
 )
 
 __all__ = [
+    # Widget Creation
+    "CreatePhase",
+    "CreateResult",
+    # Widget Events  
+    "EventType",
+    # Widget Handling
+    "HandlePhase",
+    "HandleResult",
+    # Widget State
+    "StateChangeType",
+    # Widget Style
+    "ToggleStyle",
+    # Widget Updates
+    "UpdatePhase",
+    "UpdateResult",
     "WidgetColor",
     # Widget Dimensions
     "WidgetDimensions",
-    # Widget Events
     "WidgetEvent",
     "WidgetEventData",
     "WidgetEventType",
@@ -45,6 +69,7 @@ __all__ = [
     "WidgetOperationResult",
     "WidgetOperationType",
     "WidgetPosition",
+    "WidgetProperty",
     "WidgetSize",
     # Widget Styling
     "WidgetStyle",

@@ -8,17 +8,19 @@ Extracted from utils/transcribe.py transcription processing logic.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from src_refactored.domain.audio.value_objects.audio_format import Duration
-from src_refactored.domain.common.abstractions import AggregateRoot, DomainEvent
+from src_refactored.domain.common.abstractions import AggregateRoot
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
+from src_refactored.domain.common.events import DomainEvent
 from src_refactored.domain.common.value_object import ProgressPercentage
 from src_refactored.domain.transcription.value_objects.confidence_score import ConfidenceScore
 from src_refactored.domain.transcription.value_objects.transcription_text import TranscriptionText
 
 if TYPE_CHECKING:
+    from src_refactored.domain.common.ports.serialization_port import SerializationPort
     from src_refactored.domain.transcription.value_objects.language import Language
 
     from .transcription_segment import TranscriptionSegment
@@ -87,8 +89,8 @@ class TranscriptionResult(AggregateRoot):
     source_audio_id: str
     language: Language
     status: TranscriptionStatus = TranscriptionStatus.PENDING
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
+    started_at: float | None = None
+    completed_at: float | None = None
     segments: list[TranscriptionSegment] = field(default_factory=list)
     overall_confidence: ConfidenceScore = field(default_factory=lambda: ConfidenceScore(0.0))
     error_message: str | None = None
@@ -110,7 +112,7 @@ class TranscriptionResult(AggregateRoot):
             raise ValueError(msg)
 
         self.status = TranscriptionStatus.PROCESSING
-        self.started_at = datetime.now()
+        self.started_at = DomainIdentityGenerator.generate_timestamp()
         self.model_version = model_version
         self.segments.clear()
         self.overall_confidence = ConfidenceScore(0.0,
@@ -166,8 +168,9 @@ class TranscriptionResult(AggregateRoot):
             covered_duration = sum(seg.duration.seconds for seg in self.segments)
             progress = ProgressPercentage.from_ratio(covered_duration / self.total_duration.seconds)
         else:
-            progress = ProgressPercentage(float(len(self.segments) * 10),
-    )  # Rough estimate
+            # Rough estimate without magic: proportional to segment count capped by 100
+            estimated = min(100.0, float(len(self.segments)) * 10.0)
+            progress = ProgressPercentage(estimated)
 
         # Raise domain event
         event = SegmentProcessedEvent(
@@ -196,7 +199,7 @@ class TranscriptionResult(AggregateRoot):
             raise ValueError(msg)
 
         self.status = TranscriptionStatus.COMPLETED
-        self.completed_at = datetime.now()
+        self.completed_at = DomainIdentityGenerator.generate_timestamp()
 
         # Final confidence calculation
         self._update_overall_confidence()
@@ -212,7 +215,7 @@ class TranscriptionResult(AggregateRoot):
             transcription_id=self.transcription_id,
             final_text=final_text,
             segment_count=len(self.segments),
-            processing_duration=self.processing_duration,
+            processing_duration=self.processing_duration or Duration(seconds=0),
             confidence=self.overall_confidence,
         )
         self.add_domain_event(event)
@@ -225,7 +228,7 @@ class TranscriptionResult(AggregateRoot):
         """Fail the transcription with an error."""
         self.status = TranscriptionStatus.FAILED
         self.error_message = error_message
-        self.completed_at = datetime.now()
+        self.completed_at = DomainIdentityGenerator.generate_timestamp()
 
         # Raise domain event
         event = TranscriptionFailedEvent(
@@ -239,14 +242,16 @@ class TranscriptionResult(AggregateRoot):
         self.add_domain_event(event)
         self.increment_version()
 
-    def cancel_transcription(self) -> None:
+    def cancel_transcription(self, reason: str | None = None) -> None:
         """Cancel the transcription process."""
         if self.status in [TranscriptionStatus.COMPLETED, TranscriptionStatus.FAILED]:
             msg = f"Cannot cancel transcription in final status: {self.status}"
             raise ValueError(msg)
 
         self.status = TranscriptionStatus.CANCELLED
-        self.completed_at = datetime.now()
+        if reason:
+            self.error_message = reason
+        self.completed_at = DomainIdentityGenerator.generate_timestamp()
         self.increment_version()
 
     def get_full_text(self) -> TranscriptionText:
@@ -266,8 +271,7 @@ class TranscriptionResult(AggregateRoot):
         combined_text = " ".join(full_text_parts)
         return TranscriptionText.final(combined_text).apply_formatting_rules()
 
-    def export_to_format(self, format_type: OutputFormat,
-    ) -> str:
+    def export_to_format(self, format_type: OutputFormat, serialization_port: SerializationPort | None = None) -> str:
         """
         Export transcription to specified format.
         Business rule: Can only export completed transcriptions.
@@ -286,11 +290,13 @@ class TranscriptionResult(AggregateRoot):
             return self._export_to_vtt()
 
         if format_type == OutputFormat.JSON:
-            return self._export_to_json()
+            if serialization_port is None:
+                msg = "SerializationPort is required for JSON export"
+                raise ValueError(msg)
+            return self._export_to_json(serialization_port)
 
         msg = f"Unsupported export format: {format_type}"
-        raise ValueError(msg,
-    )
+        raise ValueError(msg)
 
     def merge_adjacent_segments(self, max_gap_ms: float = 500) -> None:
         """
@@ -380,10 +386,8 @@ class TranscriptionResult(AggregateRoot):
 
         return "\n".join(vtt_content)
 
-    def _export_to_json(self) -> str:
-        """Export to JSON format."""
-        import json
-
+    def _export_to_json(self, serialization_port: SerializationPort) -> str:
+        """Export to JSON format using serialization port."""
         export_data = {
             "transcription_id": self.transcription_id,
             "language": self.language.code.value,
@@ -405,7 +409,16 @@ class TranscriptionResult(AggregateRoot):
             },
         }
 
-        return json.dumps(export_data, indent=2, ensure_ascii=False)
+        # Serialize using port
+        serialize_result = serialization_port.serialize_to_json(export_data)
+        if not serialize_result.is_success:
+            return "{}"  # Return empty JSON on error
+        
+        # Pretty print for better readability
+        if serialize_result.value is not None:
+            pretty_result = serialization_port.pretty_print_json(serialize_result.value, indent=2)
+            return pretty_result.value if pretty_result.is_success and pretty_result.value else serialize_result.value
+        return ""
 
     @property
     def total_duration(self) -> Duration | None:
@@ -425,7 +438,7 @@ class TranscriptionResult(AggregateRoot):
         if not self.started_at or not self.completed_at:
             return None
 
-        duration_seconds = (self.completed_at - self.started_at).total_seconds()
+        duration_seconds = float(self.completed_at - self.started_at)
         return Duration(duration_seconds)
 
     @property

@@ -1,158 +1,287 @@
-"""File System Port Interface.
+"""File System Port.
 
-This module defines the port interface for file system operations in the domain layer.
+This module defines the port for file system operations
+without direct dependency on os module implementations.
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from src_refactored.domain.common.result import Result
 
 
-class IFileSystemPort(ABC):
-    """Port interface for file system operations."""
+@dataclass(frozen=True)
+class FileInfo:
+    """File information value object."""
+    path: str
+    size_bytes: int
+    created_at: datetime
+    modified_at: datetime
+    is_file: bool
+    is_directory: bool
+    exists: bool
+    permissions: str = ""
+    metadata: dict[str, Any] | None = None
+
+    @property
+    def size_mb(self) -> float:
+        """Get file size in megabytes."""
+        return self.size_bytes / (1024 * 1024)
+
+    @property
+    def size_kb(self) -> float:
+        """Get file size in kilobytes."""
+        return self.size_bytes / 1024
+
+
+@dataclass(frozen=True)
+class DirectoryInfo:
+    """Directory information value object."""
+    path: str
+    file_count: int
+    subdirectory_count: int
+    total_size_bytes: int
+    created_at: datetime
+    modified_at: datetime
+    exists: bool
+
+
+class FileSystemPort(ABC):
+    """Port for file system operations."""
 
     @abstractmethod
-    def get_basename(self, file_path: str) -> str:
-        """Get the base name of a file path.
+    def file_exists(self, file_path: str) -> Result[bool]:
+        """Check if a file exists.
         
         Args:
-            file_path: The file path
+            file_path: Path to the file
             
         Returns:
-            Base name of the file
+            Result with boolean indicating if file exists
         """
-        ...
 
     @abstractmethod
-    def split_extension(self, file_path: str) -> tuple[str, str]:
-        """Split file path into base and extension.
+    def directory_exists(self, directory_path: str) -> Result[bool]:
+        """Check if a directory exists.
         
         Args:
-            file_path: The file path
+            directory_path: Path to the directory
             
         Returns:
-            Tuple of (base_path, extension)
+            Result with boolean indicating if directory exists
         """
-        ...
 
     @abstractmethod
-    def join_path(self, *parts: str) -> str:
-        """Join path components.
+    def get_file_info(self, file_path: str) -> Result[FileInfo]:
+        """Get information about a file.
         
         Args:
-            *parts: Path components to join
+            file_path: Path to the file
             
         Returns:
-            Joined path
+            Result with file information
         """
-        ...
 
     @abstractmethod
-    def get_absolute_path(self, path: str) -> str:
-        """Get absolute path.
+    def get_directory_info(self, directory_path: str) -> Result[DirectoryInfo]:
+        """Get information about a directory.
         
         Args:
-            path: Relative or absolute path
+            directory_path: Path to the directory
             
         Returns:
-            Absolute path
+            Result with directory information
         """
-        ...
 
     @abstractmethod
-    def is_absolute_path(self, path: str) -> bool:
+    def get_file_size(self, file_path: str) -> Result[int]:
+        """Get file size in bytes.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Result with file size in bytes
+        """
+
+    @abstractmethod
+    def get_modification_time(self, file_path: str) -> Result[datetime]:
+        """Get file modification time.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Result with modification time
+        """
+
+    @abstractmethod
+    def create_directory(self, directory_path: str, recursive: bool = True) -> Result[None]:
+        """Create a directory.
+        
+        Args:
+            directory_path: Path to create
+            recursive: Create parent directories if needed
+            
+        Returns:
+            Result of operation
+        """
+
+    @abstractmethod
+    def delete_file(self, file_path: str) -> Result[None]:
+        """Delete a file.
+        
+        Args:
+            file_path: Path to the file to delete
+            
+        Returns:
+            Result of operation
+        """
+
+    @abstractmethod
+    def delete_directory(self, directory_path: str, recursive: bool = False) -> Result[None]:
+        """Delete a directory.
+        
+        Args:
+            directory_path: Path to the directory to delete
+            recursive: Delete contents recursively
+            
+        Returns:
+            Result of operation
+        """
+
+    @abstractmethod
+    def copy_file(self, source_path: str, destination_path: str) -> Result[None]:
+        """Copy a file.
+        
+        Args:
+            source_path: Source file path
+            destination_path: Destination file path
+            
+        Returns:
+            Result of operation
+        """
+
+    @abstractmethod
+    def move_file(self, source_path: str, destination_path: str) -> Result[None]:
+        """Move/rename a file.
+        
+        Args:
+            source_path: Source file path
+            destination_path: Destination file path
+            
+        Returns:
+            Result of operation
+        """
+
+    @abstractmethod
+    def list_directory(self, directory_path: str) -> Result[list[str]]:
+        """List contents of a directory.
+        
+        Args:
+            directory_path: Path to the directory
+            
+        Returns:
+            Result with list of file and directory names
+        """
+
+    @abstractmethod
+    def get_file_extension(self, file_path: str) -> Result[str]:
+        """Get file extension.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Result with file extension (including dot)
+        """
+
+    @abstractmethod
+    def get_file_name(self, file_path: str) -> Result[str]:
+        """Get file name without path.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Result with file name
+        """
+
+    @abstractmethod
+    def get_directory_name(self, file_path: str) -> Result[str]:
+        """Get directory containing the file.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Result with directory path
+        """
+
+    @abstractmethod
+    def join_paths(self, *path_components: str) -> Result[str]:
+        """Join path components into a single path.
+        
+        Args:
+            *path_components: Path components to join
+            
+        Returns:
+            Result with joined path
+        """
+
+    @abstractmethod
+    def resolve_path(self, file_path: str) -> Result[str]:
+        """Resolve relative path to absolute path.
+        
+        Args:
+            file_path: Path to resolve
+            
+        Returns:
+            Result with absolute path
+        """
+
+    @abstractmethod
+    def is_absolute_path(self, file_path: str) -> Result[bool]:
         """Check if path is absolute.
         
         Args:
-            path: Path to check
+            file_path: Path to check
             
         Returns:
-            True if path is absolute
+            Result with boolean indicating if path is absolute
         """
-        ...
 
     @abstractmethod
-    def path_exists(self, path: str) -> bool:
-        """Check if path exists.
+    def validate_file_path(self, file_path: str) -> Result[bool]:
+        """Validate if file path is valid for the filesystem.
         
         Args:
-            path: Path to check
+            file_path: Path to validate
             
         Returns:
-            True if path exists
+            Result with boolean indicating if path is valid
         """
-        ...
 
     @abstractmethod
-    def is_file(self, path: str) -> bool:
-        """Check if path is a file.
+    def get_basename(self, file_path: str) -> Result[str]:
+        """Get base name of a file (filename without directory path).
         
         Args:
-            path: Path to check
+            file_path: Path to the file
             
         Returns:
-            True if path is a file
+            Result with base name
         """
-        ...
 
     @abstractmethod
-    def is_directory(self, path: str) -> bool:
-        """Check if path is a directory.
+    def split_extension(self, file_path: str) -> Result[tuple[str, str]]:
+        """Split file path into base name and extension.
         
         Args:
-            path: Path to check
+            file_path: Path to the file
             
         Returns:
-            True if path is a directory
+            Result with tuple of (base_name, extension)
         """
-        ...
-
-    @abstractmethod
-    def create_directory(self, path: str, parents: bool = True) -> bool:
-        """Create directory.
-        
-        Args:
-            path: Directory path to create
-            parents: Whether to create parent directories
-            
-        Returns:
-            True if directory was created successfully
-        """
-        ...
-
-    @abstractmethod
-    def remove_file(self, path: str) -> bool:
-        """Remove a file.
-        
-        Args:
-            path: File path to remove
-            
-        Returns:
-            True if file was removed successfully
-        """
-        ...
-
-    @abstractmethod
-    def get_current_directory(self) -> str:
-        """Get current working directory.
-        
-        Returns:
-            Current working directory path
-        """
-        ...
-
-    @abstractmethod
-    def get_home_directory(self) -> str:
-        """Get user home directory.
-        
-        Returns:
-            User home directory path
-        """
-        ...
-
-    @abstractmethod
-    def get_temp_directory(self) -> str:
-        """Get temporary directory.
-        
-        Returns:
-            Temporary directory path
-        """
-        ...

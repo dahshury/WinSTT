@@ -1,12 +1,11 @@
 """Animation state value object for UI coordination.
 
 Moved from domain layer to presentation layer as this is UI-specific presentation logic.
+Uses presentation-layer value object pattern without domain dependencies.
 """
 
 from dataclasses import dataclass
 from enum import Enum
-
-from src_refactored.domain.common.value_object import ValueObject
 
 
 class AnimationType(Enum):
@@ -35,8 +34,12 @@ class AnimationEasing(Enum):
 
 
 @dataclass(frozen=True)
-class AnimationState(ValueObject):
-    """Represents the state of a UI animation."""
+class AnimationState:
+    """Represents the state of a UI animation.
+    
+    This is a presentation-layer value object that encapsulates animation state
+    without depending on domain layer base classes.
+    """
 
     animation_type: AnimationType
     duration_ms: int

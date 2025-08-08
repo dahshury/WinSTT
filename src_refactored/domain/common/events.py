@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from .domain_utils import DomainIdentityGenerator
+
 
 @dataclass(frozen=True)
 class DomainEvent:
@@ -14,12 +16,10 @@ class DomainEvent:
     source: str
 
     def __post_init__(self):
-        import time
-        import uuid
         if not self.event_id:
-            object.__setattr__(self, "event_id", str(uuid.uuid4()))
+            object.__setattr__(self, "event_id", DomainIdentityGenerator.generate_domain_id("event"))
         if not self.timestamp:
-            object.__setattr__(self, "timestamp", time.time())
+            object.__setattr__(self, "timestamp", DomainIdentityGenerator.generate_timestamp())
 
 
 class DomainEventType(Enum):

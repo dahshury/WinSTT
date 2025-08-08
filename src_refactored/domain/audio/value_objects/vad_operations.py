@@ -57,19 +57,30 @@ class VADModel(Enum):
 
 @dataclass(frozen=True)
 class VADConfiguration(ValueObject):
-    """Configuration for VAD operations."""
-    model: VADModel = VADModel.SILERO_V3
-    threshold: float = 0.5
-    min_speech_duration: float = 0.1  # seconds
-    min_silence_duration: float = 0.1  # seconds
-    sample_rate: int = 16000
-    chunk_size: int = 512
-    frame_size: int = 512  # Frame size in samples
-    hop_size: int = 256    # Hop size in samples
-    window_size: float = 0.032  # 32ms window
-    overlap: float = 0.5  # 50% overlap
+    """Configuration for Voice Activity Detection."""
+    model: VADModel
+    threshold: float
+    sample_rate: int
+    frame_size: int
+    hop_size: int
     enable_smoothing: bool = True
-    smoothing_factor: float = 0.8
+    smoothing_window: int = 5
+    min_speech_duration: float = 0.1
+    min_silence_duration: float = 0.1
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (
+            self.model,
+            self.threshold,
+            self.sample_rate,
+            self.frame_size,
+            self.hop_size,
+            self.enable_smoothing,
+            self.smoothing_window,
+            self.min_speech_duration,
+            self.min_silence_duration,
+        )
 
     def __post_init__(self):
         if not 0.0 <= self.threshold <= 1.0:
@@ -112,6 +123,18 @@ class VADDetection(ValueObject):
     raw_score: float | None = None
     smoothed_score: float | None = None
 
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (
+            self.activity,
+            self.confidence,
+            self.timestamp,
+            self.duration,
+            self.chunk_id,
+            self.raw_score,
+            self.smoothed_score,
+        )
+
     def __post_init__(self):
         if not 0.0 <= self.confidence <= 1.0:
             msg = "Confidence must be between 0.0 and 1.0"
@@ -130,5 +153,4 @@ class VADDetection(ValueObject):
             raise ValueError(msg)
         if self.smoothed_score is not None and not 0.0 <= self.smoothed_score <= 1.0:
             msg = "Smoothed score must be between 0.0 and 1.0"
-            raise ValueError(msg,
-    )
+            raise ValueError(msg)

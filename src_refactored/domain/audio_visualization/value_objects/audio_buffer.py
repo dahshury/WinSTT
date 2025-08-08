@@ -2,9 +2,9 @@
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from math import ceil
 
-import numpy as np
-
+from src_refactored.domain.audio.value_objects.audio_samples import AudioSampleData
 from src_refactored.domain.common.value_object import ValueObject
 
 from .waveform_data import WaveformData
@@ -68,9 +68,9 @@ class AudioBuffer(ValueObject):
     ) -> "AudioBuffer":
         """Create audio buffer with pre-allocated capacity."""
         # Create silent waveform data for pre-allocation
-        import time
-        timestamp_ms = time.time() * 1000.0
-        silent_data = WaveformData.silence(chunk_size, sample_rate, timestamp_ms)
+        # Use duration in ms for chunk_size samples
+        duration_ms = (chunk_size / sample_rate) * 1000.0
+        silent_data = WaveformData.silence(duration_ms, sample_rate, 0.0)
         data = [silent_data] * max_size
 
         return cls(
@@ -105,11 +105,16 @@ class AudioBuffer(ValueObject):
             current_size=new_size,
         )
 
-    def add_samples(self, samples: np.ndarray) -> "AudioBuffer":
-        """Add raw audio samples to the buffer."""
-        import time
-        timestamp_ms = time.time() * 1000.0
-        waveform = WaveformData.from_numpy_array(samples, self.sample_rate, timestamp_ms)
+    def add_audio_sample_data(
+        self, audio_data: AudioSampleData, timestamp_ms: float,
+    ) -> "AudioBuffer":
+        """Add AudioSampleData to the buffer."""
+        waveform = WaveformData.from_audio_sample_data(audio_data, timestamp_ms)
+        return self.add_waveform(waveform)
+
+    def add_samples_list(self, samples: list[float], timestamp_ms: float) -> "AudioBuffer":
+        """Add raw audio samples list to the buffer."""
+        waveform = WaveformData.from_samples_list(samples, self.sample_rate, timestamp_ms)
         return self.add_waveform(waveform)
 
     def get_latest(self, count: int = 1,
@@ -151,7 +156,7 @@ class AudioBuffer(ValueObject):
 
         # Calculate how many chunks we need
         chunk_duration_ms = (self.chunk_size / self.sample_rate) * 1000.0
-        chunks_needed = int(np.ceil(duration_ms / chunk_duration_ms))
+        chunks_needed = ceil(duration_ms / chunk_duration_ms)
 
         return self.get_latest(chunks_needed)
 
@@ -164,18 +169,16 @@ class AudioBuffer(ValueObject):
             return self.data[0]
 
         # Concatenate all samples
-        all_samples = []
+        all_samples: list[float] = []
         total_duration = 0.0
 
         for waveform in self.data:
-            all_samples.append(waveform.to_numpy())
-            total_duration += waveform.duration
+            all_samples.extend(waveform.samples)
+            total_duration += waveform.duration_ms
 
-        concatenated_samples = np.concatenate(all_samples)
-
-        import time
-        timestamp_ms = time.time() * 1000.0
-        return WaveformData.from_numpy_array(concatenated_samples, self.sample_rate, timestamp_ms)
+        # Use the first timestamp as the concatenated timestamp
+        timestamp_ms = self.data[0].timestamp_ms if self.data else 0.0
+        return WaveformData.from_samples_list(all_samples, self.sample_rate, timestamp_ms)
 
     def concatenate_latest(self, count: int,
     ) -> WaveformData | None:
@@ -189,13 +192,13 @@ class AudioBuffer(ValueObject):
             return latest_data[0]
 
         # Concatenate samples
-        all_samples = []
+        all_samples: list[float] = []
         for waveform in latest_data:
-            all_samples.append(waveform.to_numpy())
+            all_samples.extend(waveform.samples)
 
-        concatenated_samples = np.concatenate(all_samples)
-
-        return WaveformData.from_numpy_array(concatenated_samples, self.sample_rate)
+        # Use the first timestamp from the latest data
+        timestamp_ms = latest_data[0].timestamp_ms
+        return WaveformData.from_samples_list(all_samples, self.sample_rate, timestamp_ms)
 
     def get_average_level(self) -> float:
         """Get average RMS level across all buffer data."""
@@ -214,7 +217,7 @@ class AudioBuffer(ValueObject):
 
     def get_total_duration(self) -> float:
         """Get total duration of all data in the buffer (seconds)."""
-        return sum(waveform.duration for waveform in self.data)
+        return sum(waveform.duration_ms / 1000.0 for waveform in self.data)
 
     def get_total_samples(self) -> int:
         """Get total number of samples in the buffer."""

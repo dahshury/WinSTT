@@ -7,55 +7,18 @@ focusing purely on business logic without UI concerns.
 import time
 from typing import Protocol
 
+from src_refactored.application.events.application_events import (
+    UITextUpdateCompleted,
+    UITextUpdateFailed,
+    UITextUpdateStarted,
+)
+from src_refactored.application.main_window.commands.update_ui_text_command import (
+    UpdateUITextCommand,
+)
 from src_refactored.domain.common.abstractions import ICommandHandler
 from src_refactored.domain.common.events import DomainEvent
 from src_refactored.domain.common.result import Result
-from src_refactored.domain.main_window.value_objects.ui_text import (
-    UpdatePhase,
-    UpdateResult,
-)
-
-from ..commands.update_ui_text_command import UpdateUITextCommand
-
-
-# Domain Events for UI Text Updates
-class UITextUpdateStarted(DomainEvent):
-    """Event raised when UI text update starts."""
-    def __init__(self, operation_id: str, text_count: int, widget_count: int):
-        super().__init__(
-            event_id=f"ui_text_update_started_{operation_id}",
-            timestamp=time.time(),
-            source="ui_text_service",
-        )
-        self.operation_id = operation_id
-        self.text_count = text_count
-        self.widget_count = widget_count
-
-
-class UITextUpdateCompleted(DomainEvent):
-    """Event raised when UI text update completes."""
-    def __init__(self, operation_id: str, result: UpdateResult, duration: float):
-        super().__init__(
-            event_id=f"ui_text_update_completed_{operation_id}",
-            timestamp=time.time(),
-            source="ui_text_service",
-        )
-        self.operation_id = operation_id
-        self.result = result
-        self.duration = duration
-
-
-class UITextUpdateFailed(DomainEvent):
-    """Event raised when UI text update fails."""
-    def __init__(self, operation_id: str, error: str, phase: UpdatePhase):
-        super().__init__(
-            event_id=f"ui_text_update_failed_{operation_id}",
-            timestamp=time.time(),
-            source="ui_text_service",
-        )
-        self.operation_id = operation_id
-        self.error = error
-        self.phase = phase
+from src_refactored.domain.ui_text import UpdatePhase, UpdateResult
 
 
 # Service Protocols (Ports)
@@ -143,28 +106,28 @@ class UpdateUITextCommandHandler(ICommandHandler[UpdateUITextCommand]):
                 command.validation_config,
             )
             if not preparation_result.is_success:
-                self._publish_failure_event(command.operation_id, preparation_result.error, UpdatePhase.TEXT_PREPARATION)
-                return Result.failure(preparation_result.error)
+                self._publish_failure_event(command.operation_id, preparation_result.error, UpdatePhase.VALIDATION)
+                return Result.failure(preparation_result.error or "Text preparation failed")
 
             # Phase 3: Text Formatting
             if command.formatting_config:
                 formatting_result = self._text_processing.format_text_content(
-                    preparation_result.value,
+                    preparation_result.value or {},
                     command.formatting_config,
                 )
                 if not formatting_result.is_success:
-                    self._publish_failure_event(command.operation_id, formatting_result.error, UpdatePhase.TEXT_FORMATTING)
-                    return Result.failure(formatting_result.error)
+                    self._publish_failure_event(command.operation_id, formatting_result.error, UpdatePhase.FORMATTING)
+                    return Result.failure(formatting_result.error or "Text formatting failed")
 
             # Phase 4: Translation
             if command.translation_config:
                 translation_result = self._text_processing.translate_text_content(
-                    preparation_result.value,
+                    preparation_result.value or {},
                     command.translation_config,
                 )
                 if not translation_result.is_success:
                     self._publish_failure_event(command.operation_id, translation_result.error, UpdatePhase.TRANSLATION)
-                    return Result.failure(translation_result.error)
+                    return Result.failure(translation_result.error or "Text translation failed")
 
             # Publish success event
             duration = time.time() - start_time
@@ -187,7 +150,7 @@ class UpdateUITextCommandHandler(ICommandHandler[UpdateUITextCommand]):
         except Exception as e:
             error_msg = f"Unexpected error in UI text update: {e!s}"
             self._logger.log_error(error_msg, operation_id=command.operation_id)
-            self._publish_failure_event(command.operation_id, error_msg, UpdatePhase.EXECUTION)
+            self._publish_failure_event(command.operation_id, error_msg, UpdatePhase.FINALIZATION)
             return Result.failure(error_msg)
 
     def _validate_command(self, command: UpdateUITextCommand) -> Result[None]:
@@ -209,14 +172,15 @@ class UpdateUITextCommandHandler(ICommandHandler[UpdateUITextCommand]):
 
         return Result.success(None)
 
-    def _publish_failure_event(self, operation_id: str, error: str, phase: UpdatePhase) -> None:
+    def _publish_failure_event(self, operation_id: str, error: str | None, phase: UpdatePhase) -> None:
         """Publish failure domain event."""
+        error_msg = error or "Unknown error"
         self._event_publisher.publish(
-            UITextUpdateFailed(operation_id, error, phase),
+            UITextUpdateFailed(operation_id, error_msg, phase),
         )
         self._logger.log_error(
             f"UI text update failed in {phase.value} phase",
             operation_id=operation_id,
-            error=error,
+            error=error_msg,
             phase=phase.value,
         )

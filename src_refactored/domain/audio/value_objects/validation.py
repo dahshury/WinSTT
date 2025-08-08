@@ -9,6 +9,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.value_object import ValueObject
 
 from .audio_format import AudioFormat
@@ -87,8 +88,7 @@ class ValidationIssue(ValueObject):
     message: str
     details: str | None = None
     location: str | None = None
-    timestamp: datetime = field(default_factory=datetime.now,
-    )
+    timestamp: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
     context: dict[str, Any] = field(default_factory=dict)
 
     def _get_equality_components(self) -> tuple:
@@ -218,7 +218,7 @@ class ValidationResult(ValueObject):
     is_valid: bool
     issues: list[ValidationIssue]
     audio_info: AudioDataInfo | None = None
-    validation_time: datetime = field(default_factory=datetime.now)
+    validation_time: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
     rules_applied: list[ValidationRule] = field(default_factory=list)
 
     def _get_equality_components(self,

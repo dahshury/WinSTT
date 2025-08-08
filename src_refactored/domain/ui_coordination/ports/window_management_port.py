@@ -173,3 +173,36 @@ class WindowManagementPort(ABC):
         Returns:
             Result containing window title if successful, error otherwise
         """
+
+    @abstractmethod
+    def activate_existing_window(self, window_id: str) -> Result[None]:
+        """Activate an existing window (bring to foreground).
+        
+        Args:
+            window_id: Unique identifier of the window
+            
+        Returns:
+            Result indicating success or failure
+        """
+
+    @abstractmethod
+    def create_main_window(self, window_id: str) -> Result[None]:
+        """Create the main application window.
+        
+        Args:
+            window_id: Unique identifier for the main window
+            
+        Returns:
+            Result indicating success or failure
+        """
+
+    @abstractmethod
+    def show_main_window(self, window_id: str) -> Result[None]:
+        """Show the main application window.
+        
+        Args:
+            window_id: Unique identifier for the main window
+            
+        Returns:
+            Result indicating success or failure
+        """

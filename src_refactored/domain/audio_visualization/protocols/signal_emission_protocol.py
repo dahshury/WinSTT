@@ -5,17 +5,17 @@ This module defines the protocol for signal emission services.
 
 from typing import Any, Protocol
 
-import numpy as np
+from src_refactored.domain.audio.value_objects.audio_samples import AudioSampleData
 
 
 class SignalEmissionServiceProtocol(Protocol):
     """Protocol for signal emission service."""
 
-    def emit_data_processed(self, data: np.ndarray, metadata: dict[str, Any]) -> None:
+    def emit_data_processed(self, data: AudioSampleData, metadata: dict[str, Any]) -> None:
         """Emit signal when data is processed.
         
         Args:
-            data: Processed audio data
+            data: Processed audio sample data
             metadata: Processing metadata
         """
         ...
@@ -41,6 +41,22 @@ class SignalEmissionServiceProtocol(Protocol):
         
         Args:
             error: Error message
+        """
+        ...
+
+    def emit_data_ready(self, data: AudioSampleData) -> None:
+        """Emit signal when data is ready.
+        
+        Args:
+            data: Ready audio sample data
+        """
+        ...
+
+    def emit_buffer_updated(self, buffer_info: dict[str, Any]) -> None:
+        """Emit signal when buffer is updated.
+        
+        Args:
+            buffer_info: Buffer update information
         """
         ...
 

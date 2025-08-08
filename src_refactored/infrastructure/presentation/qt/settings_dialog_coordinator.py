@@ -4,6 +4,7 @@ This module provides the main coordination and event handling integration
 for the settings dialog, following the refactored DDD architecture.
 """
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -11,15 +12,14 @@ from typing import Any
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QWidget
 
-from logger import setup_logger
-from src_refactored.infrastructure.presentation.qt.ui_core_abstractions import IUIEventHandler
-from src_refactored.ui.core.abstractions import (
+from src_refactored.presentation.core.container import injectable
+from src_refactored.presentation.core.result import Result
+from src_refactored.presentation.core.ui_abstractions import IUIEventHandler
+from src_refactored.presentation.core.ui_events import (
     IUIComponent,
-    Result,
     UIEvent,
     UIEventType,
 )
-from src_refactored.ui.core.container import injectable
 
 
 @dataclass
@@ -114,7 +114,7 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
         self.settings_service = settings_service
         self.progress_service = progress_service
         self.parent_window = parent
-        self.logger = setup_logger()
+        self.logger = logging.getLogger(__name__)
         
         # Initialize state
         self.defaults = self.settings_service.get_default_settings()

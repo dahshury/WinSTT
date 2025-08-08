@@ -45,6 +45,12 @@ class SettingType(Enum):
     LLM_SETTINGS = "llm_settings"
     AUDIO_SETTINGS = "audio_settings"
     UI_SETTINGS = "ui_settings"
+    VOLUME_LEVEL = "volume_level"
+    MODEL_CONFIGURATION = "model_configuration"
+    AUDIO_CONFIGURATION = "audio_configuration"
+    LLM_CONFIGURATION = "llm_configuration"
+    UI_CONFIGURATION = "ui_configuration"
+    WORKER_CONFIGURATION = "worker_configuration"
 
 
 class ApplicationState(Enum):
@@ -136,6 +142,9 @@ class LoadSource(Enum):
     DEFAULT = "default"
     CACHE = "cache"
     REMOTE = "remote"
+    DEFAULT_CONFIG = "default_config"
+    JSON_FILE = "json_file"
+    COMMAND_LINE = "command_line"
 
 
 class LoadStrategy(Enum):
@@ -146,6 +155,8 @@ class LoadStrategy(Enum):
     REFRESH = "refresh"
     FALLBACK = "fallback"
     MERGE = "merge"
+    STRICT = "strict"
+    OVERRIDE = "override"
 
 
 class ResetScope(Enum):

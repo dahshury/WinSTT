@@ -85,6 +85,28 @@ class ModelName(ValueObject):
         if "turbo" in self.value:
             return "turbo"
         return "unknown"
+    
+    def get_memory_requirements(self) -> int:
+        """Get estimated memory requirements in MB for this model."""
+        size = self.get_model_size()
+        
+        # Estimated memory requirements for Whisper models
+        memory_map = {
+            "large": 6000,    # ~6GB for large models
+            "medium": 2500,   # ~2.5GB for medium models
+            "small": 1200,    # ~1.2GB for small models
+            "base": 500,      # ~500MB for base models
+            "turbo": 800,     # ~800MB for turbo models
+            "unknown": 1000,  # Default fallback
+        }
+        
+        base_memory = memory_map.get(size, 1000)
+        
+        # Lite models use less memory
+        if self.is_lite_model():
+            base_memory = int(base_memory * 0.7)  # 30% reduction for lite models
+            
+        return base_memory
 
     def __str__(self) -> str:
         """String representation."""

@@ -168,39 +168,30 @@ class Color:
         return Color(r, g, b, self.alpha)
 
 
+@dataclass(frozen=True)
 class ColorPalette(ValueObject):
     """Color palette value object.
     
     Represents a complete color scheme for UI elements.
     """
-
-    def __init__(self, colors: dict[ColorRole, Color], theme: PaletteTheme = PaletteTheme.CUSTOM,
-    ):
-        """Initialize color palette.
-        
-        Args:
-            colors: Dictionary mapping color roles to colors
-            theme: Palette theme
-            
-        Raises:
-            ValueError: If colors dictionary is invalid
-        """
-        if not colors or not isinstance(colors, dict):
+    
+    colors: dict[ColorRole, Color]
+    theme: PaletteTheme = PaletteTheme.CUSTOM
+    
+    def __post_init__(self):
+        """Validate color palette after initialization."""
+        if not self.colors or not isinstance(self.colors, dict):
             msg = "Colors must be a non-empty dictionary"
             raise ValueError(msg)
 
         # Validate all keys are ColorRole and values are Color
-        for role, color in colors.items():
+        for role, color in self.colors.items():
             if not isinstance(role, ColorRole):
                 msg = f"Invalid color role: {role}"
                 raise ValueError(msg)
             if not isinstance(color, Color):
                 msg = f"Invalid color for role {role}: {color}"
                 raise ValueError(msg)
-
-        self._theme = theme
-        self._colors = colors.copy()
-        super().__init__(colors.copy())
 
     @classmethod
     def create_light_theme(cls) -> ColorPalette:
@@ -342,7 +333,7 @@ color_dict: dict[str, str | tuple[int, int, int] | tuple[int, int, int, int]], t
         Returns:
             Color for the role or None if not found
         """
-        return self._colors.get(role)
+        return self.colors.get(role)
 
     def get_color_or_default(self, role: ColorRole, default: Color,
     ) -> Color:
@@ -355,7 +346,7 @@ color_dict: dict[str, str | tuple[int, int, int] | tuple[int, int, int, int]], t
         Returns:
             Color for the role or default
         """
-        return self._colors.get(role, default)
+        return self.colors.get(role, default)
 
     def has_role(self, role: ColorRole,
     ) -> bool:
@@ -367,7 +358,7 @@ color_dict: dict[str, str | tuple[int, int, int] | tuple[int, int, int, int]], t
         Returns:
             True if role exists, False otherwise
         """
-        return role in self._colors
+        return role in self.colors
 
     def with_color(self, role: ColorRole, color: Color,
     ) -> ColorPalette:
@@ -380,9 +371,9 @@ color_dict: dict[str, str | tuple[int, int, int] | tuple[int, int, int, int]], t
         Returns:
             New ColorPalette with updated color
         """
-        new_colors = self._colors.copy()
+        new_colors = self.colors.copy()
         new_colors[role] = color
-        return ColorPalette(new_colors, self._theme)
+        return ColorPalette(colors=new_colors, theme=self.theme)
 
     def without_role(self, role: ColorRole,
     ) -> ColorPalette:
@@ -394,9 +385,9 @@ color_dict: dict[str, str | tuple[int, int, int] | tuple[int, int, int, int]], t
         Returns:
             New ColorPalette without the role
         """
-        new_colors = self._colors.copy()
+        new_colors = self.colors.copy()
         new_colors.pop(role, None)
-        return ColorPalette(new_colors, self._theme)
+        return ColorPalette(colors=new_colors, theme=self.theme)
 
     def merge_with(self, other: ColorPalette,
     ) -> ColorPalette:
@@ -408,12 +399,12 @@ color_dict: dict[str, str | tuple[int, int, int] | tuple[int, int, int, int]], t
         Returns:
             New ColorPalette with merged colors
         """
-        merged_colors = self._colors.copy()
-        merged_colors.update(other._colors)
-        return ColorPalette(merged_colors, self._theme)
+        merged_colors = self.colors.copy()
+        merged_colors.update(other.colors)
+        return ColorPalette(colors=merged_colors, theme=self.theme)
 
     def to_dict(self, hex_format: bool = True,
-    ) -> dict[str, str | tuple[int, int, int, int]]:
+    ) -> dict[str, str | tuple[int, ...]]:
         """Convert to dictionary.
         
         Args:
@@ -422,8 +413,8 @@ color_dict: dict[str, str | tuple[int, int, int] | tuple[int, int, int, int]], t
         Returns:
             Dictionary representation
         """
-        result = {}
-        for role, color in self._colors.items():
+        result: dict[str, str | tuple[int, ...]] = {}
+        for role, color in self.colors.items():
             if hex_format:
                 result[role.value] = color.to_hex(include_alpha=True)
             else:
@@ -442,32 +433,31 @@ color_dict: dict[str, str | tuple[int, int, int] | tuple[int, int, int, int]], t
         if required_roles is None:
             required_roles = set(ColorRole)
 
-        missing_roles = required_roles - set(self._colors.keys())
+        missing_roles = required_roles - set(self.colors.keys())
         if missing_roles:
             missing_names = [role.value for role in missing_roles]
             return Result.failure(f"Missing color roles: {', '.join(missing_names)}")
 
         return Result.success(None)
 
-    @property
-    def theme(self) -> PaletteTheme:
+    def get_theme(self) -> PaletteTheme:
         """Get palette theme."""
-        return self._theme
+        return self.theme
 
     @property
     def role_count(self) -> int:
         """Get number of color roles defined."""
-        return len(self._colors)
+        return len(self.colors)
 
     @property
     def roles(self) -> set[ColorRole]:
         """Get set of defined color roles."""
-        return set(self._colors.keys())
+        return set(self.colors.keys())
 
     def __str__(self) -> str:
         """String representation."""
-        return f"ColorPalette({self._theme.value}, {self.role_count} roles)"
+        return f"ColorPalette({self.theme.value}, {self.role_count} roles)"
 
     def __repr__(self) -> str:
         """Developer representation."""
-        return f"ColorPalette(theme={self._theme.value}, colors={dict(self._colors)})"
+        return f"ColorPalette(theme={self.theme.value}, colors={dict(self.colors)})"

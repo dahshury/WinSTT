@@ -8,26 +8,30 @@ Note: Result pattern is imported from separate module to avoid duplication.
 
 from __future__ import annotations
 
-import time
-import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 # Import Result pattern from separate module
 
 if TYPE_CHECKING:
+    from .events import DomainEvent
     from .result import Result
 
-# Type Variables for Generic Patterns
+# Import DomainEvent now that circular dependency is resolved
+from .domain_utils import DomainIdentityGenerator
+
+# Type Variables for Generic Patterns  
 T = TypeVar("T")
-TCommand = TypeVar("TCommand", bound="ICommand")
-TQuery = TypeVar("TQuery", bound="IQuery")
-TResult = TypeVar("TResult")
+TCommand = TypeVar("TCommand", bound="ICommand", contravariant=True)
+TQuery = TypeVar("TQuery", bound="IQuery", contravariant=True)
+TResult = TypeVar("TResult", covariant=True)
 TState = TypeVar("TState")
 TEvent = TypeVar("TEvent", bound="DomainEvent")
 TRequest = TypeVar("TRequest")
+TObserverData = TypeVar("TObserverData", contravariant=True)
+TStrategyContext = TypeVar("TStrategyContext", contravariant=True)
+TQueryResult = TypeVar("TQueryResult")
 TResponse = TypeVar("TResponse")
 
 # ============================================================================
@@ -58,28 +62,7 @@ class UseCase(Generic[TRequest, TResponse], ABC):
 # DOMAIN EVENTS
 # ============================================================================
 
-@dataclass(frozen=True)
-class DomainEvent:
-    """Base class for all domain events."""
-    event_id: str
-    timestamp: float
-    source: str
-
-    def __post_init__(self):
-        if not self.event_id:
-            object.__setattr__(self, "event_id", str(uuid.uuid4()))
-        if not self.timestamp:
-            object.__setattr__(self, "timestamp", time.time())
-
-class DomainEventType(Enum):
-    """Enumeration of domain event types."""
-    ENTITY_CREATED = "entity_created"
-    ENTITY_UPDATED = "entity_updated"
-    ENTITY_DELETED = "entity_deleted"
-    STATE_CHANGED = "state_changed"
-    BUSINESS_RULE_VIOLATED = "business_rule_violated"
-    OPERATION_COMPLETED = "operation_completed"
-    OPERATION_FAILED = "operation_failed"
+# Note: DomainEvent and DomainEventType are defined in events.py to avoid duplication
 
 # ============================================================================
 # COMMAND PATTERN INTERFACES (CQRS)
@@ -99,23 +82,23 @@ class ICommandHandler(Protocol, Generic[TCommand]):
     ) -> Result[None]:
         """Handle a command and return result."""
 
-class IQueryHandler(Protocol, Generic[TQuery, TResult]):
+class IQueryHandler(Protocol, Generic[TQuery, TQueryResult]):
     """Interface for query handlers."""
 
     @abstractmethod
     def handle(self, query: TQuery,
-    ) -> Result[TResult]:
+    ) -> Result[TQueryResult]:
         """Handle a query and return result with data."""
 
 # ============================================================================
 # OBSERVER PATTERN
 # ============================================================================
 
-class IObserver(Protocol, Generic[T]):
+class IObserver(Protocol, Generic[TObserverData]):
     """Interface for observers."""
 
     @abstractmethod
-    def update(self, data: T,
+    def update(self, data: TObserverData,
     ) -> None:
         """Receive update notification."""
 
@@ -174,11 +157,11 @@ class IServiceProvider(Protocol):
 # STRATEGY PATTERN
 # ============================================================================
 
-class IStrategy(Protocol, Generic[T]):
+class IStrategy(Protocol, Generic[TStrategyContext]):
     """Interface for strategy pattern."""
 
     @abstractmethod
-    def execute(self, context: T,
+    def execute(self, context: TStrategyContext,
     ) -> Result[Any]:
         """Execute the strategy."""
 
@@ -257,18 +240,17 @@ class Entity:
     created_at: float = field(default=0.0)
     updated_at: float = field(default=0.0)
 
-    def __post_init__(self,
-    ):
+    def __post_init__(self):
         if not self.entity_id:
-            object.__setattr__(self, "entity_id", str(uuid.uuid4()))
+            object.__setattr__(self, "entity_id", DomainIdentityGenerator.generate_domain_id("entity"))
         if not self.created_at:
-            current_time = time.time()
+            current_time = DomainIdentityGenerator.generate_timestamp()
             object.__setattr__(self, "created_at", current_time)
             object.__setattr__(self, "updated_at", current_time)
 
     def update_timestamp(self) -> None:
         """Update the last modified timestamp."""
-        object.__setattr__(self, "updated_at", time.time())
+        object.__setattr__(self, "updated_at", DomainIdentityGenerator.generate_timestamp())
 
     def __eq__(self, other: object,
     ) -> bool:

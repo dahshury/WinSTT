@@ -4,13 +4,13 @@ This module defines value objects for representing audio data
 and related concepts in the domain.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
-import numpy as np
-
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.value_object import ValueObject
 
 from .audio_format import AudioFormat
@@ -32,7 +32,7 @@ class StreamState(Enum):
 class AudioData(ValueObject):
     """Audio data value object."""
 
-    data: np.ndarray
+    data: Sequence[float]
     sample_rate: SampleRate
     channels: int
     audio_format: AudioFormat
@@ -42,7 +42,7 @@ class AudioData(ValueObject):
 
     def _get_equality_components(self) -> tuple:
         return (
-            self.data.tobytes() if self.data is not None else None,
+            tuple(self.data) if self.data is not None else None,
             self.sample_rate,
             self.channels,
             self.audio_format,
@@ -58,12 +58,12 @@ class AudioData(ValueObject):
         if self.channels <= 0:
             msg = "Channels must be positive"
             raise ValueError(msg)
-        if len(self.data.shape,
-    ) not in [1, 2]:
-            msg = "Audio data must be 1D or 2D array"
+        if len(self.data) == 0:
+            msg = "Audio data cannot be empty"
             raise ValueError(msg)
-        if len(self.data.shape) == 2 and self.data.shape[1] != self.channels:
-            msg = "Audio data channels mismatch"
+        # Check if data length is compatible with channels (for interleaved audio)
+        if len(self.data) % self.channels != 0:
+            msg = "Audio data length must be divisible by channel count"
             raise ValueError(msg)
         if self.duration and self.duration.total_seconds() <= 0:
             msg = "Duration must be positive"
@@ -72,9 +72,8 @@ class AudioData(ValueObject):
     @property
     def frame_count(self) -> int:
         """Get number of audio frames."""
-        if len(self.data.shape) == 1:
-            return len(self.data) // self.channels
-        return self.data.shape[0]
+        # For interleaved audio data, divide by channels
+        return len(self.data) // self.channels
 
     @property
     def calculated_duration(self) -> timedelta:
@@ -84,8 +83,8 @@ class AudioData(ValueObject):
 
     @property
     def size_bytes(self) -> int:
-        """Get size in bytes."""
-        return self.data.nbytes
+        """Get size in bytes (assuming 4 bytes per float)."""
+        return len(self.data) * 4  # 32-bit float = 4 bytes
 
     @property
     def is_mono(self) -> bool:
@@ -98,8 +97,7 @@ class AudioData(ValueObject):
         """Check if audio is stereo."""
         return self.channels == 2
 
-    def get_channel_data(self, channel: int,
-    ) -> np.ndarray:
+    def get_channel_data(self, channel: int) -> Sequence[float]:
         """Get data for specific channel."""
         if channel >= self.channels:
             msg = f"Channel {channel} not available (max: {self.channels - 1})"
@@ -108,26 +106,27 @@ class AudioData(ValueObject):
         if self.is_mono:
             return self.data
 
-        if len(self.data.shape,
-    ) == 1:
-            # Interleaved format
-            return self.data[channel::self.channels]
-        # Non-interleaved format
-        return self.data[:, channel]
+        # For multi-channel data, assume interleaved format
+        # Extract every nth sample starting from the channel index
+        return [self.data[i] for i in range(channel, len(self.data), self.channels)]
 
     def to_mono(self) -> "AudioData":
         """Convert to mono by averaging channels."""
         if self.is_mono:
             return self
 
-        if len(self.data.shape) == 1:
-            # Interleaved format
-            mono_data = np.mean([
-                self.data[i::self.channels] for i in range(self.channels)
-            ], axis=0)
-        else:
-            # Non-interleaved format
-            mono_data = np.mean(self.data, axis=1)
+        # For interleaved format: group samples by frames and average
+        frames = len(self.data) // self.channels
+        mono_data = []
+        
+        for frame in range(frames):
+            # Average all channels for this frame
+            frame_samples = [
+                self.data[frame * self.channels + ch] 
+                for ch in range(self.channels)
+            ]
+            avg_sample = sum(frame_samples) / len(frame_samples)
+            mono_data.append(avg_sample)
 
         return AudioData(
             data=mono_data,
@@ -149,7 +148,7 @@ class AudioBuffer(ValueObject):
     max_size: int
     current_size: int = 0
     is_full: bool = False
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()))
 
     def _get_equality_components(self,
     ) -> tuple:
@@ -266,7 +265,7 @@ class StreamMetrics(ValueObject):
         """Get stream uptime."""
         if not self.start_time:
             return None
-        end_time = self.last_update or datetime.now()
+        end_time = self.last_update or datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
         return end_time - self.start_time
 
     @property

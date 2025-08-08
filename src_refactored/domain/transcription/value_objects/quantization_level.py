@@ -89,6 +89,12 @@ class QuantizationLevel(ValueObject):
         if self.is_float_quantized():
             return "Balanced quality and speed"
         return "Unknown performance impact"
+    
+    def requires_gpu(self) -> bool:
+        """Check if this quantization level requires GPU for optimal performance."""
+        # Full precision models typically benefit from GPU acceleration
+        # Quantized models can run efficiently on CPU
+        return self.is_full_precision()
 
     def __str__(self) -> str:
         """String representation."""

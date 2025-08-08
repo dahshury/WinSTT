@@ -1,20 +1,13 @@
 """Audio recorder entities."""
 
 from dataclasses import dataclass, field
-from enum import Enum
 
 from src_refactored.domain.audio.entities.audio_configuration import AudioRecorderConfiguration
 from src_refactored.domain.audio.value_objects.audio_data import AudioData
+from src_refactored.domain.audio.value_objects.recording_state import RecordingState
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.entity import Entity
 from src_refactored.domain.common.result import Result
-
-
-class RecordingState(Enum):
-    """Recording state enumeration."""
-    IDLE = "idle"
-    RECORDING = "recording"
-    PAUSED = "paused"
-    STOPPED = "stopped"
 
 
 @dataclass
@@ -33,10 +26,10 @@ class AudioRecorder(Entity):
     start_time: float = 0.0
     
     def __post_init__(self):
-        super().__post_init__()
+        # Initialize the Entity with recording_id
         if not self.recording_id:
-            import uuid
-            object.__setattr__(self, "recording_id", str(uuid.uuid4()))
+            object.__setattr__(self, "recording_id", DomainIdentityGenerator.generate_domain_id("recording"))
+        super().__init__(self.recording_id)
     
     def get_state(self) -> RecordingState:
         """Get the current recording state."""
@@ -50,7 +43,7 @@ class AudioRecorder(Entity):
         """Configure the audio recorder with the given configuration."""
         try:
             self.configuration = configuration
-            self.update_timestamp()
+            self.mark_as_updated()
             return Result.success(None)
         except Exception as e:
             return Result.failure(str(e))
@@ -58,10 +51,9 @@ class AudioRecorder(Entity):
     def start_recording(self) -> Result[None]:
         """Start audio recording."""
         try:
-            import time
             self.state = RecordingState.RECORDING
-            self.start_time = time.time()
-            self.update_timestamp()
+            self.start_time = DomainIdentityGenerator.generate_timestamp()
+            self.mark_as_updated()
             return Result.success(None)
         except Exception as e:
             return Result.failure(str(e))
@@ -69,8 +61,8 @@ class AudioRecorder(Entity):
     def stop_recording(self) -> Result[None]:
         """Stop audio recording."""
         try:
-            self.state = RecordingState.IDLE
-            self.update_timestamp()
+            self.state = RecordingState.STOPPED
+            self.mark_as_updated()
             return Result.success(None)
         except Exception as e:
             return Result.failure(str(e))
@@ -79,7 +71,7 @@ class AudioRecorder(Entity):
         """Pause audio recording."""
         try:
             self.state = RecordingState.PAUSED
-            self.update_timestamp()
+            self.mark_as_updated()
             return Result.success(None)
         except Exception as e:
             return Result.failure(str(e))
@@ -88,7 +80,7 @@ class AudioRecorder(Entity):
         """Resume audio recording."""
         try:
             self.state = RecordingState.RECORDING
-            self.update_timestamp()
+            self.mark_as_updated()
             return Result.success(None)
         except Exception as e:
             return Result.failure(str(e))
@@ -102,8 +94,8 @@ class AudioRecorder(Entity):
         if self.state != RecordingState.RECORDING:
             return 0.0
         
-        import time
-        return time.time() - self.start_time
+        current_time = DomainIdentityGenerator.generate_timestamp()
+        return current_time - self.start_time
     
     def get_start_time(self) -> float:
         """Get the recording start time."""
@@ -140,4 +132,13 @@ class AudioRecorder(Entity):
     def validate_recording_continuity(self) -> Result[bool]:
         """Validate recording continuity."""
         # This is a placeholder - in a real implementation, this would validate continuity
-        return Result.success(True) 
+        return Result.success(True)
+    
+    def save_partial_recording(self) -> Result[None]:
+        """Save partial recording data."""
+        # This is a placeholder - in a real implementation, this would save partial audio data
+        try:
+            self.mark_as_updated()
+            return Result.success(None)
+        except Exception as e:
+            return Result.failure(f"Failed to save partial recording: {e!s}") 

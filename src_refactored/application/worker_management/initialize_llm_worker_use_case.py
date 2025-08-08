@@ -299,7 +299,7 @@ class InitializeLLMWorkerUseCase:
 
             config_validation = self._validate_configuration(request.configuration)
             if not config_validation.is_success:
-                response.error_message = f"Configuration validation failed: {config_validation.error_message}"
+                response.error_message = f"Configuration validation failed: {config_validation.error}"
                 response.result = LLMInitializationResult.CONFIGURATION_ERROR
                 return response
 
@@ -311,7 +311,7 @@ class InitializeLLMWorkerUseCase:
             if request.validate_dependencies:
                 dependency_result = self._dependency_validation.validate_llm_dependencies(request.configuration)
                 if not dependency_result.is_success:
-                    response.error_message = f"Dependency validation failed: {dependency_result.error_message}"
+                    response.error_message = f"Dependency validation failed: {dependency_result.error}"
                     response.result = LLMInitializationResult.DEPENDENCY_FAILED
                     return response
 
@@ -325,7 +325,7 @@ class InitializeLLMWorkerUseCase:
                 if cleanup_result.is_success:
                     response.cleanup_performed = True
                 else:
-                    response.warnings.append(f"Cleanup failed: {cleanup_result.error_message}")
+                    response.warnings.append(f"Cleanup failed: {cleanup_result.error}")
 
             # Phase 5: Load model (if preload is enabled)
             model_load_start = datetime.utcnow()
@@ -343,7 +343,7 @@ class InitializeLLMWorkerUseCase:
                     response.model_loaded = True
                     response.model_load_time_ms = int((datetime.utcnow() - model_load_start).total_seconds() * 1000)
                 else:
-                    response.error_message = f"Model loading failed: {model_result.error_message}"
+                    response.error_message = f"Model loading failed: {model_result.error}"
                     response.result = LLMInitializationResult.MODEL_LOAD_FAILED
                     return response
 
@@ -360,7 +360,7 @@ class InitializeLLMWorkerUseCase:
             )
 
             if not worker_result.is_success:
-                response.error_message = f"Worker creation failed: {worker_result.error_message}"
+                response.error_message = f"Worker creation failed: {worker_result.error}"
                 response.result = LLMInitializationResult.FAILED
                 return response
 
@@ -374,7 +374,7 @@ class InitializeLLMWorkerUseCase:
 
             thread_result = self._thread_management.create_llm_thread("llm_worker_thread")
             if not thread_result.is_success:
-                response.error_message = f"Thread creation failed: {thread_result.error_message}"
+                response.error_message = f"Thread creation failed: {thread_result.error}"
                 response.result = LLMInitializationResult.THREAD_CREATION_FAILED
                 return response
 
@@ -388,7 +388,7 @@ class InitializeLLMWorkerUseCase:
 
             move_result = self._thread_management.move_llm_worker_to_thread(worker, thread)
             if not move_result.is_success:
-                response.error_message = f"Failed to move worker to thread: {move_result.error_message}"
+                response.error_message = f"Failed to move worker to thread: {move_result.error}"
                 response.result = LLMInitializationResult.FAILED
                 return response
 
@@ -401,7 +401,7 @@ class InitializeLLMWorkerUseCase:
             if signal_result.is_success:
                 response.signals_connected = True
             else:
-                response.error_message = f"Signal connection failed: {signal_result.error_message}"
+                response.error_message = f"Signal connection failed: {signal_result.error}"
                 response.result = LLMInitializationResult.SIGNAL_CONNECTION_FAILED
                 return response
 
@@ -415,7 +415,7 @@ class InitializeLLMWorkerUseCase:
                 if start_result.is_success:
                     response.worker_started = True
                 else:
-                    response.warnings.append(f"Worker start failed: {start_result.error_message}")
+                    response.warnings.append(f"Worker start failed: {start_result.error}")
 
             # Phase 11: Verify initialization
             if not self._update_progress(request.progress_callback,
@@ -425,7 +425,7 @@ class InitializeLLMWorkerUseCase:
 
             verification_result = self._verify_initialization(worker, thread)
             if not verification_result.is_success:
-                response.warnings.append(f"Verification failed: {verification_result.error_message}")
+                response.warnings.append(f"Verification failed: {verification_result.error}")
 
             # Get memory usage
             memory_result = self._worker_cleanup.get_llm_memory_usage()
@@ -501,14 +501,14 @@ class InitializeLLMWorkerUseCase:
                 config.model_name, config.quantization_level,
             )
             if not compatibility_result.is_success:
-                return Result.failure(f"Model compatibility check failed: {compatibility_result.error_message}")
+                return Result.failure(f"Model compatibility check failed: {compatibility_result.error}")
 
             # Check memory requirements if specified
             if config.max_memory_mb is not None:
                 memory_req_result = self._llm_worker_factory.estimate_memory_requirements(
                     config.model_name, config.quantization_level,
                 )
-                if memory_req_result.is_success and memory_req_result.value > config.max_memory_mb:
+                if memory_req_result.is_success and memory_req_result.value is not None and config.max_memory_mb is not None and memory_req_result.value > config.max_memory_mb:
                     return Result.failure(f"Model requires {memory_req_result.value}MB but limit is {config.max_memory_mb}MB")
     
 
@@ -537,7 +537,7 @@ class InitializeLLMWorkerUseCase:
             # Verify signal connections
             signal_verification = self._signal_connection.verify_signal_connections(worker)
             if not signal_verification.is_success:
-                return Result.failure(f"Signal verification failed: {signal_verification.error_message}")
+                return Result.failure(f"Signal verification failed: {signal_verification.error}")
 
             return Result.success(None)
 

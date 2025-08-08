@@ -6,7 +6,7 @@ user notifications, and graceful application termination.
 
 import sys
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
@@ -14,6 +14,11 @@ from src_refactored.domain.system_integration.value_objects.system_operations im
     ErrorSeverity,
     ExitCode,
 )
+
+if TYPE_CHECKING:
+    from src_refactored.domain.application_lifecycle.ports.application_lifecycle_port import (
+        ApplicationLifecyclePort,
+    )
 
 
 class ErrorHandlingService:
@@ -35,6 +40,7 @@ class ErrorHandlingService:
         self._application_name = "WinSTT"
         self._show_detailed_errors = False
         self._exit_on_critical = True
+        self._requested_exit_code: int | None = None
 
     def configure(self,
                  application_name: str = "WinSTT",
@@ -208,7 +214,15 @@ class ErrorHandlingService:
 
         # Exit application if configured to do so
         if self._exit_on_critical:
-            self.exit_application(exit_code)
+            # Delegate termination via lifecycle port; do not hard-exit here
+            try:
+                terminator: ApplicationLifecyclePort | None = getattr(self, "_lifecycle_port", None)
+                if terminator is not None:
+                    terminator.request_exit(exit_code.value)
+                else:
+                    self._requested_exit_code = exit_code.value
+            except Exception:
+                self._requested_exit_code = exit_code.value
 
     def handle_application_startup_error(self,
                                         exception: Exception,
@@ -260,9 +274,15 @@ class ErrorHandlingService:
             exit_code: Exit code to use
         """
         if self._logger:
-            self._logger.info(f"Application exiting with code: {exit_code.value}")
-
-        sys.exit(exit_code.value)
+            self._logger.info(f"Application exit requested with code: {exit_code.value}")
+        try:
+            terminator: ApplicationLifecyclePort | None = getattr(self, "_lifecycle_port", None)
+            if terminator is not None:
+                terminator.request_exit(exit_code.value)
+            else:
+                self._requested_exit_code = exit_code.value
+        except Exception:
+            self._requested_exit_code = exit_code.value
 
     def create_exception_handler(self,
     ) -> Callable[[type, Exception, Any], None]:

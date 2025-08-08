@@ -7,10 +7,13 @@ and restoring original UI state and progress bar configuration.
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from src_refactored.domain.file_operations.value_objects import CleanupLevel
 from src_refactored.domain.window_management.value_objects import RestorationMode
+
+if TYPE_CHECKING:
+    from src_refactored.domain.common.ports.time_port import ITimePort
 
 
 class CompleteResult(Enum):
@@ -469,8 +472,13 @@ class CompleteProgressUseCase:
 
             # Add delay before cleanup if configured
             if request.configuration.delay_before_cleanup_ms > 0:
-                import time
-                time.sleep(request.configuration.delay_before_cleanup_ms / 1000.0)
+                time_port: ITimePort | None = getattr(self, "_time_port", None)
+                delay_seconds = request.configuration.delay_before_cleanup_ms / 1000.0
+                if time_port:
+                    time_port.sleep(delay_seconds)
+                else:
+                    import time as _time
+                    _time.sleep(delay_seconds)
 
             # Phase 6: Cleanup
             self.progress_service.update_progress(session_id, CompletePhase.CLEANUP, 71.5)

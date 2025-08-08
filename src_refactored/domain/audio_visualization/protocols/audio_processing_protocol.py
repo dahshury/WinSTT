@@ -3,9 +3,19 @@
 This module defines the protocol for audio processing services.
 """
 
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
-import numpy as np
+from src_refactored.domain.audio.value_objects.audio_samples import AudioSampleData
+
+
+@dataclass(frozen=True)
+class AudioProcessingResult:
+    """Result of audio processing operation."""
+    
+    processed_data: AudioSampleData
+    processing_applied: bool
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class AudioProcessingServiceProtocol(Protocol):
@@ -13,36 +23,36 @@ class AudioProcessingServiceProtocol(Protocol):
 
     def apply_clipping(
         self,
-        data: np.ndarray,
+        data: AudioSampleData,
         threshold: float = 1.0,
-    ) -> tuple[np.ndarray, bool]:
+    ) -> AudioProcessingResult:
         """Apply clipping to audio data.
         
         Args:
-            data: Audio data array
+            data: Audio sample data
             threshold: Clipping threshold
             
         Returns:
-            Tuple of (clipped_data, clipping_occurred)
+            Processing result with clipped data and metadata
         """
         ...
 
-    def center_data(self, data: np.ndarray) -> np.ndarray:
+    def center_data(self, data: AudioSampleData) -> AudioSampleData:
         """Center audio data around zero.
         
         Args:
-            data: Audio data array
+            data: Audio sample data
             
         Returns:
             Centered audio data
         """
         ...
 
-    def apply_scaling(self, data: np.ndarray, factor: float) -> np.ndarray:
+    def apply_scaling(self, data: AudioSampleData, factor: float) -> AudioSampleData:
         """Apply scaling factor to audio data.
         
         Args:
-            data: Audio data array
+            data: Audio sample data
             factor: Scaling factor
             
         Returns:
@@ -50,34 +60,34 @@ class AudioProcessingServiceProtocol(Protocol):
         """
         ...
 
-    def normalize_audio(self, audio_bytes: bytes) -> bytes:
+    def normalize_audio(self, data: AudioSampleData) -> AudioSampleData:
         """Normalize audio levels.
         
         Args:
-            audio_bytes: Raw audio data
+            data: Audio sample data
             
         Returns:
             Normalized audio data
         """
         ...
 
-    def remove_silence(self, audio_bytes: bytes) -> bytes:
+    def remove_silence(self, data: AudioSampleData, threshold: float = 0.01) -> AudioSampleData:
         """Remove silence from audio.
         
         Args:
-            audio_bytes: Raw audio data
+            data: Audio sample data
+            threshold: Silence detection threshold
             
         Returns:
             Audio data with silence removed
         """
         ...
 
-    def get_audio_duration(self, audio_bytes: bytes, sample_rate: int) -> float:
+    def get_audio_duration(self, data: AudioSampleData) -> float:
         """Get audio duration in seconds.
         
         Args:
-            audio_bytes: Raw audio data
-            sample_rate: Audio sample rate
+            data: Audio sample data
             
         Returns:
             Duration in seconds

@@ -646,7 +646,7 @@ class InstallEventFilterUseCase:
 
             testing_completed = False
             performance_metrics = {}
-            validation_results = {}
+            validation_results: dict[str, bool] = {}
 
             if request.testing_config.enable_testing:
                 # Test filters
@@ -675,18 +675,23 @@ class InstallEventFilterUseCase:
                     )
                     if not validation_passed:
                         warnings.append(f"Response validation failed: {validation_error}")
-                    else:
-                        validation_results = validation_result
+                    elif isinstance(validation_result, dict):
+                        validation_results = validation_result  # type: ignore[assignment]
+                # If validate_responses is False, validation_results remains as initialized empty dict
 
                 # Update filter results with test information
                 for filter_result in state.filter_results:
                     if filter_result.filter_installed:
-                        filter_result.test_results = validation_results.get(filter_result.filter_id, {})
+                        filter_result.test_results = (
+                            validation_results.get(filter_result.filter_id, {}) 
+                            if isinstance(validation_results, dict) 
+                            else {}
+                        )
 
             state.testing_result = TestingResult(
                 testing_completed=testing_completed,
-                tests_passed=len([r for r in validation_results.values() if r]) if validation_results else 0,
-                tests_failed=len([r for r in validation_results.values() if not r]) if validation_results else 0,
+                tests_passed=len([r for r in validation_results.values() if r]) if isinstance(validation_results, dict) else 0,
+                tests_failed=len([r for r in validation_results.values() if not r]) if isinstance(validation_results, dict) else 0,
                 performance_metrics=performance_metrics,
                 stress_test_passed=request.testing_config.stress_testing and testing_completed,
                 validation_successful=bool(validation_results),
@@ -718,14 +723,14 @@ class InstallEventFilterUseCase:
 
             # Determine result
             if state.failed_filters == 0:
-                result = InstallResult.SUCCESS if not warnings else InstallResult.PARTIAL_SUCCESS
+                final_result = InstallResult.SUCCESS if not warnings else InstallResult.PARTIAL_SUCCESS
             elif state.active_filters > 0:
-                result = InstallResult.PARTIAL_SUCCESS
+                final_result = InstallResult.PARTIAL_SUCCESS
             else:
-                result = InstallResult.FAILED
+                final_result = InstallResult.FAILED
 
             return InstallEventFilterResponse(
-                result=result,
+                result=final_result,
                 state=state,
                 filter_manager=None,  # Would be created by a filter manager service
                 system_integrator=integrator if integration_setup else None,

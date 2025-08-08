@@ -78,7 +78,7 @@ class SystemTrayIntegration(AggregateRoot,
         configuration: TrayConfiguration,
     ):
         """Initialize system tray integration."""
-        super().__init__()
+        super().__init__(tray_id)
         self._tray_id = tray_id
         self._configuration = configuration
         self._state = TrayState.HIDDEN

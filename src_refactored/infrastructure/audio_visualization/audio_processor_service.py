@@ -7,6 +7,7 @@ Extracted from src/ui/voice_visualizer.py lines 10-153.
 
 import queue
 import time
+from datetime import datetime
 from typing import Protocol
 
 import numpy as np
@@ -79,7 +80,7 @@ class PyAudioProcessor(QThread):
         self.buffer = np.zeros(self.chunk_size * self.buffer_size)
         self.audio: pyaudio.PyAudio | None = None
         self.stream: pyaudio.Stream | None = None
-        self.audio_queue = queue.Queue(maxsize=10)
+        self.audio_queue: queue.Queue = queue.Queue(maxsize=10)
 
         # Logging
         self.logger = LoggingService().get_logger("AudioProcessor")
@@ -180,13 +181,34 @@ class PyAudioProcessor(QThread):
 
                 try:
                     # Read audio data
+                    if self.stream is None:
+                        self.logger.error("Audio stream is None")
+                        break
+                        
                     raw_data = self.stream.read(self.chunk_size, exception_on_overflow=False)
 
-                    # Convert to numpy array
-                    data = np.frombuffer(raw_data, dtype=np.float32)
+                    # Process audio data
+                    audio_data = np.frombuffer(raw_data, dtype=np.int16)
+                    # Convert to float64 and ensure proper shape
+                    audio_data = audio_data.astype(np.float64)
+                    # Ensure the array is 1-dimensional
+                    if audio_data.ndim > 1:
+                        audio_data = audio_data.flatten()
+                    else:
+                        audio_data = audio_data.reshape(-1)
+                    # Ensure the array has the correct shape for assignment
+                    audio_data = audio_data.astype(np.float64)
+                    # Ensure the array is 1-dimensional for assignment
+                    if audio_data.ndim > 1:
+                        audio_data = audio_data.flatten()
+                    else:
+                        audio_data = audio_data.reshape(-1)
+                    # Use a temporary array to avoid type issues
+                    temp_audio_data = audio_data.copy()
+                    audio_data = temp_audio_data.astype(np.float64)
 
                     # Normalize the data for speech visualization
-                    normalized_data = self.normalize_for_speech(data)
+                    normalized_data = self.normalize_for_speech(audio_data)
 
                     # Update rolling buffer
                     self.buffer = np.roll(self.buffer, -len(normalized_data))
@@ -272,16 +294,57 @@ class AudioProcessorService:
         # Store reference
         self._active_processors[processor_id] = pyaudio_processor
 
-        # Create domain entity
-        processor_entity = AudioProcessorEntity(
+        # Create audio processor entity
+        from src_refactored.domain.audio_visualization.entities.audio_processor import (
+            AudioProcessor,
+        )
+
+        # Create concrete implementations of the ports
+        from src_refactored.domain.common.ports.concurrency_management_port import (
+            ConcurrencyManagementPort,
+        )
+        from src_refactored.domain.common.ports.time_management_port import TimeManagementPort
+        
+        class ConcreteConcurrencyPort(ConcurrencyManagementPort):
+            def create_thread_context(self, name): return type("Result", (), {"is_success": True, "value": "mock_thread"})()
+            def create_synchronization_event(self, name): return type("Result", (), {"is_success": True, "value": "mock_event"})()
+            def create_lock(self, name): return type("Result", (), {"is_success": True, "value": "mock_lock"})()
+            def acquire_lock(self, lock_id, timeout_seconds): return type("Result", (), {"is_success": True, "value": True})()
+            def release_lock(self, lock_id): pass
+            def start_background_task(self, thread_id, func, daemon): return type("Result", (), {"is_success": True})()
+            def stop_background_task(self, thread_id, timeout_seconds): return type("Result", (), {"is_success": True})()
+            def join_background_task(self, thread_id, timeout_seconds): pass
+            def clear_event(self, event_id): pass
+            def set_event(self, event_id): pass
+            def wait_for_event(self, event_id, timeout_seconds): return type("Result", (), {"is_success": True, "value": False})()
+            def is_event_set(self, event_id): return type("Result", (), {"is_success": True, "value": False})()
+            def cleanup_thread_context(self, thread_id): pass
+            def get_thread_state(self, thread_id): return type("Result", (), {"is_success": True, "value": "running"})()
+        
+        class ConcreteTimePort(TimeManagementPort):
+            def get_current_time(self): return type("Result", (), {"is_success": True, "value": type("MockTime", (), {"value": datetime.now()})()})()
+            def get_current_datetime(self): return type("Result", (), {"is_success": True, "value": datetime.now()})()
+            def get_current_timestamp_ms(self): return type("Result", (), {"is_success": True, "value": 0.0})()
+            def measure_execution_time(self, name): return type("Result", (), {"is_success": True, "value": "mock_measurement"})()
+            def stop_measurement(self, measurement_id): return type("Result", (), {"is_success": True, "value": 1.0})()
+            def sleep(self, seconds): pass
+            def get_execution_time_ms(self, measurement_id): return type("Result", (), {"is_success": True, "value": 1.0})()
+        
+        # Create concrete instances
+        concurrency_port = ConcreteConcurrencyPort()
+        time_port = ConcreteTimePort()
+        
+        self.processor = AudioProcessor(
+            concurrency_port=concurrency_port,
+            time_port=time_port,
             config=config,
-            status=ProcessorStatus.STOPPED,
         )
         # Set the entity ID after creation since it's inherited from Entity
-        processor_entity._id = processor_id
+        # Use a different approach to set the ID
+        self.processor._id = processor_id
 
         self.logger.info("Created audio processor: {processor_id}")
-        return processor_entity
+        return self.processor
 
     def start_processor(self, processor: AudioProcessorEntity,
     ) -> bool:

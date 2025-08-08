@@ -7,10 +7,9 @@ Extracted from infrastructure/transcription/onnx_transcription_service.py
 from __future__ import annotations
 
 import io
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-
-import numpy as np
 
 from src_refactored.domain.common.value_object import ValueObject
 
@@ -24,7 +23,7 @@ class TranscriptionRequest(ValueObject):
     
     Encapsulates all parameters needed for a transcription request.
     """
-    audio_input: str | io.BytesIO | np.ndarray
+    audio_input: str | io.BytesIO | Sequence[float]
     language: Language | None = None
     task: str = "transcribe"  # or "translate"
     return_segments: bool = True
@@ -62,6 +61,6 @@ class TranscriptionRequest(ValueObject):
             return "file_path"
         if isinstance(self.audio_input, io.BytesIO):
             return "byte_stream"
-        if isinstance(self.audio_input, np.ndarray):
-            return "numpy_array"
+        if isinstance(self.audio_input, Sequence):
+            return "sequence"
         return "unknown"

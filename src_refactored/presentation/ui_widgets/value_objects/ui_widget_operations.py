@@ -4,21 +4,31 @@ This module contains enums and value objects related to UI widget operations,
 including creation, event handling, and state management.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 from enum import Enum
+from typing import Any
+
+from src_refactored.domain.common.value_object import ValueObject
 
 
 class CreateResult(Enum):
-    """Enumeration of possible widget creation results."""
+    """Enumeration of widget creation results."""
     SUCCESS = "success"
-    VALIDATION_ERROR = "validation_error"
-    STYLING_ERROR = "styling_error"
-    PARENT_ERROR = "parent_error"
-    INTERNAL_ERROR = "internal_error"
+    FAILED = "failed"
+    VALIDATION_FAILED = "validation_failed"
+    CREATION_FAILED = "creation_failed"
+    STYLING_FAILED = "styling_failed"
+    CONFIGURATION_FAILED = "configuration_failed"
 
 
 class CreatePhase(Enum):
     """Enumeration of widget creation phases for progress tracking."""
     INITIALIZATION = "initialization"
+    VALIDATION = "validation"
+    CREATION = "creation"
+    STYLING = "styling"
     PARAMETER_VALIDATION = "parameter_validation"
     WIDGET_CREATION = "widget_creation"
     STYLING_APPLICATION = "styling_application"
@@ -46,6 +56,8 @@ class ToggleSize(Enum):
 class HandleResult(Enum):
     """Enumeration of possible event handling results."""
     SUCCESS = "success"
+    FAILED = "failed"
+    VALIDATION_FAILED = "validation_failed"
     EVENT_NOT_SUPPORTED = "event_not_supported"
     WIDGET_NOT_FOUND = "widget_not_found"
     HANDLER_ERROR = "handler_error"
@@ -57,6 +69,8 @@ class HandleResult(Enum):
 class HandlePhase(Enum):
     """Enumeration of event handling phases for progress tracking."""
     INITIALIZATION = "initialization"
+    VALIDATION = "validation"
+    PROCESSING = "processing"
     EVENT_VALIDATION = "event_validation"
     WIDGET_VALIDATION = "widget_validation"
     HANDLER_LOOKUP = "handler_lookup"
@@ -68,6 +82,7 @@ class HandlePhase(Enum):
 
 class EventType(Enum):
     """Enumeration of supported event types."""
+    CLICK = "click"
     MOUSE_PRESS = "mouse_press"
     MOUSE_RELEASE = "mouse_release"
     MOUSE_CLICK = "mouse_click"
@@ -131,3 +146,153 @@ class StateChangeType(Enum):
     TEXT_CHANGE = "text_change"
     SELECTION_CHANGE = "selection_change"
     PROPERTY_CHANGE = "property_change"
+
+
+class WidgetProperty(Enum):
+    """Widget property enumeration."""
+    WIDTH = "width"
+    HEIGHT = "height"
+    POSITION_X = "position_x"
+    POSITION_Y = "position_y"
+    VISIBLE = "visible"
+    ENABLED = "enabled"
+    TEXT = "text"
+    VALUE = "value"
+    STYLE = "style"
+    COLOR = "color"
+    BACKGROUND_COLOR = "background_color"
+    FONT = "font"
+    FONT_SIZE = "font_size"
+    OPACITY = "opacity"
+    Z_ORDER = "z_order"
+
+
+class WidgetOperationType(Enum):
+    """Types of widget operations."""
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+    SHOW = "show"
+    HIDE = "hide"
+    ENABLE = "enable"
+    DISABLE = "disable"
+    MOVE = "move"
+    RESIZE = "resize"
+    STYLE = "style"
+    FOCUS = "focus"
+    BLUR = "blur"
+    CLICK = "click"
+    HOVER = "hover"
+
+
+@dataclass(frozen=True)
+class WidgetOperation(ValueObject):
+    """Represents an operation to be performed on a widget."""
+    
+    operation_type: WidgetOperationType
+    widget_id: str
+    parameters: dict[str, Any] | None = None
+    priority: int = 0
+    is_async: bool = False
+    timeout_ms: int | None = None
+    
+    def __post_init__(self) -> None:
+        """Validate widget operation parameters."""
+        if not isinstance(self.operation_type, WidgetOperationType):
+            msg = "operation_type must be a WidgetOperationType"
+            raise ValueError(msg)
+        
+        if not self.widget_id or not isinstance(self.widget_id, str):
+            msg = "widget_id must be a non-empty string"
+            raise ValueError(msg)
+        
+        if self.parameters is not None and not isinstance(self.parameters, dict):
+            msg = "parameters must be a dictionary or None"
+            raise ValueError(msg)
+        
+        if self.priority < 0:
+            msg = "priority must be non-negative"
+            raise ValueError(msg)
+        
+        if self.timeout_ms is not None and self.timeout_ms <= 0:
+            msg = "timeout_ms must be positive"
+            raise ValueError(msg)
+    
+    def with_parameters(self, **kwargs: Any) -> WidgetOperation:
+        """Create a new operation with additional parameters."""
+        current_params = self.parameters or {}
+        new_params = {**current_params, **kwargs}
+        
+        return WidgetOperation(
+            operation_type=self.operation_type,
+            widget_id=self.widget_id,
+            parameters=new_params,
+            priority=self.priority,
+            is_async=self.is_async,
+            timeout_ms=self.timeout_ms,
+        )
+    
+    def with_priority(self, priority: int) -> WidgetOperation:
+        """Create a new operation with different priority."""
+        return WidgetOperation(
+            operation_type=self.operation_type,
+            widget_id=self.widget_id,
+            parameters=self.parameters,
+            priority=priority,
+            is_async=self.is_async,
+            timeout_ms=self.timeout_ms,
+        )
+
+
+@dataclass(frozen=True)
+class WidgetOperationResult(ValueObject):
+    """Result of a widget operation."""
+    
+    operation: WidgetOperation
+    success: bool
+    message: str = ""
+    data: dict[str, Any] | None = None
+    execution_time_ms: int = 0
+    
+    def __post_init__(self) -> None:
+        """Validate operation result."""
+        if not isinstance(self.operation, WidgetOperation):
+            msg = "operation must be a WidgetOperation"
+            raise ValueError(msg)
+        
+        if self.execution_time_ms < 0:
+            msg = "execution_time_ms must be non-negative"
+            raise ValueError(msg)
+    
+    @classmethod
+    def success_result(
+        cls,
+        operation: WidgetOperation,
+        message: str = "Operation completed successfully",
+        data: dict[str, Any] | None = None,
+        execution_time_ms: int = 0,
+    ) -> WidgetOperationResult:
+        """Create a successful operation result."""
+        return cls(
+            operation=operation,
+            success=True,
+            message=message,
+            data=data,
+            execution_time_ms=execution_time_ms,
+        )
+    
+    @classmethod
+    def failure_result(
+        cls,
+        operation: WidgetOperation,
+        message: str = "Operation failed",
+        execution_time_ms: int = 0,
+    ) -> WidgetOperationResult:
+        """Create a failed operation result."""
+        return cls(
+            operation=operation,
+            success=False,
+            message=message,
+            data=None,
+            execution_time_ms=execution_time_ms,
+        )

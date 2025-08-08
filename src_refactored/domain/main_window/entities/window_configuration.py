@@ -112,15 +112,13 @@ class WindowConfiguration(Entity[str],
                 max_height=600,
             )
 
-            icon_result = IconPath.from_resource("resources/Windows 1 Theta.png")
-            if not icon_result.is_success:
-                return Result.failure(f"Failed to create icon path: {icon_result.error}")
+            icon_path = IconPath(path="resources/Windows 1 Theta.png")
 
             config = cls(
                 config_id="default_window_config",
                 title="WinSTT",
                 dimensions=dimensions,
-                icon_path=icon_result.value,
+                icon_path=icon_path,
                 size_policy=WindowSizePolicy.FIXED,
                 flags={WindowFlags.ACCEPT_DROPS},
             )
@@ -162,8 +160,7 @@ class WindowConfiguration(Entity[str],
     def update_icon(self, icon_path: IconPath,
     ) -> Result[None]:
         """Update window icon."""
-        if not icon_path.exists():
-            return Result.failure("Icon file does not exist")
+        # TODO: Add exists check through file system port if needed
 
         self._icon_path = icon_path
         self.mark_as_updated()

@@ -9,9 +9,12 @@ from src_refactored.domain.common.value_object import ValueObject
 
 @dataclass(frozen=True)
 class Duration(ValueObject):
-    """Value object for audio duration with validation and conversions."""
-
+    """Duration value object for audio operations."""
     seconds: float
+
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (self.seconds,)
 
     # Duration constraints
     MIN_DURATION = 0.1  # Minimum 100ms for meaningful audio
@@ -61,6 +64,10 @@ class Duration(ValueObject):
     def is_long(self) -> bool:
         """Check if duration is considered long (> 60 seconds)."""
         return self.seconds > 60.0
+
+    def total_seconds(self) -> float:
+        """Get total duration in seconds (compatibility method)."""
+        return self.seconds
 
     def format_time(self) -> str:
         """Format duration as MM:SS or HH:MM:SS."""

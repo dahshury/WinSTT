@@ -28,7 +28,7 @@ class ProcessingItem:
         self.metadata = metadata or {}
         self.attempts = 0
         self.max_attempts = 3
-        self.last_error = None
+        self.last_error: str | None = None
 
     def __repr__(self) -> str:
         return f"ProcessingItem(file_path='{self.file_path}', type='{self.item_type}')"
@@ -48,10 +48,10 @@ class BatchProcessorService:
             progress_callback: Optional callback for progress updates (message, percentage)
         """
         self.progress_callback = progress_callback
-        self.processing_queue = deque()
-        self.completed_items = []
-        self.failed_items = []
-        self.current_item = None
+        self.processing_queue: deque[ProcessingItem] = deque()
+        self.completed_items: list[ProcessingItem] = []
+        self.failed_items: list[ProcessingItem] = []
+        self.current_item: ProcessingItem | None = None
         self.status = ProcessingStatus.IDLE
         self.total_items = 0
         self.processed_items = 0
@@ -122,7 +122,7 @@ class BatchProcessorService:
         # Calculate progress
         progress = (self.processed_items / self.total_items) * 100 if self.total_items > 0 else 0
 
-        if self.progress_callback:
+        if self.progress_callback and self.current_item:
             file_name = Path(self.current_item.file_path).name
             self.progress_callback(
                 f"Processing {file_name} ({self.processed_items}/{self.total_items})",

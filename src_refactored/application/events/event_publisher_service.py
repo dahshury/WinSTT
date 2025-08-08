@@ -22,7 +22,7 @@ T = TypeVar("T", bound=DomainEvent)
 class EventSubscription:
     """Represents an event subscription."""
     event_type: type[DomainEvent]
-    handler: Callable[[DomainEvent], None]
+    handler: Callable[[Any], None]
     priority: int = 0
     is_async: bool = False
     max_retries: int = 3
@@ -115,7 +115,7 @@ class EventPublisher:
         
         # Event queue for batch processing
         self._event_queue: list[DomainEvent] = []
-        self._queue_lock = self._concurrency_service.create_lock() if configuration.enable_async_publishing else None
+        self._queue_lock = self._concurrency_service.create_lock("event_queue_lock") if configuration.enable_async_publishing else None
         
         # Active handlers tracking
         self._active_handlers: set[str] = set()
@@ -311,7 +311,7 @@ class EventPublisher:
             for subscription in subscriptions:
                 handler_result = self._execute_handler(subscription, event)
                 if not handler_result.is_success:
-                    failed_handlers.append((subscription, handler_result.error))
+                    failed_handlers.append((subscription, handler_result.error or "Unknown error"))
             
             # Record metrics
             duration = self._time_service.get_current_time() - start_time
@@ -377,7 +377,7 @@ class EventPublisher:
                 if isinstance(result, Exception):
                     failed_handlers.append((subscriptions[i], str(result)))
                 elif isinstance(result, Result) and not result.is_success:
-                    failed_handlers.append((subscriptions[i], result.error))
+                    failed_handlers.append((subscriptions[i], result.error or "Unknown error"))
             
             # Record metrics
             duration = self._time_service.get_current_time() - start_time
@@ -401,7 +401,7 @@ class EventPublisher:
 
     def _execute_handler(self, subscription: EventSubscription, event: DomainEvent) -> Result[None]:
         """Execute a single event handler."""
-        handler_name = f"{subscription.handler.__module__}.{subscription.handler.__name__}"
+        handler_name = getattr(subscription.handler, "__name__", str(subscription.handler))
         start_time = self._time_service.get_current_time()
         
         try:
@@ -449,7 +449,7 @@ class EventPublisher:
 
     async def _execute_handler_async(self, subscription: EventSubscription, event: DomainEvent) -> Result[None]:
         """Execute a single event handler asynchronously."""
-        handler_name = f"{subscription.handler.__module__}.{subscription.handler.__name__}"
+        handler_name = getattr(subscription.handler, "__name__", str(subscription.handler))
         start_time = self._time_service.get_current_time()
         
         try:
@@ -457,8 +457,21 @@ class EventPublisher:
             for attempt in range(subscription.max_retries + 1):
                 try:
                     # Execute with timeout
+                    async def _execute_handler_safely() -> None:
+                        """Execute handler safely regardless of sync/async nature."""
+                        if subscription.is_async:
+                            # Async handler - await directly
+                            handler_result = subscription.handler(event)  # type: ignore[func-returns-value]
+                            if hasattr(handler_result, "__await__"):
+                                await handler_result
+                            # If not awaitable, handler was already called above
+                        else:
+                            # Sync handler - call directly in async context
+                            subscription.handler(event)
+                    
+                    # Execute with timeout
                     await self._concurrency_service.wait_for(
-                        subscription.handler(event),
+                        _execute_handler_safely(),
                         timeout=subscription.timeout_seconds,
                     )
                     
@@ -507,7 +520,7 @@ class EventPublisher:
         
         if self._logger:
             for subscription, error in failed_handlers:
-                handler_name = f"{subscription.handler.__module__}.{subscription.handler.__name__}"
+                handler_name = getattr(subscription.handler, "__name__", str(subscription.handler))
                 self._logger.log_error(
                     "Event handler failed",
                     handler_name=handler_name,

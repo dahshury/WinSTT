@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from src_refactored.domain.common.progress_callback import ProgressCallback
 from src_refactored.domain.common.result import Result
+from src_refactored.domain.common.value_object import ProgressPercentage
 from src_refactored.domain.llm.value_objects.llm_model_name import LLMModelName
 from src_refactored.domain.llm.value_objects.llm_prompt import LLMPrompt
 from src_refactored.domain.llm.value_objects.llm_quantization_level import LLMQuantizationLevel
@@ -181,7 +182,7 @@ class UpdateLLMConfigUseCase:
         llm_worker_management_service: LLMWorkerManagementServiceProtocol,
         llm_configuration_service: LLMConfigurationServiceProtocol,
         logger_service: LoggerServiceProtocol,
-    ):
+    ) -> None:
         self._llm_validation = llm_validation_service
         self._llm_worker_management = llm_worker_management_service
         self._llm_configuration = llm_configuration_service
@@ -232,11 +233,10 @@ class UpdateLLMConfigUseCase:
                 response.result = LLMUpdateResult.CANCELLED
                 return response
 
-            if enabled_to_update and request.update.validate_compatibility:
-                model_validation = self._llm_validation.validate_llm_model_name(model_to_update,
-    )
+            if enabled_to_update and request.update.validate_compatibility and model_to_update:
+                model_validation = self._llm_validation.validate_llm_model_name(model_to_update)
                 if not model_validation.is_success:
-                    response.error_message = f"Invalid LLM model: {model_validation.error_message}"
+                    response.error_message = f"Invalid LLM model: {model_validation.error}"
                     response.result = LLMUpdateResult.MODEL_NOT_AVAILABLE
                     return response
 
@@ -245,26 +245,25 @@ class UpdateLLMConfigUseCase:
                 response.result = LLMUpdateResult.CANCELLED
                 return response
 
-            if enabled_to_update and request.update.validate_compatibility:
+            if enabled_to_update and request.update.validate_compatibility and quantization_to_update:
                 quantization_validation = self._llm_validation.validate_llm_quantization_level(quantization_to_update)
                 if not quantization_validation.is_success:
-                    response.error_message = f"Invalid LLM quantization: {quantization_validation.error_message}"
+                    response.error_message = f"Invalid LLM quantization: {quantization_validation.error}"
                     response.result = LLMUpdateResult.QUANTIZATION_NOT_SUPPORTED
                     return response
 
                 # Check model-quantization compatibility
-                compatibility_result = self._llm_validation.check_llm_compatibility(model_to_update,
-                quantization_to_update)
-                if compatibility_result.is_success:
-                    response.compatibility_check = compatibility_result.value
-                    if compatibility_result.value == LLMCompatibility.INCOMPATIBLE:
-                        response.error_message = (
- 
-    f"LLM model {model_to_update.value} is incompatible with quantization {quantization_to_update.value}")
-                        response.result = LLMUpdateResult.VALIDATION_FAILED
-                        return response
-                    if compatibility_result.value == LLMCompatibility.PARTIALLY_COMPATIBLE:
-                        response.warnings.append(f"LLM model {model_to_update.value} has limited compatibility with quantization {quantization_to_update.value}")
+                if model_to_update and quantization_to_update:
+                    compatibility_result = self._llm_validation.check_llm_compatibility(model_to_update, quantization_to_update)
+                    if compatibility_result.is_success:
+                        response.compatibility_check = compatibility_result.value
+                        if compatibility_result.value == LLMCompatibility.INCOMPATIBLE:
+                            response.error_message = (
+                                f"LLM model {model_to_update.value} is incompatible with quantization {quantization_to_update.value}")
+                            response.result = LLMUpdateResult.VALIDATION_FAILED
+                            return response
+                        if compatibility_result.value == LLMCompatibility.PARTIALLY_COMPATIBLE:
+                            response.warnings.append(f"LLM model {model_to_update.value} has limited compatibility with quantization {quantization_to_update.value}")
 
             # Phase 4: Validate prompt
             if not self._update_progress(request.progress_callback, LLMUpdatePhase.VALIDATING_PROMPT, 30):
@@ -274,7 +273,7 @@ class UpdateLLMConfigUseCase:
             if enabled_to_update and prompt_to_update:
                 prompt_validation = self._llm_validation.validate_llm_prompt(prompt_to_update)
                 if not prompt_validation.is_success:
-                    response.error_message = f"Invalid LLM prompt: {prompt_validation.error_message}"
+                    response.error_message = f"Invalid LLM prompt: {prompt_validation.error}"
                     response.result = LLMUpdateResult.PROMPT_INVALID
                     return response
 
@@ -286,7 +285,7 @@ class UpdateLLMConfigUseCase:
                     backup_path = backup_result.value
                     response.backup_config_path = backup_path
                 else:
-                    response.warnings.append(f"Failed to backup configuration: {backup_result.error_message}",
+                    response.warnings.append(f"Failed to backup configuration: {backup_result.error}",
     )
 
             # Phase 6: Stop current worker if needed
@@ -298,7 +297,7 @@ class UpdateLLMConfigUseCase:
             if worker_was_running and request.update.force_restart_worker:
                 stop_result = self._llm_worker_management.stop_current_llm_worker()
                 if not stop_result.is_success:
-                    response.warnings.append(f"Failed to stop current LLM worker: {stop_result.error_message}",
+                    response.warnings.append(f"Failed to stop current LLM worker: {stop_result.error}",
     )
 
             # Phase 7: Update configuration
@@ -307,15 +306,15 @@ class UpdateLLMConfigUseCase:
                 return response
 
             config_update_result = self._llm_configuration.update_llm_config(
-                enabled_to_update, model_to_update, quantization_to_update, prompt_to_update,
+                enabled_to_update or False, model_to_update, quantization_to_update, prompt_to_update,
             )
             if not config_update_result.is_success:
-                response.error_message = f"Failed to update LLM configuration: {config_update_result.error_message}"
+                response.error_message = f"Failed to update LLM configuration: {config_update_result.error}"
                 # Try to restore backup if available
                 if backup_path:
                     restore_result = self._llm_configuration.restore_configuration(backup_path)
                     if not restore_result.is_success:
-                        response.warnings.append(f"Failed to restore backup: {restore_result.error_message}",
+                        response.warnings.append(f"Failed to restore backup: {restore_result.error}",
     )
                 return response
 
@@ -329,7 +328,7 @@ class UpdateLLMConfigUseCase:
                 if save_result.is_success:
                     response.configuration_saved = True
                 else:
-                    response.warnings.append(f"Failed to save configuration: {save_result.error_message}",
+                    response.warnings.append(f"Failed to save configuration: {save_result.error}",
     )
                     response.result = LLMUpdateResult.CONFIGURATION_SAVE_FAILED
 
@@ -338,14 +337,14 @@ class UpdateLLMConfigUseCase:
                 response.result = LLMUpdateResult.CANCELLED
                 return response
 
-            if enabled_to_update and request.update.force_restart_worker:
+            if enabled_to_update and request.update.force_restart_worker and model_to_update and quantization_to_update and prompt_to_update:
                 worker_start_result = self._llm_worker_management.start_llm_worker_with_config(
                     model_to_update, quantization_to_update, prompt_to_update,
                 )
                 if worker_start_result.is_success:
                     response.worker_restarted = True
                 else:
-                    response.error_message = f"Failed to restart LLM worker: {worker_start_result.error_message}"
+                    response.error_message = f"Failed to restart LLM worker: {worker_start_result.error}"
                     response.result = LLMUpdateResult.WORKER_RESTART_FAILED
                     # Try to restore backup if available
                     if backup_path:
@@ -368,18 +367,19 @@ class UpdateLLMConfigUseCase:
             current_config_result = self._llm_configuration.get_current_llm_config()
             if current_config_result.is_success:
                 current_config = current_config_result.value
-                if (current_config.get("llm_enabled") == enabled_to_update and
-                    (not enabled_to_update or (
-                        current_config.get("llm_model") == model_to_update.value and
-                        current_config.get("llm_quantization") == quantization_to_update.value and
-                        current_config.get("llm_prompt") == prompt_to_update.value
-                    ))):
-                    response.updated_enabled = enabled_to_update
-                    response.updated_model = model_to_update
-                    response.updated_quantization = quantization_to_update
-                    response.updated_prompt = prompt_to_update
-                else:
-                    response.warnings.append("LLM configuration update verification failed")
+                if current_config is not None:
+                    if (current_config.get("llm_enabled") == enabled_to_update and
+                        (not enabled_to_update or (
+                            model_to_update and current_config.get("llm_model") == model_to_update.value and
+                            quantization_to_update and current_config.get("llm_quantization") == quantization_to_update.value and
+                            prompt_to_update and current_config.get("llm_prompt") == prompt_to_update.value
+                        ))):
+                        response.updated_enabled = enabled_to_update
+                        response.updated_model = model_to_update
+                        response.updated_quantization = quantization_to_update
+                        response.updated_prompt = prompt_to_update
+                    else:
+                        response.warnings.append("LLM configuration update verification failed")
 
             # Phase 11: Complete
             if not self._update_progress(request.progress_callback, LLMUpdatePhase.COMPLETED, 100):
@@ -429,12 +429,12 @@ class UpdateLLMConfigUseCase:
             if self._llm_worker_management.is_llm_worker_running():
                 disable_result = self._llm_worker_management.disable_llm_worker()
                 if not disable_result.is_success:
-                    response.warnings.append(f"Failed to disable LLM worker: {disable_result.error_message}")
+                    response.warnings.append(f"Failed to disable LLM worker: {disable_result.error}")
 
             # Update configuration
             config_update_result = self._llm_configuration.update_llm_config(False)
             if not config_update_result.is_success:
-                response.error_message =  f"Failed to disable LLM in configuration: {config_update_result.error_message}"
+                response.error_message = f"Failed to disable LLM in configuration: {config_update_result.error}"
                 return response
 
             # Save configuration if requested
@@ -443,7 +443,7 @@ class UpdateLLMConfigUseCase:
                 if save_result.is_success:
                     response.configuration_saved = True
                 else:
-                    response.warnings.append(f"Failed to save configuration: {save_result.error_message}")
+                    response.warnings.append(f"Failed to save configuration: {save_result.error}")
 
             response.updated_enabled = False
             response.result = LLMUpdateResult.SUCCESS
@@ -461,9 +461,10 @@ class UpdateLLMConfigUseCase:
     ) -> bool:
         """Update progress and check for cancellation"""
         if callback:
-            return callback(
-                percentage=percentage,
+            result = callback(
+                progress=ProgressPercentage(percentage),
                 message=f"LLM update phase: {phase.value}",
                 error=None,
             )
+            return result if result is not None else True
         return True

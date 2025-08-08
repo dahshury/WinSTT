@@ -6,6 +6,7 @@ Extracted from utils/listener.py Recorder class (lines 23-124).
 """
 
 import io
+import logging
 import threading
 import time
 import wave
@@ -16,8 +17,6 @@ from queue import Empty, Queue
 from typing import Any, Protocol
 
 import pyaudio
-
-from logger.logger import setup_logger
 
 # Import domain value objects
 from src_refactored.domain.audio.value_objects import (
@@ -290,7 +289,7 @@ class PyAudioRecorder:
         self._frames: list[bytes] = []
         self.p: pyaudio.PyAudio | None = None
         self.stream: pyaudio.Stream | None = None
-        self.logger = setup_logger()
+        self.logger = logging.getLogger(__name__)
         self._error_callback: Callable[[str], None] | None = None
 
         # Initialize PyAudio

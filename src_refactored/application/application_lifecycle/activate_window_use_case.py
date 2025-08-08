@@ -5,12 +5,12 @@ windows to the foreground, with support for multiple activation methods.
 """
 
 import logging
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from src_refactored.domain.application_lifecycle.entities import ActivationConfiguration, WindowInfo
+from src_refactored.domain.common.ports.time_port import ITimePort
 from src_refactored.domain.window_management.value_objects import (
     ActivationMethod,
     ActivationResult,
@@ -124,17 +124,22 @@ class ActivateWindowUseCase:
         system_tray: SystemTrayProtocol | None = None,
         keyboard: KeyboardProtocol | None = None,
         logger: logging.Logger | None = None,
+        time_port: ITimePort | None = None,
     ):
         self.window_finder = window_finder
         self.window_activator = window_activator
         self.system_tray = system_tray
         self.keyboard = keyboard
         self.logger = logger
+        self._time = time_port
 
     def execute(self, request: ActivateWindowRequest,
     ) -> ActivateWindowResponse:
         """Execute the window activation use case."""
-        start_time = time.time()
+        if self._time is None:
+            msg = "ITimePort is required for ActivateWindowUseCase"
+            raise ValueError(msg)
+        start_time = self._time.get_current_time()
 
         response = ActivateWindowResponse(
             result=ActivationResult.ERROR,
@@ -161,13 +166,15 @@ class ActivateWindowUseCase:
 
             if success:
                 response.result = ActivationResult.SUCCESS
-                response.activation_time_ms = (time.time() - start_time) * 1000
+                end_time = self._time.get_current_time()
+                response.activation_time_ms = (end_time - start_time) * 1000
                 self._update_progress(request, 100, "Window activated successfully")
 
                 if self.logger:
+                    method_name = response.method_used.value if response.method_used else "unknown"
                     self.logger.info(
                         "Window activated successfully using %s",
-                        response.method_used.value,
+                        method_name,
                     )
             else:
                 response.result = ActivationResult.ACTIVATION_FAILED
@@ -249,7 +256,10 @@ class ActivateWindowUseCase:
 
                 try:
                     if attempt > 0:
-                        time.sleep(config.retry_delay_seconds)
+                        if self._time is None:
+                            msg = "ITimePort is required for retry delays"
+                            raise ValueError(msg)
+                        self._time.sleep(config.retry_delay_seconds)
 
                     success = self._activate_with_method(method, config, window_info, response)
 
@@ -363,7 +373,10 @@ class ActivateWindowUseCase:
 
             for shortcut in shortcuts:
                 if self.keyboard.send_shortcut(shortcut):
-                    time.sleep(0.5)  # Wait for activation
+                    if self._time is None:
+                        msg = "ITimePort is required for activation delay"
+                        raise ValueError(msg)
+                    self._time.sleep(0.5)
                     # Verify activation by checking window state
                     current_state = self.window_finder.get_window_state(window_info.handle)
                     if current_state != WindowState.MINIMIZED:

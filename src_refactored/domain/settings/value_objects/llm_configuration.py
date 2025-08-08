@@ -20,6 +20,17 @@ class LLMConfiguration(ValueObject):
     temperature: float = 0.7
     enabled: bool = True
 
+    def _get_equality_components(self) -> tuple:
+        """Get components for equality comparison."""
+        return (
+            self.model_name,
+            self.quantization,
+            self.system_prompt,
+            self.max_tokens,
+            self.temperature,
+            self.enabled,
+        )
+
     def __post_init__(self):
         """Validate LLM configuration after initialization."""
         if not self.model_name or not self.model_name.strip():

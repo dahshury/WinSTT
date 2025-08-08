@@ -99,13 +99,13 @@ class DownloadProgress:
             progress = ProgressPercentage.from_ratio(min(progress_ratio, 1.0))
 
         message = (
-            f"Downloading {self.filename}: {self.downloaded_size.format_human_readable()} / {self.total_size.format_human_readable()}"
+            f"Downloading {self.filename}: {self.downloaded_size.format_human_readable() if self.downloaded_size else '0 B'} / {self.total_size.format_human_readable() if self.total_size else 'Unknown'}"
         )
         if self.transfer_rate.bytes_per_second > 0:
             message += f" ({self.transfer_rate.format_human_readable()})"
         else:
             progress = ProgressPercentage(0.0)
-            message = f"Downloading {self.filename}: {self.downloaded_size.format_human_readable()}"
+            message = f"Downloading {self.filename}: {self.downloaded_size.format_human_readable() if self.downloaded_size else '0 B'}"
 
         self.processing_status.update_progress(progress, message)
 
@@ -134,5 +134,7 @@ class DownloadProgress:
         if not self.is_size_known or self.transfer_rate.bytes_per_second <= 0:
             return None
 
+        if not self.total_size:
+            return None
         remaining_bytes = self.total_size.bytes - self.downloaded_size.bytes
         return remaining_bytes / self.transfer_rate.bytes_per_second

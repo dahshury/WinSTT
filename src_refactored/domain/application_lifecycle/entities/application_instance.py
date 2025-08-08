@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
+
 
 @dataclass
 class ApplicationInstance:
@@ -28,7 +30,7 @@ class ApplicationInstance:
         """Mark application as started."""
         self.is_running = True
         if self.startup_time is None:
-            self.startup_time = datetime.utcnow()
+            self.startup_time = datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp())
     
     def stop(self) -> None:
         """Mark application as stopped."""
@@ -43,7 +45,7 @@ class ApplicationInstance:
         if not self.startup_time:
             return 0.0
         
-        return (datetime.utcnow() - self.startup_time).total_seconds()
+        return (datetime.fromtimestamp(DomainIdentityGenerator.generate_timestamp()) - self.startup_time).total_seconds()
     
     def set_configuration(self, key: str, value: Any) -> None:
         """Set configuration value.

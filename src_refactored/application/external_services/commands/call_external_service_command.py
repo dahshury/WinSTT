@@ -49,7 +49,7 @@ class ServiceCallConfiguration:
     enable_async_execution: bool = False
     priority: CallPriority = CallPriority.NORMAL
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration parameters."""
         if self.timeout_seconds <= 0:
             msg = "Timeout must be positive"
@@ -66,7 +66,7 @@ class ServiceCallConfiguration:
 
 
 @dataclass
-class CallExternalServiceCommand(ICommand[dict[str, Any]]):
+class CallExternalServiceCommand(ICommand):
     """Command for calling external services.
     
     This command abstracts external service calls from use cases,
@@ -84,7 +84,7 @@ class CallExternalServiceCommand(ICommand[dict[str, Any]]):
     progress_callback: Callable[[float, str], None] | None = None
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate command parameters."""
         if not self.service_name:
             msg = "Service name is required"
@@ -101,7 +101,7 @@ class CallExternalServiceCommand(ICommand[dict[str, Any]]):
 
 
 @dataclass
-class BatchCallExternalServicesCommand(ICommand[list[dict[str, Any]]]):
+class BatchCallExternalServicesCommand(ICommand):
     """Command for calling multiple external services in batch.
     
     This command allows efficient batch processing of multiple
@@ -119,7 +119,7 @@ class BatchCallExternalServicesCommand(ICommand[list[dict[str, Any]]]):
     progress_callback: Callable[[float, str], None] | None = None
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate batch command parameters."""
         if not self.service_calls:
             msg = "At least one service call is required"
@@ -136,7 +136,7 @@ class BatchCallExternalServicesCommand(ICommand[list[dict[str, Any]]]):
 
 
 @dataclass
-class CancelServiceCallCommand(ICommand[None]):
+class CancelServiceCallCommand(ICommand):
     """Command for canceling an ongoing external service call."""
     correlation_id: str
     service_type: ServiceType
@@ -144,7 +144,7 @@ class CancelServiceCallCommand(ICommand[None]):
     force_cancel: bool = False
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate cancellation command parameters."""
         if not self.correlation_id:
             msg = "Correlation ID is required"

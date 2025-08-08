@@ -647,7 +647,7 @@ class ResourceCleanupService:
         """
         total_resources = len(self.cleanup_manager.list_resources())
 
-        stats = {
+        stats: dict[str, Any] = {
             "total_resources": total_resources,
             "by_type": {},
             "by_state": {},
@@ -664,7 +664,9 @@ class ResourceCleanupService:
             resource_info = self.cleanup_manager.get_resource_info(resource_id)
             if resource_info:
                 state = resource_info.state.value
-                stats["by_state"][state] = stats["by_state"].get(state, 0) + 1
+                if state not in stats["by_state"]:
+                    stats["by_state"][state] = 0
+                stats["by_state"][state] += 1
 
         return stats
 

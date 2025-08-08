@@ -15,7 +15,6 @@ from src_refactored.domain.application_lifecycle.ports.application_lifecycle_por
 )
 from src_refactored.domain.application_lifecycle.value_objects.shutdown_result import ShutdownResult
 from src_refactored.domain.application_lifecycle.value_objects.startup_result import StartupResult
-from src_refactored.domain.common.result import Result
 
 
 class PyQtApplicationLifecycleAdapter(ApplicationLifecyclePort):
@@ -25,135 +24,121 @@ class PyQtApplicationLifecycleAdapter(ApplicationLifecyclePort):
         self._app: QApplication | None = None
         self._is_initialized = False
 
-    def initialize_application(self, config: StartupConfiguration) -> Result[None]:
-        """Initialize the PyQt application."""
+    def startup(self, config: StartupConfiguration) -> StartupResult:
+        """Start up the application."""
         try:
-            if self._is_initialized:
-                return Result.success(None)
-
-            # Create QApplication if it doesn't exist
-            if not QApplication.instance():
-                self._app = QApplication(sys.argv)
-            else:
-                self._app = QApplication.instance()
-
+            # Initialize QApplication if not already done
+            if not self._app or not isinstance(self._app, QApplication):
+                existing_app = QApplication.instance()
+                if existing_app:
+                    self._app = existing_app
+                else:
+                    new_app = QApplication([])
+                    self._app = new_app
+            
             # Set application metadata
-            if config.app_name:
+            if self._app and hasattr(config, "app_name") and config.app_name:
                 self._app.setApplicationName(config.app_name)
-            if config.app_version:
+            if self._app and hasattr(config, "app_version") and config.app_version:
                 self._app.setApplicationVersion(config.app_version)
-            if config.organization_name:
+            if self._app and hasattr(config, "organization_name") and config.organization_name:
                 self._app.setOrganizationName(config.organization_name)
-            if config.organization_domain:
-                self._app.setOrganizationDomain(config.organization_domain)
+            
+            return StartupResult.SUCCESS
+        except Exception:
+            return StartupResult.INITIALIZATION_FAILED
 
-            self._is_initialized = True
-            return Result.success(None)
+    def start_event_loop(self) -> int:
+        """Start the main application event loop."""
+        try:
+            if not self._is_initialized or not self._app:
+                return -1
 
-        except Exception as e:
-            return Result.failure(f"Failed to initialize application: {e!s}")
+            # Start the event loop
+            return self._app.exec()
 
-    def start_application(self) -> Result[StartupResult]:
+        except Exception:
+            return -1
+
+    def start_application(self) -> StartupResult:
         """Start the PyQt application event loop."""
         try:
             if not self._is_initialized or not self._app:
-                return Result.failure("Application not initialized")
+                return StartupResult.INITIALIZATION_FAILED
 
             # Start the event loop
             exit_code = self._app.exec()
             
-            result = StartupResult(
-                success=exit_code == 0,
-                exit_code=exit_code,
-                message=f"Application exited with code {exit_code}",
-            )
-            
-            return Result.success(result)
+            if exit_code == 0:
+                return StartupResult.SUCCESS
+            return StartupResult.INITIALIZATION_FAILED
 
-        except Exception as e:
-            result = StartupResult(
-                success=False,
-                exit_code=-1,
-                message=f"Application startup failed: {e!s}",
-            )
-            return Result.failure(str(e), result)
+        except Exception:
+            return StartupResult.INITIALIZATION_FAILED
 
-    def shutdown_application(self, config: ShutdownConfiguration) -> Result[ShutdownResult]:
+    def shutdown_application(self, config: ShutdownConfiguration) -> ShutdownResult:
         """Shutdown the PyQt application."""
         try:
             if not self._app:
-                result = ShutdownResult(
-                    success=True,
-                    cleanup_performed=False,
-                    message="Application was not running",
-                )
-                return Result.success(result)
+                return ShutdownResult.SUCCESS
 
             # Perform cleanup if requested
-            cleanup_performed = False
-            if config.perform_cleanup:
+            if hasattr(config, "perform_cleanup") and config.perform_cleanup:
                 # Close all windows
                 self._app.closeAllWindows()
-                cleanup_performed = True
 
             # Request application exit
-            if config.force_exit:
+            if hasattr(config, "force_exit") and config.force_exit:
                 self._app.quit()
             else:
-                self._app.exit(config.exit_code or 0)
+                exit_code = getattr(config, "exit_code", 0) or 0
+                self._app.exit(exit_code)
 
-            result = ShutdownResult(
-                success=True,
-                cleanup_performed=cleanup_performed,
-                message="Application shutdown initiated",
-            )
-            
-            return Result.success(result)
+            return ShutdownResult.SUCCESS
 
-        except Exception as e:
-            result = ShutdownResult(
-                success=False,
-                cleanup_performed=False,
-                message=f"Shutdown failed: {e!s}",
-            )
-            return Result.failure(str(e), result)
+        except Exception:
+            return ShutdownResult.PARTIAL_SUCCESS
 
-    def request_exit(self, exit_code: int = 0) -> Result[None]:
+    def request_exit(self, exit_code: int = 0) -> None:
         """Request application exit with specified code."""
         try:
             if self._app:
                 self._app.exit(exit_code)
-            return Result.success(None)
-        except Exception as e:
-            return Result.failure(f"Failed to request exit: {e!s}")
+        except Exception:
+            pass
 
-    def is_running(self) -> Result[bool]:
+    def is_running(self) -> bool:
         """Check if the application is currently running."""
         try:
-            is_running = self._app is not None and self._is_initialized
-            return Result.success(is_running)
-        except Exception as e:
-            return Result.failure(f"Failed to check running status: {e!s}")
+            return self._app is not None and self._is_initialized
+        except Exception:
+            return False
 
-    def get_command_line_arguments(self) -> Result[list[str]]:
+    def get_command_line_arguments(self) -> list[str]:
         """Get command line arguments passed to the application."""
         try:
-            args = sys.argv.copy()
-            return Result.success(args)
-        except Exception as e:
-            return Result.failure(f"Failed to get command line arguments: {e!s}")
+            return sys.argv.copy()
+        except Exception:
+            return []
 
-    def set_application_metadata(self, name: str, version: str, organization: str, domain: str) -> Result[None]:
+    def set_application_metadata(self, name: str, version: str, organization: str) -> None:
         """Set application metadata."""
         try:
             if not self._app:
-                return Result.failure("Application not initialized")
+                return
 
             self._app.setApplicationName(name)
             self._app.setApplicationVersion(version)
             self._app.setOrganizationName(organization)
-            self._app.setOrganizationDomain(domain)
-            
-            return Result.success(None)
-        except Exception as e:
-            return Result.failure(f"Failed to set application metadata: {e!s}")
+        except Exception:
+            pass
+
+    def run_application(self) -> int:
+        """Run the application event loop."""
+        try:
+            if not self._is_initialized or not self._app:
+                return -1
+
+            return self._app.exec()
+        except Exception:
+            return -1

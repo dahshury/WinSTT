@@ -88,14 +88,14 @@ class UpdateSoundSettingsUseCase(UseCase[UpdateSoundSettingsRequest, UpdateSound
         """
         self._update_port = update_port
     
-    def execute(self, request: UpdateSoundSettingsRequest) -> Result[UpdateSoundSettingsResponse]:
+    def execute(self, request: UpdateSoundSettingsRequest) -> UpdateSoundSettingsResponse:
         """Execute the sound settings update operation.
         
         Args:
             request: Update sound settings request
             
         Returns:
-            Result[UpdateSoundSettingsResponse]: Result of the update operation
+            UpdateSoundSettingsResponse: Result of the update operation
         """
         try:
             # Report progress
@@ -118,7 +118,7 @@ class UpdateSoundSettingsUseCase(UseCase[UpdateSoundSettingsRequest, UpdateSound
                 if request.validate_changes:
                     validation_result = self._validate_update(update)
                     if not validation_result.is_success:
-                        validation_errors.append(validation_result.error())
+                        validation_errors.append(validation_result.error or "Unknown validation error")
                         failed_settings.append(update.setting_type.value)
                         continue
                 
@@ -128,7 +128,7 @@ class UpdateSoundSettingsUseCase(UseCase[UpdateSoundSettingsRequest, UpdateSound
                     updated_settings.append(update.setting_type.value)
                 else:
                     failed_settings.append(update.setting_type.value)
-                    validation_errors.append(update_result.error())
+                    validation_errors.append(update_result.error or "Unknown update error")
             
             # Report completion
             if request.progress_callback:
@@ -142,7 +142,7 @@ class UpdateSoundSettingsUseCase(UseCase[UpdateSoundSettingsRequest, UpdateSound
             if request.completion_callback:
                 request.completion_callback(updated_settings)
             
-            response = UpdateSoundSettingsResponse(
+            return UpdateSoundSettingsResponse(
                 success=success,
                 updated_settings=updated_settings,
                 failed_settings=failed_settings,
@@ -150,22 +150,18 @@ class UpdateSoundSettingsUseCase(UseCase[UpdateSoundSettingsRequest, UpdateSound
                 message=message,
             )
             
-            return Result.success(response)
-            
         except Exception as e:
             error_msg = f"Failed to update sound settings: {e!s}"
             if request.error_callback:
                 request.error_callback(error_msg)
             
-            response = UpdateSoundSettingsResponse(
+            return UpdateSoundSettingsResponse(
                 success=False,
                 updated_settings=[],
                 failed_settings=[],
                 validation_errors=[error_msg],
                 message=error_msg,
             )
-            
-            return Result.failure(error_msg)
     
     def _validate_update(self, update: SoundSettingsUpdate) -> Result[None]:
         """Validate a sound settings update.
@@ -177,7 +173,7 @@ class UpdateSoundSettingsUseCase(UseCase[UpdateSoundSettingsRequest, UpdateSound
             Result[None]: Validation result
         """
         try:
-            if update.setting_type in [SettingType.RECORDING_SOUND, SettingType.NOTIFICATION_SOUND]:
+            if update.setting_type == SettingType.RECORDING_SOUND:
                 # Validate file path
                 if not isinstance(update.new_value, str):
                     return Result.failure(f"Sound file path must be a string, got {type(update.new_value)}")
@@ -218,11 +214,7 @@ class UpdateSoundSettingsUseCase(UseCase[UpdateSoundSettingsRequest, UpdateSound
                     return Result.success(None)
                 return Result.failure("Failed to update recording sound")
             
-            if update.setting_type == SettingType.NOTIFICATION_SOUND:
-                if self._update_port.update_notification_sound(update.new_value):
-                    return Result.success(None)
-                return Result.failure("Failed to update notification sound")
-            
+
             if update.setting_type == SettingType.VOLUME_LEVEL:
                 if self._update_port.update_volume_level(update.new_value):
                     return Result.success(None)

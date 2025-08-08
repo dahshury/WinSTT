@@ -84,17 +84,21 @@ class ConfigureAudioUseCase(UseCase[ConfigureAudioRequest, ConfigureAudioRespons
             current_config = self._audio_recorder.get_configuration()
 
             # Build new configuration from request
-            new_config_data = {
-                "sample_rate": request.sample_rate or (current_config.sample_rate if current_config else None),
-                "channels": request.channels or (current_config.channels if current_config else None),
-                "audio_format": request.audio_format or (current_config.audio_format if current_config else None),
-                "chunk_size": request.chunk_size or (current_config.chunk_size if current_config else 1024),
-                "device_id": request.device_id if request.device_id is not None else (current_config.device_id if current_config else None),
-            }
+            sample_rate = request.sample_rate or (current_config.sample_rate if current_config else None)
+            channels = request.channels or (current_config.channels if current_config else None)
+            audio_format = request.audio_format or (current_config.audio_format if current_config else None)
+            chunk_size = request.chunk_size or (current_config.chunk_size if current_config else 1024)
+            device_id = request.device_id if request.device_id is not None else (current_config.device_id if current_config else None)
 
             # Create new configuration
             try:
-                new_configuration = AudioRecorderConfiguration(**new_config_data)
+                new_configuration = AudioRecorderConfiguration(
+                    sample_rate=sample_rate,
+                    channels=channels,
+                    audio_format=audio_format,
+                    chunk_size=chunk_size,
+                    device_id=device_id,
+                )
             except Exception as e:
                 return ConfigureAudioResponse(
                     success=False,
@@ -105,6 +109,13 @@ class ConfigureAudioUseCase(UseCase[ConfigureAudioRequest, ConfigureAudioRespons
             device_info = None
             if request.validate_device and self._audio_device_service:
                 try:
+                    # Ensure we have valid sample rate and channels before validation
+                    if new_configuration.sample_rate is None or new_configuration.channels is None:
+                        return ConfigureAudioResponse(
+                            success=False,
+                            error_message="Sample rate and channels are required for device validation",
+                        )
+                    
                     device_validation = self._audio_device_service.validate_device(
                         new_configuration.device_id,
                         new_configuration.sample_rate.value,
@@ -131,7 +142,7 @@ class ConfigureAudioUseCase(UseCase[ConfigureAudioRequest, ConfigureAudioRespons
             # Apply configuration to recorder
             config_result = self._audio_recorder.configure(new_configuration)
 
-            if config_result.is_failure:
+            if config_result.is_failure():
                 if self._error_callback_service:
                     self._error_callback_service.notify_error(
                         f"Failed to apply audio configuration: {config_result.error}",
@@ -148,8 +159,9 @@ class ConfigureAudioUseCase(UseCase[ConfigureAudioRequest, ConfigureAudioRespons
                 try:
                     test_result = self._audio_device_service.test_configuration(new_configuration)
                     if not test_result.success:
-                        # Rollback configuration
-                        self._audio_recorder.configure(current_config)
+                        # Rollback configuration if current_config exists
+                        if current_config is not None:
+                            self._audio_recorder.configure(current_config)
 
                         return ConfigureAudioResponse(
                             success=False,

@@ -5,17 +5,76 @@ This module contains the use case for configuring transcription models.
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from src_refactored.domain.common.abstractions import UseCase
+
+logger = logging.getLogger(__name__)
 from src_refactored.domain.common.result import Result
-from src_refactored.domain.transcription.entities import TranscriptionSession
+from src_refactored.domain.transcription.entities.transcription_session import TranscriptionSession
 from src_refactored.domain.transcription.value_objects import (
     ModelConfiguration,
     ModelSize,
     ModelType,
     TranscriptionState,
 )
+
+
+class ModelManagementServiceProtocol(Protocol):
+    """Protocol for model management services."""
+    
+    def reload_model(self, config: ModelConfiguration) -> Result[None]:
+        """Reload model with new configuration."""
+        ...
+    
+    def get_model_info(self, config: ModelConfiguration) -> Result[dict[str, Any]]:
+        """Get model information."""
+        ...
+
+
+class ConfigurationValidationServiceProtocol(Protocol):
+    """Protocol for configuration validation services."""
+    
+    def validate_model_configuration(self, config: ModelConfiguration) -> Result[list[str]]:
+        """Validate model configuration."""
+        ...
+
+
+class OptimizationServiceProtocol(Protocol):
+    """Protocol for optimization services."""
+    
+    def optimize_configuration(self, config: ModelConfiguration) -> Result[ModelConfiguration]:
+        """Optimize model configuration."""
+        ...
+
+
+class DefaultModelManagementService:
+    """Default implementation of model management service."""
+    
+    def reload_model(self, config: ModelConfiguration) -> Result[None]:
+        """Default model reload - no-op."""
+        return Result.success(None)
+    
+    def get_model_info(self, config: ModelConfiguration) -> Result[dict[str, Any]]:
+        """Default model info - empty dict."""
+        return Result.success({})
+
+
+class DefaultConfigurationValidationService:
+    """Default implementation of configuration validation service."""
+    
+    def validate_model_configuration(self, config: ModelConfiguration) -> Result[list[str]]:
+        """Default validation - no warnings."""
+        return Result.success([])
+
+
+class DefaultOptimizationService:
+    """Default implementation of optimization service."""
+    
+    def optimize_configuration(self, config: ModelConfiguration) -> Result[ModelConfiguration]:
+        """Default optimization - return unchanged config."""
+        return Result.success(config)
+
 
 # Constants for validation
 MAX_BEAM_SIZE = 20
@@ -133,7 +192,7 @@ class ConfigureModelUseCase(UseCase[ConfigureModelRequest, ConfigureModelRespons
         return DefaultOptimizationService()
 
     def execute(self, request: ConfigureModelRequest,
-    ) -> Result[ConfigureModelResponse]:
+    ) -> ConfigureModelResponse:
         """Execute the configure model use case.
         
         Args:
@@ -152,60 +211,70 @@ class ConfigureModelUseCase(UseCase[ConfigureModelRequest, ConfigureModelRespons
 
             # Check if transcription is in progress
             if self._transcription_session.get_state() == TranscriptionState.PROCESSING:
-                return Result.failure("Cannot configure model while transcription is in progress")
+                return ConfigureModelResponse(
+                    success=False,
+                    error_message="Cannot configure model while transcription is in progress",
+                )
 
             # Build new configuration
             new_config_result = self._build_configuration(request, current_config)
-            if new_config_result.is_failure():
-                return Result.failure(f"Failed to build configuration: {new_config_result.error}")
+            if not new_config_result.is_success:
+                return ConfigureModelResponse(
+                    success=False,
+                    error_message=f"Failed to build configuration: {new_config_result.error}",
+                )
 
             new_config = new_config_result.value
 
             # Validate configuration if requested
             validation_warnings = []
-            if request.validate_configuration:
+            if request.validate_configuration and new_config is not None:
                 validation_result = self._validate_configuration(new_config)
-                if validation_result.is_failure():
-                    return Result.failure(f"Configuration validation failed: {validation_result.error}")
+                if not validation_result.is_success:
+                    return ConfigureModelResponse(
+                        success=False,
+                        error_message=f"Configuration validation failed: {validation_result.error}",
+                    )
 
                 validation_warnings = validation_result.value or []
 
             # Optimize configuration if service available
-            if self._optimization_service:
+            if self._optimization_service and new_config is not None:
                 try:
                     optimization_result = (
                         self._optimization_service.optimize_configuration(new_config)
                     )
-                    if optimization_result.is_success():
+                    if optimization_result.is_success:
                         new_config = optimization_result.value
-                        if optimization_result.warnings:
-                            validation_warnings.extend(optimization_result.warnings)
+                        # Handle warnings if they exist in the result structure
                 except Exception as e:
                     logger.warning("Configuration optimization failed: %s", e)
                     # Optimization failure shouldn't block configuration
                     validation_warnings.append(f"Configuration optimization failed: {e!s}")
 
             # Convert to configuration info
-            config_info = self._convert_to_config_info(new_config,
-    )
+            config_info = self._convert_to_config_info(new_config) if new_config else None
 
             # Check if model reload is required
-            requires_reload = self._requires_model_reload(current_config, new_config)
+            requires_reload = self._requires_model_reload(current_config, new_config) if new_config else False
 
             # Apply configuration if requested
             configuration_applied = False
             if request.apply_immediately:
                 apply_result = self._transcription_session.configure_model(new_config)
-                if apply_result.is_failure():
-                    return Result.failure(f"Failed to apply configuration: {apply_result.error}")
+                if not apply_result.is_success:
+                    return ConfigureModelResponse(
+                        success=False,
+                        error_message=f"Failed to apply configuration: {apply_result.error}",
+                    )
 
                 configuration_applied = True
 
                 # Reload model if required and service available
-                if requires_reload and self._model_service:
+                if requires_reload and self._model_service and new_config is not None:
                     try:
                         reload_result = self._model_service.reload_model(new_config)
-                        if reload_result.is_failure():
+                        if not reload_result.is_success:
                             validation_warnings.append(
                                 f"Model reload failed: {reload_result.error}",
                             )
@@ -213,21 +282,22 @@ class ConfigureModelUseCase(UseCase[ConfigureModelRequest, ConfigureModelRespons
                         logger.warning("Model reload failed: %s", e)
                         validation_warnings.append(f"Model reload error: {e!s}")
 
-            return Result.success(
-                ConfigureModelResponse(
-                    success=True,
-                    configuration=config_info,
-                    previous_configuration=previous_config_info,
-                    configuration_applied=configuration_applied,
-                    requires_model_reload=requires_reload,
-                    validation_warnings=validation_warnings if validation_warnings else None,
-                ),
+            return ConfigureModelResponse(
+                success=True,
+                configuration=config_info,
+                previous_configuration=previous_config_info,
+                configuration_applied=configuration_applied,
+                requires_model_reload=requires_reload,
+                validation_warnings=validation_warnings if validation_warnings else None,
             )
 
         except Exception as e:
             logger.exception("Unexpected error configuring model")
             error_msg = f"Unexpected error configuring model: {e!s}"
-            return Result.failure(error_msg)
+            return ConfigureModelResponse(
+                success=False,
+                error_message=error_msg,
+            )
 
     def _build_configuration(
         self,
@@ -347,7 +417,7 @@ class ConfigureModelUseCase(UseCase[ConfigureModelRequest, ConfigureModelRespons
             # Use validation service if available
             if self._validation_service:
                 validation_result = self._validation_service.validate_model_configuration(config)
-                if validation_result.is_failure():
+                if not validation_result.is_success:
                     return validation_result
                 warnings.extend(validation_result.value or [])
 
@@ -427,16 +497,15 @@ class ConfigureModelUseCase(UseCase[ConfigureModelRequest, ConfigureModelRespons
         if self._model_service:
             try:
                 model_info = self._model_service.get_model_info(config)
-                if model_info.is_success():
-                    estimated_memory = model_info.value.get("memory_usage")
-                    supported_languages = model_info.value.get("supported_languages",
-    )
+                if model_info.is_success:
+                    estimated_memory = model_info.value.get("memory_usage") if model_info.value else None
+                    supported_languages = model_info.value.get("supported_languages") if model_info.value else []
             except Exception as e:
                 logger.warning("Failed to get model info: %s", e)
 
         return ModelConfigurationInfo(
-            model_type=config.model_type,
-            model_size=config.model_size,
+            model_type=config.model_type if isinstance(config.model_type, ModelType) else ModelType.WHISPER,
+            model_size=config.model_size if isinstance(config.model_size, ModelSize) else ModelSize.BASE,
             model_path=config.model_path or "",
             language=config.language,
             task=config.task,

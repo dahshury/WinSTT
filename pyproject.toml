@@ -96,17 +96,19 @@ dev-all = [
 python_version = "3.12"
 ignore_missing_imports = true
 strict = false
-exclude = ["@output/"]
+exclude = ["^@output/.*"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+exclude = ["@output/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "C90", "N", "UP", "S", "BLE", "FBT", "A", "COM", "C4", "DTZ", "T10", "EM", "EXE", "ISC", "ICN", "G", "INP", "PIE", "T20", "PYI", "PT", "Q", "RSE", "RET", "SLF", "SIM", "TID", "TCH", "ARG", "PTH", "ERA", "PGH", "PL", "TRY", "FLY", "NPY", "PERF", "FURB", "LOG", "RUF"]
 ignore = [
   "S101",   # Use of assert
   "T201",   # print() usage
+  "E501",   # Line too long
   "FBT001", # Boolean positional argument
   "FBT002", # Boolean default argument
   "PLR0913", # Too many arguments
