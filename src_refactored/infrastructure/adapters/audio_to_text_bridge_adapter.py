@@ -6,6 +6,7 @@ hexagonal architecture principles.
 """
 
 import contextlib
+import threading
 import io
 from collections.abc import Callable
 from typing import Any
@@ -53,6 +54,7 @@ class AudioToTextBridgeAdapter:
         self._logger = logger
         self._ui_callback = ui_callback
         self._text_paste = text_paste_port
+        self._kb_fallback = None
         
         # Audio recording state
         self._audio_to_text: Any | None = None
@@ -86,38 +88,49 @@ class AudioToTextBridgeAdapter:
             # Only try to create AudioToText if both core services are available
             # Otherwise, we'll operate in a degraded mode where we handle recording ourselves
             if transcriber_available and vad_available:
-                # Import the original AudioToText system
-                from utils.listener import AudioToText
-                
-                # Create AudioToText instance with real adapters
-                self._audio_to_text = AudioToText(
-                    model_cls=self._transcription_adapter,
-                    vad_cls=self._vad_adapter,
-                    rec_key=self._recording_key,
-                    error_callback=self._create_error_callback(),
+                # Use new hexagonal AudioToTextService
+                from src_refactored.application.listener.audio_to_text_config import (
+                    AudioToTextConfig,
                 )
+                from src_refactored.application.listener.audio_to_text_service import (
+                    AudioToTextService,
+                )
+                config = AudioToTextConfig(
+                    rec_key=self._recording_key,
+                    channels=1,
+                    rate=16000,
+                    start_sound_file="media/splash.mp3",
+                )
+                def _on_complete_cb(result_text: str) -> None:
+                    # Bridge UI completion to controller; ensure UI clears transcribing state
+                    if self._ui_callback:
+                        with contextlib.suppress(Exception):
+                            message = result_text if (result_text and str(result_text).strip()) else "Ready for transcription"
+                            # hold=False so it auto-clears per adapter settings
+                            self._ui_callback(message, None, None, False, True)
+
+                self._audio_to_text = AudioToTextService(
+                    config=config,
+                    transcriber=self._transcription_adapter,
+                    vad=self._vad_adapter,
+                    logger=self._logger,  # type: ignore[arg-type]
+                    on_transcription_complete=_on_complete_cb,
+                )
+                # DO NOT initialize hotkeys - the main window handles hotkeys and calls our methods directly
             else:
                 if self._logger:
                     self._logger.log_warning("Running in degraded mode without AudioToText system")
                 self._audio_to_text = None
                 return
             
-            # Override the transcription handler to sync state
+            # For the new service, bridge by calling its public methods directly
             att = self._audio_to_text
             if att is None:
                 return
-            # Store original method references; assign via setattr to satisfy type checkers
-            original_transcribe_and_paste = att.transcribe_and_paste
-            setattr(att, "transcribe_and_paste", self._bridged_transcribe_and_paste)
-            self._original_transcribe_and_paste = original_transcribe_and_paste
-            
-            # Override recording start/stop to sync state
-            original_start_recording = att.start_recording
-            original_stop_recording = att.stop_recording
-            setattr(att, "start_recording", self._bridged_start_recording)
-            setattr(att, "stop_recording", self._bridged_stop_recording)
-            self._original_start_recording = original_start_recording
-            self._original_stop_recording = original_stop_recording
+            # Store original callables only if present (legacy only)
+            self._original_transcribe_and_paste = getattr(att, "transcribe_and_paste", None)
+            self._original_start_recording = getattr(att, "start_recording", None)
+            self._original_stop_recording = getattr(att, "stop_recording", None)
             
             if self._logger:
                 self._logger.log_info("AudioToText bridge adapter initialized successfully")
@@ -159,15 +172,7 @@ class AudioToTextBridgeAdapter:
     def _bridged_start_recording(self) -> None:
         """Start recording with state synchronization."""
         try:
-            # Ensure audio input device exists before starting
-            if not self.check_audio_device():
-                if self._ui_callback:
-                    self._ui_callback("No recording device detected.\nPlease connect a microphone.", None, None, None, None)
-                if self._logger:
-                    self._logger.log_warning("Attempted to start recording with no input device detected")
-                return
-
-            # Call original start recording first to validate underlying audio stack
+            # Trigger underlying start (plays beep immediately in service), then validate device asynchronously
             if self._original_start_recording:
                 self._original_start_recording()
 
@@ -176,6 +181,25 @@ class AudioToTextBridgeAdapter:
             
             if self._logger:
                 self._logger.log_info("Recording started via bridge adapter")
+
+            # Run device presence check in background; if it fails, stop recording and notify
+            def _post_check() -> None:
+                try:
+                    if not self.check_audio_device():
+                        if self._ui_callback:
+                            self._ui_callback("No recording device detected. Please connect a microphone.", None, None, None, None)
+                        if self._logger:
+                            self._logger.log_warning("Recording stopped: no input device detected")
+                        with contextlib.suppress(Exception):
+                            if self._original_stop_recording:
+                                self._original_stop_recording()
+                        with contextlib.suppress(Exception):
+                            self._audio_recorder.stop_recording()
+                except Exception as e:
+                    if self._logger:
+                        self._logger.log_debug(f"Post-start device check failed: {e}")
+
+            threading.Thread(target=_post_check, daemon=True).start()
                 
         except Exception as e:
             if self._logger:
@@ -215,18 +239,7 @@ class AudioToTextBridgeAdapter:
     def start_recording_from_hotkey(self) -> bool:
         """Entry point for starting recording initiated by a hotkey in the app layer."""
         try:
-            # Immediately gate by device availability to avoid stale state causing UI to show recording
-            if not self.check_audio_device():
-                if self._ui_callback:
-                    self._ui_callback("No recording device detected.\nPlease connect a microphone.", None, None, None, None)
-                if self._logger:
-                    self._logger.log_warning("Hotkey start ignored due to no input device")
-                
-                # CRITICAL: Reset the underlying AudioToText PyAudio instance so it can detect newly connected devices
-                # This follows the pattern from the original listener.py implementation
-                self._reset_audio_backend_for_device_refresh()
-                return False
-
+            # Start immediately (plays beep) and validate device asynchronously in _bridged_start_recording
             self._audio_recorder.get_state()
             self._bridged_start_recording()
             after_state = self._audio_recorder.get_state()
@@ -248,6 +261,10 @@ class AudioToTextBridgeAdapter:
 
             self._bridged_stop_recording()
             # If no exception, consider stop successful; transcription is handled async in AudioToText
+            # In degraded mode (no AudioToText system), proactively clear "Transcribing..." by informing UI
+            if self._audio_to_text is None and self._ui_callback:
+                with contextlib.suppress(Exception):
+                    self._ui_callback("Recording completed. Transcription unavailable (ONNX not loaded).", None, None, None, None)
             return True
         except Exception as e:
             if self._logger:
@@ -330,18 +347,15 @@ class AudioToTextBridgeAdapter:
             return True
         
         try:
-            self._audio_to_text.capture_keys(self._recording_key)
+            # Service hotkey is not auto-registered here. Listening is coordinated by the UI layer.
             self._is_listening = True
             if self._logger:
-                self._logger.log_info("Started listening for hotkeys")
+                self._logger.log_info("Listening state set (UI handles hotkey registration)")
             return True
         except Exception as e:
             if self._logger:
-                self._logger.log_error(f"Failed to start listening: {e}")
-            # Try fallback system
-            self._create_fallback_recording_system()
-            self._is_listening = True
-            return True
+                self._logger.log_error(f"Failed to enter listening state: {e}")
+            return False
     
     def stop_listening(self) -> None:
         """Stop listening for hotkeys."""
@@ -491,43 +505,40 @@ class AudioToTextBridgeAdapter:
         try:
             if self._logger:
                 self._logger.log_info("Creating fallback recording system for testing")
-            
-            # Create a simple keyboard listener that can handle hotkeys
-            from keyboard import hook
-            
-            def fallback_key_handler(event):
-                """Simple fallback key handler for testing."""
-                try:
-                    # Parse the recording key (e.g., "F10", "Ctrl+Alt+A")
-                    key_parts = self._recording_key.lower().split("+")
-                    target_key = key_parts[-1]  # Last part is the main key
-                    
-                    # Check if this is our target key
-                    if event.name.lower() == target_key.lower():
-                        if event.event_type == "down":
-                            # Key pressed - start recording
-                            current_state = self._audio_recorder.get_state()
-                            if current_state.name != "RECORDING":
-                                if self._logger:
-                                    self._logger.log_debug(f"Key down: {event.name}, starting recording")
-                                self._start_fallback_recording()
-                        elif event.event_type == "up":
-                            # Key released - stop recording
-                            current_state = self._audio_recorder.get_state()
-                            if current_state.name == "RECORDING":
-                                if self._logger:
-                                    self._logger.log_debug(f"Key up: {event.name}, stopping recording")
-                                self._stop_fallback_recording()
-                                
-                except Exception as e:
+
+            # Use system integration adapter for hotkey handling instead of direct keyboard hooks
+            from src_refactored.infrastructure.system_integration.keyboard_hook_adapter import (
+                KeyboardHookAdapter,
+            )
+
+            self._kb_fallback = KeyboardHookAdapter()
+            self._kb_fallback.start()
+
+            def _pressed(_combo: Any) -> None:
+                current_state = self._audio_recorder.get_state()
+                if current_state.name != "RECORDING":
                     if self._logger:
-                        self._logger.log_error(f"Error in fallback key handler: {e}")
-            
-            # Install the keyboard hook
-            hook(fallback_key_handler)
-            
+                        self._logger.log_debug("Fallback: hotkey pressed, starting recording")
+                    self._start_fallback_recording()
+
+            def _released(_combo: Any) -> None:
+                current_state = self._audio_recorder.get_state()
+                if current_state.name == "RECORDING":
+                    if self._logger:
+                        self._logger.log_debug("Fallback: hotkey released, stopping recording")
+                    self._stop_fallback_recording()
+
+            self._kb_fallback.register_hotkey(
+                "bridge_fallback_hotkey",
+                self._recording_key,
+                _pressed,
+                _released,
+            )
+
             if self._logger:
-                self._logger.log_info(f"Fallback keyboard listener installed for key: {self._recording_key}")
+                self._logger.log_info(
+                    f"Fallback keyboard listener installed for key: {self._recording_key}",
+                )
             
         except Exception as e:
             if self._logger:
@@ -593,9 +604,10 @@ class AudioToTextBridgeAdapter:
                 self._audio_to_text.shutdown()
         self._audio_to_text = None
         
-        # Clean up keyboard hooks
-        try:
-            from keyboard import unhook_all
-            unhook_all()
-        except Exception:
-            pass
+        # Clean up fallback keyboard adapter if used
+        if self._kb_fallback is not None:
+            with contextlib.suppress(Exception):
+                self._kb_fallback.unregister_hotkey("bridge_fallback_hotkey")
+            with contextlib.suppress(Exception):
+                self._kb_fallback.shutdown()
+            self._kb_fallback = None

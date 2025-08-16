@@ -10,9 +10,17 @@ from .audio_device_service import AudioDeviceService
 from .audio_file_service import AudioFileService
 from .audio_playback_service import (
     AudioDeviceServiceProtocol as PlaybackDeviceProtocol,
+)
+from .audio_playback_service import (
     AudioFileServiceProtocol as PlaybackFileProtocol,
+)
+from .audio_playback_service import (
     AudioPlaybackService,
+)
+from .audio_playback_service import (
     AudioProcessingServiceProtocol as PlaybackProcessingProtocol,
+)
+from .audio_playback_service import (
     AudioStreamServiceProtocol as PlaybackStreamProtocol,
 )
 from .audio_processing_service import (
@@ -73,10 +81,10 @@ class AudioServiceFactory:
         logger_service = LoggerService()
 
         return AudioPlaybackService(
-            device_service=cast(PlaybackDeviceProtocol, device_service),
-            stream_service=cast(PlaybackStreamProtocol, stream_service),
-            file_service=cast(PlaybackFileProtocol, file_service),
-            processing_service=cast(PlaybackProcessingProtocol, processing_service),
+            device_service=cast("PlaybackDeviceProtocol", device_service),
+            stream_service=cast("PlaybackStreamProtocol", stream_service),
+            file_service=cast("PlaybackFileProtocol", file_service),
+            processing_service=cast("PlaybackProcessingProtocol", processing_service),
             validation_service=validation_service,
             progress_tracking_service=progress_service,
             logger_service=logger_service,
@@ -116,16 +124,22 @@ class AudioServiceFactory:
         logger_service = LoggerService()
 
         from .pyaudio_service import (
-            AudioValidationServiceProtocol as P_Validation,
-            DeviceManagementServiceProtocol as P_Device,
-            StreamManagementServiceProtocol as P_Stream,
             AudioDataServiceProtocol as P_Data,
         )
+        from .pyaudio_service import (
+            AudioValidationServiceProtocol as P_Validation,
+        )
+        from .pyaudio_service import (
+            DeviceManagementServiceProtocol as P_Device,
+        )
+        from .pyaudio_service import (
+            StreamManagementServiceProtocol as P_Stream,
+        )
         return PyAudioService(
-            validation_service=cast(P_Validation, validation_service),
-            device_management_service=cast(P_Device, device_management_service),
-            stream_management_service=cast(P_Stream, stream_management_service),
-            audio_data_service=cast(P_Data, audio_data_service),
+            validation_service=cast("P_Validation", validation_service),
+            device_management_service=cast("P_Device", device_management_service),
+            stream_management_service=cast("P_Stream", stream_management_service),
+            audio_data_service=cast("P_Data", audio_data_service),
             progress_tracking_service=progress_service,
             logger_service=logger_service,
         )

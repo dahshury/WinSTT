@@ -5,6 +5,8 @@ with progress tracking and comprehensive file operations.
 Extracted from utils/listener.py file persistence logic.
 """
 
+from __future__ import annotations
+
 import io
 import os
 import threading
@@ -19,11 +21,11 @@ import numpy as np
 
 from src_refactored.domain.audio.entities.audio_file import (
     AudioFile,
-    Duration,
     FilePath,
     FileSize,
     FileSource,
 )
+from src_refactored.domain.audio.value_objects.duration import Duration
 from src_refactored.domain.audio.value_objects.audio_data import AudioData
 from src_refactored.domain.audio.value_objects.audio_format import AudioFormat
 from src_refactored.domain.audio.value_objects.sample_rate import SampleRate

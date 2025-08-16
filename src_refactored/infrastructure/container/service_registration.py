@@ -173,17 +173,7 @@ def service(
         
         # Mark the class with registration metadata on __dict__ to avoid mypy attr-defined complaints
         try:
-            setattr(
-                cls,
-                "_service_metadata",
-                ServiceMetadata(
-                    service_type=service_type,
-                    implementation_type=cls,
-                    lifetime=lifetime,
-                    dependencies=dependencies,
-                    tags=tags,
-                ),
-            )
+            cls._service_metadata = ServiceMetadata(service_type=service_type, implementation_type=cls, lifetime=lifetime, dependencies=dependencies, tags=tags)
         except Exception:
             # Best-effort; registration is already stored in the registry
             pass

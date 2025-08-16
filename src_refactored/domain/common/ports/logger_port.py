@@ -23,7 +23,7 @@ class ILoggerPort(ABC):
         ...
 
     @abstractmethod
-    def info(self, message: str, **kwargs: Any) -> None:
+    def info(self, message: str, *args: Any, **kwargs: Any) -> None:
         """Log an info message.
         
         Args:
@@ -33,7 +33,7 @@ class ILoggerPort(ABC):
         ...
 
     @abstractmethod
-    def warning(self, message: str, **kwargs: Any) -> None:
+    def warning(self, message: str, *args: Any, **kwargs: Any) -> None:
         """Log a warning message.
         
         Args:
@@ -43,7 +43,7 @@ class ILoggerPort(ABC):
         ...
 
     @abstractmethod
-    def error(self, message: str, **kwargs: Any) -> None:
+    def error(self, message: str, *args: Any, **kwargs: Any) -> None:
         """Log an error message.
         
         Args:
@@ -53,7 +53,7 @@ class ILoggerPort(ABC):
         ...
 
     @abstractmethod
-    def exception(self, message: str, **kwargs: Any) -> None:
+    def exception(self, message: str, *args: Any, **kwargs: Any) -> None:
         """Log an exception with stack trace.
         
         Args:
@@ -63,7 +63,7 @@ class ILoggerPort(ABC):
         ...
 
     @abstractmethod
-    def debug(self, message: str, **kwargs: Any) -> None:
+    def debug(self, message: str, *args: Any, **kwargs: Any) -> None:
         """Log a debug message.
         
         Args:

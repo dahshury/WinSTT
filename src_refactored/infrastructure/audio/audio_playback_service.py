@@ -21,7 +21,6 @@ from src_refactored.domain.audio.value_objects import (
     Duration,
     PlaybackConfiguration,
     PlaybackMetrics,
-    PlaybackMode,
     PlaybackOperation,
     PlaybackResult,
     PlaybackState,
@@ -384,7 +383,12 @@ class AudioPlaybackService:
                 config = request.config
             else:
                 # Build a minimal default using a standard audio configuration
-                from src_refactored.domain.audio.value_objects import AudioConfiguration, AudioFormat, SampleRate, ChannelCount
+                from src_refactored.domain.audio.value_objects import (
+                    AudioConfiguration,
+                    AudioFormat,
+                    ChannelCount,
+                    SampleRate,
+                )
                 default_audio_cfg = AudioConfiguration(
                     sample_rate=SampleRate(44100),
                     channels=ChannelCount(2),
@@ -1058,7 +1062,6 @@ class AudioPlaybackService:
             # Update status with current information
             if self._state.status:
                 st = self._state.status
-                queue = self._state.playback_queue or []
                 # Recreate with updated derived values
                 self._state.status = PlaybackStatus(
                     is_playing=st.is_playing,
@@ -1445,7 +1448,6 @@ class AudioPlaybackService:
                 self.execute(init_req)
 
             # Load audio
-            from pathlib import Path as _Path
             load_req = AudioPlaybackServiceRequest(
                 request_id="load",
                 request_type=RequestType.START,

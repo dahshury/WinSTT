@@ -12,15 +12,13 @@ from typing import Any
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QWidget
 
-from src_refactored.presentation.core.container import injectable
 from src_refactored.domain.common.result import Result
 from src_refactored.infrastructure.presentation.qt.ui_core_abstractions import (
-    IUIEventHandler,
     IUIComponent,
+    IUIEventHandler,
     UIEvent,
-    UIEventType,
-    UIState,
 )
+from src_refactored.presentation.core.container import injectable
 
 
 @dataclass

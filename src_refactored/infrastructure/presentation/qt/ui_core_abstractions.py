@@ -5,6 +5,7 @@ existing UI patterns while enabling dependency injection and modular architectur
 """
 
 import abc
+import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -433,10 +434,8 @@ class UIWidgetComponent(UIComponentBase, Generic[TWidget]):
         try:
             # Connect common widget signals if they exist
             if hasattr(self._widget, "destroyed"):
-                try:
+                with contextlib.suppress(Exception):
                     self._widget.destroyed.connect(lambda _obj=None: self.emit_event(UIEventType.CLOSE))
-                except Exception:
-                    pass
 
             # Connect focus signals if available
             if hasattr(self._widget, "focusInEvent"):

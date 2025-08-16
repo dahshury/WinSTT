@@ -5,6 +5,7 @@ audio processing capabilities with threading support and progress callbacks.
 Extracted from src/ui/voice_visualizer.py lines 10-153.
 """
 
+import contextlib
 import queue
 import time
 from datetime import datetime
@@ -433,8 +434,6 @@ class AudioProcessorService:
 
         # Explicitly delete keys by string to satisfy type checkers
         for pid in list(self._active_processors.keys()):
-            try:
+            with contextlib.suppress(Exception):
                 del self._active_processors[pid]
-            except Exception:
-                pass
         self.logger.info("Cleaned up all audio processors")

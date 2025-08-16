@@ -288,20 +288,19 @@ class QtDragDropAdapter(IDragDropPort):
             
             if lower_path.endswith(".wav"):
                 return Result.success(MimeType.AUDIO_WAV)
-            elif lower_path.endswith(".mp3"):
+            if lower_path.endswith(".mp3"):
                 return Result.success(MimeType.AUDIO_MP3)
-            elif lower_path.endswith(".mp4"):
+            if lower_path.endswith(".mp4"):
                 return Result.success(MimeType.VIDEO_MP4)
-            elif lower_path.endswith(".txt"):
+            if lower_path.endswith(".txt"):
                 return Result.success(MimeType.TEXT_PLAIN)
-            elif lower_path.endswith(".png"):
+            if lower_path.endswith(".png"):
                 return Result.success(MimeType.IMAGE_PNG)
-            elif lower_path.endswith((".jpg", ".jpeg")):
+            if lower_path.endswith((".jpg", ".jpeg")):
                 return Result.success(MimeType.IMAGE_JPEG)
-            elif lower_path.endswith(".json"):
+            if lower_path.endswith(".json"):
                 return Result.success(MimeType.APPLICATION_JSON)
-            else:
-                return Result.failure(f"Unknown MIME type for file: {file_path}")
+            return Result.failure(f"Unknown MIME type for file: {file_path}")
                 
         except Exception as e:
             error_msg = f"Error getting MIME type for {file_path}: {e}"

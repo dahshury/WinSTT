@@ -1,7 +1,8 @@
 """Progress UI service for managing progress bars and UI state (Presentation)."""
 
-from PyQt6 import QtCore
 import time
+
+from PyQt6 import QtCore
 from PyQt6.QtCore import QEasingCurve, QObject, QPropertyAnimation, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QLabel, QProgressBar, QPushButton

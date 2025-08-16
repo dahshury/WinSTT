@@ -14,12 +14,9 @@ from src_refactored.domain.common.result import Result
 from src_refactored.domain.ui_coordination.value_objects.event_system import (
     EventMetrics,
     EventPriority,
-    EventStatus,
     EventSubscription,
     ICommand,
     ICommandHandler,
-    IMediator,
-    IObservable,
     IObserver,
     IQuery,
     IQueryHandler,
@@ -181,7 +178,7 @@ class UIEventSystem(QObject):
     def _update_performance_metrics(self) -> None:
         if not self._processing_times:
             return
-        times = list(self._processing_times)
+        list(self._processing_times)
         # Emit snapshot metrics using domain value object
         snapshot = EventMetrics(
             event_count=self._ev_count,

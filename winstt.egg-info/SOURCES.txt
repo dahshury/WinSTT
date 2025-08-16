@@ -42,6 +42,9 @@ src_refactored/application/interfaces/main_window_service.py
 src_refactored/application/interfaces/ui_coordination_service.py
 src_refactored/application/interfaces/widget_service.py
 src_refactored/application/interfaces/window_management_service.py
+src_refactored/application/listener/__init__.py
+src_refactored/application/listener/audio_to_text_config.py
+src_refactored/application/listener/audio_to_text_service.py
 src_refactored/application/main_window/__init__.py
 src_refactored/application/main_window/configure_window_use_case.py
 src_refactored/application/main_window/create_main_window_use_case.py
@@ -147,6 +150,7 @@ src_refactored/domain/audio/entities/audio_recorder.py
 src_refactored/domain/audio/entities/audio_session.py
 src_refactored/domain/audio/entities/recording_state.py
 src_refactored/domain/audio/events/__init__.py
+src_refactored/domain/audio/ports/audio_capture_port.py
 src_refactored/domain/audio/ports/audio_device_port.py
 src_refactored/domain/audio/value_objects/__init__.py
 src_refactored/domain/audio/value_objects/audio_configuration.py
@@ -424,6 +428,7 @@ src_refactored/infrastructure/adapters/qt_drag_drop_adapter.py
 src_refactored/infrastructure/adapters/qt_system_tray_adapter.py
 src_refactored/infrastructure/adapters/resource_adapter.py
 src_refactored/infrastructure/adapters/serialization_adapter.py
+src_refactored/infrastructure/adapters/sound_player_adapter.py
 src_refactored/infrastructure/adapters/text_paste_adapter.py
 src_refactored/infrastructure/adapters/transcription_adapter.py
 src_refactored/infrastructure/adapters/application_lifecycle/__init__.py
@@ -448,7 +453,6 @@ src_refactored/infrastructure/audio/audio_stream_service.py
 src_refactored/infrastructure/audio/audio_validation_service.py
 src_refactored/infrastructure/audio/consolidated_listener_service.py
 src_refactored/infrastructure/audio/keyboard_service.py
-src_refactored/infrastructure/audio/legacy_audio_to_text.py
 src_refactored/infrastructure/audio/listener_worker_service.py
 src_refactored/infrastructure/audio/logger_service.py
 src_refactored/infrastructure/audio/playback_validation_service.py
@@ -457,6 +461,8 @@ src_refactored/infrastructure/audio/pyqt_audio_adapter.py
 src_refactored/infrastructure/audio/recording_validation_service.py
 src_refactored/infrastructure/audio/service_factory.py
 src_refactored/infrastructure/audio/signal_emission_service.py
+src_refactored/infrastructure/audio/silero_vad_model_service.py
+src_refactored/infrastructure/audio/sounddevice_sound_player_adapter.py
 src_refactored/infrastructure/audio/vad_calibration_service.py
 src_refactored/infrastructure/audio/vad_model_service.py
 src_refactored/infrastructure/audio/vad_service.py
@@ -471,12 +477,17 @@ src_refactored/infrastructure/audio_visualization/audio_stream_service.py
 src_refactored/infrastructure/audio_visualization/buffer_management_service.py
 src_refactored/infrastructure/audio_visualization/resource_cleanup_service.py
 src_refactored/infrastructure/audio_visualization/visualization_controller_service.py
+src_refactored/infrastructure/common/bytes_io_adapter.py
 src_refactored/infrastructure/common/configuration_service.py
 src_refactored/infrastructure/common/event_bus.py
+src_refactored/infrastructure/common/file_audio_writer.py
 src_refactored/infrastructure/common/progress_callback.py
 src_refactored/infrastructure/common/repository_base.py
 src_refactored/infrastructure/common/resource_service.py
+src_refactored/infrastructure/common/sync_service.py
 src_refactored/infrastructure/common/task_manager.py
+src_refactored/infrastructure/common/threading_service.py
+src_refactored/infrastructure/common/time_service.py
 src_refactored/infrastructure/common/unit_of_work.py
 src_refactored/infrastructure/container/infrastructure_service_registry.py
 src_refactored/infrastructure/container/service_registration.py
@@ -547,14 +558,16 @@ src_refactored/infrastructure/system/tray_icon_service.py
 src_refactored/infrastructure/system/window_activation_service.py
 src_refactored/infrastructure/system/window_management_service_impl.py
 src_refactored/infrastructure/system_integration/__init__.py
+src_refactored/infrastructure/system_integration/keyboard_hook_adapter.py
 src_refactored/infrastructure/system_integration/method_delegation_service.py
+src_refactored/infrastructure/system_integration/pynput_keyboard_adapter.py
+src_refactored/infrastructure/system_integration/pyperclip_adapter.py
 src_refactored/infrastructure/transcription/__init__.py
 src_refactored/infrastructure/transcription/model_cache_service.py
 src_refactored/infrastructure/transcription/model_download_service.py
 src_refactored/infrastructure/transcription/model_worker_service.py
 src_refactored/infrastructure/transcription/onnx_transcription_service.py
 src_refactored/infrastructure/transcription/transcription_file_repository.py
-src_refactored/infrastructure/transcription/vad_detector_adapter.py
 src_refactored/infrastructure/ui/__init__.py
 src_refactored/infrastructure/ui_widgets/__init__.py
 src_refactored/infrastructure/ui_widgets/widget_service_impl.py
@@ -646,6 +659,8 @@ src_refactored/presentation/ui_widgets/value_objects/ui_widget_operations.py
 src_refactored/presentation/ui_widgets/value_objects/widget_dimensions.py
 src_refactored/presentation/ui_widgets/value_objects/widget_events.py
 src_refactored/presentation/ui_widgets/value_objects/widget_styling.py
+src_refactored/tests/__init__.py
+src_refactored/tests/test_rtmixer_playback.py
 winstt.egg-info/PKG-INFO
 winstt.egg-info/SOURCES.txt
 winstt.egg-info/dependency_links.txt

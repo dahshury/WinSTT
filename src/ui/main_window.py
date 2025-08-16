@@ -2,6 +2,7 @@ import os
 
 import onnxruntime as ort
 import pyqtgraph as pg
+from logger import setup_logger
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtCore import Qt, QThread
 from PyQt6.QtGui import QAction, QIcon
@@ -18,7 +19,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from logger import setup_logger
 from src.core.utils import get_config, resource_path
 from src.ui import window_methods
 from src.workers import ListenerWorker, LLMWorker, ModelWorker, VadWorker

@@ -58,15 +58,47 @@ class ModelWorkerService(QObject):
                 f"Initializing model type: {self.model_type} with quantization: {self.quantization}",
             )
 
-            # Import here to avoid circular dependencies
-            from utils.transcribe import WhisperONNXTranscriber
+            # Import refactored ONNX service here to avoid circular dependencies
+            from src_refactored.infrastructure.transcription.onnx_transcription_service import (
+                ONNXTranscriptionService,
+            )
+            from src_refactored.domain.transcription.value_objects.transcription_quality import (
+                TranscriptionQuality,
+            )
 
-            # Initialize the WhisperONNXTranscriber
-            self.model = WhisperONNXTranscriber(
-                q=self.quantization,
-                display_message_signal=self.display_message_signal,
+            quality = (
+                TranscriptionQuality.FULL if (self.quantization or "").lower() == "full" else TranscriptionQuality.QUANTIZED
+            )
+            service = ONNXTranscriptionService(
+                quality=quality,
                 model_type=self.model_type,
             )
+            # Avoid initializing here; do it lazily to prevent Qt object lifetime issues
+
+            # Expose a minimal protocol-compatible wrapper
+            class _Compat:
+                def __init__(self, svc: ONNXTranscriptionService):
+                    self._svc = svc
+
+                def transcribe(self, file_path: str | io.BytesIO) -> str:
+                    from src_refactored.domain.transcription.value_objects.transcription_request import TranscriptionRequest
+                    req = TranscriptionRequest(audio_input=file_path)
+                    import asyncio as _a
+                    if not getattr(self._svc, "is_initialized", False):
+                        _loop = _a.new_event_loop()
+                        _a.set_event_loop(_loop)
+                        _loop.run_until_complete(self._svc.initialize_async())
+                        _loop.close()
+                    _loop = _a.new_event_loop()
+                    _a.set_event_loop(_loop)
+                    result = _loop.run_until_complete(self._svc.transcribe_async(req))
+                    _loop.close()
+                    return getattr(result, "text", None) or ""
+
+                def get_segments(self) -> list[dict[str, Any]]:
+                    return self._svc.get_segments()
+
+            self.model = _Compat(service)
 
             self.initialized.emit()
             self.toggle_status()

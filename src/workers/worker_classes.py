@@ -1,3 +1,4 @@
+import contextlib
 import gc
 import io
 
@@ -8,8 +9,18 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
-from logger import setup_logger
-from utils.listener import AudioToText
+from src_refactored.application.listener.audio_to_text_config import AudioToTextConfig
+
+# Bridge to refactored architecture (replace legacy listener usage only)
+from src_refactored.application.listener.audio_to_text_service import AudioToTextService
+from src_refactored.infrastructure.adapters.transcription_adapter import (
+    SimpleTranscriptionAdapter,
+    SimpleVADAdapter,
+)
+from src_refactored.infrastructure.system_integration.keyboard_hook_adapter import (
+    KeyboardHookAdapter,
+)
+from utils.logger_compat import setup_logger
 from utils.transcribe import VaDetector, WhisperONNXTranscriber
 
 logger = setup_logger()
@@ -17,59 +28,53 @@ logger = setup_logger()
 # Audio to text adapter that adds PyQt signals without modifying the original class
 class PyQtAudioToText(QObject):
     """
-    Adapter class that wraps AudioToText and provides PyQt signals
-    without modifying the original class.
+    Adapter that bridges to the refactored AudioToTextService and emits PyQt signals.
+    This replaces the legacy utils.listener.AudioToText usage while preserving
+    VAD/transcriber imports elsewhere in this module.
     """
+
     recording_started_signal = pyqtSignal()
     recording_stopped_signal = pyqtSignal()
-    
+
     def __init__(self, model_cls, vad_cls, rec_key=None, error_callback=None):
         super().__init__()
-        # Create the original AudioToText instance
-        self.audio_to_text = AudioToText(model_cls, vad_cls, rec_key, error_callback=error_callback)
-        
-        # Store the original _key_event_handler
-        self._original_key_handler = self.audio_to_text._key_event_handler
-        
-        # Override the key handler with our custom one
-        self.audio_to_text._key_event_handler = self._key_event_handler_with_signals
-    
-    def _key_event_handler_with_signals(self, event):
-        """Wrapper around the original key handler that adds signal emission"""
-        was_recording = self.audio_to_text.is_recording
-        
-        # Call the original handler
-        self._original_key_handler(event)
-        
-        # Check if state changed
-        if not was_recording and self.audio_to_text.is_recording:
-            # Started recording
+        # Keep API compatible (model_cls, vad_cls unused by design here)
+        self._rec_key = rec_key or ""
+        # Use refactored adapters that internally use utils.transcribe
+        self._transcriber = SimpleTranscriptionAdapter()
+        self._vad = SimpleVADAdapter()
+        self._service = AudioToTextService(
+            config=AudioToTextConfig(rec_key=self._rec_key),
+            transcriber=self._transcriber,
+            vad=self._vad,
+        )
+        self._kb = KeyboardHookAdapter()
+
+    def capture_keys(self, rec_key=None):
+        key_combo = (rec_key or self._rec_key) or ""
+        self._kb.start()
+        self._kb.unregister_hotkey("worker_rec_hotkey")
+
+        def _pressed(_):
+            # Emit started only when transitioning
+            self._service.start_recording()
             self.recording_started_signal.emit()
-        elif was_recording and not self.audio_to_text.is_recording:
-            # Stopped recording
+
+        def _released(_):
+            self._service.stop_recording()
             self.recording_stopped_signal.emit()
-    
-    # Delegate all method calls to the wrapped instance
+
+        self._kb.register_hotkey("worker_rec_hotkey", key_combo, _pressed, _released)
+
+    def shutdown(self):
+        with contextlib.suppress(Exception):
+            self._service.shutdown()
+        with contextlib.suppress(Exception):
+            self._kb.shutdown()
+
+    # Minimal delegation for compatibility
     def __getattr__(self, name):
-        return getattr(self.audio_to_text, name)
-    
-    # Explicit property delegation for start_sound_file to ensure setters work
-    @property
-    def start_sound_file(self):
-        return self.audio_to_text.start_sound_file
-    
-    @start_sound_file.setter
-    def start_sound_file(self, value):
-        self.audio_to_text.start_sound_file = value
-    
-    # Explicit delegation for other important attributes that might need setters
-    @property 
-    def start_sound(self):
-        return self.audio_to_text.start_sound
-    
-    @start_sound.setter
-    def start_sound(self, value):
-        self.audio_to_text.start_sound = value
+        return getattr(self._service, name)
 
 class VadWorker(QObject):
     initialized = pyqtSignal()

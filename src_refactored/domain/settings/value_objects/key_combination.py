@@ -84,9 +84,7 @@ class KeyCombination(ValueObject):
         if len(self.modifiers) > 0:
             return True
         key_upper = self.key.upper().strip()
-        if key_upper.startswith("F") and key_upper[1:].isdigit():
-            return True
-        return False
+        return bool(key_upper.startswith("F") and key_upper[1:].isdigit())
 
     def has_modifier(self, modifier: str,
     ) -> bool:

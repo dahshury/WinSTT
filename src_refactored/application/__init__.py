@@ -1,3 +1,5 @@
+"""Application layer package."""
+
 """Application layer module.
 
 This module contains the application layer components including use cases,

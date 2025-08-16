@@ -294,7 +294,7 @@ class JSONSettingsRepository(SettingsRepository):
                 backup_result = self.backup_settings()
                 if self.logger and not backup_result.is_success:
                     self.logger.log_warning(
-                        f"Failed to create backup before clearing: {backup_result.get_error()}"
+                        f"Failed to create backup before clearing: {backup_result.get_error()}",
                     )
 
             # Save empty settings

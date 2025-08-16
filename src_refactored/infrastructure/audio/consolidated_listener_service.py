@@ -5,7 +5,6 @@ audio operations and manages the interaction between different audio services.
 Extracted from utils/listener.py coordination logic.
 """
 
-import io
 import contextlib
 import threading
 import time
@@ -288,12 +287,12 @@ class ConsolidatedListenerService:
             # Add new hotkey
             # Register using a simple adapter that calls our start/stop operations
             class _HotkeyAdapter:
-                def on_hotkey_pressed(_, combo):
+                def on_hotkey_pressed(self, combo):
                     self._is_hotkey_pressed = True
                     self._emit_event(ListenerEvent.HOTKEY_PRESSED)
                     self._start_recording_internal()
 
-                def on_hotkey_released(_, combo):
+                def on_hotkey_released(self, combo):
                     self._is_hotkey_pressed = False
                     self._emit_event(ListenerEvent.HOTKEY_RELEASED)
                     self._stop_recording_internal()
@@ -359,11 +358,10 @@ class ConsolidatedListenerService:
                         self._is_hotkey_pressed = True
                         self._emit_event(ListenerEvent.HOTKEY_PRESSED)
                         self._start_recording_internal()
-            else:
-                if self._is_hotkey_pressed:
-                        self._is_hotkey_pressed = False
-                        self._emit_event(ListenerEvent.HOTKEY_RELEASED)
-                        self._stop_recording_internal()
+            elif self._is_hotkey_pressed:
+                    self._is_hotkey_pressed = False
+                    self._emit_event(ListenerEvent.HOTKEY_RELEASED)
+                    self._stop_recording_internal()
 
         except Exception as e:
             self._emit_error(f"Error handling keyboard event: {e!s}")
@@ -392,9 +390,15 @@ class ConsolidatedListenerService:
                     self._playback_service.play_sound_file(self._config.start_sound_file)
 
             # Start recording
-            from src_refactored.domain.audio.value_objects.service_requests import AudioRecordingServiceRequest
-            from src_refactored.domain.audio.value_objects.recording_operation import RecordingOperation
-            from src_refactored.domain.audio.value_objects.audio_configuration import RecordingConfiguration
+            from src_refactored.domain.audio.value_objects.audio_configuration import (
+                RecordingConfiguration,
+            )
+            from src_refactored.domain.audio.value_objects.recording_operation import (
+                RecordingOperation,
+            )
+            from src_refactored.domain.audio.value_objects.service_requests import (
+                AudioRecordingServiceRequest,
+            )
             req = AudioRecordingServiceRequest(
                 request_id="start",
                 request_type=type("_T", (), {})(),  # placeholder value object for type satisfaction
@@ -434,8 +438,12 @@ class ConsolidatedListenerService:
             self._change_state(ListenerState.PROCESSING)
 
             # Stop recording service
-            from src_refactored.domain.audio.value_objects.service_requests import AudioRecordingServiceRequest
-            from src_refactored.domain.audio.value_objects.recording_operation import RecordingOperation
+            from src_refactored.domain.audio.value_objects.recording_operation import (
+                RecordingOperation,
+            )
+            from src_refactored.domain.audio.value_objects.service_requests import (
+                AudioRecordingServiceRequest,
+            )
             stop_req = AudioRecordingServiceRequest(
                 request_id="stop",
                 request_type=type("_T", (), {})(),  # placeholder

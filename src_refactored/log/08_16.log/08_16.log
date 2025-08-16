@@ -1,0 +1,47 @@
+[2025-08-16 18:30:57,560] INFO - Configuration loaded successfully
+[2025-08-16 18:30:57,811] INFO - Initialized real VAD adapter with VaDetector
+[2025-08-16 18:30:57,895] INFO - AudioToText bridge adapter initialized successfully
+[2025-08-16 18:30:57,987] INFO - System tray icon created with ID: tray_0
+[2025-08-16 18:30:57,994] INFO - System tray setup completed using DDD architecture
+[2025-08-16 18:30:57,994] INFO - Enabled drag drop for zone: main_window
+[2025-08-16 18:30:57,994] INFO - Enabled widget drag drop for zone main_window
+[2025-08-16 18:30:57,994] INFO - Main window drag drop setup completed using DDD architecture
+[2025-08-16 18:30:57,994] INFO - Registered hotkey: A+ALT+CTRL, result: KeyboardServiceResult.SUCCESS
+[2025-08-16 18:30:57,995] INFO - Started keyboard monitoring, result: KeyboardServiceResult.SUCCESS
+[2025-08-16 18:30:57,995] INFO - Services initialized with recording key: A+ALT+CTRL
+[2025-08-16 18:30:57,995] INFO - Main window initialization completed
+[2025-08-16 18:30:58,051] INFO - WinSTT application started successfully
+[2025-08-16 18:31:21,717] INFO - Configuration loaded successfully
+[2025-08-16 18:31:21,718] INFO - Another instance is already running
+[2025-08-16 18:31:46,145] INFO - Stopped keyboard monitoring, result: KeyboardServiceResult.SUCCESS
+[2025-08-16 18:31:46,145] INFO - Application closing
+[2025-08-16 18:35:58,775] INFO - Configuration loaded successfully
+[2025-08-16 18:35:59,021] INFO - Initialized real VAD adapter with VaDetector
+[2025-08-16 18:35:59,040] INFO - AudioToText bridge adapter initialized successfully
+[2025-08-16 18:35:59,161] INFO - System tray icon created with ID: tray_0
+[2025-08-16 18:35:59,173] INFO - System tray setup completed using DDD architecture
+[2025-08-16 18:35:59,173] INFO - Enabled drag drop for zone: main_window
+[2025-08-16 18:35:59,173] INFO - Enabled widget drag drop for zone main_window
+[2025-08-16 18:35:59,173] INFO - Main window drag drop setup completed using DDD architecture
+[2025-08-16 18:35:59,173] INFO - Registered hotkey: A+ALT+CTRL, result: KeyboardServiceResult.SUCCESS
+[2025-08-16 18:35:59,251] INFO - Started keyboard monitoring, result: KeyboardServiceResult.SUCCESS
+[2025-08-16 18:35:59,252] INFO - Services initialized with recording key: A+ALT+CTRL
+[2025-08-16 18:35:59,252] INFO - Main window initialization completed
+[2025-08-16 18:35:59,312] INFO - WinSTT application started successfully
+[2025-08-16 18:40:42,798] INFO - Stopped keyboard monitoring, result: KeyboardServiceResult.SUCCESS
+[2025-08-16 18:40:42,798] INFO - Application closing
+[2025-08-16 18:43:34,186] INFO - Configuration loaded successfully
+[2025-08-16 18:43:34,414] INFO - Initialized real VAD adapter with VaDetector
+[2025-08-16 18:43:34,437] INFO - AudioToText bridge adapter initialized successfully
+[2025-08-16 18:43:34,541] INFO - System tray icon created with ID: tray_0
+[2025-08-16 18:43:34,547] INFO - System tray setup completed using DDD architecture
+[2025-08-16 18:43:34,547] INFO - Enabled drag drop for zone: main_window
+[2025-08-16 18:43:34,547] INFO - Enabled widget drag drop for zone main_window
+[2025-08-16 18:43:34,547] INFO - Main window drag drop setup completed using DDD architecture
+[2025-08-16 18:43:34,547] INFO - Registered hotkey: A+ALT+CTRL, result: KeyboardServiceResult.SUCCESS
+[2025-08-16 18:43:34,594] INFO - Started keyboard monitoring, result: KeyboardServiceResult.SUCCESS
+[2025-08-16 18:43:34,594] INFO - Services initialized with recording key: A+ALT+CTRL
+[2025-08-16 18:43:34,594] INFO - Main window initialization completed
+[2025-08-16 18:43:34,646] INFO - WinSTT application started successfully
+[2025-08-16 18:44:22,441] INFO - Stopped keyboard monitoring, result: KeyboardServiceResult.SUCCESS
+[2025-08-16 18:44:22,441] INFO - Application closing

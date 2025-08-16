@@ -165,10 +165,9 @@ class DragDropCoordinationController:
                             DropAction,
                         )
                         return DropAction.ACCEPT
-                    else:
-                        if self._logger:
-                            self._logger.log_warning(f"Drop processing failed: {response.message}")
-                        return DropAction.REJECT
+                    if self._logger:
+                        self._logger.log_warning(f"Drop processing failed: {response.message}")
+                    return DropAction.REJECT
                         
                 except Exception as e:
                     if self._logger:
@@ -307,10 +306,9 @@ class DragDropCoordinationController:
             result = self._drag_drop_port.get_active_drop_zones()
             if result.is_success:
                 return result.get_value()
-            else:
-                if self._logger:
-                    self._logger.log_error(f"Failed to get active zones: {result.get_error()}")
-                return []
+            if self._logger:
+                self._logger.log_error(f"Failed to get active zones: {result.get_error()}")
+            return []
         except Exception as e:
             if self._logger:
                 self._logger.log_error(f"Error getting active zones: {e}")
@@ -322,10 +320,9 @@ class DragDropCoordinationController:
             result = self._drag_drop_port.validate_drop_data(self._main_zone_id, files)
             if result.is_success:
                 return result.get_value()
-            else:
-                if self._logger:
-                    self._logger.log_warning(f"File validation failed: {result.get_error()}")
-                return []
+            if self._logger:
+                self._logger.log_warning(f"File validation failed: {result.get_error()}")
+            return []
         except Exception as e:
             if self._logger:
                 self._logger.log_error(f"Error validating files: {e}")

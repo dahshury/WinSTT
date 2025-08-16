@@ -94,7 +94,7 @@ class MainWindowController:
             
             if request.is_pressed and not is_currently_recording:
                 return self._start_hotkey_recording(request.hotkey_name)
-            elif not request.is_pressed:
+            if not request.is_pressed:
                 # Always attempt a coordinated stop on release (idempotent)
                 stopped = self._stop_hotkey_recording()
                 if not stopped and self._ui_status:
@@ -104,9 +104,8 @@ class MainWindowController:
                         type=StatusType.INFO,
                     ))
                 return True
-            else:
-                # Pressing when already recording - no action needed
-                return False
+            # Pressing when already recording - no action needed
+            return False
                 
         except Exception as e:
             self._logger.log_error(f"Error handling hotkey recording: {e}")
@@ -190,11 +189,10 @@ class MainWindowController:
                     ))
                     self._logger.log_info("Recording started via hotkey (bridge)")
                     return True
-                else:
-                    # Bridge failed - it's responsible for user-facing errors (no device, etc.).
-                    # Do NOT show additional error messages here to avoid duplication
-                    self._logger.log_info("Bridge failed to start recording (no device or other error)")
-                    return False
+                # Bridge failed - it's responsible for user-facing errors (no device, etc.).
+                # Do NOT show additional error messages here to avoid duplication
+                self._logger.log_info("Bridge failed to start recording (no device or other error)")
+                return False
 
             # Fallback to the pure domain use case (no device checking here)
             start_request = StartRecordingRequest()
@@ -209,13 +207,12 @@ class MainWindowController:
                 ))
                 self._logger.log_info("Recording started via hotkey")
                 return True
-            else:
-                if self._ui_status:
-                    self._ui_status.show_status(StatusMessage(
-                        text="Failed to start recording",
-                        type=StatusType.ERROR,
-                    ))
-                return False
+            if self._ui_status:
+                self._ui_status.show_status(StatusMessage(
+                    text="Failed to start recording",
+                    type=StatusType.ERROR,
+                ))
+            return False
                 
         except Exception as e:
             self._logger.log_error(f"Error starting hotkey recording: {e}")
@@ -246,14 +243,13 @@ class MainWindowController:
                     ))
                     self._logger.log_info("Recording stopped, transcription started (bridge)")
                     return True
-                else:
-                    # If stop failed, reset to ready state
-                    if self._ui_status:
-                        self._ui_status.show_status(StatusMessage(
-                            text="Ready for transcription",
-                            type=StatusType.INFO,
-                        ))
-                    return False
+                # If stop failed, reset to ready state
+                if self._ui_status:
+                    self._ui_status.show_status(StatusMessage(
+                        text="Ready for transcription",
+                        type=StatusType.INFO,
+                    ))
+                return False
 
             # Fallback to pure domain use case
             stop_request = StopRecordingRequest()
@@ -267,14 +263,13 @@ class MainWindowController:
                 ))
                 self._logger.log_info("Recording stopped, transcription started")
                 return True
-            else:
-                # Reset to ready state on failure
-                if self._ui_status:
-                    self._ui_status.show_status(StatusMessage(
-                        text="Ready for transcription",
-                        type=StatusType.INFO,
-                    ))
-                return False
+            # Reset to ready state on failure
+            if self._ui_status:
+                self._ui_status.show_status(StatusMessage(
+                    text="Ready for transcription",
+                    type=StatusType.INFO,
+                ))
+            return False
                 
         except Exception as e:
             self._logger.log_error(f"Error stopping hotkey recording: {e}")

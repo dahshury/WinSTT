@@ -6,8 +6,7 @@ using the enterprise IoC container for dependency injection.
 This is part of the composition root and is allowed to know about all layers.
 """
 
-from collections.abc import Callable
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 # Import application services - ALLOWED in composition root
 from src_refactored.application.application_config import (
@@ -69,6 +68,9 @@ from src_refactored.presentation.infrastructure_bridge.ui_core_patterns import (
     UIThemeManager,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 T = TypeVar("T")
 
 
@@ -121,8 +123,8 @@ class ContainerConfiguration:
         if self._builder is not None:
             # Register logger adapter as ILoggerPort
             self._builder.add_singleton(
-                cast(type[Any], ILoggerPort),
-                cast(Callable[[], ILoggerPort], lambda: PythonLoggingAdapter().setup_logger()),
+                cast("type[Any]", ILoggerPort),
+                cast("Callable[[], ILoggerPort]", lambda: PythonLoggingAdapter().setup_logger()),
             )
         
         # Application Configuration (Singleton)
@@ -187,8 +189,8 @@ class ContainerConfiguration:
         # Application Startup Service (Transient)
         if self._builder is not None:
             self._builder.add_transient(
-                cast(type[Any], IApplicationStartupService),
-                cast(Callable[[], IApplicationStartupService], lambda: self._create_application_startup_service()),
+                cast("type[Any]", IApplicationStartupService),
+                cast("Callable[[], IApplicationStartupService]", lambda: self._create_application_startup_service()),
             )
         
         # Note: Shutdown Use Case temporarily removed until proper implementation
@@ -205,7 +207,7 @@ class ContainerConfiguration:
 
             self._builder.add_transient(
                 InMemoryUnitOfWork,
-                cast(Callable[[], InMemoryUnitOfWork], lambda: create_in_memory_unit_of_work()),
+                cast("Callable[[], InMemoryUnitOfWork]", lambda: create_in_memory_unit_of_work()),
             )
     
     def _register_ui_pattern_services(self) -> None:
@@ -480,7 +482,7 @@ def register_ui_adapters(builder: EnterpriseContainerBuilder) -> None:
     from src_refactored.infrastructure.adapters.pyqt6.widget_adapters import QtUIWidgetFactory
     from src_refactored.presentation.core.ui_abstractions import IUIWidgetFactory
 
-    builder.add_singleton(cast(type[Any], IUIWidgetFactory), QtUIWidgetFactory)
+    builder.add_singleton(cast("type[Any]", IUIWidgetFactory), QtUIWidgetFactory)
 
 
 def register_ui_patterns(builder: EnterpriseContainerBuilder) -> None:
@@ -500,7 +502,7 @@ def register_ui_patterns(builder: EnterpriseContainerBuilder) -> None:
     )
     
     # Factory patterns - UIWidgetFactory now requires dependencies
-    builder.add_singleton(cast(type[Any], IWidgetFactory), UIWidgetFactory)
+    builder.add_singleton(cast("type[Any]", IWidgetFactory), UIWidgetFactory)
     
     # Builder patterns - register as transient for stateful building
     builder.add_transient(UIComponentBuilder, UIComponentBuilder)

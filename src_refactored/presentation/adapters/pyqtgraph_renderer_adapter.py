@@ -78,7 +78,7 @@ class PyQtGraphRendererAdapter(VisualizationRendererPort):
                 data_type="waveform",
                 timestamp=QtCore.QDateTime.currentDateTime().toPyDateTime(),
             )
-            frame = VisualizationFrame(
+            VisualizationFrame(
                 visualization_data=viz_data,
                 settings=VisualizationSettings(),
                 frame_id="waveform",

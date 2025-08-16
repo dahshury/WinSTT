@@ -40,9 +40,10 @@ class ModelDownloadService(QObject):
         self.config = config
         self.logger = logging.getLogger(__name__)
 
-        # Create cache directories
+        # Create cache directories (models under cache/models/<model_type>/onnx)
         self.cache_path = Path(config.cache_path)
-        self.onnx_folder = self.cache_path / "onnx"
+        self.model_dir = self.cache_path / "models" / config.model_type
+        self.onnx_folder = self.model_dir / "onnx"
         self.vad_folder = self.cache_path / "vad"
 
         os.makedirs(self.onnx_folder, exist_ok=True)
@@ -57,14 +58,13 @@ class ModelDownloadService(QObject):
         try:
             repo_url = "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/onnx/"
 
-            # Determine model files based on quality
-            encoder_name = f"encoder_model_{self.config.quality}.onnx"
-            decoder_name = f"decoder_model_{self.config.quality}.onnx"
-
+            # Determine model files based on quality (align with ONNX service expectations)
+            quality_value = self.config.quality.value
+            quality_suffix = "" if quality_value == "full" else "_quantized"
             model_files = [
-                encoder_name,
-                "encoder_model.onnx_data" if self.config.quality == "full" else None,
-                decoder_name,
+                f"encoder_model{quality_suffix}.onnx",
+                f"decoder_model{quality_suffix}.onnx",
+                f"decoder_with_past_model{quality_suffix}.onnx",
             ]
 
             config_files = [
@@ -84,17 +84,17 @@ class ModelDownloadService(QObject):
                 if file_name is not None:
                     file_path = self.onnx_folder / file_name
                     if not file_path.exists() or file_path.stat().st_size <= 2048:
-                        self.logger.info("Downloading model file: {file_name}")
+                        self.logger.info(f"Downloading model file: {file_name}")
                         file_url = repo_url + file_name
                         if not self._download_file_with_progress(file_url, file_path, file_name):
                             return False
 
-            # Download configuration files
+            # Download configuration files under model_dir
             for config_file in config_files:
-                config_path = self.cache_path / config_file
+                config_path = self.model_dir / config_file
                 config_url = f"https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/{config_file}"
                 if not config_path.exists():
-                    self.logger.info("Downloading config file: {config_file}")
+                    self.logger.info(f"Downloading config file: {config_file}")
                     if not self._download_file_with_progress(config_url, config_path, config_file):
                         return False
 
@@ -130,41 +130,70 @@ class ModelDownloadService(QObject):
             self.download_failed.emit("vad_model", str(e))
             return False
 
-    def _download_file_with_progress(self, url: str, save_path: Path, filename: str,
-    ) -> bool:
-        """Download a file with progress tracking and validation.
+    def _download_file_with_progress(self, url: str, save_path: Path, filename: str) -> bool:
+        """Download a file with progress tracking, validation, and resume support.
 
-        Args:
-            url: URL to download from
-            save_path: Path to save the file
-            filename: Name of the file for progress tracking
-
-        Returns:
-            bool: True if download successful, False otherwise
+        Uses a temporary file (<name>.tmp) and HTTP Range to resume partial downloads.
         """
         temp_path = save_path.with_suffix(save_path.suffix + ".tmp")
 
         try:
-            # Check if URL is accessible
-            head_response = requests.head(url, timeout=self.config.timeout)
+            # HEAD: total size and accept-ranges capability
+            head_response = requests.head(url, allow_redirects=True, timeout=self.config.timeout)
             head_response.raise_for_status()
+            total_size_header = head_response.headers.get("content-length")
+            total_size = int(total_size_header) if total_size_header is not None else 0
+            accept_ranges = head_response.headers.get("accept-ranges", "").lower() == "bytes"
 
-            # Start download
-            response = requests.get(url, stream=True, timeout=self.config.timeout)
+            # Determine resume offset
+            downloaded_size = 0
+            if temp_path.exists():
+                downloaded_size = temp_path.stat().st_size
+                if total_size > 0 and downloaded_size >= total_size:
+                    temp_path.replace(save_path)
+                    final_progress = DownloadProgress(
+                        filename=filename,
+                        percentage=100,
+                        downloaded_bytes=total_size,
+                        total_bytes=total_size,
+                        is_complete=True,
+                    )
+                    self.download_progress.emit(final_progress)
+                    self.download_completed.emit(filename)
+                    return True
+
+            headers: dict[str, str] = {}
+            if downloaded_size > 0 and accept_ranges:
+                headers["Range"] = f"bytes={downloaded_size}-"
+
+            # Start download (possibly resuming)
+            response = requests.get(url, stream=True, headers=headers, timeout=self.config.timeout)
+            if downloaded_size > 0 and response.status_code == 200:
+                # Server ignored Range header. Start from scratch
+                downloaded_size = 0
+                if temp_path.exists():
+                    temp_path.unlink(missing_ok=True)
+                response.close()
+                response = requests.get(url, stream=True, timeout=self.config.timeout)
+            elif response.status_code == 416 and total_size > 0:
+                # Not satisfiable; likely already complete
+                if temp_path.exists() and temp_path.stat().st_size >= total_size:
+                    temp_path.replace(save_path)
+                    final_progress = DownloadProgress.create_completed(filename, total_size)
+                    self.download_progress.emit(final_progress)
+                    self.download_completed.emit(filename)
+                    return True
             response.raise_for_status()
 
-            total_size = int(response.headers.get("content-length", 0))
-            downloaded_size = 0
-
-            with open(temp_path, "wb") as file:
+            # Stream to temp file
+            file_mode = "ab" if downloaded_size > 0 else "wb"
+            with open(temp_path, file_mode) as file:
                 for data in response.iter_content(self.config.chunk_size):
                     if not data:
                         continue
-
                     file.write(data)
                     downloaded_size += len(data)
 
-                    # Emit progress signal
                     percentage = int((downloaded_size / total_size) * 100) if total_size > 0 else 0
                     progress = DownloadProgress(
                         filename=filename,
@@ -174,12 +203,9 @@ class ModelDownloadService(QObject):
                     )
                     self.download_progress.emit(progress)
 
-            # Validate downloaded file
+            # Validate and finalize
             if self._validate_downloaded_file(temp_path, save_path):
-                # Move temp file to final location
                 temp_path.replace(save_path)
-
-                # Emit completion signal
                 final_progress = DownloadProgress(
                     filename=filename,
                     percentage=100,
@@ -189,10 +215,9 @@ class ModelDownloadService(QObject):
                 )
                 self.download_progress.emit(final_progress)
                 self.download_completed.emit(filename)
-
-                self.logger.info("Successfully downloaded: {filename}")
+                self.logger.info(f"Successfully downloaded: {filename}")
                 return True
-            # Remove invalid file
+
             if temp_path.exists():
                 temp_path.unlink()
             error_msg = f"Downloaded file failed validation: {filename}"
@@ -204,31 +229,32 @@ class ModelDownloadService(QObject):
             error_msg = "Failed to connect to the internet. Please check your connection."
             self.logger.exception(f"{error_msg} Error: {e}")
             self.download_failed.emit(filename, error_msg)
-            self._cleanup_temp_file(temp_path)
+            # Keep temp file for resume later
             return False
 
         except requests.HTTPError as e:
-            if e.response.status_code == 404:
+            status = getattr(e.response, "status_code", None)
+            if status == 404:
                 error_msg = f"File not found (404): {filename}"
             else:
                 error_msg = f"HTTP error occurred: {e}"
             self.logger.exception(error_msg)
             self.download_failed.emit(filename, error_msg)
-            self._cleanup_temp_file(temp_path)
+            # Keep temp file for resume later unless it's clearly invalid
             return False
 
         except requests.Timeout as e:
             error_msg = "The request timed out. Please try again later."
             self.logger.exception(f"{error_msg} Error: {e}")
             self.download_failed.emit(filename, error_msg)
-            self._cleanup_temp_file(temp_path)
+            # Keep temp file to resume
             return False
 
         except Exception as e:
             error_msg = f"An unexpected error occurred: {e}"
             self.logger.exception(error_msg)
             self.download_failed.emit(filename, error_msg)
-            self._cleanup_temp_file(temp_path)
+            # Keep temp file to resume when possible
             return False
 
     def _validate_downloaded_file(self, temp_path: Path, final_path: Path,
@@ -303,23 +329,26 @@ class ModelDownloadService(QObject):
         status = {}
 
         # Check Whisper models
-        encoder_name = f"encoder_model_{self.config.quality}.onnx"
-        decoder_name = f"decoder_model_{self.config.quality}.onnx"
-
-        encoder_path = self.onnx_folder / encoder_name
-        decoder_path = self.onnx_folder / decoder_name
+        quality_value = self.config.quality.value
+        quality_suffix = "" if quality_value == "full" else "_quantized"
+        encoder_path = self.onnx_folder / f"encoder_model{quality_suffix}.onnx"
+        decoder_path = self.onnx_folder / f"decoder_model{quality_suffix}.onnx"
+        decoder_with_past_path = self.onnx_folder / f"decoder_with_past_model{quality_suffix}.onnx"
 
         status["whisper_encoder"] = encoder_path.exists() and encoder_path.stat().st_size > 2048
         status["whisper_decoder"] = decoder_path.exists() and decoder_path.stat().st_size > 2048
+        status["whisper_decoder_with_past"] = (
+            decoder_with_past_path.exists() and decoder_with_past_path.stat().st_size > 2048
+        )
 
         # Check VAD model
         vad_path = self.vad_folder / "silero_vad_16k.onnx"
         status["vad_model"] = vad_path.exists() and vad_path.stat().st_size > 1000
 
-        # Check config files
+        # Check config files under model_dir
         config_files = ["config.json", "vocab.json", "tokenizer_config.json"]
         for config_file in config_files:
-            config_path = self.cache_path / config_file
+            config_path = self.model_dir / config_file
             status[f"config_{config_file.split('.')[0]}"] = config_path.exists()
 
         return status

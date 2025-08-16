@@ -68,11 +68,10 @@ def cleanup_socket():
 
 # Import UI components with patch to suppress subprocess console window
 with patch("subprocess.Popen", side_effect=suppress_subprocess_call):
-    from PyQt6.QtGui import QIcon
-    from PyQt6.QtWidgets import QApplication, QMessageBox
-
     # Import our logger module
     from logger import setup_logger
+    from PyQt6.QtGui import QIcon
+    from PyQt6.QtWidgets import QApplication, QMessageBox
 
 def main():
     """Main entry point for the application"""

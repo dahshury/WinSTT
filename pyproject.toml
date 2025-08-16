@@ -21,7 +21,7 @@ dependencies = [
   "pyqt6==6.7.1",
   "keyboard==0.13.5",
   "pydub==0.25.1",
-  "pygame==2.6.1",
+  "sounddevice>=0.4.6",
   "pynput==1.7.7",
   "pyperclip==1.9.0",
   "pvporcupine==1.9.5",

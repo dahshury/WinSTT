@@ -22,8 +22,6 @@ from src_refactored.presentation.qt.services.progress_ui_service import Progress
 from src_refactored.presentation.qt.services.state_management_service import StateManagementService
 
 __all__ = [
-    # Event System
-    "UIEventSystem",
     # File Dialogs
     "FileDialogResult",
     "FileDialogService",
@@ -33,4 +31,6 @@ __all__ = [
     "ProgressUIService",
     # State Management
     "StateManagementService",
+    # Event System
+    "UIEventSystem",
 ]

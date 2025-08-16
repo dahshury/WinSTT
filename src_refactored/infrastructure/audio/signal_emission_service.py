@@ -32,7 +32,7 @@ class SignalEmissionService(SignalEmissionServiceProtocol):
         """
         try:
             if data is None or len(data) == 0:
-                return None
+                return
                 
             # Call all registered callbacks
             for callback in self._data_ready_callbacks:
@@ -42,10 +42,10 @@ class SignalEmissionService(SignalEmissionServiceProtocol):
                     # Continue with other callbacks even if one fails
                     continue
                     
-            return None
+            return
             
         except Exception:
-            return None
+            return
 
     def emit_buffer_updated(self, buffer_data: np.ndarray) -> None:
         """Emit buffer updated signal.
@@ -58,7 +58,7 @@ class SignalEmissionService(SignalEmissionServiceProtocol):
         """
         try:
             if buffer_data is None:
-                return None
+                return
                 
             # Call all registered callbacks
             for callback in self._buffer_updated_callbacks:
@@ -68,10 +68,10 @@ class SignalEmissionService(SignalEmissionServiceProtocol):
                     # Continue with other callbacks even if one fails
                     continue
                     
-            return None
+            return
             
         except Exception:
-            return None
+            return
 
     def register_data_ready_callback(self, callback: Callable[[np.ndarray], None]) -> None:
         """Register a callback for data ready events.

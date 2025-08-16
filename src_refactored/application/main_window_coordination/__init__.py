@@ -8,9 +8,9 @@ from .main_window_controller import (
 )
 
 __all__ = [
-    "MainWindowController",
-    "HotkeyRecordingRequest", 
-    "FileTranscriptionRequest",
     "AudioDeviceServiceProtocol",
+    "FileTranscriptionRequest",
+    "HotkeyRecordingRequest",
+    "MainWindowController",
 ]
 

@@ -617,7 +617,7 @@ class RepositoryBase(Generic[TEntity, TId], IRepository[TEntity, TId]):
                 # Check if entity already exists
                 if hasattr(entity, "id"):
                     from typing import cast
-                    entity_id_typed: TId = cast(TId, getattr(entity, "id"))
+                    entity_id_typed: TId = cast("TId", entity.id)
                     if self._exists_impl(entity_id_typed):
                         return Result.failure(f"Entity with ID {getattr(entity, 'id', 'unknown')} already exists")
                 
@@ -643,7 +643,7 @@ class RepositoryBase(Generic[TEntity, TId], IRepository[TEntity, TId]):
                 # Check if entity exists
                 if hasattr(entity, "id"):
                     from typing import cast
-                    entity_id_typed: TId = cast(TId, getattr(entity, "id"))
+                    entity_id_typed: TId = cast("TId", entity.id)
                     if not self._exists_impl(entity_id_typed):
                         return Result.failure(f"Entity with ID {getattr(entity, 'id', 'unknown')} not found")
                 
@@ -917,7 +917,7 @@ class InMemoryRepository(RepositoryBase[TEntity, TId]):
         """
         if hasattr(entity, "id"):
             from typing import cast
-            self._entities[cast(TId, getattr(entity, "id"))] = entity
+            self._entities[cast("TId", entity.id)] = entity
         else:
             msg = "Entity must have an 'id' attribute"
             raise ValueError(msg)
@@ -930,7 +930,7 @@ class InMemoryRepository(RepositoryBase[TEntity, TId]):
         """
         if hasattr(entity, "id"):
             from typing import cast
-            self._entities[cast(TId, getattr(entity, "id"))] = entity
+            self._entities[cast("TId", entity.id)] = entity
         else:
             msg = "Entity must have an 'id' attribute"
             raise ValueError(msg)
@@ -943,7 +943,7 @@ class InMemoryRepository(RepositoryBase[TEntity, TId]):
         """
         if hasattr(entity, "id"):
             from typing import cast
-            key = cast(TId, getattr(entity, "id"))
+            key = cast("TId", entity.id)
             if key in self._entities:
                 del self._entities[key]
     
@@ -1066,8 +1066,8 @@ class FileRepository(RepositoryBase[TEntity, TId]):
             # Convert dict to entity (prefer explicit from_dict when available)
             if hasattr(self.entity_type, "from_dict"):
                 from typing import cast
-                from_dict_fn = getattr(self.entity_type, "from_dict")
-                return cast(TEntity, from_dict_fn(json_data))
+                from_dict_fn = self.entity_type.from_dict
+                return cast("TEntity", from_dict_fn(json_data))
             # Create entity instance and set attributes
             entity = self.entity_type.__new__(self.entity_type)  # type: ignore[call-overload]
             for key, value in json_data.items():
@@ -1236,7 +1236,7 @@ class FileRepository(RepositoryBase[TEntity, TId]):
             raise ValueError(msg)
         
         from typing import cast
-        file_path = self._get_entity_file_path(cast(TId, getattr(entity, "id")))
+        file_path = self._get_entity_file_path(cast("TId", entity.id))
         data = self._serialize_entity(entity)
         
         with open(file_path, "wb") as f:
@@ -1262,7 +1262,7 @@ class FileRepository(RepositoryBase[TEntity, TId]):
             raise ValueError(msg)
         
         from typing import cast
-        file_path = self._get_entity_file_path(cast(TId, getattr(entity, "id")))
+        file_path = self._get_entity_file_path(cast("TId", entity.id))
         
         if file_path.exists():
             file_path.unlink()

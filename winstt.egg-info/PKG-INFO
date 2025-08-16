@@ -32,7 +32,7 @@ Requires-Dist: tqdm==4.67.0
 Requires-Dist: pyqt6==6.7.1
 Requires-Dist: keyboard==0.13.5
 Requires-Dist: pydub==0.25.1
-Requires-Dist: pygame==2.6.1
+Requires-Dist: sounddevice>=0.4.6
 Requires-Dist: pynput==1.7.7
 Requires-Dist: pyperclip==1.9.0
 Requires-Dist: pvporcupine==1.9.5

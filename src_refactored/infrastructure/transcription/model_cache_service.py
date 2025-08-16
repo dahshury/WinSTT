@@ -69,14 +69,23 @@ class ModelCacheService:
         """
         onnx_folder = self.get_onnx_folder_path(model_type)
 
-        # Check for required ONNX files
-        encoder_name = "encoder_model.onnx" if quantization.lower() == "full" else f"encoder_model_{quantization.lower()}.onnx"
-        decoder_name = "decoder_model_merged.onnx" if quantization.lower() == "full" else f"decoder_model_merged_{quantization.lower()}.onnx"
+        # Check for required ONNX files (new naming)
+        quality_suffix = "" if quantization.lower() == "full" else "_quantized"
+        encoder_path = onnx_folder / f"encoder_model{quality_suffix}.onnx"
+        decoder_path = onnx_folder / f"decoder_model{quality_suffix}.onnx"
+        decoder_with_past_path = onnx_folder / f"decoder_with_past_model{quality_suffix}.onnx"
 
-        encoder_path = onnx_folder / encoder_name
-        decoder_path = onnx_folder / decoder_name
+        # Backward-compat: accept legacy merged decoder if present
+        legacy_decoder_path = onnx_folder / (
+            "decoder_model_merged.onnx" if quantization.lower() == "full" else f"decoder_model_merged_{quantization.lower()}.onnx"
+        )
 
-        return encoder_path.exists() and decoder_path.exists()
+        has_encoder = encoder_path.exists()
+        has_decoder = decoder_path.exists() or legacy_decoder_path.exists()
+        has_decoder_with_past = decoder_with_past_path.exists() or legacy_decoder_path.exists()
+
+        # Consider cached if encoder exists and at least one decoder variant exists
+        return has_encoder and (has_decoder or has_decoder_with_past)
 
     def is_config_cached(self, model_type: str,
     ) -> bool:

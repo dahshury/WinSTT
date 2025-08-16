@@ -5,6 +5,7 @@ import subprocess
 from threading import Thread
 
 import numpy as np
+from logger import setup_logger
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import QEvent, QPropertyAnimation, Qt, QThread, QTimer
 from PyQt6.QtGui import QIcon
@@ -20,7 +21,6 @@ from PyQt6.QtWidgets import (
     QTreeView,
 )
 
-from logger import setup_logger
 from src.core.utils import get_config, resource_path
 from src.ui.settings_dialog import SettingsDialog
 from src.ui.voice_visualizer import VoiceVisualizer

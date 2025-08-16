@@ -6,17 +6,16 @@ reference `presentation/core` abstractions.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-import contextlib
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from src_refactored.infrastructure.presentation.qt.ui_core_abstractions import (
     IUIEventHandler,
-    UIEventType,
 )
 from src_refactored.presentation.core.abstractions import (
     IUIComponent,
@@ -354,7 +353,7 @@ class SettingsDialogCoordinator(QObject, IUIComponent, IUIEventHandler):
         """Get current dialog state."""
         return self.state
     
-    def handle_event(self, event: "UIEvent") -> Result[None]:
+    def handle_event(self, event: UIEvent) -> Result[None]:
         """Handle UI events."""
         try:
             # Extract event id from event.data if present

@@ -31,23 +31,68 @@ class VadWorkerService(QObject):
         self.vad: object | None = None
 
     def run(self) -> None:
-        """Initialize the VAD detector.
-        
-        This method should be called from a worker thread to avoid
-        blocking the UI during VAD initialization.
-        """
+        """Initialize the refactored VAD service in a worker thread."""
         try:
-            # Import here to avoid circular dependencies
-            from utils.transcribe import VaDetector
+            # Import refactored VAD pipeline lazily
+            from src_refactored.infrastructure.audio.vad_service import (
+                VADService,
+                VADServiceRequest,
+            )
+            from src_refactored.infrastructure.audio.silero_vad_model_service import (
+                SileroVADModelService,
+            )
+            from src_refactored.infrastructure.audio.audio_processing_service import (
+                VADAudioProcessingService,
+            )
+            from src_refactored.infrastructure.audio.vad_validation_service import (
+                VADValidationService,
+            )
+            from src_refactored.infrastructure.audio.vad_smoothing_service import (
+                VADSmoothingService,
+            )
+            from src_refactored.domain.audio.value_objects.vad_operations import (
+                VADConfiguration,
+                VADModel,
+                VADOperation,
+            )
 
-            self.vad = VaDetector()
-            self.initialized.emit()
-            self.toggle_status()
+            service = VADService(
+                model_service=SileroVADModelService(),
+                audio_processing_service=VADAudioProcessingService(),
+                validation_service=VADValidationService(),
+                calibration_service=None,
+                smoothing_service=VADSmoothingService(),
+                progress_tracking_service=None,
+                logger_service=logging.getLogger(__name__),
+            )
+
+            cfg = VADConfiguration(
+                model=VADModel.SILERO_V3,
+                threshold=0.02,
+                sample_rate=16000,
+                frame_size=512,
+                hop_size=256,
+                enable_smoothing=True,
+                smoothing_window=3,
+                min_speech_duration=0.08,
+                min_silence_duration=0.08,
+            )
+
+            resp = service.execute(VADServiceRequest(operation=VADOperation.INITIALIZE, config=cfg))
+            # Consider success on explicit SUCCESS result
+            if str(getattr(resp, "result", "")).lower() in ("vadresult.success", "success"):
+                self.vad = service
+                self.initialized.emit()
+                self.toggle_status()
+                return
+
+            # Failed initialization
+            error_msg = "Failed to initialize VAD service"
+            self.error.emit(error_msg)
+            logging.getLogger(__name__).debug(error_msg)
         except Exception as e:
             error_msg = f"Failed to initialize VAD: {e}"
             self.error.emit(error_msg)
-
-            # Log the error
             logging.getLogger(__name__).debug(error_msg)
 
     def toggle_status(self) -> None:

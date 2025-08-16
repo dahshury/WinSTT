@@ -4,6 +4,7 @@ Extracted from utils/transcribe.py and src/core/utils/transcribe.py.
 Provides Whisper ONNX transcription with PyQt signal integration and non-blocking patterns.
 """
 
+import contextlib
 import gc
 import io
 import logging
@@ -14,7 +15,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Deque, Dict
+from typing import Any
 
 import librosa
 import numpy as np
@@ -25,6 +26,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from transformers import WhisperFeatureExtractor, WhisperTokenizerFast
 
 from src_refactored.domain.transcription.entities.transcription_result import TranscriptionResult
+from src_refactored.domain.audio.value_objects.audio_format import Duration
 from src_refactored.domain.transcription.entities.transcription_segment import TranscriptionSegment
 from src_refactored.domain.transcription.value_objects.language import Language
 from src_refactored.domain.transcription.value_objects.message_display_callback import (
@@ -107,12 +109,12 @@ class ONNXTranscriptionService(QObject):
         # State
         self.status = TranscriptionStatus.IDLE
         self.is_initialized = False
-        self.sessions: Dict[str, ort.InferenceSession] = {}
+        self.sessions: dict[str, ort.InferenceSession] = {}
         self.tokenizer: WhisperTokenizerFast | None = None
         self.feature_extractor: WhisperFeatureExtractor | None = None
 
         # Streaming support
-        self.audio_buffer: Deque[float] = deque(maxlen=48000)  # 3 seconds at 16kHz
+        self.audio_buffer: deque[float] = deque(maxlen=48000)  # 3 seconds at 16kHz
         self.buffer_lock = threading.Lock()
         self.transcript_queue: queue.Queue[str] = queue.Queue()
         self.current_transcript: str = ""
@@ -130,7 +132,8 @@ class ONNXTranscriptionService(QObject):
 
     def _setup_model_configuration(self) -> None:
         """Setup model configuration based on quality and type."""
-        base_url = "https://huggingface.co/openai/whisper-large-v3-turbo/resolve/main/"
+        # Use ONNX community repository with onnx/ subfolder for model files
+        base_url = "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/onnx/"
 
         if self.quality == TranscriptionQuality.FULL:
             self.model_urls = {
@@ -145,12 +148,14 @@ class ONNXTranscriptionService(QObject):
                 "decoder_with_past": f"{base_url}decoder_with_past_model_quantized.onnx",
             }
 
-        # Model file paths
-        model_dir = Path(self.cache_path) / self.model_type
-        model_dir.mkdir(parents=True, exist_ok=True)
+        # Model file paths (align with utils/transcribe.py layout: cache/models/<model_type>)
+        self.model_dir = Path(self.cache_path) / "models" / self.model_type
+        self.model_dir.mkdir(parents=True, exist_ok=True)
+        self.onnx_folder = self.model_dir / "onnx"
+        self.onnx_folder.mkdir(parents=True, exist_ok=True)
 
         self.model_paths = {
-            name: model_dir / f"{name}_model{'_quantized' if self.quality == TranscriptionQuality.QUANTIZED else ''}.onnx"
+            name: self.onnx_folder / f"{name}_model{'_quantized' if self.quality == TranscriptionQuality.QUANTIZED else ''}.onnx"
             for name in ["encoder", "decoder", "decoder_with_past"]
         }
 
@@ -214,11 +219,32 @@ class ONNXTranscriptionService(QObject):
     def _initialize_processors(self) -> None:
         """Initialize tokenizer and feature extractor."""
         try:
-            self.tokenizer = WhisperTokenizerFast.from_pretrained("openai/whisper-large-v3-turbo")
-            self.feature_extractor = (
-                WhisperFeatureExtractor.from_pretrained("openai/whisper-large-v3-turbo")
-            )
+            # Prefer local cache dir (downloaded configs) to avoid network at runtime
+            if (self.model_dir / "tokenizer_config.json").exists():
+                self.tokenizer = WhisperTokenizerFast.from_pretrained(str(self.model_dir))
+            else:
+                self.tokenizer = WhisperTokenizerFast.from_pretrained("openai/whisper-large-v3-turbo")
+
+            if (self.model_dir / "preprocessor_config.json").exists():
+                self.feature_extractor = WhisperFeatureExtractor.from_pretrained(str(self.model_dir))
+            else:
+                self.feature_extractor = WhisperFeatureExtractor.from_pretrained("openai/whisper-large-v3-turbo")
             custom_logger.info("Tokenizer and feature extractor initialized")
+
+            # Load model configuration files if available (needed for decoding loop)
+            import json as _json
+            self.config = {}
+            self.generation_config = {}
+            try:
+                with open(self.model_dir / "config.json", "r", encoding="utf-8") as f:
+                    self.config = _json.load(f)
+            except Exception:
+                pass
+            try:
+                with open(self.model_dir / "generation_config.json", "r", encoding="utf-8") as f:
+                    self.generation_config = _json.load(f)
+            except Exception:
+                pass
         except Exception as e:
             msg = f"Failed to initialize processors: {e}"
             raise RuntimeError(msg)
@@ -232,36 +258,68 @@ class ONNXTranscriptionService(QObject):
                 url = self.model_urls[name]
                 await self._download_file_with_progress(url, path, f"{name} model")
 
-    async def _download_file_with_progress(self, url: str, save_path: Path, name: str,
-    ) -> None:
-        """Download file with progress tracking."""
+    async def _download_file_with_progress(self, url: str, save_path: Path, name: str) -> None:
+        """Download file with progress tracking and resume support."""
         try:
-            custom_logger.info(f"Downloading {name} from {url}")
+            temp_path = save_path.with_suffix(save_path.suffix + ".tmp")
 
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
+            # HEAD: detect total and range support
+            head = requests.head(url, allow_redirects=True, timeout=30)
+            head.raise_for_status()
+            total_size_header = head.headers.get("content-length")
+            total_size = int(total_size_header) if total_size_header is not None else 0
+            accept_ranges = head.headers.get("accept-ranges", "").lower() == "bytes"
 
-            total_size = int(response.headers.get("content-length", 0))
+            # Resume offset
             downloaded = 0
+            if temp_path.exists():
+                downloaded = temp_path.stat().st_size
+                if total_size > 0 and downloaded >= total_size:
+                    temp_path.replace(save_path)
+                    if self.progress_callback:
+                        self.progress_callback(total_size, total_size, f"Downloaded {name}")
+                    self.model_download_progress.emit(name, total_size, total_size)
+                    return
 
-            with open(save_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
+            headers: dict[str, str] = {}
+            if downloaded > 0 and accept_ranges:
+                headers["Range"] = f"bytes={downloaded}-"
 
-                        if total_size > 0:
-                            int((downloaded / total_size) * 100)
-                            self.model_download_progress.emit(name, downloaded, total_size)
+            resp = requests.get(url, stream=True, headers=headers, timeout=30)
+            if downloaded > 0 and resp.status_code == 200:
+                # Range not supported; start over
+                downloaded = 0
+                if temp_path.exists():
+                    temp_path.unlink(missing_ok=True)
+                resp.close()
+                resp = requests.get(url, stream=True, timeout=30)
+            elif resp.status_code == 416 and total_size > 0:
+                if temp_path.exists() and temp_path.stat().st_size >= total_size:
+                    temp_path.replace(save_path)
+                    if self.progress_callback:
+                        self.progress_callback(total_size, total_size, f"Downloaded {name}")
+                    self.model_download_progress.emit(name, total_size, total_size)
+                    return
+            resp.raise_for_status()
 
-                            if self.progress_callback:
-                                self.progress_callback(downloaded, total_size, f"Downloading {name}")
+            mode = "ab" if downloaded > 0 else "wb"
+            with open(temp_path, mode) as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if self.progress_callback:
+                        self.progress_callback(downloaded, total_size, f"Downloading {name}")
 
+            temp_path.replace(save_path)
             custom_logger.info(f"Downloaded {name} successfully")
 
         except Exception as e:
+            # Keep temp for resume where possible; only remove final path
             if save_path.exists():
-                save_path.unlink()  # Remove partial download
+                with contextlib.suppress(Exception):
+                    save_path.unlink()
             msg = f"Failed to download {name}: {e}"
             raise RuntimeError(msg)
 
@@ -299,22 +357,38 @@ class ONNXTranscriptionService(QObject):
             segments = []
             if getattr(request, "return_segments", False):
                 segments = self._generate_segments(request.audio_input, transcription_text)
+            else:
+                # Produce a single segment covering the whole utterance so domain aggregate flows
+                segments = [TranscriptionSegment.create_simple_segment(0.0, max(0.5, len(transcription_text) / 15.0), transcription_text)]
 
             result = TranscriptionResult(
                 transcription_id=request_id,
                 source_audio_id=f"audio_{request_id}",
                 language=request.language or Language.auto_detect(),
             )
+            # Mark domain aggregate as started before adding segments
+            try:
+                result.start_transcription(audio_duration=Duration(0.0), model_version=f"{self.model_type}-{self.quality.value}")
+            except Exception:
+                # Non-fatal: keep result in default state
+                pass
             
             # Add segments to the result
             for segment in segments:
                 result.add_segment(segment)
+            # Complete if we added any segments
+            try:
+                if segments:
+                    result.complete_transcription()
+            except Exception:
+                # Non-fatal: allow returning partial result
+                pass
 
             self.status = TranscriptionStatus.COMPLETED
             self.transcription_progress.emit(request_id, 100, "Completed")
             self.transcription_completed.emit(request_id, result)
 
-            # Store for segment extraction
+            # Store for segment extraction and for adapter fallback
             if isinstance(request.audio_input, str):
                 self.last_audio_path = request.audio_input
             self.last_transcription = transcription_text
@@ -330,23 +404,31 @@ class ONNXTranscriptionService(QObject):
 
     def _preprocess_audio(self, audio_input: str | io.BytesIO | np.ndarray) -> np.ndarray:
         """Preprocess audio input to features."""
+        # Normalize input into a 1D float32 numpy array at 16 kHz, mono
         if isinstance(audio_input, str):
             # File path
-            audio_array, _ = librosa.load(audio_input, sr=16000)
+            audio_array, _ = librosa.load(audio_input, sr=16000, mono=True)
         elif isinstance(audio_input, io.BytesIO):
-            # Audio buffer
+            # Audio buffer (ensure format inference works by having name set upstream)
             audio_segment = AudioSegment.from_file(audio_input)
-            audio_array = np.array(audio_segment.get_array_of_samples(), dtype=np.float32)
-            if audio_segment.channels == 2:
-                audio_array = audio_array.reshape((-1, 2)).mean(axis=1)
-            audio_array = audio_array / np.max(np.abs(audio_array))
+            audio_segment = audio_segment.set_frame_rate(16000).set_channels(1)
+            samples = np.array(audio_segment.get_array_of_samples(), dtype=np.float32)
+            # Scale based on sample width to roughly [-1, 1]
+            max_value = float(1 << (8 * audio_segment.sample_width - 1)) if getattr(audio_segment, "sample_width", 2) else 0.0
+            audio_array = samples / max_value if max_value > 0 else samples
         else:
             # Raw numpy array
             audio_array = audio_input.astype(np.float32)
+            if audio_array.ndim > 1 and audio_array.shape[1] == 2:
+                audio_array = audio_array.mean(axis=1)
 
-        # Extract features
-            assert self.feature_extractor is not None
-            inputs = self.feature_extractor(
+        # Guard against silent input to avoid divide-by-zero in downstream processing
+        if audio_array.size == 0:
+            audio_array = np.zeros(16000, dtype=np.float32)
+
+        # Extract features via HF processor
+        assert self.feature_extractor is not None
+        inputs = self.feature_extractor(
             audio_array,
             sampling_rate=16000,
             return_tensors="np",
@@ -361,33 +443,114 @@ class ONNXTranscriptionService(QObject):
         return encoder_outputs[0]
 
     def _decode(self, encoder_hidden_states: np.ndarray) -> np.ndarray:
-        """Run decoder model."""
-        decoder_session = self.sessions["decoder"]
+        """Run decoder model with greedy generation using past key-values if available."""
+        # Choose decoder with past if present
+        decoder_session = self.sessions.get("decoder_with_past", self.sessions.get("decoder"))
+        if decoder_session is None:
+            raise RuntimeError("Decoder session not initialized")
 
-        # Initialize decoder inputs
-        decoder_input_ids = np.array([[50258]], dtype=np.int64)  # Start token
+        # Determine token ids from generation config if available
+        start_token_id = int(self.generation_config.get("decoder_start_token_id", 50258)) if isinstance(self.generation_config, dict) else 50258
+        eos_token_id = int(self.generation_config.get("eos_token_id", 50257)) if isinstance(self.generation_config, dict) else 50257
+        max_length = int(self.generation_config.get("max_length", 64)) if isinstance(self.generation_config, dict) else 64
 
-        # Run initial decoder step
-        decoder_outputs = decoder_session.run(
-            None,
-            {
+        # Model config for shapes
+        num_layers = int(self.config.get("decoder_layers", 2)) if isinstance(self.config, dict) else 2
+        num_attention_heads = int(self.config.get("decoder_attention_heads", 16)) if isinstance(self.config, dict) else 16
+        d_model = int(self.config.get("d_model", 1280)) if isinstance(self.config, dict) else 1280
+        head_dim = d_model // max(1, num_attention_heads)
+
+        batch_size = encoder_hidden_states.shape[0]
+        decoder_input_ids = np.array([[start_token_id]] * batch_size, dtype=np.int64)
+
+        # Initialize empty past key values
+        past_key_values: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+        for _ in range(num_layers):
+            past_decoder_key = np.zeros((batch_size, num_attention_heads, 0, head_dim), dtype=np.float32)
+            past_decoder_value = np.zeros((batch_size, num_attention_heads, 0, head_dim), dtype=np.float32)
+            past_encoder_key = np.zeros((batch_size, num_attention_heads, 0, head_dim), dtype=np.float32)
+            past_encoder_value = np.zeros((batch_size, num_attention_heads, 0, head_dim), dtype=np.float32)
+            past_key_values.append((past_decoder_key, past_decoder_value, past_encoder_key, past_encoder_value))
+
+        output_ids: list[np.ndarray] = []
+
+        for _ in range(max_length):
+            decoder_inputs: dict[str, np.ndarray] = {
                 "input_ids": decoder_input_ids,
-                "encoder_hidden_states": encoder_hidden_states,
-            },
-        )
+                "use_cache_branch": np.array([False], dtype=bool),
+                "encoder_hidden_states": encoder_hidden_states.astype(np.float32),
+            }
 
-        return decoder_outputs[0]
+            # Provide past key values
+            for layer in range(num_layers):
+                pkv = past_key_values[layer]
+                decoder_inputs[f"past_key_values.{layer}.decoder.key"] = pkv[0]
+                decoder_inputs[f"past_key_values.{layer}.decoder.value"] = pkv[1]
+                decoder_inputs[f"past_key_values.{layer}.encoder.key"] = pkv[2]
+                decoder_inputs[f"past_key_values.{layer}.encoder.value"] = pkv[3]
+
+            try:
+                decoder_outputs = decoder_session.run(None, decoder_inputs)
+            except Exception as e:
+                # Fallback: try minimal decoder without past if run fails
+                basic_decoder = self.sessions.get("decoder")
+                if basic_decoder is None:
+                    raise e
+                decoder_outputs = basic_decoder.run(None, {"input_ids": decoder_input_ids, "encoder_hidden_states": encoder_hidden_states})
+
+            # Extract next token logits (assume first output is logits)
+            logits = decoder_outputs[0]
+            next_tokens = np.argmax(logits[:, -1, :], axis=-1).astype(np.int64)
+            output_ids.append(next_tokens)
+
+            # Update past key values from outputs (follow expected ordering)
+            updated_past: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+            idx = 1
+            for _layer in range(num_layers):
+                try:
+                    updated_past.append((
+                        decoder_outputs[idx + 0],
+                        decoder_outputs[idx + 1],
+                        decoder_outputs[idx + 2],
+                        decoder_outputs[idx + 3],
+                    ))
+                    idx += 4
+                except Exception:
+                    # If outputs don't include past, keep existing zero-length past
+                    updated_past.append(past_key_values[_layer])
+            past_key_values = updated_past
+
+            # Append token to input ids for next step
+            decoder_input_ids = np.concatenate([decoder_input_ids, next_tokens[:, None]], axis=-1)
+
+            # Stop on EOS
+            if np.all(next_tokens == eos_token_id):
+                break
+
+        if not output_ids:
+            return np.zeros((batch_size, 0), dtype=np.int64)
+
+        return np.array(output_ids, dtype=np.int64).T
 
     def _postprocess(self, output_ids: np.ndarray) -> str:
-        """Convert output IDs to text."""
-        # Get the most likely tokens
-        predicted_ids = np.argmax(output_ids, axis=-1)
-
-        # Decode to text
+        """Convert model outputs to text.
+        Accepts either token IDs (batch, seq_len) or logits (batch, seq_len, vocab)."""
         assert self.tokenizer is not None
-        transcription = self.tokenizer.decode(predicted_ids[0], skip_special_tokens=True)
-
-        return transcription.strip()
+        # If logits, argmax over vocab; if already token ids, use as-is
+        if output_ids.ndim == 3:
+            token_ids = np.argmax(output_ids, axis=-1)
+        elif output_ids.ndim == 2:
+            token_ids = output_ids.astype(np.int64, copy=False)
+        elif output_ids.ndim == 1:
+            token_ids = output_ids[None, :].astype(np.int64, copy=False)
+        else:
+            return ""
+        # Take first batch
+        ids_seq = token_ids[0].tolist() if hasattr(token_ids, "tolist") else list(token_ids[0])
+        if not ids_seq:
+            return ""
+        transcription = self.tokenizer.decode(ids_seq, skip_special_tokens=True)
+        return (transcription or "").strip()
 
     def _generate_segments(self, audio_input: str | io.BytesIO | np.ndarray,
                           transcription: str,
@@ -539,49 +702,7 @@ class ONNXTranscriptionService(QObject):
         custom_logger.info("ONNX transcription service cleaned up")
 
 
-# Legacy compatibility class
-class WhisperONNXTranscriber(ONNXTranscriptionService):
-    """Legacy compatibility wrapper for WhisperONNXTranscriber."""
-
-    def __init__(
-    self,
-    cache_path=None,
-    q="quantized",
-    display_message_signal=None,
-    model_type="whisper-turbo"):
-        quality = TranscriptionQuality.FULL if q == "full" else TranscriptionQuality.QUANTIZED
-
-        # Convert PyQt signal to callback
-        display_callback = None
-        if display_message_signal:
-            def callback(message, details, progress, is_error, auto_close):
-                display_message_signal.emit(message, details, progress, is_error, auto_close)
-            display_callback = callback
-
-        super().__init__(
-            cache_path=cache_path,
-            quality=quality,
-            model_type=model_type,
-            display_message_callback=display_callback,
-        )
-
-    def transcribe(self, audio_input):
-        """Legacy transcribe method (blocking)."""
-        if not self.is_initialized:
-            return "[Model not initialized]"
-
-        try:
-            request = TranscriptionRequest(audio_input=audio_input)
-            # Note: This is a blocking call in the legacy interface
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(self.transcribe_async(request))
-            loop.close()
-            return result.text
-        except Exception as e:
-            custom_logger.exception(f"Legacy transcription failed: {e}")
-            return f"[Transcription error: {e}]"
+# (Removed legacy compatibility wrapper class)
 
 
 # VAD Service (extracted from utils/transcribe.py)

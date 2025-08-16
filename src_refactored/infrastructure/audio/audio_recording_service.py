@@ -1194,7 +1194,7 @@ class AudioRecordingService:
 
                 # Update status
                 if self._state.status:
-                    frames_recorded = (self._state.status.frames_recorded + int(len(processed_data))) if self._state.status else int(len(processed_data))
+                    frames_recorded = (self._state.status.frames_recorded + len(processed_data)) if self._state.status else len(processed_data)
                     peak = max(self._state.status.peak_level, peak_level)
                     avg = rms_level
                     self._state.status = RecordingStatus(

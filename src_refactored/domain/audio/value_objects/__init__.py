@@ -79,7 +79,6 @@ __all__ = [
     # Basic audio properties
     "AudioFormat",
     "AudioFormatType",
-    "BitDepth",
     "AudioOperation",
     "AudioPlaybackServiceRequest",
     "AudioQuality",
@@ -90,6 +89,7 @@ __all__ = [
     "AudioStreamServiceRequest",
     # Audio tracks and recordings
     "AudioTrack",
+    "BitDepth",
     "BufferMode",
     "BufferOperationResult",
     "CalibrationResult",
@@ -142,7 +142,7 @@ __all__ = [
     "VADState",
     # Validation concepts
     "ValidationCategory",
-    "ValidationIssue", 
+    "ValidationIssue",
     "ValidationResult",
     "ValidationRule",
     "ValidationSeverity",

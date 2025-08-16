@@ -74,7 +74,7 @@ class IconPath(ValueObject):
         """
         # Simple heuristic; absolute resolution must be handled by infra
         p: Final[str] = self.path
-        return not (p.startswith(("/", "\\")) or len(p) > 1 and p[1] == ":")
+        return not (p.startswith(("/", "\\")) or (len(p) > 1 and p[1] == ":"))
     
     def is_absolute(self) -> bool:
         """Check if this is an absolute path.
@@ -83,7 +83,7 @@ class IconPath(ValueObject):
             True if path is absolute
         """
         p: Final[str] = self.path
-        return (p.startswith(("/", "\\")) or len(p) > 1 and p[1] == ":")
+        return (p.startswith(("/", "\\")) or (len(p) > 1 and p[1] == ":"))
     
     def resolve_relative_to(self, base_path: str) -> "IconPath":
         """Resolve this path relative to a base path.

@@ -5,11 +5,9 @@ with non-blocking patterns and comprehensive audio device management.
 Extracted from utils/listener.py Recorder class (lines 23-124).
 """
 
-import io
 import logging
 import threading
 import time
-import wave
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -378,17 +376,10 @@ class PyAudioRecorder:
     def get_wav_bytes(self) -> bytes:
         """Assemble the recorded frames into a WAV format in-memory bytes buffer."""
         try:
-            with io.BytesIO() as wf:
-                with wave.open(wf, "wb") as wave_file:
-                    wave_file.setnchannels(self.CHANNELS)
-                    if self.p is not None:
-                        wave_file.setsampwidth(self.p.get_sample_size(self.FORMAT))
-                    else:
-                        wave_file.setsampwidth(2)  # Default for paInt16
-                    wave_file.setframerate(self.RATE)
-                    wave_file.writeframes(b"".join(self._frames))
-                wf.seek(0)
-                return wf.read()
+            from src_refactored.infrastructure.common.file_audio_writer import FileAudioWriter
+            writer = FileAudioWriter()
+            sample_width = self.p.get_sample_size(self.FORMAT) if self.p is not None else 2
+            return writer.assemble_wav(sample_width, self.CHANNELS, self.RATE, self._frames)
         except Exception as e:
             self.logger.exception("Failed to assemble WAV bytes: %s", e)
             if self._error_callback:

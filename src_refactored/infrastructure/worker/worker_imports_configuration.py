@@ -144,7 +144,7 @@ class WorkerImportsConfiguration:
             worker_type=WorkerImportType.VAD,
             module_path="src_refactored.infrastructure.audio.vad_worker_service",
             class_name="VadWorkerService",
-            dependencies=["utils.transcribe.VaDetector"],
+            dependencies=["src_refactored.infrastructure.audio.silero_vad_model_service.SileroVADModelService"],
         ))
 
         # Model Worker Configuration
@@ -152,7 +152,7 @@ class WorkerImportsConfiguration:
             worker_type=WorkerImportType.MODEL,
             module_path="src_refactored.infrastructure.transcription.model_worker_service",
             class_name="ModelWorkerService",
-            dependencies=["utils.transcribe.WhisperONNXTranscriber"],
+            dependencies=["src_refactored.infrastructure.transcription.onnx_transcription_service.ONNXTranscriptionService"],
         ))
 
         # LLM Worker Configuration
@@ -168,7 +168,7 @@ class WorkerImportsConfiguration:
             worker_type=WorkerImportType.LISTENER,
             module_path="src_refactored.infrastructure.audio.listener_worker_service",
             class_name="ListenerWorkerService",
-            dependencies=["utils.listener.AudioToText"],
+            dependencies=["src_refactored.application.listener.audio_to_text_service.AudioToTextService"],
         ))
 
         # PyQt Audio Adapter Configuration
@@ -176,7 +176,7 @@ class WorkerImportsConfiguration:
             worker_type=WorkerImportType.PYQT_AUDIO,
             module_path="src_refactored.infrastructure.audio.pyqt_audio_adapter",
             class_name="PyQtAudioAdapter",
-            dependencies=["utils.listener.AudioToText"],
+            dependencies=["src_refactored.application.listener.audio_to_text_service.AudioToTextService"],
         ))
 
     def register_worker_config(self, config: WorkerImportConfig,

@@ -445,7 +445,7 @@ class EventBus(QObject, IEventBus):
                     handler_type = EventHandlerType.LAMBDA
                 
                 # Cast handler to the expected type for EventHandler
-                handler_func = cast(Callable[[E, EventMetadata], None], handler)
+                handler_func = cast("Callable[[E, EventMetadata], None]", handler)
                 event_handler = EventHandler(
                     handler_id=handler_id,
                     event_type=event_type,
@@ -453,7 +453,7 @@ class EventBus(QObject, IEventBus):
                     handler_type=handler_type,
                 )
             else:
-                event_handler = cast(EventHandler, handler)
+                event_handler = cast("EventHandler", handler)
             
             with self._lock:
                 # Check for duplicate subscription
@@ -795,7 +795,7 @@ class EventBusManager:
                 shutdown_result = bus.shutdown()
                 if not shutdown_result.is_success:
                     self.logger.warning(
-                        f"Failed to shutdown bus '{bus_id}': {shutdown_result.get_error()}"
+                        f"Failed to shutdown bus '{bus_id}': {shutdown_result.get_error()}",
                     )
                 
                 # Remove from registry

@@ -8,14 +8,14 @@ and playback).
 
 import numpy as np
 
+from src_refactored.infrastructure.audio.audio_playback_service import (
+    AudioProcessingServiceProtocol as PlaybackProcessingProtocol,
+)
 from src_refactored.infrastructure.audio.audio_recording_service import (
     AudioProcessingServiceProtocol as RecordingProcessingProtocol,
 )
 from src_refactored.infrastructure.audio.vad_service import (
     AudioProcessingServiceProtocol as VADProcessingProtocol,
-)
-from src_refactored.infrastructure.audio.audio_playback_service import (
-    AudioProcessingServiceProtocol as PlaybackProcessingProtocol,
 )
 
 

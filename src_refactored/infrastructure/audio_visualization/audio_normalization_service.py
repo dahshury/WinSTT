@@ -5,13 +5,13 @@ including RMS-based normalization, auto-gain control, and speech-specific
 scaling. Extracted from voice_visualizer.py normalization logic.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
 import numpy as np
 
-from collections.abc import Sequence
 from src_refactored.domain.audio.value_objects.audio_samples import AudioSampleData
 from src_refactored.infrastructure.system.logging_service import LoggingService
 

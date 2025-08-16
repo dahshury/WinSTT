@@ -1,8 +1,8 @@
 """Conversion job entity for media file conversion."""
 
+from datetime import datetime
 from enum import Enum
 from typing import Any
-from datetime import datetime
 
 from src_refactored.domain.common.domain_utils import DomainIdentityGenerator
 from src_refactored.domain.common.entity import Entity
