@@ -130,49 +130,12 @@ class MainWindowDragDropProcessingAdapter(IDragDropProcessingPort):
                         parent_dir = str(_Path(self._file_path).parent)
                         repo = _TranscriptionFileRepository(base_path=parent_dir)
                         if self._save_as_srt:
-                            # Prefer high-quality timestamps via onnx-asr if available
+                            # Use our internal timestamped segmentation (long-duration + VAD)
                             seg_dicts = None
                             try:
-                                import numpy as _np
-                                import onnx_asr as _asr
-                                model = _asr.load_model("onnx-community/whisper-large-v3-turbo")
-                                # Use VAD-assisted segmentation with timestamps for accurate start/end
-                                vad = _asr.load_vad("silero")
-                                # Prepare input: pass path for wav, otherwise pass numpy waveform
-                                input_arg = self._file_path
-                                if not self._file_path.lower().endswith(".wav"):
-                                    from pydub import AudioSegment as _ASeg
-                                    import numpy as _np
-                                    seg = _ASeg.from_file(self._file_path)
-                                    samples = _np.array(seg.get_array_of_samples(), dtype=_np.float32)
-                                    max_val = float(1 << (8 * seg.sample_width - 1)) if seg.sample_width else 1.0
-                                    waveform = (samples / max_val).astype(_np.float32)
-                                    input_arg = waveform
-                                    sample_rate = int(seg.frame_rate) if seg.frame_rate else 16000
-                                else:
-                                    sample_rate = 16000  # unused for file path
                                 self.progress.emit(50, "Refining timestamps...")
-                                results = model.with_vad(vad, batch_size=1).with_timestamps().recognize(
-                                    input_arg, sample_rate=sample_rate,
-                                )
-                                # Collect timestamped segments robustly for single or batch usage
-                                seg_dicts = []
-                                def _collect_segments(obj):
-                                    try:
-                                        for seg in obj:
-                                            seg_dicts.append({
-                                                "start": float(getattr(seg, "start", 0.0)),
-                                                "end": float(getattr(seg, "end", 0.0)),
-                                                "text": getattr(seg, "text", ""),
-                                            })
-                                        return True
-                                    except TypeError:
-                                        return False
-                                if isinstance(results, list):
-                                    for item in results:
-                                        _collect_segments(item)
-                                else:
-                                    _collect_segments(results)
+                                # Prefer path input for efficiency
+                                seg_dicts = transcriber.transcribe_with_timestamps(self._file_path)
                                 if not seg_dicts:
                                     seg_dicts = None
                             except Exception:

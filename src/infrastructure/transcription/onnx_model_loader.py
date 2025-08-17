@@ -1,8 +1,8 @@
-"""Model loader that uses ModelCacheService and ModelDownloadService.
+"""Enhanced model loader with optimized ONNX session management.
 
 This encapsulates model URL decisions and file presence checks so the
 transcription service only orchestrates sessions rather than owning
-download configuration.
+download configuration. Now includes optimizations from onnx_asr.
 """
 
 from __future__ import annotations
@@ -10,11 +10,13 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING
 
-import onnxruntime as ort
-
 from src.domain.transcription.value_objects.model_download_config import ModelDownloadConfig
 from src.infrastructure.transcription.model_cache_service import ModelCacheService
 from src.infrastructure.transcription.model_download_service import ModelDownloadService
+from src.infrastructure.transcription.model_runtime_sessions import (
+    OptimizedInferenceSession,
+    OnnxSessionOptions,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -64,8 +66,9 @@ class OnnxModelLoader:
             msg = "Whisper models download failed"
             raise RuntimeError(msg)
 
-    def load_sessions(self) -> dict[str, ort.InferenceSession]:
-        providers = ort.get_available_providers()
+    def load_sessions(self, cpu_preprocessing: bool = True) -> dict[str, OptimizedInferenceSession]:
+        """Load optimized ONNX sessions with enhanced performance settings."""
+        options = OnnxSessionOptions(cpu_preprocessing=cpu_preprocessing)
         onnx_folder = self._cache.get_onnx_folder_path(self._model_type)
         suffix = "" if self._quality.value == "full" else "_quantized"
         model_paths = {
@@ -74,18 +77,18 @@ class OnnxModelLoader:
             "decoder_with_past": onnx_folder / f"decoder_with_past_model{suffix}.onnx",
         }
 
-        sessions: dict[str, ort.InferenceSession] = {}
+        sessions: dict[str, OptimizedInferenceSession] = {}
         for name, path in model_paths.items():
             if not path.exists():
                 msg = f"Model file not found: {path}"
                 raise FileNotFoundError(msg)
             try:
-                sessions[name] = ort.InferenceSession(str(path), providers=providers)
+                sessions[name] = OptimizedInferenceSession(str(path), options)
             except Exception:
                 with contextlib.suppress(Exception):
                     path.unlink(missing_ok=True)
                 self.ensure_models_present()
-                sessions[name] = ort.InferenceSession(str(path), providers=providers)
+                sessions[name] = OptimizedInferenceSession(str(path), options)
         return sessions
 
     def are_models_present(self) -> bool:

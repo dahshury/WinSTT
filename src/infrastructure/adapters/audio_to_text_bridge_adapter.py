@@ -107,11 +107,17 @@ class AudioToTextBridgeAdapter:
                 )
                 def _on_complete_cb(result_text: str) -> None:
                     # Bridge UI completion to controller; ensure UI clears transcribing state
+                    # Use QTimer.singleShot to ensure UI updates happen on main thread
                     if self._ui_callback:
-                        with contextlib.suppress(Exception):
-                            message = result_text if (result_text and str(result_text).strip()) else "Ready for transcription"
-                            # hold=False so it auto-clears per adapter settings
-                            self._ui_callback(message, None, None, False, True)
+                        def _safe_ui_update():
+                            with contextlib.suppress(Exception):
+                                message = result_text if (result_text and str(result_text).strip()) else "Ready for transcription"
+                                # hold=False so it auto-clears per adapter settings
+                                self._ui_callback(message, None, None, False, True)
+                        
+                        # Queue UI update on main thread to prevent timer threading issues
+                        from PyQt6.QtCore import QTimer
+                        QTimer.singleShot(0, _safe_ui_update)
 
                 self._audio_to_text = AudioToTextService(
                     config=config,

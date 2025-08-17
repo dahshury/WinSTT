@@ -215,7 +215,7 @@ class SimpleTranscriptionAdapter:
                     # Best-effort download (non-interactive); progress shown via UI callback
                     # We intentionally avoid wiring signals here and rely on status callback
                     ModelDownloadService(ModelDownloadConfig(cache_path=cache_root, model_type="whisper-turbo", quality=config.quality)).download_whisper_models()
-                sessions = loader.load_sessions()
+                sessions = loader.load_sessions(cpu_preprocessing=True)
                 artifacts_service = WhisperArtifactsService()
                 tokenizer, feature_extractor, model_cfg, gen_cfg = artifacts_service.get_artifacts(loader.get_model_cache_dir())
                 self._service = ONNXTranscriptionService(
@@ -298,7 +298,7 @@ class SimpleTranscriptionAdapter:
                 loader = OnnxModelLoader(cache_path=cache_root, model_type="whisper-turbo", quality=config.quality)
                 if not loader.are_models_present():
                     ModelDownloadService(ModelDownloadConfig(cache_path=cache_root, model_type="whisper-turbo", quality=config.quality)).download_whisper_models()
-                sessions = loader.load_sessions()
+                sessions = loader.load_sessions(cpu_preprocessing=True)
                 artifacts_service = WhisperArtifactsService()
                 tokenizer, feature_extractor, model_cfg, gen_cfg = artifacts_service.get_artifacts(loader.get_model_cache_dir())
                 self._service = ONNXTranscriptionService(
@@ -388,4 +388,33 @@ class SimpleTranscriptionAdapter:
     def transcribe(self, audio_data: Any) -> str:
         """Alias for transcribe_audio to match original interface."""
         return self.transcribe_audio(audio_data)
+
+    def transcribe_with_timestamps(self, audio_data: Any) -> list[dict[str, Any]]:
+        """Transcribe and return timestamped segments using our ONNX implementation.
+
+        Returns a list of dicts with keys: start, end, text.
+        """
+        # Ensure service exists and is initialized
+        if self._service is None:
+            # Initialize service without performing a real transcription
+            self.preload_models()
+        if not getattr(self._service, "is_initialized", False):
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            ok = loop.run_until_complete(self._service.initialize_async())
+            loop.close()
+            if not ok:
+                return []
+        # Call service with segments requested
+        from src.domain.transcription.value_objects.transcription_request import TranscriptionRequest
+        if isinstance(audio_data, (bytes, bytearray)):
+            audio_data = io.BytesIO(audio_data)
+        req = TranscriptionRequest(audio_input=audio_data, return_segments=True)
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result_obj = loop.run_until_complete(self._service.transcribe_async(req))
+        loop.close()
+        return getattr(result_obj, "segments", None) or []
     

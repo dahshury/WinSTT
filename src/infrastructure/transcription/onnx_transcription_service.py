@@ -9,6 +9,7 @@ import gc
 import logging
 from typing import Any
 
+import numpy as np
 import onnxruntime as ort
 from transformers import WhisperFeatureExtractor, WhisperTokenizerFast
 
@@ -25,13 +26,20 @@ from src.domain.transcription.value_objects.transcription_request import (
 from src.domain.transcription.value_objects.transcription_status import (
     TranscriptionStatus,
 )
-from src.infrastructure.media.media_info_service import MediaInfoService
+ 
+from src.infrastructure.transcription.model_cache_service import ModelCacheService
+from src.infrastructure.transcription.model_download_service import ModelDownloadService
+from src.domain.transcription.value_objects.model_download_config import (
+    ModelDownloadConfig,
+)
 
 # Modular services
 from .audio_preprocessing_service import TranscriptionAudioPreprocessingService
 from .decoding_service import WhisperOnnxDecodingService
 from .encoding_service import WhisperOnnxEncoderService
 from .postprocessing_service import WhisperPostprocessingService
+from .onnx_preprocessor_service import create_optimized_preprocessor
+from .vad_segmenter import SileroVadSegmenter, VadSegmentationConfig
 
 # Suppress transformers logging
 logging.getLogger("transformers").setLevel(logging.ERROR)
@@ -66,6 +74,7 @@ class ONNXTranscriptionService:
         self.model_type = model_type
         self.display_message_callback = display_message_callback
         self.progress_callback = progress_callback
+        self._cache_path = cache_path
 
         # State
         self.status = TranscriptionStatus.IDLE
@@ -81,6 +90,7 @@ class ONNXTranscriptionService:
         self._encoder_service = encoder_service
         self._decoder_service = decoder_service
         self._postprocessor = postprocessor
+        self._vad_segmenter: SileroVadSegmenter | None = None
 
         custom_logger.info("ONNXTranscriptionService initialized with quality: %s, model: %s", self.quality.value, model_type)
 
@@ -123,6 +133,26 @@ class ONNXTranscriptionService:
             if self._preprocessor is None and self.feature_extractor is not None:
                 self._preprocessor = TranscriptionAudioPreprocessingService()
 
+            # Initialize VAD segmenter (best-effort); ensure VAD model exists in cache
+            try:
+                cache_base = self._cache_path
+                if cache_base is None:
+                    from src.infrastructure.common.resource_service import resource_path as _resource_path
+                    cache_base = _resource_path("src/cache")
+                cache = ModelCacheService(cache_path=cache_base)
+                vad_path = cache.cache_path / "vad" / "silero_vad_16k.onnx"
+                if not vad_path.exists() or vad_path.stat().st_size <= 1000:
+                    dl_cfg = ModelDownloadConfig(
+                        cache_path=cache_base,
+                        model_type=self.model_type,
+                        quality=self.quality,
+                    )
+                    ModelDownloadService(dl_cfg).download_vad_model()
+                if vad_path.exists() and vad_path.stat().st_size > 1000:
+                    self._vad_segmenter = SileroVadSegmenter(str(vad_path))
+            except Exception:
+                self._vad_segmenter = None
+
             self.is_initialized = True
             self.status = TranscriptionStatus.IDLE
 
@@ -152,54 +182,52 @@ class ONNXTranscriptionService:
             if self.progress_callback:
                 self.progress_callback(0, 0, "Starting transcription...")
 
-            # Preprocess audio
-            if self.progress_callback:
-                self.progress_callback(20, 100, "Preprocessing audio...")
             assert self._preprocessor is not None
             assert self.feature_extractor is not None
-            audio_features = self._preprocessor.preprocess(request.audio_input, self.feature_extractor, 16000)
 
-            # Run encoder
-            if self.progress_callback:
-                self.progress_callback(40, 100, "Running encoder...")
-            assert self._encoder_service is not None
-            encoder_outputs = self._encoder_service.encode(audio_features)
+            # Choose path: VAD-assisted segmentation for timestamps, or single-pass
+            use_segments = bool(getattr(request, "return_segments", False) and self._vad_segmenter is not None)
 
-            # Run decoder
-            if self.progress_callback:
-                self.progress_callback(70, 100, "Running decoder...")
-            assert self._decoder_service is not None
-            output_ids = self._decoder_service.decode(encoder_outputs)
+            if use_segments:
+                if self.progress_callback:
+                    self.progress_callback(20, 100, "Loading audio for segmentation...")
+                # Load waveform at 16k mono float32
+                waveform, _ = self._preprocessor.load_waveform(request.audio_input, 16000)
+                if self.progress_callback:
+                    self.progress_callback(35, 100, "Running VAD segmentation...")
+                spans = self._vad_segmenter.segment(waveform, VadSegmentationConfig(sample_rate=16000)) if self._vad_segmenter else []
 
-            # Postprocess
-            if self.progress_callback:
-                self.progress_callback(90, 100, "Postprocessing...")
-            assert self._postprocessor is not None
-            transcription_text = self._postprocessor.decode_tokens(output_ids)
-
-            # Segments
-            segments = []
-            if getattr(request, "return_segments", False):
-                media_info = MediaInfoService()
-                audio_duration = media_info.get_duration_seconds(request.audio_input)
-                if self._postprocessor is None and self.tokenizer is not None:
-                    self._postprocessor = WhisperPostprocessingService(self.tokenizer)
-                if self._postprocessor is not None:
-                    segments = self._postprocessor.simple_segments(audio_duration, transcription_text)
+                if self.progress_callback:
+                    self.progress_callback(50, 100, "Transcribing segments...")
+                
+                # Use optimized batch processing like onnx_asr
+                segments_out = self._transcribe_segments_batch(waveform, spans)
+                transcription_text = " ".join(seg["text"] for seg in segments_out) if segments_out else ""
+                segments_result = segments_out if segments_out else None
             else:
-                segments = []
+                # Single-pass inference
+                if self.progress_callback:
+                    self.progress_callback(20, 100, "Preprocessing audio...")
+                audio_features = self._preprocessor.preprocess(request.audio_input, self.feature_extractor, 16000)
+                if self.progress_callback:
+                    self.progress_callback(40, 100, "Running encoder...")
+                assert self._encoder_service is not None
+                encoder_outputs = self._encoder_service.encode(audio_features)
+                if self.progress_callback:
+                    self.progress_callback(70, 100, "Running decoder...")
+                assert self._decoder_service is not None
+                output_ids = self._decoder_service.decode(encoder_outputs)
+                if self.progress_callback:
+                    self.progress_callback(90, 100, "Postprocessing...")
+                assert self._postprocessor is not None
+                transcription_text = self._postprocessor.decode_tokens(output_ids)
+                segments_result = None
 
             self.status = TranscriptionStatus.COMPLETED
             if self.progress_callback:
                 self.progress_callback(100, 100, "Completed")
 
-            return TranscriptionOutput(
-                text=transcription_text,
-                segments=[
-                    {"start": seg.start_time.seconds, "end": seg.end_time.seconds, "text": getattr(seg.text, "content", str(seg.text))}
-                    for seg in segments
-                ] if segments else None,
-            )
+            return TranscriptionOutput(text=transcription_text, segments=segments_result)
 
         except Exception as e:
             self.status = TranscriptionStatus.ERROR
@@ -208,6 +236,96 @@ class ONNXTranscriptionService:
             if self.progress_callback:
                 self.progress_callback(0, 0, error_msg)
             raise
+
+    def _transcribe_segments_batch(self, waveform: np.ndarray, spans: list[tuple[int, int]], batch_size: int = 8) -> list[dict[str, Any]]:
+        """Optimized batch processing of VAD segments using onnx_asr approach.
+        
+        Uses the ASR model's native batch processing like onnx_asr for better efficiency.
+        """
+        from itertools import islice
+        
+        assert self._encoder_service is not None
+        assert self._decoder_service is not None
+        assert self._postprocessor is not None
+        assert self.feature_extractor is not None
+        assert self._preprocessor is not None
+        
+        segments_out: list[dict[str, Any]] = []
+        
+        # Process segments in batches like onnx_asr VAD approach
+        spans_iter = iter(spans)
+        while batch_spans := list(islice(spans_iter, batch_size)):
+            # Filter valid spans
+            valid_spans = [(start, end) for start, end in batch_spans if end > start]
+            if not valid_spans:
+                continue
+            
+            try:
+                # Extract waveform segments like onnx_asr
+                segment_waveforms = [waveform[start:end] for start, end in valid_spans]
+                
+                if not segment_waveforms:
+                    continue
+                
+                # Use onnx_asr's pad_list approach for batch processing
+                padded_waveforms, waveform_lengths = self._pad_waveforms(segment_waveforms)
+                
+                # Batch preprocessing like onnx_asr
+                batch_features = []
+                for seg_wave in segment_waveforms:
+                    seg_feats = self._preprocessor.preprocess(seg_wave, self.feature_extractor, 16000)
+                    batch_features.append(seg_feats)
+                
+                # Process each segment in the batch
+                for (start_samp, end_samp), seg_feats in zip(valid_spans, batch_features, strict=True):
+                    # Use OrtValue for better memory management
+                    if hasattr(self._encoder_service, "encode_ortvalue"):
+                        enc_ortvalue = self._encoder_service.encode_ortvalue(seg_feats)
+                        ids = self._decoder_service.decode(enc_ortvalue)
+                    else:
+                        enc = self._encoder_service.encode(seg_feats)
+                        ids = self._decoder_service.decode(enc)
+                    
+                    text_seg = self._postprocessor.decode_tokens(ids).strip()
+                    if text_seg:
+                        segments_out.append({
+                            "start": float(start_samp) / 16000.0,
+                            "end": float(end_samp) / 16000.0,
+                            "text": text_seg,
+                        })
+                        
+            except Exception as e:
+                # Fallback to individual processing if batch fails
+                custom_logger.warning("Batch processing failed, falling back to individual: %s", e)
+                for start_samp, end_samp in valid_spans:
+                    try:
+                        seg_wave = waveform[start_samp:end_samp]
+                        seg_feats = self._preprocessor.preprocess(seg_wave, self.feature_extractor, 16000)
+                        enc = self._encoder_service.encode(seg_feats)
+                        ids = self._decoder_service.decode(enc)
+                        text_seg = self._postprocessor.decode_tokens(ids).strip()
+                        if text_seg:
+                            segments_out.append({
+                                "start": float(start_samp) / 16000.0,
+                                "end": float(end_samp) / 16000.0,
+                                "text": text_seg,
+                            })
+                    except Exception:
+                        continue  # Skip problematic segments
+        
+        return segments_out
+
+    def _pad_waveforms(self, waveforms: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+        """Pad list of waveforms to common length like onnx_asr utils.pad_list."""
+        lengths = np.array([waveform.shape[0] for waveform in waveforms], dtype=np.int64)
+        max_length = lengths.max()
+        
+        padded = np.zeros((len(waveforms), max_length), dtype=np.float32)
+        for i, waveform in enumerate(waveforms):
+            actual_length = min(waveform.shape[0], max_length)
+            padded[i, :actual_length] = waveform[:actual_length]
+        
+        return padded, lengths
 
     def cleanup(self) -> None:
         """Cleanup resources."""

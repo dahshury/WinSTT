@@ -336,6 +336,17 @@ class PyAudioRecorder:
                             pass
                         self.stream = None
                     
+                    # If device was unavailable last time, refresh PyAudio to detect newly connected devices
+                    if not self._last_device_available:
+                        self.logger.info("Device was unavailable last time - refreshing PyAudio to detect newly connected devices")
+                        try:
+                            if self.p is not None:
+                                self.p.terminate()
+                        except Exception:
+                            pass
+                        self._initialize_pyaudio()
+                        self.logger.debug("PyAudio reinitialized for device detection")
+                    
                     # Try to create new stream
                     self._create_stream()
                 else:
@@ -353,7 +364,10 @@ class PyAudioRecorder:
                         self._create_stream()
 
                 # Mark device as available since we got here
+                was_previously_unavailable = not self._last_device_available
                 self._last_device_available = True
+                if was_previously_unavailable:
+                    self.logger.info("Audio device is now available - recording ready")
                 
                 # Start recording thread
                 threading.Thread(target=self._recording, daemon=True).start()
@@ -475,11 +489,21 @@ class PyAudioRecorder:
         self._running.clear()
         with self._stream_lock:
             # Stop the stream but don't close it for reuse
-            if self.stream is not None and self._last_device_available:
+            if self.stream is not None:
                 try:
-                    if self.stream.is_active():
-                        self.stream.stop_stream()
-                    self.logger.debug("Recording stopped, stream kept for reuse.")
+                    # Only attempt to stop if device was available and stream is likely valid
+                    if self._last_device_available and hasattr(self.stream, 'is_active'):
+                        if self.stream.is_active():
+                            self.stream.stop_stream()
+                        self.logger.debug("Recording stopped, stream kept for reuse.")
+                    else:
+                        # Device not available or stream in invalid state - clean up safely
+                        try:
+                            self.stream.close()
+                        except Exception:
+                            pass
+                        self.stream = None
+                        self.logger.debug("Recording stopped, stream cleaned up due to device unavailability.")
                 except Exception as e:
                     self.logger.error("Error stopping stream: %s", e)
                     # If stopping fails, close and recreate next time

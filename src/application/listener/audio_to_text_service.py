@@ -158,6 +158,7 @@ class AudioToTextService:
                     # Ensure backend is refreshed so the next attempt uses a newly plugged device
                     with contextlib.suppress(Exception):
                         self._recorder.close(reset=True)
+                    self._logger.warning("No recording device detected. Please connect a microphone.")
                 else:
                     # Log message only (no traceback) for cleaner console output
                     with contextlib.suppress(Exception):
@@ -167,9 +168,25 @@ class AudioToTextService:
         self._threads.start_daemon(_start_recording_async, name="recorder_starter")
 
     def stop_recording(self) -> None:
-        self._recorder.stop()
+        # Check if recording was actually active before attempting to stop
+        was_recording = self._is_recording
         self._is_recording = False
         duration = self._time.now_seconds() - self._start_time
+        
+        # Only stop recorder if recording was actually started
+        if was_recording:
+            try:
+                self._recorder.stop()
+            except Exception as e:
+                # Handle recorder stop errors gracefully to prevent segfault
+                self._logger.warning("Error stopping recorder: %s", str(e))
+                with contextlib.suppress(Exception):
+                    self._recorder.close(reset=True)
+                return  # Don't proceed with transcription if stopping failed
+        else:
+            # Recording never started successfully, don't try to stop or transcribe
+            return
+            
         # Suppress the "too short" warning when no device was available
         if duration < self._config.minimum_duration_seconds:
             if self._has_usable_input_device():
@@ -191,11 +208,12 @@ class AudioToTextService:
         buf = BytesIOAdapter().from_bytes(wav_bytes)
         if not self._vad.has_speech(buf):
             self._logger.warning("No speech detected in the recording.")
-            # Notify completion so UI clears transcribing state
+            # Notify completion so UI clears transcribing state - use main thread
             try:
                 if self._on_complete:
                     # Send a non-empty but benign message so UI clears
-                    self._on_complete("Ready for transcription")
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, lambda: self._safe_completion_callback("Ready for transcription"))
             except Exception:
                 self._logger.debug("Retry after init failed", exc_info=True)
             return
@@ -216,7 +234,8 @@ class AudioToTextService:
             self._logger.warning("Empty transcription text; skipping paste")
             try:
                 if self._on_complete:
-                    self._on_complete("Ready for transcription")
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, lambda: self._safe_completion_callback("Ready for transcription"))
             except Exception:
                 self._logger.debug("Completion callback failed (empty text)", exc_info=True)
             return
@@ -228,12 +247,24 @@ class AudioToTextService:
         _t.sleep(0.08)
         self._key_sim.send_paste()
         # Notify completion to allow UI to clear "Transcribing..." state
+        # Ensure callback is called on main thread to prevent Qt timer issues
+        try:
+            if self._on_complete:
+                # Use QTimer.singleShot to queue callback on main thread
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self._safe_completion_callback(text))
+        except Exception:
+            # Swallow callback errors to not affect core flow
+            self._logger.debug("Completion callback failed", exc_info=True)
+
+    def _safe_completion_callback(self, text: str) -> None:
+        """Safely call completion callback with error handling."""
         try:
             if self._on_complete:
                 self._on_complete(text)
         except Exception:
             # Swallow callback errors to not affect core flow
-            self._logger.debug("Completion callback failed", exc_info=True)
+            self._logger.debug("Safe completion callback failed", exc_info=True)
 
     def shutdown(self) -> None:
         try:

@@ -575,9 +575,11 @@ src/infrastructure/transcription/model_runtime_sessions.py
 src/infrastructure/transcription/model_worker_service.py
 src/infrastructure/transcription/onnx_model_loader.py
 src/infrastructure/transcription/onnx_transcription_service.py
+src/infrastructure/transcription/onnx_utils.py
 src/infrastructure/transcription/postprocessing_service.py
 src/infrastructure/transcription/streaming_transcription_service.py
 src/infrastructure/transcription/transcription_file_repository.py
+src/infrastructure/transcription/vad_segmenter.py
 src/infrastructure/transcription/whisper_artifacts_service.py
 src/infrastructure/ui/__init__.py
 src/infrastructure/ui_widgets/__init__.py
