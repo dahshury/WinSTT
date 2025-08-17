@@ -1,11 +1,7 @@
 __pycache__
-src/cache
-src/core/cache
-/src/utils/test.wav
 /test.ipynb
 /RealtimeSTT
 /output
-/cache
 src/utils/whisper_online.py
 /RealtimeSTT
-/faster.py
+src/cache

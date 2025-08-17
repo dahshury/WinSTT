@@ -57,6 +57,8 @@ Requires-Dist: psutil>=7.0.0
 Requires-Dist: librosa>=0.10.2
 Requires-Dist: tree3>=0.2.0
 Requires-Dist: ty>=0.0.1a17
+Requires-Dist: onnx-asr[cpu,hub]>=0.7.0
+Requires-Dist: ipykernel>=6.30.1
 Provides-Extra: cpu
 Requires-Dist: faster-whisper>=0.10.0; extra == "cpu"
 Requires-Dist: onnxruntime==1.20.0; extra == "cpu"

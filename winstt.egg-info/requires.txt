@@ -28,6 +28,8 @@ psutil>=7.0.0
 librosa>=0.10.2
 tree3>=0.2.0
 ty>=0.0.1a17
+onnx-asr[cpu,hub]>=0.7.0
+ipykernel>=6.30.1
 
 [build]
 setuptools>=45

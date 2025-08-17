@@ -49,6 +49,8 @@ dependencies = [
   "librosa>=0.10.2",
   "tree3>=0.2.0",
   "ty>=0.0.1a17",
+  "onnx-asr[cpu,hub]>=0.7.0",
+  "ipykernel>=6.30.1",
 ]
 
 [project.optional-dependencies]
@@ -133,4 +135,4 @@ dev-dependencies = [
 # "Multiple top-level packages discovered in a flat-layout" errors
 # when uv/setuptools tries to build the project in editable mode.
 [tool.setuptools.packages.find]
-include = ["src_refactored*"]
+include = ["src*"]

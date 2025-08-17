@@ -1,0 +1,403 @@
+"""Get transcription result use case.
+
+This module contains the use case for retrieving transcription results.
+"""
+
+from dataclasses import dataclass
+from datetime import datetime
+
+from src.domain.common.abstractions import UseCase
+from src.domain.common.ports.time_port import ITimePort
+from src.domain.transcription.entities.transcription_result import (
+    TranscriptionResult,
+)
+from src.domain.transcription.entities.transcription_session import TranscriptionSession
+from src.domain.transcription.value_objects.transcription_segment import (
+    TranscriptionSegment,
+)
+from src.domain.transcription.value_objects.transcription_state import TranscriptionState
+
+
+@dataclass
+class TranscriptionResultData:
+    """Data structure for transcription result."""
+
+    transcription_id: str
+    text: str
+    language: str | None
+    confidence: float
+    processing_time: float
+    segments: list[TranscriptionSegment]
+    created_at: datetime
+    completed_at: datetime | None
+    state: TranscriptionState
+    error_message: str | None = None
+
+
+@dataclass
+class GetTranscriptionResultRequest:
+    """Request for getting transcription result."""
+
+    transcription_id: str | None = None
+    session_id: str | None = None
+    include_segments: bool = True
+    include_metadata: bool = True
+    wait_for_completion: bool = False
+    timeout_seconds: float = 30.0
+
+
+@dataclass
+class GetTranscriptionResultResponse:
+    """Response for getting transcription result."""
+
+    success: bool
+    result: TranscriptionResultData | None = None
+    is_processing: bool = False
+    progress_percentage: float | None = None
+    estimated_time_remaining: float | None = None
+    error_message: str | None = None
+
+
+class GetTranscriptionResultUseCase(UseCase[GetTranscriptionResultRequest, GetTranscriptionResultResponse]):
+    """Use case for retrieving transcription results.
+    
+    This use case handles retrieving transcription results, including completed results,
+    in-progress status, and error information.
+    """
+
+    def __init__(
+        self,
+        transcription_session: TranscriptionSession,
+        progress_service=None,
+        cache_service=None,
+        time_port: ITimePort | None = None,
+    ):
+        """Initialize the get transcription result use case.
+        
+        Args:
+            transcription_session: The transcription session entity
+            progress_service: Optional service for progress tracking
+            cache_service: Optional service for result caching
+        """
+        self._transcription_session = transcription_session
+        self._progress_service = progress_service
+        self._cache_service = cache_service
+        self._time = time_port
+
+    def execute(self, request: GetTranscriptionResultRequest,
+    ) -> GetTranscriptionResultResponse:
+        """Execute the get transcription result use case.
+        
+        Args:
+            request: The get transcription result request
+            
+        Returns:
+            GetTranscriptionResultResponse containing the transcription result
+        """
+        try:
+            # Determine transcription ID
+            transcription_id = self._resolve_transcription_id(request)
+            if not transcription_id:
+                return GetTranscriptionResultResponse(
+                    success=False,
+                    error_message="No transcription ID provided or found in session",
+                )
+
+            # Check cache first if available
+            if self._cache_service and not request.wait_for_completion:
+                cached_result = self._cache_service.get_transcription_result(transcription_id)
+                if cached_result:
+                    return GetTranscriptionResultResponse(
+                        success=True,
+                        result=self._convert_to_result_data(cached_result, request),
+                    )
+
+            # Get transcription result from session
+            result_response = self._transcription_session.get_transcription_result(transcription_id)
+
+            if not result_response.is_success:
+                return GetTranscriptionResultResponse(
+                    success=False,
+                    error_message=f"Failed to retrieve transcription: {result_response.error}",
+                )
+
+            transcription_result = result_response.value
+
+            # Handle different transcription states - check if result exists
+            if transcription_result is None:
+                return GetTranscriptionResultResponse(
+                    success=False,
+                    error_message="Transcription result not found",
+                )
+
+            if transcription_result.status == TranscriptionState.PROCESSING:
+                return self._handle_processing_state(transcription_result, request)
+
+            if transcription_result.status == TranscriptionState.COMPLETED:
+                return self._handle_completed_state(transcription_result, request)
+
+            if transcription_result.status == TranscriptionState.FAILED:
+                return self._handle_failed_state(transcription_result, request)
+
+            if transcription_result.status == TranscriptionState.CANCELLED:
+                return GetTranscriptionResultResponse(
+                    success=True,
+                    result=self._convert_to_result_data(transcription_result, request),
+                    error_message="Transcription was cancelled",
+                )
+
+            return GetTranscriptionResultResponse(
+                success=False,
+                error_message=f"Unknown transcription state: {transcription_result.status}",
+            )
+
+        except Exception as e:
+            error_msg = f"Unexpected error retrieving transcription result: {e!s}"
+            return GetTranscriptionResultResponse(
+                success=False,
+                error_message=error_msg,
+            )
+
+    def _resolve_transcription_id(self, request: GetTranscriptionResultRequest,
+    ) -> str | None:
+        """Resolve transcription ID from request or session.
+        
+        Args:
+            request: The get transcription result request
+            
+        Returns:
+            The resolved transcription ID or None
+        """
+        if request.transcription_id:
+            return request.transcription_id
+
+        if request.session_id:
+            # Get latest transcription from session
+            latest_result = self._transcription_session.get_latest_transcription()
+            if latest_result.is_success and latest_result.value is not None:
+                return latest_result.value.transcription_id
+
+        # Try to get current transcription from session
+        current_result = self._transcription_session.get_current_transcription()
+        if current_result.is_success and current_result.value is not None:
+            return current_result.value.transcription_id
+
+        return None
+
+    def _handle_processing_state(
+        self,
+        transcription_result: TranscriptionResult,
+        request: GetTranscriptionResultRequest,
+    ) -> GetTranscriptionResultResponse:
+        """Handle transcription in processing state.
+        
+        Args:
+            transcription_result: The transcription result
+            request: The original request
+            
+        Returns:
+            GetTranscriptionResultResponse with processing status information
+        """
+        progress_percentage = None
+        estimated_time_remaining = None
+
+        # Get progress information if service available
+        if self._progress_service:
+            try:
+                progress_info = self._progress_service.get_transcription_progress(
+                    transcription_result.transcription_id,
+                )
+                if progress_info:
+                    progress_percentage = progress_info.percentage
+                    estimated_time_remaining = progress_info.estimated_time_remaining
+            except Exception:
+                # Progress service failure shouldn't affect main result
+                pass
+
+        # Handle wait for completion
+        if request.wait_for_completion:
+            return self._wait_for_completion(transcription_result, request)
+
+        return GetTranscriptionResultResponse(
+            success=True,
+            result=self._convert_to_result_data(transcription_result, request),
+            is_processing=True,
+            progress_percentage=progress_percentage,
+            estimated_time_remaining=estimated_time_remaining,
+        )
+
+    def _handle_completed_state(
+        self,
+        transcription_result: TranscriptionResult,
+        request: GetTranscriptionResultRequest,
+    ) -> GetTranscriptionResultResponse:
+        """Handle completed transcription.
+        
+        Args:
+            transcription_result: The transcription result
+            request: The original request
+            
+        Returns:
+            GetTranscriptionResultResponse with completed transcription data
+        """
+        result_data = self._convert_to_result_data(transcription_result, request)
+
+        # Cache result if service available
+        if self._cache_service:
+            try:
+                self._cache_service.cache_transcription_result(
+                    transcription_result.transcription_id,
+                    transcription_result,
+                )
+            except Exception:
+                # Cache failure shouldn't affect main result
+                pass
+
+        return GetTranscriptionResultResponse(
+            success=True,
+            result=result_data,
+        )
+
+    def _handle_failed_state(
+        self,
+        transcription_result: TranscriptionResult,
+        request: GetTranscriptionResultRequest,
+    ) -> GetTranscriptionResultResponse:
+        """Handle failed transcription.
+        
+        Args:
+            transcription_result: The transcription result
+            request: The original request
+            
+        Returns:
+            GetTranscriptionResultResponse with failure information
+        """
+        return GetTranscriptionResultResponse(
+            success=True,
+            result=self._convert_to_result_data(transcription_result, request),
+            error_message=transcription_result.error_message or "Transcription failed",
+        )
+
+    def _wait_for_completion(
+        self,
+        transcription_result: TranscriptionResult,
+        request: GetTranscriptionResultRequest,
+    ) -> GetTranscriptionResultResponse:
+        """Wait for transcription completion.
+        
+        Args:
+            transcription_result: The transcription result
+            request: The original request
+            
+        Returns:
+            GetTranscriptionResultResponse with final transcription status
+        """
+        if self._time is None:
+            msg = "ITimePort is required for wait_for_completion"
+            raise ValueError(msg)
+        start_time = self._time.get_current_time()
+        timeout = request.timeout_seconds
+        poll_interval = 0.5  # Poll every 500ms
+
+        while self._time.get_current_time() - start_time < timeout:
+            # Get updated result
+            updated_result = self._transcription_session.get_transcription_result(
+                transcription_result.transcription_id,
+            )
+
+            if updated_result.is_success:
+                current_result = updated_result.value
+
+                if current_result is not None and current_result.status == TranscriptionState.COMPLETED:
+                    return self._handle_completed_state(current_result, request)
+
+                if current_result is not None and current_result.status == TranscriptionState.FAILED:
+                    return self._handle_failed_state(current_result, request)
+
+                if current_result is not None and current_result.status == TranscriptionState.CANCELLED:
+                    return GetTranscriptionResultResponse(
+                        success=True,
+                        result=self._convert_to_result_data(current_result, request),
+                        error_message="Transcription was cancelled",
+                    )
+
+            self._time.sleep(poll_interval)
+
+        # Timeout reached
+        return GetTranscriptionResultResponse(
+            success=True,
+            result=self._convert_to_result_data(transcription_result, request),
+            is_processing=True,
+            error_message=f"Timeout waiting for completion ({timeout}s)",
+        )
+
+    def _convert_to_result_data(
+        self,
+        transcription_result: TranscriptionResult,
+        request: GetTranscriptionResultRequest,
+    ) -> TranscriptionResultData:
+        """Convert transcription result to result data.
+        
+        Args:
+            transcription_result: The transcription result
+            request: The original request
+            
+        Returns:
+            Converted result data
+        """
+        segments: list[TranscriptionSegment] = []
+        if request.include_segments and transcription_result.segments:
+            segments = [
+                TranscriptionSegment(
+                    id=seg.entity_id,
+                    start=seg.start_time.seconds,
+                    end=seg.end_time.seconds,
+                    text=seg.text.content,
+                    confidence=seg.confidence.value if seg.confidence else None,
+                    language=seg.language_detected,
+                    metadata=(
+                        {"speaker_id": seg.speaker_id, "sequence_number": seg.sequence_number}
+                        if seg.speaker_id or seg.sequence_number
+                        else None
+                    ),
+                )
+                for seg in transcription_result.segments
+            ]
+
+        try:
+            state = TranscriptionState(transcription_result.status.value)
+        except ValueError:
+            state = TranscriptionState.IDLE
+
+        full_text = transcription_result.get_full_text().content if transcription_result.segments else ""
+
+        pd = getattr(transcription_result, "processing_duration", None)
+        if pd is None:
+            processing_duration = 0.0
+        else:
+            # Support either domain Duration or timedelta-like
+            total_seconds = getattr(pd, "total_seconds", None)
+            if callable(total_seconds):
+                processing_duration = float(total_seconds())
+            else:
+                processing_duration = float(getattr(pd, "seconds", 0.0))
+
+        language_code = transcription_result.language.code.value if transcription_result.language else None
+
+        confidence = transcription_result.overall_confidence.value if transcription_result.overall_confidence else 0.0
+
+        created_at = transcription_result.started_at if isinstance(transcription_result.started_at, datetime) else datetime.now()
+        completed_at = transcription_result.completed_at if isinstance(transcription_result.completed_at, datetime) or transcription_result.completed_at is None else None
+
+        return TranscriptionResultData(
+            transcription_id=transcription_result.transcription_id,
+            text=full_text,
+            language=language_code,
+            confidence=confidence,
+            processing_time=processing_duration,
+            segments=segments,
+            created_at=created_at,
+            completed_at=completed_at,
+            state=state,
+            error_message=transcription_result.error_message,
+        )
