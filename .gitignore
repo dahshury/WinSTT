@@ -5,3 +5,4 @@ __pycache__
 src/utils/whisper_online.py
 /RealtimeSTT
 src/cache
+.venv
