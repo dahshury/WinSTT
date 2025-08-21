@@ -9,11 +9,12 @@ from collections.abc import Callable
 from typing import Any
 
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
+import contextlib
 from PyQt6.QtWidgets import QMainWindow
 
 from src.infrastructure.audio.audio_recording_service import AudioRecordingService
 from src.infrastructure.llm.llm_service import LLMService
-from src.infrastructure.transcription.transcription_service import TranscriptionService
+from src.infrastructure.transcription.model_worker_service import ModelWorkerService
 from src.infrastructure.worker.worker_thread_management_service import (
     WorkerThreadManagementService,
 )
@@ -40,7 +41,7 @@ class WorkerIntegrationComponent(QObject):
         super().__init__()
         self.logger = logging.getLogger(__name__)
         self.worker_service = WorkerThreadManagementService()
-        self.transcription_service = TranscriptionService()
+        # Transcription worker will be created directly via ModelWorkerService
         self.llm_service = LLMService()
         self.audio_service = AudioRecordingService()
 
@@ -98,7 +99,7 @@ class WorkerIntegrationComponent(QObject):
         try:
             # Create transcription worker thread
             worker_thread = QThread()
-            worker = self.transcription_service.create_worker()
+            worker = ModelWorkerService(model_type="whisper-turbo")
 
             # Move worker to thread
             worker.moveToThread(worker_thread)
@@ -108,9 +109,11 @@ class WorkerIntegrationComponent(QObject):
             self.worker_threads["transcription"] = worker_thread
 
             # Connect signals
-            worker.transcription_completed.connect(self._handle_transcription_completed)
-            worker.transcription_error.connect(self._handle_transcription_error)
-            worker.progress_updated.connect(self._handle_transcription_progress)
+            # Connect available signals from ModelWorkerService
+            with contextlib.suppress(Exception):
+                worker.initialized.connect(lambda: self.logger.debug("Transcription worker initialized"))
+            with contextlib.suppress(Exception):
+                worker.error.connect(lambda msg: self._handle_transcription_error(str(msg)))
 
             # Start thread
             worker_thread.start()
@@ -220,15 +223,24 @@ class WorkerIntegrationComponent(QObject):
             self.logger.warning("Transcription already in progress")
             return
 
-        self.logger.info("Starting transcription: {file_path}")
+        self.logger.info(f"Starting transcription: {file_path}")
 
         try:
             self.is_transcribing = True
 
             # Start transcription worker
             if "transcription" in self.workers:
-                self.workers["transcription"].transcribe_file(file_path)
                 self.worker_started.emit("transcription")
+                import threading
+                def _do_transcribe() -> None:
+                    try:
+                        result = self.workers["transcription"].transcribe_file(file_path)
+                        # Post result back to main thread
+                        QTimer.singleShot(0, lambda: self._handle_transcription_completed("", result or {}))
+                    except Exception as e:
+                        error_msg = str(e)
+                        QTimer.singleShot(0, lambda: self._handle_transcription_error(error_msg))
+                threading.Thread(target=_do_transcribe, daemon=True).start()
 
         except Exception as e:
             self.logger.exception(f"Failed to start transcription: {e}")
@@ -246,7 +258,7 @@ class WorkerIntegrationComponent(QObject):
             self.logger.warning("Transcription already in progress")
             return
 
-        self.logger.info("Starting batch transcription: {len(file_paths)} files")
+        self.logger.info(f"Starting batch transcription: {len(file_paths)} files")
 
         try:
             # Setup queue
@@ -435,9 +447,17 @@ class WorkerIntegrationComponent(QObject):
         """
         self.logger.info("Audio data received from recording")
 
-        # Start transcription of audio data
+        # Start transcription of audio data in background thread and post result
         if "transcription" in self.workers:
-            self.workers["transcription"].transcribe_audio_data(audio_data)
+            import threading
+            def _do_transcribe_mem() -> None:
+                try:
+                    result = self.workers["transcription"].transcribe_audio_data(audio_data)
+                    QTimer.singleShot(0, lambda: self._handle_transcription_completed("", result or {}))
+                except Exception as e:
+                    error_msg = str(e)
+                    QTimer.singleShot(0, lambda: self._handle_transcription_error(error_msg))
+            threading.Thread(target=_do_transcribe_mem, daemon=True).start()
 
     def _handle_listener_error(self, error_message: str,
     ) -> None:

@@ -147,6 +147,7 @@ class WinSTTApplication:
                 enable_key_normalization=True,
                 track_key_states=True,
                 enable_event_logging=True,
+                suppress_hotkeys=False,  # Avoid OS suppression to work without elevated rights
             )
             real_keyboard_service = KeyboardService(keyboard_config)
             keyboard_service = KeyboardServiceAdapter(real_keyboard_service, self.logger)
@@ -256,6 +257,17 @@ class WinSTTApplication:
                 dispatcher = _UiStatusDispatcher()
 
                 def _on_emit_status(txt, filename, percentage, hold, reset):
+                    # Reset request: clear transient status and optionally progress
+                    if reset:
+                        from src.domain.common.ports.ui_status_port import StatusClearRequest
+                        self.main_window._ui_status_adapter.clear_status(StatusClearRequest(clear_progress=True, reset_to_default=False))
+                        # Ensure any transcribing UI state is stopped
+                        try:
+                            if hasattr(self.main_window, "_ui_controller") and self.main_window._ui_controller is not None:
+                                self.main_window._ui_controller.stop_transcribing_ui()
+                        except Exception:
+                            pass
+                        return
                     if txt:
                         from src.domain.common.ports.ui_status_port import (
                             StatusDuration,
@@ -299,12 +311,19 @@ class WinSTTApplication:
                 def ui_status_callback(txt: str | None, filename: str | None, percentage: float | None, hold: bool | None, reset: bool | None):
                     dispatcher.emitStatus.emit(txt, filename, percentage, hold, reset)
 
+                # Also register a global status callback for non-UI components
+                try:
+                    from src.infrastructure.common.ui_status_dispatch import set_ui_status_callback as _set_cb
+                    _set_cb(ui_status_callback)
+                except Exception:
+                    pass
+
                 self.bridge_adapter._ui_callback = ui_status_callback
                 # Provide callback to transcription adapter so model downloads emit progress to UI
                 with suppress(Exception):
                     transcription_model.set_ui_status_callback(ui_status_callback)
 
-                # Proactively preload Whisper models in background so first record isn't required
+                # Proactively preload selected onnx-asr model in background so first record isn't required
                 with suppress(Exception):
                     transcription_model.preload_models()
             

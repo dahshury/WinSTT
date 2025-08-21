@@ -11,135 +11,106 @@ from src.domain.common.ports.logging_port import LoggingPort
 
 
 class SimpleVADAdapter:
-    """Refactored VAD adapter using Silero VAD service (no legacy VaDetector)."""
+    """VAD adapter backed by onnx_asr Silero VAD (no legacy pipeline)."""
 
     def __init__(self, logger: LoggingPort | None = None):
         self._logger = logger
-        # Wire refactored VAD pipeline
-        from src.domain.audio.value_objects.vad_operations import (
-            VADConfiguration,
-            VADModel,
-            VADOperation,
-        )
-        from src.infrastructure.audio.audio_processing_service import (
-            VADAudioProcessingService,
-        )
-        from src.infrastructure.audio.silero_vad_model_service import (
-            SileroVADModelService,
-        )
-        from src.infrastructure.audio.vad_service import (
-            VADService,
-            VADServiceRequest,
-        )
-        from src.infrastructure.audio.vad_smoothing_service import (
-            VADSmoothingService,
-        )
-        from src.infrastructure.audio.vad_validation_service import (
-            VADValidationService,
-        )
-        self._service = VADService(
-            model_service=SileroVADModelService(),
-            audio_processing_service=VADAudioProcessingService(),
-            validation_service=VADValidationService(),
-            calibration_service=None,  # Optional for simple detection
-            smoothing_service=VADSmoothingService(),
-            progress_tracking_service=None,
-            logger_service=self._logger,
-        )
-        # Initialize with default config
-        cfg = VADConfiguration(
-            model=VADModel.SILERO_V3,
-            threshold=0.02,
-            sample_rate=16000,
-            frame_size=512,
-            hop_size=256,
-            enable_smoothing=True,
-            smoothing_window=3,
-            min_speech_duration=0.08,
-            min_silence_duration=0.08,
-        )
-        # Initialize asynchronously to avoid blocking UI startup on first run
-        def _init_vad_async() -> None:
+        self._vad = None
+        # Provide a non-None sentinel so bridge does not enter degraded mode
+        self._vad_detector = object()
+
+        def _lazy_init() -> None:
             try:
-                init_resp = self._service.execute(
-                    VADServiceRequest(operation=VADOperation.INITIALIZE, config=cfg),
-                )
-                if (
-                    getattr(init_resp, "result", None) is None
-                    or str(getattr(init_resp, "result", "")).lower()
-                    not in ("vadresult.success", "success")
-                ):
-                    if self._logger:
-                        self._logger.log_warning(
-                            "VAD initialization did not report success; detection will fall back if needed",
-                        )
-            except Exception:
+                import onnx_asr  # type: ignore[import-not-found]
+                self._vad = onnx_asr.load_vad("silero")
+            except Exception as e:  # best-effort; fallback to RMS gate
                 if self._logger:
-                    self._logger.log_warning(
-                        "VAD initialize failed; falling back to energy-based detection",
-                    )
+                    self._logger.log_warning(f"Silero VAD init failed; falling back to RMS gate: {e}")
+            # If loaded successfully, update compat attribute expected by bridge
+            if self._vad is not None:
+                self._vad_detector = self._vad
 
         try:
-            import threading as _threading
-            _threading.Thread(target=_init_vad_async, daemon=True).start()
+            import threading as _th
+            _th.Thread(target=_lazy_init, daemon=True).start()
         except Exception:
-            # Best-effort fallback to sync init if threading unavailable
-            _init_vad_async()
-        # Compat: expose attribute expected by bridge to mark availability
-        self._vad_detector = self._service
+            _lazy_init()
 
-    def detect_speech(self, audio_data: Any) -> bool:
-        """Detect speech using the refactored VAD pipeline."""
+    def _to_numpy_waveform(self, audio_input: Any, target_sr: int = 16000):
         try:
             import numpy as np
-            # Convert to float32 array; extract bytes from BytesIO
-            if isinstance(audio_data, bytes | bytearray):
-                audio_bytes = bytes(audio_data)
-                audio_f32 = np.frombuffer(audio_bytes, dtype=np.float32)
-                sr = 16000
-            elif hasattr(audio_data, "read"):
-                # Decode WAV from memory using pydub
-                from pydub import AudioSegment
-                seg = AudioSegment.from_file(audio_data)
-                seg = seg.set_frame_rate(16000).set_channels(1)
-                samples = np.array(seg.get_array_of_samples(), dtype=np.float32)
-                max_value = float(1 << (8 * seg.sample_width - 1)) if getattr(seg, "sample_width", 2) else 0.0
-                audio_f32 = samples / max_value if max_value > 0 else samples
-                sr = 16000
+            from pydub import AudioSegment  # type: ignore[import-not-found]
+            if isinstance(audio_input, (bytes, bytearray)):
+                import io as _io
+                buf = _io.BytesIO(audio_input)
+                seg = AudioSegment.from_file(buf)
             else:
-                if self._logger:
-                    self._logger.log_warning("Invalid audio data format for VAD")
+                seg = AudioSegment.from_file(audio_input)
+            seg = seg.set_frame_rate(target_sr).set_channels(1)
+            samples = np.array(seg.get_array_of_samples(), dtype=np.float32)
+            sample_width = int(getattr(seg, "sample_width", 2) or 2)
+            max_value = float(1 << (8 * sample_width - 1)) if sample_width > 0 else 1.0
+            waveform = samples / max_value if max_value > 0 else samples
+            return waveform.astype(np.float32, copy=False), target_sr
+        except Exception:
+            # Fallback: decode simple PCM WAV
+            import io as _io
+            import wave as _wave
+            import numpy as np
+            with (_io.BytesIO(audio_input) if isinstance(audio_input, (bytes, bytearray)) else audio_input) as f:  # type: ignore[arg-type]
+                with _wave.open(f, "rb") as wf:
+                    n_channels = wf.getnchannels()
+                    sr = wf.getframerate()
+                    frames = wf.readframes(wf.getnframes())
+                    data = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+                    if n_channels == 2:
+                        data = data.reshape(-1, 2).mean(axis=1)
+                    # naive resample if needed
+                    if sr != target_sr and sr > 0:
+                        import numpy as _n
+                        duration = data.shape[0] / float(sr)
+                        target_len = int(duration * target_sr)
+                        if target_len > 0:
+                            x_old = _n.linspace(0.0, 1.0, num=data.shape[0], endpoint=False, dtype=_n.float32)
+                            x_new = _n.linspace(0.0, 1.0, num=target_len, endpoint=False, dtype=_n.float32)
+                            data = _n.interp(x_new, x_old, data).astype(_n.float32, copy=False)
+                    return data.astype(np.float32, copy=False), target_sr
+
+    def detect_speech(self, audio_data: Any) -> bool:
+        """Detect speech using onnx_asr VAD or RMS fallback."""
+        try:
+            import numpy as np
+            waveform, sr = self._to_numpy_waveform(audio_data, 16000)
+            if waveform.size == 0:
                 return False
-
-            # Quick silence gate to avoid false positives on no audio
-            if audio_f32.size == 0 or float(np.sqrt(np.mean(np.square(audio_f32)))) < 0.004:
-                if self._logger:
-                    self._logger.log_debug("VAD pre-check: silence detected (RMS below threshold)")
+            # Quick RMS gate as pre-check
+            if float(np.sqrt(np.mean(np.square(waveform)))) < 0.004:
                 return False
-
-            duration = float(len(audio_f32)) / float(sr) if sr > 0 else 0.0
-
-            # Build domain AudioChunk
-            from src.domain.audio.value_objects.audio_operations import AudioChunk
-            chunk = AudioChunk(
-                data=audio_f32.tobytes(),
-                timestamp=0.0,
-                sample_rate=sr,
-                duration=max(0.001, duration),
-                chunk_id=0,
-            )
-
-            from src.domain.audio.value_objects.vad_operations import VADOperation
-            from src.infrastructure.audio.vad_service import VADServiceRequest
-            resp = self._service.execute(VADServiceRequest(operation=VADOperation.DETECT_VOICE, audio_chunk=chunk))
-            has_speech = bool(getattr(resp.detection, "activity", None).value == "speech") if resp.detection else False
-            if self._logger:
-                self._logger.log_debug(f"VAD detected speech: {has_speech}")
-            return has_speech
+            # Use Silero VAD if available
+            if self._vad is not None:
+                # Prepare batch with single waveform
+                waveforms = np.expand_dims(waveform.astype(np.float32, copy=False), axis=0)
+                waveforms_len = np.array([waveform.shape[0]], dtype=np.int64)
+                try:
+                    segments_batch = self._vad.segment_batch(waveforms, waveforms_len)
+                    first_iter = next(iter(segments_batch), None)
+                    if first_iter is None:
+                        return False
+                    # Determine if any segment exists
+                    try:
+                        first_segment = next(iter(first_iter), None)
+                        return first_segment is not None
+                    except Exception:
+                        # If iterator cannot be consumed twice, coalesce by scanning
+                        return any(True for _ in first_iter)
+                except Exception:
+                    # Fall through to RMS decision
+                    pass
+            # Fallback: RMS-based speech gate
+            return float(np.sqrt(np.mean(np.square(waveform)))) >= 0.005
         except Exception as e:
             if self._logger:
                 self._logger.log_error(f"Error in VAD speech detection: {e}")
-            # On error, do not transcribe
             return False
 
     def has_speech(self, audio_data: Any) -> bool:
@@ -147,7 +118,7 @@ class SimpleVADAdapter:
 
 
 class SimpleTranscriptionAdapter:
-    """Adapter over refactored ONNXTranscriptionService (legacy-compatible)."""
+    """Adapter over onnx-asr-backed transcription service (legacy-compatible)."""
 
     def __init__(self, logger: LoggingPort | None = None):
         self._logger = logger
@@ -175,62 +146,22 @@ class SimpleTranscriptionAdapter:
         """Kick off background initialization so models download at startup."""
         try:
             if self._service is None:
-                from src.domain.transcription.value_objects.transcription_configuration import (
-                    TranscriptionConfiguration,
-                )
-                from src.domain.transcription.value_objects.transcription_quality import (
-                    TranscriptionQuality,
-                )
-                from src.infrastructure.transcription.onnx_model_loader import OnnxModelLoader
                 from src.infrastructure.transcription.onnx_transcription_service import (
-                    ONNXTranscriptionService,
+                    OnnxAsrTranscriptionService,
                 )
-                from src.infrastructure.transcription.whisper_artifacts_service import (
-                    WhisperArtifactsService,
-                )
-
-                def _progress_cb(current: int, total: int, message: str) -> None:
-                    try:
-                        if self._ui_status_callback is None:
-                            return
-                        percent = int((current / total) * 100) if total and total > 0 else None
-                        self._ui_status_callback(message, None, percent, True, None)
-                    except Exception:
-                        pass
-
-                config = TranscriptionConfiguration(quality=TranscriptionQuality.QUANTIZED)
-                # Prepare runtime sessions and artifacts
-                from src.domain.transcription.value_objects.model_download_config import (
-                    ModelDownloadConfig,
-                )
-
-                # Resolve cache directory using resource service
-                from src.infrastructure.common.resource_service import resource_path
-                from src.infrastructure.transcription.model_download_service import (
-                    ModelDownloadService,
-                )
-                cache_root = resource_path("src/cache")
-                loader = OnnxModelLoader(cache_path=cache_root, model_type="whisper-turbo", quality=config.quality)
-                if not loader.are_models_present():
-                    # Best-effort download (non-interactive); progress shown via UI callback
-                    # We intentionally avoid wiring signals here and rely on status callback
-                    ModelDownloadService(ModelDownloadConfig(cache_path=cache_root, model_type="whisper-turbo", quality=config.quality)).download_whisper_models()
-                sessions = loader.load_sessions(cpu_preprocessing=True)
-                artifacts_service = WhisperArtifactsService()
-                tokenizer, feature_extractor, model_cfg, gen_cfg = artifacts_service.get_artifacts(loader.get_model_cache_dir())
-                self._service = ONNXTranscriptionService(
-                    quality=TranscriptionQuality.QUANTIZED,
-                    model_type="whisper-turbo",
+                # Create wrapper; let onnx-asr handle model loading and caching
+                # Map UI-configured model and quantization if available later via settings
+                # Read from configuration adapter to avoid domain-layer file IO coupling
+                from src.infrastructure.adapters.configuration_adapter import ConfigurationServiceAdapter as _Cfg
+                cfg = _Cfg("settings.json", self._logger)
+                model_name = str(cfg.get_setting("model", "onnx-community/whisper-small"))
+                quantization = str(cfg.get_setting("quantization", "Quantized"))
+                self._service = OnnxAsrTranscriptionService(
+                    model_name=model_name,
+                    use_vad=True,
                     display_message_callback=self._ui_status_callback,
-                    progress_callback=_progress_cb if self._ui_status_callback else None,
-                    configuration=config,
-                    runtime_sessions=sessions,
-                    tokenizer=tokenizer,
-                    feature_extractor=feature_extractor,
-                    model_config=model_cfg,
-                    generation_config=gen_cfg,
+                    quantization=quantization,
                 )
-                # Keep compatibility sentinel in sync
                 self._transcriber = self._service
 
             import asyncio
@@ -262,58 +193,19 @@ class SimpleTranscriptionAdapter:
         try:
             # Create service lazily in the current thread
             if self._service is None:
-                from src.domain.transcription.value_objects.transcription_configuration import (
-                    TranscriptionConfiguration,
-                )
-                from src.domain.transcription.value_objects.transcription_quality import (
-                    TranscriptionQuality,
-                )
-                from src.infrastructure.transcription.onnx_model_loader import OnnxModelLoader
                 from src.infrastructure.transcription.onnx_transcription_service import (
-                    ONNXTranscriptionService,
+                    OnnxAsrTranscriptionService,
                 )
-                from src.infrastructure.transcription.whisper_artifacts_service import (
-                    WhisperArtifactsService,
-                )
-                # Map progress callback to UI status updates
-                def _progress_cb(current: int, total: int, message: str) -> None:
-                    try:
-                        if self._ui_status_callback is None:
-                            return
-                        percent = int((current / total) * 100) if total and total > 0 else None
-                        self._ui_status_callback(message, None, percent, True, None)
-                    except Exception:
-                        pass
-
-                config = TranscriptionConfiguration(quality=TranscriptionQuality.QUANTIZED)
-                # Prepare runtime sessions and artifacts
-                from src.domain.transcription.value_objects.model_download_config import (
-                    ModelDownloadConfig,
-                )
-                from src.infrastructure.common.resource_service import resource_path
-                from src.infrastructure.transcription.model_download_service import (
-                    ModelDownloadService,
-                )
-                cache_root = resource_path("src/cache")
-                loader = OnnxModelLoader(cache_path=cache_root, model_type="whisper-turbo", quality=config.quality)
-                if not loader.are_models_present():
-                    ModelDownloadService(ModelDownloadConfig(cache_path=cache_root, model_type="whisper-turbo", quality=config.quality)).download_whisper_models()
-                sessions = loader.load_sessions(cpu_preprocessing=True)
-                artifacts_service = WhisperArtifactsService()
-                tokenizer, feature_extractor, model_cfg, gen_cfg = artifacts_service.get_artifacts(loader.get_model_cache_dir())
-                self._service = ONNXTranscriptionService(
-                    quality=TranscriptionQuality.QUANTIZED,
-                    model_type="whisper-turbo",
+                from src.infrastructure.adapters.configuration_adapter import ConfigurationServiceAdapter as _Cfg
+                cfg = _Cfg("settings.json", self._logger)
+                model_name = str(cfg.get_setting("model", "onnx-community/whisper-small"))
+                quantization = str(cfg.get_setting("quantization", "Quantized"))
+                self._service = OnnxAsrTranscriptionService(
+                    model_name=model_name,
+                    use_vad=True,
                     display_message_callback=self._ui_status_callback,
-                    progress_callback=_progress_cb if self._ui_status_callback else None,
-                    configuration=config,
-                    runtime_sessions=sessions,
-                    tokenizer=tokenizer,
-                    feature_extractor=feature_extractor,
-                    model_config=model_cfg,
-                    generation_config=gen_cfg,
+                    quantization=quantization,
                 )
-                # Keep compatibility sentinel in sync
                 self._transcriber = self._service
             # Ensure service is initialized lazily
             if not getattr(self._service, "is_initialized", False):
@@ -324,7 +216,7 @@ class SimpleTranscriptionAdapter:
                 loop.close()
                 if not ok or not getattr(self._service, "is_initialized", False):
                     if self._logger:
-                        self._logger.log_error("ONNXTranscriptionService failed to initialize")
+                        self._logger.log_error("OnnxAsrTranscriptionService failed to initialize")
                     return ""
 
             # audio_data should be a file path or BytesIO buffer
@@ -339,20 +231,20 @@ class SimpleTranscriptionAdapter:
                 asyncio.set_event_loop(loop)
                 result_obj = loop.run_until_complete(self._service.transcribe_async(req))
                 loop.close()
-                # Prefer explicit text; fallback to service's last_transcription buffer
-                result = getattr(result_obj, "text", None) or getattr(self._service, "last_transcription", "") or ""
+                result = getattr(result_obj, "text", None) or ""
             elif isinstance(audio_data, bytes | bytearray):
                 audio_buffer = io.BytesIO(audio_data)
                 from src.domain.transcription.value_objects.transcription_request import (
                     TranscriptionRequest,
                 )
-                req = TranscriptionRequest(audio_input=audio_buffer)
+                # For paste path (recorded buffer), do not request segments
+                req = TranscriptionRequest(audio_input=audio_buffer, return_segments=False)
                 import asyncio
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 result_obj = loop.run_until_complete(self._service.transcribe_async(req))
                 loop.close()
-                result = getattr(result_obj, "text", None) or getattr(self._service, "last_transcription", "") or ""
+                result = getattr(result_obj, "text", None) or ""
             elif hasattr(audio_data, "read"):
                 from src.domain.transcription.value_objects.transcription_request import (
                     TranscriptionRequest,
@@ -363,13 +255,13 @@ class SimpleTranscriptionAdapter:
                         audio_data.name = "audio.wav"  # type: ignore[attr-defined]
                 except Exception:
                     pass
-                req = TranscriptionRequest(audio_input=audio_data)
+                req = TranscriptionRequest(audio_input=audio_data, return_segments=False)
                 import asyncio
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 result_obj = loop.run_until_complete(self._service.transcribe_async(req))
                 loop.close()
-                result = getattr(result_obj, "text", None) or getattr(self._service, "last_transcription", "") or ""
+                result = getattr(result_obj, "text", None) or ""
             else:
                 if self._logger:
                     self._logger.log_warning("Invalid audio data format for transcription")

@@ -158,7 +158,8 @@ class AudioToTextService:
                     # Ensure backend is refreshed so the next attempt uses a newly plugged device
                     with contextlib.suppress(Exception):
                         self._recorder.close(reset=True)
-                    self._logger.warning("No recording device detected. Please connect a microphone.")
+                    # Message already emitted by recorder's error callback; avoid duplicate warning
+                    self._logger.debug("Suppressed duplicate device-missing warning")
                 else:
                     # Log message only (no traceback) for cleaner console output
                     with contextlib.suppress(Exception):
@@ -213,7 +214,8 @@ class AudioToTextService:
                 if self._on_complete:
                     # Send a non-empty but benign message so UI clears
                     from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(0, lambda: self._safe_completion_callback("Ready for transcription"))
+                    # Clear transient status; keep the static instruction label
+                    QTimer.singleShot(0, lambda: self._safe_completion_callback(None))
             except Exception:
                 self._logger.debug("Retry after init failed", exc_info=True)
             return
@@ -235,7 +237,8 @@ class AudioToTextService:
             try:
                 if self._on_complete:
                     from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(0, lambda: self._safe_completion_callback("Ready for transcription"))
+                    # Clear transient status; keep the static instruction label
+                    QTimer.singleShot(0, lambda: self._safe_completion_callback(None))
             except Exception:
                 self._logger.debug("Completion callback failed (empty text)", exc_info=True)
             return

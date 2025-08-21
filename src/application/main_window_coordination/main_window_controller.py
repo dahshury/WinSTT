@@ -79,7 +79,7 @@ class MainWindowController:
     
     def handle_hotkey_recording(self, request: HotkeyRecordingRequest) -> bool:
         """Handle hotkey recording press/release events.
-        
+
         Returns:
             bool: True if the requested action was successful, False otherwise
         """
@@ -93,13 +93,14 @@ class MainWindowController:
             )
             status_response = self._recording_status.execute(GetRecordingStatusRequest())
             is_currently_recording = (getattr(status_response, "state", None) == VoRecordingState.RECORDING)
-            
+
             if request.is_pressed and not is_currently_recording:
                 # Gate on transcription model readiness if exposed by bridge
                 try:
                     if self._audio_text_bridge is not None and hasattr(self._audio_text_bridge, "is_ready"):
-                        if not self._audio_text_bridge.is_ready():
-                            # Do not override existing download progress UI; just block start
+                        is_ready = self._audio_text_bridge.is_ready()
+                        if not is_ready:
+                            # Block start while models are downloading/initializing
                             return False
                 except Exception:
                     pass
@@ -108,11 +109,15 @@ class MainWindowController:
                 # Always attempt a coordinated stop on release (idempotent)
                 stopped = self._stop_hotkey_recording()
                 if not stopped and self._ui_status:
-                    # Ensure UI is reset even if stop failed/no-op
-                    self._ui_status.show_status(StatusMessage(
-                        text="Ready for transcription",
-                        type=StatusType.INFO,
-                    ))
+                    # Clear transient statuses and stop transcribing UI if it was set by the view
+                    from src.domain.common.ports.ui_status_port import StatusClearRequest
+                    self._ui_status.clear_status(StatusClearRequest(clear_progress=True, reset_to_default=False))
+                    try:
+                        from src.presentation.main_window.controllers.ui_state_controller import UIStateController  # type: ignore
+                        if hasattr(self, "_ui_controller") and isinstance(getattr(self, "_ui_controller", None), UIStateController):
+                            self._ui_controller.stop_transcribing_ui()
+                    except Exception:
+                        pass
                 return True
             # Pressing when already recording - no action needed
             return False
@@ -179,7 +184,7 @@ class MainWindowController:
     
     def _start_hotkey_recording(self, hotkey_name: str) -> bool:
         """Start recording from hotkey press.
-        
+
         Returns:
             bool: True if recording started successfully, False otherwise
         """
@@ -273,22 +278,18 @@ class MainWindowController:
                 ))
                 self._logger.log_info("Recording stopped, transcription started")
                 return True
-            # Reset to ready state on failure
+            # Clear transient status on failure, leave instruction intact
             if self._ui_status:
-                self._ui_status.show_status(StatusMessage(
-                    text="Ready for transcription",
-                    type=StatusType.INFO,
-                ))
+                from src.domain.common.ports.ui_status_port import StatusClearRequest
+                self._ui_status.clear_status(StatusClearRequest(clear_progress=True, reset_to_default=False))
             return False
                 
         except Exception as e:
             self._logger.log_error(f"Error stopping hotkey recording: {e}")
-            # Reset to ready state on error
+            # Clear transient status on error, leave instruction intact
             if self._ui_status:
-                self._ui_status.show_status(StatusMessage(
-                    text="Ready for transcription",
-                    type=StatusType.INFO,
-                ))
+                from src.domain.common.ports.ui_status_port import StatusClearRequest
+                self._ui_status.clear_status(StatusClearRequest(clear_progress=True, reset_to_default=False))
             return False
 
     def set_ui_status_port(self, ui_status: UIStatusPort) -> None:

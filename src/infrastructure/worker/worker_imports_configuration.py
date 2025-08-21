@@ -144,7 +144,7 @@ class WorkerImportsConfiguration:
             worker_type=WorkerImportType.VAD,
             module_path="src.infrastructure.audio.vad_worker_service",
             class_name="VadWorkerService",
-            dependencies=["src.infrastructure.audio.silero_vad_model_service.SileroVADModelService"],
+            dependencies=["onnx_asr"],
         ))
 
         # Model Worker Configuration
@@ -152,7 +152,7 @@ class WorkerImportsConfiguration:
             worker_type=WorkerImportType.MODEL,
             module_path="src.infrastructure.transcription.model_worker_service",
             class_name="ModelWorkerService",
-            dependencies=["src.infrastructure.transcription.onnx_transcription_service.ONNXTranscriptionService"],
+            dependencies=["src.infrastructure.transcription.onnx_transcription_service.OnnxAsrTranscriptionService"],
         ))
 
         # LLM Worker Configuration

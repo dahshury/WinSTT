@@ -39,7 +39,7 @@ class ConfigurationService:
             if not os.path.exists(self._config_path):
                 # Return default configuration if file doesn't exist
                 return Result.success(self._get_default_config())
-            
+
             with open(self._config_path, encoding="utf-8") as f:
                 config = json.load(f)
                 return Result.success(config)

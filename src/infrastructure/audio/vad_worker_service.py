@@ -11,10 +11,11 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 
 class VadWorkerService(QObject):
-    """Voice Activity Detection worker with PyQt threading support.
+    """VAD worker using onnx_asr Silero VAD with PyQt threading support.
     
-    This service manages VAD initialization and lifecycle within PyQt's
-    threading model, providing signals for status updates and error handling.
+    This service manages VAD initialization and lifecycle within PyQt's threading
+    model. It uses onnx_asr.load_vad("silero") and exposes a minimal API that
+    older callers expect (get_detector, is_active).
     
     Signals:
         initialized: Emitted when VAD is successfully initialized
@@ -33,63 +34,11 @@ class VadWorkerService(QObject):
     def run(self) -> None:
         """Initialize the refactored VAD service in a worker thread."""
         try:
-            # Import refactored VAD pipeline lazily
-            from src.domain.audio.value_objects.vad_operations import (
-                VADConfiguration,
-                VADModel,
-                VADOperation,
-            )
-            from src.infrastructure.audio.audio_processing_service import (
-                VADAudioProcessingService,
-            )
-            from src.infrastructure.audio.silero_vad_model_service import (
-                SileroVADModelService,
-            )
-            from src.infrastructure.audio.vad_service import (
-                VADService,
-                VADServiceRequest,
-            )
-            from src.infrastructure.audio.vad_smoothing_service import (
-                VADSmoothingService,
-            )
-            from src.infrastructure.audio.vad_validation_service import (
-                VADValidationService,
-            )
-
-            service = VADService(
-                model_service=SileroVADModelService(),
-                audio_processing_service=VADAudioProcessingService(),
-                validation_service=VADValidationService(),
-                calibration_service=None,
-                smoothing_service=VADSmoothingService(),
-                progress_tracking_service=None,
-                logger_service=logging.getLogger(__name__),
-            )
-
-            cfg = VADConfiguration(
-                model=VADModel.SILERO_V3,
-                threshold=0.02,
-                sample_rate=16000,
-                frame_size=512,
-                hop_size=256,
-                enable_smoothing=True,
-                smoothing_window=3,
-                min_speech_duration=0.08,
-                min_silence_duration=0.08,
-            )
-
-            resp = service.execute(VADServiceRequest(operation=VADOperation.INITIALIZE, config=cfg))
-            # Consider success on explicit SUCCESS result
-            if str(getattr(resp, "result", "")).lower() in ("vadresult.success", "success"):
-                self.vad = service
-                self.initialized.emit()
-                self.toggle_status()
-                return
-
-            # Failed initialization
-            error_msg = "Failed to initialize VAD service"
-            self.error.emit(error_msg)
-            logging.getLogger(__name__).debug(error_msg)
+            import onnx_asr  # type: ignore[import-not-found]
+            # Load Silero VAD via onnx_asr; quantization/provider auto-selected
+            self.vad = onnx_asr.load_vad("silero")
+            self.initialized.emit()
+            self.toggle_status()
         except Exception as e:
             error_msg = f"Failed to initialize VAD: {e}"
             self.error.emit(error_msg)

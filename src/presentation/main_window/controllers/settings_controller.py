@@ -153,8 +153,29 @@ class SettingsController:
             
             if result == QDialog.DialogCode.Accepted:
                 self._logger.log_info("Settings dialog accepted - changes saved")
-                # Update status to show settings were applied
+                # Update status to show settings were applied briefly, then clear
                 self._status_display.update_status_text("Settings updated")
+                try:
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(2000, lambda: self._status_display.update_status_text(""))
+                except Exception:
+                    pass
+                # Trigger onnx-asr re-init with new model/quantization
+                try:
+                    model = str(self._config.get_setting("model", "onnx-community/whisper-small"))
+                    quant = str(self._config.get_setting("quantization", "Quantized"))
+                    # Reinitialize the service so new quantization takes effect
+                    from src.infrastructure.adapters.transcription_adapter import SimpleTranscriptionAdapter
+                    from src.infrastructure.common.ui_status_dispatch import get_ui_status_callback as _get_cb
+                    adapter = SimpleTranscriptionAdapter(self._logger)
+                    cb = _get_cb()
+                    if cb:
+                        adapter.set_ui_status_callback(cb)
+                    # Ensure old instance is discarded; force a fresh init honoring settings
+                    adapter.cleanup()
+                    adapter.preload_models()
+                except Exception:
+                    self._logger.log_warning("Failed to trigger model preload after settings update")
             else:
                 self._logger.log_info("Settings dialog cancelled")
             self._dialog_ref = None

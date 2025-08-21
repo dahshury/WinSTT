@@ -51,7 +51,7 @@ class KeyboardServiceAdapter:
             
             # Call the service with the correct parameters: hotkey_id, combination, handler
             result = self._service.register_hotkey(key_combination, key_combo, handler)
-            
+
             if self._logger:
                 self._logger.log_info(f"Registered hotkey: {key_combination}, result: {result}")
                 
@@ -76,6 +76,16 @@ class KeyboardServiceAdapter:
     def start_monitoring(self) -> None:
         """Start keyboard monitoring - adapts to real service interface."""
         try:
+            # Ensure hotkeys are not suppressed at OS level to avoid permission issues
+            try:
+                cfg = getattr(self._service, "_config", None)
+                if cfg is not None and getattr(cfg, "suppress_hotkeys", True):
+                    setattr(cfg, "suppress_hotkeys", False)
+                    if self._logger:
+                        self._logger.log_debug("Disabled OS-level hotkey suppression for reliability")
+            except Exception:
+                pass
+
             result = self._service.start_hook()
             if self._logger:
                 self._logger.log_info(f"Started keyboard monitoring, result: {result}")

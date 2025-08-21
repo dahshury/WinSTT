@@ -32,8 +32,8 @@ from .toggle_switch_widget import ToggleSwitch
 @dataclass
 class SettingsDialogData:
     """Data transfer object for settings dialog state."""
-    model: str = "whisper-turbo"
-    quantization: str = "Full"
+    model: str = "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX"
+    quantization: str = "Quantized"
     rec_key: str = "F9"
     recording_sound: bool = True
     sound_path: str = "@resources/splash.wav"
@@ -319,7 +319,22 @@ class SettingsDialog(QDialog):
         model_row.setContentsMargins(0, 0, 0, 0)
         model_label = QLabel("Model:")
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["whisper-turbo", "lite-whisper-turbo", "lite-whisper-turbo-fast"])
+        self.model_combo.addItems([
+            "gigaam-v2-ctc",
+            "gigaam-v2-rnnt",
+            "nemo-fastconformer-ru-ctc",
+            "nemo-fastconformer-ru-rnnt",
+            "nemo-parakeet-ctc-0.6b",
+            "nemo-parakeet-rnnt-0.6b",
+            "nemo-parakeet-tdt-0.6b-v2",
+            "nemo-parakeet-tdt-0.6b-v3",
+            "whisper-base",
+            "onnx-community/whisper-tiny",
+            "onnx-community/whisper-base",
+            "onnx-community/whisper-small",
+            "onnx-community/whisper-large-v3-turbo",
+            "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX",
+        ])
         self.model_combo.setCurrentText(self._current_data.model)
         self.model_combo.setMinimumHeight(26)
         model_reset = self._reset_button()

@@ -10,7 +10,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from keyboard import hook, unhook_all
+from keyboard import add_hotkey, hook, remove_hotkey, unhook_all
 
 from src.domain.settings.value_objects.key_combination import KeyCombination
 from src.domain.system_integration.value_objects.system_operations import (
@@ -76,6 +76,8 @@ class KeyboardServiceConfiguration:
     track_key_states: bool = True
     enable_event_logging: bool = False
     max_event_history: int = 100
+    # When True, suppress registered hotkeys from reaching the OS
+    suppress_hotkeys: bool = True
 
 
 class KeyboardService:
@@ -87,10 +89,13 @@ class KeyboardService:
         self._is_hooked = False
         self._keys_down: set[str] = set()
         self._registered_hotkeys: dict[str, tuple[KeyCombination, HotkeyHandler]] = {}
+        # Handles returned by `keyboard.add_hotkey` for suppression cleanup
+        self._suppression_handles: dict[str, Any] = {}
         self._event_handlers: list[KeyEventHandler] = []
         self._event_history: list[KeyEvent] = []
         self._lock = threading.RLock()
         self._pynput_listener = None  # Fallback listener when `keyboard` hook fails
+        self._using_keyboard_lib_hook = False  # True when using `keyboard` library hook
 
         # Key normalization mapping
         self._key_mapping = {
@@ -111,6 +116,14 @@ class KeyboardService:
             try:
                 hook(self._key_event_handler)
                 self._is_hooked = True
+                self._using_keyboard_lib_hook = True
+                # Install suppression for any hotkeys already registered
+                if self._config.suppress_hotkeys and self._registered_hotkeys:
+                    for hotkey_id, (combination, _handler) in self._registered_hotkeys.items():
+                        combo_str = self._to_keyboard_library_string(combination)
+                        with contextlib.suppress(Exception):
+                            handle = add_hotkey(combo_str, lambda: None, suppress=True)
+                            self._suppression_handles[hotkey_id] = handle
                 return KeyboardServiceResult.SUCCESS
             except Exception:
                 # Fallback: try pynput-based listener if keyboard.hook is unavailable (e.g., no admin perms)
@@ -174,6 +187,7 @@ class KeyboardService:
                     self._pynput_listener = _kb.Listener(on_press=_on_press, on_release=_on_release)
                     self._pynput_listener.start()
                     self._is_hooked = True
+                    self._using_keyboard_lib_hook = False
                     return KeyboardServiceResult.SUCCESS
                 except Exception:
                     return KeyboardServiceResult.FAILURE
@@ -193,6 +207,12 @@ class KeyboardService:
                     with contextlib.suppress(Exception):
                         self._pynput_listener.stop()
                     self._pynput_listener = None
+                # Remove any suppression hotkeys
+                if self._suppression_handles:
+                    for _id, handle in list(self._suppression_handles.items()):
+                        with contextlib.suppress(Exception):
+                            remove_hotkey(handle)
+                    self._suppression_handles.clear()
                 self._is_hooked = False
                 self._keys_down.clear()
                 return KeyboardServiceResult.SUCCESS
@@ -212,6 +232,13 @@ class KeyboardService:
                 handler = _FunctionHotkeyHandler(handler)
 
             self._registered_hotkeys[hotkey_id] = (combination, handler)  # type: ignore[arg-type]
+            # Best-effort suppression using `keyboard.add_hotkey` if available
+            if self._config.suppress_hotkeys and self._using_keyboard_lib_hook:
+                combo_str = self._to_keyboard_library_string(combination)
+                with contextlib.suppress(Exception):
+                    # No-op callback; real logic handled by unified event path
+                    handle = add_hotkey(combo_str, lambda: None, suppress=True)
+                    self._suppression_handles[hotkey_id] = handle
             return KeyboardServiceResult.SUCCESS
 
     def unregister_hotkey(self, hotkey_id: str,
@@ -220,6 +247,11 @@ class KeyboardService:
         with self._lock:
             if hotkey_id in self._registered_hotkeys:
                 del self._registered_hotkeys[hotkey_id]
+                # Remove suppression if present
+                if hotkey_id in self._suppression_handles:
+                    handle = self._suppression_handles.pop(hotkey_id)
+                    with contextlib.suppress(Exception):
+                        remove_hotkey(handle)
                 return KeyboardServiceResult.SUCCESS
             return KeyboardServiceResult.NOT_HOOKED
 
@@ -282,10 +314,11 @@ class KeyboardService:
             with self._lock:
                 # Update key state tracking
                 if self._config.track_key_states:
+                    normalized_name = self._normalize_key_name(key_event.key_name)
                     if key_event.event_type == KeyEventType.KEY_DOWN:
-                        self._keys_down.add(key_event.key_name)
+                        self._keys_down.add(normalized_name)
                     else:
-                        self._keys_down.discard(key_event.key_name)
+                        self._keys_down.discard(normalized_name)
 
                 # Add to event history
                 if self._config.enable_event_logging:
@@ -350,14 +383,42 @@ class KeyboardService:
         if not self._config.enable_key_normalization:
             return key_name
 
-        key_upper = key_name.strip().upper()
+        raw = key_name.strip()
+        key_upper = raw.upper()
+
+        # Handle left/right variants and common synonyms
+        lr_mapping = {
+            "LEFT CTRL": "CTRL",
+            "RIGHT CTRL": "CTRL",
+            "LCTRL": "CTRL",
+            "RCTRL": "CTRL",
+            "LEFT ALT": "ALT",
+            "RIGHT ALT": "ALT",
+            "LALT": "ALT",
+            "RALT": "ALT",
+            "ALTGR": "ALT",
+            "ALT GR": "ALT",
+            "LEFT SHIFT": "SHIFT",
+            "RIGHT SHIFT": "SHIFT",
+            "LSHIFT": "SHIFT",
+            "RSHIFT": "SHIFT",
+            "LEFT WIN": "WIN",
+            "RIGHT WIN": "WIN",
+            "LEFT WINDOWS": "WIN",
+            "RIGHT WINDOWS": "WIN",
+            "LWIN": "WIN",
+            "RWIN": "WIN",
+            "WINDOWS": "WIN",
+        }
+        if key_upper in lr_mapping:
+            key_upper = lr_mapping[key_upper]
 
         # Check if it's a known modifier
         if key_upper in self._key_mapping:
             return self._key_mapping[key_upper]
 
         # For regular keys, convert to lowercase
-        return key_name.lower()
+        return raw.lower()
 
     def is_hooked(self) -> bool:
         """Check if the keyboard hook is active."""
@@ -376,3 +437,23 @@ class KeyboardService:
             self._event_handlers.clear()
             self._event_history.clear()
             self._keys_down.clear()
+
+    # Internal helpers
+    def _to_keyboard_library_string(self, combination: KeyCombination,
+    ) -> str:
+        """Convert KeyCombination to `keyboard` library string (e.g., 'ctrl+alt+a')."""
+        def _map_modifier(name: str) -> str:
+            mapping = {
+                "CTRL": "ctrl",
+                "ALT": "alt",
+                "SHIFT": "shift",
+                "META": "windows",
+                "CMD": "windows",
+            }
+            return mapping.get(name.upper(), name.lower())
+
+        parts: list[str] = []
+        for mod in combination.modifiers:
+            parts.append(_map_modifier(mod))
+        parts.append(combination.key.lower())
+        return "+".join(parts)

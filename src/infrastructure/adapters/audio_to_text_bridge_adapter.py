@@ -17,6 +17,7 @@ from src.domain.common.ports.logging_port import LoggingPort
 
 # Constants
 MIN_AUDIO_DATA_SIZE = 1024  # Minimum bytes for valid audio data
+DEVICE_SCAN_INTERVAL = 3.0  # Seconds between device availability checks when no device found
 
 
 class AudioToTextBridgeAdapter:
@@ -68,6 +69,12 @@ class AudioToTextBridgeAdapter:
         self._original_start_recording: Callable[[], None] | None = None
         self._original_stop_recording: Callable[[], None] | None = None
         self._original_transcribe_and_paste: Callable[[bytes], None] | None = None
+        
+        # Device monitoring state (following listener.py approach)
+        self._device_available = True  # Track current device availability
+        self._device_monitor_thread: threading.Thread | None = None
+        self._device_monitor_stop_event = threading.Event()
+        self._device_check_lock = threading.Lock()  # Protect device checking operations
         
         # Initialize the AudioToText system
         self._initialize_audio_to_text()
@@ -144,6 +151,9 @@ class AudioToTextBridgeAdapter:
             
             if self._logger:
                 self._logger.log_info("AudioToText bridge adapter initialized successfully")
+            
+            # Start initial device availability check and monitoring
+            self._start_device_monitoring()
                 
         except Exception as e:
             if self._logger:
@@ -223,10 +233,14 @@ class AudioToTextBridgeAdapter:
 
                 threading.Thread(target=_post_check, daemon=True).start()
             else:
-                # Not recording → likely no device; provide friendly UI message once
+                # Not recording → likely no device; provide friendly UI message once and start monitoring
                 try:
-                    if not self.check_audio_device() and self._ui_callback:
-                        self._ui_callback("No recording device detected. Please connect a microphone.", None, None, None, None)
+                    if not self.check_audio_device():
+                        self._device_available = False  # Mark device as unavailable
+                        if self._ui_callback:
+                            self._ui_callback("No recording device detected. Please connect a microphone.", None, None, None, None)
+                        # Start monitoring for newly connected devices
+                        self._start_device_monitor_thread()
                 except Exception:
                     pass
                 
@@ -234,10 +248,16 @@ class AudioToTextBridgeAdapter:
             if self._logger:
                 self._logger.log_error(f"Error starting bridged recording: {e}")
             
+            # Mark device as potentially unavailable and start monitoring
+            self._device_available = False
+            
             # Reset audio backend on recording error (following original pattern)
             # This ensures that if a device was disconnected during recording attempt,
             # the next attempt can detect newly connected devices
             self._reset_audio_backend_for_device_refresh()
+            
+            # Start device monitoring to detect when device becomes available again
+            self._start_device_monitor_thread()
             
             # Reset state on error
             if self._audio_recorder.get_state() == RecordingState.RECORDING:
@@ -294,8 +314,15 @@ class AudioToTextBridgeAdapter:
             if self._logger:
                 self._logger.log_error(f"Failed to start recording from hotkey: {e}")
             
+            # Mark device as potentially unavailable and start monitoring
+            self._device_available = False
+            
             # Reset audio backend on any error to ensure fresh state for next attempt
             self._reset_audio_backend_for_device_refresh()
+            
+            # Start device monitoring to detect when device becomes available again
+            self._start_device_monitor_thread()
+            
             return False
 
     def stop_recording_from_hotkey(self) -> bool:
@@ -373,7 +400,8 @@ class AudioToTextBridgeAdapter:
                 
                 # Show success message
                 if self._ui_callback:
-                    self._ui_callback(f"{transcription_result}", None, None, None, None)
+                    # Clear transient status; controller will display result if desired
+                    self._ui_callback(None, None, None, None, True)
                 
         except Exception as e:
             error_msg = f"Transcription Error: {e!s}"
@@ -443,8 +471,26 @@ class AudioToTextBridgeAdapter:
     def is_ready(self) -> bool:
         """Whether transcription service is initialized (models ready)."""
         try:
+            # If service exists and initialized, ready
             svc = getattr(self._transcription_adapter, "_service", None)
-            return bool(getattr(svc, "is_initialized", False))
+            if bool(getattr(svc, "is_initialized", False)):
+                return True
+            # If not initialized, attempt to detect active download via HF cache lock or pending threads
+            # Heuristic: if adapter exists but service is None, treat as not ready (preload in progress)
+            if getattr(self._transcription_adapter, "_service", None) is None:
+                return False
+            return False
+        except Exception:
+            return False
+
+    def is_downloading(self) -> bool:
+        """Best-effort heuristic to report if a download is ongoing."""
+        try:
+            svc = getattr(self._transcription_adapter, "_service", None)
+            if svc is None:
+                return True
+            # If initialize has started but not finished
+            return not bool(getattr(svc, "is_initialized", False))
         except Exception:
             return False
     
@@ -603,9 +649,15 @@ class AudioToTextBridgeAdapter:
         try:
             # Check audio device first
             if not self.check_audio_device():
+                self._device_available = False  # Mark device as unavailable
                 if self._ui_callback:
                     self._ui_callback("No microphone detected. Please connect a microphone.", None, None, None, None)
+                # Start monitoring for newly connected devices
+                self._start_device_monitor_thread()
                 return
+            
+            # Device is available
+            self._device_available = True
             
             # Update DDD entity state
             result = self._audio_recorder.start_recording()
@@ -649,9 +701,135 @@ class AudioToTextBridgeAdapter:
                 self._logger.log_error(f"Error stopping fallback recording: {e}")
             if self._ui_callback:
                 self._ui_callback("Error stopping recording", None, None, None, None)
+    
+    def _start_device_monitoring(self) -> None:
+        """Start device monitoring if not already running."""
+        try:
+            # Perform initial device check
+            initial_device_available = self.check_audio_device()
+            self._device_available = initial_device_available
+            
+            if not initial_device_available:
+                if self._logger:
+                    self._logger.log_info("No audio device detected at startup - starting periodic monitoring")
+                # Start monitoring thread only if no device is available
+                self._start_device_monitor_thread()
+            else:
+                if self._logger:
+                    self._logger.log_info("Audio device available at startup")
+        except Exception as e:
+            if self._logger:
+                self._logger.log_warning(f"Failed to start device monitoring: {e}")
+    
+    def _start_device_monitor_thread(self) -> None:
+        """Start the device monitoring thread."""
+        try:
+            if self._device_monitor_thread and self._device_monitor_thread.is_alive():
+                return  # Already running
+            
+            self._device_monitor_stop_event.clear()
+            self._device_monitor_thread = threading.Thread(
+                target=self._device_monitor_worker,
+                daemon=True,
+                name="AudioDeviceMonitor"
+            )
+            self._device_monitor_thread.start()
+            
+            if self._logger:
+                self._logger.log_debug("Device monitoring thread started")
+                
+        except Exception as e:
+            if self._logger:
+                self._logger.log_error(f"Failed to start device monitoring thread: {e}")
+    
+    def _stop_device_monitor_thread(self) -> None:
+        """Stop the device monitoring thread."""
+        try:
+            if self._device_monitor_thread:
+                self._device_monitor_stop_event.set()
+                self._device_monitor_thread.join(timeout=2.0)
+                self._device_monitor_thread = None
+                
+                if self._logger:
+                    self._logger.log_debug("Device monitoring thread stopped")
+        except Exception as e:
+            if self._logger:
+                self._logger.log_warning(f"Error stopping device monitoring thread: {e}")
+    
+    def _device_monitor_worker(self) -> None:
+        """Device monitoring worker thread - periodically check for newly connected devices."""
+        try:
+            while not self._device_monitor_stop_event.is_set():
+                try:
+                    # Wait for the scan interval or stop event
+                    if self._device_monitor_stop_event.wait(DEVICE_SCAN_INTERVAL):
+                        break  # Stop event was set
+                    
+                    # Only check if device was previously unavailable
+                    if not self._device_available:
+                        with self._device_check_lock:
+                            device_now_available = self.check_audio_device()
+                            
+                            if device_now_available and not self._device_available:
+                                # Device became available!
+                                self._device_available = True
+                                
+                                if self._logger:
+                                    self._logger.log_info("Audio device detected - device is now available!")
+                                
+                                # Refresh the AudioToText PyAudio instance (following listener.py pattern)
+                                self._refresh_audio_backend_for_new_device()
+                                
+                                # Stop monitoring since device is now available
+                                break
+                            elif not device_now_available:
+                                # Still no device, continue monitoring
+                                if self._logger:
+                                    self._logger.log_debug("No audio device detected yet, continuing to monitor...")
+                    else:
+                        # Device is available, stop monitoring
+                        break
+                        
+                except Exception as e:
+                    if self._logger:
+                        self._logger.log_debug(f"Device monitoring iteration error: {e}")
+                    # Continue monitoring despite errors
+                    continue
+                    
+        except Exception as e:
+            if self._logger:
+                self._logger.log_error(f"Device monitoring worker error: {e}")
+    
+    def _refresh_audio_backend_for_new_device(self) -> None:
+        """Refresh the AudioToText PyAudio backend when a new device becomes available.
+        
+        This follows the listener.py pattern of calling close(reset=True) to reinitialize 
+        PyAudio for newly connected devices.
+        """
+        try:
+            if self._audio_to_text and hasattr(self._audio_to_text, "_recorder"):
+                if self._logger:
+                    self._logger.log_debug("Refreshing AudioToText recorder for newly detected device")
+                
+                # Reset the recorder's PyAudio instance following the original pattern
+                # This mirrors listener.py lines 159-160 and PyAudioRecorder logic
+                self._audio_to_text._recorder.close(reset=True)
+                
+                if self._logger:
+                    self._logger.log_info("Audio backend refreshed - ready for recording with new device")
+            else:
+                if self._logger:
+                    self._logger.log_debug("No AudioToText recorder to refresh")
+                    
+        except Exception as e:
+            if self._logger:
+                self._logger.log_warning(f"Failed to refresh audio backend for new device: {e}")
 
     def cleanup(self) -> None:
         """Clean up resources."""
+        # Stop device monitoring first
+        self._stop_device_monitor_thread()
+        
         self.stop_listening()
         if self._audio_to_text:
             with contextlib.suppress(Exception):

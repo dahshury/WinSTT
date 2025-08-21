@@ -10,7 +10,6 @@ from .audio_validation_service import AudioValidationService
 from .listener_worker_service import ListenerWorkerManager, ListenerWorkerService
 from .pyaudio_service import PyAudioService
 from .pyqt_audio_adapter import PyQtAudioAdapter, PyQtAudioAdapterManager, PyQtAudioAdapterService
-from .vad_service import VADService
 from .vad_worker_service import VadWorkerManager, VadWorkerService
 
 __all__ = [
@@ -24,7 +23,6 @@ __all__ = [
     "PyQtAudioAdapter",
     "PyQtAudioAdapterManager",
     "PyQtAudioAdapterService",
-    "VADService",
     "VadWorkerManager",
     "VadWorkerService",
 ]

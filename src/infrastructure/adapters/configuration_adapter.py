@@ -45,7 +45,7 @@ class ConfigurationServiceAdapter:
             
             if self._config_cache is None:
                 return default
-            
+
             value = self._config_cache.get(key, default)
             # Ensure we return string or None as expected by the protocol
             if value is None:

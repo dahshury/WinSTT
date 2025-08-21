@@ -27,15 +27,22 @@ from src.domain.worker_management.value_objects.worker_operations import (
 )
 
 
-@dataclass
-class WorkerInitResult:
-    """Result of worker initialization operation with detailed status."""
-    result: InitializationResult
-    worker_statuses: list[WorkerInitializationStatus] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-    total_time_ms: int = 0
-
 # WorkerConfiguration is now imported from domain layer
+
+
+@dataclass
+class WorkerInitializationStatus:
+    """Status of individual worker initialization"""
+    worker_type: WorkerType
+    result: InitializationResult
+    initialized: bool = False
+    started: bool = False
+    error_message: str | None = None
+    initialization_time_ms: int = 0
+    worker_id: str | None = None
+    thread_id: str | None = None
+    memory_usage_mb: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -52,18 +59,12 @@ class InitializeWorkersRequest:
 
 
 @dataclass
-class WorkerInitializationStatus:
-    """Status of individual worker initialization"""
-    worker_type: WorkerType
+class WorkerInitResult:
+    """Result of worker initialization operation with detailed status."""
     result: InitializationResult
-    initialized: bool = False
-    started: bool = False
-    error_message: str | None = None
-    initialization_time_ms: int = 0
-    worker_id: str | None = None
-    thread_id: str | None = None
-    memory_usage_mb: float | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    worker_statuses: list[WorkerInitializationStatus] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    total_time_ms: int = 0
 
 
 @dataclass

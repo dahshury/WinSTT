@@ -6,7 +6,6 @@ from .download_progress import DownloadProgress
 from .language import Language
 from .message_display_callback import MessageDisplayCallback
 from .model_configuration import ModelConfiguration
-from .model_download_config import ModelDownloadConfig
 from .model_name import ModelName
 from .model_size import ModelSize
 from .model_type import ModelType
@@ -27,7 +26,6 @@ __all__ = [
     "Language",
     "MessageDisplayCallback",
     "ModelConfiguration",
-    "ModelDownloadConfig",
     "ModelName",
     "ModelSize",
     "ModelType",

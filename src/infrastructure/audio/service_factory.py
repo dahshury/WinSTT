@@ -8,26 +8,12 @@ from typing import cast
 
 from .audio_device_service import AudioDeviceService
 from .audio_file_service import AudioFileService
-from .audio_playback_service import (
-    AudioDeviceServiceProtocol as PlaybackDeviceProtocol,
-)
-from .audio_playback_service import (
-    AudioFileServiceProtocol as PlaybackFileProtocol,
-)
-from .audio_playback_service import (
-    AudioPlaybackService,
-)
-from .audio_playback_service import (
-    AudioProcessingServiceProtocol as PlaybackProcessingProtocol,
-)
-from .audio_playback_service import (
-    AudioStreamServiceProtocol as PlaybackStreamProtocol,
-)
-from .audio_processing_service import (
-    AudioProcessingService,
-    PlaybackAudioProcessingService,
-    VADAudioProcessingService,
-)
+from .audio_playback_service import AudioPlaybackService
+from .audio_playback_service import AudioDeviceServiceProtocol as PlaybackDeviceProtocol
+from .audio_playback_service import AudioFileServiceProtocol as PlaybackFileProtocol
+from .audio_playback_service import AudioProcessingServiceProtocol as PlaybackProcessingProtocol
+from .audio_playback_service import AudioStreamServiceProtocol as PlaybackStreamProtocol
+from .audio_processing_service import AudioProcessingService, PlaybackAudioProcessingService
 from .audio_recording_service import AudioRecordingService
 from .audio_stream_service import AudioStreamService
 from .audio_validation_service import AudioValidationService
@@ -36,11 +22,7 @@ from .playback_validation_service import PlaybackValidationService
 from .progress_tracking_service import ProgressTrackingService
 from .pyaudio_service import PyAudioService
 from .recording_validation_service import RecordingValidationService
-from .vad_calibration_service import VADCalibrationService
-from .vad_model_service import VADModelService
-from .vad_service import VADService
-from .vad_smoothing_service import VADSmoothingService
-from .vad_validation_service import VADValidationService
+# Note: Legacy VAD pipeline is deprecated; onnx_asr handles VAD.
 
 
 class AudioServiceFactory:
@@ -90,27 +72,7 @@ class AudioServiceFactory:
             logger_service=logger_service,
         )
 
-    @staticmethod
-    def create_vad_service() -> VADService:
-        """Create a properly configured VADService."""
-        # Create VAD-specific services
-        model_service = VADModelService()
-        audio_processing_service = VADAudioProcessingService()
-        validation_service = VADValidationService()
-        calibration_service = VADCalibrationService()
-        smoothing_service = VADSmoothingService()
-        progress_service = ProgressTrackingService()
-        logger_service = LoggerService()
-
-        return VADService(
-            model_service=model_service,
-            audio_processing_service=audio_processing_service,
-            validation_service=validation_service,
-            calibration_service=calibration_service,
-            smoothing_service=smoothing_service,
-            progress_tracking_service=progress_service,
-            logger_service=logger_service,
-        )
+    # VAD service factory removed in favor of onnx_asr-backed adapter usage
 
     @staticmethod
     def create_pyaudio_service() -> PyAudioService:
@@ -150,6 +112,5 @@ class AudioServiceFactory:
         return {
             "recording_service": AudioServiceFactory.create_audio_recording_service(),
             "playback_service": AudioServiceFactory.create_audio_playback_service(),
-            "vad_service": AudioServiceFactory.create_vad_service(),
             "pyaudio_service": AudioServiceFactory.create_pyaudio_service(),
         }

@@ -143,8 +143,8 @@ class SettingsConfiguration(Entity):
     def _get_default_configuration(self) -> dict[str, Any]:
         """Get default configuration values."""
         return {
-            "model": "whisper-turbo",
-            "quantization": "Full",
+            "model": "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX",
+            "quantization": "Quantized",
             "recording_sound_enabled": True,
             "sound_file_path": "",
             "output_srt": True,
@@ -188,7 +188,20 @@ class SettingsConfiguration(Entity):
         """Validate a setting key-value pair."""
         validation_rules: dict[str, Callable[[Any], bool]] = {
             "model": lambda v: isinstance(v, str) and v in [
-                "whisper-turbo", "lite-whisper-turbo", "lite-whisper-turbo-fast",
+                "gigaam-v2-ctc",
+                "gigaam-v2-rnnt",
+                "nemo-fastconformer-ru-ctc",
+                "nemo-fastconformer-ru-rnnt",
+                "nemo-parakeet-ctc-0.6b",
+                "nemo-parakeet-rnnt-0.6b",
+                "nemo-parakeet-tdt-0.6b-v2",
+                "nemo-parakeet-tdt-0.6b-v3",
+                "whisper-base",
+                "onnx-community/whisper-tiny",
+                "onnx-community/whisper-base",
+                "onnx-community/whisper-small",
+                "onnx-community/whisper-large-v3-turbo",
+                "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX",
             ],
             "quantization": lambda v: isinstance(v, str) and v in ["Full", "Quantized"],
             "recording_sound_enabled": lambda v: isinstance(v, bool),

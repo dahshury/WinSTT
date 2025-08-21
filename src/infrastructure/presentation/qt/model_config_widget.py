@@ -48,19 +48,34 @@ class ModelConfigWidget(QGroupBox):
         """
         super().__init__("Model Settings", parent)
 
-        # Available models and their configurations
+        # Available models and their configurations (onnx-asr supported)
         self._available_models = [
-            "whisper-turbo",
-            "lite-whisper-turbo",
-            "lite-whisper-turbo-fast",
+            # Sber GigaAM
+            "gigaam-v2-ctc",
+            "gigaam-v2-rnnt",
+            # Nvidia NeMo FastConformer / Parakeet
+            "nemo-fastconformer-ru-ctc",
+            "nemo-fastconformer-ru-rnnt",
+            "nemo-parakeet-ctc-0.6b",
+            "nemo-parakeet-rnnt-0.6b",
+            "nemo-parakeet-tdt-0.6b-v2",
+            "nemo-parakeet-tdt-0.6b-v3",
+            # OpenAI Whisper (onnxruntime-exported and optimum/HF variants)
+            "whisper-base",
+            "onnx-community/whisper-tiny",
+            "onnx-community/whisper-base",
+            "onnx-community/whisper-small",
+            "onnx-community/whisper-large-v3-turbo",
+            # Lite optimized variants
+            "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX",
         ]
 
-        # Current configuration
-        self._current_model = "whisper-turbo"
+        # Current configuration (default to lite optimized whisper turbo acc)
+        self._current_model = "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX"
         self._current_quantization = "Full"
 
         # Default configuration
-        self._default_model = "whisper-turbo"
+        self._default_model = "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX"
         self._default_quantization = "Full"
 
         # UI components

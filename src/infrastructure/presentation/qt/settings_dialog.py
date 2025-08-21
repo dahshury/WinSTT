@@ -72,8 +72,8 @@ class SettingsDialog(QDialog):
         config = get_config()
 
         # Load current values
-        self.current_model = config.get("model", "whisper-turbo")
-        self.current_quantization = config.get("quantization", "Full")
+        self.current_model = config.get("model", "onnx-community/whisper-small")
+        self.current_quantization = config.get("quantization", "Quantized")
         self.current_rec_key = config.get("rec_key", "F9")
         # Use a safer fallback for sound path
         try:
@@ -91,8 +91,8 @@ class SettingsDialog(QDialog):
         self.llm_prompt = config.get("llm_prompt", "Please correct any errors in the following text:")
 
         # Default values
-        self.default_model = "whisper-turbo"
-        self.default_quantization = "Full"
+        self.default_model = "onnx-community/whisper-small"
+        self.default_quantization = "Quantized"
         self.default_rec_key = "F9"
         # Use a safer fallback for default sound path
         try:
@@ -244,7 +244,22 @@ class SettingsDialog(QDialog):
         model_label.setStyleSheet("color: rgb(144, 164, 174);")
 
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["whisper-turbo", "lite-whisper-turbo", "lite-whisper-turbo-fast"])
+        self.model_combo.addItems([
+            "gigaam-v2-ctc",
+            "gigaam-v2-rnnt",
+            "nemo-fastconformer-ru-ctc",
+            "nemo-fastconformer-ru-rnnt",
+            "nemo-parakeet-ctc-0.6b",
+            "nemo-parakeet-rnnt-0.6b",
+            "nemo-parakeet-tdt-0.6b-v2",
+            "nemo-parakeet-tdt-0.6b-v3",
+            "whisper-base",
+            "onnx-community/whisper-tiny",
+            "onnx-community/whisper-base",
+            "onnx-community/whisper-small",
+            "onnx-community/whisper-large-v3-turbo",
+            "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX",
+        ])
         self.model_combo.setCurrentText(self.current_model)
         self.model_combo.setStyleSheet("""
             QComboBox {
@@ -281,7 +296,8 @@ class SettingsDialog(QDialog):
         quant_label.setStyleSheet("color: rgb(144, 164, 174);")
 
         self.quant_combo = QComboBox()
-        self.quant_combo.addItems(["Full", "Quantized"] if "lite" not in self.current_model else ["Full"])
+        # All listed models support both Full and Quantized variants when using HF/optimum or ORT; offer both
+        self.quant_combo.addItems(["Full", "Quantized"])
         self.quant_combo.setCurrentText(self.current_quantization)
         self.quant_combo.setStyleSheet("""
             QComboBox {

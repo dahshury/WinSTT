@@ -14,9 +14,7 @@ from src.infrastructure.audio.audio_playback_service import (
 from src.infrastructure.audio.audio_recording_service import (
     AudioProcessingServiceProtocol as RecordingProcessingProtocol,
 )
-from src.infrastructure.audio.vad_service import (
-    AudioProcessingServiceProtocol as VADProcessingProtocol,
-)
+# VAD-specific processing protocol removed; onnx_asr handles VAD internally.
 
 
 class AudioProcessingService(RecordingProcessingProtocol):
@@ -93,50 +91,7 @@ class AudioProcessingService(RecordingProcessingProtocol):
             return False, 0.0, 0.0, f"Failed to calculate levels: {e}"
 
 
-class VADAudioProcessingService(VADProcessingProtocol):
-    """Processing implementation for the VAD pipeline."""
-
-    def preprocess_audio(
-        self, audio_data: np.ndarray, sample_rate: int, target_rate: int,
-    ) -> tuple[bool, np.ndarray, str | None]:
-        try:
-            if sample_rate == target_rate or len(audio_data) == 0:
-                return True, audio_data.astype(np.float32, copy=False), None
-
-            # Simple linear resampling
-            duration = len(audio_data) / float(sample_rate)
-            target_length = int(duration * target_rate)
-            if target_length <= 0:
-                return True, audio_data.astype(np.float32, copy=False), None
-            x_old = np.linspace(0.0, 1.0, num=len(audio_data), endpoint=False, dtype=np.float32)
-            x_new = np.linspace(0.0, 1.0, num=target_length, endpoint=False, dtype=np.float32)
-            resampled = np.interp(x_new, x_old, audio_data).astype(np.float32, copy=False)
-            return True, resampled, None
-        except Exception as e:
-            return False, np.array([], dtype=np.float32), str(e)
-
-    def normalize_audio(self, audio_data: np.ndarray) -> np.ndarray:
-        if len(audio_data) == 0:
-            return audio_data.astype(np.float32, copy=False)
-        max_abs = float(np.max(np.abs(audio_data)))
-        if max_abs <= 0.0:
-            return audio_data.astype(np.float32, copy=False)
-        return (audio_data.astype(np.float32) / max_abs).clip(-1.0, 1.0)
-
-    def apply_windowing(self, audio_data: np.ndarray, window_size: int, overlap: float,
-    ) -> list[np.ndarray]:
-        if window_size <= 0 or len(audio_data) == 0:
-            return []
-        step = max(1, int(window_size * (1.0 - max(0.0, min(overlap, 0.99)))))
-        windows: list[np.ndarray] = []
-        for start in range(0, max(0, len(audio_data) - window_size + 1), step):
-            windows.append(audio_data[start:start + window_size])
-        return windows
-
-    def calculate_energy(self, audio_data: np.ndarray) -> float:
-        if len(audio_data) == 0:
-            return 0.0
-        return float(np.sqrt(np.mean(np.square(audio_data))))
+# Removed VADAudioProcessingService; VAD functionality is provided by onnx_asr
 
 
 class PlaybackAudioProcessingService(PlaybackProcessingProtocol):
@@ -190,5 +145,16 @@ class PlaybackAudioProcessingService(PlaybackProcessingProtocol):
 
     def resample_audio(self, data: np.ndarray, source_rate: int, target_rate: int,
     ) -> tuple[bool, np.ndarray | None, str | None]:
-        ok, resampled, err = VADAudioProcessingService().preprocess_audio(data, source_rate, target_rate)
-        return ok, resampled, err
+        try:
+            if source_rate == target_rate or len(data) == 0:
+                return True, data.astype(np.float32, copy=False), None
+            duration = len(data) / float(source_rate)
+            target_length = int(duration * target_rate)
+            if target_length <= 0:
+                return True, data.astype(np.float32, copy=False), None
+            x_old = np.linspace(0.0, 1.0, num=len(data), endpoint=False, dtype=np.float32)
+            x_new = np.linspace(0.0, 1.0, num=target_length, endpoint=False, dtype=np.float32)
+            resampled = np.interp(x_new, x_old, data).astype(np.float32, copy=False)
+            return True, resampled, None
+        except Exception as e:
+            return False, None, str(e)

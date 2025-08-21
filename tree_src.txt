@@ -1,0 +1,801 @@
+src/
+├── application/
+│   ├── application_lifecycle/
+│   │   ├── __init__.py
+│   │   ├── activate_window_use_case.py
+│   │   ├── check_single_instance_use_case.py
+│   │   ├── manage_dialog_lifecycle_use_case.py
+│   │   ├── shutdown_application_use_case.py
+│   │   └── startup_application_use_case.py
+│   ├── audio_recording/
+│   │   ├── __init__.py
+│   │   ├── configure_audio_use_case.py
+│   │   ├── get_recording_status_use_case.py
+│   │   ├── pause_recording_use_case.py
+│   │   ├── resume_recording_use_case.py
+│   │   ├── start_recording_use_case.py
+│   │   └── stop_recording_use_case.py
+│   ├── audio_visualization/
+│   │   ├── __init__.py
+│   │   ├── normalize_audio_use_case.py
+│   │   ├── process_audio_data_use_case.py
+│   │   ├── start_visualization_use_case.py
+│   │   ├── stop_visualization_use_case.py
+│   │   └── update_waveform_use_case.py
+│   ├── configuration/
+│   │   ├── __init__.py
+│   │   ├── load_configuration_use_case.py
+│   │   ├── save_configuration_use_case.py
+│   │   ├── update_llm_config_use_case.py
+│   │   └── update_model_config_use_case.py
+│   ├── events/
+│   │   ├── __init__.py
+│   │   ├── application_events.py
+│   │   └── event_publisher_service.py
+│   ├── external_services/
+│   │   ├── commands/
+│   │   │   └── call_external_service_command.py
+│   │   └── handlers/
+│   │       ├── __init__.py
+│   │       └── call_external_service_command_handler.py
+│   ├── interfaces/
+│   │   ├── __init__.py
+│   │   ├── animation_service.py
+│   │   ├── main_window_service.py
+│   │   ├── ui_coordination_service.py
+│   │   ├── widget_service.py
+│   │   └── window_management_service.py
+│   ├── listener/
+│   │   ├── __init__.py
+│   │   ├── audio_to_text_config.py
+│   │   └── audio_to_text_service.py
+│   ├── main_window/
+│   │   ├── commands/
+│   │   │   └── update_ui_text_command.py
+│   │   ├── handlers/
+│   │   │   ├── __init__.py
+│   │   │   ├── get_ui_text_state_query_handler.py
+│   │   │   └── update_ui_text_command_handler.py
+│   │   ├── queries/
+│   │   │   ├── get_hardware_capabilities_use_case.py
+│   │   │   └── get_ui_text_state_query.py
+│   │   ├── __init__.py
+│   │   ├── configure_window_use_case.py
+│   │   ├── create_main_window_use_case.py
+│   │   ├── initialize_main_window_use_case.py
+│   │   ├── integrate_visualization_use_case.py
+│   │   ├── manage_opacity_effects_use_case.py
+│   │   ├── manage_window_state_use_case.py
+│   │   ├── setup_ui_layout_use_case.py
+│   │   └── update_ui_text_use_case.py
+│   ├── main_window_coordination/
+│   │   ├── __init__.py
+│   │   └── main_window_controller.py
+│   ├── media_processing/
+│   │   ├── __init__.py
+│   │   ├── batch_transcribe_use_case.py
+│   │   ├── convert_video_use_case.py
+│   │   ├── process_media_files_use_case.py
+│   │   ├── process_next_file_use_case.py
+│   │   └── transcribe_audio_data_use_case.py
+│   ├── progress_management/
+│   │   ├── __init__.py
+│   │   ├── complete_progress_use_case.py
+│   │   ├── reparent_progress_bar_use_case.py
+│   │   ├── start_progress_session_use_case.py
+│   │   └── update_progress_use_case.py
+│   ├── recording/
+│   ├── services/
+│   │   ├── __init__.py
+│   │   └── application_startup_service.py
+│   ├── settings/
+│   │   ├── __init__.py
+│   │   ├── apply_settings_use_case.py
+│   │   ├── export_settings_use_case.py
+│   │   ├── import_settings_use_case.py
+│   │   ├── load_settings_use_case.py
+│   │   ├── reset_settings_use_case.py
+│   │   ├── reset_sound_settings_use_case.py
+│   │   ├── save_settings_use_case.py
+│   │   ├── update_hotkey_use_case.py
+│   │   ├── update_sound_settings_use_case.py
+│   │   └── validate_settings_use_case.py
+│   ├── system_integration/
+│   │   ├── __init__.py
+│   │   ├── enable_drag_drop_use_case.py
+│   │   ├── initialize_system_tray_use_case.py
+│   │   ├── install_event_filter_use_case.py
+│   │   ├── manage_geometry_use_case.py
+│   │   ├── process_drag_drop_use_case.py
+│   │   ├── process_key_event_use_case.py
+│   │   └── setup_worker_threads_use_case.py
+│   ├── transcription/
+│   │   ├── __init__.py
+│   │   ├── cancel_transcription_use_case.py
+│   │   ├── configure_model_use_case.py
+│   │   ├── get_transcription_history_use_case.py
+│   │   ├── get_transcription_result_use_case.py
+│   │   ├── start_transcription_use_case.py
+│   │   └── validate_model_use_case.py
+│   ├── ui_widgets/
+│   │   ├── commands/
+│   │   │   ├── __init__.py
+│   │   │   └── handle_widget_event_command.py
+│   │   ├── handlers/
+│   │   │   ├── __init__.py
+│   │   │   ├── get_widget_state_query_handler.py
+│   │   │   └── handle_widget_event_command_handler.py
+│   │   ├── queries/
+│   │   │   ├── __init__.py
+│   │   │   └── get_widget_state_query.py
+│   │   ├── __init__.py
+│   │   └── update_widget_state_use_case.py
+│   ├── worker_management/
+│   │   ├── __init__.py
+│   │   ├── cleanup_worker_use_case.py
+│   │   ├── initialize_llm_worker_use_case.py
+│   │   └── initialize_workers_use_case.py
+│   ├── __init__.py
+│   ├── application_config.py
+│   └── application_orchestrator.py
+├── cache/
+├── composition_root/
+│   ├── __init__.py
+│   └── container_configuration.py
+├── domain/
+│   ├── application_lifecycle/
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── activation_configuration.py
+│   │   │   ├── application_instance.py
+│   │   │   ├── shutdown_configuration.py
+│   │   │   ├── single_instance_configuration.py
+│   │   │   ├── startup_configuration.py
+│   │   │   └── window_info.py
+│   │   ├── ports/
+│   │   │   ├── __init__.py
+│   │   │   ├── application_lifecycle_port.py
+│   │   │   ├── single_instance_port.py
+│   │   │   └── window_activation_port.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── enable_phase.py
+│   │   │   ├── instance_check_method.py
+│   │   │   ├── instance_check_result.py
+│   │   │   ├── shutdown_phase.py
+│   │   │   ├── shutdown_reason.py
+│   │   │   ├── shutdown_result.py
+│   │   │   ├── startup_phase.py
+│   │   │   └── startup_result.py
+│   │   └── __init__.py
+│   ├── audio/
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── audio_configuration.py
+│   │   │   ├── audio_device.py
+│   │   │   ├── audio_file.py
+│   │   │   ├── audio_recorder.py
+│   │   │   ├── audio_session.py
+│   │   │   └── recording_state.py
+│   │   ├── events/
+│   │   │   └── __init__.py
+│   │   ├── ports/
+│   │   │   ├── audio_capture_port.py
+│   │   │   └── audio_device_port.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── audio_configuration.py
+│   │   │   ├── audio_data.py
+│   │   │   ├── audio_format.py
+│   │   │   ├── audio_operations.py
+│   │   │   ├── audio_quality.py
+│   │   │   ├── audio_samples.py
+│   │   │   ├── audio_track.py
+│   │   │   ├── channel_count.py
+│   │   │   ├── duration.py
+│   │   │   ├── listener_operations.py
+│   │   │   ├── playback_mode.py
+│   │   │   ├── playback_operation.py
+│   │   │   ├── playback_result.py
+│   │   │   ├── playback_state.py
+│   │   │   ├── recording_operation.py
+│   │   │   ├── recording_result.py
+│   │   │   ├── recording_state.py
+│   │   │   ├── sample_rate.py
+│   │   │   ├── service_requests.py
+│   │   │   ├── status_metrics.py
+│   │   │   ├── stream_operations.py
+│   │   │   ├── vad_operations.py
+│   │   │   ├── validation.py
+│   │   │   └── validation_operations.py
+│   │   └── __init__.py
+│   ├── audio_visualization/
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── audio_processor.py
+│   │   │   └── visualizer.py
+│   │   ├── ports/
+│   │   │   ├── __init__.py
+│   │   │   ├── audio_data_provider_port.py
+│   │   │   ├── integration_ports.py
+│   │   │   ├── visualization_renderer_port.py
+│   │   │   └── waveform_update_port.py
+│   │   ├── protocols/
+│   │   │   ├── __init__.py
+│   │   │   ├── audio_buffer_protocol.py
+│   │   │   ├── audio_conversion_protocol.py
+│   │   │   ├── audio_normalization_protocol.py
+│   │   │   ├── audio_processing_protocol.py
+│   │   │   ├── audio_statistics_protocol.py
+│   │   │   ├── audio_validation_protocol.py
+│   │   │   ├── logger_protocol.py
+│   │   │   └── signal_emission_protocol.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── audio_buffer.py
+│   │   │   ├── normalization_configuration.py
+│   │   │   ├── normalization_types.py
+│   │   │   ├── processing_types.py
+│   │   │   ├── visualization_configuration.py
+│   │   │   ├── visualization_control.py
+│   │   │   ├── visualization_data.py
+│   │   │   ├── visualization_settings.py
+│   │   │   └── waveform_data.py
+│   │   └── __init__.py
+│   ├── common/
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── download_progress.py
+│   │   │   └── processing_status.py
+│   │   ├── errors/
+│   │   │   └── domain_errors.py
+│   │   ├── ports/
+│   │   │   ├── __init__.py
+│   │   │   ├── application_state_port.py
+│   │   │   ├── cache_key_port.py
+│   │   │   ├── command_line_port.py
+│   │   │   ├── concurrency_management_port.py
+│   │   │   ├── concurrency_port.py
+│   │   │   ├── dependency_injection_port.py
+│   │   │   ├── dialog_lifecycle_port.py
+│   │   │   ├── environment_port.py
+│   │   │   ├── error_callback_port.py
+│   │   │   ├── event_publisher_port.py
+│   │   │   ├── file_system_port.py
+│   │   │   ├── id_generation_port.py
+│   │   │   ├── logger_port.py
+│   │   │   ├── logging_port.py
+│   │   │   ├── progress_notification_port.py
+│   │   │   ├── serialization_port.py
+│   │   │   ├── text_paste_port.py
+│   │   │   ├── threading_port.py
+│   │   │   ├── time_management_port.py
+│   │   │   ├── time_port.py
+│   │   │   ├── ui_component_port.py
+│   │   │   ├── ui_framework_port.py
+│   │   │   └── ui_status_port.py
+│   │   ├── __init__.py
+│   │   ├── abstractions.py
+│   │   ├── aggregate_root.py
+│   │   ├── domain_result.py
+│   │   ├── domain_utils.py
+│   │   ├── entity.py
+│   │   ├── errors.py
+│   │   ├── events.py
+│   │   ├── progress_callback.py
+│   │   ├── result.py
+│   │   ├── value_object.py
+│   │   └── value_objects.py
+│   ├── file_operations/
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── cleanup_level.py
+│   │   │   ├── drop_action.py
+│   │   │   ├── drop_zone_type.py
+│   │   │   ├── file_operations.py
+│   │   │   ├── file_type.py
+│   │   │   ├── output_configuration.py
+│   │   │   ├── processing_mode.py
+│   │   │   └── validation_level.py
+│   │   └── __init__.py
+│   ├── llm/
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── llm_model_name.py
+│   │   │   ├── llm_prompt.py
+│   │   │   └── llm_quantization_level.py
+│   │   └── __init__.py
+│   ├── main_window/
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── main_window.py
+│   │   │   ├── main_window_instance.py
+│   │   │   ├── ui_layout.py
+│   │   │   ├── visualization_integration.py
+│   │   │   └── window_configuration.py
+│   │   ├── events/
+│   │   │   └── window_events.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── color_palette.py
+│   │   │   ├── icon_path.py
+│   │   │   ├── opacity_level.py
+│   │   │   └── z_order_level.py
+│   │   └── __init__.py
+│   ├── media/
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── batch_processing_session.py
+│   │   │   ├── conversion_job.py
+│   │   │   └── media_file.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── conversion_operations.py
+│   │   │   ├── conversion_quality.py
+│   │   │   ├── file_format.py
+│   │   │   ├── media_duration.py
+│   │   │   ├── processing_operations.py
+│   │   │   └── transcription_operations.py
+│   │   └── __init__.py
+│   ├── progress_management/
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── download_progress.py
+│   │   │   ├── progress_bar_lifecycle.py
+│   │   │   └── progress_session.py
+│   │   ├── ports/
+│   │   │   ├── __init__.py
+│   │   │   └── progress_callback_port.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── progress_info.py
+│   │   │   ├── progress_percentage.py
+│   │   │   └── progress_state.py
+│   │   └── __init__.py
+│   ├── settings/
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── hotkey_binding.py
+│   │   │   ├── settings_configuration.py
+│   │   │   └── user_preferences.py
+│   │   ├── events/
+│   │   │   ├── __init__.py
+│   │   │   └── settings_events.py
+│   │   ├── ports/
+│   │   │   ├── __init__.py
+│   │   │   └── sound_settings_port.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── audio_configuration.py
+│   │   │   ├── configuration_operations.py
+│   │   │   ├── file_path.py
+│   │   │   ├── key_combination.py
+│   │   │   ├── llm_configuration.py
+│   │   │   ├── load_strategy.py
+│   │   │   ├── model_configuration.py
+│   │   │   ├── settings_operations.py
+│   │   │   └── update_operations.py
+│   │   └── __init__.py
+│   ├── system_integration/
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── event_system_integration.py
+│   │   │   ├── system_tray_integration.py
+│   │   │   └── worker_thread_coordination.py
+│   │   ├── ports/
+│   │   │   ├── __init__.py
+│   │   │   ├── drag_drop_port.py
+│   │   │   ├── event_processing_port.py
+│   │   │   ├── hardware_capabilities_port.py
+│   │   │   ├── platform_service_port.py
+│   │   │   ├── system_tray_port.py
+│   │   │   └── ui_integration_ports.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── drag_drop_operations.py
+│   │   │   ├── event_filtering.py
+│   │   │   ├── geometry_management.py
+│   │   │   ├── method_delegation.py
+│   │   │   ├── system_operations.py
+│   │   │   ├── thread_management.py
+│   │   │   ├── thread_reference.py
+│   │   │   └── tray_icon_path.py
+│   │   └── __init__.py
+│   ├── transcription/
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── model_instance.py
+│   │   │   ├── transcription_result.py
+│   │   │   ├── transcription_segment.py
+│   │   │   └── transcription_session.py
+│   │   ├── events/
+│   │   │   └── __init__.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── audio_data.py
+│   │   │   ├── confidence_score.py
+│   │   │   ├── download_progress.py
+│   │   │   ├── language.py
+│   │   │   ├── message_display_callback.py
+│   │   │   ├── model_configuration.py
+│   │   │   ├── model_name.py
+│   │   │   ├── model_size.py
+│   │   │   ├── model_type.py
+│   │   │   ├── progress_callback.py
+│   │   │   ├── quantization.py
+│   │   │   ├── quantization_level.py
+│   │   │   ├── transcription_configuration.py
+│   │   │   ├── transcription_operations.py
+│   │   │   ├── transcription_quality.py
+│   │   │   ├── transcription_request.py
+│   │   │   ├── transcription_result.py
+│   │   │   ├── transcription_segment.py
+│   │   │   ├── transcription_state.py
+│   │   │   ├── transcription_status.py
+│   │   │   └── transcription_text.py
+│   │   ├── __init__.py
+│   │   └── ports.py
+│   ├── ui_coordination/
+│   │   ├── entities/
+│   │   │   └── __init__.py
+│   │   ├── ports/
+│   │   │   ├── __init__.py
+│   │   │   ├── ui_layout_port.py
+│   │   │   ├── ui_state_management_port.py
+│   │   │   ├── widget_operation_port.py
+│   │   │   └── window_management_port.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── drag_drop_operations.py
+│   │   │   ├── event_system.py
+│   │   │   ├── opacity_effects.py
+│   │   │   ├── ui_abstractions.py
+│   │   │   ├── ui_coordination_types.py
+│   │   │   ├── ui_layout.py
+│   │   │   ├── ui_state_management.py
+│   │   │   ├── window_operations.py
+│   │   │   ├── window_position.py
+│   │   │   ├── window_size.py
+│   │   │   └── window_state.py
+│   │   └── __init__.py
+│   ├── ui_widgets/
+│   │   ├── entities/
+│   │   │   └── __init__.py
+│   │   ├── events/
+│   │   │   └── widget_events.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   └── widget_events.py
+│   │   └── __init__.py
+│   ├── window_management/
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── activation_method.py
+│   │   │   ├── activation_result.py
+│   │   │   ├── layout_type.py
+│   │   │   ├── reparent_direction.py
+│   │   │   ├── restoration_mode.py
+│   │   │   ├── widget_layering.py
+│   │   │   └── window_state.py
+│   │   └── __init__.py
+│   ├── worker_management/
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── thread_instance.py
+│   │   │   └── worker_instance.py
+│   │   ├── ports/
+│   │   │   ├── __init__.py
+│   │   │   ├── worker_communication_port.py
+│   │   │   ├── worker_factory_port.py
+│   │   │   ├── worker_lifecycle_port.py
+│   │   │   ├── worker_management_port.py
+│   │   │   └── worker_thread_ports.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── worker_configuration.py
+│   │   │   ├── worker_imports.py
+│   │   │   └── worker_operations.py
+│   │   └── __init__.py
+│   ├── __init__.py
+│   ├── ui_text.py
+│   ├── ui_widget_operations.py
+│   └── window_state_management.py
+├── infrastructure/
+│   ├── adapters/
+│   │   ├── application_lifecycle/
+│   │   │   ├── __init__.py
+│   │   │   └── pyqt_application_lifecycle_adapter.py
+│   │   ├── pyqt6/
+│   │   │   ├── __init__.py
+│   │   │   └── widget_adapters.py
+│   │   ├── ui/
+│   │   │   ├── __init__.py
+│   │   │   └── pyqt6_ui_adapter.py
+│   │   ├── __init__.py
+│   │   ├── audio_device_adapter.py
+│   │   ├── audio_to_text_bridge_adapter.py
+│   │   ├── configuration_adapter.py
+│   │   ├── dependency_injection_adapter.py
+│   │   ├── file_system_adapter.py
+│   │   ├── keyboard_adapter.py
+│   │   ├── listener_adapter.py
+│   │   ├── logging_adapter.py
+│   │   ├── model_worker_adapter.py
+│   │   ├── qt_drag_drop_adapter.py
+│   │   ├── qt_system_tray_adapter.py
+│   │   ├── resource_adapter.py
+│   │   ├── serialization_adapter.py
+│   │   ├── sound_player_adapter.py
+│   │   ├── text_paste_adapter.py
+│   │   └── transcription_adapter.py
+│   ├── audio/
+│   │   ├── __init__.py
+│   │   ├── audio_buffer_service.py
+│   │   ├── audio_data_conversion_service.py
+│   │   ├── audio_data_validation_service.py
+│   │   ├── audio_device_service.py
+│   │   ├── audio_file_repository.py
+│   │   ├── audio_file_service.py
+│   │   ├── audio_normalization_service.py
+│   │   ├── audio_playback_service.py
+│   │   ├── audio_processing_service.py
+│   │   ├── audio_processor.py
+│   │   ├── audio_recording_service.py
+│   │   ├── audio_stream_service.py
+│   │   ├── audio_validation_service.py
+│   │   ├── consolidated_listener_service.py
+│   │   ├── keyboard_service.py
+│   │   ├── listener_worker_service.py
+│   │   ├── logger_service.py
+│   │   ├── playback_validation_service.py
+│   │   ├── pyaudio_core_service.py
+│   │   ├── pyaudio_protocols.py
+│   │   ├── pyaudio_recorder.py
+│   │   ├── pyaudio_service.py
+│   │   ├── pyaudio_types.py
+│   │   ├── pyqt_audio_adapter.py
+│   │   ├── recording_validation_service.py
+│   │   ├── service_factory.py
+│   │   ├── signal_emission_service.py
+│   │   ├── sounddevice_sound_player_adapter.py
+│   │   └── vad_worker_service.py
+│   ├── audio_visualization/
+│   │   ├── __init__.py
+│   │   ├── audio_data_provider_service.py
+│   │   ├── audio_normalization_service.py
+│   │   ├── audio_processor_service.py
+│   │   ├── audio_stream_service.py
+│   │   ├── buffer_management_service.py
+│   │   ├── resource_cleanup_service.py
+│   │   └── visualization_controller_service.py
+│   ├── common/
+│   │   ├── bytes_io_adapter.py
+│   │   ├── configuration_service.py
+│   │   ├── event_bus.py
+│   │   ├── file_audio_writer.py
+│   │   ├── progress_callback.py
+│   │   ├── repository_base.py
+│   │   ├── resource_service.py
+│   │   ├── sync_service.py
+│   │   ├── task_manager.py
+│   │   ├── threading_service.py
+│   │   ├── time_service.py
+│   │   ├── ui_status_dispatch.py
+│   │   └── unit_of_work.py
+│   ├── container/
+│   │   ├── infrastructure_service_registry.py
+│   │   └── service_registration.py
+│   ├── llm/
+│   │   ├── __init__.py
+│   │   ├── gemma_inference_service.py
+│   │   ├── llm_pyqt_worker_service.py
+│   │   └── llm_worker_service.py
+│   ├── main_window/
+│   │   ├── __init__.py
+│   │   ├── main_window_factory_service.py
+│   │   └── main_window_service_impl.py
+│   ├── media/
+│   │   ├── __init__.py
+│   │   ├── batch_processor_service.py
+│   │   ├── file_validation_service.py
+│   │   ├── folder_scanning_service.py
+│   │   ├── media_conversion_service.py
+│   │   ├── media_info_service.py
+│   │   ├── media_scanner_service.py
+│   │   └── video_conversion_service.py
+│   ├── presentation/
+│   │   ├── qt/
+│   │   │   ├── __init__.py
+│   │   │   ├── animation_strategies.py
+│   │   │   ├── application_bootstrap.py
+│   │   │   ├── hotkey_config_widget.py
+│   │   │   ├── llm_config_widget.py
+│   │   │   ├── main_window.py
+│   │   │   ├── model_config_widget.py
+│   │   │   ├── progress_management_widget.py
+│   │   │   ├── resource_management_component.py
+│   │   │   ├── settings_dialog.py
+│   │   │   ├── settings_dialog_coordinator.py
+│   │   │   ├── settings_event_filter.py
+│   │   │   ├── settings_lifecycle.py
+│   │   │   ├── sound_config_widget.py
+│   │   │   ├── toggle_switch_widget.py
+│   │   │   ├── translation_component.py
+│   │   │   ├── ui_core_abstractions.py
+│   │   │   ├── ui_core_patterns.py
+│   │   │   ├── ui_setup_component.py
+│   │   │   ├── visualization_component.py
+│   │   │   ├── voice_visualizer.py
+│   │   │   ├── widget_layout_component.py
+│   │   │   ├── window_config_component.py
+│   │   │   ├── worker_integration.py
+│   │   │   └── worker_integration_orchestrator.py
+│   │   ├── system/
+│   │   │   ├── __init__.py
+│   │   │   └── error_handling_service.py
+│   │   └── __init__.py
+│   ├── progress_management/
+│   │   ├── __init__.py
+│   │   ├── progress_bar_reparenting_service.py
+│   │   ├── progress_tracking_service.py
+│   │   ├── timer_management_service.py
+│   │   └── ui_state_management_service.py
+│   ├── settings/
+│   │   ├── __init__.py
+│   │   ├── file_system_service.py
+│   │   ├── hotkey_recording_service.py
+│   │   ├── json_settings_repository.py
+│   │   ├── settings_file_repository.py
+│   │   ├── settings_migration_service.py
+│   │   ├── settings_repository.py
+│   │   └── settings_validator.py
+│   ├── system/
+│   │   ├── __init__.py
+│   │   ├── application_lifecycle_service.py
+│   │   ├── environment_service.py
+│   │   ├── hardware_capabilities_adapter.py
+│   │   ├── logging_service.py
+│   │   ├── platform_service.py
+│   │   ├── single_instance_service.py
+│   │   ├── subprocess_service.py
+│   │   ├── tray_icon_service.py
+│   │   ├── window_activation_service.py
+│   │   └── window_management_service_impl.py
+│   ├── system_integration/
+│   │   ├── __init__.py
+│   │   ├── keyboard_hook_adapter.py
+│   │   ├── method_delegation_service.py
+│   │   ├── pynput_keyboard_adapter.py
+│   │   └── pyperclip_adapter.py
+│   ├── transcription/
+│   │   ├── __init__.py
+│   │   ├── model_worker_service.py
+│   │   ├── onnx_transcription_service.py
+│   │   └── transcription_file_repository.py
+│   ├── ui/
+│   │   └── __init__.py
+│   ├── ui_widgets/
+│   │   ├── __init__.py
+│   │   └── widget_service_impl.py
+│   ├── worker/
+│   │   ├── __init__.py
+│   │   └── worker_imports_configuration.py
+│   ├── __init__.py
+│   └── audio_normalization_service.py
+├── presentation/
+│   ├── adapters/
+│   │   ├── __init__.py
+│   │   ├── pyqtgraph_renderer_adapter.py
+│   │   └── ui_status_adapter.py
+│   ├── core/
+│   │   ├── abstractions.py
+│   │   ├── abstractions_deprecated.py
+│   │   ├── container.py
+│   │   ├── events.py
+│   │   ├── patterns.py
+│   │   └── ui_abstractions.py
+│   ├── main_window/
+│   │   ├── builders/
+│   │   │   ├── __init__.py
+│   │   │   └── main_window_builder.py
+│   │   ├── components/
+│   │   │   ├── __init__.py
+│   │   │   ├── progress_indicator_component.py
+│   │   │   └── status_display_component.py
+│   │   ├── controllers/
+│   │   │   ├── __init__.py
+│   │   │   ├── drag_drop_coordination_controller.py
+│   │   │   ├── drag_drop_event_controller.py
+│   │   │   ├── settings_controller.py
+│   │   │   ├── tray_coordination_controller.py
+│   │   │   ├── ui_construction_controller.py
+│   │   │   ├── ui_state_controller.py
+│   │   │   └── window_minimize_controller.py
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── color_palette.py
+│   │   │   ├── icon_path.py
+│   │   │   ├── opacity_effects.py
+│   │   │   ├── opacity_level.py
+│   │   │   ├── ui_layout.py
+│   │   │   ├── ui_text.py
+│   │   │   ├── visualization_integration.py
+│   │   │   ├── window_configuration.py
+│   │   │   ├── window_operations.py
+│   │   │   ├── window_state_management.py
+│   │   │   └── z_order_level.py
+│   │   ├── __init__.py
+│   │   └── main_window.py
+│   ├── qt/
+│   │   ├── services/
+│   │   │   ├── animation_service_impl.py
+│   │   │   ├── drag_drop_service.py
+│   │   │   ├── event_system_service.py
+│   │   │   ├── file_dialog_service.py
+│   │   │   ├── message_display_service.py
+│   │   │   ├── opacity_effects_service.py
+│   │   │   ├── progress_ui_service.py
+│   │   │   ├── state_management_service.py
+│   │   │   ├── ui_coordination_service_impl.py
+│   │   │   ├── ui_layout_service.py
+│   │   │   ├── ui_text_management_service.py
+│   │   │   ├── visualization_integration_service.py
+│   │   │   ├── widget_layering_service.py
+│   │   │   └── window_configuration_service.py
+│   │   ├── __init__.py
+│   │   ├── settings_dialog.py
+│   │   ├── settings_dialog_coordinator.py
+│   │   ├── settings_dialog_impl.py
+│   │   ├── toggle_switch_widget.py
+│   │   └── voice_visualizer.py
+│   ├── shared/
+│   │   ├── __init__.py
+│   │   ├── resource_helpers.py
+│   │   └── ui_theme_service.py
+│   ├── system/
+│   │   └── user_notification_service.py
+│   ├── ui_coordination/
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── animation_state.py
+│   │   │   ├── element_type.py
+│   │   │   ├── event_system.py
+│   │   │   ├── message_display.py
+│   │   │   ├── state_management.py
+│   │   │   ├── timer_management.py
+│   │   │   └── ui_element_state.py
+│   │   ├── __init__.py
+│   │   ├── animation_controller.py
+│   │   ├── animation_controller_deprecated.py
+│   │   ├── ui_coordinator.py
+│   │   └── ui_coordinator_deprecated.py
+│   ├── ui_widgets/
+│   │   ├── value_objects/
+│   │   │   ├── __init__.py
+│   │   │   ├── ui_widget_operations.py
+│   │   │   ├── widget_dimensions.py
+│   │   │   ├── widget_events.py
+│   │   │   └── widget_styling.py
+│   │   ├── __init__.py
+│   │   ├── create_toggle_widget_presenter.py
+│   │   ├── handle_widget_event_presenter.py
+│   │   ├── toggle_widget.py
+│   │   ├── toggle_widget_deprecated.py
+│   │   └── widget_state.py
+│   ├── __init__.py
+│   └── value_objects.py
+├── resources/
+│   ├── Command-Reset-256.png
+│   ├── edit.png
+│   ├── gear.png
+│   ├── open-folder.png
+│   ├── splash.wav
+│   ├── stop.png
+│   ├── switch-off.png
+│   ├── switch-on.png
+│   ├── Untitled-1.png
+│   ├── untitled.png
+│   └── Windows 1 Theta.png
+├── __init__.py
+└── main.py
+

@@ -109,6 +109,13 @@ class MainWindow(QMainWindow):
         # Build UI components via controller (SoC)
         self._build_ui_via_controller()
 
+        # Create a hotkey proxy early so callbacks can be connected before monitoring starts
+        class _HotkeyProxy(QObject):
+            hotkeyEvent = pyqtSignal(bool)  # noqa: N815 - Qt signal naming convention
+
+        self._hotkey_proxy = _HotkeyProxy()
+        self._hotkey_proxy.hotkeyEvent.connect(self._handle_hotkey_event)
+
         # Create event-forwarding controllers (SoC) that other setup depends on
         self._dragdrop_event_controller: DragDropEventController = DragDropEventController(
             coordinator=None,  # will set inside _setup_controllers if available
@@ -123,18 +130,11 @@ class MainWindow(QMainWindow):
             tray_notifier=self._tray_controller,
             logger=self._logger,
         )
-        
+
         # Initialize services
         self._initialize_services()
-        
+
         self._logger.log_info("Main window initialization completed")
-
-        # Create a hotkey proxy after initialization for thread-safe UI updates
-        class _HotkeyProxy(QObject):
-            hotkeyEvent = pyqtSignal(bool)  # noqa: N815 - Qt signal naming convention
-
-        self._hotkey_proxy = _HotkeyProxy()
-        self._hotkey_proxy.hotkeyEvent.connect(self._handle_hotkey_event)
     
     def _load_configuration(self) -> None:
         """Load application configuration."""
@@ -312,8 +312,8 @@ class MainWindow(QMainWindow):
         self._keyboard.register_hotkey(self._recording_key, lambda: None)
         self._keyboard.start_monitoring()
         
-        # Set initial status
-        self._status_display.update_status_text("Ready for transcription")
+        # Set initial status: leave status label empty; instruction label already shows the hint
+        self._status_display.update_status_text("")
         
         self._logger.log_info(f"Services initialized with recording key: {self._recording_key}")
     
@@ -346,12 +346,27 @@ class MainWindow(QMainWindow):
                     )
                     self._logger.log_debug("Started recording UI (device available)")
                 else:
-                    # Controller failed (e.g., models not ready). Provide audible feedback if enabled.
-                    if self._enable_sound and self._sound_path:
-                        self._ui_controller.play_notification_sound(self._sound_path)
+                    # Controller failed. If models are not ready/downloading, do NOT beep and show a download hint.
+                    try:
+                        bridge = getattr(self._controller, "_audio_text_bridge", None)
+                        is_ready = True
+                        is_dl = False
+                        if bridge is not None and hasattr(bridge, "is_ready"):
+                            is_ready = bool(bridge.is_ready())
+                        if bridge is not None and hasattr(bridge, "is_downloading"):
+                            is_dl = bool(bridge.is_downloading())
+                    except Exception:
+                        is_ready = True
+                        is_dl = False
+
+                    if is_ready and not is_dl:
+                        # Provide audible feedback for other failures only
+                        if self._enable_sound and self._sound_path:
+                            self._ui_controller.play_notification_sound(self._sound_path)
+                    # If downloading, do not emit any status here; real download progress will drive the bar
                     # Ensure no recording UI
                     self._ui_controller.stop_recording_ui()
-                    self._logger.log_debug("Recording start failed - provided feedback beep and stopped recording UI")
+                    self._logger.log_debug("Recording start failed - models not ready or other failure; stopped recording UI")
             else:
                 # Hotkey RELEASED - always stop recording UI regardless of success
                 self._ui_controller.stop_recording_ui()

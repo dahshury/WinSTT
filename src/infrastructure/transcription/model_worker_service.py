@@ -13,7 +13,6 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 class _TranscriberProtocol(Protocol):
     def transcribe(self, file_path: str | io.BytesIO) -> str: ...
-    def get_segments(self) -> list[dict[str, Any]]: ...
 
 
 class ModelWorkerService(QObject):
@@ -53,36 +52,32 @@ class ModelWorkerService(QObject):
         blocking the UI during model initialization.
         """
         try:
-            # Log initialization attempt
             logging.getLogger(__name__).debug(
-                f"Initializing model type: {self.model_type} with quantization: {self.quantization}",
+                f"Initializing onnx-asr worker for model type: {self.model_type}",
             )
 
-            # Import refactored ONNX service here to avoid circular dependencies
-            from src.domain.transcription.value_objects.transcription_configuration import (
-                TranscriptionConfiguration,
-            )
-            from src.domain.transcription.value_objects.transcription_quality import (
-                TranscriptionQuality,
-            )
             from src.infrastructure.transcription.onnx_transcription_service import (
-                ONNXTranscriptionService,
+                OnnxAsrTranscriptionService,
             )
 
-            quality = (
-                TranscriptionQuality.FULL if (self.quantization or "").lower() == "full" else TranscriptionQuality.QUANTIZED
+            # Pull configured model and quantization
+            try:
+                from src.infrastructure.adapters.configuration_adapter import ConfigurationServiceAdapter as _Cfg
+                cfg = _Cfg("settings.json", logging.getLogger(__name__))
+                model_name = str(cfg.get_setting("model", "onnx-community/whisper-small"))
+                quant = str(cfg.get_setting("quantization", "Quantized"))
+            except Exception:
+                model_name = "onnx-community/whisper-small"
+                quant = "Quantized"
+            service = OnnxAsrTranscriptionService(
+                model_name=model_name,
+                use_vad=True,
+                quantization=quant,
             )
-            config = TranscriptionConfiguration(quality=quality)
-            service = ONNXTranscriptionService(
-                quality=quality,
-                model_type=self.model_type,
-                configuration=config,
-            )
-            # Avoid initializing here; do it lazily to prevent Qt object lifetime issues
 
             # Expose a minimal protocol-compatible wrapper
             class _Compat:
-                def __init__(self, svc: ONNXTranscriptionService):
+                def __init__(self, svc: OnnxAsrTranscriptionService):
                     self._svc = svc
 
                 def transcribe(self, file_path: str | io.BytesIO) -> str:
@@ -101,9 +96,6 @@ class ModelWorkerService(QObject):
                     result = _loop.run_until_complete(self._svc.transcribe_async(req))
                     _loop.close()
                     return getattr(result, "text", None) or ""
-
-                def get_segments(self) -> list[dict[str, Any]]:
-                    return self._svc.get_segments()
 
             self.model = _Compat(service)
 
@@ -166,25 +158,85 @@ class ModelWorkerService(QObject):
                 # Regular file path
                 logger.debug(f"Transcribing file: {file_path}")
 
-            # Transcribe the file
-            text = self.model.transcribe(file_path)
-
-            # Get segmentation information
-            segments = self.model.get_segments()
-
-            # Return results in a dictionary
-            return {
-                "text": text,
-                "segments": segments,
-            }
+            # Transcribe the file with segments using the underlying service
+            from src.domain.transcription.value_objects.transcription_request import (
+                TranscriptionRequest,
+            )
+            import asyncio as _a
+            # Access underlying svc via wrapper when available
+            svc = getattr(self.model, "_svc", None)
+            if svc is None:
+                logging.getLogger(__name__).error("Model service unavailable")
+                return None
+            if not getattr(svc, "is_initialized", False):
+                _loop = _a.new_event_loop()
+                _a.set_event_loop(_loop)
+                _loop.run_until_complete(svc.initialize_async())
+                _loop.close()
+            req = TranscriptionRequest(audio_input=file_path, return_segments=True)
+            _loop = _a.new_event_loop()
+            _a.set_event_loop(_loop)
+            out = _loop.run_until_complete(svc.transcribe_async(req))
+            _loop.close()
+            return {"text": out.text, "segments": out.segments}
         except Exception as e:
             logging.getLogger(__name__).exception(f"Error transcribing file: {e!s}")
             return None
 
     def cleanup(self) -> None:
         """Clean up model resources."""
+        try:
+            # Best-effort cleanup to drop references and allow GC
+            svc = getattr(self.model, "_svc", None)
+            if svc is not None and hasattr(svc, "cleanup"):
+                svc.cleanup()
+        except Exception:
+            pass
         self.model = None
         self.status = False
+        # Toggle status off and notify any observers that worker is no longer active
+        try:
+            self.toggle_status()
+        except Exception:
+            pass
+
+    def transcribe_audio_data(self, audio_bytes: bytes) -> dict[str, Any] | None:
+        """Transcribe in-memory audio bytes using the model.
+        
+        Args:
+            audio_bytes: Raw audio data as WAV bytes
+        
+        Returns:
+            Dict with text and segments or None on failure
+        """
+        try:
+            if not hasattr(self, "model") or self.model is None:
+                logging.getLogger(__name__).error("Model not initialized")
+                return None
+            import io as _io
+            buf = _io.BytesIO(audio_bytes)
+            from src.domain.transcription.value_objects.transcription_request import (
+                TranscriptionRequest,
+            )
+            svc = getattr(self.model, "_svc", None)
+            if svc is None:
+                text = self.model.transcribe(buf)
+                return {"text": text or "", "segments": []}
+            import asyncio as _a
+            if not getattr(svc, "is_initialized", False):
+                _loop = _a.new_event_loop()
+                _a.set_event_loop(_loop)
+                _loop.run_until_complete(svc.initialize_async())
+                _loop.close()
+            req = TranscriptionRequest(audio_input=buf, return_segments=True)
+            _loop = _a.new_event_loop()
+            _a.set_event_loop(_loop)
+            out = _loop.run_until_complete(svc.transcribe_async(req))
+            _loop.close()
+            return {"text": out.text, "segments": out.segments}
+        except Exception as e:
+            logging.getLogger(__name__).exception(f"Error transcribing audio data: {e!s}")
+            return None
 
 
 class ModelWorkerManager:

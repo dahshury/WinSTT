@@ -36,7 +36,6 @@ from .audio_playback_service import AudioPlaybackService
 from .audio_recording_service import AudioRecordingService
 from .keyboard_service import KeyboardService
 from .pyaudio_service import PyAudioService
-from .vad_service import VADService
 
 # ListenerEventData is now imported from domain layer
 
@@ -157,7 +156,7 @@ class ConsolidatedListenerService:
         recording_service: AudioRecordingService | None = None,
         playback_service: AudioPlaybackService | None = None,
         keyboard_service: KeyboardService | None = None,
-        vad_service: VADService | None = None,
+        vad_service: object | None = None,
         file_repository: AudioFileRepository | None = None,
     ):
         """Initialize the consolidated listener service."""
@@ -170,7 +169,8 @@ class ConsolidatedListenerService:
         self._recording_service = recording_service or AudioServiceFactory.create_audio_recording_service()
         self._playback_service = playback_service or AudioServiceFactory.create_audio_playback_service()
         self._keyboard_service = keyboard_service or KeyboardService()
-        self._vad_service = vad_service or AudioServiceFactory.create_vad_service()
+        # Legacy VAD pipeline is deprecated; speech presence is determined by onnx_asr during transcription.
+        self._vad_service = vad_service or None
 
         # Initialize file repository
         file_config = AudioFileRepositoryConfiguration(
@@ -543,11 +543,7 @@ class ConsolidatedListenerService:
                 self._change_state(ListenerState.IDLE)
                 return
 
-            # Perform VAD if enabled
-            if self._config.enable_vad and not self._check_speech_activity(audio_data):
-                self._emit_error("No speech detected in recording")
-                self._change_state(ListenerState.IDLE)
-                return
+            # VAD pre-check is delegated to transcription layer (onnx_asr with VAD). Skip here.
 
             # Save audio if auto-save is enabled
             if self._config.auto_save_recordings:
