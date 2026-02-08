@@ -669,3 +669,52 @@ class TestRecorderService:
         t.join()
         service.shutdown()
         assert call_count >= 3  # first 2 failed, then recovered
+
+    def test_warmup_runs_main_transcriber(self) -> None:
+        """warmup() runs a dummy transcription through the main transcriber."""
+        service, transcriber, _, _ = self._make_service()
+        assert transcriber.call_count == 0
+        service.warmup()
+        assert transcriber.call_count == 1
+        service.shutdown()
+
+    def test_warmup_runs_realtime_transcriber(self) -> None:
+        """warmup() also warms up the realtime transcriber when present."""
+        rt_transcriber = FakeTranscriber()
+        service, transcriber, _, _ = self._make_service(realtime_transcriber=rt_transcriber)
+        service.warmup()
+        assert transcriber.call_count == 1
+        assert rt_transcriber.call_count == 1
+        service.shutdown()
+
+    def test_warmup_skips_realtime_when_absent(self) -> None:
+        """warmup() works fine without a realtime transcriber."""
+        service, transcriber, _, _ = self._make_service()
+        service.warmup()
+        assert transcriber.call_count == 1
+        service.shutdown()
+
+    def test_abort_unblocks_wait_audio(self) -> None:
+        """abort() puts a sentinel on the queue so wait_audio() returns False immediately."""
+        service, _, _, _ = self._make_service()
+        service.abort()
+        result = service.wait_audio()
+        assert result is False
+        service.shutdown()
+
+    def test_swap_transcriber(self) -> None:
+        """swap_transcriber replaces the transcriber and shuts down the old one."""
+        service, old_transcriber, _, _ = self._make_service(transcription_text="old text")
+        new_transcriber = FakeTranscriber(
+            result=TranscriptionResult(
+                text="new text",
+                language="en",
+                language_probability=0.99,
+                duration_seconds=1.0,
+            )
+        )
+        service.swap_transcriber(new_transcriber)
+        assert old_transcriber.shutdown_called
+        result = service.transcribe()
+        assert result == "New text."
+        service.shutdown()

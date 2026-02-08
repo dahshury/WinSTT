@@ -1,0 +1,21 @@
+.backdrop {
+	transition: opacity 150ms ease;
+}
+
+.backdrop[data-starting-style],
+.backdrop[data-ending-style] {
+	opacity: 0;
+}
+
+.popup {
+	transform: translate(-50%, -50%) scale(1);
+	transition:
+		opacity 150ms ease,
+		transform 150ms ease;
+}
+
+.popup[data-starting-style],
+.popup[data-ending-style] {
+	opacity: 0;
+	transform: translate(-50%, -50%) scale(0.96);
+}

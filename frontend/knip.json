@@ -1,0 +1,7 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["app/**/*.{ts,tsx}", "src/**/*.{ts,tsx}", "electron/**/*.ts"],
+  "project": ["app/**/*.{ts,tsx}", "src/**/*.{ts,tsx}", "electron/**/*.ts"],
+  "ignore": ["**/*.test.{ts,tsx}", "test/**/*", "spec/**/*"],
+  "ignoreDependencies": ["tailwindcss", "@types/bun"]
+}

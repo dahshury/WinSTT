@@ -1,0 +1,267 @@
+@import "tailwindcss";
+
+/* ── Theme: design tokens → Tailwind utilities ── */
+@theme {
+	/* Surface — bg-surface, bg-surface-primary, etc. */
+	--color-surface: #09090b;
+	--color-surface-primary: #0c0c0f;
+	--color-surface-secondary: #111114;
+	--color-surface-tertiary: #18181b;
+	--color-surface-elevated: #1f1f23;
+	--color-surface-hover: #27272a;
+	--color-surface-active: #2e2e33;
+
+	/* Foreground — text-foreground, text-foreground-secondary, etc. */
+	--color-foreground: #fafafa;
+	--color-foreground-secondary: #a1a1aa;
+	--color-foreground-muted: #52525b;
+	--color-foreground-dim: #3f3f46;
+
+	/* Accent — bg-accent, text-accent, border-accent, etc. */
+	--color-accent: #f59e0b;
+	--color-accent-hover: #fbbf24;
+	--color-accent-muted: #92400e;
+	--color-accent-dim: #451a03;
+	--color-accent-glow: rgba(245, 158, 11, 0.15);
+	--color-accent-glow-strong: rgba(245, 158, 11, 0.3);
+
+	/* Status — text-success, bg-error, etc. */
+	--color-success: #22c55e;
+	--color-success-dim: #052e16;
+	--color-warning: #eab308;
+	--color-warning-dim: #422006;
+	--color-error: #ef4444;
+	--color-error-dim: #450a0a;
+
+	/* Border — border-border, border-border-hover, etc. */
+	--color-border: #27272a;
+	--color-border-hover: #3f3f46;
+	--color-border-accent: rgba(245, 158, 11, 0.25);
+
+	/* Radii — rounded-xs, rounded-sm, rounded-md, rounded-lg */
+	--radius-xs: 3px;
+	--radius-sm: 5px;
+	--radius-md: 8px;
+	--radius-lg: 12px;
+
+	/* Typography — font-sans, font-mono */
+	--font-sans: "Geist", system-ui, -apple-system, sans-serif;
+	--font-mono: "Geist Mono", "SF Mono", "Cascadia Code", monospace;
+
+	/* Shadows — shadow-sm, shadow-md, shadow-lg, shadow-glow */
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+	--shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+	--shadow-glow: 0 0 20px rgba(245, 158, 11, 0.08);
+
+	/* Animations — animate-fade-in, animate-slide-in, etc. */
+	--animate-fade-in: fade-in 200ms ease-out;
+	--animate-slide-in: slide-in-right 200ms ease-out;
+	--animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
+	--animate-recording-pulse: recording-pulse 1s ease-in-out infinite;
+	--animate-recording-pulse-slow: recording-pulse 2s ease-in-out infinite;
+}
+
+/* ── Legacy aliases for existing var() references in CSSProperties ── */
+/* These map old variable names to @theme-emitted variables.           */
+/* Remove as files migrate from inline styles to Tailwind utilities.   */
+:root {
+	/* Surface */
+	--color-bg-base: var(--color-surface);
+	--color-bg-primary: var(--color-surface-primary);
+	--color-bg-secondary: var(--color-surface-secondary);
+	--color-bg-tertiary: var(--color-surface-tertiary);
+	--color-bg-elevated: var(--color-surface-elevated);
+	--color-bg-hover: var(--color-surface-hover);
+	--color-bg-active: var(--color-surface-active);
+
+	/* Text */
+	--color-text-primary: var(--color-foreground);
+	--color-text-secondary: var(--color-foreground-secondary);
+	--color-text-muted: var(--color-foreground-muted);
+	--color-text-dim: var(--color-foreground-dim);
+}
+
+/* ── Fonts ── */
+@font-face {
+	font-family: "Geist Mono";
+	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-mono/GeistMono-Regular.woff2")
+		format("woff2");
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Geist Mono";
+	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-mono/GeistMono-Medium.woff2")
+		format("woff2");
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Geist Mono";
+	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-mono/GeistMono-SemiBold.woff2")
+		format("woff2");
+	font-weight: 600;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Geist";
+	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Regular.woff2")
+		format("woff2");
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Geist";
+	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Medium.woff2")
+		format("woff2");
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Geist";
+	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-SemiBold.woff2")
+		format("woff2");
+	font-weight: 600;
+	font-style: normal;
+	font-display: swap;
+}
+
+/* ── Keyframes (top-level, referenced by @theme --animate-* tokens) ── */
+@keyframes fade-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes pulse-glow {
+	0%,
+	100% {
+		box-shadow: 0 0 8px rgba(245, 158, 11, 0.15);
+	}
+	50% {
+		box-shadow: 0 0 16px rgba(245, 158, 11, 0.3);
+	}
+}
+
+@keyframes recording-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.5;
+	}
+}
+
+@keyframes slide-in-right {
+	from {
+		opacity: 0;
+		transform: translateX(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+/* ── Base layer: resets, global styles, drag regions ── */
+@layer base {
+	* {
+		box-sizing: border-box;
+		margin: 0;
+		padding: 0;
+	}
+
+	html,
+	body {
+		height: 100%;
+		background: var(--color-surface);
+		color: var(--color-foreground);
+		font-family: var(--font-sans);
+		font-size: 14px;
+		line-height: 1.5;
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
+		overflow: hidden;
+		user-select: none;
+	}
+
+	/* Frameless window drag regions */
+	.titlebar-drag {
+		-webkit-app-region: drag;
+	}
+
+	.titlebar-no-drag {
+		-webkit-app-region: no-drag;
+	}
+
+	/* Scrollbar */
+	::-webkit-scrollbar {
+		width: 5px;
+	}
+
+	::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	::-webkit-scrollbar-thumb {
+		background: var(--color-border);
+		border-radius: 999px;
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		background: var(--color-border-hover);
+	}
+
+	/* Hide native number input spinners */
+	input[type="number"]::-webkit-inner-spin-button,
+	input[type="number"]::-webkit-outer-spin-button {
+		-webkit-appearance: none;
+		margin: 0;
+	}
+
+	input[type="number"] {
+		-moz-appearance: textfield;
+		appearance: textfield;
+	}
+
+	/* Select popup transition */
+	.select-popup[data-starting-style],
+	.select-popup[data-ending-style] {
+		opacity: 0;
+		transform: scale(0.95);
+	}
+
+	/* Selection */
+	::selection {
+		background: var(--color-accent-glow-strong);
+		color: var(--color-foreground);
+	}
+
+	/* Noise texture overlay */
+	.noise-overlay::before {
+		content: "";
+		position: fixed;
+		inset: 0;
+		opacity: 0.015;
+		background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' /%3E%3C/svg%3E");
+		pointer-events: none;
+		z-index: 9999; /* Z_INDEX.NOISE_OVERLAY — keep in sync with shared/config/z-index.ts */
+	}
+}

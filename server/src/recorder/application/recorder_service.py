@@ -81,17 +81,20 @@ class RecorderService:
         self._realtime_thread: threading.Thread | None = None
         self._transcription_result: queue.Queue[str] = queue.Queue()
         self._feed_buffer = bytearray()
+        self._transcriber_lock = threading.Lock()
 
     def text(self, on_transcription_finished: TextCallback | None = None) -> str:
         self.listen()
         if not self.wait_audio():
             self._audio_buffer.clear()
             return ""
+        raw_audio = b"".join(self._audio_buffer.frames)
         audio = self._audio_buffer.get_audio_array()
         self._audio_buffer.clear()
-        self._event_bus.publish(TranscriptionStarted(timestamp=self._clock.get_current_time()))
+        self._event_bus.publish(TranscriptionStarted(timestamp=self._clock.get_current_time(), audio=raw_audio))
 
-        result = self._transcriber.transcribe(audio, self._config.transcription.language)
+        with self._transcriber_lock:
+            result = self._transcriber.transcribe(audio, self._config.transcription.language)
         text = self._preprocess_output(result.text)
 
         self._event_bus.publish(TranscriptionCompleted(timestamp=self._clock.get_current_time(), text=text))
@@ -174,8 +177,22 @@ class RecorderService:
             self._wake_word_detector.cleanup()
         self._state_machine.abort()
 
+    def warmup(self) -> None:
+        """Run a dummy inference to eagerly compile CUDA kernels.
+
+        Call once after construction so the first real transcription
+        doesn't pay the JIT-compilation cost.
+        """
+        dummy = np.zeros(16000, dtype=np.float32)  # 1 s silence @ 16 kHz
+        lang = self._config.transcription.language
+        self._transcriber.transcribe(dummy, lang)
+        if self._realtime_transcriber is not None:
+            self._realtime_transcriber.transcribe(dummy, lang)
+
     def abort(self) -> None:
         self._pipeline.request_abort()
+        # Put a sentinel on the queue to unblock wait_audio() immediately
+        self._pipeline.transcription_queue.put_nowait(None)
 
     def wait_audio(self) -> bool:
         """Block until the pipeline signals a recording is ready.
@@ -189,11 +206,13 @@ class RecorderService:
         deadline = time.time() + 60.0
         while time.time() < deadline:
             try:
-                self._pipeline.transcription_queue.get(timeout=0.1)
+                item = self._pipeline.transcription_queue.get(timeout=0.1)
+                if item is None:
+                    return False  # Abort sentinel
                 return True
             except queue.Empty:
                 continue
-        logger.warning("Timed out waiting for audio transcription trigger")
+        logger.debug("Timed out waiting for audio transcription trigger")
         return False
 
     def wakeup(self) -> None:
@@ -204,8 +223,15 @@ class RecorderService:
 
     def transcribe(self) -> str:
         audio = self._audio_buffer.get_audio_array()
-        result = self._transcriber.transcribe(audio, self._config.transcription.language)
+        with self._transcriber_lock:
+            result = self._transcriber.transcribe(audio, self._config.transcription.language)
         return self._preprocess_output(result.text)
+
+    def swap_transcriber(self, new: ITranscriber) -> None:
+        with self._transcriber_lock:
+            old = self._transcriber
+            self._transcriber = new
+        old.shutdown()
 
     @property
     def state(self) -> RecorderState:
@@ -297,10 +323,11 @@ class RecorderService:
                 continue
 
             try:
-                result = self._realtime_transcriber.transcribe(
-                    audio_array,
-                    self._config.transcription.language,
-                )
+                with self._transcriber_lock:
+                    result = self._realtime_transcriber.transcribe(
+                        audio_array,
+                        self._config.transcription.language,
+                    )
                 text = self._preprocess_output(result.text)
                 if self._state_machine.is_recording:  # pragma: no branch
                     self._event_bus.publish(

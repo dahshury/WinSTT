@@ -63,6 +63,14 @@ class TestEvents:
         assert event.word_index == 0
         assert event.word == "jarvis"
 
+    def test_transcription_started_audio_default(self) -> None:
+        event = TranscriptionStarted(timestamp=1.0)
+        assert event.audio == b""
+
+    def test_transcription_started_audio_with_data(self) -> None:
+        event = TranscriptionStarted(timestamp=1.0, audio=b"\x00\x01\x02\x03")
+        assert event.audio == b"\x00\x01\x02\x03"
+
     def test_audio_chunk_recorded(self) -> None:
         event = AudioChunkRecorded(timestamp=1.0, chunk=b"\x00\x01")
         assert event.chunk == b"\x00\x01"

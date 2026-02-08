@@ -26,6 +26,14 @@ class SileroVAD(IVoiceActivityDetector):
             onnx=use_onnx,
         )
 
+    @property
+    def sensitivity(self) -> float:
+        return self._sensitivity
+
+    @sensitivity.setter
+    def sensitivity(self, value: float) -> None:
+        self._sensitivity = value
+
     @override
     def detect(self, chunk: AudioChunk) -> VADResult:
         if self._sample_rate != _SAMPLE_RATE:

@@ -1,0 +1,83 @@
+"use client";
+
+import { NumberField } from "@base-ui/react/number-field";
+
+export interface NumberStepperProps {
+	value: number;
+	onChange: (value: number) => void;
+	min?: number;
+	max?: number;
+	step?: number;
+	smallStep?: number;
+	disabled?: boolean;
+}
+
+export function NumberStepper({
+	value,
+	onChange,
+	min,
+	max,
+	step = 1,
+	smallStep,
+	disabled,
+}: NumberStepperProps) {
+	return (
+		<NumberField.Root
+			disabled={disabled}
+			max={max}
+			min={min}
+			onValueChange={(v) => {
+				if (v !== null) {
+					onChange(v);
+				}
+			}}
+			smallStep={smallStep}
+			step={step}
+			value={value}
+		>
+			<NumberField.Group className="inline-flex">
+				<NumberField.Decrement className="flex size-8 cursor-pointer select-none items-center justify-center rounded-r-none rounded-l-md border border-border bg-surface-tertiary p-0 text-foreground-secondary outline-none hover:bg-surface-hover">
+					<MinusIcon />
+				</NumberField.Decrement>
+				<NumberField.Input className="h-8 w-[60px] border-border border-x-0 border-y bg-transparent text-center font-mono text-[13px] text-foreground tabular-nums caret-accent outline-none" />
+				<NumberField.Increment className="flex size-8 cursor-pointer select-none items-center justify-center rounded-r-md rounded-l-none border border-border bg-surface-tertiary p-0 text-foreground-secondary outline-none hover:bg-surface-hover">
+					<PlusIcon />
+				</NumberField.Increment>
+			</NumberField.Group>
+		</NumberField.Root>
+	);
+}
+
+function PlusIcon() {
+	return (
+		<svg
+			aria-hidden="true"
+			fill="none"
+			height="10"
+			stroke="currentColor"
+			strokeWidth="1.6"
+			viewBox="0 0 10 10"
+			width="10"
+			xmlns="http://www.w3.org/2000/svg"
+		>
+			<path d="M0 5H5M10 5H5M5 5V0M5 5V10" />
+		</svg>
+	);
+}
+
+function MinusIcon() {
+	return (
+		<svg
+			aria-hidden="true"
+			fill="none"
+			height="10"
+			stroke="currentColor"
+			strokeWidth="1.6"
+			viewBox="0 0 10 10"
+			width="10"
+			xmlns="http://www.w3.org/2000/svg"
+		>
+			<path d="M0 5H10" />
+		</svg>
+	);
+}

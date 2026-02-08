@@ -42,10 +42,12 @@ import argparse
 import asyncio
 import base64
 import logging
+import signal
 import sys
 from collections import deque
 from datetime import datetime
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pyaudio
@@ -71,6 +73,35 @@ hard_break_even_on_background_noise_min_chars: int = 15
 
 text_time_deque: deque[tuple[float, str]] = deque()
 loglevel: int = logging.WARNING
+
+# ─── Settings persistence ───────────────────────────────────────────────
+# Persists parameters set at runtime (e.g. model) so the next server
+# startup uses the same values without waiting for a frontend sync.
+SETTINGS_DIR = Path.home() / ".winstt"
+SETTINGS_FILE = SETTINGS_DIR / "server-settings.json"
+PERSISTED_PARAMETERS: set[str] = {"model"}
+
+
+def load_persisted_settings() -> dict[str, Any]:
+    if not SETTINGS_FILE.exists():
+        return {}
+    try:
+        data: dict[str, Any] = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return data
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def persist_setting(key: str, value: object) -> None:
+    if key not in PERSISTED_PARAMETERS:
+        return
+    settings = load_persisted_settings()
+    settings[key] = value
+    try:
+        SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+        SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    except OSError:
+        pass
 
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
@@ -142,6 +173,7 @@ recorder_ready = threading.Event()
 recorder_thread: threading.Thread | None = None
 stop_recorder: bool = False
 prev_text: str = ""
+shutdown_event: asyncio.Event | None = None
 
 # Define allowed methods and parameters for security
 allowed_methods: list[str] = [
@@ -154,6 +186,7 @@ allowed_methods: list[str] = [
     "text",
 ]
 allowed_parameters: list[str] = [
+    "model",
     "language",
     "silero_sensitivity",
     "wake_word_activation_delay",
@@ -895,6 +928,11 @@ def parse_arguments() -> argparse.Namespace:
     # Parse arguments
     args = parser.parse_args()
 
+    # Apply persisted settings for args not explicitly provided on CLI
+    persisted = load_persisted_settings()
+    if not any(a in sys.argv for a in ("-m", "--model")) and "model" in persisted:
+        args.model = persisted["model"]
+
     debug_logging = args.debug
     extended_logging = args.use_extended_logging
     writechunks = args.write
@@ -922,9 +960,19 @@ def parse_arguments() -> argparse.Namespace:
 def _recorder_thread(loop: asyncio.AbstractEventLoop) -> None:
     global recorder, stop_recorder
     print(f"{bcolors.OKGREEN}Initializing RealtimeSTT server with parameters:{bcolors.ENDC}")
+    # Display parameters as a formatted table
+    max_key_len = max(len(k) for k in recorder_config)
+    separator = f"  {bcolors.OKBLUE}{'─' * (max_key_len + 2)}┬{'─' * 50}{bcolors.ENDC}"
+    print(separator)
     for key, value in recorder_config.items():
-        print(f"    {bcolors.OKBLUE}{key}{bcolors.ENDC}: {value}")
+        display_val = str(value)
+        if callable(value):
+            display_val = f"<callback>"
+        print(f"  {bcolors.OKBLUE}{key:<{max_key_len}}{bcolors.ENDC}  │ {display_val}")
+    print(separator)
     recorder = AudioToTextRecorder(**recorder_config)
+    print(f"{bcolors.OKGREEN}Models loaded, warming up CUDA kernels...{bcolors.ENDC}")
+    recorder.warmup()
     print(f"{bcolors.OKGREEN}{bcolors.BOLD}RealtimeSTT initialized{bcolors.ENDC}")
     recorder_ready.set()
 
@@ -1006,16 +1054,22 @@ async def control_handler(websocket: ServerConnection) -> None:
                     if command == "set_parameter":
                         parameter = command_data.get("parameter")
                         value = command_data.get("value")
+                        # #region agent log
+                        try:
+                            import pathlib as _pl; _pl.Path(r"e:\DL\Projects\event_manager\.cursor\debug.log").open("a", encoding="utf-8").write(json.dumps({"location":"server.py:set_parameter","message":"set_parameter received","data":{"parameter":parameter,"value":str(value),"in_allowed":parameter in allowed_parameters,"has_attr":hasattr(recorder,parameter) if recorder else False},"timestamp":time.time()*1000,"sessionId":"debug-session","runId":"post-fix","hypothesisId":"G"})+"\n")
+                        except Exception:
+                            pass
+                        # #endregion
                         if parameter in allowed_parameters and hasattr(recorder, parameter):
                             setattr(recorder, parameter, value)
+                            persist_setting(parameter, value)
                             # Format the value for output
                             value_formatted = f"{value:.2f}" if isinstance(value, float) else value
                             timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                            if extended_logging:
-                                print(
-                                    f"  [{timestamp}] {bcolors.OKGREEN}Set recorder.{parameter} "
-                                    f"to: {bcolors.OKBLUE}{value_formatted}{bcolors.ENDC}",
-                                )
+                            print(
+                                f"  [{timestamp}] {bcolors.OKGREEN}Set recorder.{parameter} "
+                                f"to: {bcolors.OKBLUE}{value_formatted}{bcolors.ENDC}",
+                            )
                             # Optionally send a response back to the client
                             await websocket.send(
                                 json.dumps(
@@ -1302,7 +1356,7 @@ async def main_async() -> None:
         "wake_word_buffer_duration": args.wake_word_buffer_duration,
         "use_main_model_for_realtime": args.use_main_model_for_realtime,
         "spinner": False,
-        "use_microphone": False,
+        "use_microphone": True,
         "on_realtime_transcription_update": make_callback(loop, text_detected),
         "on_recording_start": make_callback(loop, on_recording_start),
         "on_recording_stop": make_callback(loop, on_recording_stop),
@@ -1347,20 +1401,38 @@ async def main_async() -> None:
 
         print(f"{bcolors.OKGREEN}Server started. Press Ctrl+C to stop the server.{bcolors.ENDC}")
 
-        # Run server tasks
-        await asyncio.gather(
-            control_server.wait_closed(),
-            data_server.wait_closed(),
-            broadcast_task,
-        )
+        # Set up shutdown signal handler so Ctrl+C works reliably on Windows
+        global shutdown_event
+        shutdown_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def _request_shutdown() -> None:
+            assert shutdown_event is not None
+            shutdown_event.set()
+
+        if sys.platform == "win32":
+            signal.signal(signal.SIGINT, lambda _s, _f: loop.call_soon_threadsafe(_request_shutdown))
+        else:
+            loop.add_signal_handler(signal.SIGINT, _request_shutdown)
+            loop.add_signal_handler(signal.SIGTERM, _request_shutdown)
+
+        # Wait until Ctrl+C (or signal) sets the shutdown event
+        await shutdown_event.wait()
+
+        print(f"\n{bcolors.WARNING}Server interrupted by user, shutting down...{bcolors.ENDC}")
+
+        # Close WebSocket servers so clients disconnect
+        control_server.close()
+        data_server.close()
+        broadcast_task.cancel()
+        await control_server.wait_closed()
+        await data_server.wait_closed()
     except OSError:
         print(
             f"{bcolors.FAIL}Error: Could not start server on specified ports. "
             f"It's possible another instance of the server is already running, "
             f"or the ports are being used by another application.{bcolors.ENDC}",
         )
-    except KeyboardInterrupt:
-        print(f"{bcolors.WARNING}Server interrupted by user, shutting down...{bcolors.ENDC}")
     finally:
         # Shutdown procedures for recorder and server threads
         await shutdown_procedure()
@@ -1371,14 +1443,15 @@ async def shutdown_procedure() -> None:
     global stop_recorder, recorder_thread
     if recorder:
         stop_recorder = True
-        recorder.abort()
+        recorder.abort()  # Unblocks wait_audio() immediately via queue sentinel
+
+        if recorder_thread:
+            recorder_thread.join(timeout=5)
+            print(f"{bcolors.OKGREEN}Recorder thread finished{bcolors.ENDC}")
+
         recorder.stop()
         recorder.shutdown()
         print(f"{bcolors.OKGREEN}Recorder shut down{bcolors.ENDC}")
-
-        if recorder_thread:
-            recorder_thread.join()
-            print(f"{bcolors.OKGREEN}Recorder thread finished{bcolors.ENDC}")
 
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     for task in tasks:
@@ -1392,9 +1465,10 @@ def main() -> None:
     try:
         asyncio.run(main_async())
     except KeyboardInterrupt:
-        # Capture any final KeyboardInterrupt to prevent it from showing up in logs
-        print(f"{bcolors.WARNING}Server interrupted by user.{bcolors.ENDC}")
-        exit(0)
+        # Capture any residual KeyboardInterrupt (e.g. during startup before signal handler is installed)
+        print(f"\n{bcolors.WARNING}Server interrupted by user.{bcolors.ENDC}")
+    except SystemExit:
+        pass
 
 
 if __name__ == "__main__":

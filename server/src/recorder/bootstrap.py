@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import cast
+from typing import Any, cast
 
+import numpy as np
 from kink import di
 
 from src.building_blocks.clock import Clock
@@ -71,6 +72,17 @@ def wire_callback_with_text(event_bus: EventBus, event_type: type, callback: Tex
     event_bus.subscribe(event_type, _handler)
 
 
+def wire_callback_with_audio(event_bus: EventBus, event_type: type, callback: SimpleCallback) -> None:
+    """Wire the on_transcription_start callback that receives audio bytes."""
+
+    def _handler(event: object) -> None:
+        audio_bytes = cast(TranscriptionStarted, event).audio
+        audio_ndarray: np.ndarray[Any, np.dtype[np.int16]] = np.frombuffer(audio_bytes, dtype=np.int16)
+        cast(Any, callback)(audio_ndarray)
+
+    event_bus.subscribe(event_type, _handler)
+
+
 def bootstrap_di(
     config: RecorderConfig,
     callbacks: CallbackMap | None = None,
@@ -90,6 +102,8 @@ def bootstrap_di(
             # Text-bearing events need special wiring
             if event_type in {RealtimeTranscriptionUpdate, RealtimeTranscriptionStabilized}:
                 wire_callback_with_text(event_bus, event_type, cast(TextCallback, cb_func))
+            elif event_type is TranscriptionStarted:
+                wire_callback_with_audio(event_bus, event_type, cast(SimpleCallback, cb_func))
             else:
                 wire_callback(event_bus, event_type, cast(SimpleCallback, cb_func))
 

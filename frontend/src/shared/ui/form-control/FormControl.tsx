@@ -1,0 +1,38 @@
+"use client";
+
+import { Field } from "@base-ui/react/field";
+import type { ReactNode } from "react";
+import { InfoTooltip } from "@/shared/ui/info-tooltip";
+
+export interface FormControlProps {
+	label?: string;
+	caption?: string;
+	error?: string;
+	/** Help text shown in an info-icon tooltip next to the label */
+	tooltip?: string;
+	children: ReactNode;
+}
+
+export function FormControl({ label, caption, error, tooltip, children }: FormControlProps) {
+	return (
+		<Field.Root className="flex flex-col">
+			{label && (
+				<div className="flex items-center gap-1">
+					<Field.Label className="font-medium text-[13px] text-foreground leading-4">
+						{label}
+					</Field.Label>
+					{tooltip && <InfoTooltip content={tooltip} />}
+				</div>
+			)}
+			{caption && (
+				<Field.Description className="mt-0.5 text-[11px] text-foreground-dim leading-[14px]">
+					{caption}
+				</Field.Description>
+			)}
+			<div className="mt-1.5">{children}</div>
+			{error && (
+				<Field.Error className="mt-0.5 text-[11px] text-error leading-[14px]">{error}</Field.Error>
+			)}
+		</Field.Root>
+	);
+}

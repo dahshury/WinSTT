@@ -91,4 +91,12 @@ class RealtimeTranscriber(ITranscriber):
     @override
     def shutdown(self) -> None:
         self._ready = False
+        del self._model
         self._model = None
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass

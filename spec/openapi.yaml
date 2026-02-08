@@ -1,0 +1,507 @@
+openapi: "3.1.0"
+info:
+  title: WinSTT Protocol
+  version: "0.1.0"
+  description: >
+    Single source of truth for all WinSTT types: STT WebSocket events,
+    control commands, settings schemas, and IPC payloads.
+
+paths: {}
+
+components:
+  schemas:
+    # ─── Data Channel Events (Server → Client) ────────────────────────
+
+    DataEvent:
+      discriminator:
+        propertyName: type
+        mapping:
+          realtime: "#/components/schemas/RealtimeTextEvent"
+          fullSentence: "#/components/schemas/FullSentenceEvent"
+          recording_start: "#/components/schemas/RecordingStartEvent"
+          recording_stop: "#/components/schemas/RecordingStopEvent"
+          vad_detect_start: "#/components/schemas/VadDetectStartEvent"
+          vad_detect_stop: "#/components/schemas/VadDetectStopEvent"
+          transcription_start: "#/components/schemas/TranscriptionStartEvent"
+          wakeword_detected: "#/components/schemas/WakewordDetectedEvent"
+          wakeword_detection_start: "#/components/schemas/WakewordDetectionStartEvent"
+          wakeword_detection_end: "#/components/schemas/WakewordDetectionEndEvent"
+          start_turn_detection: "#/components/schemas/TurnDetectionStartEvent"
+          stop_turn_detection: "#/components/schemas/TurnDetectionStopEvent"
+      oneOf:
+        - $ref: "#/components/schemas/RealtimeTextEvent"
+        - $ref: "#/components/schemas/FullSentenceEvent"
+        - $ref: "#/components/schemas/RecordingStartEvent"
+        - $ref: "#/components/schemas/RecordingStopEvent"
+        - $ref: "#/components/schemas/VadDetectStartEvent"
+        - $ref: "#/components/schemas/VadDetectStopEvent"
+        - $ref: "#/components/schemas/TranscriptionStartEvent"
+        - $ref: "#/components/schemas/WakewordDetectedEvent"
+        - $ref: "#/components/schemas/WakewordDetectionStartEvent"
+        - $ref: "#/components/schemas/WakewordDetectionEndEvent"
+        - $ref: "#/components/schemas/TurnDetectionStartEvent"
+        - $ref: "#/components/schemas/TurnDetectionStopEvent"
+
+    RealtimeTextEvent:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          const: realtime
+        text:
+          type: string
+
+    FullSentenceEvent:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          const: fullSentence
+        text:
+          type: string
+
+    RecordingStartEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: recording_start
+
+    RecordingStopEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: recording_stop
+
+    VadDetectStartEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: vad_detect_start
+
+    VadDetectStopEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: vad_detect_stop
+
+    TranscriptionStartEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: transcription_start
+        audio_bytes_base64:
+          type: string
+          description: Base64-encoded audio bytes
+
+    WakewordDetectedEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: wakeword_detected
+
+    WakewordDetectionStartEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: wakeword_detection_start
+
+    WakewordDetectionEndEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: wakeword_detection_end
+
+    TurnDetectionStartEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: start_turn_detection
+
+    TurnDetectionStopEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: stop_turn_detection
+
+    # ─── Control Channel Commands (Client → Server) ───────────────────
+
+    SetParameterCommand:
+      type: object
+      required: [command, parameter, value]
+      properties:
+        command:
+          type: string
+          const: set_parameter
+        parameter:
+          $ref: "#/components/schemas/AllowedParameter"
+        value: {}
+
+    GetParameterCommand:
+      type: object
+      required: [command, parameter]
+      properties:
+        command:
+          type: string
+          const: get_parameter
+        parameter:
+          $ref: "#/components/schemas/AllowedParameter"
+        request_id:
+          type: integer
+
+    CallMethodCommand:
+      type: object
+      required: [command, method]
+      properties:
+        command:
+          type: string
+          const: call_method
+        method:
+          $ref: "#/components/schemas/AllowedMethod"
+        args:
+          type: array
+          items: {}
+        kwargs:
+          type: object
+          additionalProperties: true
+
+    # ─── Control Channel Responses (Server → Client) ──────────────────
+
+    SuccessResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          const: success
+        message:
+          type: string
+
+    GetParameterResponse:
+      type: object
+      required: [status, parameter, value]
+      properties:
+        status:
+          type: string
+          const: success
+        parameter:
+          type: string
+        value: {}
+        request_id:
+          type: integer
+
+    ErrorResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          const: error
+        message:
+          type: string
+
+    # ─── Enums ────────────────────────────────────────────────────────
+
+    AllowedParameter:
+      type: string
+      enum:
+        - model
+        - language
+        - silero_sensitivity
+        - wake_word_activation_delay
+        - post_speech_silence_duration
+        - listen_start
+        - recording_stop_time
+        - last_transcription_bytes
+        - last_transcription_bytes_b64
+        - speech_end_silence_start
+        - is_recording
+        - use_wake_words
+
+    AllowedMethod:
+      type: string
+      enum:
+        - set_microphone
+        - abort
+        - stop
+        - clear_audio_queue
+        - wakeup
+        - shutdown
+        - text
+
+    WhisperModel:
+      type: string
+      enum:
+        - tiny
+        - tiny.en
+        - base
+        - base.en
+        - small
+        - small.en
+        - medium
+        - medium.en
+        - large-v1
+        - large-v2
+        - large-v3
+        - large-v3-turbo
+
+    ComputeType:
+      type: string
+      enum:
+        - default
+        - auto
+        - int8
+        - int8_float16
+        - int8_float32
+        - int8_bfloat16
+        - int16
+        - float16
+        - float32
+        - bfloat16
+
+    DeviceType:
+      type: string
+      enum:
+        - auto
+        - cpu
+
+    RecorderState:
+      type: string
+      enum:
+        - inactive
+        - listening
+        - wakeword
+        - recording
+        - transcribing
+
+    # ─── Settings Schemas ─────────────────────────────────────────────
+
+    ModelSettings:
+      type: object
+      properties:
+        model:
+          $ref: "#/components/schemas/WhisperModel"
+        realtimeModel:
+          $ref: "#/components/schemas/WhisperModel"
+        language:
+          type: string
+        computeType:
+          $ref: "#/components/schemas/ComputeType"
+        device:
+          $ref: "#/components/schemas/DeviceType"
+        beamSize:
+          type: integer
+          minimum: 1
+        beamSizeRealtime:
+          type: integer
+          minimum: 1
+        initialPrompt:
+          type: string
+        initialPromptRealtime:
+          type: string
+
+    QualitySettings:
+      type: object
+      properties:
+        enableRealtimeTranscription:
+          type: boolean
+        useMainModelForRealtime:
+          type: boolean
+        realtimeProcessingPause:
+          type: number
+        initRealtimeAfterSeconds:
+          type: number
+        earlyTranscriptionOnSilence:
+          type: number
+        batchSize:
+          type: integer
+        realtimeBatchSize:
+          type: integer
+        ensureSentenceStartingUppercase:
+          type: boolean
+        ensureSentenceEndsWithPeriod:
+          type: boolean
+
+    AudioSettings:
+      type: object
+      properties:
+        inputDeviceIndex:
+          type: integer
+          nullable: true
+        sampleRate:
+          type: integer
+        bufferSize:
+          type: integer
+        sileroSensitivity:
+          type: number
+          minimum: 0
+          maximum: 1
+        sileroUseOnnx:
+          type: boolean
+        sileroDeactivityDetection:
+          type: boolean
+        webrtcSensitivity:
+          type: integer
+          minimum: 0
+          maximum: 3
+        postSpeechSilenceDuration:
+          type: number
+        minLengthOfRecording:
+          type: number
+        minGapBetweenRecordings:
+          type: number
+        preRecordingBufferDuration:
+          type: number
+
+    GeneralSettings:
+      type: object
+      properties:
+        autoStart:
+          type: boolean
+        minimizeToTray:
+          type: boolean
+        startMinimized:
+          type: boolean
+        muteSystemAudioWhileDictating:
+          type: boolean
+
+    HotkeySettings:
+      type: object
+      properties:
+        pushToTalkKey:
+          type: string
+          description: Electron accelerator string
+
+    DictionaryEntry:
+      type: object
+      required: [id, find, replace]
+      properties:
+        id:
+          type: string
+        find:
+          type: string
+        replace:
+          type: string
+        caseSensitive:
+          type: boolean
+          default: false
+        wholeWord:
+          type: boolean
+          default: false
+
+    SnippetEntry:
+      type: object
+      required: [id, trigger, expansion]
+      properties:
+        id:
+          type: string
+        trigger:
+          type: string
+        expansion:
+          type: string
+
+    AppSettings:
+      type: object
+      properties:
+        model:
+          $ref: "#/components/schemas/ModelSettings"
+        quality:
+          $ref: "#/components/schemas/QualitySettings"
+        audio:
+          $ref: "#/components/schemas/AudioSettings"
+        general:
+          $ref: "#/components/schemas/GeneralSettings"
+        hotkey:
+          $ref: "#/components/schemas/HotkeySettings"
+        dictionary:
+          type: array
+          items:
+            $ref: "#/components/schemas/DictionaryEntry"
+        snippets:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnippetEntry"
+
+    # ─── Entity Types ─────────────────────────────────────────────────
+
+    TranscriptionItem:
+      type: object
+      required: [id, type, text, timestamp]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [realtime, final]
+        text:
+          type: string
+        timestamp:
+          type: number
+
+    AudioDevice:
+      type: object
+      required: [index, name, isDefault]
+      properties:
+        index:
+          type: integer
+        name:
+          type: string
+        isDefault:
+          type: boolean
+        maxInputChannels:
+          type: integer
+
+    GpuInfo:
+      type: object
+      required: [name, available]
+      properties:
+        name:
+          type: string
+        available:
+          type: boolean
+
+    ServerStatus:
+      type: string
+      enum:
+        - idle
+        - starting
+        - running
+        - error
+
+    ConnectionStatus:
+      type: string
+      enum:
+        - disconnected
+        - connecting
+        - connected
+        - error
+
+    # ─── Audio Frame Metadata ─────────────────────────────────────────
+
+    AudioFrameMetadata:
+      type: object
+      required: [sampleRate]
+      properties:
+        sampleRate:
+          type: integer

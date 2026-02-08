@@ -20,7 +20,7 @@ class RecordingStopped(RecorderEvent):
 
 @dataclass(frozen=True)
 class TranscriptionStarted(RecorderEvent):
-    pass
+    audio: bytes = b""
 
 
 @dataclass(frozen=True)

@@ -37,9 +37,15 @@ name = "pytorch-cu124"
 url = "https://download.pytorch.org/whl/cu124"
 explicit = true
 
+[tool.uv]
+link-mode = "copy"
+
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu124" }]
 torchaudio = [{ index = "pytorch-cu124" }]
+
+[project.scripts]
+stt-server = "src.stt_server.server:main"
 
 [build-system]
 requires = ["hatchling"]

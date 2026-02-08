@@ -272,6 +272,89 @@ class TestAudioToTextRecorderFacade:
         assert facade.wake_word_activation_delay == 5.0
         facade.shutdown()
 
+    def test_language_getter(self) -> None:
+        """Facade.language reads from config."""
+        facade = _make_facade_with_fakes()
+        assert facade.language == ""
+        facade.shutdown()
+
+    def test_language_setter(self) -> None:
+        """Facade.language writes through to config."""
+        facade = _make_facade_with_fakes()
+        facade.language = "de"
+        assert facade.language == "de"
+        assert facade._config.transcription.language == "de"
+        facade.shutdown()
+
+    def test_silero_sensitivity_getter(self) -> None:
+        """Facade.silero_sensitivity reads from config."""
+        facade = _make_facade_with_fakes()
+        assert facade.silero_sensitivity == 0.4
+        facade.shutdown()
+
+    def test_silero_sensitivity_setter(self) -> None:
+        """Facade.silero_sensitivity writes through to config (no live VAD in test factory)."""
+        facade = _make_facade_with_fakes()
+        facade.silero_sensitivity = 0.8
+        assert facade.silero_sensitivity == 0.8
+        assert facade._config.vad.silero_sensitivity == 0.8
+        facade.shutdown()
+
+    def test_silero_sensitivity_setter_propagates_to_live_vad(self) -> None:
+        """Facade.silero_sensitivity propagates to a live SileroVAD reference."""
+        facade = _make_facade_with_fakes()
+
+        class _MockSileroVAD:
+            sensitivity: float = 0.4
+
+        mock_vad = _MockSileroVAD()
+        facade._silero_vad = mock_vad
+        facade.silero_sensitivity = 0.7
+        assert mock_vad.sensitivity == 0.7
+        facade.shutdown()
+
+    def test_model_getter(self) -> None:
+        """Facade.model reads from config."""
+        facade = _make_facade_with_fakes()
+        # Config default model for the test factory is "tiny"
+        assert facade.model == "tiny"
+        facade.shutdown()
+
+    def test_model_setter_updates_config(self) -> None:
+        """Facade.model setter updates config immediately."""
+        facade = _make_facade_with_fakes()
+        facade.model = "large-v2"
+        assert facade._config.transcription.model == "large-v2"
+        assert facade.model == "large-v2"
+        facade.shutdown()
+
+    def test_model_setter_noop_when_same(self) -> None:
+        """Setting the same model is a no-op."""
+        facade = _make_facade_with_fakes()
+        facade.model = "tiny"
+        assert facade.model == "tiny"
+        facade.shutdown()
+
+    def test_model_setter_before_service_initialized(self) -> None:
+        """model setter before lazy init only updates config (no model load)."""
+        facade = AudioToTextRecorder(use_microphone=False)
+        assert facade._service is None
+        facade.model = "base"
+        assert facade._config.transcription.model == "base"
+        assert facade._service is None
+
+    def test_model_setter_swap_failure_logs_exception(self) -> None:
+        """model setter handles _swap failure gracefully (covers except branch)."""
+        facade = _make_facade_with_fakes()
+        # Setting a model triggers _swap in a background thread.
+        # Since WhisperTranscriber isn't available in tests, the thread will
+        # hit the except branch and log the exception.
+        facade.model = "nonexistent-model"
+        assert facade._config.transcription.model == "nonexistent-model"
+        # Give the background thread time to run and hit the exception
+        time.sleep(0.5)
+        facade.shutdown()
+
     def test_delegates_text(self) -> None:
         facade = _make_facade_with_fakes()
         chunks = [_make_chunk(value=i + 1) for i in range(22)]

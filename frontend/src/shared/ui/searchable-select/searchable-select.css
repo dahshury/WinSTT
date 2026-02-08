@@ -1,0 +1,17 @@
+.searchable-select-popup {
+	transition:
+		transform 150ms ease-out,
+		opacity 150ms ease-out;
+}
+
+.searchable-select-popup[data-starting-style],
+.searchable-select-popup[data-ending-style] {
+	opacity: 0;
+	transform: scale(0.95);
+}
+
+.searchable-select-empty:not(:empty) {
+	padding: 7px 10px;
+	font-size: 12px;
+	color: var(--color-text-dim);
+}

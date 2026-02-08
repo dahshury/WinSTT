@@ -166,7 +166,7 @@ class AudioToTextRecorderClient:
         initial_prompt_realtime: str | Iterable[int] | None = None,
         suppress_tokens: list[int] | None = None,
         print_transcription_time: bool = False,
-        early_transcription_on_silence: int = 0,
+        early_transcription_on_silence: float = 0,
         allowed_latency_limit: int = ALLOWED_LATENCY_LIMIT,
         no_log_file: bool = False,
         use_extended_logging: bool = False,

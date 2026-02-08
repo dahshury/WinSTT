@@ -21,6 +21,8 @@ from src.recorder.application.recorder_service import RecorderService
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.infrastructure.file_source import FileAudioSource
 
+logger = logging.getLogger(__name__)
+
 # Re-export for convenience
 __all__ = ["AudioToTextRecorder", "AudioToTextRecorderClient"]
 
@@ -125,7 +127,7 @@ class AudioToTextRecorder:
         initial_prompt_realtime: str | Iterable[int] | None = None,
         suppress_tokens: list[int] | None = None,
         print_transcription_time: bool = False,
-        early_transcription_on_silence: int = 0,
+        early_transcription_on_silence: float = 0,
         allowed_latency_limit: int = 100,
         no_log_file: bool = False,
         use_extended_logging: bool = False,
@@ -222,6 +224,7 @@ class AudioToTextRecorder:
         self._event_bus = EventBus()
         self._clock = Clock.system_clock()
         self._service: RecorderService | None = None
+        self._silero_vad: Any = None  # Live SileroVAD reference for runtime sensitivity updates
         self._init_lock = threading.Lock()
         self.use_microphone = _BoolFlag(use_microphone)
 
@@ -232,8 +235,17 @@ class AudioToTextRecorder:
             # Double-check after acquiring lock
             if self._service is not None:
                 return self._service
-            from src.recorder.bootstrap import CALLBACK_EVENT_MAP, wire_callback, wire_callback_with_text
-            from src.recorder.domain.events import RealtimeTranscriptionStabilized, RealtimeTranscriptionUpdate
+            from src.recorder.bootstrap import (
+                CALLBACK_EVENT_MAP,
+                wire_callback,
+                wire_callback_with_audio,
+                wire_callback_with_text,
+            )
+            from src.recorder.domain.events import (
+                RealtimeTranscriptionStabilized,
+                RealtimeTranscriptionUpdate,
+                TranscriptionStarted,
+            )
 
             # Wire callbacks
             for cb_name, cb_func in self._callbacks.items():
@@ -244,6 +256,8 @@ class AudioToTextRecorder:
                     continue
                 if event_type in {RealtimeTranscriptionUpdate, RealtimeTranscriptionStabilized}:
                     wire_callback_with_text(self._event_bus, event_type, cast(TextCallback, cb_func))
+                elif event_type is TranscriptionStarted:
+                    wire_callback_with_audio(self._event_bus, event_type, cast(SimpleCallback, cb_func))
                 else:
                     wire_callback(self._event_bus, event_type, cast(SimpleCallback, cb_func))
 
@@ -282,6 +296,7 @@ class AudioToTextRecorder:
                 sample_rate=self._config.audio.sample_rate,
             )
             vad: IVoiceActivityDetector = CompositeVAD(webrtc=webrtc, silero=silero)
+            self._silero_vad = silero
 
             # Build transcriber
             from src.recorder.infrastructure.whisper_transcriber import WhisperTranscriber
@@ -348,9 +363,14 @@ class AudioToTextRecorder:
         instance._event_bus = EventBus()
         instance._clock = Clock.system_clock()
         instance._service = service
+        instance._silero_vad = None
         instance._init_lock = threading.Lock()
         instance.use_microphone = _BoolFlag(config.audio.use_microphone)
         return instance
+
+    def warmup(self) -> None:  # pragma: no cover
+        """Eagerly load all models and warm up CUDA kernels."""
+        self._ensure_service().warmup()
 
     def text(self, on_transcription_finished: TextCallback | None = None) -> str:
         return self._ensure_service().text(on_transcription_finished)
@@ -403,6 +423,63 @@ class AudioToTextRecorder:
     @property
     def last_words_buffer(self) -> collections.deque[AudioChunk]:
         return self._ensure_service().last_words_buffer
+
+    @property
+    def language(self) -> str:
+        return self._config.transcription.language
+
+    @language.setter
+    def language(self, value: str) -> None:
+        self._config.transcription.language = value
+
+    @property
+    def model(self) -> str:
+        return self._config.transcription.model
+
+    @model.setter
+    def model(self, value: str) -> None:
+        if value == self._config.transcription.model:
+            return
+        self._config.transcription.model = value
+        if self._service is None:
+            return
+
+        service = self._service
+        config = self._config
+
+        def _swap() -> None:
+            try:
+                from src.recorder.infrastructure.whisper_transcriber import WhisperTranscriber
+
+                new_transcriber = WhisperTranscriber(
+                    model_path=value,
+                    device=config.transcription.device,
+                    compute_type=config.transcription.compute_type,
+                    gpu_device_index=config.transcription.gpu_device_index,
+                    download_root=config.transcription.download_root,
+                    beam_size=config.transcription.beam_size,
+                    initial_prompt=config.transcription.initial_prompt,
+                    suppress_tokens=config.transcription.suppress_tokens,
+                    batch_size=config.transcription.batch_size,
+                    vad_filter=config.transcription.faster_whisper_vad_filter,
+                    normalize_audio=config.transcription.normalize_audio,
+                )
+                service.swap_transcriber(new_transcriber)
+                logger.info("Model swapped to %s", value)
+            except Exception:
+                logger.exception("Failed to swap model to %s", value)
+
+        threading.Thread(target=_swap, daemon=True).start()
+
+    @property
+    def silero_sensitivity(self) -> float:
+        return self._config.vad.silero_sensitivity
+
+    @silero_sensitivity.setter
+    def silero_sensitivity(self, value: float) -> None:
+        self._config.vad.silero_sensitivity = value
+        if self._silero_vad is not None:
+            self._silero_vad.sensitivity = value
 
     @property
     def wake_word_activation_delay(self) -> float:

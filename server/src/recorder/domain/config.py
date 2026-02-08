@@ -9,9 +9,13 @@ from pydantic import BaseModel, Field
 INIT_HANDLE_BUFFER_OVERFLOW = platform.system() != "Darwin"
 
 
-class AudioConfig(BaseModel):
-    model_config = {"frozen": False}
+class StrictMutableModel(BaseModel):
+    """Base for all config models: strict type checking, mutable fields."""
 
+    model_config = {"frozen": False, "strict": True}
+
+
+class AudioConfig(StrictMutableModel):
     input_device_index: int | None = None
     sample_rate: int = 16000
     buffer_size: int = 512
@@ -19,8 +23,7 @@ class AudioConfig(BaseModel):
     handle_buffer_overflow: bool = INIT_HANDLE_BUFFER_OVERFLOW
 
 
-class VADConfig(BaseModel):
-    model_config = {"frozen": False}
+class VADConfig(StrictMutableModel):
 
     silero_sensitivity: float = Field(default=0.4, ge=0.0, le=1.0)
     silero_use_onnx: bool = False
@@ -32,9 +35,7 @@ class VADConfig(BaseModel):
     pre_recording_buffer_duration: float = 1.0
 
 
-class TranscriptionConfig(BaseModel):
-    model_config = {"frozen": False}
-
+class TranscriptionConfig(StrictMutableModel):
     model: str = "tiny"
     download_root: str | None = None
     language: str = ""
@@ -48,13 +49,11 @@ class TranscriptionConfig(BaseModel):
     faster_whisper_vad_filter: bool = True
     normalize_audio: bool = False
     print_transcription_time: bool = False
-    early_transcription_on_silence: int = 0
+    early_transcription_on_silence: float = 0
     allowed_latency_limit: int = 100
 
 
-class RealtimeConfig(BaseModel):
-    model_config = {"frozen": False}
-
+class RealtimeConfig(StrictMutableModel):
     enable_realtime_transcription: bool = False
     use_main_model_for_realtime: bool = False
     realtime_model_type: str = "tiny"
@@ -65,9 +64,7 @@ class RealtimeConfig(BaseModel):
     initial_prompt_realtime: str | list[int] | None = None
 
 
-class WakeWordConfig(BaseModel):
-    model_config = {"frozen": False}
-
+class WakeWordConfig(StrictMutableModel):
     wakeword_backend: str = ""
     openwakeword_model_paths: str | None = None
     openwakeword_inference_framework: str = "onnx"
@@ -78,9 +75,7 @@ class WakeWordConfig(BaseModel):
     wake_word_buffer_duration: float = 0.1
 
 
-class UIConfig(BaseModel):
-    model_config = {"frozen": False}
-
+class UIConfig(StrictMutableModel):
     spinner: bool = True
     ensure_sentence_starting_uppercase: bool = True
     ensure_sentence_ends_with_period: bool = True
@@ -91,9 +86,7 @@ class UIConfig(BaseModel):
     start_callback_in_new_thread: bool = False
 
 
-class RecorderConfig(BaseModel):
-    model_config = {"frozen": False}
-
+class RecorderConfig(StrictMutableModel):
     audio: AudioConfig = Field(default_factory=AudioConfig)
     vad: VADConfig = Field(default_factory=VADConfig)
     transcription: TranscriptionConfig = Field(default_factory=TranscriptionConfig)
