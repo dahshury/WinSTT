@@ -77,6 +77,7 @@ class RecorderService:
 
         self._is_running = False
         self._microphone_enabled: bool = config.audio.use_microphone
+        self._external_audio_mode: bool = False
         self._audio_reader_thread: threading.Thread | None = None
         self._realtime_thread: threading.Thread | None = None
         self._transcription_result: queue.Queue[str] = queue.Queue()
@@ -160,15 +161,29 @@ class RecorderService:
         """
         self._microphone_enabled = microphone_on
 
+    def clear_feed_buffer(self) -> None:
+        """Discard any partial audio data buffered by ``feed_audio``."""
+        self._feed_buffer = bytearray()
+
+    def set_external_audio_mode(self, active: bool) -> None:
+        """Enable/disable external audio mode (e.g. loopback capture).
+
+        When active, the audio reader thread drains the OS buffer but
+        discards frames instead of injecting silence.  This prevents
+        silence frames from interleaving with externally fed audio and
+        disrupting VAD speech detection.
+        """
+        self._external_audio_mode = active
+
     def shutdown(self) -> None:
         self._is_running = False
-        self._pipeline.stop(timeout=5.0)
+        self._pipeline.stop(timeout=2.0)
         self._audio_source.cleanup()
         if self._audio_reader_thread is not None:
-            self._audio_reader_thread.join(timeout=5.0)
+            self._audio_reader_thread.join(timeout=2.0)
             self._audio_reader_thread = None
         if self._realtime_thread is not None:
-            self._realtime_thread.join(timeout=5.0)
+            self._realtime_thread.join(timeout=2.0)
             self._realtime_thread = None
         self._transcriber.shutdown()
         if self._realtime_transcriber:
@@ -354,7 +369,10 @@ class RecorderService:
                 continue
             if self._microphone_enabled:
                 self._pipeline.feed_audio(chunk)
-            else:
+            elif not self._external_audio_mode:
+                # Inject silence so VAD detects end-of-speech (PTT mode).
+                # In external audio mode we just drain — the loopback
+                # thread is the sole audio source.
                 self._pipeline.feed_audio(b"\x00" * len(chunk))
 
     def _preprocess_output(self, text: str) -> str:

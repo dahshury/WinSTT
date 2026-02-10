@@ -1,0 +1,34 @@
+---
+title: Hotkey Settings
+description: Configure the global push-to-talk hotkey
+---
+
+WinSTT uses a global hotkey that works even when the application window is not focused. The hotkey triggers recording in both push-to-talk and toggle modes.
+
+## Settings Reference
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `pushToTalkKey` | string | `"Space"` | The global hotkey, specified as an Electron accelerator string |
+
+## Accelerator Format
+
+The hotkey uses Electron's accelerator format. Combine modifier keys with `+` signs.
+
+**Modifiers:** `Ctrl`, `Alt`, `Shift`, `Meta` (Windows key)
+
+**Common keys:** `Space`, `A`-`Z`, `0`-`9`, `F1`-`F24`, `Tab`, `Backspace`, `Enter`, `Escape`
+
+### Examples
+
+| Accelerator | Description |
+|-------------|-------------|
+| `Space` | Spacebar alone (default) |
+| `Ctrl+Space` | Ctrl and Spacebar |
+| `Alt+Shift+A` | Alt, Shift, and A |
+| `F13` | Function key 13 (useful for dedicated macro keys) |
+| `Ctrl+Shift+F9` | Ctrl, Shift, and F9 |
+
+<Callout title="Choosing a hotkey" type="info">
+  Pick a combination that does not conflict with other applications. Keys like F13-F24 are rarely used by other software and make excellent dedicated hotkeys. If you use Space alone, it will be captured globally and may interfere with typing in other applications.
+</Callout>

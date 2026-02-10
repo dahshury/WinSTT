@@ -2,12 +2,13 @@
   "headers": {
     "x-nextjs-stale-time": "300",
     "x-nextjs-prerender": "1",
-    "x-next-cache-tags": "_N_T_/layout,_N_T_/page,_N_T_/,_N_T_/index"
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(main)/layout,_N_T_/(main)/page,_N_T_/,_N_T_/index"
   },
   "segmentPaths": [
     "/_tree",
     "/_full",
-    "/__PAGE__",
+    "/!KG1haW4p/__PAGE__",
+    "/!KG1haW4p",
     "/_index",
     "/_head"
   ]

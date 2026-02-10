@@ -1,5 +1,6 @@
 {
+  "/(main)/page": "app/(main)/page.js",
   "/_global-error/page": "app/_global-error/page.js",
   "/_not-found/page": "app/_not-found/page.js",
-  "/page": "app/page.js"
+  "/settings/page": "app/settings/page.js"
 }

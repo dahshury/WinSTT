@@ -1,0 +1,37 @@
+---
+title: Quality & Transcription
+description: Fine-tune transcription quality and behavior
+---
+
+Quality settings control the realtime preview system, transcription timing, and text formatting rules.
+
+## Realtime Preview
+
+WinSTT can display a live transcription preview while you speak. The realtime model runs continuously on incoming audio and updates the display. When you stop speaking, the main model produces the final, more accurate transcription.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `enableRealtimeTranscription` | boolean | `true` | Show live preview text while speaking |
+| `useMainModelForRealtime` | boolean | `false` | Use the main model for realtime preview instead of the dedicated realtime model. More accurate but slower |
+| `realtimeProcessingPause` | number | `0.02` | Pause in seconds between realtime transcription updates |
+| `initRealtimeAfterSeconds` | number | `0.2` | Delay in seconds before starting realtime transcription after speech begins |
+
+## Transcription Timing
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `earlyTranscriptionOnSilence` | number | `0.2` | Seconds of silence that trigger an early full transcription before the post-speech timeout completes |
+
+## Batch Size
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `batchSize` | integer | `16` | Batch size for main model transcription |
+| `realtimeBatchSize` | integer | `16` | Batch size for realtime model transcription |
+
+## Text Formatting
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `ensureSentenceStartingUppercase` | boolean | `true` | Capitalize the first letter of each sentence in the output |
+| `ensureSentenceEndsWithPeriod` | boolean | `true` | Append a period to sentences that lack terminal punctuation |

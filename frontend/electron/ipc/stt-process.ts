@@ -8,6 +8,63 @@ let sttProcess: ChildProcess | null = null;
 let status: "idle" | "starting" | "running" | "error" = "idle";
 
 /**
+ * Mapping from electron-store paths to CLI flags for the STT server.
+ * These settings are only applied at server startup (passed as CLI args).
+ */
+const SETTINGS_TO_CLI: [storePath: string, cliFlag: string][] = [
+	["model.model", "--model"],
+	["model.realtimeModel", "--rt-model"],
+	["model.language", "--lang"],
+	["model.computeType", "--compute_type"],
+	["model.device", "--device"],
+	["model.backend", "--backend"],
+	["model.onnxQuantization", "--onnx_quantization"],
+	["model.beamSize", "--beam_size"],
+	["model.beamSizeRealtime", "--beam_size_realtime"],
+	["model.initialPrompt", "--initial_prompt"],
+	["model.initialPromptRealtime", "--initial_prompt_realtime"],
+	["audio.inputDeviceIndex", "--input-device"],
+	["audio.sileroSensitivity", "--silero_sensitivity"],
+	["audio.webrtcSensitivity", "--webrtc_sensitivity"],
+	["audio.minLengthOfRecording", "--min_length_of_recording"],
+	["quality.enableRealtimeTranscription", "--enable_realtime_transcription"],
+	["quality.useMainModelForRealtime", "--use_main_model_for_realtime"],
+	["quality.realtimeProcessingPause", "--realtime_processing_pause"],
+	["quality.earlyTranscriptionOnSilence", "--early_transcription_on_silence"],
+	["quality.initRealtimeAfterSeconds", "--init_realtime_after_seconds"],
+	["quality.batchSize", "--batch"],
+	["quality.realtimeBatchSize", "--realtime_batch_size"],
+];
+
+/** Read all relevant settings from electron-store and convert to CLI args */
+function buildServerArgs(baseArgs: string[]): string[] {
+	const args = [...baseArgs];
+	for (const [storePath, cliFlag] of SETTINGS_TO_CLI) {
+		const value = store.get(storePath) as string | number | boolean | undefined;
+		if (value == null || value === "") {
+			continue;
+		}
+		// Boolean flags from store use --flag (action="store_true") style
+		if (typeof value === "boolean") {
+			if (value) {
+				args.push(cliFlag);
+			}
+			// false booleans: skip the flag entirely (server defaults to false)
+			continue;
+		}
+		args.push(cliFlag, String(value));
+	}
+
+	// sileroDeactivityDetection is a boolean store_true flag
+	const sileroDeact = store.get("audio.sileroDeactivityDetection") as boolean | undefined;
+	if (sileroDeact) {
+		args.push("--silero_deactivity_detection");
+	}
+
+	return args;
+}
+
+/**
  * Resolve the STT server directory. Priority:
  * 1. STT_SERVER_DIR environment variable (development)
  * 2. Bundled server in app resources (production)
@@ -52,13 +109,8 @@ export function setupSttProcessHandlers() {
 			throw err;
 		}
 
-		const { command, args } = resolveSpawnArgs(serverDir);
-
-		// Pass the user's saved model from electron-store so the server starts with it
-		const model = store.get("model.model") as string | undefined;
-		if (model) {
-			args.push("--model", model);
-		}
+		const { command, args: baseArgs } = resolveSpawnArgs(serverDir);
+		const args = buildServerArgs(baseArgs);
 
 		status = "starting";
 
@@ -104,6 +156,59 @@ export function setupSttProcessHandlers() {
 	ipcMain.handle("stt-server:status", () => {
 		return status;
 	});
+}
+
+/** Restart the STT server with updated settings from electron-store. */
+export function restartSttProcess() {
+	killSttProcess();
+	// Re-trigger spawn via the same handler logic
+	const serverDir = resolveServerDir();
+	const { command, args: baseArgs } = resolveSpawnArgs(serverDir);
+	const args = buildServerArgs(baseArgs);
+
+	status = "starting";
+
+	try {
+		sttProcess = spawn(command, args, {
+			cwd: serverDir,
+			shell: false,
+		});
+	} catch (err) {
+		status = "error";
+		sttProcess = null;
+		console.error("[stt-server] Restart spawn error:", err);
+		return;
+	}
+
+	sttProcess.stdout?.on("data", (data: Buffer) => {
+		const text = data.toString();
+		console.log("[stt-server]", text.trimEnd());
+		if (text.includes("RealtimeSTT initialized")) {
+			status = "running";
+		}
+	});
+
+	sttProcess.stderr?.on("data", (data: Buffer) => {
+		console.error("[stt-server]", data.toString().trimEnd());
+	});
+
+	sttProcess.on("exit", () => {
+		sttProcess = null;
+		status = "idle";
+	});
+
+	sttProcess.on("error", (err) => {
+		console.error("[stt-server] Spawn error:", err);
+		status = "error";
+		sttProcess = null;
+	});
+
+	console.log("[stt-server] Restarted with args:", args.join(" "));
+}
+
+/** Returns whether the STT server process is currently alive. */
+export function isSttProcessRunning(): boolean {
+	return sttProcess != null;
 }
 
 /** Kill the STT subprocess tree. Exported for use in app lifecycle cleanup. */

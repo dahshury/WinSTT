@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
+import { dbg } from "../lib/debug-log";
 
 const DEFAULT_CONTROL_PORT = 8011;
 const DEFAULT_DATA_PORT = 8012;
@@ -84,6 +85,8 @@ export class SttClient extends EventEmitter {
 					settled = true;
 					this.reconnectAttempt = 0;
 					this.emit("connected");
+					// Request model catalog
+					this.sendControl({ command: "list_models" });
 					resolve();
 				}
 			};
@@ -165,13 +168,43 @@ export class SttClient extends EventEmitter {
 		});
 	}
 
+	listLoopbackDevices(): Promise<unknown> {
+		if (!this.isConnected) {
+			return Promise.reject(new Error("Not connected"));
+		}
+		const requestId = ++this.requestIdCounter;
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.pendingRequests.delete(requestId);
+				reject(new Error(`listLoopbackDevices timed out after ${REQUEST_TIMEOUT_MS}ms`));
+			}, REQUEST_TIMEOUT_MS);
+
+			this.pendingRequests.set(requestId, { resolve, reject, timer });
+			this.sendControl({
+				command: "list_loopback_devices",
+				request_id: requestId,
+			});
+		});
+	}
+
+	startLoopback(deviceIndex: number) {
+		this.sendControl({
+			command: "start_loopback",
+			device_index: deviceIndex,
+		});
+	}
+
+	stopLoopback() {
+		this.sendControl({ command: "stop_loopback" });
+	}
+
 	get isConnected(): boolean {
 		return (
 			this.controlWs?.readyState === WebSocket.OPEN && this.dataWs?.readyState === WebSocket.OPEN
 		);
 	}
 
-	private sendControl(data: Record<string, unknown>) {
+	sendControl(data: Record<string, unknown>) {
 		if (this.controlWs?.readyState === WebSocket.OPEN) {
 			this.controlWs.send(JSON.stringify(data));
 		}
@@ -219,6 +252,7 @@ export class SttClient extends EventEmitter {
 	private handleControlMessage(raw: string) {
 		try {
 			const data = JSON.parse(raw) as Record<string, unknown>;
+			dbg("stt-ws", "control ←", raw.length > 200 ? `${raw.slice(0, 200)}…` : raw);
 			if (data.request_id != null) {
 				const pending = this.pendingRequests.get(data.request_id as number);
 				if (pending) {
@@ -227,6 +261,12 @@ export class SttClient extends EventEmitter {
 					pending.resolve(data.value);
 				}
 			}
+			if (data.type === "server_ready") {
+				this.emit("server-ready");
+			}
+			if (data.command === "list_models" && Array.isArray(data.models)) {
+				this.emit("model-catalog", data.models);
+			}
 			this.emit("control-message", data);
 		} catch (err) {
 			console.warn("[stt-client] Malformed control message:", raw, err);
@@ -234,11 +274,13 @@ export class SttClient extends EventEmitter {
 	}
 
 	private handleDataMessage(raw: string) {
+		let data: Record<string, unknown>;
 		try {
-			const data = JSON.parse(raw) as Record<string, unknown>;
-			this.emit("data-event", data);
+			data = JSON.parse(raw) as Record<string, unknown>;
 		} catch (err) {
 			console.warn("[stt-client] Malformed data message:", raw, err);
+			return;
 		}
+		this.emit("data-event", data);
 	}
 }

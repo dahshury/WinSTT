@@ -1,0 +1,200 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+@source '../../../node_modules/fumadocs-ui/dist/**/*.js';
+
+/* Force dark mode only */
+.dark,
+:root {
+  --color-fd-background: hsl(240, 10%, 3.9%);
+  --color-fd-foreground: hsl(0, 0%, 98%);
+  --color-fd-muted: hsl(240, 4%, 8%);
+  --color-fd-muted-foreground: hsla(240, 5%, 64.9%, 0.8);
+  --color-fd-popover: hsl(240, 5%, 8.6%);
+  --color-fd-popover-foreground: hsl(0, 0%, 85.9%);
+  --color-fd-card: hsl(240, 5%, 7.3%);
+  --color-fd-card-foreground: hsl(0, 0%, 98%);
+  --color-fd-border: hsla(240, 3.8%, 20%, 35%);
+  --color-fd-primary: hsl(43, 96%, 56%);
+  --color-fd-primary-foreground: hsl(240, 10%, 3.9%);
+  --color-fd-secondary: hsl(240, 4%, 10%);
+  --color-fd-secondary-foreground: hsl(0, 0%, 92%);
+  --color-fd-accent: hsla(43, 96%, 40%, 30%);
+  --color-fd-accent-foreground: hsl(43, 96%, 80%);
+  --color-fd-ring: hsl(43, 96%, 45%);
+}
+
+:root {
+  --fd-layout-width: 1400px;
+}
+
+/* Noise overlay like the main app */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.02;
+  filter: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E#n");
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsla(240, 3.8%, 20%, 50%);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(240, 3.7%, 25%);
+}
+
+/* Hide theme toggle — dark only site */
+[data-theme-toggle],
+button[aria-label="Toggle Theme"] {
+  display: none !important;
+}
+
+/* Hide the floating sidebar panel when collapsed */
+[data-sidebar-panel] {
+  display: none !important;
+}
+
+/* Prevent sidebar from collapsing */
+[data-sidebar-placeholder] {
+  --fd-sidebar-width: 268px !important;
+}
+
+#nd-sidebar {
+  translate: none !important;
+}
+
+/* Spacing between top-level sidebar sections */
+#nd-sidebar [data-state] + [data-state],
+#nd-sidebar a + [data-state],
+#nd-sidebar [data-state] + a,
+#nd-sidebar p + [data-state],
+#nd-sidebar p + a {
+  margin-top: 6px;
+}
+
+/* Separator (--- divider) gets more spacing */
+#nd-sidebar p {
+  margin-top: 16px !important;
+  padding-top: 12px;
+  border-top: 1px solid hsla(240, 3.8%, 20%, 0.25);
+}
+
+/* ── App mock waveform animations ── */
+@keyframes wave-drift {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(-30px); }
+  100% { transform: translateX(0); }
+}
+
+@keyframes wave-drift-reverse {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(20px); }
+  100% { transform: translateX(0); }
+}
+
+@keyframes wave-breathe {
+  0% { opacity: 0.85; }
+  50% { opacity: 0.65; }
+  100% { opacity: 0.85; }
+}
+
+@keyframes glow-pulse {
+  0% { opacity: 0.03; }
+  50% { opacity: 0.07; }
+  100% { opacity: 0.03; }
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px hsl(43, 96%, 56%); }
+  50% { opacity: 0.4; box-shadow: 0 0 2px hsl(43, 96%, 56%); }
+}
+
+.mock-wave-primary {
+  animation: wave-drift 8s ease-in-out infinite;
+}
+
+.mock-wave-secondary {
+  animation: wave-drift-reverse 10s ease-in-out infinite;
+}
+
+.mock-wave-tertiary {
+  animation: wave-drift 12s ease-in-out infinite;
+}
+
+.mock-wave-fill {
+  animation: wave-drift 9s ease-in-out infinite, wave-breathe 6s ease-in-out infinite;
+}
+
+.mock-glow-pulse {
+  animation: glow-pulse 4s ease-in-out infinite;
+}
+
+.mock-cursor-blink {
+  animation: cursor-blink 1s step-end infinite;
+}
+
+.mock-status-pulse {
+  animation: status-pulse 2s ease-in-out infinite;
+}
+
+/* ── Landing page feature cards ── */
+.feature-card {
+  position: relative;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.feature-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    hsla(43, 96%, 56%, 0) 0%,
+    hsla(43, 96%, 56%, 0) 100%
+  );
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  transition: background 0.3s ease;
+}
+
+.feature-card:hover {
+  border-color: hsla(43, 96%, 56%, 0.15) !important;
+  box-shadow: 0 0 30px -10px hsla(43, 96%, 56%, 0.08);
+}
+
+.feature-card:hover::before {
+  background: linear-gradient(
+    135deg,
+    hsla(43, 96%, 56%, 0.2) 0%,
+    hsla(43, 96%, 56%, 0) 50%,
+    hsla(43, 96%, 56%, 0.1) 100%
+  );
+}
+
+.feature-card:hover .feature-icon {
+  background: hsla(43, 96%, 56%, 0.14) !important;
+  box-shadow: 0 0 20px hsla(43, 96%, 56%, 0.08);
+}

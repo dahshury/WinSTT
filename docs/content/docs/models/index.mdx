@@ -1,0 +1,31 @@
+---
+title: Available Models
+description: Overview of all supported speech recognition models
+---
+
+WinSTT supports a wide range of speech recognition models across two inference backends.
+
+## Backends
+
+**faster_whisper** -- Runs OpenAI Whisper models using CTranslate2. Supports all Whisper model sizes with configurable quantization. This is the default backend.
+
+**onnx_asr** -- Runs NVIDIA NeMo, GigaAM, Kaldi/Vosk, and T-One models via ONNX Runtime. Provides access to non-Whisper architectures including CTC, RNN-T, and TDT decoders.
+
+Set the backend in [Model Settings](/docs/settings/model) using the `backend` field.
+
+## Model Families
+
+<Cards>
+  <Card title="Whisper Models" href="/docs/models/whisper">
+    OpenAI Whisper: 12 models from 39M to 1.5B parameters. Multilingual and English-only variants.
+  </Card>
+  <Card title="NeMo Models" href="/docs/models/nemo">
+    NVIDIA NeMo Parakeet and Canary: high-accuracy models for English, multilingual, and Russian.
+  </Card>
+  <Card title="Other Models" href="/docs/models/other">
+    GigaAM (Russian), Kaldi/Vosk (Russian), and T-One (Russian) models.
+  </Card>
+  <Card title="Compute Types" href="/docs/models/compute-types">
+    Quantization options that trade quality for speed and memory savings.
+  </Card>
+</Cards>

@@ -20,7 +20,7 @@
       256,
       384
     ],
-    "path": "/_next/image/",
+    "path": "/_next/image",
     "loader": "default",
     "loaderFile": "",
     "domains": [],

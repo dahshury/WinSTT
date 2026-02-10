@@ -12,10 +12,20 @@ export const IPC = {
 	STT_WAKEWORD_DETECTED: "stt:wakeword-detected",
 	STT_WAKEWORD_DETECTION_START: "stt:wakeword-detection-start",
 	STT_WAKEWORD_DETECTION_END: "stt:wakeword-detection-end",
+	STT_MODEL_DOWNLOAD_START: "stt:model-download-start",
+	STT_MODEL_DOWNLOAD_PROGRESS: "stt:model-download-progress",
+	STT_MODEL_DOWNLOAD_COMPLETE: "stt:model-download-complete",
+	STT_AUDIO_LEVEL: "stt:audio-level",
+	STT_MODEL_CATALOG: "stt:model-catalog",
+	STT_GET_MODEL_CATALOG: "stt:get-model-catalog",
+	STT_GET_SERVER_READY: "stt:get-server-ready",
+	STT_CANCEL_DOWNLOAD: "stt:cancel-download",
 
 	// Hotkey events (main → renderer)
 	HOTKEY_PRESSED: "hotkey:pressed",
 	HOTKEY_RELEASED: "hotkey:released",
+	HOTKEY_RECORDING_UPDATE: "hotkey:recording-update",
+	HOTKEY_RECORDING_DONE: "hotkey:recording-done",
 
 	// STT commands (renderer → main)
 	STT_SET_PARAMETER: "stt:set-parameter",
@@ -25,6 +35,8 @@ export const IPC = {
 	// Hotkey commands (renderer → main)
 	HOTKEY_REGISTER: "hotkey:register",
 	HOTKEY_UNREGISTER: "hotkey:unregister",
+	HOTKEY_START_RECORDING: "hotkey:start-recording",
+	HOTKEY_STOP_RECORDING: "hotkey:stop-recording",
 
 	// System commands (renderer → main)
 	AUTOSTART_SET: "autostart:set",
@@ -51,6 +63,26 @@ export const IPC = {
 	WINDOW_CLOSE: "window:close",
 	WINDOW_OPEN_SETTINGS: "window:open-settings",
 	WINDOW_CLOSE_SELF: "window:close-self",
+
+	// Dialog (renderer → main)
+	DIALOG_OPEN_FILE: "dialog:open-file",
+
+	// File transcription (renderer → main)
+	FILE_TRANSCRIBE: "file:transcribe",
+
+	// File transcription events (main → renderer)
+	FILE_TRANSCRIPTION_PROGRESS: "file:transcription-progress",
+	FILE_TRANSCRIPTION_COMPLETE: "file:transcription-complete",
+	FILE_TRANSCRIPTION_ERROR: "file:transcription-error",
+
+	// Loopback commands (renderer → main)
+	LOOPBACK_LIST_DEVICES: "loopback:list-devices",
+	LOOPBACK_START: "loopback:start",
+	LOOPBACK_STOP: "loopback:stop",
+
+	// Loopback events (main → renderer)
+	STT_LOOPBACK_STARTED: "stt:loopback-started",
+	STT_LOOPBACK_STOPPED: "stt:loopback-stopped",
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

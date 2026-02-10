@@ -1,0 +1,47 @@
+---
+title: Audio Settings
+description: Configure microphone input and voice activity detection
+---
+
+Audio settings control how WinSTT captures and processes audio input. This includes microphone selection, buffer configuration, and the voice activity detection (VAD) system that determines when you start and stop speaking.
+
+## Input Settings
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `inputDeviceIndex` | integer or null | `null` | Microphone device index. `null` uses the system default |
+| `sampleRate` | integer | `16000` | Audio sample rate in Hz |
+| `bufferSize` | integer | `512` | Audio buffer size in samples |
+
+## Silero VAD
+
+Silero is a neural-network-based voice activity detector. It is more accurate than energy-based approaches, especially in noisy environments.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `sileroSensitivity` | number | `0.05` | Detection threshold (0-1). Lower values are more sensitive |
+| `sileroUseOnnx` | boolean | `false` | Use ONNX runtime for Silero inference |
+| `sileroDeactivityDetection` | boolean | `true` | Use Silero to detect when speech ends |
+
+## WebRTC VAD
+
+WebRTC VAD is an energy-based voice activity detector. It is lightweight and fast, acting as a first-pass filter before Silero.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `webrtcSensitivity` | integer | `3` | Sensitivity level (0-3). 0 is most sensitive, 3 is least sensitive |
+
+<Callout title="Dual VAD system" type="info">
+  Silero VAD and WebRTC VAD work together. Audio must pass both detectors to trigger recording. WebRTC provides a fast energy-based pre-check, while Silero provides accurate neural-network-based confirmation. This combination reduces false positives without sacrificing responsiveness.
+</Callout>
+
+## Recording Control
+
+These settings fine-tune when recordings start and stop.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `postSpeechSilenceDuration` | number | `0.7` | Seconds of silence after speech before stopping (in toggle mode) |
+| `minLengthOfRecording` | number | `1.1` | Minimum recording duration in seconds. Shorter recordings are discarded |
+| `minGapBetweenRecordings` | number | `0` | Minimum pause in seconds between consecutive recordings |
+| `preRecordingBufferDuration` | number | `1.0` | Seconds of audio buffered before speech onset. Captures the start of your sentence even if VAD triggers slightly late |

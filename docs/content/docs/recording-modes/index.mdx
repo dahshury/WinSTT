@@ -1,0 +1,45 @@
+---
+title: Recording Modes
+description: Push-to-Talk and Toggle mode explained
+---
+
+WinSTT supports two recording modes. Set the mode in [General Settings](/docs/settings/general) using the `recordingMode` field.
+
+## Push-to-Talk (PTT)
+
+**Default mode.** Hold the hotkey to record. Release to stop recording and trigger transcription.
+
+How it works:
+
+1. Press and hold the hotkey. Recording starts immediately.
+2. Speak while holding the key.
+3. Release the hotkey. Recording stops and the audio is sent for transcription.
+
+Voice activity detection is not used for stop detection in PTT mode. The recording duration is controlled entirely by how long you hold the key. Internally, `postSpeechSilenceDuration` is set to a very high value while the key is held, then drops to a short value on release to trigger a fast stop.
+
+**Best for:** Dictation bursts, quick voice commands, noisy environments where VAD might false-trigger.
+
+## Toggle Mode
+
+Press the hotkey once to start listening. Voice activity detection handles the rest. Press again to stop manually.
+
+How it works:
+
+1. Press the hotkey. WinSTT enters listening mode and waits for speech.
+2. Start speaking. VAD detects your voice and begins recording.
+3. Stop speaking. After `postSpeechSilenceDuration` seconds of silence (default 0.7s), recording stops and transcription begins.
+4. If you start speaking again, a new recording begins automatically.
+5. Press the hotkey again to exit listening mode entirely.
+
+**Best for:** Hands-free dictation, long passages, transcribing meetings or lectures.
+
+## Silence Duration Behavior
+
+The `postSpeechSilenceDuration` setting (in [Audio Settings](/docs/settings/audio)) behaves differently in each mode:
+
+| Mode | Silence Duration Role |
+|------|----------------------|
+| Push-to-Talk | Effectively disabled while holding the key. On release, a short internal timeout triggers the stop |
+| Toggle | Active throughout. Controls how many seconds of silence must elapse before WinSTT considers your turn finished |
+
+Lower values in toggle mode make WinSTT more responsive to pauses but may cut off speech that includes natural breaks. Higher values tolerate longer pauses but delay the final transcription.

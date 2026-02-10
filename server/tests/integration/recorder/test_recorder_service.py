@@ -718,3 +718,42 @@ class TestRecorderService:
         result = service.transcribe()
         assert result == "New text."
         service.shutdown()
+
+    def test_clear_feed_buffer(self) -> None:
+        """clear_feed_buffer() empties the internal byte buffer used by feed_audio."""
+        service, _, _, _ = self._make_service()
+        # Seed the feed buffer with a partial chunk (less than buffer_size * 2 bytes)
+        service._feed_buffer = bytearray(b"\x01\x02\x03\x04")
+        assert len(service._feed_buffer) > 0
+        service.clear_feed_buffer()
+        assert len(service._feed_buffer) == 0
+        service.shutdown()
+
+    def test_set_external_audio_mode(self) -> None:
+        """set_external_audio_mode toggles the flag."""
+        service, _, _, _ = self._make_service()
+        assert service._external_audio_mode is False
+        service.set_external_audio_mode(True)
+        assert service._external_audio_mode is True
+        service.set_external_audio_mode(False)
+        assert service._external_audio_mode is False
+        service.shutdown()
+
+    def test_audio_reader_discards_in_external_audio_mode(self) -> None:
+        """When mic is off AND external audio mode is active, reader discards chunks."""
+        service, _, _, _ = self._make_service(use_microphone=True)
+        service._microphone_enabled = False
+        service._external_audio_mode = True
+        service._is_running = True
+
+        def stop_soon() -> None:
+            time.sleep(0.1)
+            service._is_running = False
+
+        t = threading.Thread(target=stop_soon)
+        t.start()
+        service._audio_reader_loop()
+        t.join()
+        # In external audio mode, no silence is injected — queue should be empty
+        assert service._pipeline._audio_queue.empty()
+        service.shutdown()

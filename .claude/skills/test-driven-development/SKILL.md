@@ -350,9 +350,26 @@ Can't check all boxes? You skipped TDD. Start over.
 
 ## Debugging Integration
 
-Bug found? Write failing test reproducing it. Follow TDD cycle. Test proves fix and prevents regression.
+Bug found? Write failing test reproducing it **at the deepest level**. Follow TDD cycle. Test proves fix and prevents regression.
 
 Never fix bugs without a test.
+
+### Depth Rule for Bug Reproduction
+
+The test must exercise the **exact code path that crashed**. If you remove the fix and the test still passes, you reproduced nothing.
+
+**Wrong:** Bug is a PortAudio segfault from concurrent stream access → test verifies a Python buffer helper clears correctly. Test passes with or without the fix.
+
+**Right:** Bug is a PortAudio segfault from concurrent stream access → test opens real PortAudio streams, races start/stop from multiple threads. Test segfaults without the fix, passes with it.
+
+| Principle | Rule |
+|---|---|
+| **Use real dependencies** for the crashing component | Don't fake the thing that's broken |
+| **Use stubs** only for components *called by* the crashing one | Stub the recorder, not the audio library |
+| **Skip on CI if needed** | `pytest.mark.skipif(no_hardware)` — the test still exists and runs locally |
+| **Verify the test catches the bug** | Revert fix → test must fail/crash. If it passes, go deeper. |
+
+See @testing-anti-patterns.md Anti-Pattern 5 for the full decision framework.
 
 ## Testing Anti-Patterns
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { ScrollArea } from "@base-ui/react/scroll-area";
+import { useTranslations } from "next-intl";
 import { TranscriptionLine } from "@/entities/transcription";
 import { useConnectionStore } from "@/features/connect-server";
 import { useTranscriptionStore } from "@/features/live-transcription";
@@ -14,7 +15,13 @@ export function TranscriptionFeed() {
 
 	return (
 		<ScrollArea.Root className="flex flex-1 flex-col rounded-lg border border-border bg-surface-secondary">
-			<ScrollArea.Viewport className="h-full" ref={scrollRef}>
+			<ScrollArea.Viewport
+				className="h-full"
+				ref={scrollRef}
+				style={{
+					WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 20%)",
+				}}
+			>
 				<ScrollArea.Content className="flex flex-1 flex-col p-2">
 					{items.map((item, index) => (
 						<TranscriptionLine index={index} item={item} key={item.id} />
@@ -26,7 +33,7 @@ export function TranscriptionFeed() {
 								id: "realtime",
 								type: "realtime",
 								text: currentRealtime,
-								timestamp: Date.now(),
+								timestamp: 0,
 							}}
 						/>
 					)}
@@ -43,6 +50,8 @@ export function TranscriptionFeed() {
 }
 
 function EmptyState({ connected }: { connected: boolean }) {
+	const t = useTranslations("transcription");
+
 	return (
 		<div className="flex flex-1 flex-col items-center justify-center gap-3 py-8">
 			{/* Stylized waveform icon */}
@@ -56,7 +65,7 @@ function EmptyState({ connected }: { connected: boolean }) {
 				))}
 			</div>
 			<p className="font-mono text-foreground-dim text-xs">
-				{connected ? "Waiting for speech..." : "Server offline"}
+				{connected ? t("waiting") : t("serverOffline")}
 			</p>
 		</div>
 	);

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 type IpcCallback = (...args: unknown[]) => void;
 
@@ -7,6 +7,7 @@ const ALLOWED_SEND_CHANNELS = [
 	"stt:set-parameter",
 	"stt:call-method",
 	"hotkey:unregister",
+	"hotkey:stop-recording",
 	"autostart:set",
 	"audio:set-mute",
 	"settings:save",
@@ -15,6 +16,8 @@ const ALLOWED_SEND_CHANNELS = [
 	"window:close",
 	"window:open-settings",
 	"window:close-self",
+	"loopback:start",
+	"loopback:stop",
 ] as const;
 
 /** Channels the renderer may invoke (request-response) on the main process */
@@ -22,6 +25,7 @@ const ALLOWED_INVOKE_CHANNELS = [
 	"stt:get-parameter",
 	"stt:is-connected",
 	"hotkey:register",
+	"hotkey:start-recording",
 	"autostart:get",
 	"audio:get-devices",
 	"gpu:get-info",
@@ -29,6 +33,12 @@ const ALLOWED_INVOKE_CHANNELS = [
 	"stt-server:spawn",
 	"stt-server:kill",
 	"stt-server:status",
+	"dialog:open-file",
+	"file:transcribe",
+	"stt:get-model-catalog",
+	"stt:get-server-ready",
+	"loopback:list-devices",
+	"stt:cancel-download",
 ] as const;
 
 /** Channels the main process may push to the renderer */
@@ -45,12 +55,27 @@ const ALLOWED_ON_CHANNELS = [
 	"stt:wakeword-detected",
 	"stt:wakeword-detection-start",
 	"stt:wakeword-detection-end",
+	"stt:model-download-start",
+	"stt:model-download-progress",
+	"stt:model-download-complete",
+	"stt:audio-level",
+	"stt:model-catalog",
 	"hotkey:pressed",
 	"hotkey:released",
+	"hotkey:recording-update",
+	"hotkey:recording-done",
 	"settings:changed",
+	"file:transcription-progress",
+	"file:transcription-complete",
+	"file:transcription-error",
+	"stt:loopback-started",
+	"stt:loopback-stopped",
 ] as const;
 
 contextBridge.exposeInMainWorld("electronAPI", {
+	getPathForFile(file: File) {
+		return webUtils.getPathForFile(file);
+	},
 	send(channel: string, ...args: unknown[]) {
 		if ((ALLOWED_SEND_CHANNELS as readonly string[]).includes(channel)) {
 			ipcRenderer.send(channel, ...args);

@@ -6,6 +6,8 @@ export const modelSettingsSchema = z.object({
 	language: z.string().default("en"),
 	computeType: z.string().default("default"),
 	device: z.enum(["auto", "cpu"]).default("auto"),
+	backend: z.enum(["faster_whisper", "onnx_asr"]).default("faster_whisper"),
+	onnxQuantization: z.string().default(""),
 	beamSize: z.number().int().min(1).default(5),
 	beamSizeRealtime: z.number().int().min(1).default(3),
 	initialPrompt: z.string().default(""),
@@ -28,7 +30,7 @@ export const audioSettingsSchema = z.object({
 	inputDeviceIndex: z.number().int().nullable().default(null),
 	sampleRate: z.number().int().default(16_000),
 	bufferSize: z.number().int().default(512),
-	sileroSensitivity: z.number().min(0).max(1).default(0.05),
+	sileroSensitivity: z.number().min(0).max(1).default(0.4),
 	sileroUseOnnx: z.boolean().default(false),
 	sileroDeactivityDetection: z.boolean().default(true),
 	webrtcSensitivity: z.number().int().min(0).max(3).default(3),
@@ -43,10 +45,15 @@ export const generalSettingsSchema = z.object({
 	minimizeToTray: z.boolean().default(true),
 	startMinimized: z.boolean().default(false),
 	muteSystemAudioWhileDictating: z.boolean().default(false),
+	recordingSound: z.boolean().default(true),
+	recordingSoundPath: z.string().default(""),
+	fileTranscriptionFormat: z.enum(["txt", "srt"]).default("txt"),
+	recordingMode: z.enum(["ptt", "toggle", "listen"]).default("ptt"),
+	loopbackDeviceIndex: z.number().int().nullable().default(null),
 });
 
 export const hotkeySettingsSchema = z.object({
-	pushToTalkKey: z.string().default("Space"),
+	pushToTalkKey: z.string().default("LCtrl+LMeta"),
 });
 
 export const dictionaryEntrySchema = z.object({

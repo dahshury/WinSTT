@@ -1,168 +1,231 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import { useVisualizerStore } from "../model/visualizer-store";
 
-const DPR = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+/* ── Tuning constants ─────────────────────────────────────────────── */
 
-interface Point {
-	x: number;
-	y: number;
+/** Idle amplitude when recording but no speech (subtle breathing). */
+const IDLE_AMP = 0.06;
+/** Maximum amplitude when audio level is at 1.0. */
+const SPEECH_AMP = 0.32;
+/** Extra amplitude added by a sentence-landing pulse. */
+const PULSE_EXTRA_AMP = 0.08;
+/** How quickly the smoothed amplitude tracks its target (0-1). */
+const AMP_SMOOTHING = 0.08;
+/** Max stroke opacity for the accent wave (active). */
+const STROKE_ALPHA_ACTIVE = 0.25;
+/** Max stroke opacity for the idle wave (recording but no speech). */
+const STROKE_ALPHA_IDLE = 0.06;
+/** Fill peak alpha (active). */
+const FILL_ALPHA_ACTIVE = 0.04;
+/** RGB for accent color (amber-500). */
+const ACCENT = "245, 158, 11";
+/** RGB for idle color. */
+const IDLE_COLOR = "255, 255, 255";
+
+/** How quickly smoothedActivity interpolates toward its target (0-1 per frame). */
+const ACTIVITY_SMOOTHING = 0.06;
+/** audioLevel threshold to consider "active". */
+const ACTIVITY_THRESHOLD = 0.02;
+
+/* ── Wave layers: each is a sine wave with its own speed & phase ── */
+
+interface WaveLayer {
+	/** Frequency multiplier (higher = more oscillations across width). */
+	freq: number;
+	/** Time speed (rad/s). */
+	speed: number;
+	/** Amplitude weight (summed then normalized). */
+	weight: number;
+	/** Phase offset. */
+	phase: number;
 }
 
-/** Catmull-Rom spline through points, returning a smooth path. */
-function drawSmoothCurve(ctx: CanvasRenderingContext2D, points: Point[], tension = 0.3) {
-	if (points.length < 2) {
-		return;
+const WAVE_LAYERS: WaveLayer[] = [
+	{ freq: 1.2, speed: 0.8, weight: 1.0, phase: 0 },
+	{ freq: 2.5, speed: 1.3, weight: 0.5, phase: 1.2 },
+	{ freq: 0.6, speed: 0.4, weight: 0.7, phase: 2.8 },
+	{ freq: 3.8, speed: 1.8, weight: 0.25, phase: 0.5 },
+];
+
+const TOTAL_WEIGHT = WAVE_LAYERS.reduce((s, l) => s + l.weight, 0);
+
+/** Number of points along the x-axis to sample. */
+const RESOLUTION = 120;
+
+/* ── Rendering helpers ────────────────────────────────────────────── */
+
+function computeWaveY(t: number, time: number, amplitude: number, midY: number): number {
+	let sum = 0;
+	for (const layer of WAVE_LAYERS) {
+		sum += Math.sin(t * layer.freq * Math.PI * 2 + time * layer.speed + layer.phase) * layer.weight;
 	}
-	const first = points[0];
-	if (!first) {
-		return;
-	}
-	ctx.moveTo(first.x, first.y);
-
-	for (let i = 0; i < points.length - 1; i++) {
-		const p0 = points[i - 1] ?? points[i]!;
-		const p1 = points[i]!;
-		const p2 = points[i + 1]!;
-		const p3 = points[i + 2] ?? p2;
-
-		const cp1x = p1.x + ((p2.x - p0.x) * tension) / 3;
-		const cp1y = p1.y + ((p2.y - p0.y) * tension) / 3;
-		const cp2x = p2.x - ((p3.x - p1.x) * tension) / 3;
-		const cp2y = p2.y - ((p3.y - p1.y) * tension) / 3;
-
-		ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
-	}
+	const normalized = sum / TOTAL_WEIGHT;
+	const edgeFade = Math.sin(t * Math.PI);
+	return midY - normalized * amplitude * midY * edgeFade;
 }
 
-function buildPoints(frequencyData: Uint8Array, w: number, h: number) {
-	const midY = h / 2;
-	const maxAmplitude = h * 0.38;
-	const len = frequencyData.length;
-	const points: Point[] = [];
-	const mirror: Point[] = [];
-
-	for (let i = 0; i < len; i++) {
-		const t = i / (len - 1);
-		const x = t * w;
-		const val = (frequencyData[i] ?? 0) / 255;
-		const edgeFade = Math.sin(t * Math.PI);
-		const amplitude = val * maxAmplitude * edgeFade;
-
-		points.push({ x, y: midY - amplitude });
-		mirror.push({ x, y: midY + amplitude });
-	}
-
-	return { points, mirror, midY, maxAmplitude };
-}
-
-function makeHorizontalGradient(ctx: CanvasRenderingContext2D, w: number, active: boolean) {
-	const g = ctx.createLinearGradient(0, 0, w, 0);
-	const a = active ? 0.7 : 0.06;
-	const peak = active ? 1.0 : 0.1;
-	const color = active ? "245, 158, 11" : "255, 255, 255";
-	g.addColorStop(0, `rgba(${color}, 0.0)`);
-	g.addColorStop(0.15, `rgba(${color}, ${a})`);
-	g.addColorStop(0.5, `rgba(${color}, ${peak})`);
-	g.addColorStop(0.85, `rgba(${color}, ${a})`);
-	g.addColorStop(1, `rgba(${color}, 0.0)`);
-	return g;
-}
-
-function drawGlow(ctx: CanvasRenderingContext2D, points: Point[], mirror: Point[]) {
-	ctx.save();
-	ctx.shadowColor = "rgba(245, 158, 11, 0.4)";
-	ctx.shadowBlur = 24;
-	ctx.strokeStyle = "rgba(245, 158, 11, 0.3)";
-	ctx.lineWidth = 4;
-	ctx.beginPath();
-	drawSmoothCurve(ctx, points);
-	ctx.stroke();
-	ctx.beginPath();
-	drawSmoothCurve(ctx, mirror);
-	ctx.stroke();
-	ctx.restore();
-}
-
-function drawFill(
+function drawWavePath(
 	ctx: CanvasRenderingContext2D,
-	points: Point[],
-	mirror: Point[],
-	midY: number,
-	maxAmp: number,
-	active: boolean
+	w: number,
+	h: number,
+	time: number,
+	amplitude: number,
+	mirror: boolean
 ) {
-	const g = ctx.createLinearGradient(0, midY - maxAmp, 0, midY + maxAmp);
-	if (active) {
-		g.addColorStop(0, "rgba(245, 158, 11, 0.0)");
-		g.addColorStop(0.3, "rgba(245, 158, 11, 0.08)");
-		g.addColorStop(0.5, "rgba(245, 158, 11, 0.12)");
-		g.addColorStop(0.7, "rgba(245, 158, 11, 0.08)");
-		g.addColorStop(1, "rgba(245, 158, 11, 0.0)");
-	} else {
-		g.addColorStop(0, "rgba(255, 255, 255, 0.0)");
-		g.addColorStop(0.5, "rgba(255, 255, 255, 0.015)");
-		g.addColorStop(1, "rgba(255, 255, 255, 0.0)");
+	const midY = h / 2;
+	ctx.beginPath();
+	for (let i = 0; i <= RESOLUTION; i++) {
+		const t = i / RESOLUTION;
+		const x = t * w;
+		let y = computeWaveY(t, time, amplitude, midY);
+		if (mirror) {
+			y = midY + (midY - y);
+		}
+		if (i === 0) {
+			ctx.moveTo(x, y);
+		} else {
+			ctx.lineTo(x, y);
+		}
 	}
+}
+
+function drawFilledRegion(
+	ctx: CanvasRenderingContext2D,
+	w: number,
+	h: number,
+	time: number,
+	amplitude: number,
+	alpha: number,
+	color: string
+) {
+	const midY = h / 2;
 
 	ctx.beginPath();
-	drawSmoothCurve(ctx, points);
-	for (let i = mirror.length - 1; i >= 0; i--) {
-		ctx.lineTo(mirror[i]!.x, mirror[i]!.y);
+	for (let i = 0; i <= RESOLUTION; i++) {
+		const t = i / RESOLUTION;
+		const x = t * w;
+		const y = computeWaveY(t, time, amplitude, midY);
+		if (i === 0) {
+			ctx.moveTo(x, y);
+		} else {
+			ctx.lineTo(x, y);
+		}
+	}
+	for (let i = RESOLUTION; i >= 0; i--) {
+		const t = i / RESOLUTION;
+		const x = t * w;
+		const y = computeWaveY(t, time, amplitude, midY);
+		ctx.lineTo(x, midY + (midY - y));
 	}
 	ctx.closePath();
+
+	const g = ctx.createLinearGradient(0, midY - h * amplitude * 0.5, 0, midY + h * amplitude * 0.5);
+	g.addColorStop(0, `rgba(${color}, 0)`);
+	g.addColorStop(0.4, `rgba(${color}, ${alpha})`);
+	g.addColorStop(0.5, `rgba(${color}, ${alpha * 1.2})`);
+	g.addColorStop(0.6, `rgba(${color}, ${alpha})`);
+	g.addColorStop(1, `rgba(${color}, 0)`);
 	ctx.fillStyle = g;
 	ctx.fill();
 }
 
-function drawStrokes(
+function makeStrokeGradient(
 	ctx: CanvasRenderingContext2D,
-	points: Point[],
-	mirror: Point[],
 	w: number,
-	midY: number,
-	active: boolean
+	alpha: number,
+	color: string
 ) {
-	// Top waveform
-	ctx.strokeStyle = makeHorizontalGradient(ctx, w, active);
-	ctx.lineWidth = active ? 2 : 1;
+	const g = ctx.createLinearGradient(0, 0, w, 0);
+	g.addColorStop(0, `rgba(${color}, 0)`);
+	g.addColorStop(0.2, `rgba(${color}, ${alpha})`);
+	g.addColorStop(0.5, `rgba(${color}, ${alpha})`);
+	g.addColorStop(0.8, `rgba(${color}, ${alpha})`);
+	g.addColorStop(1, `rgba(${color}, 0)`);
+	return g;
+}
+
+/** Linearly interpolate between two "r, g, b" strings. */
+function lerpColor(a: string, b: string, t: number): string {
+	const [ar = 0, ag = 0, ab = 0] = a.split(",").map(Number);
+	const [br = 0, bg = 0, bb = 0] = b.split(",").map(Number);
+	const r = Math.round(ar + (br - ar) * t);
+	const g = Math.round(ag + (bg - ag) * t);
+	const bl = Math.round(ab + (bb - ab) * t);
+	return `${r}, ${g}, ${bl}`;
+}
+
+interface RenderParams {
+	targetAmp: number;
+	color: string;
+	strokeAlpha: number;
+	fillAlpha: number;
+	lineWidthMain: number;
+	lineWidthMirror: number;
+}
+
+function computeRenderParams(
+	isRecording: boolean,
+	isSpeaking: boolean,
+	audioLevel: number,
+	sentencePulse: number,
+	smoothedActivity: number
+): RenderParams {
+	let targetAmp = 0;
+	if (isRecording || audioLevel > 0) {
+		const speechContrib = audioLevel * SPEECH_AMP;
+		const vadBoost = isSpeaking ? 0.04 : 0;
+		const pulseContrib = sentencePulse * PULSE_EXTRA_AMP;
+		targetAmp = IDLE_AMP + speechContrib + vadBoost + pulseContrib;
+	}
+
+	// Smooth color/opacity interpolation based on smoothedActivity
+	const color = lerpColor(IDLE_COLOR, ACCENT, smoothedActivity);
+	const strokeAlpha =
+		STROKE_ALPHA_IDLE + (STROKE_ALPHA_ACTIVE - STROKE_ALPHA_IDLE) * smoothedActivity;
+	const fillAlpha =
+		0.005 +
+		(FILL_ALPHA_ACTIVE - 0.005) * smoothedActivity * Math.min(1, audioLevel + sentencePulse * 0.5);
+	const lineWidthMain = 0.75 + 0.75 * smoothedActivity;
+	const lineWidthMirror = 0.5 + 0.5 * smoothedActivity;
+
+	return { targetAmp, color, strokeAlpha, fillAlpha, lineWidthMain, lineWidthMirror };
+}
+
+function drawFrame(
+	ctx: CanvasRenderingContext2D,
+	w: number,
+	h: number,
+	amp: number,
+	params: RenderParams
+) {
+	const time = performance.now() / 1000;
+	const { color, strokeAlpha, fillAlpha, lineWidthMain, lineWidthMirror } = params;
+
+	drawFilledRegion(ctx, w, h, time, amp, fillAlpha, color);
+
+	ctx.strokeStyle = makeStrokeGradient(ctx, w, strokeAlpha, color);
+	ctx.lineWidth = lineWidthMain;
 	ctx.lineJoin = "round";
 	ctx.lineCap = "round";
-	ctx.beginPath();
-	drawSmoothCurve(ctx, points);
+	drawWavePath(ctx, w, h, time, amp, false);
 	ctx.stroke();
 
-	// Mirror (dimmer)
-	const mg = ctx.createLinearGradient(0, 0, w, 0);
-	const mAlpha = active ? 0.3 : 0.04;
-	const mPeak = active ? 0.5 : 0.04;
-	const color = active ? "245, 158, 11" : "255, 255, 255";
-	mg.addColorStop(0, `rgba(${color}, 0.0)`);
-	mg.addColorStop(0.15, `rgba(${color}, ${mAlpha})`);
-	mg.addColorStop(0.5, `rgba(${color}, ${mPeak})`);
-	mg.addColorStop(0.85, `rgba(${color}, ${mAlpha})`);
-	mg.addColorStop(1, `rgba(${color}, 0.0)`);
-
-	ctx.strokeStyle = mg;
-	ctx.lineWidth = active ? 1.5 : 0.5;
-	ctx.beginPath();
-	drawSmoothCurve(ctx, mirror);
-	ctx.stroke();
-
-	// Subtle center baseline
-	ctx.strokeStyle = active ? "rgba(245, 158, 11, 0.1)" : "rgba(255, 255, 255, 0.03)";
-	ctx.lineWidth = 1;
-	ctx.beginPath();
-	ctx.moveTo(0, midY);
-	ctx.lineTo(w, midY);
+	ctx.strokeStyle = makeStrokeGradient(ctx, w, strokeAlpha * 0.4, color);
+	ctx.lineWidth = lineWidthMirror;
+	drawWavePath(ctx, w, h, time, amp, true);
 	ctx.stroke();
 }
 
-export function WaveformBars() {
+/* ── Component ────────────────────────────────────────────────────── */
+
+export const WaveformBars = memo(function WaveformBars() {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const rafRef = useRef(0);
+	const smoothedAmpRef = useRef(0);
+	const smoothedActivityRef = useRef(0);
 
 	const render = useCallback(() => {
 		const canvas = canvasRef.current;
@@ -171,13 +234,14 @@ export function WaveformBars() {
 			return;
 		}
 
-		const { frequencyData, isActive } = useVisualizerStore.getState();
+		const { isRecording, isSpeaking, audioLevel, sentencePulse } = useVisualizerStore.getState();
+
 		const rect = container.getBoundingClientRect();
 		const w = rect.width;
 		const h = rect.height;
-
-		const cw = Math.round(w * DPR);
-		const ch = Math.round(h * DPR);
+		const dpr = window.devicePixelRatio || 1;
+		const cw = Math.round(w * dpr);
+		const ch = Math.round(h * dpr);
 		if (canvas.width !== cw || canvas.height !== ch) {
 			canvas.width = cw;
 			canvas.height = ch;
@@ -188,16 +252,31 @@ export function WaveformBars() {
 			return;
 		}
 
-		ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, w, h);
 
-		const { points, mirror, midY, maxAmplitude } = buildPoints(frequencyData, w, h);
+		// Smooth activity: interpolate toward target (1 when active, 0 when idle)
+		const activityTarget =
+			(isRecording || audioLevel > 0) && (isSpeaking || audioLevel > ACTIVITY_THRESHOLD) ? 1 : 0;
+		const prevActivity = smoothedActivityRef.current;
+		const activity = prevActivity + (activityTarget - prevActivity) * ACTIVITY_SMOOTHING;
+		smoothedActivityRef.current = activity;
 
-		if (isActive) {
-			drawGlow(ctx, points, mirror);
+		const params = computeRenderParams(
+			isRecording,
+			isSpeaking,
+			audioLevel,
+			sentencePulse,
+			activity
+		);
+
+		const prevAmp = smoothedAmpRef.current;
+		const amp = prevAmp + (params.targetAmp - prevAmp) * AMP_SMOOTHING;
+		smoothedAmpRef.current = amp;
+
+		if (amp >= 0.001) {
+			drawFrame(ctx, w, h, amp, params);
 		}
-		drawFill(ctx, points, mirror, midY, maxAmplitude, isActive);
-		drawStrokes(ctx, points, mirror, w, midY, isActive);
 
 		rafRef.current = requestAnimationFrame(render);
 	}, []);
@@ -212,4 +291,4 @@ export function WaveformBars() {
 			<canvas className="h-full w-full" ref={canvasRef} style={{ imageRendering: "auto" }} />
 		</div>
 	);
-}
+});

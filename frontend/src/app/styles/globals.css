@@ -45,8 +45,8 @@
 	--radius-lg: 12px;
 
 	/* Typography — font-sans, font-mono */
-	--font-sans: "Geist", system-ui, -apple-system, sans-serif;
-	--font-mono: "Geist Mono", "SF Mono", "Cascadia Code", monospace;
+	--font-sans: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+	--font-mono: var(--font-geist-mono), "SF Mono", "Cascadia Code", monospace;
 
 	/* Shadows — shadow-sm, shadow-md, shadow-lg, shadow-glow */
 	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
@@ -80,61 +80,6 @@
 	--color-text-secondary: var(--color-foreground-secondary);
 	--color-text-muted: var(--color-foreground-muted);
 	--color-text-dim: var(--color-foreground-dim);
-}
-
-/* ── Fonts ── */
-@font-face {
-	font-family: "Geist Mono";
-	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-mono/GeistMono-Regular.woff2")
-		format("woff2");
-	font-weight: 400;
-	font-style: normal;
-	font-display: swap;
-}
-
-@font-face {
-	font-family: "Geist Mono";
-	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-mono/GeistMono-Medium.woff2")
-		format("woff2");
-	font-weight: 500;
-	font-style: normal;
-	font-display: swap;
-}
-
-@font-face {
-	font-family: "Geist Mono";
-	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-mono/GeistMono-SemiBold.woff2")
-		format("woff2");
-	font-weight: 600;
-	font-style: normal;
-	font-display: swap;
-}
-
-@font-face {
-	font-family: "Geist";
-	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Regular.woff2")
-		format("woff2");
-	font-weight: 400;
-	font-style: normal;
-	font-display: swap;
-}
-
-@font-face {
-	font-family: "Geist";
-	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Medium.woff2")
-		format("woff2");
-	font-weight: 500;
-	font-style: normal;
-	font-display: swap;
-}
-
-@font-face {
-	font-family: "Geist";
-	src: url("https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-SemiBold.woff2")
-		format("woff2");
-	font-weight: 600;
-	font-style: normal;
-	font-display: swap;
 }
 
 /* ── Keyframes (top-level, referenced by @theme --animate-* tokens) ── */

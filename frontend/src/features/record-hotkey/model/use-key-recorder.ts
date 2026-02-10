@@ -1,53 +1,57 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	hotkeyStartRecording,
+	hotkeyStopRecording,
+	onHotkeyRecordingDone,
+	onHotkeyRecordingUpdate,
+} from "@/shared/api/ipc-client";
 
 export function useKeyRecorder() {
 	const [recording, setRecording] = useState(false);
 	const [key, setKey] = useState<string | null>(null);
+	const [liveKeys, setLiveKeys] = useState<string[]>([]);
+	const recordingRef = useRef(false);
 
 	const startRecording = useCallback(() => {
 		setRecording(true);
 		setKey(null);
+		setLiveKeys([]);
+		recordingRef.current = true;
+		hotkeyStartRecording();
 	}, []);
 
 	const stopRecording = useCallback(() => {
-		setRecording(false);
+		if (recordingRef.current) {
+			recordingRef.current = false;
+			setRecording(false);
+			hotkeyStopRecording();
+			// liveKeys kept until done event clears them
+		}
 	}, []);
 
 	useEffect(() => {
-		if (!recording) {
-			return;
-		}
-
-		const MODIFIER_KEYS = new Set(["Control", "Alt", "Shift", "Meta"]);
-
-		function handleKeyDown(e: KeyboardEvent) {
-			e.preventDefault();
-			e.stopPropagation();
-
-			const keyName = e.key === " " ? "Space" : e.key;
-
-			// Ignore solo modifier presses - wait for a real key or combo
-			if (MODIFIER_KEYS.has(keyName)) {
-				return;
+		const unsubUpdate = onHotkeyRecordingUpdate((keys) => {
+			if (recordingRef.current) {
+				setLiveKeys(keys);
 			}
+		});
 
-			const modifiers = [
-				e.ctrlKey && "Control",
-				e.altKey && "Alt",
-				e.shiftKey && "Shift",
-				e.metaKey && "Meta",
-			].filter(Boolean) as string[];
-
-			const parts = [...modifiers, keyName];
-			setKey(parts.join("+"));
+		const unsubDone = onHotkeyRecordingDone((combo) => {
+			recordingRef.current = false;
 			setRecording(false);
-		}
+			setLiveKeys([]);
+			if (combo) {
+				setKey(combo);
+			}
+		});
 
-		window.addEventListener("keydown", handleKeyDown, true);
-		return () => window.removeEventListener("keydown", handleKeyDown, true);
-	}, [recording]);
+		return () => {
+			unsubUpdate();
+			unsubDone();
+		};
+	}, []);
 
-	return { recording, key, startRecording, stopRecording };
+	return { recording, key, liveKeys, startRecording, stopRecording };
 }

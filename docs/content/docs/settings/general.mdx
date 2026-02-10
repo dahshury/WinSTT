@@ -1,0 +1,31 @@
+---
+title: General Settings
+description: Application behavior and system integration
+---
+
+General settings control how WinSTT integrates with the Windows operating system and how the application behaves during recording sessions.
+
+## Application Behavior
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `autoStart` | boolean | `false` | Launch WinSTT automatically when Windows starts |
+| `minimizeToTray` | boolean | `true` | Keep WinSTT running in the system tray when the window is closed |
+| `startMinimized` | boolean | `false` | Start the application minimized to the system tray |
+
+## Recording Behavior
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `recordingMode` | enum | `"ptt"` | `"ptt"` for push-to-talk (hold hotkey), `"toggle"` for toggle mode (press to start/stop) |
+| `muteSystemAudioWhileDictating` | boolean | `false` | Mute system speakers while recording to prevent feedback |
+| `recordingSound` | boolean | `true` | Play an audio cue when the hotkey is pressed or released |
+| `recordingSoundPath` | string | `""` | Path to a custom sound file (.wav or .mp3, max 3 seconds). Empty uses the built-in sound |
+
+See [Recording Modes](/docs/recording-modes) for a detailed explanation of push-to-talk vs toggle mode.
+
+## File Transcription
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `fileTranscriptionFormat` | enum | `"txt"` | Output format for file transcription: `"txt"` for plain text, `"srt"` for SubRip subtitles with timestamps |

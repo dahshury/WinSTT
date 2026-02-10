@@ -1,5 +1,3 @@
-"use client";
-
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 
@@ -10,7 +8,7 @@ export interface ButtonGroupProps {
 
 export function ButtonGroup({ children, className }: ButtonGroupProps) {
 	return (
-		<div className={cn("inline-flex", className)} role="group">
+		<div className={cn("inline-flex", className)} role="toolbar">
 			{children}
 		</div>
 	);

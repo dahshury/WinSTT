@@ -42,7 +42,7 @@ self.__SERVER_FILES_MANIFEST={
         256,
         384
       ],
-      "path": "/_next/image/",
+      "path": "/_next/image",
       "loader": "default",
       "loaderFile": "",
       "domains": [],
@@ -78,7 +78,7 @@ self.__SERVER_FILES_MANIFEST={
     },
     "basePath": "",
     "sassOptions": {},
-    "trailingSlash": true,
+    "trailingSlash": false,
     "i18n": null,
     "productionBrowserSourceMaps": false,
     "excludeDefaultMomentLocales": true,

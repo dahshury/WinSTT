@@ -1,24 +1,12 @@
 "use client";
 
+import { formatKeyName } from "@/shared/lib/format-key-name";
 import { useHotkeyStore } from "../model/hotkey-store";
-
-function parseAccelerator(accelerator: string): string[] {
-	return accelerator.split("+").map((key) => {
-		switch (key) {
-			case "Control":
-				return "Ctrl";
-			case "Meta":
-				return "Win";
-			default:
-				return key;
-		}
-	});
-}
 
 export function HotkeyDisplay() {
 	const isPressed = useHotkeyStore((s) => s.isPressed);
 	const accelerator = useHotkeyStore((s) => s.accelerator);
-	const keys = parseAccelerator(accelerator);
+	const keys = accelerator.split("+").map(formatKeyName);
 
 	return (
 		<kbd
@@ -30,9 +18,7 @@ export function HotkeyDisplay() {
 		>
 			{keys.map((key, i) => (
 				<span className="flex items-center" key={key}>
-					{i > 0 && (
-						<span className="text-[8px] text-foreground-dim">+</span>
-					)}
+					{i > 0 && <span className="text-[8px] text-foreground-dim">+</span>}
 					<span className="px-1 py-px">{key}</span>
 				</span>
 			))}

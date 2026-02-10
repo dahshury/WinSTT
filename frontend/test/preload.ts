@@ -4,6 +4,7 @@ GlobalRegistrator.register();
 
 // Mock window.electronAPI for all tests
 window.electronAPI = {
+	getPathForFile: () => "",
 	send: () => {
 		/* noop mock */
 	},
@@ -16,6 +17,7 @@ window.electronAPI = {
 declare global {
 	interface Window {
 		electronAPI: {
+			getPathForFile: (file: File) => string;
 			send: (channel: string, ...args: unknown[]) => void;
 			invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
 			on: (channel: string, callback: (...args: unknown[]) => void) => () => void;

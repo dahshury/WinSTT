@@ -1,0 +1,221 @@
+"""WASAPI loopback audio capture for system audio transcription.
+
+Uses ``pyaudiowpatch`` (a patched PyAudio build with WASAPI loopback support)
+to capture desktop/speaker output and feed it into the existing recorder
+pipeline via ``recorder.feed_audio()``.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import threading
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+if TYPE_CHECKING:
+    from src.recorder import AudioToTextRecorder
+
+
+TARGET_PEAK: float = 8000.0  # Target peak amplitude (out of 32768)
+MAX_GAIN: float = 30.0  # Maximum amplification factor
+NOISE_FLOOR: float = 50.0  # Ignore chunks below this peak
+GAIN_SMOOTH: float = 0.05  # EMA smoothing factor (slow-tracking AGC)
+
+
+class LoopbackCapture:
+    """Manages a WASAPI loopback capture stream in a background thread."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._audio: Any = None  # pyaudiowpatch.PyAudio instance
+        self._stream: Any = None
+        self._device_rate: int = 0
+        self._device_channels: int = 0
+        self._gain: float = 1.0  # Running AGC gain
+        self._saved_silence_duration: float | None = None
+
+    # ── Device enumeration ────────────────────────────────────────────
+
+    def list_devices(self) -> list[dict[str, Any]]:
+        """Return WASAPI loopback-capable output devices."""
+        import pyaudiowpatch as pyaudio
+
+        audio = pyaudio.PyAudio()
+        try:
+            wasapi_info: dict[str, Any] = audio.get_host_api_info_by_type(pyaudio.paWASAPI)
+            default_output_index: int = int(wasapi_info.get("defaultOutputDevice", -1))
+            devices: list[dict[str, Any]] = []
+
+            for i in range(audio.get_device_count()):
+                dev: dict[str, Any] = audio.get_device_info_by_index(i)
+                if dev["hostApi"] == wasapi_info["index"] and dev["maxOutputChannels"] > 0:
+                    is_default = dev["index"] == default_output_index
+                    # Try to find the matching loopback device
+                    for loopback in audio.get_loopback_device_info_generator():
+                        if loopback["index"] == dev["index"] or dev["name"] in loopback["name"]:
+                            devices.append({
+                                "index": loopback["index"],
+                                "name": str(dev["name"]),
+                                "defaultSampleRate": int(loopback["defaultSampleRate"]),
+                                "maxOutputChannels": int(
+                                    max(loopback.get("maxInputChannels", 0), loopback.get("maxOutputChannels", 0))
+                                ),
+                                "isDefault": is_default,
+                            })
+                            break
+                    else:
+                        devices.append({
+                            "index": dev["index"],
+                            "name": str(dev["name"]),
+                            "defaultSampleRate": int(dev["defaultSampleRate"]),
+                            "maxOutputChannels": int(dev["maxOutputChannels"]),
+                            "isDefault": is_default,
+                        })
+            return devices
+        finally:
+            audio.terminate()
+
+    # ── Start / Stop ──────────────────────────────────────────────────
+
+    def start(self, recorder: AudioToTextRecorder, device_index: int) -> dict[str, Any]:
+        """Open loopback stream and start capture thread.
+
+        Returns device info dict for the started device.
+        Serialized with a lock so concurrent start/stop calls from the
+        asyncio event loop cannot interleave and crash PortAudio.
+        """
+        with self._lock:
+            return self._start_locked(recorder, device_index)
+
+    def _start_locked(self, recorder: AudioToTextRecorder, device_index: int) -> dict[str, Any]:
+        import pyaudiowpatch as pyaudio
+
+        if self._thread is not None and self._thread.is_alive():
+            self._stop_locked(recorder)
+
+        self._audio = pyaudio.PyAudio()
+        dev_info: dict[str, Any] = self._audio.get_device_info_by_index(device_index)
+        self._device_rate = int(dev_info["defaultSampleRate"])
+        self._device_channels = max(int(dev_info.get("maxInputChannels", 0)), int(dev_info.get("maxOutputChannels", 0)))
+        if self._device_channels < 1:
+            self._device_channels = 2
+
+        # Switch recorder to feed_audio mode — external audio mode first
+        # so the reader thread discards instead of injecting silence
+        recorder.set_external_audio_mode(True)
+        recorder.set_microphone(False)
+
+        # Use a longer silence threshold for loopback (continuous audio)
+        self._saved_silence_duration = recorder.post_speech_silence_duration
+        recorder.post_speech_silence_duration = 2.0
+
+        self._gain = 1.0  # Reset AGC
+
+        # Clear stale audio from previous session so VAD doesn't get
+        # misaligned partial chunks on restart.
+        recorder.clear_feed_buffer()
+
+        self._stop_event.clear()
+        self._stream = self._audio.open(
+            format=pyaudio.paInt16,
+            channels=self._device_channels,
+            rate=self._device_rate,
+            input=True,
+            frames_per_buffer=512,
+            input_device_index=device_index,
+        )
+
+        recorder.wakeup()
+
+        # Pass stream as a local so the capture thread never touches a
+        # replaced self._stream after a concurrent start/stop cycle.
+        stream = self._stream
+        self._thread = threading.Thread(
+            target=self._capture_loop,
+            args=(recorder, stream),
+            daemon=True,
+            name="loopback-capture",
+        )
+        self._thread.start()
+
+        return {
+            "index": device_index,
+            "name": str(dev_info.get("name", "")),
+            "defaultSampleRate": self._device_rate,
+            "maxOutputChannels": self._device_channels,
+        }
+
+    def stop(self, recorder: AudioToTextRecorder) -> None:
+        """Stop capture thread and restore mic input.
+
+        Serialized with a lock so concurrent start/stop calls cannot
+        interleave and crash PortAudio.
+        """
+        with self._lock:
+            self._stop_locked(recorder)
+
+    def _stop_locked(self, recorder: AudioToTextRecorder) -> None:
+        self._stop_event.set()
+
+        # Stop the stream FIRST to unblock any pending read() call in the
+        # capture thread.  Without this, thread.join() can time out while
+        # the thread is stuck in a blocking PortAudio read, and we'd then
+        # close/terminate the audio backend out from under it → segfault.
+        if self._stream is not None:
+            with contextlib.suppress(Exception):
+                self._stream.stop_stream()
+
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            self._thread = None
+
+        # Now safe to close/terminate — the capture thread has exited.
+        if self._stream is not None:
+            with contextlib.suppress(Exception):
+                self._stream.close()
+            self._stream = None
+
+        if self._audio is not None:
+            with contextlib.suppress(Exception):
+                self._audio.terminate()
+            self._audio = None
+
+        # Clear stale audio left in the feed buffer from this session
+        recorder.clear_feed_buffer()
+
+        # Restore microphone input and silence duration
+        recorder.set_microphone(True)
+        recorder.set_external_audio_mode(False)
+        if self._saved_silence_duration is not None:
+            recorder.post_speech_silence_duration = self._saved_silence_duration
+            self._saved_silence_duration = None
+
+    @property
+    def is_active(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    # ── Internal ──────────────────────────────────────────────────────
+
+    def _capture_loop(self, recorder: AudioToTextRecorder, stream: Any) -> None:
+        """Read audio frames from WASAPI loopback and feed to recorder."""
+        try:
+            while not self._stop_event.is_set():
+                data: bytes = stream.read(512, exception_on_overflow=False)
+                # Convert to numpy int16 and reshape for multi-channel
+                samples = np.frombuffer(data, dtype=np.int16).reshape(-1, self._device_channels)
+
+                # AGC: normalize audio level so VAD works regardless of system volume
+                peak = float(np.max(np.abs(samples)))
+                if peak > NOISE_FLOOR:
+                    desired_gain = min(TARGET_PEAK / peak, MAX_GAIN)
+                    self._gain += GAIN_SMOOTH * (desired_gain - self._gain)
+                if self._gain > 1.0:
+                    samples = np.clip(samples.astype(np.float32) * self._gain, -32768, 32767).astype(np.int16)
+
+                # feed_audio handles stereo->mono and resampling internally
+                recorder.feed_audio(samples, original_sample_rate=self._device_rate)
+        except Exception as e:
+            print(f"[loopback] Capture error: {e}")

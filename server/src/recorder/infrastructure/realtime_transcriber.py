@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from typing_extensions import override
@@ -9,6 +10,7 @@ from typing_extensions import override
 from src.building_blocks.types import AudioArray
 from src.recorder.domain.ports.transcriber import ITranscriber, TranscriptionResult
 from src.recorder.infrastructure.device import resolve_device
+from src.recorder.infrastructure.whisper_transcriber import _intercept_hf_progress
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,7 @@ class RealtimeTranscriber(ITranscriber):
         beam_size: int = 3,
         initial_prompt: str | list[int] | None = None,
         batch_size: int = 16,
+        on_download_progress: Callable[[str, float], None] | None = None,
     ) -> None:
         if faster_whisper is None:
             msg = "faster_whisper is not installed"
@@ -44,13 +47,19 @@ class RealtimeTranscriber(ITranscriber):
         if actual_device != device:
             logger.info("Realtime transcription device: %s (compute_type: %s)", actual_device, actual_compute)
 
-        self._model: Any = faster_whisper.WhisperModel(
-            model_size_or_path=model_path,
-            device=actual_device,
-            compute_type=actual_compute,
-            device_index=gpu_device_index,
-            download_root=download_root,
-        )
+        model_kwargs: dict[str, object] = {
+            "model_size_or_path": model_path,
+            "device": actual_device,
+            "compute_type": actual_compute,
+            "device_index": gpu_device_index,
+            "download_root": download_root,
+        }
+
+        if on_download_progress is not None:
+            with _intercept_hf_progress(model_path, on_download_progress):
+                self._model: Any = faster_whisper.WhisperModel(**model_kwargs)
+        else:
+            self._model = faster_whisper.WhisperModel(**model_kwargs)
         if batch_size > 0:
             self._model = faster_whisper.BatchedInferencePipeline(model=self._model)
         self._ready = True
@@ -91,12 +100,7 @@ class RealtimeTranscriber(ITranscriber):
     @override
     def shutdown(self) -> None:
         self._ready = False
-        del self._model
+        # Release the model reference only.  Explicit CUDA cache clearing is
+        # omitted — it can hang for minutes on certain driver combinations.
+        # The server's os._exit(0) handles final CUDA teardown safely.
         self._model = None
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass

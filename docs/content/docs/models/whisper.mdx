@@ -1,0 +1,38 @@
+---
+title: Whisper Models
+description: OpenAI Whisper models via faster-whisper backend
+---
+
+Whisper is OpenAI's general-purpose speech recognition model. WinSTT runs Whisper through the faster-whisper backend (CTranslate2), which provides significant speed improvements over the original PyTorch implementation.
+
+All Whisper models support realtime transcription and use the `faster_whisper` backend.
+
+## Multilingual Models
+
+These models support automatic language detection and transcription in dozens of languages.
+
+| Model | Parameters | Notes |
+|-------|-----------|-------|
+| `tiny` | 39M | Smallest and fastest. Good for realtime preview |
+| `base` | 74M | Slightly more accurate than tiny |
+| `small` | 244M | Balanced speed and accuracy |
+| `medium` | 769M | High accuracy for most use cases |
+| `large-v1` | 1.5B | First large model release |
+| `large-v2` | 1.5B | Default model. Best quality/speed balance |
+| `large-v3` | 1.5B | Latest architecture revision |
+| `large-v3-turbo` | 809M | Faster large model with fewer parameters |
+
+## English-Only Models
+
+English-only models skip the language detection step and are slightly more accurate for English audio.
+
+| Model | Parameters |
+|-------|-----------|
+| `tiny.en` | 39M |
+| `base.en` | 74M |
+| `small.en` | 244M |
+| `medium.en` | 769M |
+
+<Callout title="Recommended configuration" type="info">
+  Use `large-v2` as your main model for the best balance of accuracy and speed. Pair it with `tiny` or `base` as the realtime model for responsive live preview. If you only transcribe English, the `.en` variants offer a small accuracy boost for the realtime model.
+</Callout>

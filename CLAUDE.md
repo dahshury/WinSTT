@@ -4,86 +4,112 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-WinSTT is a real-time Speech-to-Text system with a Python backend (`server/`) and a frontend (`frontend/`). The server is a hexagonal-architecture refactor of the monolith at `examples/RealtimeSTT/RealtimeSTT/audio_recorder.py`.
+WinSTT is a Windows speech-to-text desktop application with a Python backend (WebSocket STT server) and an Electron frontend. The two communicate over dual WebSocket channels (control JSON + binary audio data).
+
+## Repository Structure
+
+```
+WinSTT/
+├── server/          # Python STT engine (hexagonal architecture)
+├── frontend/        # Electron + Next.js 16 desktop app (FSD architecture)
+├── spec/            # OpenAPI spec (single source of truth for shared types)
+└── examples/        # Reference monolith + skill guides
+```
+
+Each sub-project has its own detailed `CLAUDE.md`:
+- `server/CLAUDE.md` — hexagonal architecture rulebook, layer hierarchy, port/adapter patterns, threading model
+- `frontend/CLAUDE.md` — Feature-Sliced Design rulebook, layer/segment/slice conventions, import contracts
 
 ## Commands
 
-### Server (working directory: `server/`)
+### Server (Python — run from `server/`)
 
 | Command | Description |
 |---|---|
-| `make` or `make all` | Run format + lint + mypy + tests (the full check) |
+| `make` | Full check: format + lint + mypy + tests |
 | `uv run pytest` | Run all tests |
-| `uv run pytest tests/unit/recorder/test_state_machine.py` | Run a single test file |
-| `uv run pytest tests/unit/ -k "test_name"` | Run a specific test by name |
-| `uv run ruff format .` | Format code |
+| `uv run pytest tests/unit/recorder/test_state_machine.py` | Single test file |
+| `uv run pytest -k "test_name"` | Single test by name |
+| `uv run ruff format .` | Format |
 | `uv run ruff check . --fix` | Lint with auto-fix |
-| `uv run mypy src` | Type check (strict mode) |
+| `uv run mypy src/ --strict` | Type check (strict mode, zero errors required) |
 
-### Frontend (working directory: `frontend/`)
+### Frontend (TypeScript — run from `frontend/`)
 
 | Command | Description |
 |---|---|
-| `bun typecheck` | TypeScript type checking (NOT `npx tsc`) |
-| `bun dev` | Start development server |
-| `bun build` | Production build |
-| `bun lint` | ESLint |
+| `bun dev` | Next.js dev server |
+| `bun electron:dev` | Full Electron + Next.js dev |
+| `bun build` | Production Next.js build |
+| `bun electron:build` | Build distributable Electron app |
+| `bun typecheck` | TypeScript type checking |
+| `bun lint` | Biome linting |
+| `bun lint:fix` | Biome lint with auto-fix |
+| `bun format` | Biome format |
+| `bun test` | Run tests (Bun test runner) |
+| `bun generate` | Regenerate TS types from OpenAPI spec |
+| `bun knip` | Detect unused exports/files |
 
-## Server Architecture
+## Architecture
 
-### Hexagonal Architecture (Ports & Adapters)
+### Type Contract: OpenAPI Spec
 
-```
-server/src/
-├── building_blocks/          # Shared primitives: Clock, EventBus, Worker, types, errors
-├── recorder/
-│   ├── domain/
-│   │   ├── ports/            # Abstract interfaces (IAudioSource, ITranscriber, IVoiceActivityDetector, IWakeWordDetector)
-│   │   ├── state_machine.py  # RecorderState: INACTIVE → LISTENING/WAKEWORD → RECORDING → TRANSCRIBING → INACTIVE
-│   │   ├── config.py         # Pydantic config hierarchy (AudioConfig, VADConfig, TranscriptionConfig, etc.)
-│   │   ├── events.py         # Domain events (frozen dataclasses)
-│   │   └── errors.py         # Domain error hierarchy (extends DomainError)
-│   ├── application/
-│   │   ├── recorder_service.py  # Orchestrator - wires ports together
-│   │   ├── pipeline.py          # RecordingPipeline (Worker thread for audio processing)
-│   │   └── dto.py               # Data transfer objects
-│   ├── infrastructure/       # Adapters: PyAudioSource, FileAudioSource, WebRTCVAD, SileroVAD, CompositeVAD,
-│   │                         #   WhisperTranscriber, RealtimeTranscriber, PorcupineDetector, OWWDetector
-│   ├── bootstrap.py          # DI wiring via Kink container
-│   ├── client.py             # AudioToTextRecorderClient (WebSocket client)
-│   └── __init__.py           # AudioToTextRecorder facade (backward-compatible with monolith's 100+ kwargs)
-└── stt_server/               # WebSocket STT server (control + data channels)
-```
+`spec/openapi.yaml` is the single source of truth for all shared types (WebSocket events, control commands, settings schemas, IPC payloads). Changes flow:
 
-### Key Patterns
+1. Edit `spec/openapi.yaml`
+2. Run `bun generate` in `frontend/` to regenerate `spec/generated/ts/schema.d.ts`
+3. Python server reads the same schemas via its domain events/config
 
-- **Ports**: ABCs in `domain/ports/` define contracts (`IAudioSource`, `ITranscriber`, `IVoiceActivityDetector`, `IWakeWordDetector`). Multiple adapters per port (e.g., WebRTC + Silero for VAD, Picovoice + OpenWakeWord for wake words).
-- **DI**: Kink container. `bootstrap.py` wires all dependencies. Constructor injection throughout.
-- **Events**: Thread-safe `EventBus` pub/sub. Domain events decouple components. Legacy callbacks are bridged to events during bootstrap.
-- **State Machine**: Enforces valid `RecorderState` transitions; invalid transitions raise `InvalidStateTransition`.
-- **Threading**: `Worker` base class for background threads. Pipeline runs audio reader + VAD + transcription in separate thread.
-- **Clock**: Abstracted for testability (`Clock.system_clock()` vs `Clock.fixed()`).
-- **Types**: `AudioChunk = bytes`, `AudioArray = NDArray[np.float32]`, `SampleRate`, `BufferSize` (NewType wrappers).
+### Server Architecture (Hexagonal / Ports & Adapters)
 
-### Testing
+- **Domain ports** (`src/recorder/domain/ports/`): Pure ABCs — `IAudioSource`, `ITranscriber`, `IVoiceActivityDetector`, `IWakeWordDetector`
+- **Infrastructure** (`src/recorder/infrastructure/`): Concrete adapters with `@override` on every method
+- **Application** (`src/recorder/application/`): `RecorderService` (orchestrator) + `RecordingPipeline` (Worker thread)
+- **Bootstrap** (`src/recorder/bootstrap.py`): Sole composition root (Kink DI container)
+- **Facade** (`src/recorder/__init__.py`): `AudioToTextRecorder` — backward-compatible 100+ kwargs public API
+- **WebSocket Server** (`src/stt_server/server.py`): Dual-channel (control JSON + binary audio data)
 
-- `tests/unit/` — pure domain logic with mocked deps
-- `tests/integration/` — multi-component collaboration (bootstrap, pipeline, facade, e2e)
-- `tests/fakes/` — test doubles: `FakeAudioSource`, `FakeTranscriber`, `FakeVAD`, `FakeWakeWord`
-- 100% coverage required (`fail_under = 100`), with infrastructure/server/client excluded via `omit`
+Dependencies point inward. Domain never imports infrastructure. Only bootstrap and facade instantiate concrete adapters.
 
-## Server Code Standards
+### Frontend Architecture (Electron + Next.js + FSD)
 
-- **Python 3.11+**, `from __future__ import annotations` in all files
-- **mypy --strict** with Pydantic plugin; overrides for untyped libs (pyaudio, torch, faster_whisper, etc.)
-- **ruff**: line-length 120, rules: E, W, F, I, UP, B, SIM, ANN, RUF
-- **Pre-commit hooks**: trailing-whitespace, ruff format/check, mypy --strict
-- All function signatures must have type annotations
+- **Electron main process** (`electron/main.ts`): Owns the WebSocket connection to the STT server, spawns/kills the Python process, manages tray and windows
+- **Preload bridge** (`electron/preload.ts`): Context bridge exposing IPC channels; strips `IpcRendererEvent` from callbacks
+- **IPC handlers** (`electron/ipc/*.ts`): Modular handlers for settings, hotkey, audio-mute, stt-process, tray, file-transcribe, relay
+- **WebSocket client** (`electron/ws/stt-client.ts`): Dual-channel client that relays events to renderer via IPC
+- **Renderer** (`src/`): Next.js 16 static export with FSD layers — `app/ → views/ → widgets/ → features/ → entities/ → shared/`
+- **Zero WebSocket code in renderer** — all server communication flows through Electron main process via IPC
 
-## Frontend Architecture
+FSD layer `views/` is used instead of `pages/` to avoid Next.js Pages Router conflict.
 
-Uses **Feature-Sliced Design (FSD)**: `app/ → pages/ → widgets/ → features/ → entities/ → shared/`. Each layer may only import from layers below. Every slice exposes a single `index.ts` public API. See `frontend/CLAUDE.md` for the full FSD rulebook.
+### Key Technology Choices
 
-## Monolith Reference
+| Concern | Server | Frontend |
+|---|---|---|
+| Package manager | uv | Bun |
+| Linter/formatter | ruff | Biome 2.x + ultracite |
+| Type checker | mypy --strict | TypeScript strict |
+| Test framework | pytest (100% coverage required) | Bun test runner |
+| DI | Kink | — |
+| State management | EventBus pub/sub | Zustand + TanStack Query |
+| UI components | — | Base UI (baseui) + Styletron |
+| Icons | — | @hugeicons/react + @hugeicons/core-free-icons |
 
-The original monolith lives at `examples/RealtimeSTT/`. The `AudioToTextRecorder` facade in `server/src/recorder/__init__.py` preserves backward compatibility with its 100+ kwargs API, so demo scripts in `server/examples/` (17 scripts) work with minimal changes.
+## Critical Conventions
+
+### Server
+- `from __future__ import annotations` in every Python file
+- `@override` decorator on all ABC method implementations
+- `TYPE_CHECKING` guards for annotation-only imports
+- ruff rules: `E W F I UP B SIM ANN RUF`, line-length 120
+- Event-driven callbacks: legacy `on_*` kwargs are bridged to domain events via `wire_callback()` in bootstrap
+
+### Frontend
+- FSD import contract: layers only import from layers below (never sideways)
+- Barrel files (`index.ts`) with named exports only (no `export *`)
+- Path aliases: `@/*` → `src/`, `@spec/*` → `spec/`, `@electron/*` → `electron/`
+- Biome: tabs, double quotes, 100-char width
+- `output: "export"` — Next.js builds to static HTML loaded by Electron
+
+### CUDA/PyTorch
+Plain `"torch"` from PyPI is CPU-only. The server's `pyproject.toml` uses `[[tool.uv.index]]` with `explicit = true` pointing to `https://download.pytorch.org/whl/cu124` and `[tool.uv.sources]` to resolve CUDA-enabled torch. Don't change this without understanding the implications.

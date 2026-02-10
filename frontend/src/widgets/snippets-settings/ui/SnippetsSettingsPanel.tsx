@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { SettingSection } from "@/entities/setting";
 import { SnippetsTable } from "@/features/manage-snippets";
 import { useSettingsStore } from "@/features/update-settings";
@@ -8,9 +9,10 @@ export function SnippetsSettingsPanel() {
 	const snippets = useSettingsStore((s) => s.settings.snippets) ?? [];
 	const setSettings = useSettingsStore((s) => s.setSettings);
 	const settings = useSettingsStore((s) => s.settings);
+	const t = useTranslations("snippets");
 
 	return (
-		<SettingSection title="Text Snippets">
+		<SettingSection title={t("title")}>
 			<div style={{ padding: "8px 0" }}>
 				<p
 					style={{
@@ -19,7 +21,7 @@ export function SnippetsSettingsPanel() {
 						marginBottom: "12px",
 					}}
 				>
-					Automatically expand short triggers into longer text.
+					{t("description")}
 				</p>
 				<SnippetsTable
 					entries={snippets}

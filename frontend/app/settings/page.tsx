@@ -1,5 +1,10 @@
+import { IntlProvider } from "@/app/providers/IntlProvider";
 import { SettingsPage } from "@/views/settings";
 
 export default function Page() {
-	return <SettingsPage />;
+	return (
+		<IntlProvider>
+			<SettingsPage />
+		</IntlProvider>
+	);
 }

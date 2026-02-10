@@ -7,7 +7,7 @@ export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        DataEvent: components["schemas"]["RealtimeTextEvent"] | components["schemas"]["FullSentenceEvent"] | components["schemas"]["RecordingStartEvent"] | components["schemas"]["RecordingStopEvent"] | components["schemas"]["VadDetectStartEvent"] | components["schemas"]["VadDetectStopEvent"] | components["schemas"]["TranscriptionStartEvent"] | components["schemas"]["WakewordDetectedEvent"] | components["schemas"]["WakewordDetectionStartEvent"] | components["schemas"]["WakewordDetectionEndEvent"] | components["schemas"]["TurnDetectionStartEvent"] | components["schemas"]["TurnDetectionStopEvent"];
+        DataEvent: components["schemas"]["RealtimeTextEvent"] | components["schemas"]["FullSentenceEvent"] | components["schemas"]["RecordingStartEvent"] | components["schemas"]["RecordingStopEvent"] | components["schemas"]["LoopbackStartedEvent"] | components["schemas"]["LoopbackStoppedEvent"] | components["schemas"]["VadDetectStartEvent"] | components["schemas"]["VadDetectStopEvent"] | components["schemas"]["TranscriptionStartEvent"] | components["schemas"]["WakewordDetectedEvent"] | components["schemas"]["WakewordDetectionStartEvent"] | components["schemas"]["WakewordDetectionEndEvent"] | components["schemas"]["TurnDetectionStartEvent"] | components["schemas"]["TurnDetectionStopEvent"] | components["schemas"]["ModelDownloadStartEvent"] | components["schemas"]["ModelDownloadProgressEvent"] | components["schemas"]["ModelDownloadCompleteEvent"];
         RealtimeTextEvent: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -30,6 +30,21 @@ export interface components {
              * @enum {string}
              */
             type: "recording_start";
+        };
+        LoopbackStartedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "loopback_started";
+            deviceName?: string;
+        };
+        LoopbackStoppedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "loopback_stopped";
         };
         RecordingStopEvent: {
             /**
@@ -96,6 +111,42 @@ export interface components {
              */
             type: "stop_turn_detection";
         };
+        ModelDownloadStartEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "model_download_start";
+            model: string;
+        };
+        ModelDownloadProgressEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "model_download_progress";
+            model: string;
+            /** @description Download progress as a fraction (0.0 to 1.0) */
+            progress: number;
+            /** @description Bytes downloaded so far */
+            downloaded_bytes?: number;
+            /** @description Total bytes to download */
+            total_bytes?: number;
+            /** @description Download speed in bytes per second */
+            speed_bps?: number;
+            /** @description Estimated seconds remaining */
+            eta_seconds?: number;
+        };
+        ModelDownloadCompleteEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "model_download_complete";
+            model: string;
+            /** @description True if the download was cancelled by the user */
+            cancelled?: boolean;
+        };
         SetParameterCommand: {
             /** @constant */
             command: "set_parameter";
@@ -135,7 +186,7 @@ export interface components {
             message: string;
         };
         /** @enum {string} */
-        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words";
+        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing";
         /** @enum {string} */
         AllowedMethod: "set_microphone" | "abort" | "stop" | "clear_audio_queue" | "wakeup" | "shutdown" | "text";
         /** @enum {string} */
@@ -146,12 +197,61 @@ export interface components {
         DeviceType: "auto" | "cpu";
         /** @enum {string} */
         RecorderState: "inactive" | "listening" | "wakeword" | "recording" | "transcribing";
+        /** @enum {string} */
+        TranscriberBackend: "faster_whisper" | "onnx_asr";
+        /** @enum {string} */
+        ModelFamily: "whisper" | "nemo" | "gigaam" | "kaldi" | "t-one";
+        ModelInfo: {
+            id: string;
+            displayName: string;
+            backend: components["schemas"]["TranscriberBackend"];
+            family: components["schemas"]["ModelFamily"];
+            languages: string[];
+            supportsLanguageDetection: boolean;
+            sizeLabel: string;
+            supportsRealtime: boolean;
+            onnxModelName?: string | null;
+            description?: string;
+        };
+        LoopbackDevice: {
+            index: number;
+            name: string;
+            defaultSampleRate: number;
+            maxOutputChannels: number;
+        };
+        ListLoopbackDevicesCommand: {
+            /** @constant */
+            command: "list_loopback_devices";
+            request_id?: number;
+        };
+        StartLoopbackCommand: {
+            /** @constant */
+            command: "start_loopback";
+            device_index: number;
+        };
+        StopLoopbackCommand: {
+            /** @constant */
+            command: "stop_loopback";
+        };
+        ListModelsCommand: {
+            /** @constant */
+            command: "list_models";
+        };
+        ListModelsResponse: {
+            /** @constant */
+            status: "success";
+            /** @constant */
+            command: "list_models";
+            models: components["schemas"]["ModelInfo"][];
+        };
         ModelSettings: {
-            model?: components["schemas"]["WhisperModel"];
-            realtimeModel?: components["schemas"]["WhisperModel"];
+            model?: string;
+            realtimeModel?: string;
             language?: string;
             computeType?: components["schemas"]["ComputeType"];
             device?: components["schemas"]["DeviceType"];
+            backend?: components["schemas"]["TranscriberBackend"];
+            onnxQuantization?: string;
             beamSize?: number;
             beamSizeRealtime?: number;
             initialPrompt?: string;
@@ -186,6 +286,13 @@ export interface components {
             minimizeToTray?: boolean;
             startMinimized?: boolean;
             muteSystemAudioWhileDictating?: boolean;
+            recordingSound?: boolean;
+            recordingSoundPath?: string;
+            /** @enum {string} */
+            fileTranscriptionFormat?: "txt" | "srt";
+            /** @enum {string} */
+            recordingMode?: "ptt" | "toggle" | "listen";
+            loopbackDeviceIndex?: number | null;
         };
         HotkeySettings: {
             /** @description Electron accelerator string */

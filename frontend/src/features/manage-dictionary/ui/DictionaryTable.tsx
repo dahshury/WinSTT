@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { components } from "@spec/schema";
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { type AddDictionaryEntry, addDictionaryEntrySchema } from "@/shared/config/settings-schema";
@@ -24,6 +25,8 @@ export interface DictionaryTableProps {
 
 export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: DictionaryTableProps) {
 	const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+	const t = useTranslations("dictionary");
+	const tc = useTranslations("common");
 	const {
 		register,
 		handleSubmit,
@@ -56,25 +59,25 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 		<div className="flex flex-col gap-3">
 			<form className="flex items-end gap-2" onSubmit={handleSubmit(onSubmit)}>
 				<div className="flex-1">
-					<FormControl error={errors.find?.message} label="Find">
+					<FormControl error={errors.find?.message} label={t("find")}>
 						<TextField
 							error={!!errors.find}
 							name={findReg.name}
 							onBlur={findReg.onBlur}
 							onChange={findReg.onChange}
-							placeholder="Find..."
+							placeholder={t("findPlaceholder")}
 							ref={findReg.ref}
 						/>
 					</FormControl>
 				</div>
 				<div className="flex-1">
-					<FormControl error={errors.replace?.message} label="Replace">
+					<FormControl error={errors.replace?.message} label={t("replace")}>
 						<TextField
 							error={!!errors.replace}
 							name={replaceReg.name}
 							onBlur={replaceReg.onBlur}
 							onChange={replaceReg.onChange}
-							placeholder="Replace with..."
+							placeholder={t("replacePlaceholder")}
 							ref={replaceReg.ref}
 						/>
 					</FormControl>
@@ -84,7 +87,7 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 					disabled={isAddDisabled}
 					type="submit"
 				>
-					Add
+					{tc("add")}
 				</Button>
 			</form>
 			<div className="flex flex-col gap-1">
@@ -107,26 +110,24 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 					</div>
 				))}
 				{entries.length === 0 && (
-					<p className="py-4 text-center text-[13px] text-foreground-muted">
-						No dictionary entries yet
-					</p>
+					<p className="py-4 text-center text-[13px] text-foreground-muted">{t("emptyState")}</p>
 				)}
 			</div>
 			{onClearAll && (
 				<>
 					<ConfirmDialog
-						description="All dictionary entries will be permanently removed. This cannot be undone."
+						description={t("clearDescription")}
 						onConfirm={onClearAll}
 						onOpenChange={setClearConfirmOpen}
 						open={clearConfirmOpen}
-						title="Delete All Dictionary Entries?"
+						title={t("clearTitle")}
 					/>
 					<Button
 						className="h-7 self-end rounded-md border border-error bg-transparent px-2.5 font-medium text-error text-xs transition-colors duration-150 hover:bg-error-dim"
 						disabled={entries.length === 0}
 						onClick={() => setClearConfirmOpen(true)}
 					>
-						Delete All
+						{tc("deleteAll")}
 					</Button>
 				</>
 			)}

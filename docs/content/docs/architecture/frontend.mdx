@@ -1,0 +1,76 @@
+---
+title: Frontend Architecture
+description: Electron + Next.js with Feature-Sliced Design
+---
+
+The WinSTT frontend is an Electron application with a Next.js 16 renderer. The renderer is built as a static export and loaded directly by Electron. All server communication happens in the Electron main process -- the renderer has zero WebSocket code.
+
+## Process Architecture
+
+### Electron Main Process
+
+The main process handles:
+
+- **WebSocket connection** to the Python STT server (dual channels: control JSON + binary audio)
+- **Python process management** -- spawning and killing the STT server
+- **System tray** integration and window management
+- **Global hotkey** registration and event forwarding
+- **IPC relay** between the WebSocket connection and the renderer
+
+Key files:
+
+- `electron/main.ts` -- Entry point, window creation, process lifecycle
+- `electron/ws/stt-client.ts` -- Dual-channel WebSocket client
+- `electron/ipc/*.ts` -- Modular IPC handlers (settings, hotkey, audio-mute, stt-process, tray, file-transcribe, relay)
+
+### Preload Bridge
+
+`electron/preload.ts` exposes IPC channels to the renderer via `contextBridge`. It strips `IpcRendererEvent` from callbacks so renderer code receives clean arguments.
+
+### Renderer
+
+The renderer is a Next.js 16 app with `output: "export"` (static HTML). It uses Feature-Sliced Design for code organization.
+
+## Feature-Sliced Design Layers
+
+```
+src/
+  app/        Bootstrap, providers, global styles
+  views/      Route-mapped pages (renamed from pages/ to avoid Next.js conflict)
+  widgets/    Composite blocks combining features and entities
+  features/   Reusable user interactions
+  entities/   Business domain objects
+  shared/     Foundation utilities, UI primitives, config
+```
+
+### Import Contract
+
+Each layer may only import from layers below it. Never sideways.
+
+| Layer | May Import From |
+|-------|----------------|
+| app | all layers |
+| views | widgets, features, entities, shared |
+| widgets | features, entities, shared |
+| features | entities, shared |
+| entities | shared |
+| shared | nothing |
+
+## State Management
+
+| Tool | Purpose |
+|------|---------|
+| Zustand | Client state (UI state, local stores) |
+| TanStack Query | Server state (settings sync, model catalog) |
+
+## Technology Stack
+
+| Concern | Choice |
+|---------|--------|
+| Package manager | Bun |
+| Linter/formatter | Biome 2.x + ultracite |
+| Type checker | TypeScript strict |
+| Test runner | Bun test |
+| UI components | Base UI (baseui) + Styletron |
+| Styling (layout) | Tailwind v4 |
+| Icons | @hugeicons/react + @hugeicons/core-free-icons |

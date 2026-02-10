@@ -10,12 +10,23 @@ export interface FormControlProps {
 	error?: string;
 	/** Help text shown in an info-icon tooltip next to the label */
 	tooltip?: string;
+	/** Visually dim the label, caption, and children */
+	disabled?: boolean;
 	children: ReactNode;
 }
 
-export function FormControl({ label, caption, error, tooltip, children }: FormControlProps) {
+export function FormControl({
+	label,
+	caption,
+	error,
+	tooltip,
+	disabled,
+	children,
+}: FormControlProps) {
 	return (
-		<Field.Root className="flex flex-col">
+		<Field.Root
+			className={disabled ? "flex cursor-not-allowed flex-col opacity-40" : "flex flex-col"}
+		>
 			{label && (
 				<div className="flex items-center gap-1">
 					<Field.Label className="font-medium text-[13px] text-foreground leading-4">
@@ -29,7 +40,7 @@ export function FormControl({ label, caption, error, tooltip, children }: FormCo
 					{caption}
 				</Field.Description>
 			)}
-			<div className="mt-1.5">{children}</div>
+			<div className={disabled ? "pointer-events-none mt-1.5" : "mt-1.5"}>{children}</div>
 			{error && (
 				<Field.Error className="mt-0.5 text-[11px] text-error leading-[14px]">{error}</Field.Error>
 			)}

@@ -225,7 +225,121 @@ BEFORE creating mock responses:
   If uncertain: Include all documented fields
 ```
 
-## Anti-Pattern 5: Integration Tests as Afterthought
+## Anti-Pattern 5: Shallow Bug Reproduction
+
+**The violation:**
+```python
+# Bug: PortAudio segfaults when loopback start/stop interleave concurrently.
+# Stack trace shows 3 capture threads stuck in pyaudiowpatch.read().
+
+# ❌ BAD: "reproduces" the bug by testing helper methods with fakes
+def test_clear_feed_buffer(self):
+    service._feed_buffer = bytearray(b"\x01\x02\x03")
+    service.clear_feed_buffer()
+    assert len(service._feed_buffer) == 0
+
+def test_set_external_audio_mode(self):
+    service.set_external_audio_mode(True)
+    assert service._external_audio_mode is True
+```
+
+**Why this is wrong:**
+- **Tests verify helper methods, not the actual failure** — the segfault is in PortAudio's C library during concurrent stream operations, not in a Python bytearray
+- **Zero chance of catching the real bug** — these pass whether or not the lock exists, whether or not `stop_stream()` is called before `join()`
+- **Gives false confidence** — "all tests pass" means nothing when no test exercises the failure path
+- **AI agents default to this** — they test what's easy (pure Python methods) not what's hard (real hardware, real concurrency)
+
+**The fix:**
+```python
+# ✅ GOOD: Reproduces the EXACT conditions that caused the crash
+
+@pytest.mark.skipif(DEVICE_INDEX is None, reason="No loopback device")
+def test_rapid_start_stop_cycles(self):
+    """Without the fix, this segfaults — 3 threads in pyaudiowpatch.read()."""
+    lc = LoopbackCapture()      # Real LoopbackCapture
+    stub = RecorderStub()       # Lightweight stub for recorder interface
+
+    for i in range(10):
+        lc.start(stub, DEVICE_INDEX)   # Real pyaudiowpatch, real PortAudio
+        time.sleep(0.05)               # Minimal delay — the bug needs near-zero gaps
+        lc.stop(stub)                  # Real stream close, real thread join
+        assert not lc.is_active
+
+def test_concurrent_start_stop_threads(self):
+    """Worst-case race: start and stop from different threads simultaneously."""
+    lc = LoopbackCapture()
+    stub = RecorderStub()
+    barrier = threading.Barrier(2)
+    errors = []
+
+    def start_worker():
+        barrier.wait()
+        for _ in range(5):
+            lc.start(stub, DEVICE_INDEX)
+            time.sleep(0.02)
+
+    def stop_worker():
+        barrier.wait()
+        for _ in range(5):
+            lc.stop(stub)
+            time.sleep(0.02)
+
+    t1 = threading.Thread(target=start_worker)
+    t2 = threading.Thread(target=stop_worker)
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+    assert not errors
+```
+
+### The Depth Rule
+
+When reproducing a bug, the test must exercise **the same code path that crashed**:
+
+| Bug Location | Shallow (Wrong) | Deep (Right) |
+|---|---|---|
+| PortAudio C library segfault | Test Python buffer helper | Open real PortAudio streams, race start/stop |
+| WebSocket connection drop | Mock WebSocket, assert call count | Real WebSocket server, kill connection mid-transfer |
+| CUDA out-of-memory | Test tensor shape math | Load real model, feed real batch, measure VRAM |
+| File lock contention | Test lock acquire/release | Open real file from 2 threads, race writes |
+| SQL deadlock | Test query builder | Real database, concurrent transactions |
+
+**Key insight:** If your test would pass even without the fix, it doesn't reproduce the bug.
+
+### The Stub vs. Real Decision
+
+Use **real** dependencies for the component that crashed. Use **stubs** only for components the crashing component *calls into* that are expensive but irrelevant to the failure:
+
+```
+Bug in: LoopbackCapture (PortAudio stream management)
+  → LoopbackCapture: REAL (this is where the bug lives)
+  → pyaudiowpatch: REAL (this is the library that segfaults)
+  → AudioToTextRecorder: STUB (LoopbackCapture calls its methods,
+    but the segfault has nothing to do with the recorder's internals)
+```
+
+The stub must implement the same interface the real component exposes — but only the methods actually called. Don't stub the thing that's broken. Don't use fakes for the layer where the crash occurs.
+
+### Gate Function
+
+```
+BEFORE writing a bug reproduction test:
+  Ask: "If I remove the fix, does this test FAIL or CRASH?"
+
+  IF it still passes without the fix:
+    STOP — You're testing helpers, not reproducing the bug.
+    Go deeper: use real libraries, real hardware, real concurrency.
+
+  IF it crashes/fails without the fix AND passes with it:
+    ✓ You've reproduced the bug at the right depth.
+
+  Ask: "Does this test exercise the EXACT code path from the stack trace?"
+
+  IF no:
+    STOP — Trace the stack, identify the real failure point,
+    and write a test that hits that exact path.
+```
+
+## Anti-Pattern 6: Integration Tests as Afterthought
 
 **The violation:**
 ```
@@ -278,6 +392,7 @@ TDD cycle:
 | Test-only methods in production | Move to test utilities |
 | Mock without understanding | Understand dependencies first, mock minimally |
 | Incomplete mocks | Mirror real API completely |
+| Shallow bug reproduction | Use real libs/hardware for the crashing component |
 | Tests as afterthought | TDD - tests first |
 | Over-complex mocks | Consider integration tests |
 
@@ -289,6 +404,10 @@ TDD cycle:
 - Test fails when you remove mock
 - Can't explain why mock is needed
 - Mocking "just to be safe"
+- Bug reproduction test still passes when fix is reverted
+- Testing helper methods instead of the crashing code path
+- Using fakes for the component that actually crashed
+- "Can't test this because it needs real hardware" (yes you can — skip on CI if needed)
 
 ## The Bottom Line
 

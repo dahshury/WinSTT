@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { components } from "@spec/schema";
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { type AddSnippetEntry, addSnippetEntrySchema } from "@/shared/config/settings-schema";
@@ -23,6 +24,8 @@ export interface SnippetsTableProps {
 
 export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: SnippetsTableProps) {
 	const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+	const t = useTranslations("snippets");
+	const tc = useTranslations("common");
 	const {
 		register,
 		handleSubmit,
@@ -50,25 +53,25 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 		<div className="flex flex-col gap-3">
 			<form className="flex items-end gap-2" onSubmit={handleSubmit(onSubmit)}>
 				<div className="w-1/3">
-					<FormControl error={errors.trigger?.message} label="Trigger">
+					<FormControl error={errors.trigger?.message} label={t("trigger")}>
 						<TextField
 							error={!!errors.trigger}
 							name={triggerReg.name}
 							onBlur={triggerReg.onBlur}
 							onChange={triggerReg.onChange}
-							placeholder="Trigger..."
+							placeholder={t("triggerPlaceholder")}
 							ref={triggerReg.ref}
 						/>
 					</FormControl>
 				</div>
 				<div className="flex-1">
-					<FormControl error={errors.expansion?.message} label="Expansion">
+					<FormControl error={errors.expansion?.message} label={t("expansion")}>
 						<TextField
 							error={!!errors.expansion}
 							name={expansionReg.name}
 							onBlur={expansionReg.onBlur}
 							onChange={expansionReg.onChange}
-							placeholder="Expands to..."
+							placeholder={t("expansionPlaceholder")}
 							ref={expansionReg.ref}
 						/>
 					</FormControl>
@@ -78,7 +81,7 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 					disabled={isAddDisabled}
 					type="submit"
 				>
-					Add
+					{tc("add")}
 				</Button>
 			</form>
 			<div className="flex flex-col gap-1">
@@ -101,24 +104,24 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 					</div>
 				))}
 				{entries.length === 0 && (
-					<p className="py-4 text-center text-[13px] text-foreground-muted">No snippets yet</p>
+					<p className="py-4 text-center text-[13px] text-foreground-muted">{t("emptyState")}</p>
 				)}
 			</div>
 			{onClearAll && (
 				<>
 					<ConfirmDialog
-						description="All snippets will be permanently removed. This cannot be undone."
+						description={t("clearDescription")}
 						onConfirm={onClearAll}
 						onOpenChange={setClearConfirmOpen}
 						open={clearConfirmOpen}
-						title="Delete All Snippets?"
+						title={t("clearTitle")}
 					/>
 					<Button
 						className="h-7 self-end rounded-md border border-error bg-transparent px-2.5 font-medium text-error text-xs transition-colors duration-150 hover:bg-error-dim"
 						disabled={entries.length === 0}
 						onClick={() => setClearConfirmOpen(true)}
 					>
-						Delete All
+						{tc("deleteAll")}
 					</Button>
 				</>
 			)}

@@ -42,6 +42,7 @@ import argparse
 import asyncio
 import base64
 import logging
+import os
 import signal
 import sys
 from collections import deque
@@ -163,11 +164,14 @@ from scipy.signal import resample  # noqa: E402
 from websockets.asyncio.server import ServerConnection  # noqa: E402
 
 from src.recorder import AudioToTextRecorder  # noqa: E402
+from src.recorder.domain.events import DownloadProgress  # noqa: E402
+from src.stt_server.loopback import LoopbackCapture  # noqa: E402
 
 init()
 
 global_args: argparse.Namespace | None = None
 recorder: AudioToTextRecorder | None = None
+loopback_capture = LoopbackCapture()
 recorder_config: dict[str, Any] = {}
 recorder_ready = threading.Event()
 recorder_thread: threading.Thread | None = None
@@ -198,6 +202,7 @@ allowed_parameters: list[str] = [
     "speech_end_silence_start",
     "is_recording",
     "use_wake_words",
+    "silence_timing",
 ]
 
 # Queues and connections for control and data
@@ -264,7 +269,7 @@ def text_detected(text: str, loop: asyncio.AbstractEventLoop) -> None:
 
     text = preprocess_text(text)
 
-    if silence_timing:
+    if silence_timing and not loopback_capture.is_active:
         assert recorder is not None, "recorder must be initialized before text_detected is called"
         assert global_args is not None, "global_args must be set before text_detected is called"
 
@@ -330,7 +335,7 @@ def text_detected(text: str, loop: asyncio.AbstractEventLoop) -> None:
             flush=True,
             end="",
         )
-    else:
+    elif debug_logging:
         print(f"\r[{timestamp}] {bcolors.OKCYAN}{text}{bcolors.ENDC}", flush=True, end="")
 
 
@@ -397,6 +402,45 @@ def on_wakeword_detection_end(loop: asyncio.AbstractEventLoop) -> None:
     asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
 
 
+# Latest download state — replayed to data clients that connect mid-download.
+_download_state: str | None = None
+
+# Cancel flag — set via the "cancel_download" control command.
+_cancel_download_requested: bool = False
+
+
+def on_model_download_start(model: str, loop: asyncio.AbstractEventLoop) -> None:
+    global _download_state, _cancel_download_requested
+    _cancel_download_requested = False
+    print(f"{bcolors.OKGREEN}[download] start: {model}{bcolors.ENDC}")
+    message = json.dumps({"type": "model_download_start", "model": model})
+    _download_state = message
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+
+def on_model_download_progress(info: DownloadProgress, loop: asyncio.AbstractEventLoop) -> None:
+    global _download_state
+    message = json.dumps({
+        "type": "model_download_progress",
+        "model": info.model,
+        "progress": info.progress,
+        "downloaded_bytes": info.downloaded_bytes,
+        "total_bytes": info.total_bytes,
+        "speed_bps": info.speed_bps,
+        "eta_seconds": info.eta_seconds,
+    })
+    _download_state = message
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+
+def on_model_download_complete(model: str, loop: asyncio.AbstractEventLoop) -> None:
+    global _download_state
+    print(f"{bcolors.OKGREEN}[download] complete: {model}{bcolors.ENDC}")
+    message = json.dumps({"type": "model_download_complete", "model": model})
+    _download_state = None
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+
 def on_transcription_start(
     _audio_bytes: np.ndarray[Any, np.dtype[np.int16]],
     loop: asyncio.AbstractEventLoop,
@@ -411,8 +455,13 @@ def on_transcription_start(
     asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
 
 
+def on_audio_level(level: float, loop: asyncio.AbstractEventLoop) -> None:
+    message = json.dumps({"type": "audio_level", "level": round(level, 4)})
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+
 def on_turn_detection_start(loop: asyncio.AbstractEventLoop) -> None:
-    print("&&& stt_server on_turn_detection_start")
+    debug_print("on_turn_detection_start")
     message = json.dumps(
         {
             "type": "start_turn_detection",
@@ -422,7 +471,7 @@ def on_turn_detection_start(loop: asyncio.AbstractEventLoop) -> None:
 
 
 def on_turn_detection_stop(loop: asyncio.AbstractEventLoop) -> None:
-    print("&&& stt_server on_turn_detection_stop")
+    debug_print("on_turn_detection_stop")
     message = json.dumps(
         {
             "type": "stop_turn_detection",
@@ -573,11 +622,12 @@ def parse_arguments() -> argparse.Namespace:
         "-s",
         "--silence_timing",
         action="store_true",
-        default=True,
+        default=False,
         help=(
             "Enable dynamic adjustment of silence duration for sentence detection. "
             "Adjusts post-speech silence duration based on detected sentence structure "
-            "and punctuation. Default is False."
+            "and punctuation. Default is False. Automatically enabled by the frontend "
+            "when recording mode is set to Toggle."
         ),
     )
 
@@ -669,10 +719,10 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--enable_realtime_transcription",
         action="store_true",
-        default=True,
+        default=False,
         help=(
             "Enable continuous real-time transcription of audio as it is received. "
-            "When enabled, transcriptions are sent in near real-time. Default is True."
+            "When enabled, transcriptions are sent in near real-time."
         ),
     )
 
@@ -857,10 +907,10 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--use_main_model_for_realtime",
         action="store_true",
+        default=False,
         help=(
-            "Enable this option if you want to use the main model for real-time "
-            "transcription, instead of the smaller, faster real-time model. Using the "
-            "main model may provide better accuracy but at the cost of higher "
+            "Use the main model for real-time transcription instead of loading a "
+            "separate smaller model. Saves GPU memory at the cost of slightly higher "
             "processing time."
         ),
     )
@@ -925,6 +975,20 @@ def parse_arguments() -> argparse.Namespace:
         help="Enable logging of incoming audio chunks (periods)",
     )
 
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="",
+        help='Transcriber backend override. Use "faster_whisper" or "onnx_asr". Default is auto-detect from model.',
+    )
+
+    parser.add_argument(
+        "--onnx_quantization",
+        type=str,
+        default="",
+        help="Quantization level for onnx-asr models (e.g. int8, fp16). Default is none.",
+    )
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -967,14 +1031,35 @@ def _recorder_thread(loop: asyncio.AbstractEventLoop) -> None:
     for key, value in recorder_config.items():
         display_val = str(value)
         if callable(value):
-            display_val = f"<callback>"
+            display_val = "<callback>"
         print(f"  {bcolors.OKBLUE}{key:<{max_key_len}}{bcolors.ENDC}  │ {display_val}")
     print(separator)
-    recorder = AudioToTextRecorder(**recorder_config)
+    try:
+        recorder = AudioToTextRecorder(**recorder_config)
+    except Exception as e:
+        from src.recorder.infrastructure.whisper_transcriber import DownloadCancelledError
+
+        if isinstance(e, DownloadCancelledError):
+            global _download_state
+            model_name = recorder_config.get("model", "unknown")
+            print(f"{bcolors.WARNING}[download] cancelled: {model_name}{bcolors.ENDC}")
+            message = json.dumps({
+                "type": "model_download_complete",
+                "model": model_name,
+                "cancelled": True,
+            })
+            _download_state = None
+            asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+        raise
     print(f"{bcolors.OKGREEN}Models loaded, warming up CUDA kernels...{bcolors.ENDC}")
     recorder.warmup()
     print(f"{bcolors.OKGREEN}{bcolors.BOLD}RealtimeSTT initialized{bcolors.ENDC}")
     recorder_ready.set()
+
+    # Broadcast server_ready to all connected control clients
+    msg = json.dumps({"type": "server_ready"})
+    for ws in list(control_connections):
+        asyncio.run_coroutine_threadsafe(ws.send(msg), loop)
 
     def process_text(full_sentence: str) -> None:
         global prev_text
@@ -1034,18 +1119,166 @@ def decode_and_resample(
     return result
 
 
+SUPPORTED_AUDIO_EXT = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".wma"}
+SUPPORTED_VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
+SUPPORTED_FILE_EXT = SUPPORTED_AUDIO_EXT | SUPPORTED_VIDEO_EXT
+
+
+def _send_file_event(event: dict[str, Any], loop: asyncio.AbstractEventLoop) -> None:
+    asyncio.run_coroutine_threadsafe(audio_queue.put(json.dumps(event)), loop)
+
+
+def _format_srt_time(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds % 1) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _format_srt(segments: list[Any]) -> str:
+    lines: list[str] = []
+    for i, seg in enumerate(segments, 1):
+        start = _format_srt_time(seg.start)
+        end = _format_srt_time(seg.end)
+        lines.append(f"{i}")
+        lines.append(f"{start} --> {end}")
+        lines.append(seg.text.strip())
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _handle_transcribe_file(file_path: str, request_id: str, loop: asyncio.AbstractEventLoop, fmt: str = "txt") -> None:
+    """Transcribe an audio/video file using the already-loaded Whisper model."""
+    file_name = Path(file_path).name
+    try:
+        p = Path(file_path)
+        if not p.exists():
+            _send_file_event(
+                {
+                    "type": "file_transcription_error",
+                    "request_id": request_id,
+                    "file_path": file_path,
+                    "error": "File not found",
+                },
+                loop,
+            )
+            return
+
+        ext = p.suffix.lower()
+        if ext not in SUPPORTED_FILE_EXT:
+            _send_file_event(
+                {
+                    "type": "file_transcription_error",
+                    "request_id": request_id,
+                    "file_path": file_path,
+                    "error": f"Unsupported format: {ext}",
+                },
+                loop,
+            )
+            return
+
+        assert recorder is not None, "Recorder must be initialized"
+
+        _send_file_event(
+            {
+                "type": "file_transcription_progress",
+                "request_id": request_id,
+                "file_path": file_path,
+                "file_name": file_name,
+                "progress": 0.1,
+                "message": "Transcribing...",
+            },
+            loop,
+        )
+
+        # Access the transcriber's underlying WhisperModel (not BatchedInferencePipeline)
+        transcriber = recorder._service._transcriber  # type: ignore[union-attr]
+        model = transcriber._model  # type: ignore[union-attr]
+
+        # BatchedInferencePipeline wraps the real model — unwrap it for file transcription
+        import faster_whisper  # type: ignore[import-untyped]
+
+        if isinstance(model, faster_whisper.BatchedInferencePipeline):
+            model = model.model
+
+        # vad_filter=False: Silero VAD filters out singing/music as non-speech.
+        # For file transcription we want everything, so disable VAD and let
+        # Whisper's own 30-second windowed decoding handle the full file.
+        segments, _info = model.transcribe(
+            file_path,
+            language=recorder.language or None,
+            beam_size=getattr(transcriber, "_beam_size", 5),
+            initial_prompt=getattr(transcriber, "_initial_prompt", None),
+            suppress_tokens=getattr(transcriber, "_suppress_tokens", [-1]),
+            vad_filter=False,
+        )
+        seg_list = list(segments)
+
+        text = _format_srt(seg_list) if fmt == "srt" else " ".join(seg.text for seg in seg_list).strip()
+
+        _send_file_event(
+            {
+                "type": "file_transcription_progress",
+                "request_id": request_id,
+                "file_path": file_path,
+                "file_name": file_name,
+                "progress": 1.0,
+                "message": "Complete",
+            },
+            loop,
+        )
+
+        _send_file_event(
+            {
+                "type": "file_transcription_complete",
+                "request_id": request_id,
+                "file_path": file_path,
+                "file_name": file_name,
+                "text": text,
+                "format": fmt,
+            },
+            loop,
+        )
+
+        print(f"{bcolors.OKGREEN}File transcription complete: {file_name} ({len(text)} chars){bcolors.ENDC}")
+
+    except Exception as e:
+        _send_file_event(
+            {
+                "type": "file_transcription_error",
+                "request_id": request_id,
+                "file_path": file_path,
+                "error": str(e),
+            },
+            loop,
+        )
+        print(f"{bcolors.FAIL}File transcription error: {e}{bcolors.ENDC}")
+
+
 async def control_handler(websocket: ServerConnection) -> None:
     debug_print(f"New control connection from {websocket.remote_address}")
     print(f"{bcolors.OKGREEN}Control client connected{bcolors.ENDC}")
     global recorder
     control_connections.add(websocket)
+    if recorder_ready.is_set():
+        await websocket.send(json.dumps({"type": "server_ready"}))
     try:
+        PRE_READY_COMMANDS = {"list_models"}
+
         async for message in websocket:
             msg_preview = message[:200] if isinstance(message, str) else message[:200].decode("utf-8", errors="replace")
             debug_print(f"Received control message: {msg_preview}...")
             if not recorder_ready.is_set():
-                print(f"{bcolors.WARNING}Recorder not ready{bcolors.ENDC}")
-                continue
+                if isinstance(message, str):
+                    try:
+                        pre_data = json.loads(message)
+                        if pre_data.get("command") not in PRE_READY_COMMANDS:
+                            continue
+                    except json.JSONDecodeError:
+                        continue
+                else:
+                    continue
             if isinstance(message, str):
                 # Handle text message (command)
                 try:
@@ -1054,13 +1287,23 @@ async def control_handler(websocket: ServerConnection) -> None:
                     if command == "set_parameter":
                         parameter = command_data.get("parameter")
                         value = command_data.get("value")
-                        # #region agent log
-                        try:
-                            import pathlib as _pl; _pl.Path(r"e:\DL\Projects\event_manager\.cursor\debug.log").open("a", encoding="utf-8").write(json.dumps({"location":"server.py:set_parameter","message":"set_parameter received","data":{"parameter":parameter,"value":str(value),"in_allowed":parameter in allowed_parameters,"has_attr":hasattr(recorder,parameter) if recorder else False},"timestamp":time.time()*1000,"sessionId":"debug-session","runId":"post-fix","hypothesisId":"G"})+"\n")
-                        except Exception:
-                            pass
-                        # #endregion
-                        if parameter in allowed_parameters and hasattr(recorder, parameter):
+                        if parameter == "silence_timing":
+                            global silence_timing
+                            silence_timing = bool(value)
+                            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                            print(
+                                f"  [{timestamp}] {bcolors.OKGREEN}Set silence_timing "
+                                f"to: {bcolors.OKBLUE}{silence_timing}{bcolors.ENDC}",
+                            )
+                            await websocket.send(
+                                json.dumps(
+                                    {
+                                        "status": "success",
+                                        "message": f"Parameter silence_timing set to {silence_timing}",
+                                    }
+                                )
+                            )
+                        elif parameter in allowed_parameters and hasattr(recorder, parameter):
                             setattr(recorder, parameter, value)
                             persist_setting(parameter, value)
                             # Format the value for output
@@ -1202,6 +1445,94 @@ async def control_handler(websocket: ServerConnection) -> None:
                                     }
                                 )
                             )
+                    elif command == "transcribe_file":
+                        request_id = command_data.get("request_id", "")
+                        file_path = command_data.get("file_path", "")
+                        fmt = command_data.get("format", "txt")
+                        loop = asyncio.get_event_loop()
+                        threading.Thread(
+                            target=_handle_transcribe_file,
+                            args=(file_path, request_id, loop, fmt),
+                            daemon=True,
+                        ).start()
+                        await websocket.send(
+                            json.dumps({"status": "success", "message": "File transcription started"})
+                        )
+                    elif command == "list_models":
+                        from src.recorder.domain.model_registry import ModelCatalog
+
+                        catalog = ModelCatalog()
+                        await websocket.send(
+                            json.dumps({
+                                "status": "success",
+                                "command": "list_models",
+                                "models": catalog.to_dicts(),
+                            })
+                        )
+                    elif command == "list_loopback_devices":
+                        request_id = command_data.get("request_id")
+                        try:
+                            devices = loopback_capture.list_devices()
+                            response_payload: dict[str, Any] = {
+                                "status": "success",
+                                "value": devices,
+                            }
+                            if request_id is not None:
+                                response_payload["request_id"] = request_id
+                            await websocket.send(json.dumps(response_payload))
+                        except Exception as e:
+                            error_payload: dict[str, Any] = {
+                                "status": "error",
+                                "message": f"Failed to list loopback devices: {e}",
+                                "value": [],
+                            }
+                            if request_id is not None:
+                                error_payload["request_id"] = request_id
+                            await websocket.send(json.dumps(error_payload))
+                    elif command == "start_loopback":
+                        device_index = command_data.get("device_index")
+                        if device_index is None or recorder is None:
+                            await websocket.send(
+                                json.dumps({"status": "error", "message": "Missing device_index or recorder not ready"})
+                            )
+                        else:
+                            try:
+                                dev_info = loopback_capture.start(recorder, int(device_index))
+                                loop = asyncio.get_event_loop()
+                                message = json.dumps({
+                                    "type": "loopback_started",
+                                    "deviceName": dev_info.get("name", ""),
+                                })
+                                asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+                                print(
+                                    f"{bcolors.OKGREEN}Loopback started: "
+                                    f"{dev_info.get('name', '')} @ {dev_info.get('defaultSampleRate', 0)}Hz"
+                                    f"{bcolors.ENDC}",
+                                )
+                                await websocket.send(
+                                    json.dumps({"status": "success", "message": "Loopback started"})
+                                )
+                            except Exception as e:
+                                await websocket.send(
+                                    json.dumps({"status": "error", "message": f"Failed to start loopback: {e}"})
+                                )
+                    elif command == "stop_loopback":
+                        if recorder is not None and loopback_capture.is_active:
+                            loopback_capture.stop(recorder)
+                            loop = asyncio.get_event_loop()
+                            message = json.dumps({"type": "loopback_stopped"})
+                            asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+                            print(f"{bcolors.OKGREEN}Loopback stopped{bcolors.ENDC}")
+                        await websocket.send(
+                            json.dumps({"status": "success", "message": "Loopback stopped"})
+                        )
+                    elif command == "cancel_download":
+                        global _cancel_download_requested
+                        _cancel_download_requested = True
+                        print(f"{bcolors.WARNING}[download] cancel requested by client{bcolors.ENDC}")
+                        await websocket.send(
+                            json.dumps({"status": "success", "message": "Download cancel requested"})
+                        )
                     else:
                         print(f"{bcolors.WARNING}Unknown command: {command}{bcolors.ENDC}")
                         await websocket.send(
@@ -1232,12 +1563,22 @@ async def control_handler(websocket: ServerConnection) -> None:
 
 async def data_handler(websocket: ServerConnection) -> None:
     global writechunks, wav_file
-    assert recorder is not None, "recorder must be initialized before data_handler accepts connections"
     print(f"{bcolors.OKGREEN}Data client connected{bcolors.ENDC}")
     data_connections.add(websocket)
+
+    # Replay current download state so clients that connect mid-download see the progress bar.
+    if _download_state is not None:
+        try:
+            await websocket.send(_download_state)
+        except websockets.exceptions.ConnectionClosed:
+            data_connections.discard(websocket)
+            return
+
     try:
         while True:
             message = await websocket.recv()
+            if not recorder_ready.is_set():
+                continue  # Ignore incoming audio during model download / init
             if isinstance(message, bytes):
                 if extended_logging:
                     debug_print(f"Received audio chunk (size: {len(message)} bytes)")
@@ -1270,6 +1611,7 @@ async def data_handler(websocket: ServerConnection) -> None:
 
                     wav_file.writeframes(chunk)
 
+                assert recorder is not None
                 if sample_rate != 16000:
                     resampled_chunk = decode_and_resample(chunk, sample_rate, 16000)
                     if extended_logging:
@@ -1283,7 +1625,8 @@ async def data_handler(websocket: ServerConnection) -> None:
         print(f"{bcolors.WARNING}Data client disconnected: {e}{bcolors.ENDC}")
     finally:
         data_connections.remove(websocket)
-        recorder.clear_audio_queue()
+        if recorder is not None:
+            recorder.clear_audio_queue()
 
 
 async def broadcast_audio_messages() -> None:
@@ -1366,8 +1709,13 @@ async def main_async() -> None:
         "on_wakeword_detection_start": make_callback(loop, on_wakeword_detection_start),
         "on_wakeword_detection_end": make_callback(loop, on_wakeword_detection_end),
         "on_transcription_start": make_callback(loop, on_transcription_start),
+        "on_audio_level": make_callback(loop, on_audio_level),
         "on_turn_detection_start": make_callback(loop, on_turn_detection_start),
         "on_turn_detection_stop": make_callback(loop, on_turn_detection_stop),
+        "on_model_download_start": make_callback(loop, on_model_download_start),
+        "on_model_download_progress": make_callback(loop, on_model_download_progress),
+        "on_model_download_complete": make_callback(loop, on_model_download_complete),
+        "cancel_download_check": lambda: _cancel_download_requested,
         # "on_recorded_chunk": make_callback(loop, on_recorded_chunk),
         "no_log_file": True,
         "use_extended_logging": args.use_extended_logging,
@@ -1379,6 +1727,8 @@ async def main_async() -> None:
         "suppress_tokens": args.suppress_tokens,
         "allowed_latency_limit": args.allowed_latency_limit,
         "faster_whisper_vad_filter": args.faster_whisper_vad_filter,
+        "backend": args.backend,
+        "onnx_quantization": args.onnx_quantization,
     }
 
     try:
@@ -1392,32 +1742,58 @@ async def main_async() -> None:
             f"{bcolors.OKGREEN}Data server started on {bcolors.OKBLUE}ws://localhost:{args.data}{bcolors.ENDC}",
         )
 
-        # Start the broadcast and recorder threads
-        broadcast_task = asyncio.create_task(broadcast_audio_messages())
-
-        recorder_thread = threading.Thread(target=_recorder_thread, args=(loop,))
-        recorder_thread.start()
-        recorder_ready.wait()
-
-        print(f"{bcolors.OKGREEN}Server started. Press Ctrl+C to stop the server.{bcolors.ENDC}")
-
-        # Set up shutdown signal handler so Ctrl+C works reliably on Windows
+        # Set up shutdown signal handler BEFORE model loading so Ctrl+C
+        # works during initialization (model download, CUDA warmup, etc.)
         global shutdown_event
         shutdown_event = asyncio.Event()
         loop = asyncio.get_running_loop()
+        _shutdown_count = 0
 
         def _request_shutdown() -> None:
+            nonlocal _shutdown_count
+            _shutdown_count += 1
+            if _shutdown_count >= 2:
+                # Second Ctrl+C: force-exit immediately
+                print(f"\n{bcolors.FAIL}Force exit.{bcolors.ENDC}")
+                os._exit(1)
             assert shutdown_event is not None
             shutdown_event.set()
 
         if sys.platform == "win32":
-            signal.signal(signal.SIGINT, lambda _s, _f: loop.call_soon_threadsafe(_request_shutdown))
+            def _win_signal_handler(_sig: int, _frame: object) -> None:
+                """Handle Ctrl+C on Windows.
+
+                Signal handlers fire between Python bytecodes but CANNOT
+                wake the SelectorEventLoop's select() call.  We must do
+                the critical work (abort recorder, set flags) directly
+                here so the recorder thread unblocks immediately.
+                """
+                global stop_recorder
+                stop_recorder = True
+                if recorder is not None:
+                    recorder.abort()
+                _request_shutdown()
+
+            signal.signal(signal.SIGINT, _win_signal_handler)
         else:
             loop.add_signal_handler(signal.SIGINT, _request_shutdown)
             loop.add_signal_handler(signal.SIGTERM, _request_shutdown)
 
-        # Wait until Ctrl+C (or signal) sets the shutdown event
-        await shutdown_event.wait()
+        # Start the broadcast and recorder threads
+        broadcast_task = asyncio.create_task(broadcast_audio_messages())
+
+        recorder_thread = threading.Thread(target=_recorder_thread, args=(loop,), daemon=True)
+        recorder_thread.start()
+        await loop.run_in_executor(None, recorder_ready.wait)
+
+        print(f"{bcolors.OKGREEN}Server started. Press Ctrl+C to stop the server.{bcolors.ENDC}")
+
+        # Poll with short sleeps so the event loop regularly returns to
+        # Python bytecode, allowing Windows signal handlers to fire.
+        # (On Windows, SelectorEventLoop.select() blocks in C code and
+        # defers signal delivery until control returns to Python.)
+        while not shutdown_event.is_set():
+            await asyncio.sleep(0.5)
 
         print(f"\n{bcolors.WARNING}Server interrupted by user, shutting down...{bcolors.ENDC}")
 
@@ -1425,8 +1801,10 @@ async def main_async() -> None:
         control_server.close()
         data_server.close()
         broadcast_task.cancel()
-        await control_server.wait_closed()
-        await data_server.wait_closed()
+        await asyncio.wait_for(control_server.wait_closed(), timeout=2)
+        await asyncio.wait_for(data_server.wait_closed(), timeout=2)
+    except TimeoutError:
+        pass  # WebSocket servers slow to close — proceed to shutdown
     except OSError:
         print(
             f"{bcolors.FAIL}Error: Could not start server on specified ports. "
@@ -1441,15 +1819,25 @@ async def main_async() -> None:
 
 async def shutdown_procedure() -> None:
     global stop_recorder, recorder_thread
+
+    # Hard deadline: if graceful shutdown takes too long, force-exit.
+    def _watchdog() -> None:
+        time.sleep(8)
+        print(f"{bcolors.FAIL}Shutdown deadline exceeded, forcing exit.{bcolors.ENDC}")
+        os._exit(1)
+
+    wd = threading.Thread(target=_watchdog, daemon=True)
+    wd.start()
+
+    if recorder and loopback_capture.is_active:
+        loopback_capture.stop(recorder)
     if recorder:
         stop_recorder = True
         recorder.abort()  # Unblocks wait_audio() immediately via queue sentinel
 
         if recorder_thread:
-            recorder_thread.join(timeout=5)
-            print(f"{bcolors.OKGREEN}Recorder thread finished{bcolors.ENDC}")
+            recorder_thread.join(timeout=2)
 
-        recorder.stop()
         recorder.shutdown()
         print(f"{bcolors.OKGREEN}Recorder shut down{bcolors.ENDC}")
 
@@ -1458,10 +1846,18 @@ async def shutdown_procedure() -> None:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
 
-    print(f"{bcolors.OKGREEN}All tasks cancelled, closing event loop now.{bcolors.ENDC}")
+
+def _clear_pycache() -> None:
+    """Remove all __pycache__ directories under src/ so stale .pyc files never mask source changes."""
+    import shutil
+
+    src_root = Path(__file__).resolve().parent.parent  # src/
+    for cache_dir in src_root.rglob("__pycache__"):
+        shutil.rmtree(cache_dir, ignore_errors=True)
 
 
 def main() -> None:
+    _clear_pycache()
     try:
         asyncio.run(main_async())
     except KeyboardInterrupt:
@@ -1469,6 +1865,14 @@ def main() -> None:
         print(f"\n{bcolors.WARNING}Server interrupted by user.{bcolors.ENDC}")
     except SystemExit:
         pass
+    finally:
+        # Force-exit to avoid segfaults during Python interpreter shutdown.
+        # CUDA/PyTorch native objects get garbage-collected in undefined order
+        # during normal interpreter teardown, causing segfaults when torch
+        # tensors reference already-freed CUDA memory.  All graceful cleanup
+        # (thread joins, model unloading, torch.cuda.empty_cache) has already
+        # completed in shutdown_procedure(), so os._exit() is safe here.
+        os._exit(0)
 
 
 if __name__ == "__main__":

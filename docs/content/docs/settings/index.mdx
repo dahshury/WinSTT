@@ -1,0 +1,26 @@
+---
+title: Settings Overview
+description: Configure WinSTT to match your needs
+---
+
+WinSTT settings are organized into five panels. Each panel groups related options so you can quickly find what you need.
+
+<Cards>
+  <Card title="Model Settings" href="/docs/settings/model">
+    Choose transcription models, set the inference backend, and tune beam search parameters.
+  </Card>
+  <Card title="Audio Settings" href="/docs/settings/audio">
+    Select your microphone, configure sample rate, and adjust voice activity detection sensitivity.
+  </Card>
+  <Card title="Quality & Transcription" href="/docs/settings/quality">
+    Control realtime preview behavior, batch sizes, and text formatting rules.
+  </Card>
+  <Card title="General Settings" href="/docs/settings/general">
+    Set application behavior: autostart, tray integration, recording mode, and file transcription format.
+  </Card>
+  <Card title="Hotkey Settings" href="/docs/settings/hotkey">
+    Configure the global push-to-talk keyboard shortcut.
+  </Card>
+</Cards>
+
+Settings are persisted automatically when changed. The Electron main process saves them to disk and syncs them to the Python STT server over the control WebSocket channel.

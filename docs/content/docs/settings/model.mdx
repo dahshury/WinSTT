@@ -1,0 +1,47 @@
+---
+title: Model Settings
+description: Configure transcription models and inference parameters
+---
+
+Model settings control which speech recognition models WinSTT uses and how they run. WinSTT uses two models simultaneously: a main model for accurate final transcription, and a realtime model for fast live preview.
+
+## Settings Reference
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `model` | string | `"large-v2"` | Main transcription model used for final output |
+| `realtimeModel` | string | `"tiny"` | Model used for live preview while you speak |
+| `language` | string | `"en"` | Transcription language code |
+| `computeType` | string | `"default"` | Quantization level for inference |
+| `device` | enum | `"auto"` | `"auto"` selects GPU if available, or `"cpu"` to force CPU |
+| `backend` | enum | `"faster_whisper"` | `"faster_whisper"` for Whisper models, `"onnx_asr"` for NeMo/GigaAM |
+| `beamSize` | integer | `5` | Beam search width for main model (1-20) |
+| `beamSizeRealtime` | integer | `3` | Beam search width for realtime model (1-20) |
+| `initialPrompt` | string | `""` | Text prompt to bias main model transcription |
+| `initialPromptRealtime` | string | `""` | Text prompt to bias realtime model transcription |
+
+## Compute Type
+
+The `computeType` setting controls model quantization. Available options:
+
+`default`, `auto`, `int8`, `int8_float16`, `int8_float32`, `int8_bfloat16`, `int16`, `float16`, `float32`, `bfloat16`
+
+See [Compute Types](/docs/models/compute-types) for a detailed comparison.
+
+## Beam Size
+
+Beam search explores multiple transcription hypotheses in parallel. Higher values produce more accurate results but take longer.
+
+<Callout title="Beam size tuning" type="info">
+  Use a low beam size (1-3) for the realtime model to keep live preview responsive. Use a higher beam size (5-10) for the main model where accuracy matters more than latency.
+</Callout>
+
+## Initial Prompt
+
+The `initialPrompt` field accepts free-form text that biases the model toward specific vocabulary. This is useful for:
+
+- Technical terms the model might otherwise mishear
+- Proper nouns (company names, product names, people)
+- Domain-specific jargon
+
+The prompt does not appear in the output. It only influences how the model interprets ambiguous audio.

@@ -8,11 +8,12 @@ from kink import di
 
 from src.building_blocks.clock import Clock
 from src.building_blocks.event_bus import EventBus
-from src.building_blocks.types import CallbackMap, SimpleCallback, TextCallback
+from src.building_blocks.types import CallbackMap, LevelCallback, SimpleCallback, TextCallback
 from src.recorder.application.recorder_service import RecorderService
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import (
     AudioChunkRecorded,
+    AudioLevelComputed,
     RealtimeTranscriptionStabilized,
     RealtimeTranscriptionUpdate,
     RecordingStarted,
@@ -55,6 +56,7 @@ CALLBACK_EVENT_MAP: dict[str, type] = {
     "on_recorded_chunk": AudioChunkRecorded,
     "on_realtime_transcription_update": RealtimeTranscriptionUpdate,
     "on_realtime_transcription_stabilized": RealtimeTranscriptionStabilized,
+    "on_audio_level": AudioLevelComputed,
 }
 
 
@@ -72,6 +74,15 @@ def wire_callback_with_text(event_bus: EventBus, event_type: type, callback: Tex
     event_bus.subscribe(event_type, _handler)
 
 
+def wire_callback_with_level(event_bus: EventBus, event_type: type, callback: LevelCallback) -> None:
+    """Wire a legacy callback that receives a float level argument."""
+
+    def _handler(event: object) -> None:
+        callback(cast(AudioLevelComputed, event).level)
+
+    event_bus.subscribe(event_type, _handler)
+
+
 def wire_callback_with_audio(event_bus: EventBus, event_type: type, callback: SimpleCallback) -> None:
     """Wire the on_transcription_start callback that receives audio bytes."""
 
@@ -81,6 +92,74 @@ def wire_callback_with_audio(event_bus: EventBus, event_type: type, callback: Si
         cast(Any, callback)(audio_ndarray)
 
     event_bus.subscribe(event_type, _handler)
+
+
+def _build_transcriber(model_name: str, config: RecorderConfig) -> ITranscriber:
+    """Build the appropriate transcriber based on model registry backend."""
+    from src.recorder.domain.model_registry import ModelCatalog, TranscriberBackend
+
+    catalog = ModelCatalog()
+    backend = config.transcription.backend
+    if backend == TranscriberBackend.ONNX_ASR.value:
+        resolved_backend = TranscriberBackend.ONNX_ASR
+    elif backend:
+        resolved_backend = TranscriberBackend.FASTER_WHISPER
+    else:
+        resolved_backend = catalog.get_backend(model_name)
+
+    if resolved_backend == TranscriberBackend.ONNX_ASR:
+        from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
+
+        info = catalog.get(model_name)
+        onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
+        quantization = config.transcription.onnx_quantization or None
+        return OnnxAsrTranscriber(model_name=onnx_name, quantization=quantization)
+
+    from src.recorder.infrastructure.whisper_transcriber import WhisperTranscriber
+
+    return WhisperTranscriber(
+        model_path=model_name,
+        device=config.transcription.device,
+        compute_type=config.transcription.compute_type,
+        gpu_device_index=config.transcription.gpu_device_index,
+        download_root=config.transcription.download_root,
+        beam_size=config.transcription.beam_size,
+        initial_prompt=config.transcription.initial_prompt,
+        suppress_tokens=config.transcription.suppress_tokens,
+        batch_size=config.transcription.batch_size,
+        vad_filter=config.transcription.faster_whisper_vad_filter,
+        normalize_audio=config.transcription.normalize_audio,
+    )
+
+
+def _build_realtime_transcriber(config: RecorderConfig) -> ITranscriber:
+    """Build the realtime transcriber based on model registry backend."""
+    from src.recorder.domain.model_registry import ModelCatalog, TranscriberBackend
+
+    model_name = config.realtime.realtime_model_type
+    catalog = ModelCatalog()
+    resolved_backend = catalog.get_backend(model_name)
+
+    if resolved_backend == TranscriberBackend.ONNX_ASR:
+        from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
+
+        info = catalog.get(model_name)
+        onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
+        quantization = config.transcription.onnx_quantization or None
+        return OnnxAsrTranscriber(model_name=onnx_name, quantization=quantization)
+
+    from src.recorder.infrastructure.realtime_transcriber import RealtimeTranscriber
+
+    return RealtimeTranscriber(
+        model_path=model_name,
+        device=config.transcription.device,
+        compute_type=config.transcription.compute_type,
+        gpu_device_index=config.transcription.gpu_device_index,
+        download_root=config.transcription.download_root,
+        beam_size=config.realtime.beam_size_realtime,
+        initial_prompt=config.realtime.initial_prompt_realtime,
+        batch_size=config.realtime.realtime_batch_size,
+    )
 
 
 def bootstrap_di(
@@ -104,6 +183,8 @@ def bootstrap_di(
                 wire_callback_with_text(event_bus, event_type, cast(TextCallback, cb_func))
             elif event_type is TranscriptionStarted:
                 wire_callback_with_audio(event_bus, event_type, cast(SimpleCallback, cb_func))
+            elif event_type is AudioLevelComputed:
+                wire_callback_with_level(event_bus, event_type, cast(LevelCallback, cb_func))
             else:
                 wire_callback(event_bus, event_type, cast(SimpleCallback, cb_func))
 
@@ -144,38 +225,15 @@ def bootstrap_di(
     vad = CompositeVAD(webrtc=webrtc, silero=silero)
 
     # Build transcriber
-    transcriber: ITranscriber
-    from src.recorder.infrastructure.whisper_transcriber import WhisperTranscriber
-
-    transcriber = WhisperTranscriber(
-        model_path=config.transcription.model,
-        device=config.transcription.device,
-        compute_type=config.transcription.compute_type,
-        gpu_device_index=config.transcription.gpu_device_index,
-        download_root=config.transcription.download_root,
-        beam_size=config.transcription.beam_size,
-        initial_prompt=config.transcription.initial_prompt,
-        suppress_tokens=config.transcription.suppress_tokens,
-        batch_size=config.transcription.batch_size,
-        vad_filter=config.transcription.faster_whisper_vad_filter,
-        normalize_audio=config.transcription.normalize_audio,
-    )
+    transcriber: ITranscriber = _build_transcriber(config.transcription.model, config)
 
     # Build realtime transcriber
     realtime_transcriber: ITranscriber | None = None
-    if config.realtime.enable_realtime_transcription and not config.realtime.use_main_model_for_realtime:
-        from src.recorder.infrastructure.realtime_transcriber import RealtimeTranscriber
-
-        realtime_transcriber = RealtimeTranscriber(
-            model_path=config.realtime.realtime_model_type,
-            device=config.transcription.device,
-            compute_type=config.transcription.compute_type,
-            gpu_device_index=config.transcription.gpu_device_index,
-            download_root=config.transcription.download_root,
-            beam_size=config.realtime.beam_size_realtime,
-            initial_prompt=config.realtime.initial_prompt_realtime,
-            batch_size=config.realtime.realtime_batch_size,
-        )
+    if config.realtime.enable_realtime_transcription:
+        if config.realtime.use_main_model_for_realtime:
+            realtime_transcriber = transcriber
+        else:
+            realtime_transcriber = _build_realtime_transcriber(config)
 
     # Build wake word detector
     wake_word_detector: IWakeWordDetector | None = None

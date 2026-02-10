@@ -1,0 +1,50 @@
+---
+title: WinSTT Documentation
+description: Windows speech-to-text desktop application powered by state-of-the-art AI models
+---
+
+import { AppMock } from '@/components/app-mock';
+
+WinSTT is a Windows desktop application for real-time speech-to-text. It pairs a Python backend (WebSocket STT server) with an Electron frontend to deliver fast, accurate transcription directly on your machine.
+
+**All processing runs locally.** No cloud APIs, no internet connection required, no telemetry. Your audio is processed in-memory by on-device AI models and never leaves your computer.
+
+<div className="my-8">
+  <AppMock />
+</div>
+
+## Key Features
+
+<Cards>
+  <Card title="Real-Time Transcription" href="/docs/settings/quality">
+    See words appear as you speak with live preview, then get polished final output.
+  </Card>
+  <Card title="Multiple AI Models" href="/docs/models">
+    Choose from OpenAI Whisper, NVIDIA NeMo, GigaAM, and more across two inference backends.
+  </Card>
+  <Card title="Push-to-Talk & Toggle" href="/docs/recording-modes">
+    Hold a hotkey to dictate, or toggle hands-free mode with automatic voice activity detection.
+  </Card>
+  <Card title="File Transcription" href="/docs/settings/general">
+    Transcribe audio files to plain text or SRT subtitle format with timestamps.
+  </Card>
+  <Card title="Custom Dictionary" href="/docs/dictionary">
+    Define text replacements and snippet expansions applied to all transcriptions.
+  </Card>
+  <Card title="GPU Acceleration" href="/docs/models/compute-types">
+    Leverage NVIDIA CUDA for faster inference with configurable quantization levels.
+  </Card>
+</Cards>
+
+## Privacy by Design
+
+WinSTT is built around a simple principle: **your voice data belongs to you**.
+
+- **Offline-first** — works without an internet connection. No data is ever sent to external servers.
+- **In-memory processing** — audio is transcribed in real-time and discarded. Nothing is written to disk unless you explicitly export.
+- **No telemetry** — zero analytics, zero tracking, zero phone-home behavior.
+- **Open source** — every line of code is auditable. You can verify exactly what runs on your machine.
+
+<Callout title="Coming soon" type="info">
+  Setup and getting started guides are under development. Check back for installation instructions, first-run walkthroughs, and troubleshooting tips.
+</Callout>

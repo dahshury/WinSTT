@@ -36,7 +36,7 @@ export const DEFAULT_SETTINGS: Required<AppSettings> = {
 		inputDeviceIndex: null,
 		sampleRate: 16_000,
 		bufferSize: 512,
-		sileroSensitivity: 0.05,
+		sileroSensitivity: 0.4,
 		sileroUseOnnx: false,
 		sileroDeactivityDetection: true,
 		webrtcSensitivity: 3,
@@ -52,7 +52,7 @@ export const DEFAULT_SETTINGS: Required<AppSettings> = {
 		muteSystemAudioWhileDictating: false,
 	},
 	hotkey: {
-		pushToTalkKey: "Space",
+		pushToTalkKey: "LCtrl+LMeta",
 	},
 	dictionary: [],
 	snippets: [],

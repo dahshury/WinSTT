@@ -1,110 +1,135 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { onRecordingStart, onRecordingStop } from "@/shared/api/ipc-client";
+import {
+	onAudioLevel,
+	onFullSentence,
+	onRecordingStart,
+	onRecordingStop,
+	onVadStart,
+	onVadStop,
+} from "@/shared/api/ipc-client";
 import { useVisualizerStore } from "../model/visualizer-store";
 
-const POINT_COUNT = 64;
-/** Smoothing factor: 0 = frozen, 1 = instant. Lower = smoother. */
-const SMOOTHING = 0.12;
+/** Sentence pulse decay per frame. */
+const PULSE_DECAY = 0.03;
+/** How quickly audio level decays each frame while fading out (~300-500ms at 60fps). */
+const FADE_DECAY = 0.06;
 
 /**
- * Subscribes to recording IPC events and drives the visualizer store
- * with smooth synthetic frequency data while recording is active.
+ * Subscribes to recording / VAD / audio-level IPC events and drives the
+ * visualizer store with real RMS audio levels from the server.
  */
 export function useVisualizerSync() {
-	const setActive = useVisualizerStore((s) => s.setActive);
-	const setFrequencyData = useVisualizerStore((s) => s.setFrequencyData);
+	const setRecording = useVisualizerStore((s) => s.setRecording);
+	const setSpeaking = useVisualizerStore((s) => s.setSpeaking);
+	const setAudioLevel = useVisualizerStore((s) => s.setAudioLevel);
+	const setSentencePulse = useVisualizerStore((s) => s.setSentencePulse);
+
 	const rafRef = useRef(0);
 	const activeRef = useRef(false);
+	const fadingRef = useRef(false);
 
-	// Persistent state across frames (not React state - mutated in rAF)
-	const currentRef = useRef(new Float32Array(POINT_COUNT));
-	const targetRef = useRef(new Float32Array(POINT_COUNT));
-	const phasesRef = useRef(new Float32Array(POINT_COUNT));
-	const retargetTimerRef = useRef(0);
+	// Mutable accumulators updated from IPC callbacks, read in rAF loop.
+	const rawLevelRef = useRef(0);
+	const sentenceFiredRef = useRef(false);
 
-	/** Pick new random target amplitudes every ~120ms for organic drift. */
-	const pickTargets = useCallback(() => {
-		const targets = targetRef.current;
-		const phases = phasesRef.current;
-		const t = performance.now() / 1000;
-
-		for (let i = 0; i < POINT_COUNT; i++) {
-			const phase = phases[i] ?? 0;
-			const center = Math.abs(i - POINT_COUNT / 2) / (POINT_COUNT / 2);
-			const centerBoost = 1 - center * 0.45;
-
-			// Layered waves for slow, breathing movement
-			const wave1 = Math.sin(phase + t * 1.8) * 0.3;
-			const wave2 = Math.sin(phase * 0.7 + t * 2.6) * 0.2;
-			const wave3 = Math.sin(phase * 1.3 + t * 0.9) * 0.15;
-			const jitter = (Math.random() - 0.5) * 0.15;
-
-			const raw = (0.35 + wave1 + wave2 + wave3 + jitter) * centerBoost;
-			targets[i] = Math.max(0.04, Math.min(1, raw));
-		}
-	}, []);
+	// Smoothed values persisted across frames.
+	const pulseRef = useRef(0);
 
 	const animate = useCallback(() => {
+		// Fading: decay level toward 0, stop once negligible
+		if (fadingRef.current) {
+			rawLevelRef.current = Math.max(0, rawLevelRef.current - FADE_DECAY);
+			setAudioLevel(rawLevelRef.current);
+
+			// Decay pulse during fade too
+			let pulse = pulseRef.current;
+			pulse = Math.max(0, pulse - PULSE_DECAY);
+			pulseRef.current = pulse;
+			setSentencePulse(pulse);
+
+			if (rawLevelRef.current < 0.001) {
+				fadingRef.current = false;
+				activeRef.current = false;
+				setAudioLevel(0);
+				setSentencePulse(0);
+				return; // Stop the rAF loop
+			}
+			rafRef.current = requestAnimationFrame(animate);
+			return;
+		}
+
 		if (!activeRef.current) {
 			return;
 		}
 
-		const current = currentRef.current;
-		const targets = targetRef.current;
-		const out = new Uint8Array(POINT_COUNT);
+		// Write raw audio level to store
+		setAudioLevel(rawLevelRef.current);
 
-		for (let i = 0; i < POINT_COUNT; i++) {
-			// Exponential smoothing toward target
-			const c = current[i] ?? 0;
-			const t = targets[i] ?? 0;
-			const next = c + (t - c) * SMOOTHING;
-			current[i] = next;
-			out[i] = Math.round(next * 255);
+		// Sentence pulse: fire to 1 then decay
+		let pulse = pulseRef.current;
+		if (sentenceFiredRef.current) {
+			pulse = 1;
+			sentenceFiredRef.current = false;
+		} else {
+			pulse = Math.max(0, pulse - PULSE_DECAY);
 		}
-
-		setFrequencyData(out);
-
-		// Re-pick targets periodically for natural drift
-		retargetTimerRef.current++;
-		if (retargetTimerRef.current >= 7) {
-			retargetTimerRef.current = 0;
-			pickTargets();
-		}
+		pulseRef.current = pulse;
+		setSentencePulse(pulse);
 
 		rafRef.current = requestAnimationFrame(animate);
-	}, [setFrequencyData, pickTargets]);
+	}, [setAudioLevel, setSentencePulse]);
 
 	useEffect(() => {
-		const unsubStart = onRecordingStart(() => {
+		const unsubRecStart = onRecordingStart(() => {
+			fadingRef.current = false;
 			activeRef.current = true;
-			setActive(true);
-
-			// Initialize phases once per recording session
-			const phases = phasesRef.current;
-			for (let i = 0; i < POINT_COUNT; i++) {
-				phases[i] = Math.random() * Math.PI * 2;
-			}
-			currentRef.current.fill(0);
-			pickTargets();
-			retargetTimerRef.current = 0;
+			setRecording(true);
+			rawLevelRef.current = 0;
+			pulseRef.current = 0;
 			rafRef.current = requestAnimationFrame(animate);
 		});
 
-		const unsubStop = onRecordingStop(() => {
-			activeRef.current = false;
-			setActive(false);
-			cancelAnimationFrame(rafRef.current);
-			// Fade out: set all to zero
-			setFrequencyData(new Uint8Array(POINT_COUNT));
+		const unsubRecStop = onRecordingStop(() => {
+			setRecording(false);
+			setSpeaking(false);
+			// Start smooth fade-out instead of instant zero
+			fadingRef.current = true;
+			// rAF loop continues via fadingRef — animate() handles the decay
+			if (!activeRef.current) {
+				// If loop wasn't running, start it for the fade
+				activeRef.current = true;
+				rafRef.current = requestAnimationFrame(animate);
+			}
+		});
+
+		const unsubVadStart = onVadStart(() => {
+			setSpeaking(true);
+		});
+
+		const unsubVadStop = onVadStop(() => {
+			setSpeaking(false);
+		});
+
+		const unsubAudioLevel = onAudioLevel((level) => {
+			rawLevelRef.current = level;
+		});
+
+		const unsubSentence = onFullSentence(() => {
+			sentenceFiredRef.current = true;
 		});
 
 		return () => {
-			unsubStart();
-			unsubStop();
+			unsubRecStart();
+			unsubRecStop();
+			unsubVadStart();
+			unsubVadStop();
+			unsubAudioLevel();
+			unsubSentence();
 			activeRef.current = false;
+			fadingRef.current = false;
 			cancelAnimationFrame(rafRef.current);
 		};
-	}, [setActive, setFrequencyData, animate, pickTargets]);
+	}, [setRecording, setSpeaking, animate]);
 }

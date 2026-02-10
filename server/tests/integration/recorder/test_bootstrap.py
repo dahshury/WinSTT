@@ -7,8 +7,8 @@ from src.recorder.domain.events import RecordingStarted
 
 
 class TestBootstrap:
-    def test_callback_event_map_has_all_16_callbacks(self) -> None:
-        assert len(CALLBACK_EVENT_MAP) == 16
+    def test_callback_event_map_has_all_17_callbacks(self) -> None:
+        assert len(CALLBACK_EVENT_MAP) == 17
 
     def test_wire_callback_fires_on_event(self) -> None:
         event_bus = EventBus()

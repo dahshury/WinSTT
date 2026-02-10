@@ -1,0 +1,32 @@
+---
+title: NeMo Models
+description: NVIDIA NeMo ASR models via ONNX backend
+---
+
+NVIDIA NeMo provides high-accuracy speech recognition models built on the FastConformer architecture. WinSTT runs these through the `onnx_asr` backend using ONNX Runtime.
+
+All NeMo models support realtime transcription.
+
+## Available Models
+
+| Model | Size | Language | Architecture | Notes |
+|-------|------|----------|-------------|-------|
+| `nemo-parakeet-ctc-0.6b` | 600M | English | CTC | Connectionist Temporal Classification |
+| `nemo-parakeet-rnnt-0.6b` | 600M | English | RNN-T | Recurrent Neural Network Transducer |
+| `nemo-parakeet-tdt-0.6b-v2` | 600M | English | TDT v2 | Token-and-Duration Transducer |
+| `nemo-parakeet-tdt-0.6b-v3` | 600M | Multilingual | TDT v3 | Multilingual variant |
+| `nemo-canary-1b-v2` | 1B | Multilingual | Canary | Supports automatic language detection |
+| `nemo-fastconformer-ru-ctc` | -- | Russian | CTC | Russian-specific model |
+| `nemo-fastconformer-ru-rnnt` | -- | Russian | RNN-T | Russian-specific model |
+
+## Architecture Comparison
+
+**CTC (Connectionist Temporal Classification)** -- Simpler decoding, faster inference. Each audio frame is classified independently.
+
+**RNN-T (Recurrent Neural Network Transducer)** -- Autoregressive decoding that considers previously emitted tokens. Generally more accurate than CTC.
+
+**TDT (Token-and-Duration Transducer)** -- Extension of RNN-T that jointly predicts tokens and their durations. NVIDIA's latest architecture.
+
+<Callout title="Backend requirement" type="info">
+  NeMo models require the `onnx_asr` backend. Set `backend` to `"onnx_asr"` in Model Settings before selecting a NeMo model.
+</Callout>

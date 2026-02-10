@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { SettingSection } from "@/entities/setting";
 import { DictionaryTable } from "@/features/manage-dictionary";
 import { useSettingsStore } from "@/features/update-settings";
@@ -8,9 +9,10 @@ export function DictionarySettingsPanel() {
 	const dictionary = useSettingsStore((s) => s.settings.dictionary) ?? [];
 	const setSettings = useSettingsStore((s) => s.setSettings);
 	const settings = useSettingsStore((s) => s.settings);
+	const t = useTranslations("dictionary");
 
 	return (
-		<SettingSection title="Word Replacements">
+		<SettingSection title={t("title")}>
 			<div style={{ padding: "8px 0" }}>
 				<p
 					style={{
@@ -19,7 +21,7 @@ export function DictionarySettingsPanel() {
 						marginBottom: "12px",
 					}}
 				>
-					Automatically replace words or phrases in transcribed text.
+					{t("description")}
 				</p>
 				<DictionaryTable
 					entries={dictionary}

@@ -1,0 +1,35 @@
+---
+title: Compute Types
+description: Quantization options for model inference
+---
+
+Compute types control the numerical precision used during model inference. Lower precision reduces memory usage and increases speed at the cost of minor quality differences. These options apply to the `faster_whisper` backend.
+
+## Available Types
+
+| Type | Description | Speed | Memory | Quality |
+|------|------------|-------|--------|---------|
+| `default` | Engine default | Baseline | Baseline | Baseline |
+| `auto` | Auto-detect best for your hardware | Varies | Varies | Varies |
+| `float32` | Full 32-bit precision | Slowest | Highest | Best |
+| `float16` | Half 16-bit precision | Fast | Low | Excellent |
+| `bfloat16` | Brain float 16-bit | Fast | Low | Excellent |
+| `int8` | 8-bit integer quantization | Fastest | Lowest | Good |
+| `int8_float16` | Mixed int8 weights, float16 compute | Very fast | Low | Very good |
+| `int8_float32` | Mixed int8 weights, float32 compute | Fast | Medium | Very good |
+| `int8_bfloat16` | Mixed int8 weights, bfloat16 compute | Very fast | Low | Very good |
+| `int16` | 16-bit integer quantization | Fast | Low | Good |
+
+## Recommendations
+
+<Callout title="GPU users" type="info">
+  For NVIDIA GPUs, `float16` is recommended. It cuts memory usage roughly in half compared to `float32` with negligible quality loss. Most modern NVIDIA GPUs have dedicated float16 tensor cores that accelerate this format.
+</Callout>
+
+<Callout title="CPU users" type="info">
+  For CPU-only inference, `int8` gives the best performance. Integer operations are faster on CPU than floating point, and the quality difference is minimal for most use cases.
+</Callout>
+
+## How to Set
+
+Configure the compute type in [Model Settings](/docs/settings/model) using the `computeType` field. The setting applies to both the main model and the realtime model.

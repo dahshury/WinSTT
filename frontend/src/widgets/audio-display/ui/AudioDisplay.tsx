@@ -1,50 +1,131 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+import { type DragEvent, useCallback, useRef, useState } from "react";
 import { WaveformBars } from "@/features/audio-visualizer";
-import { useTranscriptionStore } from "@/features/live-transcription";
+import { useFileTranscriptionStore } from "@/features/file-transcription";
+import { useSettingsStore } from "@/features/update-settings";
+import { fileTranscribe, getFilePath } from "@/shared/api/ipc-client";
+import { DownloadOverlay } from "./DownloadOverlay";
+import { FileOverlay } from "./FileOverlay";
+import { SubtitleOverlay } from "./SubtitleOverlay";
 
-const VISIBLE_COUNT = 3;
-const FADE_OPACITIES = [1, 0.4, 0.15];
+const SUPPORTED_EXTENSIONS = new Set([
+	".mp3",
+	".wav",
+	".flac",
+	".m4a",
+	".aac",
+	".ogg",
+	".wma",
+	".mp4",
+	".mkv",
+	".avi",
+	".mov",
+	".wmv",
+	".flv",
+	".webm",
+]);
+
+function getExtension(name: string): string {
+	const i = name.lastIndexOf(".");
+	return i >= 0 ? name.slice(i).toLowerCase() : "";
+}
 
 export function AudioDisplay() {
-	const items = useTranscriptionStore((s) => s.items);
-	const currentRealtime = useTranscriptionStore((s) => s.currentRealtime);
+	const isListenMode = useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
+	const setProcessing = useFileTranscriptionStore((s) => s.setProcessing);
+	const setError = useFileTranscriptionStore((s) => s.setError);
+	const t = useTranslations("audioDisplay");
+	const tf = useTranslations("fileOverlay");
 
-	const visibleItems = items.slice(-VISIBLE_COUNT);
-	const hasContent = visibleItems.length > 0 || currentRealtime;
+	console.log("[AudioDisplay] Rendering, isListenMode=", isListenMode);
+
+	const [isDragOver, setIsDragOver] = useState(false);
+	const dragCounter = useRef(0);
+
+	const handleDragEnter = useCallback((e: DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		dragCounter.current++;
+		if (e.dataTransfer.types.includes("Files")) {
+			setIsDragOver(true);
+		}
+	}, []);
+
+	const handleDragOver = useCallback((e: DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		e.dataTransfer.dropEffect = "copy";
+	}, []);
+
+	const handleDragLeave = useCallback((e: DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		dragCounter.current--;
+		if (dragCounter.current <= 0) {
+			dragCounter.current = 0;
+			setIsDragOver(false);
+		}
+	}, []);
+
+	const handleDrop = useCallback(
+		async (e: DragEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			dragCounter.current = 0;
+			setIsDragOver(false);
+
+			const files = Array.from(e.dataTransfer.files);
+			const file = files[0];
+			if (!file) {
+				return;
+			}
+
+			const ext = getExtension(file.name);
+			if (!SUPPORTED_EXTENSIONS.has(ext)) {
+				setError(file.name, tf("unsupportedFormat", { ext }));
+				return;
+			}
+
+			const filePath = getFilePath(file);
+			if (!filePath) {
+				setError(file.name, tf("cannotDetermineFilePath"));
+				return;
+			}
+
+			setProcessing(file.name);
+			try {
+				await fileTranscribe(filePath);
+			} catch (err) {
+				setError(file.name, err instanceof Error ? err.message : tf("transcriptionFailed"));
+			}
+		},
+		[setProcessing, setError, tf]
+	);
 
 	return (
-		<div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden rounded-lg border border-border bg-surface-secondary">
+		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: drop zone for file transcription
+		<section
+			aria-label="Audio display and file drop zone"
+			className={`relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-surface-secondary ${isListenMode ? "" : "rounded-lg border border-border"}`}
+			onDragEnter={handleDragEnter}
+			onDragLeave={handleDragLeave}
+			onDragOver={handleDragOver}
+			onDrop={handleDrop}
+		>
 			<WaveformBars />
 
-			{/* Subtitle overlay with gradient backdrop */}
-			{hasContent && (
-				<div
-					className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center justify-end gap-0.5 px-5 pt-8 pb-2"
-					style={{
-						background: "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.55) 100%)",
-					}}
-				>
-					{visibleItems.map((item, i) => {
-						const age = visibleItems.length - 1 - i;
-						const opacity = FADE_OPACITIES[age] ?? 0.1;
-						return (
-							<p
-								className="max-w-full text-center font-sans text-[13px] text-white leading-snug"
-								key={item.id}
-								style={{ opacity, transition: "opacity 300ms ease-out" }}
-							>
-								{item.text}
-							</p>
-						);
-					})}
-					{currentRealtime && (
-						<p className="max-w-full text-center font-sans text-[13px] text-white/60 italic leading-snug">
-							{currentRealtime}
-						</p>
-					)}
+			{/* Drag-over drop zone overlay */}
+			{isDragOver && (
+				<div className="absolute inset-0 z-20 flex items-center justify-center border-2 border-accent border-dashed bg-surface-secondary/90">
+					<p className="font-medium text-accent text-sm">{t("dropToTranscribe")}</p>
 				</div>
 			)}
-		</div>
+
+			<DownloadOverlay />
+			<FileOverlay />
+			<SubtitleOverlay />
+		</section>
 	);
 }

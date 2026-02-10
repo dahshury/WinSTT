@@ -1,0 +1,108 @@
+---
+title: IPC Channels
+description: Inter-process communication between Electron and renderer
+---
+
+All communication between the Electron main process and the renderer flows through named IPC channels. The main process relays events from the Python STT server and handles system-level operations.
+
+Arrows indicate direction: **main -> renderer** for events pushed to the UI, **renderer -> main** for commands initiated by the user.
+
+## STT Events (main -> renderer)
+
+| Channel | Description |
+|---------|-------------|
+| `stt:realtime-text` | Live transcription preview updated |
+| `stt:full-sentence` | Final transcription result |
+| `stt:recording-start` | Recording began |
+| `stt:recording-stop` | Recording ended |
+| `stt:vad-start` | Voice activity detection enabled |
+| `stt:vad-stop` | Voice activity detection disabled |
+| `stt:transcription-start` | Full transcription started |
+| `stt:connection-change` | WebSocket connection state changed |
+| `stt:server-status` | Server process status update |
+| `stt:wakeword-detected` | Wake word matched |
+| `stt:wakeword-detection-start` | Wake word detector enabled |
+| `stt:wakeword-detection-end` | Wake word detector disabled |
+
+## STT Commands (renderer -> main)
+
+| Channel | Description |
+|---------|-------------|
+| `stt:set-parameter` | Update a server parameter |
+| `stt:get-parameter` | Read a server parameter |
+| `stt:call-method` | Invoke a server method |
+
+## Model (bidirectional)
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `stt:model-download-start` | main -> renderer | Model download began |
+| `stt:model-download-progress` | main -> renderer | Download progress update |
+| `stt:model-download-complete` | main -> renderer | Download finished |
+| `stt:model-catalog` | main -> renderer | Full model catalog data |
+| `stt:get-model-catalog` | renderer -> main | Request the model catalog |
+
+## Hotkey
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `hotkey:pressed` | main -> renderer | Global hotkey was pressed |
+| `hotkey:released` | main -> renderer | Global hotkey was released |
+| `hotkey:register` | renderer -> main | Register a new global hotkey |
+| `hotkey:unregister` | renderer -> main | Unregister the current hotkey |
+
+## Audio
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `audio:set-mute` | renderer -> main | Mute or unmute system audio |
+| `audio:get-devices` | renderer -> main | List available audio input devices |
+
+## Settings
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `settings:save` | renderer -> main | Persist settings to disk |
+| `settings:load` | renderer -> main | Load settings from disk |
+| `settings:changed` | main -> renderer | Settings were updated (sync notification) |
+
+## Server Control
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `stt-server:spawn` | renderer -> main | Start the Python STT server process |
+| `stt-server:kill` | renderer -> main | Stop the Python STT server process |
+| `stt-server:status` | renderer -> main | Query current server process status |
+
+## Window Controls
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `window:minimize` | renderer -> main | Minimize the application window |
+| `window:maximize` | renderer -> main | Maximize or restore the window |
+| `window:close` | renderer -> main | Close the application window |
+| `window:open-settings` | renderer -> main | Open the settings window |
+| `window:close-self` | renderer -> main | Close the calling window |
+
+## File Transcription
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `file:transcribe` | renderer -> main | Start transcribing an audio file |
+| `file:transcription-progress` | main -> renderer | File transcription progress update |
+| `file:transcription-complete` | main -> renderer | File transcription finished |
+| `file:transcription-error` | main -> renderer | File transcription failed |
+
+## Dialog
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `dialog:open-file` | renderer -> main | Open a native file picker dialog |
+
+## System
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `gpu:get-info` | renderer -> main | Query GPU/device information |
+| `autostart:set` | renderer -> main | Enable or disable Windows autostart |
+| `autostart:get` | renderer -> main | Check current autostart status |

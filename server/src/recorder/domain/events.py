@@ -80,6 +80,11 @@ class WakeWordDetectionEnded(RecorderEvent):
 
 
 @dataclass(frozen=True)
+class AudioLevelComputed(RecorderEvent):
+    level: float  # 0.0-1.0 normalized RMS
+
+
+@dataclass(frozen=True)
 class AudioChunkRecorded(RecorderEvent):
     chunk: bytes
 
@@ -92,3 +97,35 @@ class RealtimeTranscriptionUpdate(RecorderEvent):
 @dataclass(frozen=True)
 class RealtimeTranscriptionStabilized(RecorderEvent):
     text: str
+
+
+@dataclass(frozen=True)
+class DownloadProgress:
+    """Rich progress snapshot for model downloads."""
+
+    model: str
+    progress: float  # 0.0 - 1.0
+    downloaded_bytes: int
+    total_bytes: int
+    speed_bps: float  # bytes per second
+    eta_seconds: float  # estimated seconds remaining (0 when done)
+
+
+@dataclass(frozen=True)
+class ModelDownloadStarted(RecorderEvent):
+    model: str
+
+
+@dataclass(frozen=True)
+class ModelDownloadProgress(RecorderEvent):
+    model: str
+    progress: float
+    downloaded_bytes: int = 0
+    total_bytes: int = 0
+    speed_bps: float = 0.0
+    eta_seconds: float = 0.0
+
+
+@dataclass(frozen=True)
+class ModelDownloadCompleted(RecorderEvent):
+    model: str

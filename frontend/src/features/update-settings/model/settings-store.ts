@@ -73,8 +73,20 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "winstt-settings",
-			// Only persist the settings object, not isLoaded or methods
 			partialize: (state) => ({ settings: state.settings }),
 		}
 	)
 );
+
+// Mark loaded after localStorage hydration completes.
+// Cannot use onRehydrateStorage because it fires during create() before
+// useSettingsStore is assigned, causing a ReferenceError.
+// Use onFinishHydration + hasHydrated check to cover both sync and async hydration.
+if (typeof window !== "undefined") {
+	if (useSettingsStore.persist.hasHydrated()) {
+		useSettingsStore.setState({ isLoaded: true });
+	}
+	useSettingsStore.persist.onFinishHydration(() => {
+		useSettingsStore.setState({ isLoaded: true });
+	});
+}

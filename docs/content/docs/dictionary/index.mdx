@@ -1,0 +1,47 @@
+---
+title: Dictionary & Snippets
+description: Custom text replacements and text expansion
+---
+
+WinSTT provides two text transformation features that run on every transcription output: dictionary replacements and snippet expansions.
+
+## Dictionary
+
+Dictionary entries are find-and-replace rules applied to all transcriptions. Use them to correct common misrecognitions or normalize informal speech.
+
+### Entry Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `find` | string | (required) | Text pattern to search for in transcription output |
+| `replace` | string | (required) | Replacement text |
+| `caseSensitive` | boolean | `false` | Match exact case only |
+| `wholeWord` | boolean | `false` | Match whole words only, not substrings |
+
+### Examples
+
+| Find | Replace | Case Sensitive | Whole Word | Effect |
+|------|---------|---------------|------------|--------|
+| `gonna` | `going to` | false | true | "I'm gonna leave" becomes "I'm going to leave" |
+| `wanna` | `want to` | false | true | "I wanna go" becomes "I want to go" |
+| `acme` | `ACME` | false | true | Corrects capitalization of a company name |
+| `k8s` | `Kubernetes` | true | true | Expands an abbreviation |
+
+## Snippets
+
+Snippets are text expansion triggers. Type a short keyword and WinSTT replaces it with longer text. Unlike dictionary entries, snippets are intended for inserting predefined blocks of text.
+
+### Entry Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `trigger` | string | Short text that activates the expansion |
+| `expansion` | string | Full text inserted in place of the trigger |
+
+### Examples
+
+| Trigger | Expansion |
+|---------|-----------|
+| `addr` | `123 Main St, City, ST 12345` |
+| `sig` | `Best regards, John Smith` |
+| `eml` | `john.smith@example.com` |

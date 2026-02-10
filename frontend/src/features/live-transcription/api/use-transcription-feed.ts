@@ -9,11 +9,14 @@ export function useTranscriptionFeed() {
 	const setRealtimeText = useTranscriptionStore((s) => s.setRealtimeText);
 
 	useEffect(() => {
+		console.log("[useTranscriptionFeed] Subscribing to realtime + fullSentence");
 		const unsubRealtime = onRealtimeText((text) => {
+			console.log("[useTranscriptionFeed] realtime:", text.slice(0, 60));
 			setRealtimeText(text);
 		});
 
 		const unsubFinal = onFullSentence((text) => {
+			console.log("[useTranscriptionFeed] FINAL:", text);
 			addFinalSentence(text);
 		});
 

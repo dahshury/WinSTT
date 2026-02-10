@@ -1,3 +1,5 @@
+"use client";
+
 import type { components } from "@spec/schema";
 import { IPC } from "./ipc-channels";
 
@@ -38,6 +40,14 @@ function on(channel: string, callback: (...args: unknown[]) => void): () => void
 
 export { send as ipcSend, invoke as ipcInvoke, on as ipcOn };
 
+/** Get the native file path for a dropped File object (works with sandbox: true). */
+export function getFilePath(file: File): string {
+	if (isElectron()) {
+		return window.electronAPI.getPathForFile(file);
+	}
+	return "";
+}
+
 // STT commands
 export const sttSetParameter = (parameter: AllowedParameter, value: unknown) =>
 	send(IPC.STT_SET_PARAMETER, { parameter, value });
@@ -54,6 +64,10 @@ export const hotkeyRegister = (accelerator: string) =>
 
 export const hotkeyUnregister = (accelerator: string) =>
 	send(IPC.HOTKEY_UNREGISTER, { accelerator });
+
+export const hotkeyStartRecording = () => invoke<boolean>(IPC.HOTKEY_START_RECORDING);
+
+export const hotkeyStopRecording = () => send(IPC.HOTKEY_STOP_RECORDING);
 
 // System
 export const autostartSet = (enabled: boolean) => send(IPC.AUTOSTART_SET, { enabled });
@@ -103,5 +117,90 @@ export const onServerStatus = (cb: (status: ServerStatus) => void) =>
 export const onHotkeyPressed = (cb: () => void) => on(IPC.HOTKEY_PRESSED, cb);
 export const onHotkeyReleased = (cb: () => void) => on(IPC.HOTKEY_RELEASED, cb);
 
+export const onHotkeyRecordingUpdate = (cb: (keys: string[]) => void) =>
+	on(IPC.HOTKEY_RECORDING_UPDATE, (data) => cb((data as { keys: string[] }).keys));
+
+export const onHotkeyRecordingDone = (cb: (combo: string | null) => void) =>
+	on(IPC.HOTKEY_RECORDING_DONE, (data) => cb((data as { combo: string | null }).combo));
+
 export const onSettingsChanged = (cb: (settings: AppSettings) => void) =>
 	on(IPC.SETTINGS_CHANGED, (data) => cb((data as { settings: AppSettings }).settings));
+
+export const onAudioLevel = (cb: (level: number) => void) =>
+	on(IPC.STT_AUDIO_LEVEL, (data) => cb((data as { level: number }).level));
+
+export const onModelDownloadStart = (cb: (model: string) => void) =>
+	on(IPC.STT_MODEL_DOWNLOAD_START, (data) => cb((data as { model: string }).model));
+
+export interface DownloadProgressPayload {
+	model: string;
+	progress: number;
+	downloadedBytes?: number;
+	totalBytes?: number;
+	speedBps?: number;
+	etaSeconds?: number;
+}
+
+export const onModelDownloadProgress = (cb: (payload: DownloadProgressPayload) => void) =>
+	on(IPC.STT_MODEL_DOWNLOAD_PROGRESS, (data) => {
+		cb(data as DownloadProgressPayload);
+	});
+
+export const onModelDownloadComplete = (cb: (model: string, cancelled: boolean) => void) =>
+	on(IPC.STT_MODEL_DOWNLOAD_COMPLETE, (data) => {
+		const d = data as { model: string; cancelled?: boolean };
+		cb(d.model, d.cancelled ?? false);
+	});
+
+export const cancelDownload = () => invoke<void>(IPC.STT_CANCEL_DOWNLOAD);
+
+export const onModelCatalog = (cb: (models: unknown[]) => void) =>
+	on(IPC.STT_MODEL_CATALOG, (data) => cb((data as { models: unknown[] }).models));
+
+export const fetchModelCatalog = () => invoke<unknown[]>(IPC.STT_GET_MODEL_CATALOG);
+
+// Loopback
+export const loopbackListDevices = () =>
+	invoke<
+		Array<{ index: number; name: string; defaultSampleRate: number; maxOutputChannels: number }>
+	>(IPC.LOOPBACK_LIST_DEVICES);
+
+export const loopbackStart = (deviceIndex: number) => send(IPC.LOOPBACK_START, { deviceIndex });
+
+export const loopbackStop = () => send(IPC.LOOPBACK_STOP);
+
+export const onLoopbackStarted = (cb: (deviceName: string) => void) =>
+	on(IPC.STT_LOOPBACK_STARTED, (data) => cb((data as { deviceName: string }).deviceName));
+
+export const onLoopbackStopped = (cb: () => void) => on(IPC.STT_LOOPBACK_STOPPED, cb);
+
+// Dialog
+export const dialogOpenFile = (
+	filters?: Array<{ name: string; extensions: string[] }>,
+	title?: string
+) => invoke<string | null>(IPC.DIALOG_OPEN_FILE, { filters, title });
+
+// File transcription
+export const fileTranscribe = (filePath: string) =>
+	invoke<{ requestId: string }>(IPC.FILE_TRANSCRIBE, { filePath });
+
+export const onFileTranscriptionProgress = (
+	cb: (data: { fileName: string; progress: number; message: string }) => void
+) =>
+	on(IPC.FILE_TRANSCRIPTION_PROGRESS, (data) =>
+		cb(data as { fileName: string; progress: number; message: string })
+	);
+
+export const onFileTranscriptionComplete = (
+	cb: (data: { requestId: string; fileName: string; text: string; outputPath: string }) => void
+) =>
+	on(IPC.FILE_TRANSCRIPTION_COMPLETE, (data) =>
+		cb(data as { requestId: string; fileName: string; text: string; outputPath: string })
+	);
+
+export const onFileTranscriptionError = (
+	cb: (data: { requestId: string; fileName: string; error: string }) => void
+) =>
+	on(IPC.FILE_TRANSCRIPTION_ERROR, (data) =>
+		cb(data as { requestId: string; fileName: string; error: string })
+	);

@@ -51,6 +51,8 @@ class TranscriptionConfig(StrictMutableModel):
     print_transcription_time: bool = False
     early_transcription_on_silence: float = 0
     allowed_latency_limit: int = 100
+    backend: str = ""
+    onnx_quantization: str = ""
 
 
 class RealtimeConfig(StrictMutableModel):

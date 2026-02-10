@@ -20,6 +20,8 @@ components:
           fullSentence: "#/components/schemas/FullSentenceEvent"
           recording_start: "#/components/schemas/RecordingStartEvent"
           recording_stop: "#/components/schemas/RecordingStopEvent"
+          loopback_started: "#/components/schemas/LoopbackStartedEvent"
+          loopback_stopped: "#/components/schemas/LoopbackStoppedEvent"
           vad_detect_start: "#/components/schemas/VadDetectStartEvent"
           vad_detect_stop: "#/components/schemas/VadDetectStopEvent"
           transcription_start: "#/components/schemas/TranscriptionStartEvent"
@@ -28,11 +30,17 @@ components:
           wakeword_detection_end: "#/components/schemas/WakewordDetectionEndEvent"
           start_turn_detection: "#/components/schemas/TurnDetectionStartEvent"
           stop_turn_detection: "#/components/schemas/TurnDetectionStopEvent"
+          model_download_start: "#/components/schemas/ModelDownloadStartEvent"
+          model_download_progress: "#/components/schemas/ModelDownloadProgressEvent"
+          model_download_complete: "#/components/schemas/ModelDownloadCompleteEvent"
+          audio_level: "#/components/schemas/AudioLevelEvent"
       oneOf:
         - $ref: "#/components/schemas/RealtimeTextEvent"
         - $ref: "#/components/schemas/FullSentenceEvent"
         - $ref: "#/components/schemas/RecordingStartEvent"
         - $ref: "#/components/schemas/RecordingStopEvent"
+        - $ref: "#/components/schemas/LoopbackStartedEvent"
+        - $ref: "#/components/schemas/LoopbackStoppedEvent"
         - $ref: "#/components/schemas/VadDetectStartEvent"
         - $ref: "#/components/schemas/VadDetectStopEvent"
         - $ref: "#/components/schemas/TranscriptionStartEvent"
@@ -41,6 +49,10 @@ components:
         - $ref: "#/components/schemas/WakewordDetectionEndEvent"
         - $ref: "#/components/schemas/TurnDetectionStartEvent"
         - $ref: "#/components/schemas/TurnDetectionStopEvent"
+        - $ref: "#/components/schemas/ModelDownloadStartEvent"
+        - $ref: "#/components/schemas/ModelDownloadProgressEvent"
+        - $ref: "#/components/schemas/ModelDownloadCompleteEvent"
+        - $ref: "#/components/schemas/AudioLevelEvent"
 
     RealtimeTextEvent:
       type: object
@@ -69,6 +81,24 @@ components:
         type:
           type: string
           const: recording_start
+
+    LoopbackStartedEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: loopback_started
+        deviceName:
+          type: string
+
+    LoopbackStoppedEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: loopback_stopped
 
     RecordingStopEvent:
       type: object
@@ -144,6 +174,69 @@ components:
         type:
           type: string
           const: stop_turn_detection
+
+    ModelDownloadStartEvent:
+      type: object
+      required: [type, model]
+      properties:
+        type:
+          type: string
+          const: model_download_start
+        model:
+          type: string
+
+    ModelDownloadProgressEvent:
+      type: object
+      required: [type, model, progress]
+      properties:
+        type:
+          type: string
+          const: model_download_progress
+        model:
+          type: string
+        progress:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Download progress as a fraction (0.0 to 1.0)
+        downloaded_bytes:
+          type: integer
+          description: Bytes downloaded so far
+        total_bytes:
+          type: integer
+          description: Total bytes to download
+        speed_bps:
+          type: number
+          description: Download speed in bytes per second
+        eta_seconds:
+          type: number
+          description: Estimated seconds remaining
+
+    ModelDownloadCompleteEvent:
+      type: object
+      required: [type, model]
+      properties:
+        type:
+          type: string
+          const: model_download_complete
+        model:
+          type: string
+        cancelled:
+          type: boolean
+          description: True if the download was cancelled by the user
+
+    AudioLevelEvent:
+      type: object
+      required: [type, level]
+      properties:
+        type:
+          type: string
+          const: audio_level
+        level:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Normalized RMS audio level (0.0 to 1.0)
 
     # ─── Control Channel Commands (Client → Server) ───────────────────
 
@@ -238,6 +331,7 @@ components:
         - speech_end_silence_start
         - is_recording
         - use_wake_words
+        - silence_timing
 
     AllowedMethod:
       type: string
@@ -295,21 +389,132 @@ components:
         - recording
         - transcribing
 
+    TranscriberBackend:
+      type: string
+      enum:
+        - faster_whisper
+        - onnx_asr
+
+    ModelFamily:
+      type: string
+      enum:
+        - whisper
+        - nemo
+        - gigaam
+        - kaldi
+        - t-one
+
+    ModelInfo:
+      type: object
+      required: [id, displayName, backend, family, languages, supportsLanguageDetection, sizeLabel, supportsRealtime]
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+        backend:
+          $ref: "#/components/schemas/TranscriberBackend"
+        family:
+          $ref: "#/components/schemas/ModelFamily"
+        languages:
+          type: array
+          items:
+            type: string
+        supportsLanguageDetection:
+          type: boolean
+        sizeLabel:
+          type: string
+        supportsRealtime:
+          type: boolean
+        onnxModelName:
+          type: string
+          nullable: true
+        description:
+          type: string
+
+    LoopbackDevice:
+      type: object
+      required: [index, name, defaultSampleRate, maxOutputChannels]
+      properties:
+        index:
+          type: integer
+        name:
+          type: string
+        defaultSampleRate:
+          type: integer
+        maxOutputChannels:
+          type: integer
+
+    ListLoopbackDevicesCommand:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          const: list_loopback_devices
+        request_id:
+          type: integer
+
+    StartLoopbackCommand:
+      type: object
+      required: [command, device_index]
+      properties:
+        command:
+          type: string
+          const: start_loopback
+        device_index:
+          type: integer
+
+    StopLoopbackCommand:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          const: stop_loopback
+
+    ListModelsCommand:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          const: list_models
+
+    ListModelsResponse:
+      type: object
+      required: [status, command, models]
+      properties:
+        status:
+          type: string
+          const: success
+        command:
+          type: string
+          const: list_models
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelInfo"
+
     # ─── Settings Schemas ─────────────────────────────────────────────
 
     ModelSettings:
       type: object
       properties:
         model:
-          $ref: "#/components/schemas/WhisperModel"
+          type: string
         realtimeModel:
-          $ref: "#/components/schemas/WhisperModel"
+          type: string
         language:
           type: string
         computeType:
           $ref: "#/components/schemas/ComputeType"
         device:
           $ref: "#/components/schemas/DeviceType"
+        backend:
+          $ref: "#/components/schemas/TranscriberBackend"
+        onnxQuantization:
+          type: string
         beamSize:
           type: integer
           minimum: 1
@@ -385,6 +590,19 @@ components:
           type: boolean
         muteSystemAudioWhileDictating:
           type: boolean
+        recordingSound:
+          type: boolean
+        recordingSoundPath:
+          type: string
+        fileTranscriptionFormat:
+          type: string
+          enum: [txt, srt]
+        recordingMode:
+          type: string
+          enum: [ptt, toggle, listen]
+        loopbackDeviceIndex:
+          type: integer
+          nullable: true
 
     HotkeySettings:
       type: object

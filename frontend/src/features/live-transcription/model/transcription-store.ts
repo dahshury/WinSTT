@@ -14,19 +14,14 @@ interface TranscriptionState {
 export const useTranscriptionStore = create<TranscriptionState>((set) => ({
 	items: [],
 	currentRealtime: "",
-	addFinalSentence: (text) =>
+	addFinalSentence: (text) => {
+		const id = crypto.randomUUID();
+		const timestamp = Date.now();
 		set((state) => ({
-			items: [
-				...state.items,
-				{
-					id: crypto.randomUUID(),
-					type: "final",
-					text,
-					timestamp: Date.now(),
-				},
-			],
+			items: [...state.items, { id, type: "final", text, timestamp }],
 			currentRealtime: "",
-		})),
+		}));
+	},
 	setRealtimeText: (text) => set({ currentRealtime: text }),
 	clearAll: () => set({ items: [], currentRealtime: "" }),
 }));

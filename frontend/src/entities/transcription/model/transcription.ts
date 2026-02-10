@@ -5,12 +5,9 @@ export type RecorderState = components["schemas"]["RecorderState"];
 
 export function createTranscriptionItem(
 	type: TranscriptionItem["type"],
-	text: string
+	text: string,
+	id: string = crypto.randomUUID(),
+	timestamp: number = Date.now()
 ): TranscriptionItem {
-	return {
-		id: crypto.randomUUID(),
-		type,
-		text,
-		timestamp: Date.now(),
-	};
+	return { id, type, text, timestamp };
 }

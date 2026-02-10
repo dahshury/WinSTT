@@ -1,0 +1,81 @@
+---
+title: Server Architecture
+description: Hexagonal architecture with ports and adapters
+---
+
+The WinSTT server follows hexagonal architecture (ports and adapters). Dependencies always point inward: infrastructure depends on domain, never the reverse.
+
+## Layer Overview
+
+```
+src/recorder/
+  domain/
+    ports/           Pure ABCs (interfaces)
+    config.py        Pydantic config hierarchy
+    events.py        Frozen dataclass events
+    state_machine.py State transitions
+    errors.py        Domain error hierarchy
+    audio_buffer.py  Pre-roll + recording buffer
+  application/
+    recorder_service.py  Orchestrator
+    pipeline.py          Recording pipeline (Worker thread)
+  infrastructure/        Concrete adapters
+  bootstrap.py           DI composition root
+  __init__.py            Public facade
+```
+
+## Domain Ports
+
+Ports are abstract base classes that define the contracts infrastructure must fulfill. The domain never imports concrete implementations.
+
+| Port | Key Methods | Adapters |
+|------|------------|----------|
+| `IAudioSource` | `setup()`, `read_chunk()`, `cleanup()` | PyAudioSource, FileAudioSource |
+| `ITranscriber` | `transcribe(audio, lang)`, `is_ready()`, `shutdown()` | WhisperTranscriber, RealtimeTranscriber, OnnxAsrTranscriber |
+| `IVoiceActivityDetector` | `detect(chunk)`, `reset()` | WebRTCVAD, SileroVAD, CompositeVAD |
+| `IWakeWordDetector` | `detect(chunk)`, `cleanup()` | PorcupineDetector, OWWDetector |
+
+## Application Layer
+
+**RecorderService** is the orchestrator. It owns the recording pipeline, the audio reader thread, and the realtime worker thread. It exposes methods like `text()` (blocking: listen, record, transcribe, return), `start()`, `stop()`, and `set_microphone()`.
+
+**RecordingPipeline** runs in a Worker thread. It reads audio chunks from a queue, runs VAD, drives the state machine, and manages the audio buffer. Only the pipeline thread drives state transitions.
+
+## State Machine
+
+```
+INACTIVE --> LISTENING --> RECORDING --> TRANSCRIBING --> INACTIVE
+                 ^
+                 |
+                 v
+             WAKEWORD
+```
+
+Transitions are guarded. Invalid transitions raise `InvalidStateTransition`. Only the `RecordingPipeline` drives state changes, ensuring single-threaded access.
+
+## Bootstrap & DI
+
+`bootstrap.py` is the sole composition root. It uses the Kink DI container to wire everything together:
+
+1. Create EventBus and Clock
+2. Wire legacy callbacks to domain events
+3. Build infrastructure adapters
+4. Register adapters against port interfaces
+5. Create and return RecorderService
+
+No other module instantiates infrastructure directly.
+
+## Facade
+
+`AudioToTextRecorder` in `__init__.py` is the public API. It accepts 100+ kwargs for backward compatibility with the original monolith, uses lazy initialization (double-checked locking), and delegates all work to `RecorderService`.
+
+## Threading Model
+
+| Thread | Owner | Purpose |
+|--------|-------|---------|
+| Main | Caller | `text()` blocks here; facade initialization |
+| Audio reader | RecorderService | Reads from PyAudio, feeds the pipeline queue |
+| Pipeline worker | RecordingPipeline | VAD, state transitions, audio buffering |
+| Realtime worker | RecorderService | Periodic transcription for live display |
+
+Threads communicate via thread-safe `Queue` instances. The `EventBus.publish()` call holds an internal lock.

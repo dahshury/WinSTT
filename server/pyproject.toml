@@ -6,6 +6,7 @@ dependencies = [
     "kink>=0.6.5",
     "pydantic>=2.0",
     "PyAudio>=0.2.14",
+    "PyAudioWPatch>=0.2.12",
     "faster-whisper>=1.1.1",
     "pvporcupine>=1.9.5",
     "webrtcvad-wheels>=2.0.14",
@@ -21,6 +22,7 @@ dependencies = [
     "pyperclip>=1.8",
     "colorama>=0.4.6",
     "websockets>=16.0",
+    "onnx-asr[hub]",
 ]
 
 [dependency-groups]
@@ -43,6 +45,7 @@ link-mode = "copy"
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu124" }]
 torchaudio = [{ index = "pytorch-cu124" }]
+onnx-asr = { path = "../examples/onnx-asr", editable = true }
 
 [project.scripts]
 stt-server = "src.stt_server.server:main"
@@ -83,7 +86,7 @@ warn_no_return = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyaudio.*","webrtcvad.*","pvporcupine.*","openwakeword.*","faster_whisper.*","torch.*","torchaudio.*","scipy.*","soundfile.*","halo.*","websocket.*","websockets.*","colorama.*"]
+module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","faster_whisper.*","torch.*","torchaudio.*","scipy.*","soundfile.*","halo.*","websocket.*","websockets.*","colorama.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnxruntime.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -1,0 +1,4 @@
+{
+  "title": "Settings",
+  "pages": ["index", "model", "audio", "quality", "general", "hotkey"]
+}

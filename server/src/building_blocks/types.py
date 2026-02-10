@@ -23,7 +23,10 @@ TextCallback = Callable[[str], None]
 ChunkCallback = Callable[[bytes], None]
 """Callback that receives raw audio chunk data."""
 
-CallbackMap = dict[str, SimpleCallback | TextCallback | ChunkCallback | None]
+LevelCallback = Callable[[float], None]
+"""Callback that receives a normalized audio level (0.0-1.0)."""
+
+CallbackMap = dict[str, SimpleCallback | TextCallback | ChunkCallback | LevelCallback | None]
 """Map of callback names to their handler functions (or ``None`` for unset)."""
 
 __all__ = [
@@ -32,6 +35,7 @@ __all__ = [
     "BufferSize",
     "CallbackMap",
     "ChunkCallback",
+    "LevelCallback",
     "SampleRate",
     "SimpleCallback",
     "TextCallback",

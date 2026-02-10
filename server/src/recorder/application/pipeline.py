@@ -4,6 +4,7 @@ import collections
 import logging
 import queue
 
+import numpy as np
 from typing_extensions import override
 
 from src.building_blocks.clock import Clock
@@ -14,6 +15,7 @@ from src.recorder.domain.audio_buffer import AudioBuffer
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import (
     AudioChunkRecorded,
+    AudioLevelComputed,
     RecordingStarted,
     RecordingStopped,
     TurnDetectionStarted,
@@ -151,6 +153,10 @@ class RecordingPipeline(Worker):
                 continue
 
             self._event_bus.publish(AudioChunkRecorded(timestamp=self._clock.get_current_time(), chunk=chunk))
+            samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
+            rms = float(np.sqrt(np.mean(samples * samples)))
+            level = min(1.0, rms / 10000.0)
+            self._event_bus.publish(AudioLevelComputed(timestamp=self._clock.get_current_time(), level=level))
             self._buffer.add_to_last_words(chunk)
 
             if self._sm.is_recording:

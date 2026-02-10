@@ -43,6 +43,6 @@ export function pasteText(text: string): void {
 			if (error) {
 				console.error("[paste] Failed to simulate Ctrl+V:", error.message);
 			}
-		},
+		}
 	);
 }

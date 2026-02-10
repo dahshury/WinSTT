@@ -1041,6 +1041,97 @@ wheels = [
 ]
 
 [[package]]
+name = "onnx-asr"
+source = { editable = "../examples/onnx-asr" }
+dependencies = [
+    { name = "numpy" },
+]
+
+[package.optional-dependencies]
+hub = [
+    { name = "huggingface-hub" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "huggingface-hub", marker = "extra == 'hub'", specifier = ">=0.30.2" },
+    { name = "numpy", specifier = ">=1.21.6" },
+    { name = "onnxruntime", marker = "extra == 'cpu'", specifier = ">=1.18.1" },
+    { name = "onnxruntime-gpu", marker = "extra == 'gpu'", specifier = ">=1.18.1" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4.15.0" },
+]
+provides-extras = ["cpu", "gpu", "hub"]
+
+[package.metadata.requires-dev]
+build = [
+    { name = "hatch-vcs", specifier = ">=0.5.0" },
+    { name = "hatchling", specifier = ">=1.28.0" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "onnx", specifier = ">=1.20.1" },
+    { name = "onnxscript", specifier = ">=0.5.7" },
+    { name = "torch", specifier = ">=2.9.1", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torchaudio", specifier = ">=2.9.1", index = "https://download.pytorch.org/whl/cpu" },
+]
+dev = [
+    { name = "click", specifier = "<8.3" },
+    { name = "hatch-vcs", specifier = ">=0.5.0" },
+    { name = "hatchling", specifier = ">=1.28.0" },
+    { name = "huggingface-hub", specifier = ">=0.30.2" },
+    { name = "ipykernel", specifier = ">=7.1.0" },
+    { name = "ipywidgets", specifier = ">=8.1.8" },
+    { name = "kaldi-native-fbank", specifier = ">=1.22.3" },
+    { name = "markdown-callouts", specifier = ">=0.4.0" },
+    { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.7.1" },
+    { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.0" },
+    { name = "mypy", specifier = ">=1.19.1" },
+    { name = "nemo-toolkit", extras = ["asr"], specifier = ">=2.6.1" },
+    { name = "numpy", specifier = ">=1.21.6" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "onnx", specifier = ">=1.20.1" },
+    { name = "onnxruntime", specifier = ">=1.18.1" },
+    { name = "onnxscript", specifier = ">=0.5.7" },
+    { name = "openai-whisper", specifier = ">=20250625" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "ruff", specifier = ">=0.14.11" },
+    { name = "soundfile", marker = "python_full_version != '3.13.*'", specifier = ">=0.13.1" },
+    { name = "torch", specifier = ">=2.9.1", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torchaudio", specifier = ">=2.9.1", index = "https://download.pytorch.org/whl/cpu" },
+]
+docs = [
+    { name = "click", specifier = "<8.3" },
+    { name = "markdown-callouts", specifier = ">=0.4.0" },
+    { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.7.1" },
+    { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.0" },
+]
+test = [
+    { name = "huggingface-hub", specifier = ">=0.30.2" },
+    { name = "numpy", specifier = ">=1.21.6" },
+    { name = "onnxruntime", specifier = ">=1.18.1" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "soundfile", marker = "python_full_version != '3.13.*'", specifier = ">=0.13.1" },
+]
+test-preprocessors = [
+    { name = "hatch-vcs", specifier = ">=0.5.0" },
+    { name = "hatchling", specifier = ">=1.28.0" },
+    { name = "huggingface-hub", specifier = ">=0.30.2" },
+    { name = "kaldi-native-fbank", specifier = ">=1.22.3" },
+    { name = "nemo-toolkit", extras = ["asr"], specifier = ">=2.6.1" },
+    { name = "numpy", specifier = ">=1.21.6" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "onnx", specifier = ">=1.20.1" },
+    { name = "onnxruntime", specifier = ">=1.18.1" },
+    { name = "onnxscript", specifier = ">=0.5.7" },
+    { name = "openai-whisper", specifier = ">=20250625" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "soundfile", marker = "python_full_version != '3.13.*'", specifier = ">=0.13.1" },
+    { name = "torch", specifier = ">=2.9.1", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torchaudio", specifier = ">=2.9.1", index = "https://download.pytorch.org/whl/cpu" },
+]
+
+[[package]]
 name = "onnxruntime"
 version = "1.24.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1266,6 +1357,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b0/6a/d25812e5f79f06285767ec607b39149d02aa3b31d50c2269768f48768930/PyAudio-0.2.14-cp312-cp312-win_amd64.whl", hash = "sha256:12f2f1ba04e06ff95d80700a78967897a489c05e093e3bffa05a84ed9c0a7fa3", size = 164126, upload-time = "2023-11-07T07:11:41.539Z" },
     { url = "https://files.pythonhosted.org/packages/3a/77/66cd37111a87c1589b63524f3d3c848011d21ca97828422c7fde7665ff0d/PyAudio-0.2.14-cp313-cp313-win32.whl", hash = "sha256:95328285b4dab57ea8c52a4a996cb52be6d629353315be5bfda403d15932a497", size = 150982, upload-time = "2024-11-20T19:12:12.404Z" },
     { url = "https://files.pythonhosted.org/packages/a5/8b/7f9a061c1cc2b230f9ac02a6003fcd14c85ce1828013aecbaf45aa988d20/PyAudio-0.2.14-cp313-cp313-win_amd64.whl", hash = "sha256:692d8c1446f52ed2662120bcd9ddcb5aa2b71f38bda31e58b19fb4672fffba69", size = 173655, upload-time = "2024-11-20T19:12:13.616Z" },
+]
+
+[[package]]
+name = "pyaudiowpatch"
+version = "0.2.12.8"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/a3/0bd930258c9b81f77ec52f1edfa5a8ed44c4d6079d1253c4fee5ed766863/pyaudiowpatch-0.2.12.8-cp311-cp311-win32.whl", hash = "sha256:13903f6a78abfd745fbae82c1edda95119fce179c6f2fc95e7849a54d537dce1", size = 96645, upload-time = "2026-01-14T18:19:26.217Z" },
+    { url = "https://files.pythonhosted.org/packages/55/df/88a94ca45c8b158b52888f5010cdad2f7998d5c4a44d0794fab97937f9ec/pyaudiowpatch-0.2.12.8-cp311-cp311-win_amd64.whl", hash = "sha256:8610948499efa12b01ec861408fcc95e7bc18c1dddf0abbfed6fd2305a898f63", size = 99097, upload-time = "2026-01-14T18:19:27.409Z" },
+    { url = "https://files.pythonhosted.org/packages/88/4e/ba7c938033fb25ba25f35e9f125f5c270e60c7789e65662d37424a5d9c0c/pyaudiowpatch-0.2.12.8-cp312-cp312-win32.whl", hash = "sha256:5c6f54cbee50ed3c971767cc8e85f45e94012aa3c4363b7cdd8541e9f9496d01", size = 96800, upload-time = "2026-01-14T18:19:29.01Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/e1/c25c239737386a3fd85354ce35a00fbe83e993a7e51d76791022850ca12c/pyaudiowpatch-0.2.12.8-cp312-cp312-win_amd64.whl", hash = "sha256:fd163a6531c4e4969925e687ef1bc57fae8ecc1a95de7ba707a436622552d7fa", size = 99319, upload-time = "2026-01-14T18:19:31.063Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/b9/62c83aea777521b0748f3ec6b4d0f8650af88d2a7fee03b98a6257f8ec32/pyaudiowpatch-0.2.12.8-cp313-cp313-win32.whl", hash = "sha256:d941c272ced5b1c6f1d054d47046ef50efcee954151c293c0102b410f549c3ab", size = 96801, upload-time = "2026-01-14T18:19:32.239Z" },
+    { url = "https://files.pythonhosted.org/packages/65/0f/aa9e6c6d331d2a027330e1275697ece6ace23c2209df8cd0f8c0e397ba1c/pyaudiowpatch-0.2.12.8-cp313-cp313-win_amd64.whl", hash = "sha256:3339e6430836a021e1a83ddb915a42eec0a8f198693855a8f32a57b4b97e0202", size = 99307, upload-time = "2026-01-14T18:19:33.706Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/cf/a2544222ca61b89b27beed06efc7d9f865216fd31d0da677921ef9fb3b9d/pyaudiowpatch-0.2.12.8-cp314-cp314-win32.whl", hash = "sha256:448b83316295ab4786b1844ea296d4848c75b93ada4df6f2150715520cf985a5", size = 98755, upload-time = "2026-01-14T18:19:34.923Z" },
+    { url = "https://files.pythonhosted.org/packages/12/61/1c9e515e45dfd86d25a1447ac7241436c8000c3ab142011c23fb1d3202ed/pyaudiowpatch-0.2.12.8-cp314-cp314-win_amd64.whl", hash = "sha256:df6e26032439d87cbbeb8f433e635652a36d54cdd14aa058188e21ba5c9a7df9", size = 100997, upload-time = "2026-01-14T18:19:36.188Z" },
 ]
 
 [[package]]
@@ -4919,9 +5025,11 @@ dependencies = [
     { name = "keyboard" },
     { name = "kink" },
     { name = "numpy" },
+    { name = "onnx-asr", extra = ["hub"] },
     { name = "openwakeword" },
     { name = "pvporcupine" },
     { name = "pyaudio" },
+    { name = "pyaudiowpatch" },
     { name = "pyautogui" },
     { name = "pydantic" },
     { name = "pyperclip" },
@@ -4950,9 +5058,11 @@ requires-dist = [
     { name = "keyboard", specifier = ">=0.13.5" },
     { name = "kink", specifier = ">=0.6.5" },
     { name = "numpy" },
+    { name = "onnx-asr", extras = ["hub"], editable = "../examples/onnx-asr" },
     { name = "openwakeword", specifier = ">=0.4.0" },
     { name = "pvporcupine", specifier = ">=1.9.5" },
     { name = "pyaudio", specifier = ">=0.2.14" },
+    { name = "pyaudiowpatch", specifier = ">=0.2.12" },
     { name = "pyautogui", specifier = ">=0.9.54" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyperclip", specifier = ">=1.8" },

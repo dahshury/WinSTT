@@ -8,6 +8,7 @@ import {
 	WifiDisconnected01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useTranslations } from "next-intl";
 import { useConnectionStore } from "../model/connection-store";
 
 const RE_VENDOR = /^(NVIDIA|AMD|Intel)\s+/i;
@@ -32,13 +33,14 @@ function shortenGpuName(raw: string): string {
 export function ConnectionIndicator() {
 	const status = useConnectionStore((s) => s.connectionStatus);
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
+	const t = useTranslations("statusBar");
 
 	if (status === "connecting") {
 		return (
 			<div className="flex items-center gap-1">
 				<HugeiconsIcon color="var(--color-warning)" icon={CloudIcon} size={12} />
 				<span className="font-medium text-[10px]" style={{ color: "var(--color-warning)" }}>
-					CONNECTING
+					{t("connecting")}
 				</span>
 			</div>
 		);
@@ -49,7 +51,7 @@ export function ConnectionIndicator() {
 			<div className="flex items-center gap-1">
 				<HugeiconsIcon color="var(--color-error)" icon={Plug01Icon} size={12} />
 				<span className="font-medium text-[10px]" style={{ color: "var(--color-error)" }}>
-					ERROR
+					{t("error")}
 				</span>
 			</div>
 		);
@@ -60,7 +62,7 @@ export function ConnectionIndicator() {
 			<div className="flex items-center gap-1">
 				<HugeiconsIcon color="var(--color-error)" icon={WifiDisconnected01Icon} size={12} />
 				<span className="font-medium text-[10px]" style={{ color: "var(--color-error)" }}>
-					OFFLINE
+					{t("offline")}
 				</span>
 			</div>
 		);

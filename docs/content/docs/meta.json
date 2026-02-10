@@ -1,0 +1,12 @@
+{
+  "title": "WinSTT",
+  "pages": [
+    "index",
+    "settings",
+    "models",
+    "recording-modes",
+    "dictionary",
+    "---",
+    "architecture"
+  ]
+}
