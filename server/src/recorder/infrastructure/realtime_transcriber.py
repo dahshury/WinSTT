@@ -8,6 +8,7 @@ from typing import Any
 from typing_extensions import override
 
 from src.building_blocks.types import AudioArray
+from src.recorder.domain.events import DownloadProgress
 from src.recorder.domain.ports.transcriber import ITranscriber, TranscriptionResult
 from src.recorder.infrastructure.device import resolve_device
 from src.recorder.infrastructure.whisper_transcriber import _intercept_hf_progress
@@ -32,7 +33,8 @@ class RealtimeTranscriber(ITranscriber):
         beam_size: int = 3,
         initial_prompt: str | list[int] | None = None,
         batch_size: int = 16,
-        on_download_progress: Callable[[str, float], None] | None = None,
+        on_download_progress: Callable[[DownloadProgress], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> None:
         if faster_whisper is None:
             msg = "faster_whisper is not installed"
@@ -56,7 +58,7 @@ class RealtimeTranscriber(ITranscriber):
         }
 
         if on_download_progress is not None:
-            with _intercept_hf_progress(model_path, on_download_progress):
+            with _intercept_hf_progress(model_path, on_download_progress, cancel_check):
                 self._model: Any = faster_whisper.WhisperModel(**model_kwargs)
         else:
             self._model = faster_whisper.WhisperModel(**model_kwargs)

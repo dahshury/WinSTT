@@ -14,47 +14,68 @@ export function QualitySettingsPanel() {
 
 	return (
 		<div className="flex flex-col gap-5">
-			{/* ── Realtime Preview ────────────────────────────── */}
-			<SettingSection title={t("realtimePreview")}>
-				<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
-					<FormControl
-						caption={t("enableRealtimeCaption")}
-						label={t("enableRealtime")}
-						tooltip={t("enableRealtimeTooltip")}
-					>
-						<Toggle
-							checked={q?.enableRealtimeTranscription ?? true}
-							onCheckedChange={(v) => update({ enableRealtimeTranscription: v })}
-						/>
-					</FormControl>
-					{(q?.enableRealtimeTranscription ?? true) && (
-						<>
+			{/* ── Realtime Preview (visible only when realtime is enabled in Model tab) */}
+			{(q?.enableRealtimeTranscription ?? true) && (
+				<SettingSection title={t("realtimePreview")}>
+					<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+						<FormControl
+							caption={t("useMainModelCaption")}
+							label={t("useMainModel")}
+							tooltip={t("useMainModelTooltip")}
+						>
+							<Toggle
+								checked={q?.useMainModelForRealtime ?? false}
+								onCheckedChange={(v) => update({ useMainModelForRealtime: v })}
+							/>
+						</FormControl>
+						<FormControl
+							caption={t("updateIntervalCaption")}
+							label={t("updateInterval")}
+							tooltip={t("updateIntervalTooltip")}
+						>
+							<NumberStepper
+								min={0.01}
+								onChange={(v) => update({ realtimeProcessingPause: v })}
+								step={0.01}
+								value={q?.realtimeProcessingPause ?? 0.02}
+							/>
+						</FormControl>
+					</div>
+				</SettingSection>
+			)}
+
+			{/* ── Smart Endpoint ─────────────────────────────── */}
+			{(q?.enableRealtimeTranscription ?? true) && (
+				<SettingSection title={t("smartEndpoint")}>
+					<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+						<FormControl
+							caption={t("smartEndpointCaption")}
+							label={t("smartEndpointLabel")}
+							tooltip={t("smartEndpointTooltip")}
+						>
+							<Toggle
+								checked={q?.smartEndpoint ?? false}
+								onCheckedChange={(v) => update({ smartEndpoint: v })}
+							/>
+						</FormControl>
+						{(q?.smartEndpoint ?? false) && (
 							<FormControl
-								caption={t("useMainModelCaption")}
-								label={t("useMainModel")}
-								tooltip={t("useMainModelTooltip")}
-							>
-								<Toggle
-									checked={q?.useMainModelForRealtime ?? false}
-									onCheckedChange={(v) => update({ useMainModelForRealtime: v })}
-								/>
-							</FormControl>
-							<FormControl
-								caption={t("updateIntervalCaption")}
-								label={t("updateInterval")}
-								tooltip={t("updateIntervalTooltip")}
+								caption={t("detectionSpeedCaption")}
+								label={t("detectionSpeed")}
+								tooltip={t("detectionSpeedTooltip")}
 							>
 								<NumberStepper
-									min={0.01}
-									onChange={(v) => update({ realtimeProcessingPause: v })}
-									step={0.01}
-									value={q?.realtimeProcessingPause ?? 0.02}
+									max={3.0}
+									min={0.5}
+									onChange={(v) => update({ smartEndpointSpeed: v })}
+									step={0.1}
+									value={q?.smartEndpointSpeed ?? 1.5}
 								/>
 							</FormControl>
-						</>
-					)}
-				</div>
-			</SettingSection>
+						)}
+					</div>
+				</SettingSection>
+			)}
 
 			{/* ── Timing ─────────────────────────────────────── */}
 			<SettingSection title={t("timing")}>

@@ -1,2 +1,18 @@
 # Ignore examples directory
 examples/
+
+# Python
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.coverage
+
+# Next.js
+.next/
+
+# Logs
+debug.log
+*.log

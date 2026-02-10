@@ -332,6 +332,8 @@ components:
         - is_recording
         - use_wake_words
         - silence_timing
+        - smart_endpoint_enabled
+        - detection_speed
 
     AllowedMethod:
       type: string
@@ -547,6 +549,14 @@ components:
           type: boolean
         ensureSentenceEndsWithPeriod:
           type: boolean
+        smartEndpoint:
+          type: boolean
+          description: Use DistilBERT classifier for intelligent speech endpoint detection
+        smartEndpointSpeed:
+          type: number
+          minimum: 0.5
+          maximum: 3.0
+          description: Detection speed multiplier (higher = faster finalization)
 
     AudioSettings:
       type: object

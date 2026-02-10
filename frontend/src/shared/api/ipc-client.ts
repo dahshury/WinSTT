@@ -40,6 +40,20 @@ function on(channel: string, callback: (...args: unknown[]) => void): () => void
 
 export { send as ipcSend, invoke as ipcInvoke, on as ipcOn };
 
+/** Subscribe to an IPC channel, cast the payload to `T`, extract a value, and pass it to the callback. */
+function onTyped<T, V>(
+	channel: string,
+	extract: (data: T) => V,
+	cb: (value: V) => void
+): () => void {
+	return on(channel, (data) => cb(extract(data as T)));
+}
+
+/** Subscribe to an IPC channel, cast the entire payload to `T`, and pass it to the callback. */
+function onCast<T>(channel: string, cb: (value: T) => void): () => void {
+	return on(channel, (data) => cb(data as T));
+}
+
 /** Get the native file path for a dropped File object (works with sandbox: true). */
 export function getFilePath(file: File): string {
 	if (isElectron()) {
@@ -95,10 +109,10 @@ export const windowCloseSelf = () => send(IPC.WINDOW_CLOSE_SELF);
 // Event subscriptions
 // Note: preload strips the IpcRendererEvent, so callbacks receive only the data args
 export const onRealtimeText = (cb: (text: string) => void) =>
-	on(IPC.STT_REALTIME_TEXT, (data) => cb((data as { text: string }).text));
+	onTyped(IPC.STT_REALTIME_TEXT, (d: { text: string }) => d.text, cb);
 
 export const onFullSentence = (cb: (text: string) => void) =>
-	on(IPC.STT_FULL_SENTENCE, (data) => cb((data as { text: string }).text));
+	onTyped(IPC.STT_FULL_SENTENCE, (d: { text: string }) => d.text, cb);
 
 export const onRecordingStart = (cb: () => void) => on(IPC.STT_RECORDING_START, cb);
 export const onRecordingStop = (cb: () => void) => on(IPC.STT_RECORDING_STOP, cb);
@@ -106,31 +120,31 @@ export const onVadStart = (cb: () => void) => on(IPC.STT_VAD_START, cb);
 export const onVadStop = (cb: () => void) => on(IPC.STT_VAD_STOP, cb);
 
 export const onTranscriptionStart = (cb: (audioBase64?: string) => void) =>
-	on(IPC.STT_TRANSCRIPTION_START, (data) => cb((data as { audioBase64?: string }).audioBase64));
+	onTyped(IPC.STT_TRANSCRIPTION_START, (d: { audioBase64?: string }) => d.audioBase64, cb);
 
 export const onConnectionChange = (cb: (connected: boolean) => void) =>
-	on(IPC.STT_CONNECTION_CHANGE, (data) => cb((data as { connected: boolean }).connected));
+	onTyped(IPC.STT_CONNECTION_CHANGE, (d: { connected: boolean }) => d.connected, cb);
 
 export const onServerStatus = (cb: (status: ServerStatus) => void) =>
-	on(IPC.STT_SERVER_STATUS, (data) => cb((data as { status: ServerStatus }).status));
+	onTyped(IPC.STT_SERVER_STATUS, (d: { status: ServerStatus }) => d.status, cb);
 
 export const onHotkeyPressed = (cb: () => void) => on(IPC.HOTKEY_PRESSED, cb);
 export const onHotkeyReleased = (cb: () => void) => on(IPC.HOTKEY_RELEASED, cb);
 
 export const onHotkeyRecordingUpdate = (cb: (keys: string[]) => void) =>
-	on(IPC.HOTKEY_RECORDING_UPDATE, (data) => cb((data as { keys: string[] }).keys));
+	onTyped(IPC.HOTKEY_RECORDING_UPDATE, (d: { keys: string[] }) => d.keys, cb);
 
 export const onHotkeyRecordingDone = (cb: (combo: string | null) => void) =>
-	on(IPC.HOTKEY_RECORDING_DONE, (data) => cb((data as { combo: string | null }).combo));
+	onTyped(IPC.HOTKEY_RECORDING_DONE, (d: { combo: string | null }) => d.combo, cb);
 
 export const onSettingsChanged = (cb: (settings: AppSettings) => void) =>
-	on(IPC.SETTINGS_CHANGED, (data) => cb((data as { settings: AppSettings }).settings));
+	onTyped(IPC.SETTINGS_CHANGED, (d: { settings: AppSettings }) => d.settings, cb);
 
 export const onAudioLevel = (cb: (level: number) => void) =>
-	on(IPC.STT_AUDIO_LEVEL, (data) => cb((data as { level: number }).level));
+	onTyped(IPC.STT_AUDIO_LEVEL, (d: { level: number }) => d.level, cb);
 
 export const onModelDownloadStart = (cb: (model: string) => void) =>
-	on(IPC.STT_MODEL_DOWNLOAD_START, (data) => cb((data as { model: string }).model));
+	onTyped(IPC.STT_MODEL_DOWNLOAD_START, (d: { model: string }) => d.model, cb);
 
 export interface DownloadProgressPayload {
 	model: string;
@@ -142,9 +156,7 @@ export interface DownloadProgressPayload {
 }
 
 export const onModelDownloadProgress = (cb: (payload: DownloadProgressPayload) => void) =>
-	on(IPC.STT_MODEL_DOWNLOAD_PROGRESS, (data) => {
-		cb(data as DownloadProgressPayload);
-	});
+	onCast(IPC.STT_MODEL_DOWNLOAD_PROGRESS, cb);
 
 export const onModelDownloadComplete = (cb: (model: string, cancelled: boolean) => void) =>
 	on(IPC.STT_MODEL_DOWNLOAD_COMPLETE, (data) => {
@@ -155,7 +167,7 @@ export const onModelDownloadComplete = (cb: (model: string, cancelled: boolean) 
 export const cancelDownload = () => invoke<void>(IPC.STT_CANCEL_DOWNLOAD);
 
 export const onModelCatalog = (cb: (models: unknown[]) => void) =>
-	on(IPC.STT_MODEL_CATALOG, (data) => cb((data as { models: unknown[] }).models));
+	onTyped(IPC.STT_MODEL_CATALOG, (d: { models: unknown[] }) => d.models, cb);
 
 export const fetchModelCatalog = () => invoke<unknown[]>(IPC.STT_GET_MODEL_CATALOG);
 
@@ -170,7 +182,7 @@ export const loopbackStart = (deviceIndex: number) => send(IPC.LOOPBACK_START, {
 export const loopbackStop = () => send(IPC.LOOPBACK_STOP);
 
 export const onLoopbackStarted = (cb: (deviceName: string) => void) =>
-	on(IPC.STT_LOOPBACK_STARTED, (data) => cb((data as { deviceName: string }).deviceName));
+	onTyped(IPC.STT_LOOPBACK_STARTED, (d: { deviceName: string }) => d.deviceName, cb);
 
 export const onLoopbackStopped = (cb: () => void) => on(IPC.STT_LOOPBACK_STOPPED, cb);
 
@@ -186,21 +198,12 @@ export const fileTranscribe = (filePath: string) =>
 
 export const onFileTranscriptionProgress = (
 	cb: (data: { fileName: string; progress: number; message: string }) => void
-) =>
-	on(IPC.FILE_TRANSCRIPTION_PROGRESS, (data) =>
-		cb(data as { fileName: string; progress: number; message: string })
-	);
+) => onCast(IPC.FILE_TRANSCRIPTION_PROGRESS, cb);
 
 export const onFileTranscriptionComplete = (
 	cb: (data: { requestId: string; fileName: string; text: string; outputPath: string }) => void
-) =>
-	on(IPC.FILE_TRANSCRIPTION_COMPLETE, (data) =>
-		cb(data as { requestId: string; fileName: string; text: string; outputPath: string })
-	);
+) => onCast(IPC.FILE_TRANSCRIPTION_COMPLETE, cb);
 
 export const onFileTranscriptionError = (
 	cb: (data: { requestId: string; fileName: string; error: string }) => void
-) =>
-	on(IPC.FILE_TRANSCRIPTION_ERROR, (data) =>
-		cb(data as { requestId: string; fileName: string; error: string })
-	);
+) => onCast(IPC.FILE_TRANSCRIPTION_ERROR, cb);

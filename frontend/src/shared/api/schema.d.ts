@@ -195,7 +195,7 @@ export interface components {
             message: string;
         };
         /** @enum {string} */
-        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing";
+        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "smart_endpoint_enabled" | "detection_speed";
         /** @enum {string} */
         AllowedMethod: "set_microphone" | "abort" | "stop" | "clear_audio_queue" | "wakeup" | "shutdown" | "text";
         /** @enum {string} */
@@ -276,6 +276,10 @@ export interface components {
             realtimeBatchSize?: number;
             ensureSentenceStartingUppercase?: boolean;
             ensureSentenceEndsWithPeriod?: boolean;
+            /** @description Use DistilBERT classifier for intelligent speech endpoint detection */
+            smartEndpoint?: boolean;
+            /** @description Detection speed multiplier (higher = faster finalization) */
+            smartEndpointSpeed?: number;
         };
         AudioSettings: {
             inputDeviceIndex?: number | null;

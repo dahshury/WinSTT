@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, cast
 
 import numpy as np
@@ -14,6 +16,7 @@ from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import (
     AudioChunkRecorded,
     AudioLevelComputed,
+    DownloadProgress,
     RealtimeTranscriptionStabilized,
     RealtimeTranscriptionUpdate,
     RecordingStarted,
@@ -37,6 +40,36 @@ from src.recorder.domain.ports.wake_word import IWakeWordDetector
 from src.recorder.infrastructure.file_source import FileAudioSource
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DownloadCallbacks:
+    """Encapsulates model download lifecycle callbacks."""
+
+    on_start: Callable[[str], None] | None = None
+    on_progress: Callable[[DownloadProgress], None] | None = None
+    on_complete: Callable[[str], None] | None = None
+    on_cancelled: Callable[[str], None] | None = None
+    cancel_check: Callable[[], bool] | None = None
+
+    def make_progress_handler(self) -> Callable[[DownloadProgress], None] | None:
+        """Build a unified closure that coalesces start/progress/complete, or None if no callbacks."""
+        if self.on_start is None and self.on_progress is None and self.on_complete is None:
+            return None
+        dl_start = self.on_start
+        dl_progress = self.on_progress
+        dl_complete = self.on_complete
+
+        def _handler(info: DownloadProgress) -> None:
+            if info.progress == 0.0 and dl_start is not None:
+                dl_start(info.model)
+            if dl_progress is not None:
+                dl_progress(info)
+            if info.progress >= 1.0 and dl_complete is not None:
+                dl_complete(info.model)
+
+        return _handler
+
 
 # Callback name -> event type mapping for the bridge
 CALLBACK_EVENT_MAP: dict[str, type] = {
@@ -94,9 +127,16 @@ def wire_callback_with_audio(event_bus: EventBus, event_type: type, callback: Si
     event_bus.subscribe(event_type, _handler)
 
 
-def _build_transcriber(model_name: str, config: RecorderConfig) -> ITranscriber:
+def build_transcriber(
+    model_name: str,
+    config: RecorderConfig,
+    *,
+    download_callbacks: DownloadCallbacks | None = None,
+) -> ITranscriber:
     """Build the appropriate transcriber based on model registry backend."""
     from src.recorder.domain.model_registry import ModelCatalog, TranscriberBackend
+
+    progress_handler = download_callbacks.make_progress_handler() if download_callbacks else None
 
     catalog = ModelCatalog()
     backend = config.transcription.backend
@@ -113,7 +153,11 @@ def _build_transcriber(model_name: str, config: RecorderConfig) -> ITranscriber:
         info = catalog.get(model_name)
         onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
         quantization = config.transcription.onnx_quantization or None
-        return OnnxAsrTranscriber(model_name=onnx_name, quantization=quantization)
+        return OnnxAsrTranscriber(
+            model_name=onnx_name,
+            quantization=quantization,
+            on_download_progress=progress_handler,
+        )
 
     from src.recorder.infrastructure.whisper_transcriber import WhisperTranscriber
 
@@ -129,12 +173,20 @@ def _build_transcriber(model_name: str, config: RecorderConfig) -> ITranscriber:
         batch_size=config.transcription.batch_size,
         vad_filter=config.transcription.faster_whisper_vad_filter,
         normalize_audio=config.transcription.normalize_audio,
+        on_download_progress=progress_handler,
+        cancel_check=download_callbacks.cancel_check if download_callbacks else None,
     )
 
 
-def _build_realtime_transcriber(config: RecorderConfig) -> ITranscriber:
+def build_realtime_transcriber(
+    config: RecorderConfig,
+    *,
+    download_callbacks: DownloadCallbacks | None = None,
+) -> ITranscriber:
     """Build the realtime transcriber based on model registry backend."""
     from src.recorder.domain.model_registry import ModelCatalog, TranscriberBackend
+
+    progress_handler = download_callbacks.make_progress_handler() if download_callbacks else None
 
     model_name = config.realtime.realtime_model_type
     catalog = ModelCatalog()
@@ -146,7 +198,11 @@ def _build_realtime_transcriber(config: RecorderConfig) -> ITranscriber:
         info = catalog.get(model_name)
         onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
         quantization = config.transcription.onnx_quantization or None
-        return OnnxAsrTranscriber(model_name=onnx_name, quantization=quantization)
+        return OnnxAsrTranscriber(
+            model_name=onnx_name,
+            quantization=quantization,
+            on_download_progress=progress_handler,
+        )
 
     from src.recorder.infrastructure.realtime_transcriber import RealtimeTranscriber
 
@@ -159,12 +215,16 @@ def _build_realtime_transcriber(config: RecorderConfig) -> ITranscriber:
         beam_size=config.realtime.beam_size_realtime,
         initial_prompt=config.realtime.initial_prompt_realtime,
         batch_size=config.realtime.realtime_batch_size,
+        on_download_progress=progress_handler,
+        cancel_check=download_callbacks.cancel_check if download_callbacks else None,
     )
 
 
 def bootstrap_di(
     config: RecorderConfig,
     callbacks: CallbackMap | None = None,
+    *,
+    download_callbacks: DownloadCallbacks | None = None,
 ) -> RecorderService:
     """Wire all ports to adapters and create RecorderService."""
     event_bus = EventBus()
@@ -225,7 +285,9 @@ def bootstrap_di(
     vad = CompositeVAD(webrtc=webrtc, silero=silero)
 
     # Build transcriber
-    transcriber: ITranscriber = _build_transcriber(config.transcription.model, config)
+    transcriber: ITranscriber = build_transcriber(
+        config.transcription.model, config, download_callbacks=download_callbacks
+    )
 
     # Build realtime transcriber
     realtime_transcriber: ITranscriber | None = None
@@ -233,7 +295,7 @@ def bootstrap_di(
         if config.realtime.use_main_model_for_realtime:
             realtime_transcriber = transcriber
         else:
-            realtime_transcriber = _build_realtime_transcriber(config)
+            realtime_transcriber = build_realtime_transcriber(config, download_callbacks=download_callbacks)
 
     # Build wake word detector
     wake_word_detector: IWakeWordDetector | None = None

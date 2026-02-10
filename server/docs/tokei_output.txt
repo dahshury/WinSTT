@@ -1,0 +1,105 @@
+===============================================================================
+ Language            Files        Lines         Code     Comments       Blanks
+===============================================================================
+ Python                 80        11537         9290          381         1866
+-------------------------------------------------------------------------------
+ |src\stt_server\server.py         2070         1718           85          267
+ |r/src\recorder\client.py          864          735           13          116
+ |test_recorder_service.py          759          623           35          101
+ |src\recorder\__init__.py          708          593           27           88
+ |ecorder\test_pipeline.py          712          537           58          117
+ |est_download_progress.py          490          344           33          113
+ |tion\recorder_service.py          404          339            9           56
+ |\recorder\test_facade.py          373          317           10           46
+ |\test_shutdown_timing.py          325          257            9           59
+ |domain\model_registry.py          256          232            0           24
+ |rc\recorder\bootstrap.py          284          225           10           49
+ |e\whisper_transcriber.py          269          211           27           31
+ |\application\pipeline.py          219          186            0           33
+ |c\stt_server\loopback.py          225          165           21           39
+ |ion\recorder\test_e2e.py          183          156            5           22
+ |test_loopback_capture.py          221          152           21           48
+ |der\test_audio_buffer.py          174          152            1           21
+ |r\test_model_registry.py          144          121            0           23
+ |ecorder\domain\config.py          147          121            0           26
+ |ucture\pyaudio_source.py          121          102            0           19
+ |download_progress_e2e.py          125          101            2           22
+ |der\test_ptt_shutdown.py          123           99            4           20
+ |rastructure\safe_pipe.py          117           93            0           24
+ |\test_speech_endpoint.py          121           90            0           31
+ |\realtime_transcriber.py          106           87            3           16
+ |ecorder\domain\events.py          131           83            0           48
+ |er\test_state_machine.py           95           78            0           17
+ |s\unit\test_event_bus.py           98           77            0           21
+ |distilbert_classifier.py           95           77            2           16
+ |e\onnxasr_transcriber.py           87           70            1           16
+ |\recorder\test_events.py           76           67            0            9
+ |r\domain\audio_buffer.py           84           66            0           18
+ |structure\file_source.py           77           63            0           14
+ |rver\install_packages.py           73           63            0           10
+ |kes\fake_audio_source.py           62           49            0           13
+ |tructure\oww_detector.py           56           45            0           11
+ |ests\unit\test_worker.py           56           44            0           12
+ |astructure\webrtc_vad.py           56           44            0           12
+ |re\porcupine_detector.py           51           43            0            8
+ |astructure\silero_vad.py           55           43            0           12
+ |akes\fake_transcriber.py           52           42            0           10
+ |\recorder\test_config.py           50           41            0            9
+ |\domain\state_machine.py           51           38            0           13
+ |uilding_blocks\worker.py           47           37            0           10
+ |/tests\fakes\fake_vad.py           38           30            0            8
+ |building_blocks\types.py           42           30            3            9
+ |\fakes\fake_wake_word.py           37           29            0            8
+ |ding_blocks\event_bus.py           35           27            0            8
+ |ests\unit\test_errors.py           34           26            0            8
+ |corder\test_bootstrap.py           28           23            0            5
+ |building_blocks\clock.py           34           23            0           11
+ |tests\unit\test_clock.py           30           22            0            8
+ |e_sentence_classifier.py           31           22            0            9
+ |ain\ports\transcriber.py           30           22            0            8
+ |ructure\composite_vad.py           27           21            0            6
+ |nit\recorder\test_dto.py           25           20            0            5
+ |t_onnxasr_transcriber.py           28           18            1            9
+ |order\application\dto.py           26           18            0            8
+ |in\ports\audio_source.py           27           18            0            9
+ |infrastructure\device.py           22           16            0            6
+ |domain\ports\__init__.py           16           15            0            1
+ |uilding_blocks\errors.py           29           15            0           14
+ |omain\ports\wake_word.py           21           14            0            7
+ |rder\domain\ports\vad.py           20           13            0            7
+ |/tests\fakes\__init__.py           13           12            0            1
+ |ecorder\domain\errors.py           23           12            0           11
+ |s\sentence_classifier.py           15           10            0            5
+ |c\stt_server\__init__.py            7            4            0            3
+ |server/tests\conftest.py            7            4            1            2
+ |ion\recorder\__init__.py            0            0            0            0
+ |\integration\__init__.py            0            0            0            0
+ |nit\recorder\__init__.py            0            0            0            0
+ |r/tests\unit\__init__.py            0            0            0            0
+ |server/tests\__init__.py            0            0            0            0
+ |ion\recorder\conftest.py            0            0            0            0
+ |T/server/src\__init__.py            0            0            0            0
+ |frastructure\__init__.py            0            0            0            0
+ |order\domain\__init__.py            0            0            0            0
+ |\application\__init__.py            0            0            0            0
+ |lding_blocks\__init__.py            0            0            0            0
+-------------------------------------------------------------------------------
+ TOML                    1          113           98            0           15
+-------------------------------------------------------------------------------
+ |TT/server/pyproject.toml          113           98            0           15
+-------------------------------------------------------------------------------
+ Makefile                1           11           11            0            0
+-------------------------------------------------------------------------------
+ |s/WinSTT/server/Makefile           11           11            0            0
+-------------------------------------------------------------------------------
+ Markdown                1          224            0          164           60
+ |- Python               1            1            1            0            0
+ (Total)                            225            1          164           60
+-------------------------------------------------------------------------------
+ E:/DL/Projects/WinSTT/server/CLAUDE.md
+ |- Markdown                        224            0          164           60
+ |- Python                            1            1            0            0
+ E:/DL/Projects/WinSTT/server/CLAUDE.md          224            0          164           60
+===============================================================================
+ Total                  84        11885         9399          545         1941
+===============================================================================

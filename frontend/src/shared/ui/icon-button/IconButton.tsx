@@ -8,20 +8,30 @@ export interface IconButtonProps {
 	icon: ReactNode;
 	onClick?: () => void;
 	disabled?: boolean;
+	/** Accessible label — required for icon-only buttons (WCAG 4.1.2) */
+	"aria-label": string;
 	title?: string;
 	className?: string;
 }
 
-export function IconButton({ icon, onClick, disabled, title, className }: IconButtonProps) {
+export function IconButton({
+	icon,
+	onClick,
+	disabled,
+	"aria-label": ariaLabel,
+	title,
+	className,
+}: IconButtonProps) {
 	return (
 		<Button
+			aria-label={ariaLabel}
 			className={cn(
 				"size-7 rounded-full bg-transparent p-0 text-foreground-muted hover:bg-surface-hover hover:text-foreground-secondary",
 				className
 			)}
 			disabled={disabled}
 			onClick={onClick}
-			title={title}
+			title={title ?? ariaLabel}
 		>
 			{icon}
 		</Button>

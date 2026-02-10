@@ -39,8 +39,6 @@ export function AudioDisplay() {
 	const t = useTranslations("audioDisplay");
 	const tf = useTranslations("fileOverlay");
 
-	console.log("[AudioDisplay] Rendering, isListenMode=", isListenMode);
-
 	const [isDragOver, setIsDragOver] = useState(false);
 	const dragCounter = useRef(0);
 

@@ -14,15 +14,15 @@ import threading
 import time
 import wave
 from collections.abc import Callable, Iterable
-from datetime import datetime
 from types import TracebackType
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 import numpy as np
 from numpy.typing import NDArray
 from websocket import ABNF, WebSocketApp
 
+from src.building_blocks.terminal import format_timestamp_ns as _format_timestamp_ns
 from src.building_blocks.types import ChunkCallback, SimpleCallback, TextCallback
 
 # Client-specific callback: receives the normalized audio float32 array
@@ -53,30 +53,6 @@ BUFFER_SIZE = 512
 SAMPLE_RATE = 16000
 
 INIT_HANDLE_BUFFER_OVERFLOW = platform.system() != "Darwin"
-
-
-class _BColors:
-    """ANSI color codes for terminal output."""
-
-    HEADER = "\033[95m"
-    OKBLUE = "\033[94m"
-    OKCYAN = "\033[96m"
-    OKGREEN = "\033[92m"
-    WARNING = "\033[93m"
-    FAIL = "\033[91m"
-    ENDC = "\033[0m"
-    BOLD = "\033[1m"
-    UNDERLINE = "\033[4m"
-
-
-def _format_timestamp_ns(timestamp_ns: int) -> str:
-    """Format a nanosecond timestamp as HH:MM:SS.mmm."""
-    seconds = timestamp_ns // 1_000_000_000
-    remainder_ns = timestamp_ns % 1_000_000_000
-    dt = datetime.fromtimestamp(seconds)
-    time_str = dt.strftime("%H:%M:%S")
-    milliseconds = remainder_ns // 1_000_000
-    return f"{time_str}.{milliseconds:03d}"
 
 
 def _get_audio_input_class() -> type[Any]:
@@ -435,85 +411,75 @@ class AudioToTextRecorderClient:
             print(f"Error while connecting to the server: {e}")
             return False
 
+    # Declarative CLI arg map: (attribute, cli_flag, is_bool_flag)
+    # bool_flag=True → append flag only when truthy (no value)
+    # bool_flag=False → append flag + str(value) when truthy
+    _CLI_ARG_MAP: ClassVar[list[tuple[str, str, bool]]] = [
+        ("model", "--model", False),
+        ("realtime_model_type", "--realtime_model_type", False),
+        ("download_root", "--root", False),
+        ("batch_size", "--batch", False),
+        ("realtime_batch_size", "--realtime_batch_size", False),
+        ("init_realtime_after_seconds", "--init_realtime_after_seconds", False),
+        ("debug_mode", "--debug", True),
+        ("language", "--language", False),
+        ("silero_sensitivity", "--silero_sensitivity", False),
+        ("silero_use_onnx", "--silero_use_onnx", True),
+        ("webrtc_sensitivity", "--webrtc_sensitivity", False),
+        ("min_length_of_recording", "--min_length_of_recording", False),
+        ("min_gap_between_recordings", "--min_gap_between_recordings", False),
+        ("realtime_processing_pause", "--realtime_processing_pause", False),
+        ("early_transcription_on_silence", "--early_transcription_on_silence", False),
+        ("silero_deactivity_detection", "--silero_deactivity_detection", True),
+        ("beam_size", "--beam_size", False),
+        ("beam_size_realtime", "--beam_size_realtime", False),
+        ("wake_words", "--wake_words", False),
+        ("wake_words_sensitivity", "--wake_words_sensitivity", False),
+        ("wake_word_timeout", "--wake_word_timeout", False),
+        ("wake_word_activation_delay", "--wake_word_activation_delay", False),
+        ("wakeword_backend", "--wakeword_backend", False),
+        ("openwakeword_model_paths", "--openwakeword_model_paths", False),
+        ("openwakeword_inference_framework", "--openwakeword_inference_framework", False),
+        ("wake_word_buffer_duration", "--wake_word_buffer_duration", False),
+        ("use_main_model_for_realtime", "--use_main_model_for_realtime", True),
+        ("use_extended_logging", "--use_extended_logging", True),
+    ]
+
+    def _build_cli_args(self) -> list[str]:
+        """Build CLI args from instance attributes using the declarative map."""
+        args: list[str] = ["stt-server"]
+        for attr, flag, is_bool in self._CLI_ARG_MAP:
+            value = getattr(self, attr, None)
+            if not value and value != 0:
+                continue
+            if is_bool:
+                args.append(flag)
+            else:
+                args += [flag, str(value)]
+
+        # Special handling: prompts need newline sanitization
+        if self.initial_prompt_realtime:
+            sanitized = str(self.initial_prompt_realtime).replace("\n", "\\n")
+            args += ["--initial_prompt_realtime", sanitized]
+        if self.initial_prompt:
+            sanitized = str(self.initial_prompt).replace("\n", "\\n")
+            args += ["--initial_prompt", sanitized]
+
+        # Port extraction from URLs
+        if self.control_url:
+            port = urlparse(self.control_url).port
+            if port:
+                args += ["--control_port", str(port)]
+        if self.data_url:
+            port = urlparse(self.data_url).port
+            if port:
+                args += ["--data_port", str(port)]
+        return args
+
     def start_server(self) -> None:
         """Launch the stt-server subprocess."""
-        args = ["stt-server"]
+        args = self._build_cli_args()
 
-        if self.model:
-            args += ["--model", self.model]
-        if self.realtime_model_type:
-            args += ["--realtime_model_type", self.realtime_model_type]
-        if self.download_root:
-            args += ["--root", self.download_root]
-        if self.batch_size is not None:
-            args += ["--batch", str(self.batch_size)]
-        if self.realtime_batch_size is not None:
-            args += ["--realtime_batch_size", str(self.realtime_batch_size)]
-        if self.init_realtime_after_seconds is not None:
-            args += ["--init_realtime_after_seconds", str(self.init_realtime_after_seconds)]
-        if self.initial_prompt_realtime:
-            sanitized_prompt = str(self.initial_prompt_realtime).replace("\n", "\\n")
-            args += ["--initial_prompt_realtime", sanitized_prompt]
-
-        if self.debug_mode:
-            args.append("--debug")
-
-        if self.language:
-            args += ["--language", self.language]
-        if self.silero_sensitivity is not None:
-            args += ["--silero_sensitivity", str(self.silero_sensitivity)]
-        if self.silero_use_onnx:
-            args.append("--silero_use_onnx")
-        if self.webrtc_sensitivity is not None:
-            args += ["--webrtc_sensitivity", str(self.webrtc_sensitivity)]
-        if self.min_length_of_recording is not None:
-            args += ["--min_length_of_recording", str(self.min_length_of_recording)]
-        if self.min_gap_between_recordings is not None:
-            args += ["--min_gap_between_recordings", str(self.min_gap_between_recordings)]
-        if self.realtime_processing_pause is not None:
-            args += ["--realtime_processing_pause", str(self.realtime_processing_pause)]
-        if self.early_transcription_on_silence is not None:
-            args += ["--early_transcription_on_silence", str(self.early_transcription_on_silence)]
-        if self.silero_deactivity_detection:
-            args.append("--silero_deactivity_detection")
-        if self.beam_size is not None:
-            args += ["--beam_size", str(self.beam_size)]
-        if self.beam_size_realtime is not None:
-            args += ["--beam_size_realtime", str(self.beam_size_realtime)]
-        if self.wake_words is not None:
-            args += ["--wake_words", str(self.wake_words)]
-        if self.wake_words_sensitivity is not None:
-            args += ["--wake_words_sensitivity", str(self.wake_words_sensitivity)]
-        if self.wake_word_timeout is not None:
-            args += ["--wake_word_timeout", str(self.wake_word_timeout)]
-        if self.wake_word_activation_delay is not None:
-            args += ["--wake_word_activation_delay", str(self.wake_word_activation_delay)]
-        if self.wakeword_backend is not None:
-            args += ["--wakeword_backend", str(self.wakeword_backend)]
-        if self.openwakeword_model_paths:
-            args += ["--openwakeword_model_paths", str(self.openwakeword_model_paths)]
-        if self.openwakeword_inference_framework is not None:
-            args += ["--openwakeword_inference_framework", str(self.openwakeword_inference_framework)]
-        if self.wake_word_buffer_duration is not None:
-            args += ["--wake_word_buffer_duration", str(self.wake_word_buffer_duration)]
-        if self.use_main_model_for_realtime:
-            args.append("--use_main_model_for_realtime")
-        if self.use_extended_logging:
-            args.append("--use_extended_logging")
-
-        if self.control_url:
-            parsed_control_url = urlparse(self.control_url)
-            if parsed_control_url.port:
-                args += ["--control_port", str(parsed_control_url.port)]
-        if self.data_url:
-            parsed_data_url = urlparse(self.data_url)
-            if parsed_data_url.port:
-                args += ["--data_port", str(parsed_data_url.port)]
-        if self.initial_prompt:
-            sanitized_prompt = str(self.initial_prompt).replace("\n", "\\n")
-            args += ["--initial_prompt", sanitized_prompt]
-
-        # Start the subprocess with the mapped arguments
         if os.name == "nt":  # Windows
             cmd = "start /min cmd /c " + subprocess.list2cmdline(args)
             if self.debug_mode:
@@ -685,71 +651,50 @@ class AudioToTextRecorderClient:
         except Exception as e:
             print(f"Error processing control message: {e}")
 
+    # Dispatch table: message type → callback attribute name (simple no-arg callbacks)
+    _DATA_DISPATCH: ClassVar[dict[str, str]] = {
+        "recording_start": "on_recording_start",
+        "recording_stop": "on_recording_stop",
+        "vad_detect_start": "on_vad_detect_start",
+        "vad_detect_stop": "on_vad_detect_stop",
+        "vad_start": "on_vad_start",
+        "vad_stop": "on_vad_stop",
+        "start_turn_detection": "on_turn_detection_start",
+        "stop_turn_detection": "on_turn_detection_stop",
+        "wakeword_detected": "on_wakeword_detected",
+        "wakeword_detection_start": "on_wakeword_detection_start",
+        "wakeword_detection_end": "on_wakeword_detection_end",
+    }
+
     def on_data_message(self, ws: WebSocketApp, message: str) -> None:
         """Handle real-time transcription and full sentence updates."""
         try:
             data = json.loads(message)
+            msg_type = data.get("type")
 
-            if data.get("type") == "realtime":
+            if msg_type == "realtime":
                 if data["text"] != self.realtime_text:
                     self.realtime_text = data["text"]
-
                     if self.on_realtime_transcription_update:
                         threading.Thread(
                             target=self.on_realtime_transcription_update,
                             args=(self.realtime_text,),
                         ).start()
-
-            elif data.get("type") == "fullSentence":
+            elif msg_type == "fullSentence":
                 self.final_text = data["text"]
                 self.final_text_ready.set()
-
-            elif data.get("type") == "recording_start":
-                if self.on_recording_start:
-                    self.on_recording_start()
-            elif data.get("type") == "recording_stop":
-                if self.on_recording_stop:
-                    self.on_recording_stop()
-            elif data.get("type") == "transcription_start":
-                audio_bytes_base64 = data.get("audio_bytes_base64")
-                decoded_bytes = base64.b64decode(audio_bytes_base64)
-
+            elif msg_type == "transcription_start":
+                decoded_bytes = base64.b64decode(data.get("audio_bytes_base64"))
                 audio_array = np.frombuffer(decoded_bytes, dtype=np.int16)
-
-                int16_max_abs_value = 32768.0
-                normalized_audio = audio_array.astype(np.float32) / int16_max_abs_value
-
+                normalized_audio = audio_array.astype(np.float32) / 32768.0
                 if self.on_transcription_start:
                     self.on_transcription_start(normalized_audio)
-            elif data.get("type") == "vad_detect_start":
-                if self.on_vad_detect_start:
-                    self.on_vad_detect_start()
-            elif data.get("type") == "vad_detect_stop":
-                if self.on_vad_detect_stop:
-                    self.on_vad_detect_stop()
-            elif data.get("type") == "vad_start":
-                if self.on_vad_start:
-                    self.on_vad_start()
-            elif data.get("type") == "vad_stop":
-                if self.on_vad_stop:
-                    self.on_vad_stop()
-            elif data.get("type") == "start_turn_detection":
-                if self.on_turn_detection_start:
-                    self.on_turn_detection_start()
-            elif data.get("type") == "stop_turn_detection":
-                if self.on_turn_detection_stop:
-                    self.on_turn_detection_stop()
-            elif data.get("type") == "wakeword_detected":
-                if self.on_wakeword_detected:
-                    self.on_wakeword_detected()
-            elif data.get("type") == "wakeword_detection_start":
-                if self.on_wakeword_detection_start:
-                    self.on_wakeword_detection_start()
-            elif data.get("type") == "wakeword_detection_end":
-                if self.on_wakeword_detection_end:
-                    self.on_wakeword_detection_end()
-            elif data.get("type") == "recorded_chunk":
+            elif msg_type == "recorded_chunk":
                 pass
+            elif msg_type in self._DATA_DISPATCH:
+                cb = getattr(self, self._DATA_DISPATCH[msg_type], None)
+                if cb is not None:
+                    cb()
             else:
                 print(f"Unknown data message format: {data}")
 

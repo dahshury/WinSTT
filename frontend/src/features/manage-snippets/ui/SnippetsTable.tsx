@@ -91,11 +91,12 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 						key={entry.id}
 					>
 						<span>
-							<span className="text-accent">{entry.trigger}</span>
+							<span className="text-purple">{entry.trigger}</span>
 							<span className="text-foreground-muted">{" → "}</span>
 							<span className="text-foreground">{entry.expansion}</span>
 						</span>
 						<Button
+							aria-label={`${tc("delete")} "${entry.trigger}"`}
 							className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
 							onClick={() => onRemove(entry.id)}
 						>

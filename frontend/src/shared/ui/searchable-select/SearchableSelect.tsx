@@ -33,7 +33,7 @@ export function SearchableSelect({ options, value, onChange }: SearchableSelectP
 		>
 			<div className="relative flex w-full items-center">
 				<Combobox.Input
-					className="flex h-8 w-full items-center rounded-sm border border-border bg-surface-tertiary pr-7 pl-2.5 font-inherit text-[13px] text-foreground leading-normal outline-none focus:border-accent"
+					className="flex h-8 w-full items-center rounded-sm border border-border bg-surface-tertiary pr-7 pl-2.5 font-inherit text-[13px] text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface"
 					placeholder="Search…"
 				/>
 				<Combobox.Trigger

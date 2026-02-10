@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain } from "electron";
 import { store } from "../lib/store";
+import type { SttClient } from "../ws/stt-client";
 import { isSttProcessRunning, restartSttProcess } from "./stt-process";
 
 const ALLOWED_SETTINGS_KEYS = new Set([
@@ -17,7 +18,8 @@ const ALLOWED_SETTINGS_KEYS = new Set([
  * These are passed as CLI args and cannot be hot-reloaded.
  */
 const STARTUP_ONLY_KEYS = new Set([
-	"model.model",
+	// model.model is NOT here — it's hot-reloaded via sttSetParameter("model") which triggers
+	// an in-place model swap on the server. Including it here would kill the recorder mid-swap.
 	"model.realtimeModel",
 	"model.computeType",
 	"model.device",
@@ -41,6 +43,7 @@ const STARTUP_ONLY_KEYS = new Set([
 ]);
 
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
+let sttClientRef: SttClient | null = null;
 
 /** Check if any startup-only settings changed between old and new, trigger restart if so. */
 function checkForRestartNeeded(
@@ -64,20 +67,40 @@ function checkForRestartNeeded(
 		}
 	}
 
-	if (needsRestart && isSttProcessRunning()) {
-		// Debounce restart so rapid changes don't cause multiple restarts
-		if (restartTimer) {
-			clearTimeout(restartTimer);
-		}
-		restartTimer = setTimeout(() => {
-			restartTimer = null;
-			console.log("[settings] Restarting STT server due to startup-only setting change");
-			restartSttProcess();
-		}, 500);
+	if (!needsRestart) {
+		return;
 	}
+
+	const managed = isSttProcessRunning();
+	const connected = sttClientRef?.isConnected ?? false;
+
+	if (!(managed || connected)) {
+		return;
+	}
+
+	// Debounce restart so rapid changes don't cause multiple restarts
+	if (restartTimer) {
+		clearTimeout(restartTimer);
+	}
+	restartTimer = setTimeout(() => {
+		restartTimer = null;
+		if (isSttProcessRunning()) {
+			// Electron-managed server — kill and respawn with updated CLI args
+			console.log("[settings] Restarting Electron-managed STT server");
+			restartSttProcess();
+		} else {
+			// External server — cannot restart from Electron. These settings
+			// will take effect on the next manual server restart.
+			console.log(
+				"[settings] Startup-only setting changed but server is not managed by Electron." +
+					" Restart the server manually to apply the change."
+			);
+		}
+	}, 500);
 }
 
-export function setupSettingsHandlers() {
+export function setupSettingsHandlers(sttClient?: SttClient) {
+	sttClientRef = sttClient ?? null;
 	ipcMain.handle("settings:load", () => {
 		return store.store;
 	});

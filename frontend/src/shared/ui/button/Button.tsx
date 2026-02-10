@@ -11,6 +11,7 @@ export interface ButtonProps {
 	type?: "button" | "submit" | "reset";
 	className?: string;
 	title?: string;
+	"aria-label"?: string;
 }
 
 export function Button({
@@ -20,11 +21,13 @@ export function Button({
 	type = "button",
 	className,
 	title,
+	"aria-label": ariaLabel,
 }: ButtonProps) {
 	return (
 		<BaseButton
+			aria-label={ariaLabel}
 			className={cn(
-				"inline-flex cursor-pointer items-center justify-center border-none font-sans outline-none disabled:cursor-default disabled:opacity-40",
+				"inline-flex cursor-pointer items-center justify-center border-none font-sans outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface disabled:cursor-default disabled:opacity-40",
 				className
 			)}
 			disabled={disabled}

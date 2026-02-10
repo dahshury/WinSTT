@@ -27,14 +27,14 @@ export const FileOverlay = memo(function FileOverlay() {
 							<Progress.Value>{(formattedValue: string | null) => formattedValue}</Progress.Value>
 						</div>
 						<Progress.Track className="h-3 overflow-hidden rounded-full bg-surface-tertiary">
-							<Progress.Indicator className="h-full rounded-full bg-accent transition-[width] duration-200 ease-out" />
+							<Progress.Indicator className="h-full rounded-full bg-teal transition-[width] duration-200 ease-out" />
 						</Progress.Track>
 					</Progress.Root>
 					<p className="text-foreground-dim text-xs">{message}</p>
 				</>
 			)}
-			{status === "complete" && <p className="font-medium text-green-400 text-sm">{message}</p>}
-			{status === "error" && <p className="font-medium text-red-400 text-sm">{message}</p>}
+			{status === "complete" && <p className="font-medium text-sm text-success">{message}</p>}
+			{status === "error" && <p className="font-medium text-error text-sm">{message}</p>}
 		</div>
 	);
 });

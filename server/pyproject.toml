@@ -23,6 +23,7 @@ dependencies = [
     "colorama>=0.4.6",
     "websockets>=16.0",
     "onnx-asr[hub]",
+    "transformers>=4.30",
 ]
 
 [dependency-groups]
@@ -86,7 +87,7 @@ warn_no_return = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","faster_whisper.*","torch.*","torchaudio.*","scipy.*","soundfile.*","halo.*","websocket.*","websockets.*","colorama.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnxruntime.*"]
+module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","faster_whisper.*","torch.*","torchaudio.*","scipy.*","soundfile.*","halo.*","websocket.*","websockets.*","colorama.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnxruntime.*","transformers.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -97,6 +98,7 @@ testpaths = ["tests"]
 branch = true
 omit = [
     "tests/*",
+    "src/building_blocks/terminal.py",
     "src/recorder/infrastructure/*",
     "src/recorder/bootstrap.py",
     "src/recorder/client.py",

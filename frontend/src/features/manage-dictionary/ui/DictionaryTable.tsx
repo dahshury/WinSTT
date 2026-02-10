@@ -102,6 +102,7 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 							<span className="text-foreground">{entry.replace}</span>
 						</span>
 						<Button
+							aria-label={`${tc("delete")} "${entry.find}"`}
 							className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
 							onClick={() => onRemove(entry.id)}
 						>

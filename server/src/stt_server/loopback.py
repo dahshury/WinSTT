@@ -56,24 +56,28 @@ class LoopbackCapture:
                     # Try to find the matching loopback device
                     for loopback in audio.get_loopback_device_info_generator():
                         if loopback["index"] == dev["index"] or dev["name"] in loopback["name"]:
-                            devices.append({
-                                "index": loopback["index"],
-                                "name": str(dev["name"]),
-                                "defaultSampleRate": int(loopback["defaultSampleRate"]),
-                                "maxOutputChannels": int(
-                                    max(loopback.get("maxInputChannels", 0), loopback.get("maxOutputChannels", 0))
-                                ),
-                                "isDefault": is_default,
-                            })
+                            devices.append(
+                                {
+                                    "index": loopback["index"],
+                                    "name": str(dev["name"]),
+                                    "defaultSampleRate": int(loopback["defaultSampleRate"]),
+                                    "maxOutputChannels": int(
+                                        max(loopback.get("maxInputChannels", 0), loopback.get("maxOutputChannels", 0))
+                                    ),
+                                    "isDefault": is_default,
+                                }
+                            )
                             break
                     else:
-                        devices.append({
-                            "index": dev["index"],
-                            "name": str(dev["name"]),
-                            "defaultSampleRate": int(dev["defaultSampleRate"]),
-                            "maxOutputChannels": int(dev["maxOutputChannels"]),
-                            "isDefault": is_default,
-                        })
+                        devices.append(
+                            {
+                                "index": dev["index"],
+                                "name": str(dev["name"]),
+                                "defaultSampleRate": int(dev["defaultSampleRate"]),
+                                "maxOutputChannels": int(dev["maxOutputChannels"]),
+                                "isDefault": is_default,
+                            }
+                        )
             return devices
         finally:
             audio.terminate()

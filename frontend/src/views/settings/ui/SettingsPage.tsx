@@ -56,13 +56,15 @@ export function SettingsPage() {
 					<div className="flex-1" />
 					<div className="titlebar-no-drag flex items-center">
 						<Button
+							aria-label={t("minimize")}
 							className="flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-colors duration-150 hover:bg-surface-hover hover:text-foreground-secondary"
 							onClick={windowMinimize}
 						>
 							<HugeiconsIcon icon={MinusSignIcon} size={12} />
 						</Button>
 						<Button
-							className="flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-colors duration-150 hover:bg-[#dc2626] hover:text-white"
+							aria-label={t("close")}
+							className="flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-colors duration-150 hover:bg-error hover:text-white"
 							onClick={windowCloseSelf}
 						>
 							<HugeiconsIcon icon={Cancel01Icon} size={12} />

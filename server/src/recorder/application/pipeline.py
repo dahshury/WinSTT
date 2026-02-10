@@ -70,7 +70,7 @@ class RecordingPipeline(Worker):
         self._start_recording_on_voice_activity: bool = False
         self._stop_recording_on_voice_deactivity: bool = False
         self._use_wake_words: bool = bool(config.wake_word.wakeword_backend)
-        self._transcription_queue: queue.Queue[tuple[bool, float]] = queue.Queue()
+        self._transcription_queue: queue.Queue[tuple[bool, float] | None] = queue.Queue()
 
     def feed_audio(self, chunk: AudioChunk) -> None:
         self._audio_queue.put(chunk)
@@ -125,7 +125,7 @@ class RecordingPipeline(Worker):
         self._post_speech_silence_duration = value
 
     @property
-    def transcription_queue(self) -> queue.Queue[tuple[bool, float]]:
+    def transcription_queue(self) -> queue.Queue[tuple[bool, float] | None]:
         return self._transcription_queue
 
     @property

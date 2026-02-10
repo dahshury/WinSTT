@@ -2,10 +2,16 @@ import type { ChildProcess } from "node:child_process";
 import { execSync, spawn } from "node:child_process";
 import path from "node:path";
 import { app, ipcMain } from "electron";
+import { dbg } from "../lib/debug-log";
 import { store } from "../lib/store";
 
 let sttProcess: ChildProcess | null = null;
 let status: "idle" | "starting" | "running" | "error" = "idle";
+
+function setErrorState() {
+	status = "error";
+	sttProcess = null;
+}
 
 /**
  * Mapping from electron-store paths to CLI flags for the STT server.
@@ -27,13 +33,20 @@ const SETTINGS_TO_CLI: [storePath: string, cliFlag: string][] = [
 	["audio.sileroSensitivity", "--silero_sensitivity"],
 	["audio.webrtcSensitivity", "--webrtc_sensitivity"],
 	["audio.minLengthOfRecording", "--min_length_of_recording"],
-	["quality.enableRealtimeTranscription", "--enable_realtime_transcription"],
 	["quality.useMainModelForRealtime", "--use_main_model_for_realtime"],
 	["quality.realtimeProcessingPause", "--realtime_processing_pause"],
 	["quality.earlyTranscriptionOnSilence", "--early_transcription_on_silence"],
 	["quality.initRealtimeAfterSeconds", "--init_realtime_after_seconds"],
 	["quality.batchSize", "--batch"],
 	["quality.realtimeBatchSize", "--realtime_batch_size"],
+];
+
+/**
+ * Boolean flags that use argparse BooleanOptionalAction (default=True on server).
+ * These need --no-{flag} when disabled, unlike store_true flags which just omit the flag.
+ */
+const BOOLEAN_OPTIONAL_CLI: [storePath: string, cliFlag: string][] = [
+	["quality.enableRealtimeTranscription", "--enable_realtime_transcription"],
 ];
 
 /** Read all relevant settings from electron-store and convert to CLI args */
@@ -53,6 +66,17 @@ function buildServerArgs(baseArgs: string[]): string[] {
 			continue;
 		}
 		args.push(cliFlag, String(value));
+	}
+
+	// BooleanOptionalAction flags: --flag when true, --no-flag when false
+	for (const [storePath, cliFlag] of BOOLEAN_OPTIONAL_CLI) {
+		const value = store.get(storePath) as boolean | undefined;
+		if (value === true) {
+			args.push(cliFlag);
+		} else if (value === false) {
+			args.push(cliFlag.replace("--", "--no-"));
+		}
+		// undefined: let server use its default
 	}
 
 	// sileroDeactivityDetection is a boolean store_true flag
@@ -95,58 +119,75 @@ function resolveSpawnArgs(serverDir: string): { command: string; args: string[] 
 	return { command: "uv", args: ["run", "stt-server"] };
 }
 
+/**
+ * Attach stdout/stderr/exit/error handlers to a spawned process.
+ * The `proc` reference is captured so that stale exit/error handlers
+ * from a killed process cannot clobber a newly spawned replacement.
+ */
+function attachProcessHandlers(proc: ChildProcess) {
+	proc.stdout?.on("data", (data: Buffer) => {
+		const text = data.toString();
+		console.log("[stt-server]", text.trimEnd());
+		if (text.includes("RealtimeSTT initialized") && sttProcess === proc) {
+			status = "running";
+		}
+	});
+
+	proc.stderr?.on("data", (data: Buffer) => {
+		console.error("[stt-server]", data.toString().trimEnd());
+	});
+
+	proc.on("exit", () => {
+		if (sttProcess === proc) {
+			sttProcess = null;
+			status = "idle";
+		}
+	});
+
+	proc.on("error", (err) => {
+		console.error("[stt-server] Spawn error:", err);
+		if (sttProcess === proc) {
+			setErrorState();
+		}
+	});
+}
+
+/** Spawn the STT server process with the given CLI args. */
+function spawnServer(): void {
+	const serverDir = resolveServerDir();
+	const { command, args: baseArgs } = resolveSpawnArgs(serverDir);
+	const args = buildServerArgs(baseArgs);
+
+	status = "starting";
+
+	const proc = spawn(command, args, {
+		cwd: serverDir,
+		shell: false,
+	});
+
+	sttProcess = proc;
+	attachProcessHandlers(proc);
+	dbg("stt-spawn", "CLI args:", args.join(" "));
+	dbg(
+		"stt-spawn",
+		"store enableRealtimeTranscription=",
+		store.get("quality.enableRealtimeTranscription"),
+		"useMainModelForRealtime=",
+		store.get("quality.useMainModelForRealtime")
+	);
+}
+
 export function setupSttProcessHandlers() {
 	ipcMain.handle("stt-server:spawn", () => {
 		if (sttProcess) {
 			return;
 		}
-
-		let serverDir: string;
 		try {
-			serverDir = resolveServerDir();
+			spawnServer();
 		} catch (err) {
-			status = "error";
+			setErrorState();
 			throw err;
 		}
-
-		const { command, args: baseArgs } = resolveSpawnArgs(serverDir);
-		const args = buildServerArgs(baseArgs);
-
-		status = "starting";
-
-		try {
-			sttProcess = spawn(command, args, {
-				cwd: serverDir,
-				shell: false,
-			});
-		} catch (err) {
-			status = "error";
-			sttProcess = null;
-			throw err;
-		}
-
-		sttProcess.stdout?.on("data", (data: Buffer) => {
-			const text = data.toString();
-			console.log("[stt-server]", text.trimEnd());
-			if (text.includes("RealtimeSTT initialized")) {
-				status = "running";
-			}
-		});
-
-		sttProcess.stderr?.on("data", (data: Buffer) => {
-			console.error("[stt-server]", data.toString().trimEnd());
-		});
-
-		sttProcess.on("exit", () => {
-			sttProcess = null;
-			status = "idle";
-		});
-
-		sttProcess.on("error", (err) => {
-			console.error("[stt-server] Spawn error:", err);
-			status = "error";
-			sttProcess = null;
-		});
 	});
 
 	ipcMain.handle("stt-server:kill", () => {
@@ -161,54 +202,31 @@ export function setupSttProcessHandlers() {
 /** Restart the STT server with updated settings from electron-store. */
 export function restartSttProcess() {
 	killSttProcess();
-	// Re-trigger spawn via the same handler logic
-	const serverDir = resolveServerDir();
-	const { command, args: baseArgs } = resolveSpawnArgs(serverDir);
-	const args = buildServerArgs(baseArgs);
-
-	status = "starting";
-
 	try {
-		sttProcess = spawn(command, args, {
-			cwd: serverDir,
-			shell: false,
-		});
+		spawnServer();
 	} catch (err) {
-		status = "error";
-		sttProcess = null;
+		setErrorState();
 		console.error("[stt-server] Restart spawn error:", err);
-		return;
 	}
-
-	sttProcess.stdout?.on("data", (data: Buffer) => {
-		const text = data.toString();
-		console.log("[stt-server]", text.trimEnd());
-		if (text.includes("RealtimeSTT initialized")) {
-			status = "running";
-		}
-	});
-
-	sttProcess.stderr?.on("data", (data: Buffer) => {
-		console.error("[stt-server]", data.toString().trimEnd());
-	});
-
-	sttProcess.on("exit", () => {
-		sttProcess = null;
-		status = "idle";
-	});
-
-	sttProcess.on("error", (err) => {
-		console.error("[stt-server] Spawn error:", err);
-		status = "error";
-		sttProcess = null;
-	});
-
-	console.log("[stt-server] Restarted with args:", args.join(" "));
 }
 
 /** Returns whether the STT server process is currently alive. */
 export function isSttProcessRunning(): boolean {
 	return sttProcess != null;
+}
+
+/** Try to auto-spawn the STT server at startup. Gracefully handles errors (e.g. missing STT_SERVER_DIR). */
+export function tryAutoSpawnServer(): void {
+	if (sttProcess) {
+		dbg("stt-spawn", "Auto-spawn skipped: process already running");
+		return;
+	}
+	try {
+		spawnServer();
+		dbg("stt-spawn", "Auto-spawn succeeded, pid=", (sttProcess as ChildProcess | null)?.pid);
+	} catch (err) {
+		dbg("stt-spawn", "Auto-spawn SKIPPED:", err instanceof Error ? err.message : String(err));
+	}
 }
 
 /** Kill the STT subprocess tree. Exported for use in app lifecycle cleanup. */

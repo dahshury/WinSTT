@@ -19,10 +19,10 @@ const STROKE_ALPHA_ACTIVE = 0.25;
 const STROKE_ALPHA_IDLE = 0.06;
 /** Fill peak alpha (active). */
 const FILL_ALPHA_ACTIVE = 0.04;
-/** RGB for accent color (amber-500). */
-const ACCENT = "245, 158, 11";
-/** RGB for idle color. */
-const IDLE_COLOR = "255, 255, 255";
+/** RGB for active color (bright blue). */
+const ACCENT = "88, 166, 255";
+/** RGB for idle color (blue-tinted white). */
+const IDLE_COLOR = "160, 170, 190";
 
 /** How quickly smoothedActivity interpolates toward its target (0-1 per frame). */
 const ACTIVITY_SMOOTHING = 0.06;
@@ -66,6 +66,32 @@ function computeWaveY(t: number, time: number, amplitude: number, midY: number):
 	return midY - normalized * amplitude * midY * edgeFade;
 }
 
+function buildWavePoints(
+	w: number,
+	h: number,
+	time: number,
+	amplitude: number
+): [x: number, y: number][] {
+	const midY = h / 2;
+	const points: [number, number][] = [];
+	for (let i = 0; i <= RESOLUTION; i++) {
+		const t = i / RESOLUTION;
+		points.push([t * w, computeWaveY(t, time, amplitude, midY)]);
+	}
+	return points;
+}
+
+function tracePath(ctx: CanvasRenderingContext2D, points: [number, number][]) {
+	for (let i = 0; i < points.length; i++) {
+		const pt = points[i]!;
+		if (i === 0) {
+			ctx.moveTo(pt[0], pt[1]);
+		} else {
+			ctx.lineTo(pt[0], pt[1]);
+		}
+	}
+}
+
 function drawWavePath(
 	ctx: CanvasRenderingContext2D,
 	w: number,
@@ -75,19 +101,15 @@ function drawWavePath(
 	mirror: boolean
 ) {
 	const midY = h / 2;
+	const points = buildWavePoints(w, h, time, amplitude);
 	ctx.beginPath();
-	for (let i = 0; i <= RESOLUTION; i++) {
-		const t = i / RESOLUTION;
-		const x = t * w;
-		let y = computeWaveY(t, time, amplitude, midY);
-		if (mirror) {
-			y = midY + (midY - y);
-		}
-		if (i === 0) {
-			ctx.moveTo(x, y);
-		} else {
-			ctx.lineTo(x, y);
-		}
+	if (mirror) {
+		tracePath(
+			ctx,
+			points.map(([x, y]) => [x, midY + (midY - y)])
+		);
+	} else {
+		tracePath(ctx, points);
 	}
 }
 
@@ -101,23 +123,14 @@ function drawFilledRegion(
 	color: string
 ) {
 	const midY = h / 2;
+	const points = buildWavePoints(w, h, time, amplitude);
 
 	ctx.beginPath();
-	for (let i = 0; i <= RESOLUTION; i++) {
-		const t = i / RESOLUTION;
-		const x = t * w;
-		const y = computeWaveY(t, time, amplitude, midY);
-		if (i === 0) {
-			ctx.moveTo(x, y);
-		} else {
-			ctx.lineTo(x, y);
-		}
-	}
-	for (let i = RESOLUTION; i >= 0; i--) {
-		const t = i / RESOLUTION;
-		const x = t * w;
-		const y = computeWaveY(t, time, amplitude, midY);
-		ctx.lineTo(x, midY + (midY - y));
+	tracePath(ctx, points);
+	// Trace mirrored path in reverse to close the filled region
+	for (let i = points.length - 1; i >= 0; i--) {
+		const pt = points[i]!;
+		ctx.lineTo(pt[0], midY + (midY - pt[1]));
 	}
 	ctx.closePath();
 
@@ -274,6 +287,15 @@ export const WaveformBars = memo(function WaveformBars() {
 		const amp = prevAmp + (params.targetAmp - prevAmp) * AMP_SMOOTHING;
 		smoothedAmpRef.current = amp;
 
+		// Always draw the center baseline
+		const midY = h / 2;
+		ctx.beginPath();
+		ctx.moveTo(0, midY);
+		ctx.lineTo(w, midY);
+		ctx.strokeStyle = makeStrokeGradient(ctx, w, STROKE_ALPHA_IDLE, IDLE_COLOR);
+		ctx.lineWidth = 1;
+		ctx.stroke();
+
 		if (amp >= 0.001) {
 			drawFrame(ctx, w, h, amp, params);
 		}
@@ -287,7 +309,7 @@ export const WaveformBars = memo(function WaveformBars() {
 	}, [render]);
 
 	return (
-		<div className="absolute inset-0" ref={containerRef}>
+		<div aria-hidden="true" className="absolute inset-0" ref={containerRef}>
 			<canvas className="h-full w-full" ref={canvasRef} style={{ imageRendering: "auto" }} />
 		</div>
 	);

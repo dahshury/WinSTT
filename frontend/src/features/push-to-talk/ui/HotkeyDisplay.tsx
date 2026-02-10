@@ -12,7 +12,7 @@ export function HotkeyDisplay() {
 		<kbd
 			className={`inline-flex items-center gap-px rounded border font-mono text-[10px] leading-none transition-all duration-150 ease-in-out ${
 				isPressed
-					? "border-border-accent bg-accent-dim text-accent shadow-[0_0_8px_rgba(245,158,11,0.12)]"
+					? "border-orange/30 bg-orange-dim text-orange shadow-[0_0_8px_rgba(59,130,246,0.15)]"
 					: "border-border bg-surface-tertiary text-foreground-secondary"
 			}`}
 		>
@@ -23,7 +23,7 @@ export function HotkeyDisplay() {
 				</span>
 			))}
 			{isPressed && (
-				<span className="mr-1.5 inline-block size-1 animate-recording-pulse rounded-full bg-accent" />
+				<span className="mr-1.5 inline-block size-1 animate-recording-pulse rounded-full bg-orange" />
 			)}
 		</kbd>
 	);

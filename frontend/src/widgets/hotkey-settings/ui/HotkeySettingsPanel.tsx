@@ -13,7 +13,7 @@ export function HotkeySettingsPanel() {
 
 	return (
 		<SettingSection title={t("configuration")}>
-			<div style={{ padding: "8px 0" }}>
+			<div className="py-2">
 				<FormControl caption={t("pushToTalkKeyCaption")} label={t("pushToTalkKey")}>
 					<HotkeyRecorder
 						currentKey={hotkey?.pushToTalkKey ?? "LCtrl+LMeta"}

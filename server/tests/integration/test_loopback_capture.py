@@ -18,11 +18,11 @@ pyaudiowpatch = pytest.importorskip("pyaudiowpatch", reason="pyaudiowpatch not i
 
 from src.stt_server.loopback import LoopbackCapture
 
-
 # ---------------------------------------------------------------------------
 # Lightweight recorder stub — implements only the interface LoopbackCapture
 # actually calls at runtime (duck-typed via TYPE_CHECKING guard).
 # ---------------------------------------------------------------------------
+
 
 class RecorderStub:
     """Minimal stand-in for AudioToTextRecorder used by LoopbackCapture."""
@@ -58,6 +58,7 @@ class RecorderStub:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _find_loopback_device() -> int | None:
     """Return the index of the first available loopback device, or None."""
     lc = LoopbackCapture()
@@ -82,6 +83,7 @@ skip_no_device = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @skip_no_device
 class TestLoopbackCapture:

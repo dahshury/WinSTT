@@ -9,7 +9,10 @@
     "comingSoon": "即将推出"
   },
   "titleBar": {
-    "appName": "WinSTT"
+    "appName": "WinSTT",
+    "settings": "设置",
+    "minimize": "最小化",
+    "close": "关闭"
   },
   "settings": {
     "title": "设置",
@@ -23,7 +26,9 @@
     "tabProcessing": "处理",
     "tabHotkey": "快捷键",
     "tabDictionary": "词典",
-    "tabSnippets": "文本片段"
+    "tabSnippets": "文本片段",
+    "minimize": "最小化",
+    "close": "关闭"
   },
   "general": {
     "recording": "录音",
@@ -130,7 +135,14 @@
     "uppercaseFirst": "首字母大写",
     "uppercaseFirstCaption": "自动将句首字母大写",
     "endWithPeriod": "句末加句号",
-    "endWithPeriodCaption": "自动在句尾添加句号"
+    "endWithPeriodCaption": "自动在句尾添加句号",
+    "smartEndpoint": "智能端点",
+    "smartEndpointLabel": "智能端点",
+    "smartEndpointCaption": "AI 驱动的句子检测",
+    "smartEndpointTooltip": "使用 DistilBERT 分类器检测句子是否完整。在按住说话模式下，句子在按住按键时自动完成并粘贴。在切换模式下，完整句子更快完成，未完成的句子等待更长时间。需要启用实时预览。",
+    "detectionSpeed": "检测速度",
+    "detectionSpeedCaption": "暂停时长的倍数",
+    "detectionSpeedTooltip": "控制句子完成的速度。较高的值意味着完成前的暂停更短。较低的值更有耐心，等待说话者继续。"
   },
   "hotkey": {
     "configuration": "快捷键配置",

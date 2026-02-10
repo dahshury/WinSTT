@@ -9,7 +9,10 @@
     "comingSoon": "Coming soon"
   },
   "titleBar": {
-    "appName": "WinSTT"
+    "appName": "WinSTT",
+    "settings": "Settings",
+    "minimize": "Minimize",
+    "close": "Close"
   },
   "settings": {
     "title": "Settings",
@@ -23,7 +26,9 @@
     "tabProcessing": "Processing",
     "tabHotkey": "Hotkey",
     "tabDictionary": "Dictionary",
-    "tabSnippets": "Snippets"
+    "tabSnippets": "Snippets",
+    "minimize": "Minimize",
+    "close": "Close"
   },
   "general": {
     "recording": "Recording",
@@ -130,7 +135,14 @@
     "uppercaseFirst": "Uppercase First Letter",
     "uppercaseFirstCaption": "Auto-capitalize sentence starts",
     "endWithPeriod": "End with Period",
-    "endWithPeriodCaption": "Auto-add period to sentences"
+    "endWithPeriodCaption": "Auto-add period to sentences",
+    "smartEndpoint": "Smart Endpoint",
+    "smartEndpointLabel": "Smart Endpoint",
+    "smartEndpointCaption": "AI-powered sentence detection",
+    "smartEndpointTooltip": "Uses a DistilBERT classifier to detect when a sentence is complete. In PTT mode, sentences auto-finalize and paste while the key is held. In Toggle mode, complete sentences finalize faster while incomplete ones wait longer. Requires the realtime preview to be enabled.",
+    "detectionSpeed": "Detection Speed",
+    "detectionSpeedCaption": "Multiplier for pause duration",
+    "detectionSpeedTooltip": "Controls how quickly sentences are finalized. Higher values mean shorter pauses before finalization. Lower values are more patient and wait longer for the speaker to continue."
   },
   "hotkey": {
     "configuration": "Hotkey Configuration",

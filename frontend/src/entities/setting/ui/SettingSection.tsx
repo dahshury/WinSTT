@@ -1,43 +1,45 @@
+"use client";
+
 import type { ReactNode } from "react";
+import { Toggle } from "@/shared/ui/toggle";
 
 export interface SettingSectionProps {
 	title: string;
 	children: ReactNode;
+	/** When provided, renders a toggle switch inline with the section title. */
+	toggled?: boolean;
+	onToggle?: (checked: boolean) => void;
+	toggleDisabled?: boolean;
 }
 
-export function SettingSection({ title, children }: SettingSectionProps) {
+export function SettingSection({
+	title,
+	children,
+	toggled,
+	onToggle,
+	toggleDisabled,
+}: SettingSectionProps) {
+	const hasToggle = onToggle !== undefined;
+	const isDisabled = hasToggle && !toggled;
+
 	return (
-		<div style={{ marginBottom: "16px" }}>
-			<div
-				style={{
-					display: "flex",
-					alignItems: "center",
-					gap: "8px",
-					padding: "0 4px",
-					marginBottom: "6px",
-				}}
-			>
-				<h3
-					style={{
-						color: "var(--color-accent)",
-						fontFamily: "var(--font-mono)",
-						fontSize: "11px",
-						fontWeight: 600,
-						letterSpacing: "0.1em",
-						textTransform: "uppercase",
-					}}
-				>
+		<div className="mb-4">
+			<div className="mb-1.5 flex items-center gap-2 px-1">
+				<h3 className="font-mono font-semibold text-[11px] text-purple uppercase tracking-[0.1em]">
 					{title}
 				</h3>
-				<div style={{ height: "1px", flex: 1, backgroundColor: "var(--color-border)" }} />
+				{hasToggle && (
+					<Toggle
+						aria-label={`Toggle ${title}`}
+						checked={toggled ?? false}
+						disabled={toggleDisabled}
+						onCheckedChange={onToggle}
+					/>
+				)}
+				<div className="h-px flex-1 bg-border" />
 			</div>
 			<div
-				style={{
-					backgroundColor: "var(--color-bg-secondary)",
-					border: "1px solid var(--color-border)",
-					borderRadius: "8px",
-					padding: "4px 12px",
-				}}
+				className={`rounded-lg border border-border bg-surface-secondary px-3 py-1 transition-opacity duration-150 ${isDisabled ? "pointer-events-none opacity-40" : ""}`}
 			>
 				{children}
 			</div>

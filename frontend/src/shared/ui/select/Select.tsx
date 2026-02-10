@@ -13,15 +13,21 @@ export interface SelectProps {
 	options: readonly SelectOption[];
 	value: string;
 	onChange: (value: string) => void;
+	"aria-label"?: string;
 }
 
-export function Select({ options, value, onChange }: SelectProps) {
+export function Select({ options, value, onChange, "aria-label": ariaLabel }: SelectProps) {
 	const selectedLabel = options.find((o) => o.id === value)?.label ?? value;
 
 	return (
 		<Menu.Root>
-			<Menu.Trigger className="flex h-8 w-full cursor-pointer select-none items-center justify-between rounded-sm border border-border bg-surface-tertiary px-2.5 text-[13px] text-foreground leading-normal outline-none">
-				<span className="overflow-hidden text-ellipsis whitespace-nowrap">{selectedLabel}</span>
+			<Menu.Trigger
+				aria-label={ariaLabel}
+				className="flex h-8 w-full cursor-pointer select-none items-center justify-between rounded-sm border border-border bg-surface-tertiary px-2.5 text-[13px] text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface"
+			>
+				<span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+					{selectedLabel}
+				</span>
 				<HugeiconsIcon className="ml-1.5 shrink-0" icon={ArrowDown01Icon} size={14} />
 			</Menu.Trigger>
 			<Menu.Portal>

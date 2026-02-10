@@ -2,30 +2,45 @@
 
 /* ── Theme: design tokens → Tailwind utilities ── */
 @theme {
-	/* Surface — bg-surface, bg-surface-primary, etc. */
-	--color-surface: #09090b;
-	--color-surface-primary: #0c0c0f;
-	--color-surface-secondary: #111114;
-	--color-surface-tertiary: #18181b;
-	--color-surface-elevated: #1f1f23;
-	--color-surface-hover: #27272a;
-	--color-surface-active: #2e2e33;
+	/* Surface — original darkness, blue-shifted (hue ~245) */
+	--color-surface: #080a10;
+	--color-surface-primary: #0b0d14;
+	--color-surface-secondary: #0f111a;
+	--color-surface-tertiary: #151822;
+	--color-surface-elevated: #1b1f2a;
+	--color-surface-hover: #222834;
+	--color-surface-active: #282e3c;
 
-	/* Foreground — text-foreground, text-foreground-secondary, etc. */
-	--color-foreground: #fafafa;
-	--color-foreground-secondary: #a1a1aa;
-	--color-foreground-muted: #52525b;
-	--color-foreground-dim: #3f3f46;
+	/* Foreground — blue-tinted whites */
+	--color-foreground: #e8ecf4;
+	--color-foreground-secondary: #a0aabe;
+	--color-foreground-muted: #6b7a94;
+	--color-foreground-dim: #3e4a62;
 
-	/* Accent — bg-accent, text-accent, border-accent, etc. */
-	--color-accent: #f59e0b;
-	--color-accent-hover: #fbbf24;
-	--color-accent-muted: #92400e;
-	--color-accent-dim: #451a03;
-	--color-accent-glow: rgba(245, 158, 11, 0.15);
-	--color-accent-glow-strong: rgba(245, 158, 11, 0.3);
+	/* Accent — Docker Blue (primary interactive: buttons, dropdowns, focus rings) */
+	--color-accent: #3b82f6;
+	--color-accent-hover: #60a5fa;
+	--color-accent-muted: #2563eb;
+	--color-accent-dim: #0c1830;
+	--color-accent-glow: rgba(59, 130, 246, 0.12);
+	--color-accent-glow-strong: rgba(59, 130, 246, 0.25);
 
-	/* Status — text-success, bg-error, etc. */
+	/* Teal → Bright Blue (waveform, toggles, sliders, progress, sidebar indicator) */
+	--color-teal: #58a6ff;
+	--color-teal-hover: #79b8ff;
+	--color-teal-dim: #0c1832;
+
+	/* Purple → Soft Blue (settings section headers, snippet triggers, highlights) */
+	--color-purple: #79b8ff;
+	--color-purple-hover: #a5d0ff;
+	--color-purple-dim: #0e1c36;
+
+	/* Orange → Accent Blue (hotkey pressed, recording indicators) */
+	--color-orange: #3b82f6;
+	--color-orange-hover: #60a5fa;
+	--color-orange-dim: #0c1830;
+
+	/* Status — functional colors */
 	--color-success: #22c55e;
 	--color-success-dim: #052e16;
 	--color-warning: #eab308;
@@ -33,10 +48,10 @@
 	--color-error: #ef4444;
 	--color-error-dim: #450a0a;
 
-	/* Border — border-border, border-border-hover, etc. */
-	--color-border: #27272a;
-	--color-border-hover: #3f3f46;
-	--color-border-accent: rgba(245, 158, 11, 0.25);
+	/* Border — blue-tinted dark edges */
+	--color-border: #1e2330;
+	--color-border-hover: #2a3144;
+	--color-border-accent: rgba(59, 130, 246, 0.25);
 
 	/* Radii — rounded-xs, rounded-sm, rounded-md, rounded-lg */
 	--radius-xs: 3px;
@@ -48,11 +63,11 @@
 	--font-sans: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
 	--font-mono: var(--font-geist-mono), "SF Mono", "Cascadia Code", monospace;
 
-	/* Shadows — shadow-sm, shadow-md, shadow-lg, shadow-glow */
-	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
-	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-	--shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
-	--shadow-glow: 0 0 20px rgba(245, 158, 11, 0.08);
+	/* Shadows */
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.6);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+	--shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+	--shadow-glow: 0 0 20px rgba(59, 130, 246, 0.08);
 
 	/* Animations — animate-fade-in, animate-slide-in, etc. */
 	--animate-fade-in: fade-in 200ms ease-out;
@@ -97,10 +112,10 @@
 @keyframes pulse-glow {
 	0%,
 	100% {
-		box-shadow: 0 0 8px rgba(245, 158, 11, 0.15);
+		box-shadow: 0 0 8px rgba(59, 130, 246, 0.15);
 	}
 	50% {
-		box-shadow: 0 0 16px rgba(245, 158, 11, 0.3);
+		box-shadow: 0 0 16px rgba(59, 130, 246, 0.3);
 	}
 }
 
@@ -131,6 +146,10 @@
 		box-sizing: border-box;
 		margin: 0;
 		padding: 0;
+	}
+
+	html {
+		color-scheme: dark;
 	}
 
 	html,
@@ -197,6 +216,18 @@
 	::selection {
 		background: var(--color-accent-glow-strong);
 		color: var(--color-foreground);
+	}
+
+	/* Reduced motion: disable animations and transitions globally */
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			animation-duration: 0.01ms !important;
+			animation-iteration-count: 1 !important;
+			transition-duration: 0.01ms !important;
+			scroll-behavior: auto !important;
+		}
 	}
 
 	/* Noise texture overlay */

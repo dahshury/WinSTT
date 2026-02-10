@@ -2,8 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useCallback, useMemo } from "react";
-import type { ModelInfo } from "@/entities/model-catalog";
-import { useCatalogStore } from "@/entities/model-catalog";
+import { buildModelOpts, buildRealtimeOpts, useCatalogStore } from "@/entities/model-catalog";
 import { SettingSection } from "@/entities/setting";
 import { useConnectionStore } from "@/features/connect-server";
 import { useSettingsStore } from "@/features/update-settings";
@@ -44,41 +43,12 @@ const ALL_DEVICE_OPTS: SelectOption[] = [
 ];
 const CPU_ONLY_OPTS: SelectOption[] = [{ id: "cpu", label: "CPU" }];
 
-const FAMILY_LABELS: Record<string, string> = {
-	whisper: "Whisper",
-	nemo: "NeMo",
-	gigaam: "GigaAM",
-	kaldi: "Kaldi",
-	"t-one": "T-One",
-};
-
-function buildModelOpts(models: ModelInfo[]): SelectOption[] {
-	const grouped = new Map<string, ModelInfo[]>();
-	for (const m of models) {
-		const list = grouped.get(m.family) ?? [];
-		list.push(m);
-		grouped.set(m.family, list);
-	}
-	const opts: SelectOption[] = [];
-	for (const [family, items] of grouped) {
-		const familyLabel = FAMILY_LABELS[family] ?? family;
-		for (const m of items) {
-			opts.push({
-				id: m.id,
-				label: `[${familyLabel}] ${m.displayName} (${m.sizeLabel})`,
-			});
-		}
-	}
-	return opts;
-}
-
-function buildRealtimeOpts(models: ModelInfo[]): SelectOption[] {
-	return buildModelOpts(models.filter((m) => m.supportsRealtime));
-}
-
 export function ModelSettingsPanel() {
 	const settings = useSettingsStore((s) => s.settings.model);
 	const update = useSettingsStore((s) => s.updateModelSettings);
+	const quality = useSettingsStore((s) => s.settings.quality);
+	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
+	const realtimeEnabled = quality?.enableRealtimeTranscription ?? true;
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
 	const gpuAvailable = gpuInfo?.available ?? true;
 	const deviceOpts = gpuAvailable ? ALL_DEVICE_OPTS : CPU_ONLY_OPTS;
@@ -181,7 +151,11 @@ export function ModelSettingsPanel() {
 				</div>
 			</SettingSection>
 
-			<SettingSection title={t("realtimeModelSection")}>
+			<SettingSection
+				onToggle={(v) => updateQuality({ enableRealtimeTranscription: v })}
+				title={t("realtimeModelSection")}
+				toggled={realtimeEnabled}
+			>
 				<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
 					<FormControl
 						caption={t("realtimeModelCaption")}

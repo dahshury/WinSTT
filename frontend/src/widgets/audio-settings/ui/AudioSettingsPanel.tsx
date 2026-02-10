@@ -9,7 +9,6 @@ import { FormControl } from "@/shared/ui/form-control";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
-import { Toggle } from "@/shared/ui/toggle";
 
 export function AudioSettingsPanel() {
 	const audio = useSettingsStore((s) => s.settings.audio);
@@ -63,18 +62,12 @@ export function AudioSettingsPanel() {
 			)}
 
 			{/* ── Voice Activity Detection ─────────────────────── */}
-			<SettingSection title={t("vad")}>
+			<SettingSection
+				onToggle={(v) => update({ sileroDeactivityDetection: v })}
+				title={t("vad")}
+				toggled={audio?.sileroDeactivityDetection ?? true}
+			>
 				<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
-					<FormControl
-						caption={t("sileroDeactivityCaption")}
-						label={t("sileroDeactivity")}
-						tooltip={t("sileroDeactivityTooltip")}
-					>
-						<Toggle
-							checked={audio?.sileroDeactivityDetection ?? true}
-							onCheckedChange={(v) => update({ sileroDeactivityDetection: v })}
-						/>
-					</FormControl>
 					<FormControl
 						caption={t("sileroSensitivityCaption")}
 						label={t("sileroSensitivity")}

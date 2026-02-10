@@ -13,8 +13,6 @@ export function MainPage() {
 	const t = useTranslations("mainPage");
 	const th = useTranslations("hotkey");
 
-	console.log("[MainPage] Rendering, isListenMode=", isListenMode);
-
 	return (
 		<div className="flex h-full flex-col">
 			<div className={`flex flex-1 flex-col overflow-hidden ${isListenMode ? "" : "p-1.5"}`}>
@@ -33,7 +31,8 @@ export function MainPage() {
 					</div>
 
 					<button
-						className="titlebar-no-drag absolute top-1 right-1 z-40 flex items-center gap-1.5 rounded-md px-2 py-1 opacity-[0.15] transition-opacity duration-200 hover:bg-white/10 hover:opacity-100 focus-visible:opacity-100"
+						aria-label={th("switchToPtt")}
+						className="titlebar-no-drag absolute top-1 right-1 z-40 flex items-center gap-1.5 rounded-md px-2 py-1 opacity-[0.15] transition-opacity duration-200 hover:bg-white/10 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-white/50"
 						onClick={() => updateGeneral({ recordingMode: "ptt" })}
 						title={th("switchToPtt")}
 						type="button"

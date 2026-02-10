@@ -9,8 +9,6 @@ import { TitleBar } from "./TitleBar";
 export function RootLayout({ children }: { children: ReactNode }) {
 	const isListenMode = useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
 
-	console.log("[RootLayout] Rendering, isListenMode=", isListenMode);
-
 	return (
 		<IntlProvider>
 			<IpcProvider>

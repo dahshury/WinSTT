@@ -9,7 +9,10 @@
     "comingSoon": "Bientôt disponible"
   },
   "titleBar": {
-    "appName": "WinSTT"
+    "appName": "WinSTT",
+    "settings": "Paramètres",
+    "minimize": "Réduire",
+    "close": "Fermer"
   },
   "settings": {
     "title": "Paramètres",
@@ -23,7 +26,9 @@
     "tabProcessing": "Traitement",
     "tabHotkey": "Raccourci",
     "tabDictionary": "Dictionnaire",
-    "tabSnippets": "Extraits"
+    "tabSnippets": "Extraits",
+    "minimize": "Réduire",
+    "close": "Fermer"
   },
   "general": {
     "recording": "Enregistrement",
@@ -130,7 +135,14 @@
     "uppercaseFirst": "Première lettre en majuscule",
     "uppercaseFirstCaption": "Mettre automatiquement en majuscule le début des phrases",
     "endWithPeriod": "Terminer par un point",
-    "endWithPeriodCaption": "Ajouter automatiquement un point aux phrases"
+    "endWithPeriodCaption": "Ajouter automatiquement un point aux phrases",
+    "smartEndpoint": "Point final intelligent",
+    "smartEndpointLabel": "Point final intelligent",
+    "smartEndpointCaption": "Détection de phrases par IA",
+    "smartEndpointTooltip": "Utilise un classificateur DistilBERT pour détecter quand une phrase est complète. En mode PTT, les phrases sont finalisées et collées automatiquement pendant que la touche est maintenue. En mode Bascule, les phrases complètes sont finalisées plus rapidement tandis que les incomplètes attendent plus longtemps. Nécessite l'aperçu temps réel.",
+    "detectionSpeed": "Vitesse de détection",
+    "detectionSpeedCaption": "Multiplicateur de durée de pause",
+    "detectionSpeedTooltip": "Contrôle la vitesse de finalisation des phrases. Des valeurs plus élevées signifient des pauses plus courtes avant la finalisation. Des valeurs plus basses sont plus patientes et attendent plus longtemps."
   },
   "hotkey": {
     "configuration": "Configuration du raccourci",

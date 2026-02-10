@@ -9,7 +9,10 @@
     "comingSoon": "قريبًا"
   },
   "titleBar": {
-    "appName": "WinSTT"
+    "appName": "WinSTT",
+    "settings": "الإعدادات",
+    "minimize": "تصغير",
+    "close": "إغلاق"
   },
   "settings": {
     "title": "الإعدادات",
@@ -23,7 +26,9 @@
     "tabProcessing": "المعالجة",
     "tabHotkey": "مفتاح الاختصار",
     "tabDictionary": "القاموس",
-    "tabSnippets": "المقتطفات"
+    "tabSnippets": "المقتطفات",
+    "minimize": "تصغير",
+    "close": "إغلاق"
   },
   "general": {
     "recording": "التسجيل",
@@ -130,7 +135,14 @@
     "uppercaseFirst": "الحرف الأول كبير",
     "uppercaseFirstCaption": "كتابة بداية الجمل بحرف كبير تلقائيًا",
     "endWithPeriod": "الإنهاء بنقطة",
-    "endWithPeriodCaption": "إضافة نقطة تلقائيًا للجمل"
+    "endWithPeriodCaption": "إضافة نقطة تلقائيًا للجمل",
+    "smartEndpoint": "نقطة النهاية الذكية",
+    "smartEndpointLabel": "نقطة النهاية الذكية",
+    "smartEndpointCaption": "كشف الجمل بالذكاء الاصطناعي",
+    "smartEndpointTooltip": "يستخدم مصنف DistilBERT لاكتشاف اكتمال الجملة. في وضع PTT، يتم إنهاء الجمل ولصقها تلقائيًا أثناء الضغط على المفتاح. في وضع التبديل، تنتهي الجمل المكتملة أسرع بينما تنتظر غير المكتملة وقتًا أطول. يتطلب تفعيل المعاينة الفورية.",
+    "detectionSpeed": "سرعة الكشف",
+    "detectionSpeedCaption": "مضاعف مدة التوقف",
+    "detectionSpeedTooltip": "يتحكم في سرعة إنهاء الجمل. القيم الأعلى تعني توقفات أقصر قبل الإنهاء. القيم الأقل أكثر صبرًا وتنتظر وقتًا أطول."
   },
   "hotkey": {
     "configuration": "إعداد مفتاح الاختصار",

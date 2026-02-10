@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 try:
     import onnx_asr
 except ImportError:
-    onnx_asr = None
+    onnx_asr = None  # type: ignore[assignment]
 
 
 class OnnxAsrTranscriber(ITranscriber):

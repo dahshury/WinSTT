@@ -148,6 +148,7 @@ class AudioToTextRecorder:
         on_model_download_start: Callable[[str], None] | None = None,
         on_model_download_progress: Callable[[DownloadProgress], None] | None = None,
         on_model_download_complete: Callable[[str], None] | None = None,
+        on_model_download_cancelled: Callable[[str], None] | None = None,
         # Download cancellation check
         cancel_download_check: Callable[[], bool] | None = None,
         # Backend selection
@@ -246,6 +247,7 @@ class AudioToTextRecorder:
         self._on_dl_start = on_model_download_start
         self._on_dl_progress = on_model_download_progress
         self._on_dl_complete = on_model_download_complete
+        self._on_dl_cancelled = on_model_download_cancelled
         self._cancel_download_check = cancel_download_check
 
         # Build service with fakes for testing or real adapters via bootstrap
@@ -255,6 +257,7 @@ class AudioToTextRecorder:
         self._silero_vad: Any = None  # Live SileroVAD reference for runtime sensitivity updates
         self._init_lock = threading.Lock()
         self.use_microphone = _BoolFlag(use_microphone)
+        self._sigint_reinstall: SimpleCallback | None = None
 
     def _ensure_service(self) -> RecorderService:  # pragma: no cover
         if self._service is not None:
@@ -265,6 +268,9 @@ class AudioToTextRecorder:
                 return self._service
             from src.recorder.bootstrap import (
                 CALLBACK_EVENT_MAP,
+                DownloadCallbacks,
+                build_realtime_transcriber,
+                build_transcriber,
                 wire_callback,
                 wire_callback_with_audio,
                 wire_callback_with_level,
@@ -293,10 +299,8 @@ class AudioToTextRecorder:
                 else:
                     wire_callback(self._event_bus, event_type, cast(SimpleCallback, cb_func))
 
-            # Build lightweight components for facade (no hardware init until needed)
+            # Build audio source
             from src.recorder.domain.ports.audio_source import IAudioSource
-            from src.recorder.domain.ports.transcriber import ITranscriber
-            from src.recorder.domain.ports.vad import IVoiceActivityDetector
 
             audio_source: IAudioSource
             if self._config.audio.use_microphone:
@@ -318,116 +322,34 @@ class AudioToTextRecorder:
             from src.recorder.infrastructure.silero_vad import SileroVAD
             from src.recorder.infrastructure.webrtc_vad import WebRTCVAD
 
-            webrtc: IVoiceActivityDetector = WebRTCVAD(
+            webrtc = WebRTCVAD(
                 sensitivity=self._config.vad.webrtc_sensitivity,
                 sample_rate=self._config.audio.sample_rate,
             )
-            silero: IVoiceActivityDetector = SileroVAD(
+            silero = SileroVAD(
                 sensitivity=self._config.vad.silero_sensitivity,
                 use_onnx=self._config.vad.silero_use_onnx,
                 sample_rate=self._config.audio.sample_rate,
             )
-            vad: IVoiceActivityDetector = CompositeVAD(webrtc=webrtc, silero=silero)
+            vad = CompositeVAD(webrtc=webrtc, silero=silero)
             self._silero_vad = silero
 
-            # Build download progress callback
-            dl_start = self._on_dl_start
-            dl_progress = self._on_dl_progress
-            dl_complete = self._on_dl_complete
+            # Build transcribers via shared bootstrap builders
+            dl_cbs = DownloadCallbacks(
+                on_start=self._on_dl_start,
+                on_progress=self._on_dl_progress,
+                on_complete=self._on_dl_complete,
+                on_cancelled=self._on_dl_cancelled,
+                cancel_check=self._cancel_download_check,
+            )
+            transcriber = build_transcriber(self._config.transcription.model, self._config, download_callbacks=dl_cbs)
 
-            def _on_download_progress(info: DownloadProgress) -> None:
-                if info.progress == 0.0 and dl_start is not None:
-                    dl_start(info.model)
-                if dl_progress is not None:
-                    dl_progress(info)
-                if info.progress >= 1.0 and dl_complete is not None:
-                    dl_complete(info.model)
-
-            has_dl_cb = dl_start is not None or dl_progress is not None or dl_complete is not None
-
-            # Build transcriber — route by backend
-            from src.recorder.domain.model_registry import ModelCatalog, TranscriberBackend
-
-            catalog = ModelCatalog()
-            _backend_cfg = self._config.transcription.backend
-            if _backend_cfg == TranscriberBackend.ONNX_ASR.value:
-                _resolved = TranscriberBackend.ONNX_ASR
-            elif _backend_cfg:
-                _resolved = TranscriberBackend.FASTER_WHISPER
-            else:
-                _resolved = catalog.get_backend(self._config.transcription.model)
-
-            transcriber: ITranscriber
-            if _resolved == TranscriberBackend.ONNX_ASR:
-                from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
-
-                _info = catalog.get(self._config.transcription.model)
-                _onnx_name = (
-                    _info.onnx_model_name
-                    if _info and _info.onnx_model_name
-                    else self._config.transcription.model
-                )
-                _quant = self._config.transcription.onnx_quantization or None
-                transcriber = OnnxAsrTranscriber(
-                    model_name=_onnx_name,
-                    quantization=_quant,
-                    on_download_progress=_on_download_progress if has_dl_cb else None,
-                )
-            else:
-                from src.recorder.infrastructure.whisper_transcriber import WhisperTranscriber
-
-                transcriber = WhisperTranscriber(
-                    model_path=self._config.transcription.model,
-                    device=self._config.transcription.device,
-                    compute_type=self._config.transcription.compute_type,
-                    gpu_device_index=self._config.transcription.gpu_device_index,
-                    download_root=self._config.transcription.download_root,
-                    beam_size=self._config.transcription.beam_size,
-                    initial_prompt=self._config.transcription.initial_prompt,
-                    suppress_tokens=self._config.transcription.suppress_tokens,
-                    batch_size=self._config.transcription.batch_size,
-                    vad_filter=self._config.transcription.faster_whisper_vad_filter,
-                    normalize_audio=self._config.transcription.normalize_audio,
-                    on_download_progress=_on_download_progress if has_dl_cb else None,
-                    cancel_check=self._cancel_download_check,
-                )
-
-            # Build realtime transcriber
-            realtime_transcriber: ITranscriber | None = None
+            realtime_transcriber = None
             if self._config.realtime.enable_realtime_transcription:
                 if self._config.realtime.use_main_model_for_realtime:
                     realtime_transcriber = transcriber
                 else:
-                    _rt_backend = catalog.get_backend(self._config.realtime.realtime_model_type)
-                    if _rt_backend == TranscriberBackend.ONNX_ASR:
-                        from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber as _OAT
-
-                        _rt_info = catalog.get(self._config.realtime.realtime_model_type)
-                        _rt_name = (
-                            _rt_info.onnx_model_name
-                            if _rt_info and _rt_info.onnx_model_name
-                            else self._config.realtime.realtime_model_type
-                        )
-                        _rt_quant = self._config.transcription.onnx_quantization or None
-                        realtime_transcriber = _OAT(
-                            model_name=_rt_name,
-                            quantization=_rt_quant,
-                            on_download_progress=_on_download_progress if has_dl_cb else None,
-                        )
-                    else:
-                        from src.recorder.infrastructure.realtime_transcriber import RealtimeTranscriber
-
-                        realtime_transcriber = RealtimeTranscriber(
-                            model_path=self._config.realtime.realtime_model_type,
-                            device=self._config.transcription.device,
-                            compute_type=self._config.transcription.compute_type,
-                            gpu_device_index=self._config.transcription.gpu_device_index,
-                            download_root=self._config.transcription.download_root,
-                            beam_size=self._config.realtime.beam_size_realtime,
-                            initial_prompt=self._config.realtime.initial_prompt_realtime,
-                            batch_size=self._config.realtime.realtime_batch_size,
-                            on_download_progress=_on_download_progress if has_dl_cb else None,
-                        )
+                    realtime_transcriber = build_realtime_transcriber(self._config, download_callbacks=dl_cbs)
 
             self._service = RecorderService(
                 audio_source=audio_source,
@@ -458,6 +380,7 @@ class AudioToTextRecorder:
         instance._on_dl_start = None
         instance._on_dl_progress = None
         instance._on_dl_complete = None
+        instance._on_dl_cancelled = None
         instance._cancel_download_check = None
         instance._event_bus = EventBus()
         instance._clock = Clock.system_clock()
@@ -465,6 +388,7 @@ class AudioToTextRecorder:
         instance._silero_vad = None
         instance._init_lock = threading.Lock()
         instance.use_microphone = _BoolFlag(config.audio.use_microphone)
+        instance._sigint_reinstall = None
         return instance
 
     def warmup(self) -> None:  # pragma: no cover
@@ -507,7 +431,7 @@ class AudioToTextRecorder:
         if self._service is not None:
             self._service.set_microphone(microphone_on)
 
-    def clear_feed_buffer(self) -> None:
+    def clear_feed_buffer(self) -> None:  # pragma: no cover
         """Discard partial audio data buffered by ``feed_audio``.
 
         Call when stopping an external audio source (e.g. loopback) to
@@ -516,7 +440,7 @@ class AudioToTextRecorder:
         if self._service is not None:
             self._service.clear_feed_buffer()
 
-    def set_external_audio_mode(self, active: bool) -> None:
+    def set_external_audio_mode(self, active: bool) -> None:  # pragma: no cover
         """Enable/disable external audio mode (e.g. loopback capture).
 
         When active, the mic reader thread drains but discards frames
@@ -558,76 +482,50 @@ class AudioToTextRecorder:
     def model(self, value: str) -> None:
         if value == self._config.transcription.model:
             return
+        old_model = self._config.transcription.model
         self._config.transcription.model = value
         if self._service is None:
             return
 
         service = self._service
         config = self._config
-
-        swap_dl_start = self._on_dl_start
-        swap_dl_progress = self._on_dl_progress
-        swap_dl_complete = self._on_dl_complete
-        swap_cancel_check = self._cancel_download_check
+        swap_dl_cancelled = self._on_dl_cancelled
+        swap_sigint_reinstall = self._sigint_reinstall
 
         def _swap() -> None:  # pragma: no cover
             try:
-                from src.recorder.domain.model_registry import ModelCatalog, TranscriberBackend
-                from src.recorder.domain.ports.transcriber import ITranscriber as _ITranscriber
+                from src.recorder.bootstrap import DownloadCallbacks, build_transcriber
 
-                swap_catalog = ModelCatalog()
-                _swap_backend_cfg = config.transcription.backend
-                if _swap_backend_cfg == TranscriberBackend.ONNX_ASR.value:
-                    _swap_resolved = TranscriberBackend.ONNX_ASR
-                elif _swap_backend_cfg:
-                    _swap_resolved = TranscriberBackend.FASTER_WHISPER
-                else:
-                    _swap_resolved = swap_catalog.get_backend(value)
-
-                new_transcriber: _ITranscriber
-                if _swap_resolved == TranscriberBackend.ONNX_ASR:
-                    from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
-
-                    _swap_info = swap_catalog.get(value)
-                    _swap_name = _swap_info.onnx_model_name if _swap_info and _swap_info.onnx_model_name else value
-                    _swap_quant = config.transcription.onnx_quantization or None
-                    new_transcriber = OnnxAsrTranscriber(model_name=_swap_name, quantization=_swap_quant)
-                else:
-                    from src.recorder.infrastructure.whisper_transcriber import WhisperTranscriber
-
-                    def _swap_on_progress(info: DownloadProgress) -> None:  # pragma: no cover
-                        if info.progress == 0.0 and swap_dl_start is not None:
-                            swap_dl_start(info.model)
-                        if swap_dl_progress is not None:
-                            swap_dl_progress(info)
-                        if info.progress >= 1.0 and swap_dl_complete is not None:
-                            swap_dl_complete(info.model)
-
-                    has_swap_cb = (
-                        swap_dl_start is not None or swap_dl_progress is not None or swap_dl_complete is not None
-                    )
-
-                    new_transcriber = WhisperTranscriber(
-                        model_path=value,
-                        device=config.transcription.device,
-                        compute_type=config.transcription.compute_type,
-                        gpu_device_index=config.transcription.gpu_device_index,
-                        download_root=config.transcription.download_root,
-                        beam_size=config.transcription.beam_size,
-                        initial_prompt=config.transcription.initial_prompt,
-                        suppress_tokens=config.transcription.suppress_tokens,
-                        batch_size=config.transcription.batch_size,
-                        vad_filter=config.transcription.faster_whisper_vad_filter,
-                        normalize_audio=config.transcription.normalize_audio,
-                        on_download_progress=_swap_on_progress if has_swap_cb else None,
-                        cancel_check=swap_cancel_check,
-                    )
+                dl_cbs = DownloadCallbacks(
+                    on_start=self._on_dl_start,
+                    on_progress=self._on_dl_progress,
+                    on_complete=self._on_dl_complete,
+                    on_cancelled=self._on_dl_cancelled,
+                    cancel_check=self._cancel_download_check,
+                )
+                new_transcriber = build_transcriber(value, config, download_callbacks=dl_cbs)
                 service.swap_transcriber(new_transcriber)
                 logger.info("Model swapped to %s", value)
-            except Exception:
-                logger.exception("Failed to swap model to %s", value)
+                # CTranslate2 replaces the CRT SIGINT handler during model load.
+                # Re-install our Python handler so Ctrl+C keeps working.
+                if swap_sigint_reinstall is not None:
+                    swap_sigint_reinstall()
+            except Exception as exc:
+                from src.recorder.infrastructure.whisper_transcriber import DownloadCancelledError
+
+                if isinstance(exc, DownloadCancelledError):
+                    config.transcription.model = old_model
+                    logger.info("Download cancelled for %s, reverted to %s", value, old_model)
+                    if swap_dl_cancelled is not None:
+                        swap_dl_cancelled(value)
+                else:
+                    logger.exception("Failed to swap model to %s", value)
 
         threading.Thread(target=_swap, daemon=True).start()
+
+    @property
+    def enable_realtime_transcription(self) -> bool:  # pragma: no cover
+        return self._config.realtime.enable_realtime_transcription
 
     @property
     def silero_sensitivity(self) -> float:

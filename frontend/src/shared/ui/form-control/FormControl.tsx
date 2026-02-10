@@ -42,7 +42,13 @@ export function FormControl({
 			)}
 			<div className={disabled ? "pointer-events-none mt-1.5" : "mt-1.5"}>{children}</div>
 			{error && (
-				<Field.Error className="mt-0.5 text-[11px] text-error leading-[14px]">{error}</Field.Error>
+				<Field.Error
+					aria-live="assertive"
+					className="mt-0.5 text-[11px] text-error leading-[14px]"
+					role="alert"
+				>
+					{error}
+				</Field.Error>
 			)}
 		</Field.Root>
 	);

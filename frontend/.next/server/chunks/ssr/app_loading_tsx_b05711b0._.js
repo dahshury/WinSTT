@@ -1,3 +1,0 @@
-module.exports=[63588,a=>{"use strict";var b=a.i(7997);function c(){return(0,b.jsxs)("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",height:"100%"},children:[(0,b.jsx)("div",{style:{width:"24px",height:"24px",border:"2px solid var(--color-border)",borderTopColor:"var(--color-accent)",borderRadius:"50%",animation:"spin 600ms linear infinite"}}),(0,b.jsx)("style",{children:"@keyframes spin { to { transform: rotate(360deg) } }"})]})}a.s(["default",()=>c])}];
-
-//# sourceMappingURL=app_loading_tsx_b05711b0._.js.map

@@ -7,8 +7,6 @@ import { messages, useLocaleStore } from "@/shared/i18n";
 export function IntlProvider({ children }: { children: ReactNode }) {
 	const locale = useLocaleStore((s) => s.locale);
 
-	console.log("[IntlProvider] Rendering, locale=", locale, "has messages:", !!messages[locale]);
-
 	return (
 		<NextIntlClientProvider
 			locale={locale}

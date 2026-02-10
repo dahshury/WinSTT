@@ -239,16 +239,18 @@ class ModelCatalog:
     def to_dicts(self) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
         for m in self._models.values():
-            result.append({
-                "id": m.id,
-                "display_name": m.display_name,
-                "backend": m.backend.value,
-                "family": m.family,
-                "languages": m.languages,
-                "supports_language_detection": m.supports_language_detection,
-                "size_label": m.size_label,
-                "supports_realtime": m.supports_realtime,
-                "onnx_model_name": m.onnx_model_name,
-                "description": m.description,
-            })
+            result.append(
+                {
+                    "id": m.id,
+                    "display_name": m.display_name,
+                    "backend": m.backend.value,
+                    "family": m.family,
+                    "languages": m.languages,
+                    "supports_language_detection": m.supports_language_detection,
+                    "size_label": m.size_label,
+                    "supports_realtime": m.supports_realtime,
+                    "onnx_model_name": m.onnx_model_name,
+                    "description": m.description,
+                }
+            )
         return result

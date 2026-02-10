@@ -24,6 +24,8 @@ export const qualitySettingsSchema = z.object({
 	realtimeBatchSize: z.number().int().default(16),
 	ensureSentenceStartingUppercase: z.boolean().default(true),
 	ensureSentenceEndsWithPeriod: z.boolean().default(true),
+	smartEndpoint: z.boolean().default(false),
+	smartEndpointSpeed: z.number().min(0.5).max(3.0).default(1.5),
 });
 
 export const audioSettingsSchema = z.object({

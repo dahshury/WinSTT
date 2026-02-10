@@ -25,7 +25,7 @@ export function Modal({ isOpen, onClose, children }: ModalProps) {
 					className={`${dialogAnimation.backdrop} fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm`}
 				/>
 				<Dialog.Popup
-					className={`${dialogAnimation.popup} fixed top-1/2 left-1/2 z-[101] overflow-hidden rounded-xl border border-border bg-surface-secondary outline-none`}
+					className={`${dialogAnimation.popup} fixed top-1/2 left-1/2 z-[101] overflow-hidden overscroll-contain rounded-xl border border-border bg-surface-secondary outline-none`}
 				>
 					{children}
 				</Dialog.Popup>

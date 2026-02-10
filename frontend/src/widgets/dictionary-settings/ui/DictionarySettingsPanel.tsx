@@ -13,16 +13,8 @@ export function DictionarySettingsPanel() {
 
 	return (
 		<SettingSection title={t("title")}>
-			<div style={{ padding: "8px 0" }}>
-				<p
-					style={{
-						color: "var(--color-text-muted)",
-						fontSize: "12px",
-						marginBottom: "12px",
-					}}
-				>
-					{t("description")}
-				</p>
+			<div className="py-2">
+				<p className="mb-3 text-[12px] text-foreground-muted">{t("description")}</p>
 				<DictionaryTable
 					entries={dictionary}
 					onAdd={(entry) => {

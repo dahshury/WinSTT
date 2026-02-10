@@ -7,8 +7,18 @@ import pytest
 from src.recorder.domain.model_registry import ModelCatalog, ModelInfo, TranscriberBackend
 
 WHISPER_IDS = [
-    "tiny", "tiny.en", "base", "base.en", "small", "small.en",
-    "medium", "medium.en", "large-v1", "large-v2", "large-v3", "large-v3-turbo",
+    "tiny",
+    "tiny.en",
+    "base",
+    "base.en",
+    "small",
+    "small.en",
+    "medium",
+    "medium.en",
+    "large-v1",
+    "large-v2",
+    "large-v3",
+    "large-v3-turbo",
 ]
 
 

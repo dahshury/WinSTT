@@ -38,9 +38,9 @@ export function StatusBar() {
 				{recordingMode === "listen" ? (
 					<span className="inline-flex max-w-[120px] items-center gap-1.5 text-[10px]">
 						{isListening && (
-							<span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-green-400" />
+							<span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-success" />
 						)}
-						<span className={`truncate ${isListening ? "text-green-400" : "text-foreground-dim"}`}>
+						<span className={`truncate ${isListening ? "text-success" : "text-foreground-dim"}`}>
 							{listenDeviceName ? shortDeviceName(listenDeviceName) : t("loopbackIdle")}
 						</span>
 					</span>
@@ -51,7 +51,12 @@ export function StatusBar() {
 					<>
 						<Separator className="h-3 w-px bg-border" orientation="vertical" />
 						<span className="flex items-center gap-1 text-[10px] text-foreground-dim">
-							<HugeiconsIcon color="var(--color-foreground-dim)" icon={AiAudioIcon} size={11} />
+							<HugeiconsIcon
+								aria-hidden="true"
+								color="var(--color-foreground-dim)"
+								icon={AiAudioIcon}
+								size={11}
+							/>
 							<span className="truncate">{currentModel}</span>
 						</span>
 					</>

@@ -34,7 +34,7 @@ export function Switcher<T extends string = string>({
 			{options.map((opt) => (
 				<Toggle
 					className={cn(
-						"px-3 py-1 font-medium text-[12px] transition-colors first:rounded-l-xs last:rounded-r-xs",
+						"px-3 py-1 font-medium text-[12px] outline-none transition-colors first:rounded-l-xs last:rounded-r-xs focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface",
 						"data-[pressed]:bg-accent data-[pressed]:text-white",
 						"not-data-[pressed]:bg-surface-tertiary not-data-[pressed]:text-foreground-dim not-data-[pressed]:hover:text-foreground"
 					)}

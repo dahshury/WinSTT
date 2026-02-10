@@ -24,7 +24,6 @@ class AudioConfig(StrictMutableModel):
 
 
 class VADConfig(StrictMutableModel):
-
     silero_sensitivity: float = Field(default=0.4, ge=0.0, le=1.0)
     silero_use_onnx: bool = False
     silero_deactivity_detection: bool = False
@@ -77,6 +76,12 @@ class WakeWordConfig(StrictMutableModel):
     wake_word_buffer_duration: float = 0.1
 
 
+class EndpointConfig(StrictMutableModel):
+    smart_endpoint_enabled: bool = False
+    detection_speed: float = 1.5
+    smart_endpoint_model: str = "KoljaB/SentenceFinishedClassification"
+
+
 class UIConfig(StrictMutableModel):
     spinner: bool = True
     ensure_sentence_starting_uppercase: bool = True
@@ -95,6 +100,7 @@ class RecorderConfig(StrictMutableModel):
     realtime: RealtimeConfig = Field(default_factory=RealtimeConfig)
     wake_word: WakeWordConfig = Field(default_factory=WakeWordConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
+    endpoint: EndpointConfig = Field(default_factory=EndpointConfig)
 
     @classmethod
     def from_kwargs(cls, **kwargs: Any) -> RecorderConfig:  # noqa: ANN401
@@ -104,6 +110,7 @@ class RecorderConfig(StrictMutableModel):
         realtime_fields = set(RealtimeConfig.model_fields.keys())
         wake_word_fields = set(WakeWordConfig.model_fields.keys())
         ui_fields = set(UIConfig.model_fields.keys())
+        endpoint_fields = set(EndpointConfig.model_fields.keys())
 
         audio_kwargs: dict[str, Any] = {}
         vad_kwargs: dict[str, Any] = {}
@@ -111,6 +118,7 @@ class RecorderConfig(StrictMutableModel):
         realtime_kwargs: dict[str, Any] = {}
         wake_word_kwargs: dict[str, Any] = {}
         ui_kwargs: dict[str, Any] = {}
+        endpoint_kwargs: dict[str, Any] = {}
 
         for key, value in kwargs.items():
             if key in audio_fields:
@@ -125,6 +133,8 @@ class RecorderConfig(StrictMutableModel):
                 wake_word_kwargs[key] = value
             elif key in ui_fields:
                 ui_kwargs[key] = value
+            elif key in endpoint_fields:
+                endpoint_kwargs[key] = value
 
         return cls(
             audio=AudioConfig(**audio_kwargs),
@@ -133,4 +143,5 @@ class RecorderConfig(StrictMutableModel):
             realtime=RealtimeConfig(**realtime_kwargs),
             wake_word=WakeWordConfig(**wake_word_kwargs),
             ui=UIConfig(**ui_kwargs),
+            endpoint=EndpointConfig(**endpoint_kwargs),
         )

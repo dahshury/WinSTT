@@ -20,9 +20,12 @@ export function usePushToTalk() {
 	const accelerator = useHotkeyStore((s) => s.accelerator);
 	const hotkeySettings = useSettingsStore((s) => s.settings.hotkey);
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
+	const smartEndpoint = useSettingsStore((s) => s.settings.quality?.smartEndpoint ?? false);
 	const isActiveRef = useRef(false);
 	const recordingModeRef = useRef(recordingMode);
+	const smartEndpointRef = useRef(smartEndpoint);
 	recordingModeRef.current = recordingMode;
+	smartEndpointRef.current = smartEndpoint;
 
 	// Sync accelerator from settings store
 	useEffect(() => {
@@ -45,15 +48,18 @@ export function usePushToTalk() {
 
 		const unsubPressed = onHotkeyPressed(() => {
 			const mode = recordingModeRef.current;
-			console.log("[usePushToTalk] hotkey:pressed received, mode=", mode);
+
 			if (mode === "listen") {
 				return;
 			}
 			setPressed(true);
 
 			if (mode === "ptt") {
-				console.log("[usePushToTalk] PTT down — sending set_microphone(true) + wakeup");
-				sttSetParameter("post_speech_silence_duration", 9999);
+				if (!smartEndpointRef.current) {
+					// Original: disable silence detection while key is held
+					sttSetParameter("post_speech_silence_duration", 9999);
+				}
+				// else: leave silence detection active (classifier manages it)
 				sttCallMethod("set_microphone", [true]);
 				sttCallMethod("wakeup");
 			} else {
@@ -72,14 +78,13 @@ export function usePushToTalk() {
 
 		const unsubReleased = onHotkeyReleased(() => {
 			const mode = recordingModeRef.current;
-			console.log("[usePushToTalk] hotkey:released received, mode=", mode);
+
 			if (mode === "listen") {
 				return;
 			}
 			setPressed(false);
 
 			if (mode === "ptt") {
-				console.log("[usePushToTalk] PTT up — sending set_microphone(false)");
 				sttSetParameter("post_speech_silence_duration", 0.15);
 				sttCallMethod("set_microphone", [false]);
 			}

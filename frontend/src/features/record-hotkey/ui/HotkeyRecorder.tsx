@@ -41,9 +41,9 @@ export function HotkeyRecorder({ currentKey, onKeyRecorded }: HotkeyRecorderProp
 			{/* Display box */}
 			<div
 				className={cn(
-					"flex h-8 min-w-[140px] items-center justify-center rounded-md border px-3 font-mono text-xs transition-all duration-150",
+					"flex h-8 min-w-[140px] items-center justify-center rounded-md border px-3 font-mono text-xs transition-[border-color,background-color,color] duration-150",
 					recording
-						? "border-border-accent bg-accent-dim text-accent"
+						? "border-orange/30 bg-orange-dim text-orange"
 						: "border-border bg-surface-tertiary text-foreground"
 				)}
 			>
@@ -53,9 +53,9 @@ export function HotkeyRecorder({ currentKey, onKeyRecorded }: HotkeyRecorderProp
 			{/* Record / Stop toggle */}
 			<Button
 				className={cn(
-					"h-8 rounded-md border px-3 font-medium text-xs transition-all duration-150",
+					"h-8 rounded-md border px-3 font-medium text-xs transition-[border-color,background-color,color] duration-150",
 					recording
-						? "border-red-500/40 bg-red-950 text-red-400 hover:bg-red-900"
+						? "border-error/40 bg-error-dim text-error hover:bg-error/20"
 						: "border-border bg-surface-tertiary text-foreground-secondary hover:bg-surface-hover"
 				)}
 				onClick={recording ? stopRecording : startRecording}

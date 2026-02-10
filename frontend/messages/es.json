@@ -9,7 +9,10 @@
     "comingSoon": "Próximamente"
   },
   "titleBar": {
-    "appName": "WinSTT"
+    "appName": "WinSTT",
+    "settings": "Configuración",
+    "minimize": "Minimizar",
+    "close": "Cerrar"
   },
   "settings": {
     "title": "Configuración",
@@ -23,7 +26,9 @@
     "tabProcessing": "Procesamiento",
     "tabHotkey": "Atajo",
     "tabDictionary": "Diccionario",
-    "tabSnippets": "Fragmentos"
+    "tabSnippets": "Fragmentos",
+    "minimize": "Minimizar",
+    "close": "Cerrar"
   },
   "general": {
     "recording": "Grabación",
@@ -130,7 +135,14 @@
     "uppercaseFirst": "Primera letra en mayúscula",
     "uppercaseFirstCaption": "Capitalizar automáticamente el inicio de las oraciones",
     "endWithPeriod": "Terminar con punto",
-    "endWithPeriodCaption": "Agregar punto automáticamente a las oraciones"
+    "endWithPeriodCaption": "Agregar punto automáticamente a las oraciones",
+    "smartEndpoint": "Endpoint inteligente",
+    "smartEndpointLabel": "Endpoint inteligente",
+    "smartEndpointCaption": "Detección de oraciones con IA",
+    "smartEndpointTooltip": "Usa un clasificador DistilBERT para detectar cuándo una oración está completa. En modo PTT, las oraciones se finalizan y pegan automáticamente mientras se mantiene la tecla. En modo Toggle, las oraciones completas se finalizan más rápido mientras las incompletas esperan más. Requiere la vista previa en tiempo real.",
+    "detectionSpeed": "Velocidad de detección",
+    "detectionSpeedCaption": "Multiplicador de duración de pausa",
+    "detectionSpeedTooltip": "Controla qué tan rápido se finalizan las oraciones. Valores más altos significan pausas más cortas antes de finalizar. Valores más bajos son más pacientes y esperan más tiempo."
   },
   "hotkey": {
     "configuration": "Configuración de atajo",

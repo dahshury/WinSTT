@@ -179,18 +179,14 @@ class TestTranscriberShutdownContract:
         from src.recorder.infrastructure.whisper_transcriber import WhisperTranscriber
 
         source = inspect.getsource(WhisperTranscriber.shutdown)
-        assert "empty_cache" not in source, (
-            "WhisperTranscriber.shutdown() must not call torch.cuda.empty_cache()"
-        )
+        assert "empty_cache" not in source, "WhisperTranscriber.shutdown() must not call torch.cuda.empty_cache()"
 
     def test_realtime_shutdown_has_no_empty_cache(self) -> None:
         """RealtimeTranscriber.shutdown() must not call torch.cuda.empty_cache()."""
         from src.recorder.infrastructure.realtime_transcriber import RealtimeTranscriber
 
         source = inspect.getsource(RealtimeTranscriber.shutdown)
-        assert "empty_cache" not in source, (
-            "RealtimeTranscriber.shutdown() must not call torch.cuda.empty_cache()"
-        )
+        assert "empty_cache" not in source, "RealtimeTranscriber.shutdown() must not call torch.cuda.empty_cache()"
 
     def test_whisper_shutdown_nulls_model(self) -> None:
         """WhisperTranscriber.shutdown() must set _model to None."""
@@ -226,9 +222,7 @@ class TestServerSignalHandlerContract:
 
     def test_win_signal_handler_does_not_use_call_soon_threadsafe(self) -> None:
         """The Windows SIGINT path must not route through call_soon_threadsafe."""
-        source = inspect.getsource(
-            __import__("src.stt_server.server", fromlist=["main_async"]).main_async
-        )
+        source = inspect.getsource(__import__("src.stt_server.server", fromlist=["main_async"]).main_async)
         # Find the Windows signal handler block
         win_block_start = source.find("_win_signal_handler")
         assert win_block_start != -1, "Could not find _win_signal_handler in main_async"
@@ -242,9 +236,7 @@ class TestServerSignalHandlerContract:
 
     def test_shutdown_wait_uses_polling(self) -> None:
         """The shutdown wait must use asyncio.sleep polling, not bare Event.wait()."""
-        source = inspect.getsource(
-            __import__("src.stt_server.server", fromlist=["main_async"]).main_async
-        )
+        source = inspect.getsource(__import__("src.stt_server.server", fromlist=["main_async"]).main_async)
         # Must not have a bare `await shutdown_event.wait()` line
         assert "await shutdown_event.wait()" not in source, (
             "Must use polling loop (asyncio.sleep) instead of bare shutdown_event.wait() — "
@@ -330,6 +322,4 @@ class TestModelCleanup:
         service = _make_service(transcriber=transcriber)
         service.shutdown()
 
-        assert model_ref() is None, (
-            "Transcriber model still alive after RecorderService.shutdown() — GPU memory leaked"
-        )
+        assert model_ref() is None, "Transcriber model still alive after RecorderService.shutdown() — GPU memory leaked"

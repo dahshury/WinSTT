@@ -35,7 +35,7 @@ export function NumberStepper({
 			step={step}
 			value={value}
 		>
-			<NumberField.Group className="inline-flex">
+			<NumberField.Group className="inline-flex rounded-md focus-within:ring-2 focus-within:ring-accent focus-within:ring-offset-1 focus-within:ring-offset-surface">
 				<NumberField.Decrement className="flex size-8 cursor-pointer select-none items-center justify-center rounded-r-none rounded-l-md border border-border bg-surface-tertiary p-0 text-foreground-secondary outline-none hover:bg-surface-hover">
 					<MinusIcon />
 				</NumberField.Decrement>

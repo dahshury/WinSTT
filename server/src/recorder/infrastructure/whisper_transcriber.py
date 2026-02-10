@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 class DownloadCancelledError(Exception):
     """Raised when a model download is cancelled by the user."""
 
+
 try:
     import faster_whisper
 except ImportError:
@@ -143,12 +144,16 @@ def _intercept_hf_progress(
                 _patches.append((_mod, attr, val))
     logger.info("Patched %d tqdm references for download progress of %s", len(_patches), model_name)
 
+    _cancelled: list[bool] = [False]
     try:
         yield
+    except DownloadCancelledError:
+        _cancelled[0] = True
+        raise
     finally:
         for _patched_mod, _patched_attr, _orig_val in _patches:
             setattr(_patched_mod, _patched_attr, _orig_val)
-        if _started[0]:
+        if _started[0] and not _cancelled[0]:
             # Compute final totals for the complete event
             total_f: float = 0.0
             for b in _bars:

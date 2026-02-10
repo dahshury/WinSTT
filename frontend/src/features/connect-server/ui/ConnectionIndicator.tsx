@@ -37,50 +37,47 @@ export function ConnectionIndicator() {
 
 	if (status === "connecting") {
 		return (
-			<div className="flex items-center gap-1">
-				<HugeiconsIcon color="var(--color-warning)" icon={CloudIcon} size={12} />
-				<span className="font-medium text-[10px]" style={{ color: "var(--color-warning)" }}>
-					{t("connecting")}
-				</span>
-			</div>
+			<output className="flex items-center gap-1">
+				<HugeiconsIcon className="text-warning" icon={CloudIcon} size={12} />
+				<span className="font-medium text-[10px] text-warning">{t("connecting")}</span>
+			</output>
 		);
 	}
 
 	if (status === "error") {
 		return (
-			<div className="flex items-center gap-1">
-				<HugeiconsIcon color="var(--color-error)" icon={Plug01Icon} size={12} />
-				<span className="font-medium text-[10px]" style={{ color: "var(--color-error)" }}>
-					{t("error")}
-				</span>
-			</div>
+			<output className="flex items-center gap-1">
+				<HugeiconsIcon className="text-error" icon={Plug01Icon} size={12} />
+				<span className="font-medium text-[10px] text-error">{t("error")}</span>
+			</output>
 		);
 	}
 
 	if (status !== "connected" || !gpuInfo) {
 		return (
-			<div className="flex items-center gap-1">
-				<HugeiconsIcon color="var(--color-error)" icon={WifiDisconnected01Icon} size={12} />
-				<span className="font-medium text-[10px]" style={{ color: "var(--color-error)" }}>
-					{t("offline")}
-				</span>
-			</div>
+			<output className="flex items-center gap-1">
+				<HugeiconsIcon className="text-error" icon={WifiDisconnected01Icon} size={12} />
+				<span className="font-medium text-[10px] text-error">{t("offline")}</span>
+			</output>
 		);
 	}
 
 	const isGpu = gpuInfo.available;
 	const icon = isGpu ? GpuIcon : CpuIcon;
-	const color = isGpu ? "var(--color-success)" : "var(--color-foreground-dim)";
 	const label = isGpu ? "GPU" : "CPU";
 	const shortName = shortenGpuName(gpuInfo.name);
 
 	return (
-		<div className="flex items-center gap-1">
-			<HugeiconsIcon color={color} icon={icon} size={12} />
-			<span className="font-medium text-[10px]" style={{ color }}>
+		<output className="flex items-center gap-1">
+			<HugeiconsIcon
+				className={isGpu ? "text-success" : "text-foreground-dim"}
+				icon={icon}
+				size={12}
+			/>
+			<span className={`font-medium text-[10px] ${isGpu ? "text-success" : "text-foreground-dim"}`}>
 				{label}
 			</span>
 			<span className="text-[9px] text-foreground-dim/60">{shortName}</span>
-		</div>
+		</output>
 	);
 }

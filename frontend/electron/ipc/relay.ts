@@ -2,99 +2,27 @@ import { BrowserWindow, ipcMain } from "electron";
 import { dbg } from "../lib/debug-log";
 import { pasteText } from "../lib/paste";
 import { store } from "../lib/store";
+import { applyPostProcessing, initPostProcessing } from "../lib/text-processing";
 import type { SttClient } from "../ws/stt-client";
 import { muteSystemAudio, unmuteSystemAudio } from "./audio-mute";
 
-/** Last known model catalog — cached so any window can fetch it on demand. */
-let cachedModelCatalog: unknown[] = [];
-
-/** Tracks whether server_ready has been received (survives renderer late-mount). */
-let serverIsReady = false;
-
-// Allow any window (including settings) to request the cached catalog.
-ipcMain.handle("stt:get-model-catalog", () => cachedModelCatalog);
-
-// Allow renderer to query current server-ready status on mount (fixes race condition
-// where server_ready fires before renderer IPC listeners are subscribed).
-ipcMain.handle("stt:get-server-ready", () => serverIsReady);
-
-const SENTENCE_END_RE = /[.!?]$/;
-const REGEX_ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
-
-// ── Cached post-processing patterns ──────────────────────────────────
-// Re-compiled only when the underlying store data changes (via onDidChange).
-
-interface CompiledDictEntry {
-	regex: RegExp;
-	replace: string;
-}
-
-let cachedDictPatterns: CompiledDictEntry[] = [];
-let cachedSnippets: Array<{ trigger: string; expansion: string }> = [];
-
-function rebuildDictPatterns() {
-	const dictionary = store.get("dictionary") as
-		| Array<{ find: string; replace: string; caseSensitive?: boolean; wholeWord?: boolean }>
-		| undefined;
-	if (!dictionary?.length) {
-		cachedDictPatterns = [];
-		return;
-	}
-	cachedDictPatterns = dictionary
-		.filter((e) => e.find)
-		.map((entry) => {
-			const escaped = entry.find.replace(REGEX_ESCAPE_RE, "\\$&");
-			const pattern = entry.wholeWord ? `\\b${escaped}\\b` : escaped;
-			const flags = entry.caseSensitive ? "g" : "gi";
-			return { regex: new RegExp(pattern, flags), replace: entry.replace };
-		});
-}
-
-function rebuildSnippets() {
-	const snippets = store.get("snippets") as
-		| Array<{ trigger: string; expansion: string }>
-		| undefined;
-	cachedSnippets = snippets?.filter((e) => e.trigger) ?? [];
-}
-
-// Build on startup
-rebuildDictPatterns();
-rebuildSnippets();
-
-// Rebuild when store changes
-store.onDidChange("dictionary" as never, rebuildDictPatterns);
-store.onDidChange("snippets" as never, rebuildSnippets);
-
-/** Apply dictionary replacements and snippet expansions to text. */
-function applyPostProcessing(text: string): string {
-	let result = text;
-
-	// Ensure sentence ends with period (if enabled and not already punctuated)
-	const addPeriod = store.get("quality.ensureSentenceEndsWithPeriod") as boolean | undefined;
-	if (addPeriod && result.length > 0 && !SENTENCE_END_RE.test(result.trimEnd())) {
-		result = `${result.trimEnd()}.`;
-	}
-
-	// Dictionary replacements (pre-compiled regexes)
-	for (const entry of cachedDictPatterns) {
-		entry.regex.lastIndex = 0;
-		result = result.replace(entry.regex, entry.replace);
-	}
-
-	// Snippet expansions
-	for (const entry of cachedSnippets) {
-		result = result.replaceAll(entry.trigger, entry.expansion);
-	}
-
-	return result;
-}
-
-/** Deduplication guard — prevents pasting the same text twice within a short window. */
-const PASTE_DEDUP_MS = 5000;
-let lastPastedText = "";
-let lastPasteTime = 0;
-
 export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
+	/** Last known model catalog — cached so any window can fetch it on demand. */
+	let cachedModelCatalog: unknown[] = [];
+
+	/** Tracks whether server_ready has been received (survives renderer late-mount). */
+	let serverIsReady = false;
+
+	// Allow any window (including settings) to request the cached catalog.
+	ipcMain.handle("stt:get-model-catalog", () => cachedModelCatalog);
+
+	// Allow renderer to query current server-ready status on mount (fixes race condition
+	// where server_ready fires before renderer IPC listeners are subscribed).
+	ipcMain.handle("stt:get-server-ready", () => serverIsReady);
+
+	// Initialize text post-processing (dictionary + snippet caches + store listeners)
+	initPostProcessing(store);
+
 	// Cancel download handler — sends command on control WebSocket
 	ipcMain.handle("stt:cancel-download", () => {
 		client.sendControl({ command: "cancel_download" });
@@ -113,25 +41,23 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 			dbg("relay", "Data event WITHOUT type:", JSON.stringify(event));
 			return;
 		}
+		if (type !== "audio_level") {
+			dbg("relay", `data-event: ${type}`);
+		}
 
 		switch (type) {
 			case "realtime":
+				dbg("relay", "realtime:", String(event.text).slice(0, 80));
 				safeSend("stt:realtime-text", { text: event.text });
 				break;
 			case "fullSentence": {
 				const processed = applyPostProcessing(String(event.text));
+				const mode = store.get("general.recordingMode") as string;
+				dbg("relay", `fullSentence: text=${JSON.stringify(processed)} mode=${mode}`);
 				safeSend("stt:full-sentence", { text: processed });
 				// Skip auto-paste in listen mode (passive monitoring, not dictation)
-				if (store.get("general.recordingMode") !== "listen") {
-					const now = Date.now();
-					if (processed === lastPastedText && now - lastPasteTime < PASTE_DEDUP_MS) {
-						dbg("relay", "PASTE SKIPPED (dedup):", JSON.stringify(processed));
-					} else {
-						dbg("relay", "PASTE:", JSON.stringify(processed));
-						lastPastedText = processed;
-						lastPasteTime = now;
-						pasteText(`${processed} `);
-					}
+				if (mode !== "listen") {
+					pasteText(`${processed} `);
 				}
 				break;
 			}
@@ -228,8 +154,35 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 
 	const onServerReady = () => {
 		dbg("relay", "Server READY — recorder initialized, sending status=running to renderer");
+		dbg(
+			"relay",
+			"Store realtime config: enableRealtimeTranscription=",
+			store.get("quality.enableRealtimeTranscription"),
+			"useMainModelForRealtime=",
+			store.get("quality.useMainModelForRealtime"),
+			"realtimeModel=",
+			store.get("model.realtimeModel")
+		);
 		serverIsReady = true;
 		safeSend("stt:server-status", { status: "running" });
+
+		// Diagnostic: query the server's actual realtime transcription config
+		client
+			.getParameter("enable_realtime_transcription")
+			.then((val) => {
+				dbg("relay", "SERVER reports enable_realtime_transcription=", val);
+				if (!val) {
+					dbg(
+						"relay",
+						"WARNING: Server has realtime transcription DISABLED. " +
+							"Pass --enable_realtime_transcription when starting the server, " +
+							"or restart via the Electron app."
+					);
+				}
+			})
+			.catch((err) => {
+				dbg("relay", "Could not query server realtime config:", String(err));
+			});
 	};
 
 	client.on("data-event", onDataEvent);
@@ -245,5 +198,7 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		client.off("model-catalog", onModelCatalog);
 		client.off("server-ready", onServerReady);
 		ipcMain.removeHandler("stt:cancel-download");
+		ipcMain.removeHandler("stt:get-model-catalog");
+		ipcMain.removeHandler("stt:get-server-ready");
 	};
 }

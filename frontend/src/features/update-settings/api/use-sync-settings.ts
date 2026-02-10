@@ -22,67 +22,92 @@ const AUDIO_PARAM_MAP: Record<string, AllowedParameter> = {
 	wakeWordActivationDelay: "wake_word_activation_delay",
 };
 
-/** Push all mapped settings to the STT server */
-function syncAllToServer(settings: AppSettings) {
-	const audio = settings.audio;
-	if (audio) {
-		for (const [camelKey, snakeKey] of Object.entries(AUDIO_PARAM_MAP)) {
-			const value = audio[camelKey as keyof typeof audio];
-			if (value != null) {
-				sttSetParameter(snakeKey, value);
-			}
+/** Send a parameter only when it changed (incremental) or is non-null (initial). */
+function sendIfChanged<V>(
+	value: V | undefined | null,
+	prevValue: V | undefined | null,
+	param: AllowedParameter,
+	isInitial: boolean
+) {
+	if (isInitial) {
+		if (value != null) {
+			sttSetParameter(param, value);
 		}
+	} else if (value !== prevValue) {
+		sttSetParameter(param, value);
 	}
-
-	if (settings.model?.language != null) {
-		sttSetParameter("language", settings.model.language);
-	}
-
-	if (settings.model?.model != null) {
-		sttSetParameter("model", settings.model.model);
-	}
-
-	// Derive silence_timing from recording mode: PTT disables it, Toggle/Listen enable it
-	const mode = settings.general?.recordingMode ?? "ptt";
-	sttSetParameter("silence_timing", mode === "toggle" || mode === "listen");
 }
 
-/** Sync only the changed parameters to the STT server and Electron system settings. */
-function syncChangedToServer(settings: AppSettings, prev: AppSettings) {
+function syncAudioParams(settings: AppSettings, prev: AppSettings | undefined) {
 	const audio = settings.audio;
-	const prevAudio = prev.audio;
-	if (audio && prevAudio) {
-		for (const [camelKey, snakeKey] of Object.entries(AUDIO_PARAM_MAP)) {
-			const key = camelKey as keyof typeof audio;
-			if (audio[key] !== prevAudio[key]) {
-				sttSetParameter(snakeKey, audio[key]);
-			}
-		}
+	if (!audio) {
+		return;
 	}
+	const prevAudio = prev?.audio;
+	const isInitial = !prev;
+	for (const [camelKey, snakeKey] of Object.entries(AUDIO_PARAM_MAP)) {
+		const key = camelKey as keyof typeof audio;
+		sendIfChanged(audio[key], prevAudio?.[key], snakeKey, isInitial);
+	}
+}
 
+function syncModelParams(settings: AppSettings, prev: AppSettings | undefined) {
 	const model = settings.model;
-	const prevModel = prev.model;
-	if (model?.language !== prevModel?.language && model?.language != null) {
-		sttSetParameter("language", model.language);
-	}
-	if (model?.model !== prevModel?.model && model?.model != null) {
-		sttSetParameter("model", model.model);
+	const prevModel = prev?.model;
+	const isInitial = !prev;
+	sendIfChanged(model?.language, prevModel?.language, "language", isInitial);
+	sendIfChanged(model?.model, prevModel?.model, "model", isInitial);
+}
+
+function syncQualityParams(settings: AppSettings, prev: AppSettings | undefined) {
+	const smartEndpoint = settings.quality?.smartEndpoint ?? false;
+	const prevSmartEndpoint = prev?.quality?.smartEndpoint ?? false;
+	const mode = settings.general?.recordingMode ?? "ptt";
+	const modeChanged = !prev || settings.general?.recordingMode !== prev.general?.recordingMode;
+
+	if (modeChanged || smartEndpoint !== prevSmartEndpoint) {
+		sttSetParameter("silence_timing", smartEndpoint || mode === "toggle" || mode === "listen");
 	}
 
-	// Sync autoStart toggle to Electron's login item settings
+	const quality = settings.quality;
+	const prevQuality = prev?.quality;
+	const isInitial = !prev;
+	sendIfChanged(
+		quality?.smartEndpoint,
+		prevQuality?.smartEndpoint,
+		"smart_endpoint_enabled",
+		isInitial
+	);
+	sendIfChanged(
+		quality?.smartEndpointSpeed,
+		prevQuality?.smartEndpointSpeed,
+		"detection_speed",
+		isInitial
+	);
+}
+
+function syncSystemParams(settings: AppSettings, prev: AppSettings | undefined) {
+	if (!prev) {
+		return;
+	}
 	const general = settings.general;
 	const prevGeneral = prev.general;
 	if (general?.autoStart !== prevGeneral?.autoStart && general?.autoStart != null) {
 		autostartSet(general.autoStart);
 	}
+}
 
-	// Sync recording mode change → silence_timing parameter on the server
-	if (general?.recordingMode !== prevGeneral?.recordingMode && general?.recordingMode != null) {
-		sttSetParameter(
-			"silence_timing",
-			general.recordingMode === "toggle" || general.recordingMode === "listen"
-		);
-	}
+/**
+ * Sync settings to the STT server (and Electron system settings).
+ *
+ * - If `prev` is undefined → initial connect: push all non-null settings.
+ * - If `prev` is provided → incremental: push only changed keys.
+ */
+function syncToServer(settings: AppSettings, prev?: AppSettings) {
+	syncAudioParams(settings, prev);
+	syncModelParams(settings, prev);
+	syncQualityParams(settings, prev);
+	syncSystemParams(settings, prev);
 }
 
 export function useSyncSettings() {
@@ -122,18 +147,9 @@ export function useSyncSettings() {
 
 	// When server signals ready (recorder fully initialized), push all saved settings
 	useEffect(() => {
-		console.log(
-			"[useSyncSettings] serverStatus=",
-			serverStatus,
-			"isLoaded=",
-			isLoaded,
-			"synced=",
-			hasSyncedOnConnect.current
-		);
 		if (serverStatus === "running" && isLoaded && !hasSyncedOnConnect.current) {
 			hasSyncedOnConnect.current = true;
-			console.log("[useSyncSettings] Syncing ALL settings to server");
-			syncAllToServer(latestSettingsRef.current);
+			syncToServer(latestSettingsRef.current);
 		}
 		// Reset flag when server is not running so settings are re-synced next time
 		if (serverStatus === "idle") {
@@ -188,7 +204,7 @@ export function useSyncSettings() {
 		}
 
 		// Sync changed parameters to STT server and system settings (immediate)
-		syncChangedToServer(settings, prev);
+		syncToServer(settings, prev);
 
 		// Save to electron-store: flush immediately for recording mode changes
 		// so the broadcast reaches other windows without delay.

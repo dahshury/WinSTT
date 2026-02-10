@@ -51,7 +51,7 @@ class _FakeDisabledTqdm(_FakeTqdm):
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         kwargs["disable"] = True
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
 
 
 @pytest.fixture(autouse=True)
@@ -91,7 +91,7 @@ def _install_fake_modules() -> Any:  # noqa: ANN401
         "faster_whisper.utils",
     )
     for name in mod_names:
-        saved[name] = sys.modules.get(name)  # type: ignore[assignment]
+        saved[name] = sys.modules.get(name)
 
     sys.modules["tqdm"] = tqdm_root
     sys.modules["tqdm.auto"] = tqdm_auto
@@ -111,12 +111,12 @@ def _install_fake_modules() -> Any:  # noqa: ANN401
 
 def _get_patched_cls() -> type:
     """Return the currently-installed tqdm class from the fake hf module."""
-    return sys.modules["huggingface_hub.utils"].tqdm  # type: ignore[no-any-return,union-attr]
+    return sys.modules["huggingface_hub.utils"].tqdm  # type: ignore[no-any-return]
 
 
 def _get_fw_disabled() -> type:
     """Return the currently-installed disabled_tqdm from fake faster_whisper."""
-    return sys.modules["faster_whisper.utils"].disabled_tqdm  # type: ignore[no-any-return,union-attr]
+    return sys.modules["faster_whisper.utils"].disabled_tqdm  # type: ignore[no-any-return]
 
 
 def _collect(events: list[DownloadProgress]) -> Callable[[DownloadProgress], None]:
@@ -238,10 +238,10 @@ class TestInterceptHfProgress:
 
         with _intercept_hf_progress("multi", _collect(events)):
             cls = _get_patched_cls()
-            bar1 = cls(total=_10MB)   # file 1: 10 MB
-            bar2 = cls(total=_10MB)   # file 2: 10 MB  (total = 20 MB)
-            bar1.update(_10MB)        # 10/20 = 50%
-            bar2.update(_10MB)        # 20/20 = 99% (capped)
+            bar1 = cls(total=_10MB)  # file 1: 10 MB
+            bar2 = cls(total=_10MB)  # file 2: 10 MB  (total = 20 MB)
+            bar1.update(_10MB)  # 10/20 = 50%
+            bar2.update(_10MB)  # 20/20 = 99% (capped)
 
         progress_only = [e.progress for e in events]
         assert progress_only[0] == 0.0  # start (first bar created)
@@ -424,3 +424,67 @@ class TestFasterWhisperDisabledTqdmPatch:
         assert events[0].progress == 0.0
         assert events[-1].progress == 1.0
         assert len(events) >= 4  # start + 2 progress + complete
+
+
+class TestCancelDownload:
+    """Verify download cancellation suppresses the 100% completion event.
+
+    Bug: _intercept_hf_progress's finally block fired _emit(1.0, total, total)
+    even when DownloadCancelledError was raised, causing a false "download
+    complete" event to reach the frontend UI.
+    """
+
+    def test_cancel_suppresses_completion_event(self) -> None:
+        """When cancelled, the finally block must NOT fire the 1.0 progress event."""
+        from src.recorder.infrastructure.whisper_transcriber import (
+            DownloadCancelledError,
+            _intercept_hf_progress,
+        )
+
+        events: list[DownloadProgress] = []
+        cancel_flag = False
+
+        with pytest.raises(DownloadCancelledError):
+            with _intercept_hf_progress("cancel-model", _collect(events), cancel_check=lambda: cancel_flag):
+                cls = _get_patched_cls()
+                bar = cls(total=_100MB)
+                bar.update(_100MB // 4)  # 25%
+                cancel_flag = True
+                bar.update(_100MB // 4)  # raises DownloadCancelledError
+
+        # Must NOT have a 1.0 completion event — download was cancelled
+        assert all(e.progress < 1.0 for e in events), (
+            f"Expected no 1.0 completion event after cancel, got: {[e.progress for e in events]}"
+        )
+
+    def test_cancel_still_restores_original_class(self) -> None:
+        """Even on cancellation, original tqdm classes must be restored."""
+        from src.recorder.infrastructure.whisper_transcriber import (
+            DownloadCancelledError,
+            _intercept_hf_progress,
+        )
+
+        assert _get_patched_cls() is _FakeTqdm
+        assert _get_fw_disabled() is _FakeDisabledTqdm
+
+        with pytest.raises(DownloadCancelledError):
+            with _intercept_hf_progress("mdl", lambda _: None, cancel_check=lambda: True):
+                cls = _get_patched_cls()
+                bar = cls(total=_10MB)
+                bar.update(_2MB)  # cancel_check returns True → raises
+
+        assert _get_patched_cls() is _FakeTqdm
+        assert _get_fw_disabled() is _FakeDisabledTqdm
+
+    def test_normal_completion_still_fires_100_percent(self) -> None:
+        """Regression: normal (non-cancelled) downloads must still emit 1.0."""
+        from src.recorder.infrastructure.whisper_transcriber import _intercept_hf_progress
+
+        events: list[DownloadProgress] = []
+
+        with _intercept_hf_progress("ok-model", _collect(events), cancel_check=lambda: False):
+            cls = _get_patched_cls()
+            bar = cls(total=_10MB)
+            bar.update(_10MB)
+
+        assert events[-1].progress == 1.0

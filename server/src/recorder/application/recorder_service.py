@@ -292,9 +292,18 @@ class RecorderService:
         if self._config.audio.use_microphone:
             self._audio_reader_thread = threading.Thread(target=self._audio_reader_loop, daemon=True)
             self._audio_reader_thread.start()
-        if self._config.realtime.enable_realtime_transcription and self._realtime_transcriber:
+        rt_enabled = self._config.realtime.enable_realtime_transcription
+        rt_has_transcriber = self._realtime_transcriber is not None
+        if rt_enabled and rt_has_transcriber:
             self._realtime_thread = threading.Thread(target=self._realtime_worker, daemon=True)
             self._realtime_thread.start()
+            logger.warning("Realtime worker STARTED (model=%s)", self._config.realtime.realtime_model_type)
+        else:
+            logger.warning(
+                "Realtime worker NOT started (enabled=%s, has_transcriber=%s)",
+                rt_enabled,
+                rt_has_transcriber,
+            )
 
     def _realtime_worker(self) -> None:
         """Periodically transcribe accumulated audio for live display.

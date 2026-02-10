@@ -46,7 +46,7 @@ export function ConfirmDialog({
 						<AlertDialog.Close
 							render={
 								<button
-									className="inline-flex h-8 cursor-pointer items-center justify-center rounded-md border border-border bg-surface-tertiary px-4 font-medium text-[13px] text-foreground-secondary outline-none transition-colors duration-150 hover:bg-surface-elevated"
+									className="inline-flex h-8 cursor-pointer items-center justify-center rounded-md border border-border bg-surface-tertiary px-4 font-medium text-[13px] text-foreground-secondary outline-none transition-colors duration-150 hover:bg-surface-elevated focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface"
 									type="button"
 								>
 									{cancelLabel}
@@ -54,7 +54,7 @@ export function ConfirmDialog({
 							}
 						/>
 						<button
-							className="inline-flex h-8 cursor-pointer items-center justify-center rounded-md border-none bg-error px-4 font-medium text-[13px] text-white outline-none transition-colors duration-150 hover:bg-error-dim"
+							className="inline-flex h-8 cursor-pointer items-center justify-center rounded-md border-none bg-error px-4 font-medium text-[13px] text-white outline-none transition-colors duration-150 hover:bg-error-dim focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
 							onClick={handleConfirm}
 							type="button"
 						>

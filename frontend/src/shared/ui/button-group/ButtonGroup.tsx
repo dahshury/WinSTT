@@ -4,11 +4,12 @@ import { cn } from "@/shared/lib/cn";
 export interface ButtonGroupProps {
 	children: ReactNode;
 	className?: string;
+	"aria-label"?: string;
 }
 
-export function ButtonGroup({ children, className }: ButtonGroupProps) {
+export function ButtonGroup({ children, className, "aria-label": ariaLabel }: ButtonGroupProps) {
 	return (
-		<div className={cn("inline-flex", className)} role="toolbar">
+		<div aria-label={ariaLabel} className={cn("inline-flex", className)} role="toolbar">
 			{children}
 		</div>
 	);

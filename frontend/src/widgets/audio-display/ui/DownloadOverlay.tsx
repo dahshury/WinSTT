@@ -4,6 +4,7 @@ import { Progress } from "@base-ui/react/progress";
 import { useTranslations } from "next-intl";
 import { memo, useCallback } from "react";
 import { useDownloadStore } from "@/features/model-download";
+import { Button } from "@/shared/ui/button";
 
 function formatBytes(bytes: number): string {
 	if (bytes < 1024) {
@@ -84,7 +85,7 @@ export const DownloadOverlay = memo(function DownloadOverlay() {
 				</p>
 
 				<Progress.Track className="h-2.5 overflow-hidden rounded-full bg-surface-tertiary">
-					<Progress.Indicator className="h-full rounded-full bg-accent transition-[width] duration-200 ease-out" />
+					<Progress.Indicator className="h-full rounded-full bg-teal transition-[width] duration-200 ease-out" />
 				</Progress.Track>
 
 				<div className="text-center font-mono text-foreground-muted text-xs tabular-nums">
@@ -93,13 +94,12 @@ export const DownloadOverlay = memo(function DownloadOverlay() {
 				</div>
 			</Progress.Root>
 
-			<button
-				className="h-7 cursor-pointer rounded-md border border-error bg-transparent px-3 font-medium text-error text-xs transition-colors duration-150 hover:bg-error-dim"
+			<Button
+				className="h-7 rounded-md border border-error bg-transparent px-3 font-medium text-error text-xs transition-colors duration-150 hover:bg-error-dim"
 				onClick={handleCancel}
-				type="button"
 			>
 				{t("cancel")}
-			</button>
+			</Button>
 		</div>
 	);
 });

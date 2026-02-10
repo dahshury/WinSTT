@@ -9,7 +9,10 @@
     "comingSoon": "जल्द आ रहा है"
   },
   "titleBar": {
-    "appName": "WinSTT"
+    "appName": "WinSTT",
+    "settings": "सेटिंग्स",
+    "minimize": "छोटा करें",
+    "close": "बंद करें"
   },
   "settings": {
     "title": "सेटिंग्स",
@@ -23,7 +26,9 @@
     "tabProcessing": "प्रोसेसिंग",
     "tabHotkey": "हॉटकी",
     "tabDictionary": "शब्दकोश",
-    "tabSnippets": "स्निपेट्स"
+    "tabSnippets": "स्निपेट्स",
+    "minimize": "छोटा करें",
+    "close": "बंद करें"
   },
   "general": {
     "recording": "रिकॉर्डिंग",
@@ -130,7 +135,14 @@
     "uppercaseFirst": "पहला अक्षर बड़ा",
     "uppercaseFirstCaption": "वाक्य की शुरुआत स्वतः बड़े अक्षर में",
     "endWithPeriod": "पूर्णविराम से समाप्त करें",
-    "endWithPeriodCaption": "वाक्यों में स्वतः पूर्णविराम जोड़ें"
+    "endWithPeriodCaption": "वाक्यों में स्वतः पूर्णविराम जोड़ें",
+    "smartEndpoint": "स्मार्ट एंडपॉइंट",
+    "smartEndpointLabel": "स्मार्ट एंडपॉइंट",
+    "smartEndpointCaption": "AI-संचालित वाक्य पहचान",
+    "smartEndpointTooltip": "वाक्य पूर्ण होने का पता लगाने के लिए DistilBERT क्लासिफायर का उपयोग करता है। PTT मोड में, कुंजी दबाए रखते हुए वाक्य स्वतः पूर्ण और पेस्ट होते हैं। टॉगल मोड में, पूर्ण वाक्य तेजी से पूर्ण होते हैं जबकि अपूर्ण वाक्य अधिक समय तक प्रतीक्षा करते हैं। रियलटाइम पूर्वावलोकन सक्षम होना आवश्यक है।",
+    "detectionSpeed": "पहचान गति",
+    "detectionSpeedCaption": "विराम अवधि गुणक",
+    "detectionSpeedTooltip": "नियंत्रित करता है कि वाक्य कितनी जल्दी पूर्ण होते हैं। उच्च मान का अर्थ है पूर्णता से पहले छोटे विराम। कम मान अधिक धैर्यवान हैं और वक्ता के जारी रखने की अधिक प्रतीक्षा करते हैं।"
   },
   "hotkey": {
     "configuration": "हॉटकी कॉन्फ़िगरेशन",

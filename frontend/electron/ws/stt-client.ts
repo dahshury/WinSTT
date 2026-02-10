@@ -48,12 +48,32 @@ export class SttClient extends EventEmitter {
 		return this.connectInternal();
 	}
 
-	private connectInternal(): Promise<void> {
-		// Close any lingering sockets from the previous attempt before starting fresh
+	private closeAll() {
 		this.controlWs?.close();
 		this.dataWs?.close();
 		this.controlWs = null;
 		this.dataWs = null;
+	}
+
+	private sendRequest(action: Record<string, unknown>, timeoutLabel: string): Promise<unknown> {
+		if (!this.isConnected) {
+			return Promise.reject(new Error("Not connected"));
+		}
+		const requestId = ++this.requestIdCounter;
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.pendingRequests.delete(requestId);
+				reject(new Error(`${timeoutLabel} timed out after ${REQUEST_TIMEOUT_MS}ms`));
+			}, REQUEST_TIMEOUT_MS);
+
+			this.pendingRequests.set(requestId, { resolve, reject, timer });
+			this.sendControl({ ...action, request_id: requestId });
+		});
+	}
+
+	private connectInternal(): Promise<void> {
+		// Close any lingering sockets from the previous attempt before starting fresh
+		this.closeAll();
 
 		const gen = ++this._gen;
 
@@ -63,19 +83,12 @@ export class SttClient extends EventEmitter {
 			let settled = false;
 			this._disconnectedEmitted = false;
 
-			const cleanup = () => {
-				this.controlWs?.close();
-				this.dataWs?.close();
-				this.controlWs = null;
-				this.dataWs = null;
-			};
-
 			const fail = (err: unknown) => {
 				if (settled || gen !== this._gen) {
 					return;
 				}
 				settled = true;
-				cleanup();
+				this.closeAll();
 				this.emit("error", err);
 				reject(err);
 			};
@@ -125,10 +138,7 @@ export class SttClient extends EventEmitter {
 			clearTimeout(this.reconnectTimer);
 			this.reconnectTimer = null;
 		}
-		this.controlWs?.close();
-		this.dataWs?.close();
-		this.controlWs = null;
-		this.dataWs = null;
+		this.closeAll();
 		this.rejectAllPending(new Error("Client disconnected"));
 	}
 
@@ -141,23 +151,10 @@ export class SttClient extends EventEmitter {
 	}
 
 	getParameter(parameter: string): Promise<unknown> {
-		if (!this.isConnected) {
-			return Promise.reject(new Error("Not connected"));
-		}
-		const requestId = ++this.requestIdCounter;
-		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.pendingRequests.delete(requestId);
-				reject(new Error(`getParameter("${parameter}") timed out after ${REQUEST_TIMEOUT_MS}ms`));
-			}, REQUEST_TIMEOUT_MS);
-
-			this.pendingRequests.set(requestId, { resolve, reject, timer });
-			this.sendControl({
-				command: "get_parameter",
-				parameter,
-				request_id: requestId,
-			});
-		});
+		return this.sendRequest(
+			{ command: "get_parameter", parameter },
+			`getParameter("${parameter}")`
+		);
 	}
 
 	callMethod(method: string, args?: unknown[]) {
@@ -169,22 +166,7 @@ export class SttClient extends EventEmitter {
 	}
 
 	listLoopbackDevices(): Promise<unknown> {
-		if (!this.isConnected) {
-			return Promise.reject(new Error("Not connected"));
-		}
-		const requestId = ++this.requestIdCounter;
-		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.pendingRequests.delete(requestId);
-				reject(new Error(`listLoopbackDevices timed out after ${REQUEST_TIMEOUT_MS}ms`));
-			}, REQUEST_TIMEOUT_MS);
-
-			this.pendingRequests.set(requestId, { resolve, reject, timer });
-			this.sendControl({
-				command: "list_loopback_devices",
-				request_id: requestId,
-			});
-		});
+		return this.sendRequest({ command: "list_loopback_devices" }, "listLoopbackDevices");
 	}
 
 	startLoopback(deviceIndex: number) {
@@ -217,10 +199,7 @@ export class SttClient extends EventEmitter {
 		}
 		this._disconnectedEmitted = true;
 
-		this.controlWs?.close();
-		this.dataWs?.close();
-		this.controlWs = null;
-		this.dataWs = null;
+		this.closeAll();
 		this.rejectAllPending(new Error("Connection lost"));
 		this.emit("disconnected");
 		this.scheduleReconnect();

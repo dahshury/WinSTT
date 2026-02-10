@@ -9,6 +9,8 @@ export const store = new Store({
 			language: "en",
 			computeType: "default",
 			device: "auto",
+			backend: "faster_whisper",
+			onnxQuantization: "",
 			beamSize: 5,
 			beamSizeRealtime: 3,
 			initialPrompt: "",
@@ -24,6 +26,8 @@ export const store = new Store({
 			realtimeBatchSize: 16,
 			ensureSentenceStartingUppercase: true,
 			ensureSentenceEndsWithPeriod: true,
+			smartEndpoint: false,
+			smartEndpointSpeed: 1.5,
 		},
 		audio: {
 			inputDeviceIndex: null,
@@ -61,20 +65,23 @@ export const store = new Store({
 // ── One-time migration for stale persisted values ────────────────────
 // electron-store defaults only apply when a key is missing. If old defaults
 // were persisted via settings:save, they override new defaults silently.
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const currentVersion = (store.get("_schemaVersion") as number | undefined) ?? 1;
 
 if (currentVersion < SCHEMA_VERSION) {
-	// v1→v2: enable realtime transcription with separate tiny model
-	if (store.get("quality.enableRealtimeTranscription") === false) {
+	// Ensure realtime transcription is enabled with separate tiny model.
+	// Use !value to catch both `false` and `undefined` (missing key in persisted JSON).
+	if (!store.get("quality.enableRealtimeTranscription")) {
 		store.set("quality.enableRealtimeTranscription", true);
 	}
-	if (store.get("quality.useMainModelForRealtime") === true) {
+	if (store.get("quality.useMainModelForRealtime") !== false) {
 		store.set("quality.useMainModelForRealtime", false);
 	}
-	// v1→v2: fix silero sensitivity that was incorrectly defaulting to 0.05
-	if (store.get("audio.sileroSensitivity") === 0.05) {
+	// Fix silero sensitivity that was incorrectly defaulting to 0.05
+	const silero = store.get("audio.sileroSensitivity") as number | undefined;
+	if (silero == null || silero === 0.05) {
 		store.set("audio.sileroSensitivity", 0.4);
 	}
+	console.log("[store] Migration applied: _schemaVersion", currentVersion, "→", SCHEMA_VERSION);
 	store.set("_schemaVersion", SCHEMA_VERSION);
 }
