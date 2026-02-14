@@ -4,15 +4,56 @@ examples/
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
 .venv/
+venv/
 .coverage
+*.egg-info/
+dist/
+build/
 
-# Next.js
+# Node/Bun
+node_modules/
 .next/
+out/
+.turbo/
+bun.lockb
+
+# Electron
+dist-electron/
+release/
+*.exe
+*.dmg
+*.AppImage
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
 # Logs
 debug.log
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+*.tmp
+*.temp
+~*
