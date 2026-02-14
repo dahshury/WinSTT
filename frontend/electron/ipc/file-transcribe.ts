@@ -1,6 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { type BrowserWindow, ipcMain } from "electron";
+import {
+	ConnectionError,
+	FileSystemError,
+	getErrorMessage,
+	NotFoundError,
+	ValidationError,
+} from "../../src/shared/lib/errors";
 import { store } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
 
@@ -23,38 +30,70 @@ const SUPPORTED_EXTENSIONS = new Set([
 
 let requestCounter = 0;
 
-export function setupFileTranscribeHandlers(win: BrowserWindow, client: SttClient): () => void {
+/**
+ * Start a file transcription request.
+ * Can be called from IPC handlers or directly from main process code (e.g., tray menu).
+ */
+export function transcribeFile(
+	client: SttClient,
+	filePath: string,
+	pendingRequests: Map<string, string>
+): { requestId: string } {
+	// Validate input
+	if (!filePath || typeof filePath !== "string") {
+		throw new ValidationError("File path is required", "filePath");
+	}
+
+	const ext = path.extname(filePath).toLowerCase();
+
+	if (!SUPPORTED_EXTENSIONS.has(ext)) {
+		throw new ValidationError(
+			`Unsupported file format: ${ext}. Supported formats: ${Array.from(SUPPORTED_EXTENSIONS).join(", ")}`,
+			"filePath",
+			{ extension: ext, filePath }
+		);
+	}
+
+	if (!fs.existsSync(filePath)) {
+		throw new NotFoundError("File", filePath);
+	}
+
+	if (!client.isConnected) {
+		throw new ConnectionError(
+			"Cannot transcribe file: STT server is not connected",
+			undefined,
+			true
+		);
+	}
+
+	const requestId = `file-${++requestCounter}-${Date.now()}`;
+	pendingRequests.set(requestId, filePath);
+
+	const format = (store.get("general.fileTranscriptionFormat") as string) ?? "txt";
+
+	client.sendControl({
+		command: "transcribe_file",
+		request_id: requestId,
+		file_path: filePath,
+		format,
+	});
+
+	return { requestId };
+}
+
+export function setupFileTranscribeHandlers(
+	win: BrowserWindow,
+	client: SttClient
+): { cleanup: () => void; pendingRequests: Map<string, string> } {
 	const pendingRequests = new Map<string, string>(); // requestId → filePath
 
 	const handler = (_event: Electron.IpcMainInvokeEvent, payload: { filePath: string }) => {
-		const filePath = payload.filePath;
-		const ext = path.extname(filePath).toLowerCase();
-
-		if (!SUPPORTED_EXTENSIONS.has(ext)) {
-			throw new Error(`Unsupported file format: ${ext}`);
+		try {
+			return transcribeFile(client, payload.filePath, pendingRequests);
+		} catch (error) {
+			console.error("[file-transcribe] Transcription request failed:", getErrorMessage(error));
+			throw error;
 		}
-
-		if (!fs.existsSync(filePath)) {
-			throw new Error("File not found");
-		}
-
-		if (!client.isConnected) {
-			throw new Error("STT server is not connected");
-		}
-
-		const requestId = `file-${++requestCounter}-${Date.now()}`;
-		pendingRequests.set(requestId, filePath);
-
-		const format = (store.get("general.fileTranscriptionFormat") as string) ?? "txt";
-
-		client.sendControl({
-			command: "transcribe_file",
-			request_id: requestId,
-			file_path: filePath,
-			format,
-		});
-
-		return { requestId };
 	};
 
 	ipcMain.handle("file:transcribe", handler);
@@ -86,7 +125,25 @@ export function setupFileTranscribeHandlers(win: BrowserWindow, client: SttClien
 			try {
 				fs.writeFileSync(outputPath, text, "utf-8");
 			} catch (err) {
-				console.warn("[file-transcribe] Failed to write output:", err);
+				console.error(
+					"[file-transcribe] Failed to write output:",
+					getErrorMessage(err),
+					"Path:",
+					outputPath
+				);
+				const fileError = new FileSystemError(
+					`Failed to write transcription output: ${getErrorMessage(err)}`,
+					outputPath,
+					"write",
+					{ originalError: err }
+				);
+				safeSend("file:transcription-error", {
+					requestId,
+					fileName,
+					error: fileError.message,
+				});
+				pendingRequests.delete(requestId);
+				return;
 			}
 
 			pendingRequests.delete(requestId);
@@ -110,8 +167,11 @@ export function setupFileTranscribeHandlers(win: BrowserWindow, client: SttClien
 
 	client.on("data-event", onDataEvent);
 
-	return () => {
-		ipcMain.removeHandler("file:transcribe");
-		client.off("data-event", onDataEvent);
+	return {
+		cleanup: () => {
+			ipcMain.removeHandler("file:transcribe");
+			client.off("data-event", onDataEvent);
+		},
+		pendingRequests,
 	};
 }

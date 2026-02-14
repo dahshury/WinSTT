@@ -39,6 +39,9 @@ const ALLOWED_INVOKE_CHANNELS = [
 	"stt:get-server-ready",
 	"loopback:list-devices",
 	"stt:cancel-download",
+	"sound:get-data",
+	"llm:scan-models",
+	"llm:process-text",
 ] as const;
 
 /** Channels the main process may push to the renderer */
@@ -70,6 +73,8 @@ const ALLOWED_ON_CHANNELS = [
 	"file:transcription-error",
 	"stt:loopback-started",
 	"stt:loopback-stopped",
+	"sound:play",
+	"llm:catalog",
 ] as const;
 
 contextBridge.exposeInMainWorld("electronAPI", {

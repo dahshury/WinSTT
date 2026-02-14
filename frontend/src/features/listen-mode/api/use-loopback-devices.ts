@@ -29,9 +29,17 @@ export function useLoopbackDevices() {
 		if (recordingMode !== "listen") {
 			return;
 		}
+
+		let isCancelled = false;
+
 		loopbackListDevices()
 			.then((devices) => {
+				if (isCancelled) {
+					return;
+				}
+
 				if (!Array.isArray(devices)) {
+					console.warn("[useLoopbackDevices] Invalid devices response:", devices);
 					return;
 				}
 				const typed = devices as LoopbackDevice[];
@@ -52,8 +60,15 @@ export function useLoopbackDevices() {
 				}
 			})
 			.catch((err: unknown) => {
-				console.warn("[useLoopbackDevices] Failed to fetch loopback devices:", err);
+				if (isCancelled) {
+					return;
+				}
+				console.error("[useLoopbackDevices] Failed to fetch loopback devices:", err);
 			});
+
+		return () => {
+			isCancelled = true;
+		};
 	}, [recordingMode, general?.loopbackDeviceIndex, update]);
 
 	const currentId =

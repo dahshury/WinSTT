@@ -34,6 +34,7 @@ ALLOWED_PARAMETERS: list[str] = [
     "silero_sensitivity",
     "wake_word_activation_delay",
     "post_speech_silence_duration",
+    "silence_endpoint_enabled",
     "listen_start",
     "recording_stop_time",
     "last_transcription_bytes",
@@ -46,6 +47,7 @@ ALLOWED_PARAMETERS: list[str] = [
     "smart_endpoint_enabled",
     "detection_speed",
 ]
+
 
 def _log_set(name: str, value: object) -> None:
     """Print a timestamped parameter-set log line."""
@@ -90,9 +92,16 @@ async def control_handler(websocket: ServerConnection, state: ServerState) -> No
                     command_data: dict[str, Any] = json.loads(message)
                     command = command_data.get("command")
                     await _dispatch_command(websocket, state, command_data, command)
-                except json.JSONDecodeError:
-                    print(f"{bcolors.WARNING}Received invalid JSON command{bcolors.ENDC}")
-                    await websocket.send(json.dumps({"status": "error", "message": "Invalid JSON command"}))
+                except json.JSONDecodeError as e:
+                    error_msg = f"Invalid JSON command (error at position {e.pos}: {e.msg})"
+                    print(f"{bcolors.WARNING}{error_msg}{bcolors.ENDC}")
+                    await websocket.send(
+                        json.dumps({"status": "error", "message": error_msg, "received": message[:100]})
+                    )
+                except Exception as e:
+                    error_msg = f"Command execution failed: {type(e).__name__}: {e}"
+                    print(f"{bcolors.FAIL}{error_msg}{bcolors.ENDC}")
+                    await websocket.send(json.dumps({"status": "error", "message": error_msg}))
             else:
                 print(f"{bcolors.WARNING}Received unknown message type on control connection{bcolors.ENDC}")
     except websockets.exceptions.ConnectionClosed as e:
@@ -154,7 +163,11 @@ async def _handle_set_parameter(ws: ServerConnection, state: ServerState, data: 
                 state.sentence_classifier = DistilBertClassifier()
                 print(f"{bcolors.OKGREEN}Smart endpoint classifier loaded{bcolors.ENDC}")
             except Exception as e:
-                print(f"{bcolors.WARNING}Failed to load classifier: {e}{bcolors.ENDC}")
+                error_msg = f"Failed to load classifier: {type(e).__name__}: {e}"
+                print(f"{bcolors.WARNING}{error_msg}{bcolors.ENDC}")
+                state.smart_endpoint_enabled = False
+                await ws.send(json.dumps({"status": "error", "message": error_msg}))
+                return
         _log_set("smart_endpoint_enabled", state.smart_endpoint_enabled)
         msg = f"Parameter smart_endpoint_enabled set to {state.smart_endpoint_enabled}"
         await ws.send(json.dumps({"status": "success", "message": msg}))
@@ -258,9 +271,11 @@ async def _handle_list_loopback_devices(ws: ServerConnection, state: ServerState
             response_payload["request_id"] = request_id
         await ws.send(json.dumps(response_payload))
     except Exception as e:
+        error_msg = f"Failed to list loopback devices: {type(e).__name__}: {e}"
+        print(f"{bcolors.FAIL}{error_msg}{bcolors.ENDC}")
         error_payload: dict[str, Any] = {
             "status": "error",
-            "message": f"Failed to list loopback devices: {e}",
+            "message": error_msg,
             "value": [],
         }
         if request_id is not None:
@@ -285,7 +300,9 @@ async def _handle_start_loopback(ws: ServerConnection, state: ServerState, data:
         )
         await ws.send(json.dumps({"status": "success", "message": "Loopback started"}))
     except Exception as e:
-        await ws.send(json.dumps({"status": "error", "message": f"Failed to start loopback: {e}"}))
+        error_msg = f"Failed to start loopback (device {device_index}): {type(e).__name__}: {e}"
+        print(f"{bcolors.FAIL}{error_msg}{bcolors.ENDC}")
+        await ws.send(json.dumps({"status": "error", "message": error_msg}))
 
 
 async def _handle_stop_loopback(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:

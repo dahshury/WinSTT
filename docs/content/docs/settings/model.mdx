@@ -45,3 +45,52 @@ The `initialPrompt` field accepts free-form text that biases the model toward sp
 - Domain-specific jargon
 
 The prompt does not appear in the output. It only influences how the model interprets ambiguous audio.
+
+## LLM Post-Processing
+
+WinSTT can enhance transcribed text using local AI models via [Ollama](https://ollama.com). This feature applies intelligent text transformations before pasting, making your transcriptions more polished and contextually appropriate.
+
+### Prerequisites
+
+LLM post-processing requires Ollama to be installed and running on your machine:
+
+1. Download and install [Ollama](https://ollama.com)
+2. Pull a model (e.g., `ollama pull llama2`)
+3. Ensure Ollama is running (it starts automatically on system startup by default)
+
+### Configuration
+
+Enable LLM post-processing in **Settings → Model → LLM Post-Processing**:
+
+| Setting | Description |
+|---------|-------------|
+| **Enable** | Toggle to activate/deactivate LLM processing |
+| **Ollama Endpoint** | URL where Ollama is running (default: `http://localhost:11434`) |
+| **Model** | Select which Ollama model to use (larger models = better quality but slower) |
+| **Style Preset** | Choose how the LLM transforms your text |
+
+### Style Presets
+
+Six presets are available to match different use cases:
+
+- **Neutral** — Grammar and punctuation fixes only
+- **Formal** — Professional, business-appropriate language
+- **Friendly** — Warm, conversational tone
+- **Technical** — Precise, domain-specific phrasing
+- **Casual** — Relaxed, informal style
+- **Concise** — Shortened, direct communication
+
+### How It Works
+
+1. You dictate using push-to-talk or toggle mode
+2. WinSTT transcribes your speech to text
+3. If LLM post-processing is enabled, the transcription is sent to Ollama for enhancement
+4. The enhanced text is pasted into your active application
+
+<Callout title="Privacy-first design" type="info">
+All LLM processing happens locally on your machine via Ollama. No text is sent to external servers. If Ollama is unavailable, WinSTT gracefully falls back to pasting the original transcription.
+</Callout>
+
+<Callout title="Performance note" type="warn">
+LLM processing adds a small delay (typically 1-3 seconds depending on text length and model size). Disable this feature if you need instant transcription results.
+</Callout>

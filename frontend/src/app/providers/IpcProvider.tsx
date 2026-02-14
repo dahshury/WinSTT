@@ -11,6 +11,7 @@ import { useDownloadListener } from "@/features/model-download";
 import { usePushToTalk } from "@/features/push-to-talk";
 import { useSyncSettings } from "@/features/update-settings";
 import { gpuGetInfo } from "@/shared/api/ipc-client";
+import { useRecordingSound } from "@/shared/lib/use-recording-sound";
 
 export function IpcProvider({ children }: { children: ReactNode }) {
 	const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
@@ -24,6 +25,7 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 	useDownloadListener();
 	useFileTranscriptionListener();
 	useListenMode();
+	useRecordingSound();
 
 	// Model catalog is self-initializing — see catalog-store.ts
 

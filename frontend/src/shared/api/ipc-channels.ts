@@ -63,6 +63,11 @@ export const IPC = {
 	WINDOW_CLOSE: "window:close",
 	WINDOW_OPEN_SETTINGS: "window:open-settings",
 	WINDOW_CLOSE_SELF: "window:close-self",
+	WINDOW_SHOW: "window:show",
+	WINDOW_QUIT: "window:quit",
+
+	// Tray menu (renderer → main)
+	TRAY_MENU_CLOSE: "tray-menu:close",
 
 	// Dialog (renderer → main)
 	DIALOG_OPEN_FILE: "dialog:open-file",
@@ -83,6 +88,17 @@ export const IPC = {
 	// Loopback events (main → renderer)
 	STT_LOOPBACK_STARTED: "stt:loopback-started",
 	STT_LOOPBACK_STOPPED: "stt:loopback-stopped",
+
+	// Sound (renderer → main invoke, main → renderer push)
+	SOUND_GET_DATA: "sound:get-data",
+	SOUND_PLAY: "sound:play",
+
+	// LLM (renderer → main)
+	LLM_SCAN_MODELS: "llm:scan-models",
+	LLM_PROCESS_TEXT: "llm:process-text",
+
+	// LLM events (main → renderer)
+	LLM_CATALOG: "llm:catalog",
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

@@ -7,8 +7,9 @@ import { setPasteGuard } from "../ipc/hotkey";
  * 1. Release all modifier keys (including Win) so they don't combine with Ctrl+V
  * 2. Simulate Ctrl+V
  *
- * Modifiers are NOT re-pressed — the paste guard in hotkey.ts keeps pressedKeys
- * intact, and the physical key release later triggers hotkey:released normally.
+ * Modifiers are NOT re-pressed — the paste guard in hotkey.ts still tracks
+ * physical key releases in pressedKeys, and fires a deferred hotkey:released
+ * when the guard lifts if the combo keys were released during the guard window.
  *
  * Virtual-key codes: https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
  *   0xA0–0xA5 = L/R Shift, Ctrl, Alt; 0x5B–0x5C = L/R Win

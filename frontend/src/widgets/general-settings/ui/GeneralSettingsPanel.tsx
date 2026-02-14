@@ -1,10 +1,13 @@
 "use client";
 
+import { FileMusicIcon, RefreshIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
 import { SettingSection } from "@/entities/setting";
 import { useLoopbackDevices } from "@/features/listen-mode";
 import { useSettingsStore } from "@/features/update-settings";
 import { LOCALE_NAMES, LOCALES, type Locale, useLocaleStore } from "@/shared/i18n";
+import { ButtonGroup, ButtonGroupText } from "@/shared/ui/button-group";
 import { FormControl } from "@/shared/ui/form-control";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { Switcher } from "@/shared/ui/switcher";
@@ -114,6 +117,24 @@ export function GeneralSettingsPanel() {
 				</div>
 			</SettingSection>
 
+			{/* ── Display ──────────────────────────────────────── */}
+			<SettingSection title={t("display")}>
+				<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+					<FormControl
+						caption={t("showRecordingOverlayCaption")}
+						disabled={isListenMode}
+						label={t("showRecordingOverlay")}
+						tooltip={t("showRecordingOverlayTooltip")}
+					>
+						<Toggle
+							checked={isListenMode ? false : (general?.showRecordingOverlay ?? true)}
+							disabled={isListenMode}
+							onCheckedChange={(v) => update({ showRecordingOverlay: v })}
+						/>
+					</FormControl>
+				</div>
+			</SettingSection>
+
 			{/* ── Sound ─────────────────────────────────────────── */}
 			<SettingSection
 				onToggle={(v) => update({ recordingSound: v })}
@@ -127,35 +148,40 @@ export function GeneralSettingsPanel() {
 						label={t("soundFile")}
 					>
 						{/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: drop zone needs drag events */}
-						<section
-							aria-label={t("soundFile")}
-							className={`flex items-center gap-2 rounded border border-dashed p-1.5 transition-colors ${
+						<div
+							className={`rounded border border-dashed transition-colors ${
 								dragOver ? "border-accent bg-accent/10" : "border-transparent"
 							}`}
 							onDragLeave={handlers.onDragLeave}
 							onDragOver={handlers.onDragOver}
 							onDrop={handlers.onDrop}
 						>
-							<span className="min-w-0 flex-1 truncate text-[12px] text-foreground-dim">
-								{recordingSoundPath || t("soundFileDefault")}
-							</span>
-							<button
-								className="shrink-0 rounded px-2 py-0.5 text-[11px] text-accent hover:bg-surface-tertiary"
-								onClick={handleBrowse}
-								type="button"
-							>
-								{tc("browse")}
-							</button>
-							{recordingSoundPath && (
+							<ButtonGroup aria-label={t("soundFile")} className="w-full">
+								<ButtonGroupText className="min-w-0 flex-1">
+									<span className="min-w-0 truncate">
+										{recordingSoundPath || t("soundFileDefault")}
+									</span>
+								</ButtonGroupText>
 								<button
-									className="shrink-0 rounded px-2 py-0.5 text-[11px] text-foreground-dim hover:bg-surface-tertiary hover:text-foreground"
-									onClick={handleReset}
+									className="flex items-center justify-center bg-background px-3 py-1.5 text-accent transition-colors last:rounded-r hover:bg-surface-tertiary"
+									onClick={handleBrowse}
+									title={tc("browse")}
 									type="button"
 								>
-									{tc("reset")}
+									<HugeiconsIcon icon={FileMusicIcon} size={14} />
 								</button>
-							)}
-						</section>
+								{recordingSoundPath && (
+									<button
+										className="flex items-center justify-center border-border border-l bg-background px-3 py-1.5 text-foreground-dim transition-colors last:rounded-r hover:bg-surface-tertiary hover:text-foreground"
+										onClick={handleReset}
+										title={tc("reset")}
+										type="button"
+									>
+										<HugeiconsIcon icon={RefreshIcon} size={14} />
+									</button>
+								)}
+							</ButtonGroup>
+						</div>
 						{dropError && <p className="mt-1 text-[11px] text-error">{dropError}</p>}
 					</FormControl>
 				</div>

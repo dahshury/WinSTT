@@ -16,6 +16,7 @@ interface SettingsState {
 	updateAudioSettings: (patch: Partial<NonNullable<AppSettings["audio"]>>) => void;
 	updateGeneralSettings: (patch: Partial<NonNullable<AppSettings["general"]>>) => void;
 	updateHotkeySettings: (patch: Partial<NonNullable<AppSettings["hotkey"]>>) => void;
+	updateLlmSettings: (patch: Partial<NonNullable<AppSettings["llm"]>>) => void;
 	resetSettings: () => void;
 	setLoaded: (loaded: boolean) => void;
 }
@@ -61,6 +62,22 @@ export const useSettingsStore = create<SettingsState>()(
 						hotkey: { ...state.settings.hotkey, ...patch },
 					},
 				})),
+			updateLlmSettings: (patch) =>
+				set((state) => {
+					const currentLlm = state.settings.llm ?? {
+						enabled: false,
+						endpoint: "http://localhost:11434",
+						model: "",
+						preset: "neutral" as const,
+						timeout: 5000,
+					};
+					return {
+						settings: {
+							...state.settings,
+							llm: { ...currentLlm, ...patch },
+						},
+					};
+				}),
 			resetSettings: () =>
 				set((state) => ({
 					settings: {

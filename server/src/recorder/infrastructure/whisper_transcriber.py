@@ -6,21 +6,19 @@ import time
 import types
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from types import TracebackType
 from typing import Any
 
 import numpy as np
 from typing_extensions import override
 
 from src.building_blocks.types import AudioArray
+from src.recorder.domain.errors import DownloadCancelledError
 from src.recorder.domain.events import DownloadProgress
 from src.recorder.domain.ports.transcriber import ITranscriber, TranscriptionResult
 from src.recorder.infrastructure.device import resolve_device
 
 logger = logging.getLogger(__name__)
-
-
-class DownloadCancelledError(Exception):
-    """Raised when a model download is cancelled by the user."""
 
 
 try:
@@ -181,9 +179,12 @@ class WhisperTranscriber(ITranscriber):
         on_download_progress: Callable[[DownloadProgress], None] | None = None,
         cancel_check: Callable[[], bool] | None = None,
     ) -> None:
+        from src.building_blocks.errors import ModelError
+
         if faster_whisper is None:
-            msg = "faster_whisper is not installed"
-            raise RuntimeError(msg)
+            msg = "faster_whisper is not installed. Install with: pip install faster-whisper"
+            raise ModelError(msg)
+
         self._beam_size = beam_size
         self._initial_prompt = initial_prompt
         self._suppress_tokens = suppress_tokens or [-1]
@@ -205,14 +206,23 @@ class WhisperTranscriber(ITranscriber):
             "download_root": download_root,
         }
 
-        if on_download_progress is not None:
-            with _intercept_hf_progress(model_path, on_download_progress, cancel_check):
-                self._model: Any = faster_whisper.WhisperModel(**model_kwargs)
-        else:
-            self._model = faster_whisper.WhisperModel(**model_kwargs)
-        if batch_size > 0:
-            self._model = faster_whisper.BatchedInferencePipeline(model=self._model)
-        self._ready = True
+        try:
+            if on_download_progress is not None:
+                with _intercept_hf_progress(model_path, on_download_progress, cancel_check):
+                    self._model: Any = faster_whisper.WhisperModel(**model_kwargs)
+            else:
+                self._model = faster_whisper.WhisperModel(**model_kwargs)
+
+            if batch_size > 0:
+                self._model = faster_whisper.BatchedInferencePipeline(model=self._model)
+
+            self._ready = True
+        except DownloadCancelledError:
+            # Re-raise download cancellation without wrapping
+            raise
+        except Exception as e:
+            msg = f"Failed to load model '{model_path}' on {actual_device}: {e}"
+            raise ModelError(msg, model=model_path, device=actual_device, compute_type=actual_compute) from e
 
     @override
     def transcribe(
@@ -221,40 +231,54 @@ class WhisperTranscriber(ITranscriber):
         language: str = "",
         use_prompt: bool = True,
     ) -> TranscriptionResult:
+        from src.building_blocks.errors import ModelError
+        from src.recorder.domain.errors import TranscriberNotReady
+
+        if not self._ready:
+            raise TranscriberNotReady("Transcriber is not ready")
+
         start_t = time.time()
 
-        if self._normalize_audio and audio.size > 0:
-            peak = float(np.max(np.abs(audio)))
-            if peak > 0:
-                audio = (audio / peak * 0.95).astype(np.float32)
-
-        prompt = self._initial_prompt if use_prompt else None
-
-        kwargs: dict[str, object] = {
-            "language": language if language else None,
-            "beam_size": self._beam_size,
-            "initial_prompt": prompt,
-            "suppress_tokens": self._suppress_tokens,
-            "vad_filter": self._vad_filter,
-        }
-        if self._batch_size > 0:
-            kwargs["batch_size"] = self._batch_size
-
         try:
-            segments, info = self._model.transcribe(audio, **kwargs)
-            text = " ".join(seg.text for seg in segments).strip()
-        except RuntimeError:
-            # BatchedInferencePipeline raises when VAD finds no speech in audio
-            text = ""
-            info = None
-        elapsed = time.time() - start_t
+            if self._normalize_audio and audio.size > 0:
+                peak = float(np.max(np.abs(audio)))
+                if peak > 0:
+                    audio = (audio / peak * 0.95).astype(np.float32)
 
-        return TranscriptionResult(
-            text=text,
-            language=str(getattr(info, "language", language)),
-            language_probability=float(getattr(info, "language_probability", 0.0)),
-            duration_seconds=elapsed,
-        )
+            prompt = self._initial_prompt if use_prompt else None
+
+            kwargs: dict[str, object] = {
+                "language": language if language else None,
+                "beam_size": self._beam_size,
+                "initial_prompt": prompt,
+                "suppress_tokens": self._suppress_tokens,
+                "vad_filter": self._vad_filter,
+            }
+            if self._batch_size > 0:
+                kwargs["batch_size"] = self._batch_size
+
+            try:
+                segments, info = self._model.transcribe(audio, **kwargs)
+                text = " ".join(seg.text for seg in segments).strip()
+            except RuntimeError:
+                # BatchedInferencePipeline raises when VAD finds no speech in audio
+                text = ""
+                info = None
+
+            elapsed = time.time() - start_t
+
+            return TranscriptionResult(
+                text=text,
+                language=str(getattr(info, "language", language)),
+                language_probability=float(getattr(info, "language_probability", 0.0)),
+                duration_seconds=elapsed,
+            )
+        except (TranscriberNotReady, RuntimeError):
+            # Expected errors, re-raise as-is
+            raise
+        except Exception as e:
+            msg = f"Transcription failed (audio shape: {audio.shape}, language: {language}): {e}"
+            raise ModelError(msg, audio_length=len(audio), language=language) from e
 
     @override
     def is_ready(self) -> bool:
@@ -267,3 +291,14 @@ class WhisperTranscriber(ITranscriber):
         # omitted — it can hang for minutes on certain driver combinations.
         # The server's os._exit(0) handles final CUDA teardown safely.
         self._model = None
+
+    def __enter__(self) -> WhisperTranscriber:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self.shutdown()

@@ -100,8 +100,10 @@ async def data_handler(websocket: ServerConnection, state: ServerState) -> None:
                 print(f"{bcolors.WARNING}Received non-binary message on data connection{bcolors.ENDC}")
     except websockets.exceptions.ConnectionClosed as e:
         print(f"{bcolors.WARNING}Data client disconnected: {e}{bcolors.ENDC}")
+    except Exception as e:
+        print(f"{bcolors.FAIL}Data handler error: {type(e).__name__}: {e}{bcolors.ENDC}")
     finally:
-        state.data_connections.remove(websocket)
+        state.data_connections.discard(websocket)  # Use discard to avoid KeyError
         if state.recorder is not None:
             state.recorder.clear_audio_queue()
 
@@ -121,4 +123,7 @@ async def broadcast_audio_messages(state: ServerState) -> None:
                     )
                 await conn.send(message)
             except websockets.exceptions.ConnectionClosed:
-                state.data_connections.remove(conn)
+                state.data_connections.discard(conn)
+            except Exception as e:
+                print(f"{bcolors.WARNING}Broadcast error for client: {type(e).__name__}: {e}{bcolors.ENDC}")
+                state.data_connections.discard(conn)

@@ -207,3 +207,23 @@ export const onFileTranscriptionComplete = (
 export const onFileTranscriptionError = (
 	cb: (data: { requestId: string; fileName: string; error: string }) => void
 ) => onCast(IPC.FILE_TRANSCRIPTION_ERROR, cb);
+
+// LLM
+export interface OllamaModel {
+	name: string;
+	size: number;
+	modifiedAt: string;
+}
+
+export const fetchOllamaModels = (): Promise<OllamaModel[]> =>
+	invoke<OllamaModel[]>(IPC.LLM_SCAN_MODELS);
+
+export const processWithLlm = (text: string, model: string, preset: string): Promise<string> =>
+	invoke<string>(IPC.LLM_PROCESS_TEXT, { text, model, preset });
+
+export const onLlmCatalog = (callback: (models: OllamaModel[]) => void): (() => void) => {
+	if (!isElectron()) {
+		return noop;
+	}
+	return onTyped(IPC.LLM_CATALOG, (d: { models: OllamaModel[] }) => d.models, callback);
+};

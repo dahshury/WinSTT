@@ -6,7 +6,10 @@
     "add": "जोड़ें",
     "browse": "ब्राउज़ करें",
     "deleteAll": "सभी हटाएं",
-    "comingSoon": "जल्द आ रहा है"
+    "comingSoon": "जल्द आ रहा है",
+    "loading": "लोड हो रहा है...",
+    "scanning": "स्कैन हो रहा है...",
+    "refresh": "रिफ्रेश करें"
   },
   "titleBar": {
     "appName": "WinSTT",
@@ -27,6 +30,7 @@
     "tabHotkey": "हॉटकी",
     "tabDictionary": "शब्दकोश",
     "tabSnippets": "स्निपेट्स",
+    "tabLlm": "LLM",
     "minimize": "छोटा करें",
     "close": "बंद करें"
   },
@@ -55,6 +59,10 @@
     "soundFileDropError": "केवल .wav और .mp3 फ़ाइलें स्वीकृत हैं",
     "soundFileTooLong": "ध्वनि {max}s से कम होनी चाहिए (यह फ़ाइल {duration}s है)",
     "soundFileUnreadable": "ऑडियो फ़ाइल पढ़ नहीं सकी",
+    "display": "प्रदर्शन",
+    "showRecordingOverlay": "रिकॉर्डिंग ओवरले",
+    "showRecordingOverlayCaption": "रिकॉर्डिंग के दौरान फ्लोटिंग विज़ुअलाइज़र दिखाएं",
+    "showRecordingOverlayTooltip": "रिकॉर्डिंग के दौरान स्क्रीन के निचले भाग में ऑडियो विज़ुअलाइज़र के साथ एक फ्लोटिंग विंडो प्रदर्शित करें (केवल PTT और टॉगल मोड)",
     "fileTranscription": "फ़ाइल ट्रांसक्रिप्शन",
     "fileTranscriptionFormat": "प्रारूप",
     "fileTranscriptionFormatCaption": "ट्रांसक्राइब की गई फ़ाइलों का आउटपुट प्रारूप",
@@ -201,6 +209,31 @@
     "unsupportedFormat": "असमर्थित प्रारूप: {ext}",
     "cannotDetermineFilePath": "फ़ाइल पथ निर्धारित नहीं कर सकता",
     "transcriptionFailed": "ट्रांसक्रिप्शन विफल"
+  },
+  "llm": {
+    "title": "LLM पोस्ट-प्रोसेसिंग",
+    "endpoint": "Ollama एंडपॉइंट",
+    "endpointCaption": "Ollama API सर्वर पता",
+    "endpointTooltip": "URL जहाँ Ollama चल रहा है (डिफ़ॉल्ट: http://localhost:11434)",
+    "model": "मॉडल",
+    "modelCaption": "टेक्स्ट सुधार के लिए Ollama मॉडल चुनें",
+    "modelTooltip": "बड़े मॉडल बेहतर परिणाम देते हैं लेकिन धीमे होते हैं",
+    "selectModel": "एक मॉडल चुनें",
+    "preset": "स्टाइल प्रीसेट",
+    "presetCaption": "टेक्स्ट परिवर्तन शैली",
+    "presetTooltip": "चुनें कि LLM को आपके ट्रांसक्रिप्शन को कैसे संशोधित करना चाहिए",
+    "presetNeutral": "तटस्थ (केवल व्याकरण)",
+    "presetFormal": "औपचारिक",
+    "presetFriendly": "मैत्रीपूर्ण",
+    "presetTechnical": "तकनीकी",
+    "presetCasual": "आकस्मिक",
+    "presetConcise": "संक्षिप्त",
+    "ollamaNotDetected": "Ollama का पता नहीं चला। कृपया Ollama इंस्टॉल करें और सुनिश्चित करें कि यह चल रहा है।",
+    "ollamaNotAvailable": "⚠️ LLM प्रोसेसिंग अनुपलब्ध",
+    "ollamaNotAvailableDescription": "Ollama नहीं चल रहा है या अनइंस्टॉल कर दिया गया है। ट्रांसक्रिप्शन सामान्य रूप से काम करेंगे, लेकिन LLM पोस्ट-प्रोसेसिंग अक्षम है। इस सुविधा का उपयोग करने के लिए कृपया Ollama इंस्टॉल करें और सुनिश्चित करें कि यह चल रहा है।",
+    "ollamaRequired": "Ollama आवश्यक",
+    "ollamaRequiredDescription": "LLM पोस्ट-प्रोसेसिंग के लिए Ollama का इंस्टॉल और चालू होना आवश्यक है। कृपया आधिकारिक वेबसाइट से Ollama डाउनलोड और इंस्टॉल करें, फिर पुनः प्रयास करें।",
+    "downloadOllama": "Ollama डाउनलोड करें"
   },
   "errors": {
     "somethingWentWrong": "कुछ गलत हो गया",

@@ -56,4 +56,11 @@ export const DEFAULT_SETTINGS: Required<AppSettings> = {
 	},
 	dictionary: [],
 	snippets: [],
+	llm: {
+		enabled: false,
+		endpoint: "http://localhost:11434",
+		model: "",
+		preset: "neutral",
+		timeout: 5000,
+	},
 };

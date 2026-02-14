@@ -195,7 +195,7 @@ export interface components {
             message: string;
         };
         /** @enum {string} */
-        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "smart_endpoint_enabled" | "detection_speed";
+        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "silence_endpoint_enabled" | "smart_endpoint_enabled" | "detection_speed";
         /** @enum {string} */
         AllowedMethod: "set_microphone" | "abort" | "stop" | "clear_audio_queue" | "wakeup" | "shutdown" | "text";
         /** @enum {string} */
@@ -306,6 +306,7 @@ export interface components {
             /** @enum {string} */
             recordingMode?: "ptt" | "toggle" | "listen";
             loopbackDeviceIndex?: number | null;
+            showRecordingOverlay?: boolean;
         };
         HotkeySettings: {
             /** @description Electron accelerator string */
@@ -325,6 +326,27 @@ export interface components {
             trigger: string;
             expansion: string;
         };
+        LlmSettings: {
+            /** @default false */
+            enabled: boolean;
+            /** @default http://localhost:11434 */
+            endpoint: string;
+            /** @default  */
+            model: string;
+            /**
+             * @default neutral
+             * @enum {string}
+             */
+            preset: "neutral" | "formal" | "friendly" | "technical" | "casual" | "concise";
+            /** @default 5000 */
+            timeout: number;
+        };
+        OllamaModel: {
+            name: string;
+            size?: number;
+            /** Format: date-time */
+            modifiedAt?: string;
+        };
         AppSettings: {
             model?: components["schemas"]["ModelSettings"];
             quality?: components["schemas"]["QualitySettings"];
@@ -333,6 +355,7 @@ export interface components {
             hotkey?: components["schemas"]["HotkeySettings"];
             dictionary?: components["schemas"]["DictionaryEntry"][];
             snippets?: components["schemas"]["SnippetEntry"][];
+            llm?: components["schemas"]["LlmSettings"];
         };
         TranscriptionItem: {
             id: string;

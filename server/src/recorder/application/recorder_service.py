@@ -158,8 +158,14 @@ class RecorderService:
         Mirrors the monolith: the audio stream stays open so the reader
         thread keeps draining the OS buffer.  When *off*, chunks are
         simply discarded instead of being fed to the pipeline.
+
+        When silence endpoint is disabled (PTT mode) and the mic turns
+        off, recording is stopped directly instead of relying on
+        injected silence frames to trigger the silence timeout.
         """
         self._microphone_enabled = microphone_on
+        if not microphone_on and not self._pipeline.silence_endpoint_enabled:
+            self._pipeline.request_stop()
 
     def clear_feed_buffer(self) -> None:
         """Discard any partial audio data buffered by ``feed_audio``."""
@@ -176,21 +182,70 @@ class RecorderService:
         self._external_audio_mode = active
 
     def shutdown(self) -> None:
+        """Gracefully shutdown all components with independent error handling.
+
+        Each cleanup step is wrapped in try-except to ensure all resources
+        are released even if individual steps fail.
+        """
         self._is_running = False
-        self._pipeline.stop(timeout=2.0)
-        self._audio_source.cleanup()
+
+        # Stop pipeline first to halt audio processing
+        try:
+            self._pipeline.stop(timeout=2.0)
+        except Exception as e:
+            logger.debug("Error stopping pipeline: %s", e)
+
+        # Clean up audio source
+        try:
+            self._audio_source.cleanup()
+        except Exception as e:
+            logger.debug("Error cleaning up audio source: %s", e)
+
+        # Join worker threads with timeout
         if self._audio_reader_thread is not None:
-            self._audio_reader_thread.join(timeout=2.0)
-            self._audio_reader_thread = None
+            try:
+                self._audio_reader_thread.join(timeout=2.0)
+                if self._audio_reader_thread.is_alive():
+                    logger.warning("Audio reader thread did not terminate within timeout")
+            except Exception as e:
+                logger.debug("Error joining audio reader thread: %s", e)
+            finally:
+                self._audio_reader_thread = None
+
         if self._realtime_thread is not None:
-            self._realtime_thread.join(timeout=2.0)
-            self._realtime_thread = None
-        self._transcriber.shutdown()
-        if self._realtime_transcriber:
-            self._realtime_transcriber.shutdown()
+            try:
+                self._realtime_thread.join(timeout=2.0)
+                if self._realtime_thread.is_alive():
+                    logger.warning("Realtime worker thread did not terminate within timeout")
+            except Exception as e:
+                logger.debug("Error joining realtime thread: %s", e)
+            finally:
+                self._realtime_thread = None
+
+        # Shutdown transcribers
+        try:
+            self._transcriber.shutdown()
+        except Exception as e:
+            logger.debug("Error shutting down transcriber: %s", e)
+
+        if self._realtime_transcriber and self._realtime_transcriber is not self._transcriber:
+            try:
+                self._realtime_transcriber.shutdown()
+            except Exception as e:
+                logger.debug("Error shutting down realtime transcriber: %s", e)
+
+        # Clean up wake word detector
         if self._wake_word_detector:
-            self._wake_word_detector.cleanup()
-        self._state_machine.abort()
+            try:
+                self._wake_word_detector.cleanup()
+            except Exception as e:
+                logger.debug("Error cleaning up wake word detector: %s", e)
+
+        # Abort state machine
+        try:
+            self._state_machine.abort()
+        except Exception as e:
+            logger.debug("Error aborting state machine: %s", e)
 
     def warmup(self) -> None:
         """Run a dummy inference to eagerly compile CUDA kernels.
@@ -222,9 +277,7 @@ class RecorderService:
         while time.time() < deadline:
             try:
                 item = self._pipeline.transcription_queue.get(timeout=0.1)
-                if item is None:
-                    return False  # Abort sentinel
-                return True
+                return item is not None  # False if abort sentinel (None), True otherwise
             except queue.Empty:
                 continue
         logger.debug("Timed out waiting for audio transcription trigger")
@@ -263,6 +316,14 @@ class RecorderService:
     @post_speech_silence_duration.setter
     def post_speech_silence_duration(self, value: float) -> None:
         self._pipeline.post_speech_silence_duration = value
+
+    @property
+    def silence_endpoint_enabled(self) -> bool:
+        return self._pipeline.silence_endpoint_enabled
+
+    @silence_endpoint_enabled.setter
+    def silence_endpoint_enabled(self, value: bool) -> None:
+        self._pipeline.silence_endpoint_enabled = value
 
     @property
     def frames(self) -> list[AudioChunk]:
@@ -357,8 +418,14 @@ class RecorderService:
                     self._event_bus.publish(
                         RealtimeTranscriptionUpdate(timestamp=self._clock.get_current_time(), text=text)
                     )
-            except Exception:
-                logger.exception("Realtime transcription error")
+            except Exception as e:
+                logger.error(
+                    "Realtime transcription error (audio length: %d samples): %s",
+                    len(audio_array),
+                    e,
+                    exc_info=True,
+                )
+                # Continue processing - realtime transcription is non-critical
 
     def _audio_reader_loop(self) -> None:
         """Read chunks from the audio source and feed the pipeline.
@@ -368,14 +435,36 @@ class RecorderService:
         fed instead so the pipeline/VAD can still detect the speech →
         silence transition (required for push-to-talk).
         """
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+
         while self._is_running:
             try:
                 chunk = self._audio_source.read_chunk()
-            except Exception:
+                consecutive_errors = 0  # Reset on success
+            except Exception as e:
                 if not self._is_running:
                     break
-                logger.debug("Audio reader: error reading chunk", exc_info=True)
+
+                consecutive_errors += 1
+                logger.warning(
+                    "Audio reader error (attempt %d/%d): %s",
+                    consecutive_errors,
+                    max_consecutive_errors,
+                    e,
+                )
+
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.error(
+                        "Audio reader: too many consecutive errors (%d), stopping",
+                        consecutive_errors,
+                    )
+                    self._is_running = False
+                    break
+
+                time.sleep(0.1)  # Back off before retry
                 continue
+
             if self._microphone_enabled:
                 self._pipeline.feed_audio(chunk)
             elif not self._external_audio_mode:

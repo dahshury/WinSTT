@@ -83,7 +83,7 @@ def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> Non
     try:
         state.recorder = AudioToTextRecorder(**state.recorder_config)
     except Exception as e:
-        from src.recorder.infrastructure.whisper_transcriber import DownloadCancelledError
+        from src.recorder.domain.errors import DownloadCancelledError
 
         if isinstance(e, DownloadCancelledError):
             state.cancel_download_requested = False

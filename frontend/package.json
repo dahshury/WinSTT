@@ -18,7 +18,7 @@
     "generate": "openapi-typescript ../spec/openapi.yaml -o src/shared/api/schema.d.ts",
     "knip": "knip",
     "icon:generate": "bun run scripts/generate-placeholder-icon.ts",
-    "electron:compile:main": "tsup electron/main.ts --format esm --outDir dist-electron --external electron --external uiohook-napi --clean --sourcemap",
+    "electron:compile:main": "tsup electron/main.ts --format esm --outDir dist-electron --external electron --external uiohook-napi --external pngjs --clean --sourcemap",
     "electron:compile:preload": "tsup electron/preload.ts --format cjs --outDir dist-electron --external electron --sourcemap",
     "electron:compile": "bun run electron:compile:main && bun run electron:compile:preload",
     "electron:dev": "bun run electron:compile && electron .",
@@ -30,9 +30,11 @@
     "@hugeicons/core-free-icons": "^1.0.0",
     "@hugeicons/react": "^1.0.0",
     "clsx": "^2.1.1",
+    "framer-motion": "^12.34.0",
     "geist": "^1.7.0",
     "next": "^16.0.0",
     "next-intl": "^4.8.2",
+    "pngjs": "^7.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.71.1",
@@ -49,6 +51,7 @@
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.1.0",
     "@types/bun": "latest",
+    "@types/pngjs": "^6.0.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/styletron-engine-atomic": "^1.1.4",
@@ -68,6 +71,7 @@
     "ultracite": "latest"
   },
   "trustedDependencies": [
+    "electron",
     "uiohook-napi"
   ]
 }

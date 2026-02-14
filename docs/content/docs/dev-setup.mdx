@@ -1,0 +1,210 @@
+---
+title: Dev Environment Setup
+description: Set up a local development environment for WinSTT from scratch
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Everything you need to clone, install, and run WinSTT locally for development.
+
+## Prerequisites
+
+Before you start, make sure you have these installed:
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| [Git](https://git-scm.com/) | Version control, cloning dependencies | [Download](https://git-scm.com/download/win) |
+| [uv](https://docs.astral.sh/uv/) | Python package manager (installs Python too) | See step 1 below |
+| [Bun](https://bun.sh/) | JavaScript runtime + package manager | [Download](https://bun.sh/) |
+
+**Optional but recommended:**
+
+| Tool | Purpose |
+|------|---------|
+| NVIDIA GPU + [CUDA 12.4](https://developer.nvidia.com/cuda-toolkit) | GPU-accelerated inference (10–50x faster) |
+| [Ollama](https://ollama.com) | LLM-powered text enhancement for transcriptions |
+
+<Callout title="No Python install needed" type="info">
+  uv downloads and manages Python for you. You do **not** need a system-wide Python installation.
+</Callout>
+
+## One-Click Setup
+
+Run the batch script from the repo root — it handles everything automatically:
+
+```bat
+setup-dev.bat
+```
+
+The script will:
+1. Install uv and Bun if missing
+2. Clone the `onnx-asr` local dependency
+3. Install Python 3.11 + all server packages (including CUDA PyTorch)
+4. Install all frontend packages
+
+If you prefer to do it manually, follow the steps below.
+
+## Manual Setup
+
+<Steps>
+
+<Step>
+### Install uv
+
+Open PowerShell and run:
+
+```powershell
+irm https://astral.sh/uv/install.ps1 | iex
+```
+
+Then add `C:\Users\<your-username>\.local\bin` to your system PATH.
+
+Restart your terminal and verify:
+
+```bash
+uv --version
+```
+</Step>
+
+<Step>
+### Clone the onnx-asr dependency
+
+The server depends on [onnx-asr](https://github.com/istupakov/onnx-asr) as a local editable package. Clone it into the `examples/` directory:
+
+```bash
+mkdir examples
+git clone https://github.com/istupakov/onnx-asr.git examples/onnx-asr
+```
+</Step>
+
+<Step>
+### Install server dependencies
+
+```bash
+cd server
+uv sync
+```
+
+This will:
+- Download Python 3.11 if not already installed
+- Create a `.venv` in `server/`
+- Install all packages including CUDA-enabled PyTorch (~2.4 GB on first run)
+
+Verify the install:
+
+```bash
+uv run stt-server --help
+```
+</Step>
+
+<Step>
+### Install frontend dependencies
+
+```bash
+cd frontend
+bun install
+```
+
+Verify the Electron build compiles:
+
+```bash
+bun electron:compile
+```
+</Step>
+
+</Steps>
+
+## Running the App
+
+You need **two terminals** — one for the server, one for the frontend.
+
+<Tabs items={['Server', 'Frontend']}>
+<Tab value="Server">
+```bash
+cd server
+uv run stt-server
+```
+
+The server starts two WebSocket channels:
+- **Control** (JSON commands): `ws://localhost:8011`
+- **Data** (binary audio): `ws://localhost:8012`
+
+Common flags:
+
+| Flag | Description |
+|------|-------------|
+| `-m tiny.en` | Use a smaller model for faster startup |
+| `--device cpu` | Force CPU inference (no CUDA) |
+| `-c 8011 -d 8012` | Set custom WebSocket ports |
+| `--no-enable_realtime_transcription` | Disable live preview |
+| `-D` | Enable debug logging |
+
+</Tab>
+<Tab value="Frontend">
+```bash
+cd frontend
+bun electron:dev
+```
+
+This compiles the Electron main/preload scripts and launches the app. The renderer connects to the STT server via IPC relay (the Electron main process holds the WebSocket connection).
+
+</Tab>
+</Tabs>
+
+## Dev Commands Reference
+
+### Server (`server/`)
+
+| Command | Description |
+|---------|-------------|
+| `uv run stt-server` | Start the STT server |
+| `uv run pytest` | Run all tests |
+| `uv run pytest -k "test_name"` | Run a single test |
+| `uv run ruff format .` | Format code |
+| `uv run ruff check . --fix` | Lint with auto-fix |
+| `uv run mypy src/ --strict` | Type check (strict, zero errors) |
+| `make` | Run all checks (format + lint + mypy + tests) |
+
+### Frontend (`frontend/`)
+
+| Command | Description |
+|---------|-------------|
+| `bun electron:dev` | Full Electron + Next.js dev mode |
+| `bun dev` | Next.js dev server only (no Electron) |
+| `bun electron:build` | Build distributable Electron app |
+| `bun typecheck` | TypeScript type checking |
+| `bun lint` | Biome linting |
+| `bun lint:fix` | Biome lint with auto-fix |
+| `bun format` | Biome format |
+| `bun test` | Run tests |
+| `bun generate` | Regenerate TS types from OpenAPI spec |
+| `bun knip` | Detect unused exports/files |
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="uv sync fails with torch download error">
+The server uses a custom PyTorch index for CUDA 12.4 builds. Make sure you have a stable internet connection — the torch package is ~2.4 GB. If the download times out, just run `uv sync` again; uv resumes partial downloads.
+</Accordion>
+
+<Accordion title="stt-server starts but transcription is slow">
+Check that CUDA is being used. Run `uv run stt-server -D` and look for the device info in the logs. If it says `cpu`, either install the [CUDA Toolkit 12.4](https://developer.nvidia.com/cuda-toolkit) or pass `--device cpu` and use a smaller model like `-m tiny.en`.
+</Accordion>
+
+<Accordion title="Electron app shows a blank window">
+Make sure the STT server is running before launching the Electron app. The frontend expects the server on ports 8011/8012 by default.
+</Accordion>
+
+<Accordion title="'onnx-asr' not found during uv sync">
+The server references `onnx-asr` as a local editable dependency at `../examples/onnx-asr`. Make sure you cloned the repo:
+
+```bash
+git clone https://github.com/istupakov/onnx-asr.git examples/onnx-asr
+```
+</Accordion>
+
+<Accordion title="bun install fails on uiohook-napi">
+`uiohook-napi` is a native module that needs compilation. Make sure you have the Visual Studio Build Tools (C++ workload) installed. The `trustedDependencies` in `package.json` already includes it.
+</Accordion>
+</Accordions>

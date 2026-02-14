@@ -2,6 +2,7 @@
   "title": "WinSTT",
   "pages": [
     "index",
+    "dev-setup",
     "settings",
     "models",
     "recording-modes",

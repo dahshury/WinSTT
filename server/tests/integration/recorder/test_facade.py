@@ -204,6 +204,19 @@ class TestAudioToTextRecorderFacade:
         assert facade.post_speech_silence_duration == 2.0
         facade.shutdown()
 
+    def test_silence_endpoint_enabled_getter(self) -> None:
+        """Facade property reads from service."""
+        facade = _make_facade_with_fakes()
+        assert facade.silence_endpoint_enabled is True
+        facade.shutdown()
+
+    def test_silence_endpoint_enabled_setter(self) -> None:
+        """Facade property writes through to service."""
+        facade = _make_facade_with_fakes()
+        facade.silence_endpoint_enabled = False
+        assert facade.silence_endpoint_enabled is False
+        facade.shutdown()
+
     def test_use_microphone_value(self) -> None:
         """use_microphone exposes .value matching config."""
         facade = _make_facade_with_fakes()

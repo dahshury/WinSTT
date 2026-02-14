@@ -52,6 +52,7 @@ export const generalSettingsSchema = z.object({
 	fileTranscriptionFormat: z.enum(["txt", "srt"]).default("txt"),
 	recordingMode: z.enum(["ptt", "toggle", "listen"]).default("ptt"),
 	loopbackDeviceIndex: z.number().int().nullable().default(null),
+	showRecordingOverlay: z.boolean().default(true),
 });
 
 export const hotkeySettingsSchema = z.object({
@@ -83,6 +84,16 @@ export const snippetEntrySchema = z.object({
 export const addSnippetEntrySchema = snippetEntrySchema.omit({ id: true });
 export type AddSnippetEntry = z.infer<typeof addSnippetEntrySchema>;
 
+export const llmSettingsSchema = z.object({
+	enabled: z.boolean().default(false),
+	endpoint: z.string().url().default("http://localhost:11434"),
+	model: z.string().default(""),
+	preset: z
+		.enum(["neutral", "formal", "friendly", "technical", "casual", "concise"])
+		.default("neutral"),
+	timeout: z.number().int().min(1000).max(30_000).default(5000),
+});
+
 export const appSettingsSchema = z.object({
 	model: modelSettingsSchema.default({}),
 	quality: qualitySettingsSchema.default({}),
@@ -91,6 +102,7 @@ export const appSettingsSchema = z.object({
 	hotkey: hotkeySettingsSchema.default({}),
 	dictionary: z.array(dictionaryEntrySchema).default([]),
 	snippets: z.array(snippetEntrySchema).default([]),
+	llm: llmSettingsSchema.default({}),
 });
 
 export type AppSettingsInput = z.input<typeof appSettingsSchema>;

@@ -5,23 +5,33 @@ import { dbg } from "../lib/debug-log";
 import { codesToNames, KEYCODE_TO_NAME, parseAccelerator } from "../lib/keycodes";
 import { playRecordingSound } from "../lib/sound";
 import { store } from "../lib/store";
+import type { SttClient } from "../ws/stt-client";
 
 const MAX_COMBO_KEYS = 3;
 
 let hotkeyStarted = false;
 
 /**
- * When true, onKeyDown/onKeyUp skip all processing so that synthetic
- * keybd_event releases + re-presses from the paste script don't
- * trigger hotkey pressed/released or corrupt pressedKeys state.
+ * When true, onKeyDown/onKeyUp skip hotkey activation/deactivation logic
+ * so that synthetic keybd_event releases from the paste script don't
+ * trigger hotkey pressed/released.
+ *
+ * Key-up events still update pressedKeys so physical releases aren't lost.
+ * When the guard is lifted, a deferred check fires the missed hotkey:released
+ * if the combo keys were released during the guard window.
  */
 let pasteGuard = false;
+let onPasteGuardLifted: (() => void) | null = null;
 
 export function setPasteGuard(active: boolean): void {
 	pasteGuard = active;
+	if (!active && onPasteGuardLifted) {
+		onPasteGuardLifted();
+		onPasteGuardLifted = null;
+	}
 }
 
-export function setupHotkeyHandlers(win: BrowserWindow) {
+export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient) {
 	let targetKeyCodes: Set<number> | null = null;
 	const pressedKeys = new Set<number>();
 	let isActive = false;
@@ -90,6 +100,21 @@ export function setupHotkeyHandlers(win: BrowserWindow) {
 		});
 	};
 
+	/** Check if combo keys were released and fire hotkey:released if needed. */
+	const checkDeferredRelease = () => {
+		if (isActive && !checkCombo()) {
+			isActive = false;
+			dbg("hotkey", "RELEASED (deferred — key released during paste guard)");
+			safeSend("hotkey:released");
+		}
+		if (!comboFullyReleased && targetKeyCodes) {
+			const anyHeld = [...targetKeyCodes].some((c) => pressedKeys.has(c));
+			if (!anyHeld) {
+				comboFullyReleased = true;
+			}
+		}
+	};
+
 	const onKeyDown = (e: { keycode: number }) => {
 		if (pasteGuard) {
 			return;
@@ -116,9 +141,9 @@ export function setupHotkeyHandlers(win: BrowserWindow) {
 			isActive = true;
 			comboFullyReleased = false;
 			const mode = store.get("general.recordingMode") as string;
-			dbg("hotkey", `PRESSED — combo matched, mode=${mode}`);
-			// Skip recording sound in listen mode — hotkey doesn't control recording
-			if (mode !== "listen") {
+			dbg("hotkey", `PRESSED — combo matched, mode=${mode}, connected=${sttClient.isConnected}`);
+			// Skip recording sound in listen mode and when server is offline
+			if (mode !== "listen" && sttClient.isConnected) {
 				playRecordingSound();
 			}
 			safeSend("hotkey:pressed");
@@ -126,9 +151,6 @@ export function setupHotkeyHandlers(win: BrowserWindow) {
 	};
 
 	const onKeyUp = (e: { keycode: number }) => {
-		if (pasteGuard) {
-			return;
-		}
 		const code = e.keycode;
 
 		// ── Recording mode ──────────────────────────────────────────
@@ -143,9 +165,21 @@ export function setupHotkeyHandlers(win: BrowserWindow) {
 			return;
 		}
 
-		// ── Normal hotkey detection ─────────────────────────────────
+		// Always track physical key releases, even during paste guard.
+		// Synthetic keybd_event releases from the paste script target
+		// specific VK codes (0xA0–0xA5, 0x5B–0x5C) that rarely overlap
+		// with the hotkey combo, but real releases MUST be tracked so
+		// we can fire the deferred hotkey:released when the guard lifts.
 		pressedKeys.delete(code);
 
+		if (pasteGuard) {
+			// Schedule a deferred check — when the guard lifts,
+			// setPasteGuard(false) will call checkDeferredRelease().
+			onPasteGuardLifted = checkDeferredRelease;
+			return;
+		}
+
+		// ── Normal hotkey detection ─────────────────────────────────
 		if (isActive && !checkCombo()) {
 			isActive = false;
 			dbg("hotkey", "RELEASED");

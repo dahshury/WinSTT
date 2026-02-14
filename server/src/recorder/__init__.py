@@ -459,6 +459,14 @@ class AudioToTextRecorder:
         self._ensure_service().post_speech_silence_duration = value
 
     @property
+    def silence_endpoint_enabled(self) -> bool:
+        return self._ensure_service().silence_endpoint_enabled
+
+    @silence_endpoint_enabled.setter
+    def silence_endpoint_enabled(self, value: bool) -> None:
+        self._ensure_service().silence_endpoint_enabled = value
+
+    @property
     def frames(self) -> list[AudioChunk]:
         return self._ensure_service().frames
 
@@ -511,7 +519,7 @@ class AudioToTextRecorder:
                 if swap_sigint_reinstall is not None:
                     swap_sigint_reinstall()
             except Exception as exc:
-                from src.recorder.infrastructure.whisper_transcriber import DownloadCancelledError
+                from src.recorder.domain.errors import DownloadCancelledError
 
                 if isinstance(exc, DownloadCancelledError):
                     config.transcription.model = old_model

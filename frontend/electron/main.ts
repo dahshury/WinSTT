@@ -6,22 +6,30 @@ import { setupAutostartHandlers } from "./ipc/autostart";
 import { setupDialogHandlers } from "./ipc/dialog";
 import { setupFileTranscribeHandlers } from "./ipc/file-transcribe";
 import { setupHotkeyHandlers } from "./ipc/hotkey";
+import { setupLlm } from "./ipc/llm";
 import { setupLoopbackHandlers } from "./ipc/loopback";
+import { setOverlayWindow, setupOverlayHandlers } from "./ipc/overlay";
 import { setupRelay } from "./ipc/relay";
 import { setupSettingsHandlers } from "./ipc/settings";
 import { setupSttCommandHandlers } from "./ipc/stt-commands";
 import { killSttProcess, setupSttProcessHandlers, tryAutoSpawnServer } from "./ipc/stt-process";
 import { setupTray } from "./ipc/tray";
+import { setupTrayMenuHandlers } from "./ipc/tray-menu-window";
 import { dbg } from "./lib/debug-log";
+import { cleanupRecordingIndicator, initRecordingIndicator } from "./lib/recording-indicator";
+import { cleanupSound, initSound } from "./lib/sound";
 import { store } from "./lib/store";
 import { SttClient } from "./ws/stt-client";
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
+let overlayWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let cleanupRelay: (() => void) | null = null;
 let cleanupHotkeys: (() => void) | null = null;
 let cleanupFileTranscribe: (() => void) | null = null;
+let cleanupLlm: (() => void) | null = null;
+let cleanupTrayMenu: (() => void) | null = null;
 const sttClient = new SttClient();
 const isDev = !app.isPackaged;
 
@@ -39,12 +47,14 @@ let isQuitting = false;
 // Prevent unhandled "error" events on EventEmitter from crashing the app with dialog windows.
 // WebSocket connection failures during reconnection emit "error" — just log them.
 sttClient.on("error", (err: unknown) => {
-	const msg =
-		err instanceof Error
-			? err.message
-			: typeof err === "object" && err !== null && "message" in err
-				? String((err as { message: unknown }).message)
-				: String(err);
+	let msg: string;
+	if (err instanceof Error) {
+		msg = err.message;
+	} else if (typeof err === "object" && err !== null && "message" in err) {
+		msg = String((err as { message: unknown }).message);
+	} else {
+		msg = String(err);
+	}
 	dbg("stt-client", "Connection error:", msg);
 });
 
@@ -58,6 +68,10 @@ app.commandLine.appendSwitch(
 	"disable-features",
 	"AutofillServerCommunication,Autofill,AutofillCreditCardAuthentication"
 );
+
+// Allow Web Audio API playback without user gesture (hotkey is detected via
+// native uIOhook, not a DOM event, so Chromium won't recognise it as user input)
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
 // ── Single-instance lock ─────────────────────────────────────────────
 const gotTheLock = app.requestSingleInstanceLock();
@@ -96,10 +110,15 @@ if (gotTheLock) {
 	// ── Cleanup on quit ───────────────────────────────────────────────
 	app.on("before-quit", () => {
 		isQuitting = true;
+		cleanupSound();
+		cleanupRecordingIndicator();
+		cleanupTrayMenu?.();
+		cleanupLlm?.();
 		killSttProcess();
 		sttClient.disconnect();
 		tray?.destroy();
 		tray = null;
+		overlayWindow = null;
 	});
 } else {
 	app.quit();
@@ -115,6 +134,10 @@ function setupGlobalIpcHandlers() {
 	setupLoopbackHandlers(sttClient);
 	setupWindowControlHandlers();
 	setupDialogHandlers();
+	setupOverlayHandlers();
+	cleanupTrayMenu = setupTrayMenuHandlers();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	cleanupLlm = setupLlm(store as any);
 }
 
 function setupWindowControlHandlers() {
@@ -132,6 +155,12 @@ function setupWindowControlHandlers() {
 	ipcMain.on("window:open-settings", () => openSettingsWindow());
 	ipcMain.on("window:close-self", (event) => {
 		BrowserWindow.fromWebContents(event.sender)?.close();
+	});
+	ipcMain.on("window:show", () => {
+		mainWindow?.show();
+	});
+	ipcMain.on("window:quit", () => {
+		app.quit();
 	});
 }
 
@@ -192,6 +221,41 @@ function openSettingsWindow() {
 	// Fallback: recreate if somehow destroyed
 	createSettingsWindow();
 	settingsWindow!.show();
+}
+
+// ── Overlay window (pre-created hidden for instant show during recording) ───
+function createOverlayWindow() {
+	overlayWindow = new BrowserWindow({
+		width: 800,
+		height: 120,
+		transparent: true,
+		frame: false,
+		alwaysOnTop: true,
+		skipTaskbar: true,
+		show: false,
+		backgroundColor: "#00000000",
+		webPreferences: sharedWebPreferences,
+	});
+
+	if (isDev) {
+		overlayWindow.loadURL("http://localhost:3000/overlay");
+	} else {
+		overlayWindow.loadFile(path.join(import.meta.dirname, "../out/overlay.html"));
+	}
+
+	// Make window click-through (user can interact with apps beneath it)
+	overlayWindow.setIgnoreMouseEvents(true);
+
+	// Hide instead of destroy on close — window is reused for instant re-show
+	overlayWindow.on("close", (event) => {
+		if (!isQuitting && overlayWindow) {
+			event.preventDefault();
+			overlayWindow.hide();
+		}
+	});
+
+	// Store reference for overlay control module
+	setOverlayWindow(overlayWindow);
 }
 
 // ── Window creation ──────────────────────────────────────────────────
@@ -276,7 +340,14 @@ function createWindow() {
 
 	// Capture renderer console output to debug.log
 	mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-		const tag = level <= 0 ? "renderer:log" : level === 1 ? "renderer:warn" : "renderer:error";
+		let tag: string;
+		if (level <= 0) {
+			tag = "renderer:log";
+		} else if (level === 1) {
+			tag = "renderer:warn";
+		} else {
+			tag = "renderer:error";
+		}
 		const src = sourceId ? ` (${sourceId}:${line})` : "";
 		dbg(tag, message + src);
 	});
@@ -290,12 +361,23 @@ function createWindow() {
 		mainWindow.loadFile(path.join(import.meta.dirname, "../out/index.html"));
 	}
 
+	// Register sound IPC (renderer fetches WAV data and plays via Web Audio API)
+	initSound(mainWindow);
+
 	// Window-specific setup (per window, cleaned up on close)
-	cleanupHotkeys = setupHotkeyHandlers(mainWindow);
-	let rebuildTrayMenu: (() => void) | undefined;
-	({ tray, rebuildTrayMenu } = setupTray(mainWindow, openSettingsWindow, sttClient));
+	cleanupHotkeys = setupHotkeyHandlers(mainWindow, sttClient);
+
+	// Setup file transcription
+	const { cleanup: fileTranscribeCleanup } = setupFileTranscribeHandlers(mainWindow, sttClient);
+	cleanupFileTranscribe = fileTranscribeCleanup;
+
+	// Setup tray with custom menu window
+	tray = setupTray(mainWindow);
 	cleanupRelay = setupRelay(mainWindow, sttClient);
-	cleanupFileTranscribe = setupFileTranscribeHandlers(mainWindow, sttClient);
+
+	// Initialize recording indicator (tray + taskbar overlay icons)
+	const iconPath = path.join(import.meta.dirname, "..", "build", "icon.ico");
+	initRecordingIndicator(tray!, mainWindow, iconPath);
 
 	// Toggle window resizable when recording mode changes to/from listen
 	applyListenModeWindow(mainWindow);
@@ -303,7 +385,6 @@ function createWindow() {
 		if (mainWindow) {
 			applyListenModeWindow(mainWindow);
 		}
-		rebuildTrayMenu?.();
 	});
 
 	// Auto-spawn the STT server (production: bundled exe, dev: requires STT_SERVER_DIR env var)
@@ -332,4 +413,7 @@ function createWindow() {
 
 	// Pre-create hidden settings window so opening it is instant
 	createSettingsWindow();
+
+	// Pre-create hidden overlay window for instant display during recording
+	createOverlayWindow();
 }

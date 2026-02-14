@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import logging
+from types import TracebackType
 from typing import Any
 
 import numpy as np
@@ -40,27 +42,52 @@ class PyAudioSource(IAudioSource):
 
     @override
     def setup(self) -> None:
+        from src.building_blocks.errors import DeviceError
+
         if pyaudio is None:
-            msg = "PyAudio is not installed"
-            raise RuntimeError(msg)
-        self._audio_interface = pyaudio.PyAudio()
-        pa: Any = self._audio_interface
+            msg = "PyAudio is not installed. Install with: pip install pyaudio"
+            raise DeviceError(msg)
 
-        if self._input_device_index is None:
-            info: Any = pa.get_default_input_device_info()
-            self._input_device_index = int(info["index"])
+        try:
+            self._audio_interface = pyaudio.PyAudio()
+            pa: Any = self._audio_interface
 
-        self._device_sample_rate = self._get_best_sample_rate(self._input_device_index)
+            if self._input_device_index is None:
+                try:
+                    info: Any = pa.get_default_input_device_info()
+                    self._input_device_index = int(info["index"])
+                except Exception as e:
+                    msg = f"Failed to get default input device: {e}"
+                    raise DeviceError(msg) from e
 
-        self._stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=self._device_sample_rate,
-            input=True,
-            frames_per_buffer=self._buffer_size,
-            input_device_index=self._input_device_index,
-        )
-        self._active = True
+            self._device_sample_rate = self._get_best_sample_rate(self._input_device_index)
+
+            try:
+                self._stream = pa.open(
+                    format=pyaudio.paInt16,
+                    channels=1,
+                    rate=self._device_sample_rate,
+                    input=True,
+                    frames_per_buffer=self._buffer_size,
+                    input_device_index=self._input_device_index,
+                )
+            except Exception as e:
+                msg = (
+                    f"Failed to open audio stream "
+                    f"(device {self._input_device_index}, rate {self._device_sample_rate}Hz): {e}"
+                )
+                raise DeviceError(
+                    msg, device_index=self._input_device_index, sample_rate=self._device_sample_rate
+                ) from e
+
+            self._active = True
+        except DeviceError:
+            # Clean up on failure
+            if self._audio_interface is not None:
+                with contextlib.suppress(Exception):
+                    self._audio_interface.terminate()
+                self._audio_interface = None
+            raise
 
     @override
     def read_chunk(self) -> AudioChunk:
@@ -73,13 +100,25 @@ class PyAudioSource(IAudioSource):
 
     @override
     def cleanup(self) -> None:
+        # Clean up resources in reverse order with individual error handling
         if self._stream is not None:
-            self._stream.stop_stream()
-            self._stream.close()
+            try:
+                self._stream.stop_stream()
+            except Exception as e:
+                logger.debug("Error stopping audio stream: %s", e)
+            try:
+                self._stream.close()
+            except Exception as e:
+                logger.debug("Error closing audio stream: %s", e)
             self._stream = None
+
         if self._audio_interface is not None:
-            self._audio_interface.terminate()
+            try:
+                self._audio_interface.terminate()
+            except Exception as e:
+                logger.debug("Error terminating audio interface: %s", e)
             self._audio_interface = None
+
         self._active = False
 
     @override
@@ -110,8 +149,13 @@ class PyAudioSource(IAudioSource):
                     input_format=pyaudio.paInt16,
                 ):
                     return self._target_sample_rate
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(
+                    "Sample rate %dHz not supported on device %d, falling back to 44100Hz: %s",
+                    self._target_sample_rate,
+                    device_index,
+                    e,
+                )
         return 44100
 
     @staticmethod
@@ -119,3 +163,15 @@ class PyAudioSource(IAudioSource):
         pcm = np.frombuffer(raw, dtype=np.int16)
         resampled: NDArray[np.float64] = resample_poly(pcm.astype(np.float64), to_rate, from_rate)
         return bytes(resampled.astype(np.int16).tobytes())
+
+    def __enter__(self) -> PyAudioSource:
+        self.setup()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self.cleanup()

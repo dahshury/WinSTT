@@ -10,20 +10,32 @@ export interface SearchableSelectProps {
 	options: readonly SelectOption[];
 	value: string;
 	onChange: (value: string) => void;
+	onOpenChange?: (open: boolean) => void;
+	placeholder?: string;
+	disabled?: boolean;
 }
 
 function getItemLabel(item: SelectOption | null): string {
 	return item ? item.label : "";
 }
 
-export function SearchableSelect({ options, value, onChange }: SearchableSelectProps) {
+export function SearchableSelect({
+	options,
+	value,
+	onChange,
+	onOpenChange,
+	placeholder = "Search…",
+	disabled = false,
+}: SearchableSelectProps) {
 	const selected = options.find((o) => o.id === value) ?? null;
 
 	return (
 		<Combobox.Root
 			defaultValue={selected}
+			disabled={disabled}
 			items={options as SelectOption[]}
 			itemToStringLabel={getItemLabel}
+			onOpenChange={onOpenChange}
 			onValueChange={(item: SelectOption | null) => {
 				if (item) {
 					onChange(item.id);
@@ -33,8 +45,8 @@ export function SearchableSelect({ options, value, onChange }: SearchableSelectP
 		>
 			<div className="relative flex w-full items-center">
 				<Combobox.Input
-					className="flex h-8 w-full items-center rounded-sm border border-border bg-surface-tertiary pr-7 pl-2.5 font-inherit text-[13px] text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface"
-					placeholder="Search…"
+					className="flex h-8 w-full items-center rounded-sm border border-border bg-surface-tertiary pr-7 pl-2.5 font-inherit text-[13px] text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-40"
+					placeholder={placeholder}
 				/>
 				<Combobox.Trigger
 					aria-label="Open popup"

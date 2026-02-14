@@ -371,6 +371,32 @@ class TestRecorderService:
         assert service.post_speech_silence_duration == 1.23
         service.shutdown()
 
+    def test_silence_endpoint_enabled_getter(self) -> None:
+        """Property returns the pipeline's current value."""
+        service, _, _, _ = self._make_service()
+        assert service.silence_endpoint_enabled is True
+        service.shutdown()
+
+    def test_silence_endpoint_enabled_setter(self) -> None:
+        """Setter delegates to pipeline."""
+        service, _, _, _ = self._make_service()
+        service.silence_endpoint_enabled = False
+        assert service.silence_endpoint_enabled is False
+        service.shutdown()
+
+    def test_set_microphone_off_stops_recording_when_silence_endpoint_disabled(self) -> None:
+        """In PTT mode (silence endpoint disabled), set_microphone(False) stops recording directly."""
+        service, _, _, _ = self._make_service()
+        service.silence_endpoint_enabled = False
+        service.listen()
+        service.start()
+        assert service.state == RecorderState.RECORDING
+
+        service.set_microphone(False)
+        time.sleep(0.2)
+        assert service.state != RecorderState.RECORDING
+        service.shutdown()
+
     def test_use_microphone_initial(self) -> None:
         """use_microphone reflects config at construction time."""
         service, _, _, _ = self._make_service(use_microphone=False)

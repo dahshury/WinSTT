@@ -6,7 +6,10 @@
     "add": "Add",
     "browse": "Browse",
     "deleteAll": "Delete All",
-    "comingSoon": "Coming soon"
+    "comingSoon": "Coming soon",
+    "loading": "Loading...",
+    "scanning": "Scanning...",
+    "refresh": "Refresh"
   },
   "titleBar": {
     "appName": "WinSTT",
@@ -27,6 +30,7 @@
     "tabHotkey": "Hotkey",
     "tabDictionary": "Dictionary",
     "tabSnippets": "Snippets",
+    "tabLlm": "LLM",
     "minimize": "Minimize",
     "close": "Close"
   },
@@ -55,6 +59,10 @@
     "soundFileDropError": "Only .wav and .mp3 files are accepted",
     "soundFileTooLong": "Sound must be under {max}s (this file is {duration}s)",
     "soundFileUnreadable": "Could not read audio file",
+    "display": "Display",
+    "showRecordingOverlay": "Recording overlay",
+    "showRecordingOverlayCaption": "Show floating visualizer while recording",
+    "showRecordingOverlayTooltip": "Display a floating window with audio visualizer at the bottom of the screen during recording (PTT and toggle modes only)",
     "fileTranscription": "File Transcription",
     "fileTranscriptionFormat": "Format",
     "fileTranscriptionFormatCaption": "Output format for transcribed files",
@@ -201,6 +209,31 @@
     "unsupportedFormat": "Unsupported format: {ext}",
     "cannotDetermineFilePath": "Cannot determine file path",
     "transcriptionFailed": "Transcription failed"
+  },
+  "llm": {
+    "title": "LLM Post-Processing",
+    "endpoint": "Ollama Endpoint",
+    "endpointCaption": "Ollama API server address",
+    "endpointTooltip": "URL where Ollama is running (default: http://localhost:11434)",
+    "model": "Model",
+    "modelCaption": "Select Ollama model for text enhancement",
+    "modelTooltip": "Larger models produce better results but are slower",
+    "selectModel": "Select a model",
+    "preset": "Style Preset",
+    "presetCaption": "Text transformation style",
+    "presetTooltip": "Choose how the LLM should modify your transcription",
+    "presetNeutral": "Neutral (grammar only)",
+    "presetFormal": "Formal",
+    "presetFriendly": "Friendly",
+    "presetTechnical": "Technical",
+    "presetCasual": "Casual",
+    "presetConcise": "Concise",
+    "ollamaNotDetected": "Ollama not detected. Please install Ollama and ensure it's running.",
+    "ollamaNotAvailable": "⚠️ LLM Processing Unavailable",
+    "ollamaNotAvailableDescription": "Ollama is not running or was uninstalled. Transcriptions will work normally, but LLM post-processing is disabled. Please install Ollama and ensure it's running to use this feature.",
+    "ollamaRequired": "Ollama Required",
+    "ollamaRequiredDescription": "LLM post-processing requires Ollama to be installed and running. Please download and install Ollama from the official website, then try again.",
+    "downloadOllama": "Download Ollama"
   },
   "errors": {
     "somethingWentWrong": "Something went wrong",

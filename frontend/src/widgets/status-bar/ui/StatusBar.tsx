@@ -4,7 +4,7 @@ import { Separator } from "@base-ui/react/separator";
 import { AiAudioIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { ConnectionIndicator } from "@/features/connect-server";
+import { ConnectionIndicator, useConnectionStore } from "@/features/connect-server";
 import { useListenStore } from "@/features/listen-mode";
 import { useDownloadStore } from "@/features/model-download";
 import { HotkeyDisplay } from "@/features/push-to-talk";
@@ -22,6 +22,7 @@ export function StatusBar() {
 	const isListening = useListenStore((s) => s.isListening);
 	const listenDeviceName = useListenStore((s) => s.deviceName);
 	const isDownloading = useDownloadStore((s) => s.isDownloading);
+	const connectionStatus = useConnectionStore((s) => s.connectionStatus);
 	const t = useTranslations("statusBar");
 
 	return (
@@ -45,7 +46,7 @@ export function StatusBar() {
 						</span>
 					</span>
 				) : (
-					<HotkeyDisplay />
+					<HotkeyDisplay isConnected={connectionStatus === "connected"} />
 				)}
 				{currentModel && (
 					<>

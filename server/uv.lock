@@ -1055,10 +1055,10 @@ hub = [
 [package.metadata]
 requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'hub'", specifier = ">=0.30.2" },
-    { name = "numpy", specifier = ">=1.21.6" },
+    { name = "numpy", specifier = ">=1.22.4" },
     { name = "onnxruntime", marker = "extra == 'cpu'", specifier = ">=1.18.1" },
     { name = "onnxruntime-gpu", marker = "extra == 'gpu'", specifier = ">=1.18.1" },
-    { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4.15.0" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4.6.0" },
 ]
 provides-extras = ["cpu", "gpu", "hub"]
 
@@ -1085,7 +1085,6 @@ dev = [
     { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.0" },
     { name = "mypy", specifier = ">=1.19.1" },
     { name = "nemo-toolkit", extras = ["asr"], specifier = ">=2.6.1" },
-    { name = "numpy", specifier = ">=1.21.6" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "onnx", specifier = ">=1.20.1" },
     { name = "onnxruntime", specifier = ">=1.18.1" },
@@ -1093,7 +1092,7 @@ dev = [
     { name = "openai-whisper", specifier = ">=20250625" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "ruff", specifier = ">=0.14.11" },
+    { name = "ruff", specifier = ">=0.15.0" },
     { name = "soundfile", marker = "python_full_version != '3.13.*'", specifier = ">=0.13.1" },
     { name = "torch", specifier = ">=2.9.1", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchaudio", specifier = ">=2.9.1", index = "https://download.pytorch.org/whl/cpu" },
@@ -1103,10 +1102,10 @@ docs = [
     { name = "markdown-callouts", specifier = ">=0.4.0" },
     { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.7.1" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.0" },
+    { name = "ruff", specifier = ">=0.15.0" },
 ]
 test = [
     { name = "huggingface-hub", specifier = ">=0.30.2" },
-    { name = "numpy", specifier = ">=1.21.6" },
     { name = "onnxruntime", specifier = ">=1.18.1" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
@@ -1118,7 +1117,6 @@ test-preprocessors = [
     { name = "huggingface-hub", specifier = ">=0.30.2" },
     { name = "kaldi-native-fbank", specifier = ">=1.22.3" },
     { name = "nemo-toolkit", extras = ["asr"], specifier = ">=2.6.1" },
-    { name = "numpy", specifier = ">=1.21.6" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "onnx", specifier = ">=1.20.1" },
     { name = "onnxruntime", specifier = ">=1.18.1" },

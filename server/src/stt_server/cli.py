@@ -49,12 +49,12 @@ def parse_arguments() -> argparse.Namespace:
         "-m",
         "--model",
         type=str,
-        default="large-v2",
+        default="large-v3-turbo",
         help=(
             "Path to the STT model or model size. Options include: tiny, tiny.en, "
             "base, base.en, small, small.en, medium, medium.en, large-v1, large-v2, "
-            "or any huggingface CTranslate2 STT model such as "
-            "deepdml/faster-whisper-large-v3-turbo-ct2. Default is large-v2."
+            "large-v3, large-v3-turbo, or any huggingface CTranslate2 STT model such as "
+            "deepdml/faster-whisper-large-v3-turbo-ct2. Default is large-v3-turbo."
         ),
     )
 

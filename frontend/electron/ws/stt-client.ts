@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
+import { ConnectionError, getErrorMessage, TimeoutError } from "../../src/shared/lib/errors";
 import { dbg } from "../lib/debug-log";
 
 const DEFAULT_CONTROL_PORT = 8011;
@@ -57,13 +58,20 @@ export class SttClient extends EventEmitter {
 
 	private sendRequest(action: Record<string, unknown>, timeoutLabel: string): Promise<unknown> {
 		if (!this.isConnected) {
-			return Promise.reject(new Error("Not connected"));
+			return Promise.reject(
+				new ConnectionError("STT server not connected", `${this.host}:${this.controlPort}`, true)
+			);
 		}
 		const requestId = ++this.requestIdCounter;
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pendingRequests.delete(requestId);
-				reject(new Error(`${timeoutLabel} timed out after ${REQUEST_TIMEOUT_MS}ms`));
+				reject(
+					new TimeoutError(REQUEST_TIMEOUT_MS, timeoutLabel, {
+						requestId,
+						action: action.command,
+					})
+				);
 			}, REQUEST_TIMEOUT_MS);
 
 			this.pendingRequests.set(requestId, { resolve, reject, timer });
@@ -89,8 +97,14 @@ export class SttClient extends EventEmitter {
 				}
 				settled = true;
 				this.closeAll();
-				this.emit("error", err);
-				reject(err);
+				const connError = new ConnectionError(
+					`Failed to connect to STT server: ${getErrorMessage(err)}`,
+					`ws://${this.host}:${this.controlPort}`,
+					true,
+					{ attempt: this.reconnectAttempt, originalError: err }
+				);
+				this.emit("error", connError);
+				reject(connError);
 			};
 
 			const checkReady = () => {
@@ -139,7 +153,9 @@ export class SttClient extends EventEmitter {
 			this.reconnectTimer = null;
 		}
 		this.closeAll();
-		this.rejectAllPending(new Error("Client disconnected"));
+		this.rejectAllPending(
+			new ConnectionError("Client disconnected", `${this.host}:${this.controlPort}`, false)
+		);
 	}
 
 	setParameter(parameter: string, value: unknown) {
@@ -200,7 +216,9 @@ export class SttClient extends EventEmitter {
 		this._disconnectedEmitted = true;
 
 		this.closeAll();
-		this.rejectAllPending(new Error("Connection lost"));
+		this.rejectAllPending(
+			new ConnectionError("Connection lost", `${this.host}:${this.controlPort}`, true)
+		);
 		this.emit("disconnected");
 		this.scheduleReconnect();
 	}
@@ -248,7 +266,11 @@ export class SttClient extends EventEmitter {
 			}
 			this.emit("control-message", data);
 		} catch (err) {
-			console.warn("[stt-client] Malformed control message:", raw, err);
+			console.error(
+				"[stt-client] Malformed control message:",
+				raw.slice(0, 100),
+				getErrorMessage(err)
+			);
 		}
 	}
 
@@ -257,7 +279,11 @@ export class SttClient extends EventEmitter {
 		try {
 			data = JSON.parse(raw) as Record<string, unknown>;
 		} catch (err) {
-			console.warn("[stt-client] Malformed data message:", raw, err);
+			console.error(
+				"[stt-client] Malformed data message:",
+				raw.slice(0, 100),
+				getErrorMessage(err)
+			);
 			return;
 		}
 		this.emit("data-event", data);

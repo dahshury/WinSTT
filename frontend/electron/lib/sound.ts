@@ -1,42 +1,57 @@
-import { execFile } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
+import type { BrowserWindow } from "electron";
+import { ipcMain } from "electron";
 import { store } from "./store";
 
 const DEFAULT_SOUND_PATH = path.join(import.meta.dirname, "..", "build", "splash.wav");
 
-/**
- * Play an audio file (WAV or MP3) using PowerShell.
- * - WAV: uses Media.SoundPlayer.PlaySync() (fast, lightweight)
- * - MP3: uses Windows Media Player COM object (supports all common formats)
- */
-export function playSound(filePath: string): void {
-	const escaped = filePath.replace(/'/g, "''");
-	const isWav = filePath.toLowerCase().endsWith(".wav");
+let win: BrowserWindow | null = null;
 
-	// Media.SoundPlayer only supports WAV. For MP3 use WMP COM.
-	const command = isWav
-		? `(New-Object Media.SoundPlayer '${escaped}').PlaySync()`
-		: `$p = New-Object -ComObject WMPlayer.OCX; $p.URL = '${escaped}'; $p.controls.play(); Start-Sleep -Milliseconds 3500; $p.close()`;
-
-	execFile(
-		"powershell",
-		["-NoProfile", "-NonInteractive", "-Command", command],
-		{ windowsHide: true },
-		(err) => {
-			if (err) {
-				console.warn("[sound] Failed to play:", err.message);
-			}
-		}
-	);
-}
-
-/** Play the recording-start sound if enabled in settings. */
-export function playRecordingSound(): void {
+function getSoundPath(): string | null {
 	const enabled = store.get("general.recordingSound") as boolean | undefined;
 	if (enabled === false) {
+		return null;
+	}
+	const custom = store.get("general.recordingSoundPath") as string | undefined;
+	return custom && custom.length > 0 ? custom : DEFAULT_SOUND_PATH;
+}
+
+/**
+ * Register the IPC handler that serves WAV data to the renderer.
+ * The renderer calls `invoke("sound:get-data")` on mount, decodes the
+ * buffer into an AudioBuffer, and plays it via Web Audio API when
+ * `sound:play` fires — giving ~1-3ms playback latency instead of
+ * the ~150ms PowerShell overhead.
+ */
+export function initSound(mainWindow: BrowserWindow): void {
+	win = mainWindow;
+
+	ipcMain.handle("sound:get-data", () => {
+		const soundPath = getSoundPath();
+		if (!soundPath) {
+			return null;
+		}
+		try {
+			return fs.readFileSync(soundPath);
+		} catch {
+			return null;
+		}
+	});
+}
+
+/** Tell the renderer to play the preloaded sound. */
+export function playRecordingSound(): void {
+	if (!win || win.isDestroyed()) {
 		return;
 	}
-	const customPath = store.get("general.recordingSoundPath") as string | undefined;
-	const soundPath = customPath && customPath.length > 0 ? customPath : DEFAULT_SOUND_PATH;
-	playSound(soundPath);
+	if (!getSoundPath()) {
+		return;
+	}
+	win.webContents.send("sound:play");
+}
+
+export function cleanupSound(): void {
+	win = null;
+	ipcMain.removeHandler("sound:get-data");
 }

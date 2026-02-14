@@ -6,7 +6,10 @@
     "add": "Agregar",
     "browse": "Explorar",
     "deleteAll": "Eliminar todo",
-    "comingSoon": "Próximamente"
+    "comingSoon": "Próximamente",
+    "loading": "Cargando...",
+    "scanning": "Escaneando...",
+    "refresh": "Actualizar"
   },
   "titleBar": {
     "appName": "WinSTT",
@@ -27,6 +30,7 @@
     "tabHotkey": "Atajo",
     "tabDictionary": "Diccionario",
     "tabSnippets": "Fragmentos",
+    "tabLlm": "LLM",
     "minimize": "Minimizar",
     "close": "Cerrar"
   },
@@ -55,6 +59,10 @@
     "soundFileDropError": "Solo se aceptan archivos .wav y .mp3",
     "soundFileTooLong": "El sonido debe durar menos de {max}s (este archivo dura {duration}s)",
     "soundFileUnreadable": "No se pudo leer el archivo de audio",
+    "display": "Pantalla",
+    "showRecordingOverlay": "Superposición de grabación",
+    "showRecordingOverlayCaption": "Mostrar visualizador flotante durante la grabación",
+    "showRecordingOverlayTooltip": "Mostrar una ventana flotante con visualizador de audio en la parte inferior de la pantalla durante la grabación (solo modos PTT y alternar)",
     "fileTranscription": "Transcripción de archivos",
     "fileTranscriptionFormat": "Formato",
     "fileTranscriptionFormatCaption": "Formato de salida para archivos transcritos",
@@ -201,6 +209,31 @@
     "unsupportedFormat": "Formato no compatible: {ext}",
     "cannotDetermineFilePath": "No se puede determinar la ruta del archivo",
     "transcriptionFailed": "Error en la transcripción"
+  },
+  "llm": {
+    "title": "Post-procesamiento LLM",
+    "endpoint": "Punto final de Ollama",
+    "endpointCaption": "Dirección del servidor API de Ollama",
+    "endpointTooltip": "URL donde se ejecuta Ollama (predeterminado: http://localhost:11434)",
+    "model": "Modelo",
+    "modelCaption": "Seleccione el modelo Ollama para mejorar el texto",
+    "modelTooltip": "Los modelos más grandes producen mejores resultados pero son más lentos",
+    "selectModel": "Seleccionar un modelo",
+    "preset": "Estilo predefinido",
+    "presetCaption": "Estilo de transformación de texto",
+    "presetTooltip": "Elige cómo el LLM debe modificar tu transcripción",
+    "presetNeutral": "Neutral (solo gramática)",
+    "presetFormal": "Formal",
+    "presetFriendly": "Amigable",
+    "presetTechnical": "Técnico",
+    "presetCasual": "Casual",
+    "presetConcise": "Conciso",
+    "ollamaNotDetected": "Ollama no detectado. Por favor instale Ollama y asegúrese de que esté ejecutándose.",
+    "ollamaNotAvailable": "⚠️ Procesamiento LLM no disponible",
+    "ollamaNotAvailableDescription": "Ollama no está ejecutándose o fue desinstalado. Las transcripciones funcionarán normalmente, pero el post-procesamiento LLM está desactivado. Por favor instale Ollama y asegúrese de que esté ejecutándose para usar esta función.",
+    "ollamaRequired": "Ollama requerido",
+    "ollamaRequiredDescription": "El post-procesamiento LLM requiere que Ollama esté instalado y ejecutándose. Por favor descargue e instale Ollama desde el sitio web oficial, luego intente nuevamente.",
+    "downloadOllama": "Descargar Ollama"
   },
   "errors": {
     "somethingWentWrong": "Algo salió mal",

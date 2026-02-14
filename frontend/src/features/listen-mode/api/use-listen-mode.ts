@@ -38,24 +38,41 @@ export function useListenMode() {
 
 	// Fetch loopback devices when connected and in listen mode
 	useEffect(() => {
-		if (connectionStatus === "connected" && recordingMode === "listen") {
-			loopbackListDevices()
-				.then((devices) => {
-					if (Array.isArray(devices)) {
-						setDevices(
-							devices as Array<{
-								index: number;
-								name: string;
-								defaultSampleRate: number;
-								maxOutputChannels: number;
-							}>
-						);
-					}
-				})
-				.catch((err: unknown) => {
-					console.warn("[useListenMode] Failed to fetch loopback devices:", err);
-				});
+		if (connectionStatus !== "connected" || recordingMode !== "listen") {
+			return;
 		}
+
+		let isCancelled = false;
+
+		loopbackListDevices()
+			.then((devices) => {
+				if (isCancelled) {
+					return;
+				}
+
+				if (Array.isArray(devices)) {
+					setDevices(
+						devices as Array<{
+							index: number;
+							name: string;
+							defaultSampleRate: number;
+							maxOutputChannels: number;
+						}>
+					);
+				} else {
+					console.warn("[useListenMode] Invalid devices response:", devices);
+				}
+			})
+			.catch((err: unknown) => {
+				if (isCancelled) {
+					return;
+				}
+				console.error("[useListenMode] Failed to fetch loopback devices:", err);
+			});
+
+		return () => {
+			isCancelled = true;
+		};
 	}, [connectionStatus, recordingMode, setDevices]);
 
 	// Start/stop loopback when mode or device changes

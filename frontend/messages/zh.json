@@ -6,7 +6,10 @@
     "add": "添加",
     "browse": "浏览",
     "deleteAll": "全部删除",
-    "comingSoon": "即将推出"
+    "comingSoon": "即将推出",
+    "loading": "加载中...",
+    "scanning": "扫描中...",
+    "refresh": "刷新"
   },
   "titleBar": {
     "appName": "WinSTT",
@@ -27,6 +30,7 @@
     "tabHotkey": "快捷键",
     "tabDictionary": "词典",
     "tabSnippets": "文本片段",
+    "tabLlm": "LLM",
     "minimize": "最小化",
     "close": "关闭"
   },
@@ -55,6 +59,10 @@
     "soundFileDropError": "仅接受 .wav 和 .mp3 文件",
     "soundFileTooLong": "声音必须短于 {max} 秒（此文件为 {duration} 秒）",
     "soundFileUnreadable": "无法读取音频文件",
+    "display": "显示",
+    "showRecordingOverlay": "录音叠加层",
+    "showRecordingOverlayCaption": "录音时显示浮动可视化器",
+    "showRecordingOverlayTooltip": "在录音期间在屏幕底部显示带有音频可视化器的浮动窗口（仅限PTT和切换模式）",
     "fileTranscription": "文件转录",
     "fileTranscriptionFormat": "格式",
     "fileTranscriptionFormatCaption": "转录文件的输出格式",
@@ -201,6 +209,31 @@
     "unsupportedFormat": "不支持的格式：{ext}",
     "cannotDetermineFilePath": "无法确定文件路径",
     "transcriptionFailed": "转录失败"
+  },
+  "llm": {
+    "title": "LLM 后处理",
+    "endpoint": "Ollama 端点",
+    "endpointCaption": "Ollama API 服务器地址",
+    "endpointTooltip": "Ollama 运行的 URL（默认：http://localhost:11434）",
+    "model": "模型",
+    "modelCaption": "选择用于文本增强的 Ollama 模型",
+    "modelTooltip": "更大的模型产生更好的结果但速度较慢",
+    "selectModel": "选择模型",
+    "preset": "样式预设",
+    "presetCaption": "文本转换样式",
+    "presetTooltip": "选择 LLM 应如何修改您的转录",
+    "presetNeutral": "中性（仅语法）",
+    "presetFormal": "正式",
+    "presetFriendly": "友好",
+    "presetTechnical": "技术",
+    "presetCasual": "随意",
+    "presetConcise": "简洁",
+    "ollamaNotDetected": "未检测到 Ollama。请安装 Ollama 并确保其正在运行。",
+    "ollamaNotAvailable": "⚠️ LLM 处理不可用",
+    "ollamaNotAvailableDescription": "Ollama 未运行或已被卸载。转录将正常工作，但 LLM 后处理已禁用。请安装 Ollama 并确保其正在运行以使用此功能。",
+    "ollamaRequired": "需要 Ollama",
+    "ollamaRequiredDescription": "LLM 后处理需要安装并运行 Ollama。请从官方网站下载并安装 Ollama，然后重试。",
+    "downloadOllama": "下载 Ollama"
   },
   "errors": {
     "somethingWentWrong": "出了点问题",

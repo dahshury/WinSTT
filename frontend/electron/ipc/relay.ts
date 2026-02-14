@@ -1,10 +1,13 @@
 import { BrowserWindow, ipcMain } from "electron";
 import { dbg } from "../lib/debug-log";
 import { pasteText } from "../lib/paste";
+import { onAudioLevel, onRecordingStart, onRecordingStop } from "../lib/recording-indicator";
 import { store } from "../lib/store";
 import { applyPostProcessing, initPostProcessing } from "../lib/text-processing";
 import type { SttClient } from "../ws/stt-client";
 import { muteSystemAudio, unmuteSystemAudio } from "./audio-mute";
+import { processText } from "./llm";
+import { hideOverlay, showOverlay } from "./overlay";
 
 export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 	/** Last known model catalog — cached so any window can fetch it on demand. */
@@ -35,7 +38,7 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		}
 	};
 
-	const onDataEvent = (event: Record<string, unknown>) => {
+	const onDataEvent = async (event: Record<string, unknown>) => {
 		const type = event.type;
 		if (typeof type !== "string") {
 			dbg("relay", "Data event WITHOUT type:", JSON.stringify(event));
@@ -51,7 +54,23 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 				safeSend("stt:realtime-text", { text: event.text });
 				break;
 			case "fullSentence": {
-				const processed = applyPostProcessing(String(event.text));
+				let processed = applyPostProcessing(String(event.text));
+
+				const llmEnabled = store.get("llm.enabled") as boolean;
+				const llmModel = store.get("llm.model") as string;
+				const llmPreset = store.get("llm.preset") as string;
+				const llmEndpoint = store.get("llm.endpoint") as string;
+				const llmTimeout = store.get("llm.timeout") as number;
+
+				if (llmEnabled && llmModel) {
+					try {
+						processed = await processText(processed, llmModel, llmPreset, llmEndpoint, llmTimeout);
+						dbg("relay", `LLM processed: ${processed.slice(0, 80)}`);
+					} catch (err) {
+						dbg("relay", "LLM processing failed, using original:", String(err));
+					}
+				}
+
 				const mode = store.get("general.recordingMode") as string;
 				dbg("relay", `fullSentence: text=${JSON.stringify(processed)} mode=${mode}`);
 				safeSend("stt:full-sentence", { text: processed });
@@ -63,6 +82,8 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 			}
 			case "recording_start":
 				safeSend("stt:recording-start");
+				onRecordingStart();
+				showOverlay();
 				// Skip mute in listen mode — would silence the audio being transcribed
 				if (
 					store.get("general.muteSystemAudioWhileDictating") &&
@@ -73,6 +94,8 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 				break;
 			case "recording_stop":
 				safeSend("stt:recording-stop");
+				onRecordingStop();
+				hideOverlay();
 				if (didMuteAudio) {
 					unmuteSystemAudio();
 					didMuteAudio = false;
@@ -119,6 +142,7 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 				break;
 			case "audio_level":
 				safeSend("stt:audio-level", { level: event.level });
+				onAudioLevel(event.level as number);
 				break;
 			case "loopback_started":
 				safeSend("stt:loopback-started", { deviceName: event.deviceName });
@@ -139,6 +163,7 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 	const onDisconnected = () => {
 		dbg("relay", "STT server DISCONNECTED");
 		serverIsReady = false;
+		onRecordingStop();
 		safeSend("stt:connection-change", { connected: false });
 	};
 

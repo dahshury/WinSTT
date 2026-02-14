@@ -146,14 +146,22 @@ def handle_transcribe_file(
         print(f"{bcolors.OKGREEN}File transcription complete: {file_name} ({len(text)} chars){bcolors.ENDC}")
 
     except Exception as e:
+        import traceback
+
+        error_msg = f"{type(e).__name__}: {e}"
+        stack_trace = traceback.format_exc()
         _send_file_event(
             {
                 "type": "file_transcription_error",
                 "request_id": request_id,
                 "file_path": file_path,
-                "error": str(e),
+                "file_name": file_name,
+                "error": error_msg,
+                "error_type": type(e).__name__,
             },
             state,
             loop,
         )
-        print(f"{bcolors.FAIL}File transcription error: {e}{bcolors.ENDC}")
+        print(f"{bcolors.FAIL}File transcription error ({file_name}): {error_msg}{bcolors.ENDC}")
+        if state.extended_logging:
+            print(f"{bcolors.FAIL}{stack_trace}{bcolors.ENDC}")

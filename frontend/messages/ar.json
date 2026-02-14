@@ -6,7 +6,10 @@
     "add": "إضافة",
     "browse": "استعراض",
     "deleteAll": "حذف الكل",
-    "comingSoon": "قريبًا"
+    "comingSoon": "قريبًا",
+    "loading": "جاري التحميل...",
+    "scanning": "جاري الفحص...",
+    "refresh": "تحديث"
   },
   "titleBar": {
     "appName": "WinSTT",
@@ -27,6 +30,7 @@
     "tabHotkey": "مفتاح الاختصار",
     "tabDictionary": "القاموس",
     "tabSnippets": "المقتطفات",
+    "tabLlm": "نموذج اللغة",
     "minimize": "تصغير",
     "close": "إغلاق"
   },
@@ -55,6 +59,10 @@
     "soundFileDropError": "يُقبل فقط ملفات .wav و .mp3",
     "soundFileTooLong": "يجب أن يكون الصوت أقل من {max} ثانية (هذا الملف {duration} ثانية)",
     "soundFileUnreadable": "تعذرت قراءة ملف الصوت",
+    "display": "العرض",
+    "showRecordingOverlay": "تراكب التسجيل",
+    "showRecordingOverlayCaption": "إظهار المصور العائم أثناء التسجيل",
+    "showRecordingOverlayTooltip": "عرض نافذة عائمة مع مصور الصوت في أسفل الشاشة أثناء التسجيل (أوضاع الضغط للتحدث والتبديل فقط)",
     "fileTranscription": "نسخ الملفات",
     "fileTranscriptionFormat": "التنسيق",
     "fileTranscriptionFormatCaption": "تنسيق الإخراج للملفات المنسوخة",
@@ -201,6 +209,31 @@
     "unsupportedFormat": "تنسيق غير مدعوم: {ext}",
     "cannotDetermineFilePath": "تعذر تحديد مسار الملف",
     "transcriptionFailed": "فشل النسخ"
+  },
+  "llm": {
+    "title": "معالجة نموذج اللغة",
+    "endpoint": "نقطة نهاية Ollama",
+    "endpointCaption": "عنوان خادم Ollama API",
+    "endpointTooltip": "عنوان URL حيث يعمل Ollama (الافتراضي: http://localhost:11434)",
+    "model": "النموذج",
+    "modelCaption": "اختر نموذج Ollama لتحسين النص",
+    "modelTooltip": "النماذج الأكبر تنتج نتائج أفضل لكنها أبطأ",
+    "selectModel": "اختر نموذجًا",
+    "preset": "إعداد مسبق للأسلوب",
+    "presetCaption": "أسلوب تحويل النص",
+    "presetTooltip": "اختر كيف يجب أن يعدل نموذج اللغة النسخ الخاص بك",
+    "presetNeutral": "محايد (قواعد فقط)",
+    "presetFormal": "رسمي",
+    "presetFriendly": "ودي",
+    "presetTechnical": "تقني",
+    "presetCasual": "عادي",
+    "presetConcise": "موجز",
+    "ollamaNotDetected": "لم يتم اكتشاف Ollama. يرجى تثبيت Ollama والتأكد من تشغيله.",
+    "ollamaNotAvailable": "⚠️ معالجة نموذج اللغة غير متاحة",
+    "ollamaNotAvailableDescription": "Ollama غير قيد التشغيل أو تمت إزالة تثبيته. ستعمل عمليات النسخ بشكل طبيعي، لكن المعالجة بنموذج اللغة معطلة. يرجى تثبيت Ollama والتأكد من تشغيله لاستخدام هذه الميزة.",
+    "ollamaRequired": "Ollama مطلوب",
+    "ollamaRequiredDescription": "تتطلب المعالجة بنموذج اللغة تثبيت Ollama وتشغيله. يرجى تنزيل وتثبيت Ollama من الموقع الرسمي، ثم حاول مرة أخرى.",
+    "downloadOllama": "تنزيل Ollama"
   },
   "errors": {
     "somethingWentWrong": "حدث خطأ ما",

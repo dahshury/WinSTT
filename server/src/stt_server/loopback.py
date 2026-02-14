@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -205,21 +206,42 @@ class LoopbackCapture:
 
     def _capture_loop(self, recorder: AudioToTextRecorder, stream: Any) -> None:
         """Read audio frames from WASAPI loopback and feed to recorder."""
+        from src.building_blocks.terminal import TerminalColors as bcolors
+
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+
         try:
             while not self._stop_event.is_set():
-                data: bytes = stream.read(512, exception_on_overflow=False)
-                # Convert to numpy int16 and reshape for multi-channel
-                samples = np.frombuffer(data, dtype=np.int16).reshape(-1, self._device_channels)
+                try:
+                    data: bytes = stream.read(512, exception_on_overflow=False)
+                    consecutive_errors = 0  # Reset on success
 
-                # AGC: normalize audio level so VAD works regardless of system volume
-                peak = float(np.max(np.abs(samples)))
-                if peak > NOISE_FLOOR:
-                    desired_gain = min(TARGET_PEAK / peak, MAX_GAIN)
-                    self._gain += GAIN_SMOOTH * (desired_gain - self._gain)
-                if self._gain > 1.0:
-                    samples = np.clip(samples.astype(np.float32) * self._gain, -32768, 32767).astype(np.int16)
+                    # Convert to numpy int16 and reshape for multi-channel
+                    samples = np.frombuffer(data, dtype=np.int16).reshape(-1, self._device_channels)
 
-                # feed_audio handles stereo->mono and resampling internally
-                recorder.feed_audio(samples, original_sample_rate=self._device_rate)
+                    # AGC: normalize audio level so VAD works regardless of system volume
+                    peak = float(np.max(np.abs(samples)))
+                    if peak > NOISE_FLOOR:
+                        desired_gain = min(TARGET_PEAK / peak, MAX_GAIN)
+                        self._gain += GAIN_SMOOTH * (desired_gain - self._gain)
+                    if self._gain > 1.0:
+                        samples = np.clip(samples.astype(np.float32) * self._gain, -32768, 32767).astype(np.int16)
+
+                    # feed_audio handles stereo->mono and resampling internally
+                    recorder.feed_audio(samples, original_sample_rate=self._device_rate)
+                except Exception as e:
+                    if self._stop_event.is_set():
+                        break
+
+                    consecutive_errors += 1
+                    error_msg = f"[loopback] Capture error (attempt {consecutive_errors}/{max_consecutive_errors}): {e}"
+                    print(f"{bcolors.WARNING}{error_msg}{bcolors.ENDC}")
+
+                    if consecutive_errors >= max_consecutive_errors:
+                        print(f"{bcolors.FAIL}[loopback] Too many consecutive errors, stopping capture{bcolors.ENDC}")
+                        break
+
+                    time.sleep(0.1)  # Back off before retry
         except Exception as e:
-            print(f"[loopback] Capture error: {e}")
+            print(f"{bcolors.FAIL}[loopback] Fatal capture error: {type(e).__name__}: {e}{bcolors.ENDC}")

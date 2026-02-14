@@ -332,6 +332,7 @@ components:
         - is_recording
         - use_wake_words
         - silence_timing
+        - silence_endpoint_enabled
         - smart_endpoint_enabled
         - detection_speed
 
@@ -613,6 +614,8 @@ components:
         loopbackDeviceIndex:
           type: integer
           nullable: true
+        showRecordingOverlay:
+          type: boolean
 
     HotkeySettings:
       type: object
@@ -649,6 +652,38 @@ components:
         expansion:
           type: string
 
+    LlmSettings:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        endpoint:
+          type: string
+          default: "http://localhost:11434"
+        model:
+          type: string
+          default: ""
+        preset:
+          type: string
+          enum: [neutral, formal, friendly, technical, casual, concise]
+          default: neutral
+        timeout:
+          type: integer
+          default: 5000
+
+    OllamaModel:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        size:
+          type: integer
+        modifiedAt:
+          type: string
+          format: date-time
+
     AppSettings:
       type: object
       properties:
@@ -670,6 +705,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SnippetEntry"
+        llm:
+          $ref: "#/components/schemas/LlmSettings"
 
     # ─── Entity Types ─────────────────────────────────────────────────
 

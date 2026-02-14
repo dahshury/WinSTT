@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { execSync, spawn } from "node:child_process";
 import path from "node:path";
 import { app, ipcMain } from "electron";
+import { getErrorMessage, NotFoundError, ProcessSpawnError } from "../../src/shared/lib/errors";
 import { dbg } from "../lib/debug-log";
 import { store } from "../lib/store";
 
@@ -100,9 +101,12 @@ function resolveServerDir(): string {
 	if (app.isPackaged) {
 		return path.join(process.resourcesPath, "stt-server");
 	}
-	throw new Error(
-		"STT_SERVER_DIR environment variable is not set. Set it to the server/ directory path."
-	);
+	throw new NotFoundError("STT_SERVER_DIR", undefined, {
+		message:
+			"STT_SERVER_DIR environment variable is not set. Set it to the server/ directory path.",
+		isPackaged: app.isPackaged,
+		resourcesPath: process.resourcesPath,
+	});
 }
 
 /**
@@ -145,8 +149,15 @@ function attachProcessHandlers(proc: ChildProcess) {
 	});
 
 	proc.on("error", (err) => {
-		console.error("[stt-server] Spawn error:", err);
+		console.error("[stt-server] Spawn error:", getErrorMessage(err));
 		if (sttProcess === proc) {
+			const spawnError = new ProcessSpawnError(
+				`Failed to spawn STT server: ${getErrorMessage(err)}`,
+				proc.spawnfile ?? "unknown",
+				undefined,
+				{ originalError: err, pid: proc.pid }
+			);
+			console.error("[stt-server] ProcessSpawnError:", spawnError.toJSON());
 			setErrorState();
 		}
 	});
@@ -179,23 +190,35 @@ function spawnServer(): void {
 
 export function setupSttProcessHandlers() {
 	ipcMain.handle("stt-server:spawn", () => {
-		if (sttProcess) {
-			return;
-		}
 		try {
+			if (sttProcess) {
+				dbg("stt-spawn", "Process already running, skipping spawn");
+				return;
+			}
 			spawnServer();
 		} catch (err) {
 			setErrorState();
+			console.error("[stt-server] Spawn handler error:", getErrorMessage(err));
 			throw err;
 		}
 	});
 
 	ipcMain.handle("stt-server:kill", () => {
-		killSttProcess();
+		try {
+			killSttProcess();
+		} catch (err) {
+			console.error("[stt-server] Kill handler error:", getErrorMessage(err));
+			throw err;
+		}
 	});
 
 	ipcMain.handle("stt-server:status", () => {
-		return status;
+		try {
+			return status;
+		} catch (err) {
+			console.error("[stt-server] Status handler error:", getErrorMessage(err));
+			throw err;
+		}
 	});
 }
 
@@ -235,16 +258,20 @@ export function killSttProcess() {
 		return;
 	}
 
+	const pid = sttProcess.pid;
 	try {
 		if (process.platform === "win32") {
 			// On Windows, kill the entire process tree
-			execSync(`taskkill /T /F /PID ${sttProcess.pid}`, { stdio: "ignore" });
+			execSync(`taskkill /T /F /PID ${pid}`, { stdio: "ignore" });
 		} else {
 			sttProcess.kill("SIGTERM");
 		}
-	} catch {
+		dbg("stt-process", `Killed process ${pid} successfully`);
+	} catch (err) {
 		// Process may have already exited
+		dbg("stt-process", `Failed to kill process ${pid}:`, getErrorMessage(err));
+	} finally {
+		sttProcess = null;
+		status = "idle";
 	}
-	sttProcess = null;
-	status = "idle";
 }

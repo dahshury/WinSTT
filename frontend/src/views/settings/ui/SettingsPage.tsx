@@ -5,12 +5,12 @@ import { Tooltip } from "@base-ui/react/tooltip";
 import {
 	AiChat02Icon,
 	Cancel01Icon,
-	Configuration01Icon,
+	CpuChargeIcon,
 	KeyboardIcon,
+	ListSettingIcon,
 	Mic01Icon,
 	MinusSignIcon,
 	Note01Icon,
-	SlidersHorizontalIcon,
 	TextIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -34,10 +34,10 @@ export function SettingsPage() {
 	const t = useTranslations("settings");
 
 	const links: SidebarLink[] = [
-		{ key: "general", label: t("tabGeneral"), icon: Configuration01Icon },
+		{ key: "general", label: t("tabGeneral"), icon: ListSettingIcon },
 		{ key: "model", label: t("tabModel"), icon: AiChat02Icon },
 		{ key: "audio", label: t("tabAudio"), icon: Mic01Icon },
-		{ key: "quality", label: t("tabProcessing"), icon: SlidersHorizontalIcon },
+		{ key: "quality", label: t("tabProcessing"), icon: CpuChargeIcon },
 		{ key: "hotkey", label: t("tabHotkey"), icon: KeyboardIcon },
 		{ key: "dictionary", label: t("tabDictionary"), icon: TextIcon },
 		{ key: "snippets", label: t("tabSnippets"), icon: Note01Icon },

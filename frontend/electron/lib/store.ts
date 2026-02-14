@@ -58,6 +58,13 @@ export const store = new Store({
 		},
 		dictionary: [],
 		snippets: [],
+		llm: {
+			enabled: false,
+			endpoint: "http://localhost:11434",
+			model: "",
+			preset: "neutral" as const,
+			timeout: 5000,
+		},
 		windowBounds: null as { x: number; y: number; width: number; height: number } | null,
 	},
 });

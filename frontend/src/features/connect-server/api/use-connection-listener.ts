@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { ipcInvoke, onConnectionChange, onServerStatus } from "@/shared/api/ipc-client";
+import { getErrorMessage } from "@/shared/lib/errors";
 import { useConnectionStore } from "../model/connection-store";
 
 export function useConnectionListener() {
@@ -10,18 +11,32 @@ export function useConnectionListener() {
 
 	useEffect(() => {
 		// Query current status on mount (connection may have been established before page loaded)
-		ipcInvoke("stt:is-connected").then((connected) => {
-			if (connected) {
-				setConnectionStatus("connected");
-			}
-		});
+		ipcInvoke("stt:is-connected")
+			.then((connected) => {
+				if (connected) {
+					setConnectionStatus("connected");
+				}
+			})
+			.catch((error: unknown) => {
+				console.error(
+					"[useConnectionListener] Failed to query connection status:",
+					getErrorMessage(error)
+				);
+			});
 
 		// Query server-ready status on mount (server_ready may have fired before renderer subscribed)
-		ipcInvoke("stt:get-server-ready").then((ready) => {
-			if (ready) {
-				setServerStatus("running");
-			}
-		});
+		ipcInvoke("stt:get-server-ready")
+			.then((ready) => {
+				if (ready) {
+					setServerStatus("running");
+				}
+			})
+			.catch((error: unknown) => {
+				console.error(
+					"[useConnectionListener] Failed to query server-ready status:",
+					getErrorMessage(error)
+				);
+			});
 
 		// Listen for future connection changes
 		const unsubConnection = onConnectionChange((connected) => {

@@ -710,3 +710,109 @@ class TestRecordingPipeline:
         assert len(wakeword_events) == 0
         assert pipeline._wakeword_detected is False
         assert buf.pre_roll_count == 1
+
+    def test_silence_endpoint_enabled_default(self) -> None:
+        """Property defaults to True."""
+        clock = Clock.fixed_clock(1000.0)
+        pipeline, _event_bus, _sm, _buf, _vad = self._make_pipeline_with_clock(clock)
+        assert pipeline.silence_endpoint_enabled is True
+
+    def test_silence_endpoint_enabled_setter(self) -> None:
+        """Setter mutates the runtime value."""
+        clock = Clock.fixed_clock(1000.0)
+        pipeline, _event_bus, _sm, _buf, _vad = self._make_pipeline_with_clock(clock)
+        pipeline.silence_endpoint_enabled = False
+        assert pipeline.silence_endpoint_enabled is False
+
+    def test_silence_endpoint_disabled_skips_vad_stop(self) -> None:
+        """When silence_endpoint_enabled is False, silence does not trigger stop."""
+        clock = Clock.fixed_clock(1000.0)
+        cfg = RecorderConfig.from_kwargs(
+            post_speech_silence_duration=0.0,  # Would fire immediately if enabled
+            min_length_of_recording=0.0,
+        )
+        pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
+            clock,
+            speech_pattern=[False, False],
+            config=cfg,
+        )
+
+        vad_stopped: list[object] = []
+        event_bus.subscribe(VADStopped, vad_stopped.append)
+
+        pipeline.request_start()
+        assert sm.state == RecorderState.RECORDING
+
+        # Disable silence endpoint — silence should NOT trigger stop
+        pipeline.silence_endpoint_enabled = False
+        pipeline._process_recording(_make_chunk())
+
+        assert sm.state == RecorderState.RECORDING
+        assert len(vad_stopped) == 0
+
+    def test_silence_endpoint_disabled_vad_still_tracks_speech(self) -> None:
+        """VAD runs even when silence endpoint is disabled, tracking speech presence."""
+        clock = Clock.fixed_clock(1000.0)
+        cfg = RecorderConfig.from_kwargs(
+            post_speech_silence_duration=0.0,
+            min_length_of_recording=0.0,
+        )
+        pipeline, _event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
+            clock,
+            speech_pattern=[True],
+            config=cfg,
+        )
+
+        pipeline.request_start()
+        pipeline.silence_endpoint_enabled = False
+        pipeline._process_recording(_make_chunk())
+
+        # VAD ran and detected speech even though silence endpoint is disabled
+        assert pipeline._speech_detected_in_recording is True
+        # But recording was NOT stopped (silence endpoint disabled)
+        assert sm.state == RecorderState.RECORDING
+
+    def test_request_stop_aborts_when_no_speech_in_ptt_mode(self) -> None:
+        """In PTT mode, request_stop aborts if no speech was detected."""
+        clock = Clock.fixed_clock(1000.0)
+        cfg = RecorderConfig.from_kwargs(
+            post_speech_silence_duration=0.1,
+            min_length_of_recording=0.0,
+        )
+        pipeline, _event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
+            clock,
+            speech_pattern=[False],
+            config=cfg,
+        )
+
+        pipeline.request_start()
+        pipeline.silence_endpoint_enabled = False
+        # Feed silence — VAD says no speech
+        pipeline._process_recording(_make_chunk())
+        assert pipeline._speech_detected_in_recording is False
+
+        # Stop should abort instead of transcribing
+        pipeline.request_stop()
+        assert sm.state == RecorderState.INACTIVE
+
+    def test_request_stop_transcribes_when_speech_detected_in_ptt_mode(self) -> None:
+        """In PTT mode, request_stop transcribes normally if speech was detected."""
+        clock = Clock.fixed_clock(1000.0)
+        cfg = RecorderConfig.from_kwargs(
+            post_speech_silence_duration=0.1,
+            min_length_of_recording=0.0,
+        )
+        pipeline, _event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
+            clock,
+            speech_pattern=[True],
+            config=cfg,
+        )
+
+        pipeline.request_start()
+        pipeline.silence_endpoint_enabled = False
+        # Feed speech — VAD detects it
+        pipeline._process_recording(_make_chunk())
+        assert pipeline._speech_detected_in_recording is True
+
+        pipeline.request_stop()
+        assert sm.state == RecorderState.TRANSCRIBING

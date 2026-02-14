@@ -42,6 +42,15 @@ export function usePushToTalk() {
 		};
 	}, [accelerator]);
 
+	// Sync silence endpoint based on recording mode — set once, not per keypress
+	useEffect(() => {
+		if (recordingMode === "ptt" && !smartEndpoint) {
+			sttSetParameter("silence_endpoint_enabled", false);
+		} else {
+			sttSetParameter("silence_endpoint_enabled", true);
+		}
+	}, [recordingMode, smartEndpoint]);
+
 	// Subscribe to press/release events — uses refs for mode to avoid re-subscribing
 	useEffect(() => {
 		let unsubRecordingStop: (() => void) | undefined;
@@ -55,11 +64,6 @@ export function usePushToTalk() {
 			setPressed(true);
 
 			if (mode === "ptt") {
-				if (!smartEndpointRef.current) {
-					// Original: disable silence detection while key is held
-					sttSetParameter("post_speech_silence_duration", 9999);
-				}
-				// else: leave silence detection active (classifier manages it)
 				sttCallMethod("set_microphone", [true]);
 				sttCallMethod("wakeup");
 			} else {
@@ -85,7 +89,6 @@ export function usePushToTalk() {
 			setPressed(false);
 
 			if (mode === "ptt") {
-				sttSetParameter("post_speech_silence_duration", 0.15);
 				sttCallMethod("set_microphone", [false]);
 			}
 		});
