@@ -17,6 +17,7 @@ from src.recorder.domain.events import (
     AudioChunkRecorded,
     AudioLevelComputed,
     DownloadProgress,
+    NoAudioDetected,
     RealtimeTranscriptionStabilized,
     RealtimeTranscriptionUpdate,
     RecordingStarted,
@@ -75,6 +76,7 @@ class DownloadCallbacks:
 CALLBACK_EVENT_MAP: dict[str, type] = {
     "on_recording_start": RecordingStarted,
     "on_recording_stop": RecordingStopped,
+    "on_no_audio_detected": NoAudioDetected,
     "on_transcription_start": TranscriptionStarted,
     "on_vad_start": VADStarted,
     "on_vad_stop": VADStopped,
@@ -125,6 +127,24 @@ def wire_callback_with_audio(event_bus: EventBus, event_type: type, callback: Si
         cast(Any, callback)(audio_ndarray)
 
     event_bus.subscribe(event_type, _handler)
+
+
+def wire_all_callbacks(event_bus: EventBus, callbacks: CallbackMap) -> None:
+    """Bridge every legacy callback in ``callbacks`` to its matching domain event."""
+    for cb_name, cb_func in callbacks.items():
+        if cb_func is None:
+            continue
+        event_type = CALLBACK_EVENT_MAP.get(cb_name)
+        if event_type is None:
+            continue
+        if event_type in {RealtimeTranscriptionUpdate, RealtimeTranscriptionStabilized}:
+            wire_callback_with_text(event_bus, event_type, cast(TextCallback, cb_func))
+        elif event_type is TranscriptionStarted:
+            wire_callback_with_audio(event_bus, event_type, cast(SimpleCallback, cb_func))
+        elif event_type is AudioLevelComputed:
+            wire_callback_with_level(event_bus, event_type, cast(LevelCallback, cb_func))
+        else:
+            wire_callback(event_bus, event_type, cast(SimpleCallback, cb_func))
 
 
 def build_transcriber(
@@ -230,23 +250,8 @@ def bootstrap_di(
     event_bus = EventBus()
     clock = Clock.system_clock()
 
-    # Wire callbacks to event bus
     if callbacks:
-        for cb_name, cb_func in callbacks.items():
-            if cb_func is None:
-                continue
-            event_type = CALLBACK_EVENT_MAP.get(cb_name)
-            if event_type is None:
-                continue
-            # Text-bearing events need special wiring
-            if event_type in {RealtimeTranscriptionUpdate, RealtimeTranscriptionStabilized}:
-                wire_callback_with_text(event_bus, event_type, cast(TextCallback, cb_func))
-            elif event_type is TranscriptionStarted:
-                wire_callback_with_audio(event_bus, event_type, cast(SimpleCallback, cb_func))
-            elif event_type is AudioLevelComputed:
-                wire_callback_with_level(event_bus, event_type, cast(LevelCallback, cb_func))
-            else:
-                wire_callback(event_bus, event_type, cast(SimpleCallback, cb_func))
+        wire_all_callbacks(event_bus, callbacks)
 
     # Build audio source
     audio_source: IAudioSource

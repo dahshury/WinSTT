@@ -8,7 +8,7 @@ import {
 } from "@/shared/api/ipc-client";
 import { useDownloadStore } from "../model/download-store";
 
-export function useDownloadListener() {
+export function useDownloadListener(): void {
 	const setDownloadStart = useDownloadStore((s) => s.setDownloadStart);
 	const setDownloadProgress = useDownloadStore((s) => s.setDownloadProgress);
 	const setDownloadComplete = useDownloadStore((s) => s.setDownloadComplete);

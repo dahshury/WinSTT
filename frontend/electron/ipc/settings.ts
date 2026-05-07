@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 import { getErrorMessage, ValidationError } from "../../src/shared/lib/errors";
 import { store } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
@@ -45,6 +45,22 @@ const STARTUP_ONLY_KEYS = new Set([
 
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let sttClientRef: SttClient | null = null;
+let isShuttingDown = false;
+let settingsSaveListener:
+	| ((event: Electron.IpcMainEvent, payload: { settings: Record<string, unknown> }) => void)
+	| null = null;
+
+function clearRestartTimer(): void {
+	if (restartTimer) {
+		clearTimeout(restartTimer);
+		restartTimer = null;
+	}
+}
+
+function handleBeforeQuit(): void {
+	isShuttingDown = true;
+	clearRestartTimer();
+}
 
 /** Check if any startup-only settings changed between old and new, trigger restart if so. */
 function checkForRestartNeeded(
@@ -54,11 +70,20 @@ function checkForRestartNeeded(
 	let needsRestart = false;
 
 	for (const dotPath of STARTUP_ONLY_KEYS) {
-		const parts = dotPath.split(".");
-		const section = parts[0] as string;
-		const key = parts[1] as string;
-		const oldVal = (oldSettings[section] as Record<string, unknown> | undefined)?.[key];
-		const newVal = (newSettings[section] as Record<string, unknown> | undefined)?.[key];
+		const [section, key] = dotPath.split(".");
+		if (!(section && key)) {
+			continue;
+		}
+		const oldSection = oldSettings[section];
+		const newSection = newSettings[section];
+		const oldVal =
+			oldSection != null && typeof oldSection === "object"
+				? (oldSection as Record<string, unknown>)[key]
+				: undefined;
+		const newVal =
+			newSection != null && typeof newSection === "object"
+				? (newSection as Record<string, unknown>)[key]
+				: undefined;
 		if (oldVal !== newVal) {
 			needsRestart = true;
 			console.log(
@@ -78,13 +103,17 @@ function checkForRestartNeeded(
 	if (!(managed || connected)) {
 		return;
 	}
+	if (isShuttingDown) {
+		return;
+	}
 
 	// Debounce restart so rapid changes don't cause multiple restarts
-	if (restartTimer) {
-		clearTimeout(restartTimer);
-	}
+	clearRestartTimer();
 	restartTimer = setTimeout(() => {
 		restartTimer = null;
+		if (isShuttingDown) {
+			return;
+		}
 		if (isSttProcessRunning()) {
 			// Electron-managed server — kill and respawn with updated CLI args
 			console.log("[settings] Restarting Electron-managed STT server");
@@ -100,8 +129,12 @@ function checkForRestartNeeded(
 	}, 500);
 }
 
-export function setupSettingsHandlers(sttClient?: SttClient) {
+export function setupSettingsHandlers(sttClient?: SttClient): void {
+	isShuttingDown = false;
 	sttClientRef = sttClient ?? null;
+	app.off("before-quit", handleBeforeQuit);
+	app.on("before-quit", handleBeforeQuit);
+	ipcMain.removeHandler("settings:load");
 	ipcMain.handle("settings:load", () => {
 		try {
 			return store.store;
@@ -113,7 +146,10 @@ export function setupSettingsHandlers(sttClient?: SttClient) {
 		}
 	});
 
-	ipcMain.on("settings:save", (event, { settings }: { settings: Record<string, unknown> }) => {
+	if (settingsSaveListener) {
+		ipcMain.off("settings:save", settingsSaveListener);
+	}
+	settingsSaveListener = (event, { settings }: { settings: Record<string, unknown> }) => {
 		try {
 			// Validate settings object
 			if (!settings || typeof settings !== "object") {
@@ -150,5 +186,17 @@ export function setupSettingsHandlers(sttClient?: SttClient) {
 				error: getErrorMessage(error),
 			});
 		}
-	});
+	};
+	ipcMain.on("settings:save", settingsSaveListener);
+}
+
+export function cleanupSettingsHandlers(): void {
+	isShuttingDown = true;
+	clearRestartTimer();
+	app.off("before-quit", handleBeforeQuit);
+	ipcMain.removeHandler("settings:load");
+	if (settingsSaveListener) {
+		ipcMain.off("settings:save", settingsSaveListener);
+		settingsSaveListener = null;
+	}
 }

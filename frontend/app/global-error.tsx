@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { Button } from "@/shared/ui/button";
 
 export default function GlobalError({
 	error,
@@ -56,7 +57,7 @@ export default function GlobalError({
 					>
 						{error.message || "A critical error occurred"}
 					</p>
-					<button
+					<Button
 						onClick={reset}
 						style={{
 							marginTop: "8px",
@@ -67,12 +68,10 @@ export default function GlobalError({
 							backgroundColor: "#1f1f23",
 							border: "1px solid #27272a",
 							borderRadius: "5px",
-							cursor: "pointer",
 						}}
-						type="button"
 					>
 						Try again
-					</button>
+					</Button>
 				</div>
 			</body>
 		</html>

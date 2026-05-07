@@ -2,8 +2,9 @@
 
 import type { ReactNode } from "react";
 import { useEffect } from "react";
+import { useConnectionStore } from "@/entities/connection";
 import { useVisualizerSync } from "@/features/audio-visualizer";
-import { useConnectionListener, useConnectionStore } from "@/features/connect-server";
+import { useConnectionListener } from "@/features/connect-server";
 import { useFileTranscriptionListener } from "@/features/file-transcription";
 import { useListenMode } from "@/features/listen-mode";
 import { useTranscriptionFeed } from "@/features/live-transcription";

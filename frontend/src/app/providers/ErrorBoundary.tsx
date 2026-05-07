@@ -1,7 +1,10 @@
 "use client";
 
+import { Collapsible } from "@base-ui/react/collapsible";
 import { Component, type ReactNode } from "react";
 import { formatErrorForLog, isApplicationError } from "@/shared/lib/errors";
+import { Button } from "@/shared/ui/button";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 
 interface ErrorBoundaryProps {
 	children: ReactNode;
@@ -55,103 +58,40 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
 			// Default fallback UI
 			return (
-				<div
-					style={{
-						display: "flex",
-						flexDirection: "column",
-						alignItems: "center",
-						justifyContent: "center",
-						height: "100%",
-						gap: "16px",
-						padding: "32px",
-						fontFamily: "var(--font-sans)",
-					}}
-				>
-					<div
-						style={{
-							width: "48px",
-							height: "48px",
-							borderRadius: "var(--radius-lg)",
-							backgroundColor: "var(--color-error-dim)",
-							display: "flex",
-							alignItems: "center",
-							justifyContent: "center",
-							fontSize: "20px",
-							fontWeight: 600,
-							color: "var(--color-error)",
-						}}
-					>
+				<div className="flex h-full flex-col items-center justify-center gap-4 p-8 font-sans">
+					<div className="flex size-12 items-center justify-center rounded-lg bg-error-dim font-semibold text-error text-xl">
 						!
 					</div>
 
-					<h2
-						style={{
-							fontSize: "16px",
-							fontWeight: 600,
-							color: "var(--color-text-primary)",
-							margin: 0,
-						}}
-					>
-						Component Error
-					</h2>
+					<h2 className="m-0 font-semibold text-base text-foreground">Component Error</h2>
 
-					<p
-						style={{
-							fontSize: "13px",
-							color: "var(--color-text-muted)",
-							textAlign: "center",
-							maxWidth: "480px",
-							margin: 0,
-							fontFamily: "var(--font-mono)",
-						}}
-					>
+					<p className="m-0 max-w-[480px] text-center font-mono text-body text-foreground-muted">
 						{this.state.error.message || "An unexpected error occurred in this component"}
 					</p>
 
 					{isApplicationError(this.state.error) && this.state.error.context && (
-						<details
-							style={{
-								fontSize: "12px",
-								color: "var(--color-text-muted)",
-								maxWidth: "480px",
-								marginTop: "8px",
-							}}
-						>
-							<summary style={{ cursor: "pointer", fontWeight: 500 }}>Error Details</summary>
-							<pre
-								style={{
-									marginTop: "8px",
-									padding: "12px",
-									backgroundColor: "var(--color-bg-elevated)",
-									borderRadius: "var(--radius-sm)",
-									overflow: "auto",
-									maxHeight: "200px",
-								}}
-							>
-								{JSON.stringify(this.state.error.context, null, 2)}
-							</pre>
-						</details>
+						<Collapsible.Root className="mt-2 max-w-[480px] text-body-sm text-foreground-muted">
+							<Collapsible.Trigger
+								render={
+									<Button className="cursor-pointer bg-transparent p-0 font-medium text-foreground-muted hover:text-foreground">
+										Error Details
+									</Button>
+								}
+							/>
+							<Collapsible.Panel>
+								<ScrollArea className="mt-2 max-h-[200px] rounded-sm bg-surface-elevated">
+									<pre className="p-3">{JSON.stringify(this.state.error.context, null, 2)}</pre>
+								</ScrollArea>
+							</Collapsible.Panel>
+						</Collapsible.Root>
 					)}
 
-					<button
+					<Button
+						className="mt-2 rounded-sm border border-border bg-surface-elevated px-5 py-2 font-medium font-mono text-body text-foreground transition-[background-color,border-color] duration-150 hover:bg-surface-hover"
 						onClick={this.reset}
-						style={{
-							marginTop: "8px",
-							padding: "8px 20px",
-							fontSize: "13px",
-							fontWeight: 500,
-							fontFamily: "var(--font-mono)",
-							color: "var(--color-text-primary)",
-							backgroundColor: "var(--color-bg-elevated)",
-							border: "1px solid var(--color-border)",
-							borderRadius: "var(--radius-sm)",
-							cursor: "pointer",
-							transition: "background-color 150ms, border-color 150ms",
-						}}
-						type="button"
 					>
 						Try again
-					</button>
+					</Button>
 				</div>
 			);
 		}

@@ -2,6 +2,10 @@ export const LOCALES = ["en", "zh", "es", "hi", "fr", "ar"] as const;
 export type Locale = (typeof LOCALES)[number];
 export const DEFAULT_LOCALE: Locale = "en";
 
+export function isLocale(value: string): value is Locale {
+	return (LOCALES as readonly string[]).includes(value);
+}
+
 export const LOCALE_NAMES: Record<Locale, { name: string; native: string }> = {
 	en: { name: "English", native: "English" },
 	zh: { name: "Chinese", native: "中文" },

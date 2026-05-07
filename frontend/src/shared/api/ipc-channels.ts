@@ -2,6 +2,7 @@ export const IPC = {
 	// STT events (main → renderer)
 	STT_REALTIME_TEXT: "stt:realtime-text",
 	STT_FULL_SENTENCE: "stt:full-sentence",
+	STT_NO_AUDIO_DETECTED: "stt:no-audio-detected",
 	STT_RECORDING_START: "stt:recording-start",
 	STT_RECORDING_STOP: "stt:recording-stop",
 	STT_VAD_START: "stt:vad-start",
@@ -31,6 +32,7 @@ export const IPC = {
 	STT_SET_PARAMETER: "stt:set-parameter",
 	STT_GET_PARAMETER: "stt:get-parameter",
 	STT_CALL_METHOD: "stt:call-method",
+	STT_IS_CONNECTED: "stt:is-connected",
 
 	// Hotkey commands (renderer → main)
 	HOTKEY_REGISTER: "hotkey:register",
@@ -51,6 +53,7 @@ export const IPC = {
 
 	// Settings (main → renderer)
 	SETTINGS_CHANGED: "settings:changed",
+	SETTINGS_SAVE_ERROR: "settings:save-error",
 
 	// Server management (renderer → main)
 	STT_SERVER_SPAWN: "stt-server:spawn",
@@ -68,9 +71,14 @@ export const IPC = {
 
 	// Tray menu (renderer → main)
 	TRAY_MENU_CLOSE: "tray-menu:close",
+	TRAY_MENU_RESIZE: "tray-menu:resize",
 
 	// Dialog (renderer → main)
 	DIALOG_OPEN_FILE: "dialog:open-file",
+	APP_MENU_SET_TEMPLATE: "app-menu:set-template",
+	APP_MENU_RESET: "app-menu:reset",
+	CONTEXT_MENU_SHOW: "context-menu:show",
+	CLIPBOARD_OPERATE: "clipboard:operate",
 
 	// File transcription (renderer → main)
 	FILE_TRANSCRIBE: "file:transcribe",
@@ -96,9 +104,17 @@ export const IPC = {
 	// LLM (renderer → main)
 	LLM_SCAN_MODELS: "llm:scan-models",
 	LLM_PROCESS_TEXT: "llm:process-text",
+	LLM_DETECT_OLLAMA: "llm:detect-ollama",
+	LLM_START_OLLAMA: "llm:start-ollama",
 
 	// LLM events (main → renderer)
 	LLM_CATALOG: "llm:catalog",
+	UPDATER_GET_STATUS_HISTORY: "updater:get-status-history",
+	UPDATER_CLEAR_STATUS_HISTORY: "updater:clear-status-history",
+	UPDATER_STATUS: "updater:status",
+	WINDOW_TELEMETRY: "window:telemetry",
+	SECURE_GET_KEY: "secure:get-key",
+	SECURE_INVOKE: "secure:invoke",
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

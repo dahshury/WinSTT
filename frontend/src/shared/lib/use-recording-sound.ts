@@ -11,7 +11,7 @@ import { ipcInvoke, ipcOn } from "@/shared/api/ipc-client";
  * Latency: ~1-3ms (pre-decoded PCM played straight to hardware),
  * vs ~150-200ms with the old PowerShell approach.
  */
-export function useRecordingSound() {
+export function useRecordingSound(): void {
 	const ctxRef = useRef<AudioContext | null>(null);
 	const bufRef = useRef<AudioBuffer | null>(null);
 

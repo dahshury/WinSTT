@@ -1,10 +1,16 @@
+import fs from "node:fs";
 import path from "node:path";
 import { type BrowserWindow as BrowserWindowType, nativeImage, Tray } from "electron";
 import { showTrayMenuAt } from "./tray-menu-window";
 
 export function setupTray(win: BrowserWindowType): Tray {
-	const iconPath = path.join(import.meta.dirname, "..", "build", "icon.ico");
-	const icon = nativeImage.createFromPath(iconPath);
+	const preferredIconPath =
+		process.platform === "win32"
+			? path.join(import.meta.dirname, "..", "build", "icon.ico")
+			: path.join(import.meta.dirname, "..", "build", "icon.png");
+	const icon = fs.existsSync(preferredIconPath)
+		? nativeImage.createFromPath(preferredIconPath)
+		: nativeImage.createEmpty();
 	const tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
 
 	tray.setToolTip("WinSTT - Speech to Text");
@@ -16,10 +22,7 @@ export function setupTray(win: BrowserWindowType): Tray {
 
 	// Show custom menu on right click
 	tray.on("right-click", (_event, bounds) => {
-		// Position menu at the bottom-left of the tray icon
-		const x = bounds.x;
-		const y = bounds.y + bounds.height;
-		showTrayMenuAt(x, y);
+		showTrayMenuAt(bounds.x, bounds.y + bounds.height);
 	});
 
 	return tray;

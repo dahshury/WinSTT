@@ -1,12 +1,36 @@
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
+import { z } from "zod";
 import { ConnectionError, getErrorMessage, TimeoutError } from "../../src/shared/lib/errors";
-import { dbg } from "../lib/debug-log";
+import { dbgVerbose } from "../lib/debug-log";
+
+// ── Zod schemas for WebSocket message validation ─────────────────────
+
+/** Control channel messages: responses, server_ready, list_models, and generic events. */
+const controlMessageSchema = z
+	.object({
+		type: z.string().optional(),
+		command: z.string().optional(),
+		request_id: z.number().optional(),
+		value: z.unknown().optional(),
+		models: z.array(z.unknown()).optional(),
+	})
+	.passthrough();
+
+/** Data channel messages: all have a `type` discriminator field. */
+const dataMessageSchema = z
+	.object({
+		type: z.string(),
+	})
+	.passthrough();
 
 const DEFAULT_CONTROL_PORT = 8011;
 const DEFAULT_DATA_PORT = 8012;
 const REQUEST_TIMEOUT_MS = 10_000;
+const INITIAL_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
+/** Jitter factor (±50%) applied to reconnect delays to avoid thundering-herd on server restart. */
+const RECONNECT_JITTER_FACTOR = 0.5;
 
 export interface SttClientOptions {
 	controlPort?: number;
@@ -146,7 +170,7 @@ export class SttClient extends EventEmitter {
 		});
 	}
 
-	disconnect() {
+	disconnect(): void {
 		this.shouldReconnect = false;
 		if (this.reconnectTimer) {
 			clearTimeout(this.reconnectTimer);
@@ -158,7 +182,7 @@ export class SttClient extends EventEmitter {
 		);
 	}
 
-	setParameter(parameter: string, value: unknown) {
+	setParameter(parameter: string, value: unknown): void {
 		this.sendControl({
 			command: "set_parameter",
 			parameter,
@@ -173,7 +197,7 @@ export class SttClient extends EventEmitter {
 		);
 	}
 
-	callMethod(method: string, args?: unknown[]) {
+	callMethod(method: string, args?: unknown[]): void {
 		this.sendControl({
 			command: "call_method",
 			method,
@@ -185,14 +209,14 @@ export class SttClient extends EventEmitter {
 		return this.sendRequest({ command: "list_loopback_devices" }, "listLoopbackDevices");
 	}
 
-	startLoopback(deviceIndex: number) {
+	startLoopback(deviceIndex: number): void {
 		this.sendControl({
 			command: "start_loopback",
 			device_index: deviceIndex,
 		});
 	}
 
-	stopLoopback() {
+	stopLoopback(): void {
 		this.sendControl({ command: "stop_loopback" });
 	}
 
@@ -202,7 +226,7 @@ export class SttClient extends EventEmitter {
 		);
 	}
 
-	sendControl(data: Record<string, unknown>) {
+	sendControl(data: Record<string, unknown>): void {
 		if (this.controlWs?.readyState === WebSocket.OPEN) {
 			this.controlWs.send(JSON.stringify(data));
 		}
@@ -227,7 +251,14 @@ export class SttClient extends EventEmitter {
 		if (!this.shouldReconnect) {
 			return;
 		}
-		const delay = Math.min(1000 * 2 ** this.reconnectAttempt, MAX_RECONNECT_DELAY_MS);
+		const baseDelay = Math.min(
+			INITIAL_RECONNECT_DELAY_MS * 2 ** this.reconnectAttempt,
+			MAX_RECONNECT_DELAY_MS
+		);
+		// Apply ±50% jitter to avoid thundering-herd when the server restarts and many
+		// clients (or rapid reconnect loops) would otherwise hit it simultaneously.
+		const jitter = 1 - RECONNECT_JITTER_FACTOR + Math.random() * RECONNECT_JITTER_FACTOR * 2;
+		const delay = Math.round(baseDelay * jitter);
 		this.reconnectAttempt++;
 		this.emit("reconnecting", { attempt: this.reconnectAttempt, delay });
 		this.reconnectTimer = setTimeout(() => {
@@ -247,45 +278,69 @@ export class SttClient extends EventEmitter {
 	}
 
 	private handleControlMessage(raw: string) {
+		let json: unknown;
 		try {
-			const data = JSON.parse(raw) as Record<string, unknown>;
-			dbg("stt-ws", "control ←", raw.length > 200 ? `${raw.slice(0, 200)}…` : raw);
-			if (data.request_id != null) {
-				const pending = this.pendingRequests.get(data.request_id as number);
-				if (pending) {
-					clearTimeout(pending.timer);
-					this.pendingRequests.delete(data.request_id as number);
-					pending.resolve(data.value);
-				}
-			}
-			if (data.type === "server_ready") {
-				this.emit("server-ready");
-			}
-			if (data.command === "list_models" && Array.isArray(data.models)) {
-				this.emit("model-catalog", data.models);
-			}
-			this.emit("control-message", data);
+			json = JSON.parse(raw);
 		} catch (err) {
 			console.error(
-				"[stt-client] Malformed control message:",
-				raw.slice(0, 100),
-				getErrorMessage(err)
-			);
-		}
-	}
-
-	private handleDataMessage(raw: string) {
-		let data: Record<string, unknown>;
-		try {
-			data = JSON.parse(raw) as Record<string, unknown>;
-		} catch (err) {
-			console.error(
-				"[stt-client] Malformed data message:",
+				"[stt-client] Malformed control JSON:",
 				raw.slice(0, 100),
 				getErrorMessage(err)
 			);
 			return;
 		}
-		this.emit("data-event", data);
+
+		const parsed = controlMessageSchema.safeParse(json);
+		if (!parsed.success) {
+			console.warn(
+				"[stt-client] Control message failed schema validation:",
+				parsed.error.message,
+				raw.slice(0, 100)
+			);
+			return;
+		}
+
+		const data = parsed.data;
+		dbgVerbose("stt-ws", "control ←", raw.length > 200 ? `${raw.slice(0, 200)}…` : raw);
+
+		if (data.request_id != null) {
+			const pending = this.pendingRequests.get(data.request_id);
+			if (pending) {
+				clearTimeout(pending.timer);
+				this.pendingRequests.delete(data.request_id);
+				pending.resolve(data.value);
+			}
+		}
+		if (data.type === "server_ready") {
+			this.emit("server-ready");
+		}
+		if (data.command === "list_models" && Array.isArray(data.models)) {
+			this.emit("model-catalog", data.models);
+		}
+		this.emit("control-message", data);
+	}
+
+	private handleDataMessage(raw: string) {
+		let json: unknown;
+		try {
+			json = JSON.parse(raw);
+		} catch (err) {
+			console.error("[stt-client] Malformed data JSON:", raw.slice(0, 100), getErrorMessage(err));
+			return;
+		}
+
+		const parsed = dataMessageSchema.safeParse(json);
+		if (!parsed.success) {
+			console.warn(
+				"[stt-client] Data message failed schema validation (missing 'type' field):",
+				parsed.error.message,
+				typeof json === "object" && json !== null
+					? JSON.stringify(json).slice(0, 100)
+					: String(json).slice(0, 100)
+			);
+			return;
+		}
+
+		this.emit("data-event", parsed.data);
 	}
 }

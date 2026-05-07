@@ -7,6 +7,7 @@ import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { windowClose, windowMinimize, windowOpenSettings } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 export function TitleBar() {
 	const t = useTranslations("titleBar");
@@ -23,7 +24,7 @@ export function TitleBar() {
 					src="/icon.ico"
 					width={16}
 				/>
-				<span className="font-mono font-semibold text-[11px] text-foreground-secondary uppercase tracking-widest">
+				<span className="font-mono font-semibold text-foreground-secondary text-xs-tight uppercase tracking-widest">
 					{t("appName")}
 				</span>
 			</div>
@@ -33,28 +34,34 @@ export function TitleBar() {
 
 			{/* Right: Settings gear + window controls */}
 			<div className="titlebar-no-drag flex items-center">
-				<Button
-					aria-label={t("settings")}
-					className="flex h-full w-8 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-surface-hover hover:text-foreground-secondary"
-					onClick={windowOpenSettings}
-				>
-					<HugeiconsIcon icon={Settings05Icon} size={13} />
-				</Button>
+				<Tooltip content={t("settings")}>
+					<Button
+						aria-label={t("settings")}
+						className="flex h-full w-8 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-surface-hover hover:text-foreground-secondary"
+						onClick={windowOpenSettings}
+					>
+						<HugeiconsIcon icon={Settings05Icon} size={13} />
+					</Button>
+				</Tooltip>
 				<Separator className="h-3 w-px self-center bg-border" orientation="vertical" />
-				<Button
-					aria-label={t("minimize")}
-					className="flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-surface-hover hover:text-foreground-secondary"
-					onClick={windowMinimize}
-				>
-					<HugeiconsIcon icon={MinusSignIcon} size={12} />
-				</Button>
-				<Button
-					aria-label={t("close")}
-					className="flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-error hover:text-white"
-					onClick={windowClose}
-				>
-					<HugeiconsIcon icon={Cancel01Icon} size={12} />
-				</Button>
+				<Tooltip content={t("minimize")}>
+					<Button
+						aria-label={t("minimize")}
+						className="flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-surface-hover hover:text-foreground-secondary"
+						onClick={windowMinimize}
+					>
+						<HugeiconsIcon icon={MinusSignIcon} size={12} />
+					</Button>
+				</Tooltip>
+				<Tooltip content={t("close")}>
+					<Button
+						aria-label={t("close")}
+						className="flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-error hover:text-white"
+						onClick={windowClose}
+					>
+						<HugeiconsIcon icon={Cancel01Icon} size={12} />
+					</Button>
+				</Tooltip>
 			</div>
 		</header>
 	);

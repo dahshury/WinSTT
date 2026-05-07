@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
+import { useConnectionStore } from "@/entities/connection";
 import { ipcInvoke, onConnectionChange, onServerStatus } from "@/shared/api/ipc-client";
 import { getErrorMessage } from "@/shared/lib/errors";
-import { useConnectionStore } from "../model/connection-store";
 
-export function useConnectionListener() {
+export function useConnectionListener(): void {
 	const setConnectionStatus = useConnectionStore((s) => s.setConnectionStatus);
 	const setServerStatus = useConnectionStore((s) => s.setServerStatus);
 

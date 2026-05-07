@@ -2,9 +2,9 @@
 
 import { useTranslations } from "next-intl";
 import { type DragEvent, useCallback, useRef, useState } from "react";
-import { WaveformBars } from "@/features/audio-visualizer";
+import { useSettingsStore } from "@/entities/setting";
+import { AudioVisualizer } from "@/features/audio-visualizer";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
-import { useSettingsStore } from "@/features/update-settings";
 import { fileTranscribe, getFilePath } from "@/shared/api/ipc-client";
 import { DownloadOverlay } from "./DownloadOverlay";
 import { FileOverlay } from "./FileOverlay";
@@ -105,14 +105,16 @@ export function AudioDisplay() {
 	return (
 		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: drop zone for file transcription
 		<section
-			aria-label="Audio display and file drop zone"
+			aria-label={t("ariaLabel")}
 			className={`relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-surface-secondary ${isListenMode ? "" : "rounded-lg border border-border"}`}
 			onDragEnter={handleDragEnter}
 			onDragLeave={handleDragLeave}
 			onDragOver={handleDragOver}
 			onDrop={handleDrop}
 		>
-			<WaveformBars />
+			<div className="absolute inset-0 flex items-center justify-center">
+				<AudioVisualizer size="auto" />
+			</div>
 
 			{/* Drag-over drop zone overlay */}
 			{isDragOver && (

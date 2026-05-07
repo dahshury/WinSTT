@@ -1,10 +1,11 @@
 import type { BrowserWindow } from "electron";
 import { ipcMain } from "electron";
 import { UiohookKey, uIOhook } from "uiohook-napi";
-import { dbg } from "../lib/debug-log";
+import { dbg, dbgVerbose } from "../lib/debug-log";
+import { createSafeSender } from "../lib/ipc-helpers";
 import { codesToNames, KEYCODE_TO_NAME, parseAccelerator } from "../lib/keycodes";
 import { playRecordingSound } from "../lib/sound";
-import { store } from "../lib/store";
+import { getStoreValue } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
 
 const MAX_COMBO_KEYS = 3;
@@ -31,7 +32,7 @@ export function setPasteGuard(active: boolean): void {
 	}
 }
 
-export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient) {
+export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): () => void {
 	let targetKeyCodes: Set<number> | null = null;
 	const pressedKeys = new Set<number>();
 	let isActive = false;
@@ -57,11 +58,7 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient) {
 		return true;
 	};
 
-	const safeSend = (channel: string, ...args: unknown[]) => {
-		if (!win.isDestroyed()) {
-			win.webContents.send(channel, ...args);
-		}
-	};
+	const safeSend = createSafeSender(win);
 
 	/** Send recording events to the window that started recording (settings or main). */
 	const recordingSend = (channel: string, ...args: unknown[]) => {
@@ -134,13 +131,16 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient) {
 			const name = KEYCODE_TO_NAME[code] ?? `?${code}`;
 			const held = [...pressedKeys].map((c) => KEYCODE_TO_NAME[c] ?? `?${c}`).join("+");
 			const need = [...(targetKeyCodes ?? [])].map((c) => KEYCODE_TO_NAME[c] ?? `?${c}`).join("+");
-			dbg("hotkey", `combo-key DOWN: ${name} | held=[${held}] need=[${need}] isActive=${isActive}`);
+			dbgVerbose(
+				"hotkey",
+				`combo-key DOWN: ${name} | held=[${held}] need=[${need}] isActive=${isActive}`
+			);
 		}
 
 		if (!isActive && comboFullyReleased && checkCombo()) {
 			isActive = true;
 			comboFullyReleased = false;
-			const mode = store.get("general.recordingMode") as string;
+			const mode = getStoreValue("general.recordingMode");
 			dbg("hotkey", `PRESSED — combo matched, mode=${mode}, connected=${sttClient.isConnected}`);
 			// Skip recording sound in listen mode and when server is offline
 			if (mode !== "listen" && sttClient.isConnected) {
@@ -203,7 +203,15 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient) {
 		hotkeyStarted = true;
 	}
 
-	ipcMain.handle("hotkey:register", (_event, { accelerator }: { accelerator: string }) => {
+	const handleRegister = (
+		_event: Electron.IpcMainInvokeEvent,
+		payload: { accelerator: string }
+	) => {
+		if (!payload || typeof payload.accelerator !== "string" || !payload.accelerator) {
+			dbg("hotkey", "Register FAILED — invalid payload");
+			return false;
+		}
+		const { accelerator } = payload;
 		const codes = parseAccelerator(accelerator);
 		if (!codes) {
 			dbg("hotkey", `Register FAILED — unknown accelerator: "${accelerator}"`);
@@ -215,16 +223,16 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient) {
 		comboFullyReleased = true;
 		dbg("hotkey", `Registered: "${accelerator}" → keycodes:`, JSON.stringify([...codes]));
 		return true;
-	});
+	};
 
-	ipcMain.on("hotkey:unregister", () => {
+	const handleUnregister = () => {
 		targetKeyCodes = null;
 		pressedKeys.clear();
 		isActive = false;
 		comboFullyReleased = true;
-	});
+	};
 
-	ipcMain.handle("hotkey:start-recording", (event) => {
+	const handleStartRecording = (event: Electron.IpcMainInvokeEvent) => {
 		isRecording = true;
 		recordingPressed.clear();
 		peakSnapshot = [];
@@ -233,9 +241,9 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient) {
 		pressedKeys.clear();
 		isActive = false;
 		return true;
-	});
+	};
 
-	ipcMain.on("hotkey:stop-recording", () => {
+	const handleStopRecording = () => {
 		if (isRecording && peakSnapshot.length > 0) {
 			const names = codesToNames(peakSnapshot);
 			const combo = names.join("+");
@@ -245,11 +253,24 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient) {
 			recordingSend("hotkey:recording-done", { combo: null });
 		}
 		resetRecording();
-	});
+	};
+
+	ipcMain.removeHandler("hotkey:register");
+	ipcMain.removeHandler("hotkey:start-recording");
+	ipcMain.removeAllListeners("hotkey:unregister");
+	ipcMain.removeAllListeners("hotkey:stop-recording");
+	ipcMain.on("hotkey:unregister", handleUnregister);
+	ipcMain.on("hotkey:stop-recording", handleStopRecording);
+	ipcMain.handle("hotkey:register", handleRegister);
+	ipcMain.handle("hotkey:start-recording", handleStartRecording);
 
 	return () => {
 		uIOhook.off("keydown", onKeyDown);
 		uIOhook.off("keyup", onKeyUp);
+		ipcMain.removeHandler("hotkey:register");
+		ipcMain.removeHandler("hotkey:start-recording");
+		ipcMain.off("hotkey:unregister", handleUnregister);
+		ipcMain.off("hotkey:stop-recording", handleStopRecording);
 		targetKeyCodes = null;
 		pressedKeys.clear();
 		isActive = false;

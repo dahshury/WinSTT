@@ -33,7 +33,7 @@ export function SearchableSelect({
 		<Combobox.Root
 			defaultValue={selected}
 			disabled={disabled}
-			items={options as SelectOption[]}
+			items={[...options]}
 			itemToStringLabel={getItemLabel}
 			onOpenChange={onOpenChange}
 			onValueChange={(item: SelectOption | null) => {
@@ -45,7 +45,7 @@ export function SearchableSelect({
 		>
 			<div className="relative flex w-full items-center">
 				<Combobox.Input
-					className="flex h-8 w-full items-center rounded-sm border border-border bg-surface-tertiary pr-7 pl-2.5 font-inherit text-[13px] text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-40"
+					className="flex h-8 w-full items-center rounded-sm border border-border bg-surface-tertiary pr-7 pl-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-40"
 					placeholder={placeholder}
 				/>
 				<Combobox.Trigger
@@ -63,7 +63,7 @@ export function SearchableSelect({
 						<Combobox.List className="outline-none">
 							{(item: SelectOption) => (
 								<Combobox.Item
-									className="searchable-select-item mx-1 grid cursor-default select-none grid-cols-[12px_1fr] items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-[13px] text-foreground leading-normal outline-none data-[highlighted]:bg-surface-hover data-[selected]:text-accent"
+									className="searchable-select-item mx-1 grid cursor-default select-none grid-cols-[12px_1fr] items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none data-[highlighted]:bg-surface-hover data-[selected]:text-accent"
 									key={item.id}
 									value={item}
 								>

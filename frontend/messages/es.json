@@ -31,6 +31,15 @@
     "tabDictionary": "Diccionario",
     "tabSnippets": "Fragmentos",
     "tabLlm": "LLM",
+    "tabDesktop": "Escritorio",
+    "tabGeneralTooltip": "Modo de grabación, idioma, sonido y comportamiento al iniciar.",
+    "tabModelTooltip": "Elige el modelo de voz a texto y configura el post-procesador LLM.",
+    "tabAudioTooltip": "Micrófono, detección de actividad de voz y manejo del silencio.",
+    "tabProcessingTooltip": "Vista previa en vivo, finalización inteligente y formato de texto.",
+    "tabHotkeyTooltip": "Configura el atajo de teclado de pulsar para hablar.",
+    "tabDictionaryTooltip": "Reemplaza palabras o frases automáticamente en el texto transcrito.",
+    "tabSnippetsTooltip": "Expande disparadores cortos a texto predefinido más largo.",
+    "tabDesktopTooltip": "Integraciones nativas de escritorio: menú, portapapeles, actualizador y telemetría.",
     "minimize": "Minimizar",
     "close": "Cerrar"
   },
@@ -63,6 +72,25 @@
     "showRecordingOverlay": "Superposición de grabación",
     "showRecordingOverlayCaption": "Mostrar visualizador flotante durante la grabación",
     "showRecordingOverlayTooltip": "Mostrar una ventana flotante con visualizador de audio en la parte inferior de la pantalla durante la grabación (solo modos PTT y alternar)",
+    "visualizerSize": "Tamaño del visualizador",
+    "visualizerSizeCaption": "Tamaño en píxeles del visualizador (10–200)",
+    "visualizerSizeTooltip": "Ancho y alto en píxeles del visualizador flotante mostrado durante la grabación.",
+    "showLiveTranscription": "Transcripción en vivo",
+    "showLiveTranscriptionCaption": "Mostrar el texto transcrito bajo el visualizador",
+    "showLiveTranscriptionTooltip": "Mostrar el texto transcrito en vivo debajo del visualizador de grabación.",
+    "visualizerType": "Estilo del visualizador",
+    "visualizerTypeCaption": "Estilo de animación del visualizador de audio",
+    "visualizerTypeTooltip": "Elige el estilo visual del visualizador de audio. Barras: barras verticales. Cuadrícula: cuadrícula de puntos. Radial: barras circulares en expansión. Onda: forma de onda de osciloscopio (WebGL). Aura: aura orgánica luminosa (WebGL).",
+    "visualizerBar": "Barras",
+    "visualizerGrid": "Cuadrícula",
+    "visualizerRadial": "Radial",
+    "visualizerWave": "Onda",
+    "visualizerAura": "Aura",
+    "visualizerBarCount": "Número de barras",
+    "visualizerBarCountCaption": "Cantidad de barras en el estilo de barras (3–21)",
+    "visualizerBarCountTooltip": "Ajusta cuántas barras renderiza el visualizador de barras. Más barras dan un aspecto más denso.",
+    "visualizerColor": "Color del visualizador",
+    "visualizerColorCaption": "Color de acento para el visualizador",
     "fileTranscription": "Transcripción de archivos",
     "fileTranscriptionFormat": "Formato",
     "fileTranscriptionFormatCaption": "Formato de salida para archivos transcritos",
@@ -74,7 +102,14 @@
     "minimizeToTray": "Minimizar a la bandeja",
     "minimizeToTrayCaption": "Seguir ejecutándose en la bandeja del sistema",
     "language": "Idioma",
-    "languageCaption": "Idioma de la interfaz"
+    "languageCaption": "Idioma de la interfaz",
+    "languageTooltip": "Idioma usado para la interfaz (menús, ajustes, descripciones). Independiente del idioma de transcripción.",
+    "visualizerColorTooltip": "Color de acento usado por la animación del visualizador de audio.",
+    "soundFileTooltip": "Archivo .wav o .mp3 personalizado que suena al iniciar la grabación. Arrastra un archivo o usa el explorador para seleccionarlo.",
+    "fileTranscriptionFormatTooltip": "Formato del archivo de salida para los archivos de audio/vídeo transcritos. TXT es texto plano; SRT incluye marcas de tiempo para subtítulos.",
+    "startOnLoginTooltip": "Inicia WinSTT automáticamente cada vez que inicies sesión en Windows.",
+    "startMinimizedTooltip": "Al iniciarse, comienza oculto en la bandeja del sistema en lugar de abrir la ventana principal.",
+    "minimizeToTrayTooltip": "Cerrar la ventana principal mantiene WinSTT en ejecución en la bandeja del sistema en lugar de salir."
   },
   "model": {
     "mainModel": "Modelo principal",
@@ -99,7 +134,11 @@
     "realtimeBeamSize": "Tamaño de haz en tiempo real",
     "realtimeBeamSizeCaption": "Ancho de búsqueda en tiempo real",
     "realtimeBeamSizeTooltip": "Tamaño de haz para el modelo de vista previa en tiempo real. Valores más bajos ofrecen retroalimentación en vivo más rápida a costa de cierta precisión. Esto solo afecta la vista previa en vivo, no la transcripción final.",
-    "llm": "Modelo de lenguaje grande"
+    "llm": "Modelo de lenguaje grande",
+    "computeDefaultLabel": "Predeterminado (precisión nativa del modelo)",
+    "computeAutoLabel": "Automático (mejor para tu hardware)",
+    "deviceAutoLabel": "Automático",
+    "deviceCpuLabel": "CPU"
   },
   "audio": {
     "inputDevice": "Dispositivo de entrada",
@@ -142,8 +181,10 @@
     "formatting": "Formato",
     "uppercaseFirst": "Primera letra en mayúscula",
     "uppercaseFirstCaption": "Capitalizar automáticamente el inicio de las oraciones",
+    "uppercaseFirstTooltip": "Pone en mayúscula la primera letra de cada oración transcrita automáticamente.",
     "endWithPeriod": "Terminar con punto",
     "endWithPeriodCaption": "Agregar punto automáticamente a las oraciones",
+    "endWithPeriodTooltip": "Añade un punto al final de las oraciones transcritas que no terminen ya en signo de puntuación.",
     "smartEndpoint": "Endpoint inteligente",
     "smartEndpointLabel": "Endpoint inteligente",
     "smartEndpointCaption": "Detección de oraciones con IA",
@@ -156,10 +197,13 @@
     "configuration": "Configuración de atajo",
     "pushToTalkKey": "Tecla de Pulsar para hablar",
     "pushToTalkKeyCaption": "Haz clic en Grabar, presiona tu combinación de teclas, luego haz clic en Detener",
+    "pushToTalkKeyTooltip": "El atajo de teclado que activa la grabación. Haz clic en Grabar, presiona la combinación que quieras y luego haz clic en Detener.",
     "pressKeys": "Presiona teclas...",
     "record": "Grabar",
     "stop": "Detener",
-    "switchToPtt": "Cambiar a Pulsar para hablar"
+    "switchToPtt": "Cambiar a Pulsar para hablar",
+    "displayTooltip": "Atajo para pulsar para hablar. Cámbialo en Ajustes → Atajo.",
+    "displayTooltipDisconnected": "Atajo para pulsar para hablar (inactivo — servidor desconectado). Cámbialo en Ajustes → Atajo."
   },
   "dictionary": {
     "title": "Reemplazos de palabras",
@@ -187,17 +231,27 @@
     "connecting": "CONECTANDO",
     "error": "ERROR",
     "offline": "SIN CONEXIÓN",
-    "loopbackIdle": "Bucle invertido inactivo"
+    "loopbackIdle": "Bucle invertido inactivo",
+    "connectingTooltip": "Estableciendo conexión con el servidor de voz a texto...",
+    "errorTooltip": "No se pudo conectar al servidor de voz a texto. Comprueba que el proceso del servidor esté en ejecución.",
+    "offlineTooltip": "Sin conexión con el servidor de voz a texto.",
+    "gpuTooltip": "El servidor está usando aceleración por GPU para la transcripción.",
+    "cpuTooltip": "El servidor se ejecuta en la CPU. La transcripción será notablemente más lenta que en una GPU.",
+    "modelTooltip": "Modelo activo de voz a texto: {model}. Cámbialo en Ajustes → Modelo.",
+    "loopbackActiveTooltip": "Escuchando el audio del sistema desde este dispositivo de loopback. Cámbialo en Ajustes → General → Dispositivo de loopback.",
+    "loopbackIdleTooltip": "El modo Escuchar está configurado pero aún no se está capturando audio."
   },
   "transcription": {
     "waiting": "Esperando voz...",
-    "serverOffline": "Servidor sin conexión"
+    "serverOffline": "Servidor sin conexión",
+    "noAudioDetected": "(no se detectó audio)"
   },
   "mainPage": {
     "pttButton": "PTT"
   },
   "audioDisplay": {
-    "dropToTranscribe": "Arrastra un archivo para transcribir"
+    "dropToTranscribe": "Arrastra un archivo para transcribir",
+    "ariaLabel": "Visor de audio y zona de soltar archivos"
   },
   "download": {
     "downloadingModel": "Descargando {model}...",
@@ -233,7 +287,12 @@
     "ollamaNotAvailableDescription": "Ollama no está ejecutándose o fue desinstalado. Las transcripciones funcionarán normalmente, pero el post-procesamiento LLM está desactivado. Por favor instale Ollama y asegúrese de que esté ejecutándose para usar esta función.",
     "ollamaRequired": "Ollama requerido",
     "ollamaRequiredDescription": "El post-procesamiento LLM requiere que Ollama esté instalado y ejecutándose. Por favor descargue e instale Ollama desde el sitio web oficial, luego intente nuevamente.",
-    "downloadOllama": "Descargar Ollama"
+    "ollamaNotRunning": "Ollama no está en ejecución",
+    "ollamaNotRunningDescription": "Ollama está instalado pero no se está ejecutando. Inícielo para habilitar el post-procesamiento LLM.",
+    "downloadOllama": "Descargar Ollama",
+    "runOllama": "Ejecutar Ollama",
+    "starting": "Iniciando…",
+    "ollamaStartFailed": "No se pudo iniciar Ollama. Por favor, ejecútelo manualmente."
   },
   "errors": {
     "somethingWentWrong": "Algo salió mal",
@@ -241,5 +300,61 @@
     "tryAgain": "Intentar de nuevo",
     "pageNotFound": "Página no encontrada",
     "notFoundDescription": "La página que buscas no existe."
+  },
+  "tray": {
+    "showWindow": "Mostrar ventana",
+    "openSettings": "Configuración",
+    "transcribeFile": "Transcribir archivo...",
+    "checkForUpdates": "Buscar actualizaciones",
+    "quit": "Salir",
+    "modePtt": "PTT",
+    "modeToggle": "Alternar",
+    "modeListen": "Escuchar",
+    "audioFiles": "Archivos de audio",
+    "videoFiles": "Archivos de vídeo",
+    "allFiles": "Todos los archivos",
+    "selectFileTitle": "Selecciona un archivo de audio o vídeo para transcribir"
+  },
+  "desktop": {
+    "title": "Herramientas de escritorio",
+    "active": "Los controles de escritorio inspirados en Electrobun están activos para esta ventana de configuración.",
+    "unavailable": "La API de Electron no está disponible en este entorno.",
+    "menuEditor": "Editor de menú de la aplicación",
+    "menuJsonLabel": "JSON del menú",
+    "menuJsonCaption": "Edita el JSON y aplícalo al menú nativo de la aplicación.",
+    "applyJson": "Aplicar JSON",
+    "loadDemo": "Cargar demo",
+    "resetMenu": "Restablecer menú nativo",
+    "appliedMenu": "Se aplicaron {count} elemento(s) de menú de nivel superior.",
+    "menuReset": "Menú de la aplicación restablecido.",
+    "contextMenuTitle": "Zona de pruebas del menú contextual",
+    "contextMenuHint": "Haz clic derecho en este cuadro para abrir un menú contextual nativo.",
+    "openContextMenu": "Abrir menú contextual",
+    "contextMenuClosed": "Menú contextual cerrado sin selección.",
+    "contextMenuSelected": "Seleccionado: {id}",
+    "contextMenuInitial": "Aún no hay acción de menú contextual.",
+    "clipboardTitle": "Panel del portapapeles",
+    "clipboardLabel": "Texto",
+    "clipboardCaption": "Lee y escribe en el portapapeles nativo.",
+    "clipboardPlaceholder": "Texto del portapapeles",
+    "readClipboard": "Leer portapapeles",
+    "writeClipboard": "Escribir portapapeles",
+    "clearClipboard": "Borrar portapapeles",
+    "clipboardLoaded": "Contenido del portapapeles cargado.",
+    "clipboardUpdated": "Portapapeles actualizado.",
+    "clipboardCleared": "Portapapeles borrado.",
+    "updaterTitle": "Cronología del actualizador",
+    "refreshHistory": "Actualizar historial",
+    "clearHistory": "Borrar historial",
+    "updaterRefreshed": "Historial del actualizador actualizado.",
+    "updaterCleared": "Historial del actualizador borrado.",
+    "noUpdaterEntries": "Aún no hay entradas del actualizador.",
+    "telemetryTitle": "Telemetría de la ventana",
+    "telemetryLabel": "Transmisión en vivo",
+    "telemetryCaption": "Rastrea eventos de mover/redimensionar/enfocar de esta ventana.",
+    "telemetryClear": "Borrar",
+    "telemetryClearCaption": "Elimina todos los eventos capturados del panel.",
+    "clearEvents": "Borrar eventos",
+    "noTelemetry": "Aún no se ha capturado telemetría."
   }
 }

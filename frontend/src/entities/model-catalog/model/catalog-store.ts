@@ -1,5 +1,6 @@
 "use client";
 
+import { z } from "zod";
 import { create } from "zustand";
 import { fetchModelCatalog, onModelCatalog } from "@/shared/api/ipc-client";
 
@@ -16,26 +17,28 @@ export interface ModelInfo {
 	description: string;
 }
 
-/** Server sends snake_case keys; map to camelCase ModelInfo. */
-interface RawModelInfo {
-	id: string;
-	display_name: string;
-	backend: string;
-	family: string;
-	languages: string[];
-	supports_language_detection: boolean;
-	size_label: string;
-	supports_realtime: boolean;
-	onnx_model_name: string | null;
-	description: string;
-}
+/** Zod schema for server-sent model catalog items (snake_case). */
+const rawModelInfoSchema = z.object({
+	id: z.string(),
+	display_name: z.string(),
+	backend: z.enum(["faster_whisper", "onnx_asr"]),
+	family: z.enum(["whisper", "nemo", "gigaam", "kaldi", "t-one"]),
+	languages: z.array(z.string()),
+	supports_language_detection: z.boolean(),
+	size_label: z.string(),
+	supports_realtime: z.boolean(),
+	onnx_model_name: z.string().nullable(),
+	description: z.string(),
+});
+
+type RawModelInfo = z.infer<typeof rawModelInfoSchema>;
 
 function mapModel(raw: RawModelInfo): ModelInfo {
 	return {
 		id: raw.id,
 		displayName: raw.display_name,
-		backend: raw.backend as ModelInfo["backend"],
-		family: raw.family as ModelInfo["family"],
+		backend: raw.backend,
+		family: raw.family,
 		languages: raw.languages,
 		supportsLanguageDetection: raw.supports_language_detection,
 		sizeLabel: raw.size_label,
@@ -54,10 +57,14 @@ interface CatalogState {
 }
 
 function applyRaw(raw: unknown[]): { models: ModelInfo[]; isLoaded: boolean } {
-	return { models: (raw as RawModelInfo[]).map(mapModel), isLoaded: true };
+	const validated = raw
+		.map((item) => rawModelInfoSchema.safeParse(item))
+		.filter((r) => r.success)
+		.map((r) => r.data);
+	return { models: validated.map(mapModel), isLoaded: true };
 }
 
-export const useCatalogStore = create<CatalogState>((set, get) => ({
+export const useCatalogStore = create<CatalogState>()((set, get) => ({
 	models: [],
 	isLoaded: false,
 	setModels: (raw) => set(applyRaw(raw)),

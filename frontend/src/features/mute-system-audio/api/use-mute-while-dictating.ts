@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { audioSetMute, onRecordingStart, onRecordingStop } from "@/shared/api/ipc-client";
 
-export function useMuteWhileDictating(enabled: boolean) {
+export function useMuteWhileDictating(enabled: boolean): void {
 	useEffect(() => {
 		if (!enabled) {
 			return;

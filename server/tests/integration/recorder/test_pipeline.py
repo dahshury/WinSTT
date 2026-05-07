@@ -11,6 +11,7 @@ from src.recorder.application.pipeline import RecordingPipeline
 from src.recorder.domain.audio_buffer import AudioBuffer
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import (
+    NoAudioDetected,
     RecordingStarted,
     RecordingStopped,
     TurnDetectionStarted,
@@ -773,17 +774,20 @@ class TestRecordingPipeline:
         assert sm.state == RecorderState.RECORDING
 
     def test_request_stop_aborts_when_no_speech_in_ptt_mode(self) -> None:
-        """In PTT mode, request_stop aborts if no speech was detected."""
+        """In PTT mode, request_stop aborts if no speech was detected and emits NoAudioDetected."""
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
             min_length_of_recording=0.0,
         )
-        pipeline, _event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
+        pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
             clock,
             speech_pattern=[False],
             config=cfg,
         )
+
+        no_audio_events: list[object] = []
+        event_bus.subscribe(NoAudioDetected, no_audio_events.append)
 
         pipeline.request_start()
         pipeline.silence_endpoint_enabled = False
@@ -794,6 +798,41 @@ class TestRecordingPipeline:
         # Stop should abort instead of transcribing
         pipeline.request_stop()
         assert sm.state == RecorderState.INACTIVE
+        assert len(no_audio_events) == 1
+
+    def test_request_stop_emits_no_audio_when_not_recording_in_ptt_mode(self) -> None:
+        """In PTT mode, request_stop while INACTIVE emits NoAudioDetected (line 102 silent-exit)."""
+        clock = Clock.fixed_clock(1000.0)
+        pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(clock)
+
+        no_audio_events: list[object] = []
+        event_bus.subscribe(NoAudioDetected, no_audio_events.append)
+
+        pipeline.silence_endpoint_enabled = False
+        assert sm.state == RecorderState.INACTIVE
+        pipeline.request_stop()
+        assert sm.state == RecorderState.INACTIVE
+        assert len(no_audio_events) == 1
+
+    def test_request_stop_emits_no_audio_when_too_short_in_ptt_mode(self) -> None:
+        """In PTT mode, request_stop below min_length emits NoAudioDetected (line 105 silent-exit)."""
+        clock = Clock.fixed_clock(1000.0)
+        cfg = RecorderConfig.from_kwargs(
+            post_speech_silence_duration=0.1,
+            min_length_of_recording=10.0,
+        )
+        pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(clock, config=cfg)
+
+        no_audio_events: list[object] = []
+        event_bus.subscribe(NoAudioDetected, no_audio_events.append)
+
+        pipeline.request_start()
+        pipeline.silence_endpoint_enabled = False
+        assert sm.state == RecorderState.RECORDING
+
+        pipeline.request_stop()
+        assert sm.state == RecorderState.RECORDING
+        assert len(no_audio_events) == 1
 
     def test_request_stop_transcribes_when_speech_detected_in_ptt_mode(self) -> None:
         """In PTT mode, request_stop transcribes normally if speech was detected."""

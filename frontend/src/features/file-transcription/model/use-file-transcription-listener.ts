@@ -8,7 +8,7 @@ import {
 } from "@/shared/api/ipc-client";
 import { useFileTranscriptionStore } from "./file-transcription-store";
 
-export function useFileTranscriptionListener() {
+export function useFileTranscriptionListener(): void {
 	const setProgress = useFileTranscriptionStore((s) => s.setProgress);
 	const setComplete = useFileTranscriptionStore((s) => s.setComplete);
 	const setError = useFileTranscriptionStore((s) => s.setError);

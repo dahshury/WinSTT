@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { Button } from "@/shared/ui/button";
 
 export default function RootError({
 	error,
@@ -65,7 +66,7 @@ export default function RootError({
 				{error.message || "An unexpected error occurred"}
 			</p>
 
-			<button
+			<Button
 				onBlur={(e) => {
 					e.currentTarget.style.backgroundColor = "var(--color-bg-elevated)";
 					e.currentTarget.style.borderColor = "var(--color-border)";
@@ -93,13 +94,11 @@ export default function RootError({
 					backgroundColor: "var(--color-bg-elevated)",
 					border: "1px solid var(--color-border)",
 					borderRadius: "var(--radius-sm)",
-					cursor: "pointer",
 					transition: "background-color 150ms, border-color 150ms",
 				}}
-				type="button"
 			>
 				Try again
-			</button>
+			</Button>
 		</div>
 	);
 }

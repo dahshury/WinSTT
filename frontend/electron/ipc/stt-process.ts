@@ -1,10 +1,10 @@
 import type { ChildProcess } from "node:child_process";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { app, ipcMain } from "electron";
 import { getErrorMessage, NotFoundError, ProcessSpawnError } from "../../src/shared/lib/errors";
 import { dbg } from "../lib/debug-log";
-import { store } from "../lib/store";
+import { getStoreRaw, getStoreValue, store } from "../lib/store";
 
 let sttProcess: ChildProcess | null = null;
 let status: "idle" | "starting" | "running" | "error" = "idle";
@@ -12,6 +12,11 @@ let status: "idle" | "starting" | "running" | "error" = "idle";
 function setErrorState() {
 	status = "error";
 	sttProcess = null;
+}
+
+/** Helper to access sttProcess.pid without TS narrowing issues from cross-function mutation. */
+function getSttProcessPid(): number | undefined {
+	return sttProcess?.pid;
 }
 
 /**
@@ -54,7 +59,7 @@ const BOOLEAN_OPTIONAL_CLI: [storePath: string, cliFlag: string][] = [
 function buildServerArgs(baseArgs: string[]): string[] {
 	const args = [...baseArgs];
 	for (const [storePath, cliFlag] of SETTINGS_TO_CLI) {
-		const value = store.get(storePath) as string | number | boolean | undefined;
+		const value = getStoreRaw(storePath);
 		if (value == null || value === "") {
 			continue;
 		}
@@ -71,7 +76,7 @@ function buildServerArgs(baseArgs: string[]): string[] {
 
 	// BooleanOptionalAction flags: --flag when true, --no-flag when false
 	for (const [storePath, cliFlag] of BOOLEAN_OPTIONAL_CLI) {
-		const value = store.get(storePath) as boolean | undefined;
+		const value = getStoreRaw(storePath);
 		if (value === true) {
 			args.push(cliFlag);
 		} else if (value === false) {
@@ -81,7 +86,7 @@ function buildServerArgs(baseArgs: string[]): string[] {
 	}
 
 	// sileroDeactivityDetection is a boolean store_true flag
-	const sileroDeact = store.get("audio.sileroDeactivityDetection") as boolean | undefined;
+	const sileroDeact = getStoreValue("audio.sileroDeactivityDetection");
 	if (sileroDeact) {
 		args.push("--silero_deactivity_detection");
 	}
@@ -188,7 +193,7 @@ function spawnServer(): void {
 	);
 }
 
-export function setupSttProcessHandlers() {
+export function setupSttProcessHandlers(): void {
 	ipcMain.handle("stt-server:spawn", () => {
 		try {
 			if (sttProcess) {
@@ -198,8 +203,10 @@ export function setupSttProcessHandlers() {
 			spawnServer();
 		} catch (err) {
 			setErrorState();
-			console.error("[stt-server] Spawn handler error:", getErrorMessage(err));
-			throw err;
+			const message = getErrorMessage(err);
+			console.error("[stt-server] Spawn handler error:", message);
+			// Re-throw as plain Error so Electron serializes a useful message
+			throw new Error(message);
 		}
 	});
 
@@ -207,8 +214,9 @@ export function setupSttProcessHandlers() {
 		try {
 			killSttProcess();
 		} catch (err) {
-			console.error("[stt-server] Kill handler error:", getErrorMessage(err));
-			throw err;
+			const message = getErrorMessage(err);
+			console.error("[stt-server] Kill handler error:", message);
+			throw new Error(message);
 		}
 	});
 
@@ -216,14 +224,15 @@ export function setupSttProcessHandlers() {
 		try {
 			return status;
 		} catch (err) {
-			console.error("[stt-server] Status handler error:", getErrorMessage(err));
-			throw err;
+			const message = getErrorMessage(err);
+			console.error("[stt-server] Status handler error:", message);
+			throw new Error(message);
 		}
 	});
 }
 
 /** Restart the STT server with updated settings from electron-store. */
-export function restartSttProcess() {
+export function restartSttProcess(): void {
 	killSttProcess();
 	try {
 		spawnServer();
@@ -246,32 +255,41 @@ export function tryAutoSpawnServer(): void {
 	}
 	try {
 		spawnServer();
-		dbg("stt-spawn", "Auto-spawn succeeded, pid=", (sttProcess as ChildProcess | null)?.pid);
+		// sttProcess is mutated by spawnServer() but TS narrows it to null
+		// after the early-return guard. Use a helper to re-read the module variable.
+		dbg("stt-spawn", "Auto-spawn succeeded, pid=", getSttProcessPid());
 	} catch (err) {
 		dbg("stt-spawn", "Auto-spawn SKIPPED:", err instanceof Error ? err.message : String(err));
 	}
 }
 
 /** Kill the STT subprocess tree. Exported for use in app lifecycle cleanup. */
-export function killSttProcess() {
-	if (!sttProcess?.pid) {
+export function killSttProcess(): void {
+	const proc = sttProcess;
+	if (!proc?.pid) {
 		return;
 	}
 
-	const pid = sttProcess.pid;
+	const pid = proc.pid;
+	sttProcess = null;
+	status = "idle";
+
 	try {
 		if (process.platform === "win32") {
-			// On Windows, kill the entire process tree
-			execSync(`taskkill /T /F /PID ${pid}`, { stdio: "ignore" });
+			// Kill the entire process tree without blocking the main process.
+			const killer = spawn("taskkill", ["/T", "/F", "/PID", String(pid)], {
+				stdio: "ignore",
+				windowsHide: true,
+			});
+			killer.on("error", (error) => {
+				dbg("stt-process", `Failed to kill process tree ${pid}:`, getErrorMessage(error));
+			});
 		} else {
-			sttProcess.kill("SIGTERM");
+			proc.kill("SIGTERM");
 		}
 		dbg("stt-process", `Killed process ${pid} successfully`);
 	} catch (err) {
 		// Process may have already exited
 		dbg("stt-process", `Failed to kill process ${pid}:`, getErrorMessage(err));
-	} finally {
-		sttProcess = null;
-		status = "idle";
 	}
 }

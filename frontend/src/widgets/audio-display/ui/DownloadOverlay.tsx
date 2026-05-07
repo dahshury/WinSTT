@@ -3,6 +3,7 @@
 import { Progress } from "@base-ui/react/progress";
 import { useTranslations } from "next-intl";
 import { memo, useCallback } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useDownloadStore } from "@/features/model-download";
 import { Button } from "@/shared/ui/button";
 
@@ -44,15 +45,29 @@ function joinStats(parts: string[], sep = " \u00B7 "): string {
 }
 
 export const DownloadOverlay = memo(function DownloadOverlay() {
-	const isDownloading = useDownloadStore((s) => s.isDownloading);
-	const modelName = useDownloadStore((s) => s.modelName);
-	const progress = useDownloadStore((s) => s.progress);
-	const downloadedBytes = useDownloadStore((s) => s.downloadedBytes);
-	const totalBytes = useDownloadStore((s) => s.totalBytes);
-	const speedBps = useDownloadStore((s) => s.speedBps);
-	const etaSeconds = useDownloadStore((s) => s.etaSeconds);
-	const cancelled = useDownloadStore((s) => s.cancelled);
-	const cancelDownload = useDownloadStore((s) => s.cancelDownload);
+	const {
+		isDownloading,
+		modelName,
+		progress,
+		downloadedBytes,
+		totalBytes,
+		speedBps,
+		etaSeconds,
+		cancelled,
+		cancelDownload,
+	} = useDownloadStore(
+		useShallow((s) => ({
+			isDownloading: s.isDownloading,
+			modelName: s.modelName,
+			progress: s.progress,
+			downloadedBytes: s.downloadedBytes,
+			totalBytes: s.totalBytes,
+			speedBps: s.speedBps,
+			etaSeconds: s.etaSeconds,
+			cancelled: s.cancelled,
+			cancelDownload: s.cancelDownload,
+		}))
+	);
 	const t = useTranslations("download");
 
 	const handleCancel = useCallback(() => {

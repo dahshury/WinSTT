@@ -16,7 +16,7 @@ import pytest
 
 pyaudiowpatch = pytest.importorskip("pyaudiowpatch", reason="pyaudiowpatch not installed")
 
-from src.stt_server.loopback import LoopbackCapture
+from src.stt_server.loopback import LoopbackCapture  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Lightweight recorder stub — implements only the interface LoopbackCapture

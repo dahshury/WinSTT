@@ -22,7 +22,7 @@ interface DownloadState {
 	cancelDownload: () => void;
 }
 
-export const useDownloadStore = create<DownloadState>((set) => ({
+export const useDownloadStore = create<DownloadState>()((set) => ({
 	isDownloading: false,
 	modelName: null,
 	progress: null,

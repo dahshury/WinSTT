@@ -7,7 +7,7 @@ export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        DataEvent: components["schemas"]["RealtimeTextEvent"] | components["schemas"]["FullSentenceEvent"] | components["schemas"]["RecordingStartEvent"] | components["schemas"]["RecordingStopEvent"] | components["schemas"]["LoopbackStartedEvent"] | components["schemas"]["LoopbackStoppedEvent"] | components["schemas"]["VadDetectStartEvent"] | components["schemas"]["VadDetectStopEvent"] | components["schemas"]["TranscriptionStartEvent"] | components["schemas"]["WakewordDetectedEvent"] | components["schemas"]["WakewordDetectionStartEvent"] | components["schemas"]["WakewordDetectionEndEvent"] | components["schemas"]["TurnDetectionStartEvent"] | components["schemas"]["TurnDetectionStopEvent"] | components["schemas"]["ModelDownloadStartEvent"] | components["schemas"]["ModelDownloadProgressEvent"] | components["schemas"]["ModelDownloadCompleteEvent"] | components["schemas"]["AudioLevelEvent"];
+        DataEvent: components["schemas"]["RealtimeTextEvent"] | components["schemas"]["FullSentenceEvent"] | components["schemas"]["RecordingStartEvent"] | components["schemas"]["RecordingStopEvent"] | components["schemas"]["NoAudioDetectedEvent"] | components["schemas"]["LoopbackStartedEvent"] | components["schemas"]["LoopbackStoppedEvent"] | components["schemas"]["VadDetectStartEvent"] | components["schemas"]["VadDetectStopEvent"] | components["schemas"]["TranscriptionStartEvent"] | components["schemas"]["WakewordDetectedEvent"] | components["schemas"]["WakewordDetectionStartEvent"] | components["schemas"]["WakewordDetectionEndEvent"] | components["schemas"]["TurnDetectionStartEvent"] | components["schemas"]["TurnDetectionStopEvent"] | components["schemas"]["ModelDownloadStartEvent"] | components["schemas"]["ModelDownloadProgressEvent"] | components["schemas"]["ModelDownloadCompleteEvent"] | components["schemas"]["AudioLevelEvent"];
         RealtimeTextEvent: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -52,6 +52,14 @@ export interface components {
              * @enum {string}
              */
             type: "recording_stop";
+        };
+        /** @description Emitted when a manual stop (e.g. push-to-talk release) finishes without producing a transcription because no speech was captured. */
+        NoAudioDetectedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "no_audio_detected";
         };
         VadDetectStartEvent: {
             /**
@@ -307,6 +315,12 @@ export interface components {
             recordingMode?: "ptt" | "toggle" | "listen";
             loopbackDeviceIndex?: number | null;
             showRecordingOverlay?: boolean;
+            visualizerSize?: number;
+            showLiveTranscription?: boolean;
+            /** @enum {string} */
+            visualizerType?: "bar" | "grid" | "radial" | "wave" | "aura";
+            visualizerBarCount?: number;
+            visualizerColor?: string;
         };
         HotkeySettings: {
             /** @description Electron accelerator string */
@@ -346,6 +360,19 @@ export interface components {
             size?: number;
             /** Format: date-time */
             modifiedAt?: string;
+        };
+        OllamaScanResult: {
+            models: components["schemas"]["OllamaModel"][];
+            /** @description True if the Ollama API responded (even with HTTP error). False if connection failed. */
+            reachable: boolean;
+            /** @description Human-readable failure reason when not reachable or models couldn't be parsed. */
+            error?: string;
+        };
+        OllamaDetectResult: {
+            /** @description True if an `ollama` executable can be located on PATH or in default install locations. */
+            installed: boolean;
+            /** @description Resolved path to the ollama executable, when installed. */
+            path?: string;
         };
         AppSettings: {
             model?: components["schemas"]["ModelSettings"];

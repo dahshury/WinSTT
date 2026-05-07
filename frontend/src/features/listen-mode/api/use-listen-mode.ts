@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useConnectionStore } from "@/features/connect-server";
-import { useSettingsStore } from "@/features/update-settings";
+import { z } from "zod";
+import { useConnectionStore } from "@/entities/connection";
+import { useSettingsStore } from "@/entities/setting";
 import {
 	loopbackListDevices,
 	loopbackStart,
@@ -12,7 +13,14 @@ import {
 } from "@/shared/api/ipc-client";
 import { useListenStore } from "../model/listen-store";
 
-export function useListenMode() {
+const loopbackDeviceSchema = z.object({
+	index: z.number().int(),
+	name: z.string(),
+	defaultSampleRate: z.number(),
+	maxOutputChannels: z.number(),
+});
+
+export function useListenMode(): void {
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const loopbackDeviceIndex = useSettingsStore(
 		(s) => s.settings.general?.loopbackDeviceIndex ?? null
@@ -51,14 +59,11 @@ export function useListenMode() {
 				}
 
 				if (Array.isArray(devices)) {
-					setDevices(
-						devices as Array<{
-							index: number;
-							name: string;
-							defaultSampleRate: number;
-							maxOutputChannels: number;
-						}>
-					);
+					const validated = devices
+						.map((d) => loopbackDeviceSchema.safeParse(d))
+						.filter((r) => r.success)
+						.map((r) => r.data);
+					setDevices(validated);
 				} else {
 					console.warn("[useListenMode] Invalid devices response:", devices);
 				}

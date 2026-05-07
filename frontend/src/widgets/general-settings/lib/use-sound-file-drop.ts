@@ -23,17 +23,31 @@ function hasValidExtension(name: string): boolean {
 	return ACCEPTED_EXTENSIONS.includes(ext);
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: next-intl Translator uses namespace-parameterized generics; narrowing breaks assignability at the call site.
+type TranslatorFn = (key: any, values?: any) => string;
+
 interface UseSoundFileDropOptions {
 	update: (patch: { recordingSoundPath: string }) => void;
-	// biome-ignore lint/suspicious/noExplicitAny: accepts any next-intl Translator signature
-	t: (key: any, values?: any) => string;
+	t: TranslatorFn;
 }
 
 /**
  * Manages drag-and-drop, browse, and reset logic for the recording sound file.
  * Validates file extension and audio duration before accepting.
  */
-export function useSoundFileDrop({ update, t }: UseSoundFileDropOptions) {
+interface UseSoundFileDropReturn {
+	dragOver: boolean;
+	dropError: string;
+	handlers: {
+		onDrop: (e: DragEvent<HTMLDivElement>) => void;
+		onDragOver: (e: DragEvent<HTMLDivElement>) => void;
+		onDragLeave: () => void;
+	};
+	handleBrowse: () => Promise<void>;
+	handleReset: () => void;
+}
+
+export function useSoundFileDrop({ update, t }: UseSoundFileDropOptions): UseSoundFileDropReturn {
 	const [dragOver, setDragOver] = useState(false);
 	const [dropError, setDropError] = useState("");
 

@@ -1,23 +1,30 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSettingsStore } from "@/features/update-settings";
+import { z } from "zod";
+import { useSettingsStore } from "@/entities/setting";
 import { loopbackListDevices } from "@/shared/api/ipc-client";
 import type { SelectOption } from "@/shared/ui/select";
 
-interface LoopbackDevice {
-	index: number;
-	name: string;
-	defaultSampleRate: number;
-	maxOutputChannels: number;
-	isDefault?: boolean;
-}
+const loopbackDeviceSchema = z.object({
+	index: z.number().int(),
+	name: z.string(),
+	defaultSampleRate: z.number(),
+	maxOutputChannels: z.number(),
+	isDefault: z.boolean().optional(),
+});
 
 /**
  * Fetches loopback audio devices via IPC when in "listen" recording mode,
  * maps them to select options, and resolves the current selection ID.
  */
-export function useLoopbackDevices() {
+interface UseLoopbackDevicesReturn {
+	options: SelectOption[];
+	currentId: string;
+	handleChange: (v: string) => void;
+}
+
+export function useLoopbackDevices(): UseLoopbackDevicesReturn {
 	const general = useSettingsStore((s) => s.settings.general);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
 	const [options, setOptions] = useState<SelectOption[]>([]);
@@ -42,7 +49,10 @@ export function useLoopbackDevices() {
 					console.warn("[useLoopbackDevices] Invalid devices response:", devices);
 					return;
 				}
-				const typed = devices as LoopbackDevice[];
+				const typed = devices
+					.map((d) => loopbackDeviceSchema.safeParse(d))
+					.filter((r) => r.success)
+					.map((r) => r.data);
 				const defaultDev = typed.find((d) => d.isDefault);
 				const defaultLabel = defaultDev ? `System Default (${defaultDev.name})` : "System Default";
 				const defIdx = defaultDev?.index ?? null;

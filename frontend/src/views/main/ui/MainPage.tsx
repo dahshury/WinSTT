@@ -3,7 +3,9 @@
 import { Mic01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { useSettingsStore } from "@/features/update-settings";
+import { useSettingsStore } from "@/entities/setting";
+import { Button } from "@/shared/ui/button";
+import { Tooltip } from "@/shared/ui/tooltip";
 import { AudioDisplay } from "@/widgets/audio-display";
 import { StatusBar } from "@/widgets/status-bar";
 
@@ -30,16 +32,16 @@ export function MainPage() {
 						</div>
 					</div>
 
-					<button
-						aria-label={th("switchToPtt")}
-						className="titlebar-no-drag absolute top-1 right-1 z-40 flex items-center gap-1.5 rounded-md px-2 py-1 opacity-[0.15] transition-opacity duration-200 hover:bg-white/10 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-white/50"
-						onClick={() => updateGeneral({ recordingMode: "ptt" })}
-						title={th("switchToPtt")}
-						type="button"
-					>
-						<HugeiconsIcon className="text-white/60" icon={Mic01Icon} size={14} />
-						<span className="font-medium text-[11px] text-white/60">{t("pttButton")}</span>
-					</button>
+					<Tooltip content={th("switchToPtt")}>
+						<Button
+							aria-label={th("switchToPtt")}
+							className="titlebar-no-drag absolute top-1 right-1 z-40 gap-1.5 rounded-md px-2 py-1 opacity-[0.15] transition-opacity duration-200 hover:bg-white/10 hover:opacity-100"
+							onClick={() => updateGeneral({ recordingMode: "ptt" })}
+						>
+							<HugeiconsIcon className="text-white/60" icon={Mic01Icon} size={14} />
+							<span className="font-medium text-white/60 text-xs-tight">{t("pttButton")}</span>
+						</Button>
+					</Tooltip>
 				</>
 			)}
 

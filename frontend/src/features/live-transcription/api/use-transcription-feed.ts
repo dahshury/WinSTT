@@ -1,12 +1,15 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useEffect } from "react";
-import { onFullSentence, onRealtimeText } from "@/shared/api/ipc-client";
+import { onFullSentence, onNoAudioDetected, onRealtimeText } from "@/shared/api/ipc-client";
 import { useTranscriptionStore } from "../model/transcription-store";
 
-export function useTranscriptionFeed() {
+export function useTranscriptionFeed(): void {
+	const t = useTranslations("transcription");
 	const addFinalSentence = useTranscriptionStore((s) => s.addFinalSentence);
 	const setRealtimeText = useTranscriptionStore((s) => s.setRealtimeText);
+	const showEphemeral = useTranscriptionStore((s) => s.showEphemeral);
 
 	useEffect(() => {
 		const unsubRealtime = onRealtimeText((text) => {
@@ -17,9 +20,14 @@ export function useTranscriptionFeed() {
 			addFinalSentence(text);
 		});
 
+		const unsubNoAudio = onNoAudioDetected(() => {
+			showEphemeral(t("noAudioDetected"));
+		});
+
 		return () => {
 			unsubRealtime();
 			unsubFinal();
+			unsubNoAudio();
 		};
-	}, [addFinalSentence, setRealtimeText]);
+	}, [addFinalSentence, setRealtimeText, showEphemeral, t]);
 }

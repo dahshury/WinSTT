@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { type DependencyList, useEffect, useRef } from "react";
 
-export function useAutoScroll<T extends HTMLElement>(_dependency: unknown) {
+export function useAutoScroll<T extends HTMLElement>(deps: DependencyList) {
 	const ref = useRef<T>(null);
 
 	useEffect(() => {
@@ -10,7 +10,8 @@ export function useAutoScroll<T extends HTMLElement>(_dependency: unknown) {
 		if (el) {
 			el.scrollTop = el.scrollHeight;
 		}
-	}, []);
+		// biome-ignore lint/correctness/useExhaustiveDependencies: caller controls when scrolling triggers via `deps`
+	}, deps);
 
 	return ref;
 }

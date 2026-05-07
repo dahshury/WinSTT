@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 export interface IconButtonProps {
 	icon: ReactNode;
@@ -10,7 +11,8 @@ export interface IconButtonProps {
 	disabled?: boolean;
 	/** Accessible label — required for icon-only buttons (WCAG 4.1.2) */
 	"aria-label": string;
-	title?: string;
+	/** Tooltip text — defaults to aria-label */
+	tooltip?: string;
 	className?: string;
 }
 
@@ -19,21 +21,22 @@ export function IconButton({
 	onClick,
 	disabled,
 	"aria-label": ariaLabel,
-	title,
+	tooltip,
 	className,
 }: IconButtonProps) {
 	return (
-		<Button
-			aria-label={ariaLabel}
-			className={cn(
-				"size-7 rounded-full bg-transparent p-0 text-foreground-muted hover:bg-surface-hover hover:text-foreground-secondary",
-				className
-			)}
-			disabled={disabled}
-			onClick={onClick}
-			title={title ?? ariaLabel}
-		>
-			{icon}
-		</Button>
+		<Tooltip content={tooltip ?? ariaLabel}>
+			<Button
+				aria-label={ariaLabel}
+				className={cn(
+					"size-7 rounded-full bg-transparent p-0 text-foreground-muted hover:bg-surface-hover hover:text-foreground-secondary",
+					className
+				)}
+				disabled={disabled}
+				onClick={onClick}
+			>
+				{icon}
+			</Button>
+		</Tooltip>
 	);
 }

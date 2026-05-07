@@ -2,8 +2,8 @@
 
 import { ScrollArea } from "@base-ui/react/scroll-area";
 import { useTranslations } from "next-intl";
+import { useConnectionStore } from "@/entities/connection";
 import { TranscriptionLine } from "@/entities/transcription";
-import { useConnectionStore } from "@/features/connect-server";
 import { useTranscriptionStore } from "@/features/live-transcription";
 import { useAutoScroll } from "../lib/use-auto-scroll";
 

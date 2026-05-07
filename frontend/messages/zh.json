@@ -31,6 +31,15 @@
     "tabDictionary": "词典",
     "tabSnippets": "文本片段",
     "tabLlm": "LLM",
+    "tabDesktop": "桌面",
+    "tabGeneralTooltip": "录音模式、语言、声音和启动行为。",
+    "tabModelTooltip": "选择语音转文本模型并配置 LLM 后处理器。",
+    "tabAudioTooltip": "麦克风、语音活动检测和静音处理。",
+    "tabProcessingTooltip": "实时预览、智能断点和文本格式化。",
+    "tabHotkeyTooltip": "配置按键说话的键盘快捷键。",
+    "tabDictionaryTooltip": "在转录文本中自动替换单词或短语。",
+    "tabSnippetsTooltip": "将简短触发词扩展为预定义的较长文本。",
+    "tabDesktopTooltip": "原生桌面集成:菜单、剪贴板、更新器和遥测。",
     "minimize": "最小化",
     "close": "关闭"
   },
@@ -63,6 +72,25 @@
     "showRecordingOverlay": "录音叠加层",
     "showRecordingOverlayCaption": "录音时显示浮动可视化器",
     "showRecordingOverlayTooltip": "在录音期间在屏幕底部显示带有音频可视化器的浮动窗口（仅限PTT和切换模式）",
+    "visualizerSize": "可视化器大小",
+    "visualizerSizeCaption": "可视化器的像素大小 (10–200)",
+    "visualizerSizeTooltip": "录音期间显示的浮动可视化器的宽度和高度（像素）。",
+    "showLiveTranscription": "实时转录",
+    "showLiveTranscriptionCaption": "在可视化器下方显示转录文本",
+    "showLiveTranscriptionTooltip": "在录音可视化器下方显示实时转录文本。",
+    "visualizerType": "可视化样式",
+    "visualizerTypeCaption": "音频可视化动画样式",
+    "visualizerTypeTooltip": "选择音频可视化器的视觉样式。条形:垂直条形。网格:点阵网格。径向:圆形扩展条。波形:示波器波形 (WebGL)。光环:有机发光光环 (WebGL)。",
+    "visualizerBar": "条形",
+    "visualizerGrid": "网格",
+    "visualizerRadial": "径向",
+    "visualizerWave": "波形",
+    "visualizerAura": "光环",
+    "visualizerBarCount": "条形数量",
+    "visualizerBarCountCaption": "条形可视化器的条数 (3–21)",
+    "visualizerBarCountTooltip": "调整条形样式可视化器显示的条数。条数越多越密集。",
+    "visualizerColor": "可视化颜色",
+    "visualizerColorCaption": "可视化器的强调色",
     "fileTranscription": "文件转录",
     "fileTranscriptionFormat": "格式",
     "fileTranscriptionFormatCaption": "转录文件的输出格式",
@@ -74,7 +102,14 @@
     "minimizeToTray": "最小化到托盘",
     "minimizeToTrayCaption": "在系统托盘中后台运行",
     "language": "语言",
-    "languageCaption": "界面显示语言"
+    "languageCaption": "界面显示语言",
+    "languageTooltip": "用于界面(菜单、设置、提示)的语言。与转录语言相互独立。",
+    "visualizerColorTooltip": "音频可视化动画使用的强调色。",
+    "soundFileTooltip": "录音开始时播放的自定义 .wav 或 .mp3 文件。拖放文件或浏览选择。",
+    "fileTranscriptionFormatTooltip": "已转录音视频文件的输出文件格式。TXT 为纯文本;SRT 包含用于字幕的时间戳。",
+    "startOnLoginTooltip": "每次登录 Windows 时自动启动 WinSTT。",
+    "startMinimizedTooltip": "启动时隐藏在系统托盘中,而不是打开主窗口。",
+    "minimizeToTrayTooltip": "关闭主窗口后将 WinSTT 保留在系统托盘中运行,而不是退出程序。"
   },
   "model": {
     "mainModel": "主模型",
@@ -99,7 +134,11 @@
     "realtimeBeamSize": "实时束搜索宽度",
     "realtimeBeamSizeCaption": "实时模型的搜索宽度",
     "realtimeBeamSizeTooltip": "实时预览模型的束搜索宽度。较低的值可提供更快的实时反馈，但会牺牲一些准确度。这只影响实时预览，不影响最终转录。",
-    "llm": "大语言模型"
+    "llm": "大语言模型",
+    "computeDefaultLabel": "默认(模型原生精度)",
+    "computeAutoLabel": "自动(适合您的硬件)",
+    "deviceAutoLabel": "自动",
+    "deviceCpuLabel": "CPU"
   },
   "audio": {
     "inputDevice": "输入设备",
@@ -142,8 +181,10 @@
     "formatting": "格式化",
     "uppercaseFirst": "首字母大写",
     "uppercaseFirstCaption": "自动将句首字母大写",
+    "uppercaseFirstTooltip": "自动将每个转录句子的首字母大写。",
     "endWithPeriod": "句末加句号",
     "endWithPeriodCaption": "自动在句尾添加句号",
+    "endWithPeriodTooltip": "在不以标点符号结尾的转录句子末尾追加句号。",
     "smartEndpoint": "智能端点",
     "smartEndpointLabel": "智能端点",
     "smartEndpointCaption": "AI 驱动的句子检测",
@@ -156,10 +197,13 @@
     "configuration": "快捷键配置",
     "pushToTalkKey": "按住说话键",
     "pushToTalkKeyCaption": "点击录制，按下按键组合，然后点击停止",
+    "pushToTalkKeyTooltip": "触发录音的键盘快捷键。点击录制,按下您想要的按键组合,然后点击停止。",
     "pressKeys": "请按键...",
     "record": "录制",
     "stop": "停止",
-    "switchToPtt": "切换到按住说话"
+    "switchToPtt": "切换到按住说话",
+    "displayTooltip": "按键说话快捷键。在「设置 → 快捷键」中更改。",
+    "displayTooltipDisconnected": "按键说话快捷键（未激活 — 服务器已断开）。在「设置 → 快捷键」中更改。"
   },
   "dictionary": {
     "title": "词语替换",
@@ -187,17 +231,27 @@
     "connecting": "连接中",
     "error": "错误",
     "offline": "离线",
-    "loopbackIdle": "回环空闲"
+    "loopbackIdle": "回环空闲",
+    "connectingTooltip": "正在与语音转文本服务器建立连接...",
+    "errorTooltip": "无法连接到语音转文本服务器。请检查服务器进程是否正在运行。",
+    "offlineTooltip": "已与语音转文本服务器断开连接。",
+    "gpuTooltip": "服务器正在使用 GPU 加速进行转录。",
+    "cpuTooltip": "服务器正在 CPU 上运行。转录速度将比 GPU 慢得多。",
+    "modelTooltip": "活动语音转文字模型：{model}。在「设置 → 模型」中更改。",
+    "loopbackActiveTooltip": "正在监听来自此环回设备的系统音频。在「设置 → 通用 → 环回设备」中更改。",
+    "loopbackIdleTooltip": "已配置「监听」模式，但尚未捕获音频。"
   },
   "transcription": {
     "waiting": "等待语音输入...",
-    "serverOffline": "服务器离线"
+    "serverOffline": "服务器离线",
+    "noAudioDetected": "（未检测到音频）"
   },
   "mainPage": {
     "pttButton": "PTT"
   },
   "audioDisplay": {
-    "dropToTranscribe": "拖放文件以转录"
+    "dropToTranscribe": "拖放文件以转录",
+    "ariaLabel": "音频显示与文件拖放区"
   },
   "download": {
     "downloadingModel": "正在下载 {model}...",
@@ -233,7 +287,12 @@
     "ollamaNotAvailableDescription": "Ollama 未运行或已被卸载。转录将正常工作，但 LLM 后处理已禁用。请安装 Ollama 并确保其正在运行以使用此功能。",
     "ollamaRequired": "需要 Ollama",
     "ollamaRequiredDescription": "LLM 后处理需要安装并运行 Ollama。请从官方网站下载并安装 Ollama，然后重试。",
-    "downloadOllama": "下载 Ollama"
+    "ollamaNotRunning": "Ollama 未运行",
+    "ollamaNotRunningDescription": "Ollama 已安装但当前未运行。启动它以启用 LLM 后处理。",
+    "downloadOllama": "下载 Ollama",
+    "runOllama": "运行 Ollama",
+    "starting": "正在启动…",
+    "ollamaStartFailed": "启动 Ollama 失败。请手动启动。"
   },
   "errors": {
     "somethingWentWrong": "出了点问题",
@@ -241,5 +300,61 @@
     "tryAgain": "重试",
     "pageNotFound": "页面未找到",
     "notFoundDescription": "您访问的页面不存在。"
+  },
+  "tray": {
+    "showWindow": "显示窗口",
+    "openSettings": "设置",
+    "transcribeFile": "转录文件...",
+    "checkForUpdates": "检查更新",
+    "quit": "退出",
+    "modePtt": "PTT",
+    "modeToggle": "切换",
+    "modeListen": "聆听",
+    "audioFiles": "音频文件",
+    "videoFiles": "视频文件",
+    "allFiles": "所有文件",
+    "selectFileTitle": "选择要转录的音频或视频文件"
+  },
+  "desktop": {
+    "title": "桌面工具",
+    "active": "本设置窗口已启用 Electrobun 风格的桌面控件。",
+    "unavailable": "当前运行环境中 Electron API 不可用。",
+    "menuEditor": "应用菜单编辑器",
+    "menuJsonLabel": "菜单 JSON",
+    "menuJsonCaption": "编辑 JSON 并应用到原生应用菜单。",
+    "applyJson": "应用 JSON",
+    "loadDemo": "加载示例",
+    "resetMenu": "重置原生菜单",
+    "appliedMenu": "已应用 {count} 个顶级菜单项。",
+    "menuReset": "已重置应用菜单。",
+    "contextMenuTitle": "上下文菜单演练场",
+    "contextMenuHint": "在此框中右击以打开原生上下文菜单。",
+    "openContextMenu": "打开上下文菜单",
+    "contextMenuClosed": "上下文菜单已关闭未选择项。",
+    "contextMenuSelected": "已选择:{id}",
+    "contextMenuInitial": "尚无上下文菜单操作。",
+    "clipboardTitle": "剪贴板面板",
+    "clipboardLabel": "文本",
+    "clipboardCaption": "读写原生剪贴板。",
+    "clipboardPlaceholder": "剪贴板文本",
+    "readClipboard": "读取剪贴板",
+    "writeClipboard": "写入剪贴板",
+    "clearClipboard": "清空剪贴板",
+    "clipboardLoaded": "已加载剪贴板内容。",
+    "clipboardUpdated": "已更新剪贴板。",
+    "clipboardCleared": "已清空剪贴板。",
+    "updaterTitle": "更新器时间线",
+    "refreshHistory": "刷新历史",
+    "clearHistory": "清除历史",
+    "updaterRefreshed": "已刷新更新器历史。",
+    "updaterCleared": "已清除更新器历史。",
+    "noUpdaterEntries": "尚无更新器记录。",
+    "telemetryTitle": "窗口遥测",
+    "telemetryLabel": "实时流",
+    "telemetryCaption": "跟踪此窗口的移动/调整大小/聚焦事件。",
+    "telemetryClear": "清除",
+    "telemetryClearCaption": "清除面板中所有捕获的事件。",
+    "clearEvents": "清除事件",
+    "noTelemetry": "尚未捕获遥测。"
   }
 }

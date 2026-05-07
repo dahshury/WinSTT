@@ -44,6 +44,9 @@ export function pasteText(text: string): void {
 	if (!text) {
 		return;
 	}
+	if (process.platform !== "win32") {
+		return;
+	}
 	clipboard.writeText(text);
 	setPasteGuard(true);
 	execFile(

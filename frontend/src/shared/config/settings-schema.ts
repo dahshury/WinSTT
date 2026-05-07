@@ -1,10 +1,13 @@
 import { z } from "zod";
+import { COMPUTE_TYPES } from "./defaults";
+
+const computeTypeSchema = z.enum(COMPUTE_TYPES);
 
 export const modelSettingsSchema = z.object({
 	model: z.string().default("large-v2"),
 	realtimeModel: z.string().default("tiny"),
 	language: z.string().default("en"),
-	computeType: z.string().default("default"),
+	computeType: computeTypeSchema.default("default"),
 	device: z.enum(["auto", "cpu"]).default("auto"),
 	backend: z.enum(["faster_whisper", "onnx_asr"]).default("faster_whisper"),
 	onnxQuantization: z.string().default(""),
@@ -53,14 +56,22 @@ export const generalSettingsSchema = z.object({
 	recordingMode: z.enum(["ptt", "toggle", "listen"]).default("ptt"),
 	loopbackDeviceIndex: z.number().int().nullable().default(null),
 	showRecordingOverlay: z.boolean().default(true),
+	visualizerSize: z.number().int().min(10).max(200).default(20),
+	showLiveTranscription: z.boolean().default(true),
+	visualizerType: z.enum(["bar", "grid", "radial", "wave", "aura"]).default("bar"),
+	visualizerBarCount: z.number().int().min(3).max(21).default(9),
+	visualizerColor: z
+		.string()
+		.regex(/^#[0-9a-fA-F]{6}$/)
+		.default("#58a6ff"),
 });
 
 export const hotkeySettingsSchema = z.object({
-	pushToTalkKey: z.string().default("LCtrl+LMeta"),
+	pushToTalkKey: z.string().min(1).default("LCtrl+LMeta"),
 });
 
 export const dictionaryEntrySchema = z.object({
-	id: z.string(),
+	id: z.string().min(1),
 	find: z.string().min(1, "Required"),
 	replace: z.string().min(1, "Required"),
 	caseSensitive: z.boolean().default(false),
@@ -68,20 +79,23 @@ export const dictionaryEntrySchema = z.object({
 });
 
 export const addDictionaryEntrySchema = z.object({
-	find: z.string().min(1, "Required"),
-	replace: z.string().min(1, "Required"),
+	find: z.string().trim().min(1, "Required"),
+	replace: z.string().trim().min(1, "Required"),
 	caseSensitive: z.boolean(),
 	wholeWord: z.boolean(),
 });
 export type AddDictionaryEntry = z.infer<typeof addDictionaryEntrySchema>;
 
 export const snippetEntrySchema = z.object({
-	id: z.string(),
+	id: z.string().min(1),
 	trigger: z.string().min(1, "Required"),
 	expansion: z.string().min(1, "Required"),
 });
 
-export const addSnippetEntrySchema = snippetEntrySchema.omit({ id: true });
+export const addSnippetEntrySchema = z.object({
+	trigger: z.string().trim().min(1, "Required"),
+	expansion: z.string().trim().min(1, "Required"),
+});
 export type AddSnippetEntry = z.infer<typeof addSnippetEntrySchema>;
 
 export const llmSettingsSchema = z.object({

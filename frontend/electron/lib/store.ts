@@ -1,4 +1,68 @@
 import Store from "electron-store";
+import { z } from "zod";
+
+// ── Zod schemas for individual store values (dot-path access) ────────
+// These validate the raw `unknown` return of store.get("section.key").
+const storeValueSchemas = {
+	// general
+	"general.recordingMode": z.enum(["ptt", "toggle", "listen"]).catch("ptt"),
+	"general.minimizeToTray": z.boolean().catch(true),
+	"general.startMinimized": z.boolean().catch(false),
+	"general.recordingSound": z.boolean().catch(true),
+	"general.recordingSoundPath": z.string().catch(""),
+	"general.fileTranscriptionFormat": z.enum(["txt", "srt"]).catch("txt"),
+	"general.showRecordingOverlay": z.boolean().catch(true),
+	"general.visualizerSize": z.number().int().min(10).max(200).catch(20),
+	"general.showLiveTranscription": z.boolean().catch(true),
+	"general.muteSystemAudioWhileDictating": z.boolean().catch(false),
+	// quality
+	"quality.enableRealtimeTranscription": z.boolean().catch(true),
+	"quality.useMainModelForRealtime": z.boolean().catch(false),
+	"quality.ensureSentenceEndsWithPeriod": z.boolean().catch(true),
+	// audio
+	"audio.sileroSensitivity": z.number().catch(0.4),
+	"audio.sileroDeactivityDetection": z.boolean().catch(true),
+	// llm
+	"llm.enabled": z.boolean().catch(false),
+	"llm.model": z.string().catch(""),
+	"llm.preset": z
+		.enum(["neutral", "formal", "friendly", "technical", "casual", "concise"])
+		.catch("neutral"),
+	"llm.endpoint": z.string().catch("http://localhost:11434"),
+	"llm.timeout": z.number().int().catch(5000),
+	// schema version (internal)
+	_schemaVersion: z.number().optional().catch(undefined),
+} as const;
+
+type StoreValueSchemas = typeof storeValueSchemas;
+
+/**
+ * Type-safe, Zod-validated accessor for electron-store dot-path keys.
+ * Returns the parsed value or the schema's `.catch()` fallback on failure.
+ */
+export function getStoreValue<K extends keyof StoreValueSchemas>(
+	key: K
+): z.output<StoreValueSchemas[K]> {
+	const raw = store.get(key);
+	const schema = storeValueSchemas[key];
+	return (schema as z.ZodType).parse(raw);
+}
+
+/**
+ * Type-safe accessor for CLI arg building — returns the raw value with a
+ * narrow type union so callers don't need `as` casts. Returns `undefined`
+ * when the key is missing from the store.
+ */
+export function getStoreRaw(key: string): string | number | boolean | undefined {
+	const raw = store.get(key);
+	if (raw == null) {
+		return undefined;
+	}
+	if (typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean") {
+		return raw;
+	}
+	return undefined;
+}
 
 export const store = new Store({
 	name: "winstt-settings",
@@ -52,6 +116,12 @@ export const store = new Store({
 			fileTranscriptionFormat: "txt",
 			recordingMode: "ptt",
 			loopbackDeviceIndex: null,
+			showRecordingOverlay: true,
+			visualizerSize: 20,
+			showLiveTranscription: true,
+			visualizerType: "bar",
+			visualizerBarCount: 9,
+			visualizerColor: "#58a6ff",
 		},
 		hotkey: {
 			pushToTalkKey: "LCtrl+LMeta",
@@ -73,20 +143,20 @@ export const store = new Store({
 // electron-store defaults only apply when a key is missing. If old defaults
 // were persisted via settings:save, they override new defaults silently.
 const SCHEMA_VERSION = 3;
-const currentVersion = (store.get("_schemaVersion") as number | undefined) ?? 1;
+const currentVersion = getStoreValue("_schemaVersion") ?? 1;
 
 if (currentVersion < SCHEMA_VERSION) {
 	// Ensure realtime transcription is enabled with separate tiny model.
 	// Use !value to catch both `false` and `undefined` (missing key in persisted JSON).
-	if (!store.get("quality.enableRealtimeTranscription")) {
+	if (!getStoreValue("quality.enableRealtimeTranscription")) {
 		store.set("quality.enableRealtimeTranscription", true);
 	}
-	if (store.get("quality.useMainModelForRealtime") !== false) {
+	if (getStoreValue("quality.useMainModelForRealtime") !== false) {
 		store.set("quality.useMainModelForRealtime", false);
 	}
 	// Fix silero sensitivity that was incorrectly defaulting to 0.05
-	const silero = store.get("audio.sileroSensitivity") as number | undefined;
-	if (silero == null || silero === 0.05) {
+	const silero = getStoreValue("audio.sileroSensitivity");
+	if (silero === 0.05) {
 		store.set("audio.sileroSensitivity", 0.4);
 	}
 	console.log("[store] Migration applied: _schemaVersion", currentVersion, "→", SCHEMA_VERSION);

@@ -1,42 +1,32 @@
 "use client";
 
+import { TextIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
-import { SettingSection } from "@/entities/setting";
+import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { DictionaryTable } from "@/features/manage-dictionary";
-import { useSettingsStore } from "@/features/update-settings";
 
 export function DictionarySettingsPanel() {
 	const dictionary = useSettingsStore((s) => s.settings.dictionary) ?? [];
-	const setSettings = useSettingsStore((s) => s.setSettings);
-	const settings = useSettingsStore((s) => s.settings);
+	const updateDictionary = useSettingsStore((s) => s.updateDictionary);
 	const t = useTranslations("dictionary");
 
 	return (
-		<SettingSection title={t("title")}>
+		<SettingSection icon={TextIcon} title={t("title")}>
 			<div className="py-2">
-				<p className="mb-3 text-[12px] text-foreground-muted">{t("description")}</p>
+				<p className="mb-3 text-body-sm text-foreground-muted">{t("description")}</p>
 				<DictionaryTable
 					entries={dictionary}
 					onAdd={(entry) => {
-						setSettings({
-							...settings,
-							dictionary: [...dictionary, { ...entry, id: crypto.randomUUID() }],
-						});
+						updateDictionary([...dictionary, { ...entry, id: crypto.randomUUID() }]);
 					}}
 					onClearAll={() => {
-						setSettings({ ...settings, dictionary: [] });
+						updateDictionary([]);
 					}}
 					onRemove={(id) => {
-						setSettings({
-							...settings,
-							dictionary: dictionary.filter((e) => e.id !== id),
-						});
+						updateDictionary(dictionary.filter((e) => e.id !== id));
 					}}
 					onUpdate={(id, patch) => {
-						setSettings({
-							...settings,
-							dictionary: dictionary.map((e) => (e.id === id ? { ...e, ...patch } : e)),
-						});
+						updateDictionary(dictionary.map((e) => (e.id === id ? { ...e, ...patch } : e)));
 					}}
 				/>
 			</div>

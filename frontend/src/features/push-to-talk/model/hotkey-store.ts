@@ -9,7 +9,7 @@ interface HotkeyState {
 	setAccelerator: (accelerator: string) => void;
 }
 
-export const useHotkeyStore = create<HotkeyState>((set) => ({
+export const useHotkeyStore = create<HotkeyState>()((set) => ({
 	isPressed: false,
 	isActive: false,
 	accelerator: "LCtrl+LMeta",

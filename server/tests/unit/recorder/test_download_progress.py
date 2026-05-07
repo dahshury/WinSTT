@@ -444,13 +444,15 @@ class TestCancelDownload:
         events: list[DownloadProgress] = []
         cancel_flag = False
 
-        with pytest.raises(DownloadCancelledError):
-            with _intercept_hf_progress("cancel-model", _collect(events), cancel_check=lambda: cancel_flag):
-                cls = _get_patched_cls()
-                bar = cls(total=_100MB)
-                bar.update(_100MB // 4)  # 25%
-                cancel_flag = True
-                bar.update(_100MB // 4)  # raises DownloadCancelledError
+        with (
+            pytest.raises(DownloadCancelledError),
+            _intercept_hf_progress("cancel-model", _collect(events), cancel_check=lambda: cancel_flag),
+        ):
+            cls = _get_patched_cls()
+            bar = cls(total=_100MB)
+            bar.update(_100MB // 4)  # 25%
+            cancel_flag = True
+            bar.update(_100MB // 4)  # raises DownloadCancelledError
 
         # Must NOT have a 1.0 completion event — download was cancelled
         assert all(e.progress < 1.0 for e in events), (
@@ -467,11 +469,13 @@ class TestCancelDownload:
         assert _get_patched_cls() is _FakeTqdm
         assert _get_fw_disabled() is _FakeDisabledTqdm
 
-        with pytest.raises(DownloadCancelledError):
-            with _intercept_hf_progress("mdl", lambda _: None, cancel_check=lambda: True):
-                cls = _get_patched_cls()
-                bar = cls(total=_10MB)
-                bar.update(_2MB)  # cancel_check returns True → raises
+        with (
+            pytest.raises(DownloadCancelledError),
+            _intercept_hf_progress("mdl", lambda _: None, cancel_check=lambda: True),
+        ):
+            cls = _get_patched_cls()
+            bar = cls(total=_10MB)
+            bar.update(_2MB)  # cancel_check returns True → raises
 
         assert _get_patched_cls() is _FakeTqdm
         assert _get_fw_disabled() is _FakeDisabledTqdm

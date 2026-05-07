@@ -1,6 +1,10 @@
 appId: com.winstt.app
 productName: WinSTT
 asar: true
+asarUnpack:
+  - "node_modules/uiohook-napi/**/*"
+  - "node_modules/node-gyp-build/**/*"
+  - "out/standalone/**/*"
 directories:
   output: dist
   buildResources: build
@@ -11,6 +15,7 @@ files:
   - package.json
   - "node_modules/uiohook-napi/**/*"
   - "node_modules/node-gyp-build/**/*"
+  - "node_modules/pngjs/**/*"
 # Bundled STT server (PyInstaller/Nuitka executable).
 # Place the built server at frontend/stt-server-dist/ before running electron:build.
 # In production, stt-process.ts resolves to process.resourcesPath/stt-server/
@@ -27,3 +32,6 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+publish:
+  - provider: github
+    releaseType: release

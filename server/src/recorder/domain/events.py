@@ -29,6 +29,11 @@ class TranscriptionCompleted(RecorderEvent):
 
 
 @dataclass(frozen=True)
+class NoAudioDetected(RecorderEvent):
+    """Emitted when a manual stop (PTT release) finds no transcribable audio."""
+
+
+@dataclass(frozen=True)
 class VADStarted(RecorderEvent):
     pass
 

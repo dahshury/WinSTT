@@ -2,19 +2,31 @@ import fs from "node:fs";
 import path from "node:path";
 import type { BrowserWindow } from "electron";
 import { ipcMain } from "electron";
-import { store } from "./store";
+import { getStoreValue } from "./store";
 
 const DEFAULT_SOUND_PATH = path.join(import.meta.dirname, "..", "build", "splash.wav");
 
 let win: BrowserWindow | null = null;
 
+/** Allowed audio file extensions for custom recording sounds. */
+const ALLOWED_SOUND_EXTENSIONS = new Set([".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac"]);
+
 function getSoundPath(): string | null {
-	const enabled = store.get("general.recordingSound") as boolean | undefined;
-	if (enabled === false) {
+	const enabled = getStoreValue("general.recordingSound");
+	if (!enabled) {
 		return null;
 	}
-	const custom = store.get("general.recordingSoundPath") as string | undefined;
-	return custom && custom.length > 0 ? custom : DEFAULT_SOUND_PATH;
+	const custom = getStoreValue("general.recordingSoundPath");
+	if (custom && custom.length > 0) {
+		// Validate custom path: must have an allowed audio extension
+		const ext = path.extname(custom).toLowerCase();
+		if (!ALLOWED_SOUND_EXTENSIONS.has(ext)) {
+			console.warn("[sound] Custom sound path rejected (bad extension):", ext);
+			return DEFAULT_SOUND_PATH;
+		}
+		return custom;
+	}
+	return DEFAULT_SOUND_PATH;
 }
 
 /**

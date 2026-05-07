@@ -2,13 +2,18 @@
 
 import { Progress } from "@base-ui/react/progress";
 import { memo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
 
 export const FileOverlay = memo(function FileOverlay() {
-	const status = useFileTranscriptionStore((s) => s.status);
-	const progress = useFileTranscriptionStore((s) => s.progress);
-	const message = useFileTranscriptionStore((s) => s.message);
-	const fileName = useFileTranscriptionStore((s) => s.fileName);
+	const { status, progress, message, fileName } = useFileTranscriptionStore(
+		useShallow((s) => ({
+			status: s.status,
+			progress: s.progress,
+			message: s.message,
+			fileName: s.fileName,
+		}))
+	);
 
 	if (status === "idle") {
 		return null;

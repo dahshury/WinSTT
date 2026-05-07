@@ -3,7 +3,7 @@ import type { components } from "@spec/schema";
 type DictionaryEntry = components["schemas"]["DictionaryEntry"];
 type SnippetEntry = components["schemas"]["SnippetEntry"];
 
-export function applyDictionary(text: string, entries: DictionaryEntry[]): string {
+export function applyDictionary(text: string, entries: readonly DictionaryEntry[]): string {
 	let result = text;
 	for (const entry of entries) {
 		const flags = entry.caseSensitive ? "g" : "gi";
@@ -13,7 +13,7 @@ export function applyDictionary(text: string, entries: DictionaryEntry[]): strin
 	return result;
 }
 
-export function applySnippets(text: string, entries: SnippetEntry[]): string {
+export function applySnippets(text: string, entries: readonly SnippetEntry[]): string {
 	let result = text;
 	for (const entry of entries) {
 		result = result.replaceAll(entry.trigger, entry.expansion);
@@ -23,8 +23,8 @@ export function applySnippets(text: string, entries: SnippetEntry[]): string {
 
 export function applyAllReplacements(
 	text: string,
-	dictionary: DictionaryEntry[],
-	snippets: SnippetEntry[]
+	dictionary: readonly DictionaryEntry[],
+	snippets: readonly SnippetEntry[]
 ): string {
 	let result = applyDictionary(text, dictionary);
 	result = applySnippets(result, snippets);

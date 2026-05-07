@@ -2,9 +2,9 @@
 
 import { useTranslations } from "next-intl";
 import { useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useLlmCatalogStore } from "@/entities/llm-catalog";
-import { SettingSection } from "@/entities/setting";
-import { useSettingsStore } from "@/features/update-settings";
+import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { Button } from "@/shared/ui/button";
 import { FormControl } from "@/shared/ui/form-control";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
@@ -17,7 +17,15 @@ export function LlmSettingsPanel() {
 	const t = useTranslations("llm");
 	const tc = useTranslations("common");
 
-	const { models, isLoaded, isScanning, error, scanModels } = useLlmCatalogStore();
+	const { models, isLoaded, isScanning, error, scanModels } = useLlmCatalogStore(
+		useShallow((s) => ({
+			models: s.models,
+			isLoaded: s.isLoaded,
+			isScanning: s.isScanning,
+			error: s.error,
+			scanModels: s.scanModels,
+		}))
+	);
 
 	useEffect(() => {
 		if (!isLoaded) {
@@ -27,7 +35,7 @@ export function LlmSettingsPanel() {
 
 	const modelOpts = models.map((m) => ({
 		id: m.name,
-		label: `${m.name} (${(m.size / 1e9).toFixed(1)} GB)`,
+		label: `${m.name} (${((m.size ?? 0) / 1e9).toFixed(1)} GB)`,
 	}));
 
 	const presetOpts = [
@@ -70,7 +78,7 @@ export function LlmSettingsPanel() {
 								/>
 							</div>
 							<Button
-								className="h-8 rounded-md border border-border bg-surface-secondary px-3 font-medium text-[13px] transition-colors duration-150 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
+								className="h-8 rounded-md border border-border bg-surface-secondary px-3 font-medium text-body transition-colors duration-150 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
 								disabled={isScanning}
 								onClick={scanModels}
 							>

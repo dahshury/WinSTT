@@ -71,15 +71,22 @@ if sys.platform == "win32":
 def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> None:
     """Initialize the recorder and run the text-processing loop."""
     print(f"{bcolors.OKGREEN}Initializing RealtimeSTT server with parameters:{bcolors.ENDC}")
-    max_key_len = max(len(k) for k in state.recorder_config)
-    separator = f"  {bcolors.OKBLUE}{'─' * (max_key_len + 2)}┬{'─' * 50}{bcolors.ENDC}"
-    print(separator)
-    for key, value in state.recorder_config.items():
-        display_val = str(value)
-        if callable(value):
-            display_val = "<callback>"
-        print(f"  {bcolors.OKBLUE}{key:<{max_key_len}}{bcolors.ENDC}  │ {display_val}")
-    print(separator)
+    rows = [(k, "<callback>" if callable(v) else str(v)) for k, v in state.recorder_config.items()]
+    key_w = max(len("Parameter"), *(len(k) for k, _ in rows))
+    val_w = min(80, max(len("Value"), *(len(v) for _, v in rows)))
+    c, e = bcolors.OKBLUE, bcolors.ENDC
+    top = f"  {c}┌{'─' * (key_w + 2)}┬{'─' * (val_w + 2)}┐{e}"
+    sep = f"  {c}├{'─' * (key_w + 2)}┼{'─' * (val_w + 2)}┤{e}"
+    bot = f"  {c}└{'─' * (key_w + 2)}┴{'─' * (val_w + 2)}┘{e}"
+    print(top)
+    print(f"  {c}│{e} {'Parameter':<{key_w}} {c}│{e} {'Value':<{val_w}} {c}│{e}")
+    print(sep)
+    for key, val in rows:
+        chunks = [val[i : i + val_w] for i in range(0, len(val), val_w)] or [""]
+        print(f"  {c}│{e} {key:<{key_w}} {c}│{e} {chunks[0]:<{val_w}} {c}│{e}")
+        for chunk in chunks[1:]:
+            print(f"  {c}│{e} {' ' * key_w} {c}│{e} {chunk:<{val_w}} {c}│{e}")
+    print(bot)
     try:
         state.recorder = AudioToTextRecorder(**state.recorder_config)
     except Exception as e:

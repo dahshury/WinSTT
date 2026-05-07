@@ -1,11 +1,13 @@
 "use client";
 
+import { useEffect } from "react";
 import { TrayMenu } from "@/widgets/tray-menu";
 
 export function TrayMenuPage() {
-	return (
-		<div className="flex h-screen w-screen items-start justify-start bg-transparent p-[3px]">
-			<TrayMenu />
-		</div>
-	);
+	useEffect(() => {
+		document.documentElement.style.background = "transparent";
+		document.body.style.background = "transparent";
+	}, []);
+
+	return <TrayMenu />;
 }

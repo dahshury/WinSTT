@@ -61,17 +61,18 @@ export function initRecordingIndicator(tray: Tray, win: BrowserWindow, iconPath:
 		dbg("indicator", "Base icon is empty — indicator disabled");
 		levelIcons = [];
 	} else {
-		const size = baseIcon.getSize();
-		dbg("indicator", `Base icon loaded: ${size.width}x${size.height}`);
 		try {
 			levelIcons = generateLevelIcons(baseIcon);
 		} catch (err) {
 			dbg("indicator", "Failed to generate level icons:", String(err));
 			levelIcons = [];
 		}
+		const size = baseIcon.getSize();
+		dbg(
+			"indicator",
+			`Initialized: ${size.width}x${size.height} base, ${levelIcons.length} level icons`
+		);
 	}
-
-	dbg("indicator", `Initialized: ${levelIcons.length} level icons`);
 }
 
 export function onRecordingStart(): void {
@@ -139,7 +140,6 @@ function generateLevelIcons(base: NativeImage): NativeImage[] {
 	const basePngBuf = base.toPNG();
 	const basePng = PNG.sync.read(basePngBuf);
 	const { width, height } = basePng;
-	dbg("indicator", `Decoded base PNG: ${width}x${height}, data length=${basePng.data.length}`);
 
 	const icons: NativeImage[] = [];
 

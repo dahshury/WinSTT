@@ -39,7 +39,7 @@ export function NumberStepper({
 				<NumberField.Decrement className="flex size-8 cursor-pointer select-none items-center justify-center rounded-r-none rounded-l-md border border-border bg-surface-tertiary p-0 text-foreground-secondary outline-none hover:bg-surface-hover">
 					<MinusIcon />
 				</NumberField.Decrement>
-				<NumberField.Input className="h-8 w-[60px] border-border border-x-0 border-y bg-transparent text-center font-mono text-[13px] text-foreground tabular-nums caret-accent outline-none" />
+				<NumberField.Input className="h-8 w-[60px] border-border border-x-0 border-y bg-transparent text-center font-mono text-body text-foreground tabular-nums caret-accent outline-none" />
 				<NumberField.Increment className="flex size-8 cursor-pointer select-none items-center justify-center rounded-r-md rounded-l-none border border-border bg-surface-tertiary p-0 text-foreground-secondary outline-none hover:bg-surface-hover">
 					<PlusIcon />
 				</NumberField.Increment>

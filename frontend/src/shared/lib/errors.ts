@@ -3,8 +3,8 @@
  * All custom errors should extend this class.
  */
 export class ApplicationError extends Error {
-	public readonly context?: Record<string, unknown>;
-	public readonly timestamp: number;
+	readonly context?: Record<string, unknown>;
+	readonly timestamp: number;
 
 	constructor(message: string, context?: Record<string, unknown>) {
 		super(message);
@@ -18,7 +18,7 @@ export class ApplicationError extends Error {
 		}
 	}
 
-	public toJSON(): Record<string, unknown> {
+	toJSON(): Record<string, unknown> {
 		return {
 			name: this.name,
 			message: this.message,
@@ -33,14 +33,14 @@ export class ApplicationError extends Error {
  * Validation error - thrown when input validation fails.
  */
 export class ValidationError extends ApplicationError {
-	public readonly field?: string;
+	readonly field?: string;
 
 	constructor(message: string, field?: string, context?: Record<string, unknown>) {
 		super(message, context);
 		this.field = field;
 	}
 
-	public override toJSON(): Record<string, unknown> {
+	override toJSON(): Record<string, unknown> {
 		return {
 			...super.toJSON(),
 			field: this.field,
@@ -52,8 +52,8 @@ export class ValidationError extends ApplicationError {
  * Not found error - thrown when a resource is not found.
  */
 export class NotFoundError extends ApplicationError {
-	public readonly resource: string;
-	public readonly identifier?: string | number;
+	readonly resource: string;
+	readonly identifier?: string | number;
 
 	constructor(resource: string, identifier?: string | number, context?: Record<string, unknown>) {
 		const msg = identifier
@@ -64,7 +64,7 @@ export class NotFoundError extends ApplicationError {
 		this.identifier = identifier;
 	}
 
-	public override toJSON(): Record<string, unknown> {
+	override toJSON(): Record<string, unknown> {
 		return {
 			...super.toJSON(),
 			resource: this.resource,
@@ -77,8 +77,8 @@ export class NotFoundError extends ApplicationError {
  * Connection error - thrown when network/IPC connection fails.
  */
 export class ConnectionError extends ApplicationError {
-	public readonly endpoint?: string;
-	public readonly retryable: boolean;
+	readonly endpoint?: string;
+	readonly retryable: boolean;
 
 	constructor(
 		message: string,
@@ -91,7 +91,7 @@ export class ConnectionError extends ApplicationError {
 		this.retryable = retryable;
 	}
 
-	public override toJSON(): Record<string, unknown> {
+	override toJSON(): Record<string, unknown> {
 		return {
 			...super.toJSON(),
 			endpoint: this.endpoint,
@@ -104,8 +104,8 @@ export class ConnectionError extends ApplicationError {
  * Timeout error - thrown when an operation times out.
  */
 export class TimeoutError extends ApplicationError {
-	public readonly timeoutMs: number;
-	public readonly operation?: string;
+	readonly timeoutMs: number;
+	readonly operation?: string;
 
 	constructor(timeoutMs: number, operation?: string, context?: Record<string, unknown>) {
 		const msg = operation
@@ -116,7 +116,7 @@ export class TimeoutError extends ApplicationError {
 		this.operation = operation;
 	}
 
-	public override toJSON(): Record<string, unknown> {
+	override toJSON(): Record<string, unknown> {
 		return {
 			...super.toJSON(),
 			timeoutMs: this.timeoutMs,
@@ -129,8 +129,8 @@ export class TimeoutError extends ApplicationError {
  * IPC error - thrown when IPC communication fails.
  */
 export class IpcError extends ApplicationError {
-	public readonly channel: string;
-	public readonly ipcOperation: "invoke" | "send" | "on";
+	readonly channel: string;
+	readonly ipcOperation: "invoke" | "send" | "on";
 
 	constructor(
 		message: string,
@@ -143,7 +143,7 @@ export class IpcError extends ApplicationError {
 		this.ipcOperation = operation;
 	}
 
-	public override toJSON(): Record<string, unknown> {
+	override toJSON(): Record<string, unknown> {
 		return {
 			...super.toJSON(),
 			channel: this.channel,
@@ -156,8 +156,8 @@ export class IpcError extends ApplicationError {
  * File system error - thrown when file operations fail.
  */
 export class FileSystemError extends ApplicationError {
-	public readonly filePath: string;
-	public readonly operation: "read" | "write" | "delete" | "exists" | "stat";
+	readonly filePath: string;
+	readonly operation: "read" | "write" | "delete" | "exists" | "stat";
 
 	constructor(
 		message: string,
@@ -170,7 +170,7 @@ export class FileSystemError extends ApplicationError {
 		this.operation = operation;
 	}
 
-	public override toJSON(): Record<string, unknown> {
+	override toJSON(): Record<string, unknown> {
 		return {
 			...super.toJSON(),
 			filePath: this.filePath,
@@ -183,8 +183,8 @@ export class FileSystemError extends ApplicationError {
  * Process spawn error - thrown when spawning external process fails.
  */
 export class ProcessSpawnError extends ApplicationError {
-	public readonly command: string;
-	public readonly exitCode?: number;
+	readonly command: string;
+	readonly exitCode?: number;
 
 	constructor(
 		message: string,
@@ -197,7 +197,7 @@ export class ProcessSpawnError extends ApplicationError {
 		this.exitCode = exitCode;
 	}
 
-	public override toJSON(): Record<string, unknown> {
+	override toJSON(): Record<string, unknown> {
 		return {
 			...super.toJSON(),
 			command: this.command,

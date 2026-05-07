@@ -1,13 +1,158 @@
 import { BrowserWindow, ipcMain } from "electron";
-import { dbg } from "../lib/debug-log";
+import { dbg, dbgVerbose } from "../lib/debug-log";
+import { createSafeSender, type SafeSend } from "../lib/ipc-helpers";
 import { pasteText } from "../lib/paste";
 import { onAudioLevel, onRecordingStart, onRecordingStop } from "../lib/recording-indicator";
-import { store } from "../lib/store";
-import { applyPostProcessing, initPostProcessing } from "../lib/text-processing";
+import { getStoreValue, store } from "../lib/store";
+import {
+	applyPostProcessing,
+	cleanupPostProcessing,
+	initPostProcessing,
+} from "../lib/text-processing";
 import type { SttClient } from "../ws/stt-client";
 import { muteSystemAudio, unmuteSystemAudio } from "./audio-mute";
 import { processText } from "./llm";
 import { hideOverlay, showOverlay } from "./overlay";
+
+async function handleFullSentence(
+	event: Record<string, unknown>,
+	safeSend: SafeSend
+): Promise<void> {
+	const rawText = String(event.text ?? "");
+	const mode = getStoreValue("general.recordingMode");
+
+	// Empty/whitespace-only result means VAD found no transcribable audio.
+	// Surface this as a "no audio detected" hint instead of an empty subtitle.
+	if (rawText.trim().length === 0) {
+		if (mode !== "listen") {
+			dbg("relay", "fullSentence: empty result, treating as no_audio_detected");
+			safeSend("stt:no-audio-detected");
+		}
+		return;
+	}
+
+	let processed = applyPostProcessing(rawText);
+
+	const llmEnabled = getStoreValue("llm.enabled");
+	const llmModel = getStoreValue("llm.model");
+	const llmPreset = getStoreValue("llm.preset");
+	const llmEndpoint = getStoreValue("llm.endpoint");
+	const llmTimeout = getStoreValue("llm.timeout");
+
+	if (llmEnabled && llmModel) {
+		try {
+			processed = await processText(processed, llmModel, llmPreset, llmEndpoint, llmTimeout);
+			dbg("relay", `LLM processed: ${processed.slice(0, 80)}`);
+		} catch (err) {
+			dbg("relay", "LLM processing failed, using original:", String(err));
+		}
+	}
+
+	dbg("relay", `fullSentence: text=${JSON.stringify(processed)} mode=${mode}`);
+	safeSend("stt:full-sentence", { text: processed });
+	// Skip auto-paste in listen mode (passive monitoring, not dictation)
+	if (mode !== "listen") {
+		pasteText(`${processed} `);
+	}
+}
+
+function handleRecordingStart(safeSend: SafeSend): { muted: boolean; attempted: boolean } {
+	safeSend("stt:recording-start");
+	onRecordingStart();
+	showOverlay();
+	// Skip mute in listen mode — would silence the audio being transcribed
+	if (
+		getStoreValue("general.muteSystemAudioWhileDictating") &&
+		getStoreValue("general.recordingMode") !== "listen"
+	) {
+		return { muted: muteSystemAudio(), attempted: true };
+	}
+	return { muted: false, attempted: false };
+}
+
+function handleModelDownloadProgress(event: Record<string, unknown>, safeSend: SafeSend): void {
+	safeSend("stt:model-download-progress", {
+		model: event.model,
+		progress: event.progress,
+		downloadedBytes: event.downloaded_bytes,
+		totalBytes: event.total_bytes,
+		speedBps: event.speed_bps,
+		etaSeconds: event.eta_seconds,
+	});
+}
+
+function handleAudioLevel(event: Record<string, unknown>, safeSend: SafeSend): void {
+	safeSend("stt:audio-level", { level: event.level });
+	if (typeof event.level === "number") {
+		onAudioLevel(event.level);
+	}
+}
+
+function handleRealtimeEvent(event: Record<string, unknown>, safeSend: SafeSend): void {
+	if (!event.text) {
+		return;
+	}
+	dbgVerbose("relay", "realtime:", String(event.text).slice(0, 80));
+	safeSend("stt:realtime-text", { text: event.text });
+}
+
+function handleRecordingStop(wasMuted: boolean, safeSend: SafeSend): boolean {
+	safeSend("stt:recording-stop");
+	onRecordingStop();
+	hideOverlay();
+	if (wasMuted) {
+		unmuteSystemAudio();
+		return false;
+	}
+	return wasMuted;
+}
+
+function handleSimpleRelayEvent(
+	type: string,
+	event: Record<string, unknown>,
+	safeSend: SafeSend
+): boolean {
+	switch (type) {
+		case "no_audio_detected":
+			safeSend("stt:no-audio-detected");
+			return true;
+		case "vad_detect_start":
+			safeSend("stt:vad-start");
+			return true;
+		case "vad_detect_stop":
+			safeSend("stt:vad-stop");
+			return true;
+		case "transcription_start":
+			safeSend("stt:transcription-start", { audioBase64: event.audio_bytes_base64 });
+			return true;
+		case "wakeword_detected":
+			safeSend("stt:wakeword-detected");
+			return true;
+		case "wakeword_detection_start":
+			safeSend("stt:wakeword-detection-start");
+			return true;
+		case "wakeword_detection_end":
+			safeSend("stt:wakeword-detection-end");
+			return true;
+		case "model_download_start":
+			safeSend("stt:model-download-start", { model: event.model });
+			return true;
+		case "model_download_complete":
+			safeSend("stt:model-download-complete", {
+				model: event.model,
+				cancelled: event.cancelled ?? false,
+			});
+			return true;
+		case "loopback_started":
+			safeSend("stt:loopback-started", { deviceName: event.deviceName });
+			return true;
+		case "loopback_stopped":
+			safeSend("stt:loopback-stopped");
+			return true;
+		default:
+			return false;
+	}
+}
 
 export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 	/** Last known model catalog — cached so any window can fetch it on demand. */
@@ -32,139 +177,88 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 	});
 	let didMuteAudio = false;
 
-	const safeSend = (channel: string, ...args: unknown[]) => {
-		if (!win.isDestroyed()) {
-			win.webContents.send(channel, ...args);
+	const mainSend = createSafeSender(win);
+	// Events the overlay window also needs (realtime text, audio level, recording
+	// state, VAD, no-audio hint). Broadcast to every renderer so the overlay
+	// receives them alongside the main window.
+	const broadcast: SafeSend = (channel: string, ...args: unknown[]) => {
+		for (const bw of BrowserWindow.getAllWindows()) {
+			if (!bw.isDestroyed()) {
+				bw.webContents.send(channel, ...args);
+			}
 		}
 	};
 
-	const onDataEvent = async (event: Record<string, unknown>) => {
+	const dispatchDataEvent = async (type: string, event: Record<string, unknown>): Promise<void> => {
+		if (type === "realtime") {
+			handleRealtimeEvent(event, broadcast);
+			return;
+		}
+		if (type === "fullSentence") {
+			await handleFullSentence(event, broadcast);
+			return;
+		}
+		if (type === "recording_start") {
+			const result = handleRecordingStart(broadcast);
+			if (result.attempted) {
+				didMuteAudio = result.muted;
+			}
+			return;
+		}
+		if (type === "recording_stop") {
+			didMuteAudio = handleRecordingStop(didMuteAudio, broadcast);
+			return;
+		}
+		if (type === "audio_level") {
+			handleAudioLevel(event, broadcast);
+			return;
+		}
+		if (type === "model_download_progress") {
+			handleModelDownloadProgress(event, mainSend);
+			return;
+		}
+		// no_audio_detected and vad_* are overlay-relevant; the rest stay main-only.
+		if (
+			type === "no_audio_detected" ||
+			type === "vad_detect_start" ||
+			type === "vad_detect_stop"
+		) {
+			handleSimpleRelayEvent(type, event, broadcast);
+			return;
+		}
+		handleSimpleRelayEvent(type, event, mainSend);
+	};
+
+	const onDataEvent = async (event: Record<string, unknown>): Promise<void> => {
 		const type = event.type;
 		if (typeof type !== "string") {
 			dbg("relay", "Data event WITHOUT type:", JSON.stringify(event));
 			return;
 		}
 		if (type !== "audio_level") {
-			dbg("relay", `data-event: ${type}`);
+			dbgVerbose("relay", `data-event: ${type}`);
 		}
+		await dispatchDataEvent(type, event);
+	};
 
-		switch (type) {
-			case "realtime":
-				dbg("relay", "realtime:", String(event.text).slice(0, 80));
-				safeSend("stt:realtime-text", { text: event.text });
-				break;
-			case "fullSentence": {
-				let processed = applyPostProcessing(String(event.text));
-
-				const llmEnabled = store.get("llm.enabled") as boolean;
-				const llmModel = store.get("llm.model") as string;
-				const llmPreset = store.get("llm.preset") as string;
-				const llmEndpoint = store.get("llm.endpoint") as string;
-				const llmTimeout = store.get("llm.timeout") as number;
-
-				if (llmEnabled && llmModel) {
-					try {
-						processed = await processText(processed, llmModel, llmPreset, llmEndpoint, llmTimeout);
-						dbg("relay", `LLM processed: ${processed.slice(0, 80)}`);
-					} catch (err) {
-						dbg("relay", "LLM processing failed, using original:", String(err));
-					}
-				}
-
-				const mode = store.get("general.recordingMode") as string;
-				dbg("relay", `fullSentence: text=${JSON.stringify(processed)} mode=${mode}`);
-				safeSend("stt:full-sentence", { text: processed });
-				// Skip auto-paste in listen mode (passive monitoring, not dictation)
-				if (mode !== "listen") {
-					pasteText(`${processed} `);
-				}
-				break;
+	const broadcastConnectionChange = (connected: boolean) => {
+		for (const bw of BrowserWindow.getAllWindows()) {
+			if (!bw.isDestroyed()) {
+				bw.webContents.send("stt:connection-change", { connected });
 			}
-			case "recording_start":
-				safeSend("stt:recording-start");
-				onRecordingStart();
-				showOverlay();
-				// Skip mute in listen mode — would silence the audio being transcribed
-				if (
-					store.get("general.muteSystemAudioWhileDictating") &&
-					store.get("general.recordingMode") !== "listen"
-				) {
-					didMuteAudio = muteSystemAudio();
-				}
-				break;
-			case "recording_stop":
-				safeSend("stt:recording-stop");
-				onRecordingStop();
-				hideOverlay();
-				if (didMuteAudio) {
-					unmuteSystemAudio();
-					didMuteAudio = false;
-				}
-				break;
-			case "vad_detect_start":
-				safeSend("stt:vad-start");
-				break;
-			case "vad_detect_stop":
-				safeSend("stt:vad-stop");
-				break;
-			case "transcription_start":
-				safeSend("stt:transcription-start", {
-					audioBase64: event.audio_bytes_base64,
-				});
-				break;
-			case "wakeword_detected":
-				safeSend("stt:wakeword-detected");
-				break;
-			case "wakeword_detection_start":
-				safeSend("stt:wakeword-detection-start");
-				break;
-			case "wakeword_detection_end":
-				safeSend("stt:wakeword-detection-end");
-				break;
-			case "model_download_start":
-				safeSend("stt:model-download-start", { model: event.model });
-				break;
-			case "model_download_progress":
-				safeSend("stt:model-download-progress", {
-					model: event.model,
-					progress: event.progress,
-					downloadedBytes: event.downloaded_bytes,
-					totalBytes: event.total_bytes,
-					speedBps: event.speed_bps,
-					etaSeconds: event.eta_seconds,
-				});
-				break;
-			case "model_download_complete":
-				safeSend("stt:model-download-complete", {
-					model: event.model,
-					cancelled: event.cancelled ?? false,
-				});
-				break;
-			case "audio_level":
-				safeSend("stt:audio-level", { level: event.level });
-				onAudioLevel(event.level as number);
-				break;
-			case "loopback_started":
-				safeSend("stt:loopback-started", { deviceName: event.deviceName });
-				break;
-			case "loopback_stopped":
-				safeSend("stt:loopback-stopped");
-				break;
-			default:
-				break;
 		}
 	};
 
 	const onConnected = () => {
 		dbg("relay", "STT server CONNECTED");
-		safeSend("stt:connection-change", { connected: true });
+		broadcastConnectionChange(true);
 	};
 
 	const onDisconnected = () => {
 		dbg("relay", "STT server DISCONNECTED");
 		serverIsReady = false;
 		onRecordingStop();
-		safeSend("stt:connection-change", { connected: false });
+		broadcastConnectionChange(false);
 	};
 
 	const onModelCatalog = (models: unknown[]) => {
@@ -179,7 +273,7 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 
 	const onServerReady = () => {
 		dbg("relay", "Server READY — recorder initialized, sending status=running to renderer");
-		dbg(
+		dbgVerbose(
 			"relay",
 			"Store realtime config: enableRealtimeTranscription=",
 			store.get("quality.enableRealtimeTranscription"),
@@ -189,13 +283,13 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 			store.get("model.realtimeModel")
 		);
 		serverIsReady = true;
-		safeSend("stt:server-status", { status: "running" });
+		mainSend("stt:server-status", { status: "running" });
 
 		// Diagnostic: query the server's actual realtime transcription config
 		client
 			.getParameter("enable_realtime_transcription")
 			.then((val) => {
-				dbg("relay", "SERVER reports enable_realtime_transcription=", val);
+				dbgVerbose("relay", "SERVER reports enable_realtime_transcription=", val);
 				if (!val) {
 					dbg(
 						"relay",
@@ -225,5 +319,6 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		ipcMain.removeHandler("stt:cancel-download");
 		ipcMain.removeHandler("stt:get-model-catalog");
 		ipcMain.removeHandler("stt:get-server-ready");
+		cleanupPostProcessing();
 	};
 }

@@ -8,7 +8,15 @@ import {
 	onHotkeyRecordingUpdate,
 } from "@/shared/api/ipc-client";
 
-export function useKeyRecorder() {
+interface UseKeyRecorderReturn {
+	recording: boolean;
+	key: string | null;
+	liveKeys: string[];
+	startRecording: () => void;
+	stopRecording: () => void;
+}
+
+export function useKeyRecorder(): UseKeyRecorderReturn {
 	const [recording, setRecording] = useState(false);
 	const [key, setKey] = useState<string | null>(null);
 	const [liveKeys, setLiveKeys] = useState<string[]>([]);

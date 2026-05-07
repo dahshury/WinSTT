@@ -56,11 +56,23 @@ def _log_set(name: str, value: object) -> None:
     print(f"  [{ts}] {bcolors.OKGREEN}Set {name} to: {bcolors.OKBLUE}{v}{bcolors.ENDC}")
 
 
+def _log_call(name: str, args: object = None) -> None:
+    """Print a timestamped method-call log line."""
+    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    suffix = f"({args})" if args else "()"
+    print(f"  [{ts}] {bcolors.OKCYAN}Call recorder.{name}{suffix}{bcolors.ENDC}")
+
+
 def _log_get(name: str, value: str) -> None:
     """Print a timestamped parameter-get log line."""
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     print(f"  [{ts}] {bcolors.OKGREEN}Get {name}: {bcolors.OKBLUE}{value}{bcolors.ENDC}")
 
+
+# Sentinel for "current value could not be read" — distinct from any real value so
+# the no-op-write guard in _handle_set_parameter never silently swallows a write
+# whose getter raised.
+_UNSET: object = object()
 
 # Commands that can be handled before the recorder is ready
 PRE_READY_COMMANDS: set[str] = {"list_models"}
@@ -148,14 +160,26 @@ async def _handle_set_parameter(ws: ServerConnection, state: ServerState, data: 
 
     # Server-local parameters (not on recorder)
     if parameter == "silence_timing":
-        state.silence_timing = bool(value)
+        new_value = bool(value)
+        if state.silence_timing == new_value:
+            await ws.send(json.dumps({"status": "success", "message": "Parameter silence_timing unchanged"}))
+            return
+        state.silence_timing = new_value
         _log_set("silence_timing", state.silence_timing)
         msg = f"Parameter silence_timing set to {state.silence_timing}"
         await ws.send(json.dumps({"status": "success", "message": msg}))
         return
 
     if parameter == "smart_endpoint_enabled":
-        state.smart_endpoint_enabled = bool(value)
+        new_value = bool(value)
+        if state.smart_endpoint_enabled == new_value and (
+            not new_value or state.sentence_classifier is not None
+        ):
+            await ws.send(
+                json.dumps({"status": "success", "message": "Parameter smart_endpoint_enabled unchanged"})
+            )
+            return
+        state.smart_endpoint_enabled = new_value
         if state.smart_endpoint_enabled and state.sentence_classifier is None:
             try:
                 from src.recorder.infrastructure.distilbert_classifier import DistilBertClassifier
@@ -174,7 +198,11 @@ async def _handle_set_parameter(ws: ServerConnection, state: ServerState, data: 
         return
 
     if parameter == "detection_speed":
-        state.detection_speed = float(value) if value is not None else 0.0
+        new_speed = float(value) if value is not None else 0.0
+        if state.detection_speed == new_speed:
+            await ws.send(json.dumps({"status": "success", "message": "Parameter detection_speed unchanged"}))
+            return
+        state.detection_speed = new_speed
         _log_set("detection_speed", state.detection_speed)
         msg = f"Parameter detection_speed set to {state.detection_speed}"
         await ws.send(json.dumps({"status": "success", "message": msg}))
@@ -182,6 +210,15 @@ async def _handle_set_parameter(ws: ServerConnection, state: ServerState, data: 
 
     # Recorder parameters
     if parameter in ALLOWED_PARAMETERS and hasattr(state.recorder, parameter):
+        try:
+            current = getattr(state.recorder, parameter)
+        except Exception:
+            current = _UNSET
+        if current == value:
+            await ws.send(
+                json.dumps({"status": "success", "message": f"Parameter {parameter} unchanged"})
+            )
+            return
         setattr(state.recorder, parameter, value)
         persist_setting(parameter, value)
         _log_set(f"recorder.{parameter}", value)
@@ -232,7 +269,8 @@ async def _handle_call_method(ws: ServerConnection, state: ServerState, data: di
             args = data.get("args", [])
             kwargs = data.get("kwargs", {})
             method(*args, **kwargs)
-            _log_set(f"method recorder.{method_name}", "called")
+            arg_repr = ", ".join(repr(a) for a in args) if args else None
+            _log_call(method_name, arg_repr)
             await ws.send(json.dumps({"status": "success", "message": f"Method {method_name} called"}))
         else:
             print(f"{bcolors.WARNING}Recorder does not have method {method_name}{bcolors.ENDC}")

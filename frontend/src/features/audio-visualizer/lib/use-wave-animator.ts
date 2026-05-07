@@ -1,0 +1,123 @@
+import {
+	type AnimationPlaybackControlsWithThen,
+	animate,
+	useMotionValue,
+	type ValueAnimationTransition,
+} from "motion/react";
+import { useCallback, useEffect, useRef } from "react";
+import { useVisualizerStore } from "../model/visualizer-store";
+import type { Uniforms } from "../ui/ReactShaderToy";
+import type { AgentState } from "./audio-visualizer";
+
+const DEFAULT_SPEED = 5;
+const DEFAULT_AMPLITUDE = 0.025;
+const DEFAULT_FREQUENCY = 10;
+const DEFAULT_TRANSITION: ValueAnimationTransition = { duration: 0.2, ease: "easeOut" };
+
+/**
+ * Creates an animated motion value that writes directly to a mutable ref
+ * instead of triggering React state updates. This avoids re-renders on
+ * every animation frame — the ReactShaderToy render loop reads from the
+ * uniforms ref instead of from React props.
+ */
+function useRefAnimatedValue(
+	initialValue: number,
+	uniformsRef: React.RefObject<Uniforms>,
+	uniformName: string,
+	uniformType: string
+) {
+	const motionValue = useMotionValue(initialValue);
+	const controlsRef = useRef<AnimationPlaybackControlsWithThen | null>(null);
+
+	// Write every motion value change directly into the shared uniforms ref
+	useEffect(() => {
+		const unsubscribe = motionValue.on("change", (v: number) => {
+			const uniforms = uniformsRef.current;
+			if (uniforms?.[uniformName]) {
+				uniforms[uniformName] = { type: uniformType, value: v };
+			}
+		});
+		return unsubscribe;
+	}, [motionValue, uniformsRef, uniformName, uniformType]);
+
+	const animateFn = useCallback(
+		(targetValue: number | number[], transition: ValueAnimationTransition) => {
+			controlsRef.current = animate(motionValue, targetValue, transition);
+		},
+		[motionValue]
+	);
+
+	return { controls: controlsRef, animate: animateFn };
+}
+
+export function useWaveAnimator(state: AgentState, uniformsRef: React.RefObject<Uniforms>): void {
+	const { animate: animateAmplitude } = useRefAnimatedValue(
+		DEFAULT_AMPLITUDE,
+		uniformsRef,
+		"uAmplitude",
+		"1f"
+	);
+	const { animate: animateFrequency } = useRefAnimatedValue(
+		DEFAULT_FREQUENCY,
+		uniformsRef,
+		"uFrequency",
+		"1f"
+	);
+	const { animate: animateOpacity } = useRefAnimatedValue(1.0, uniformsRef, "uMix", "1f");
+
+	const audioLevel = useVisualizerStore((s) => s.audioLevel);
+
+	useEffect(() => {
+		switch (state) {
+			case "disconnected":
+				if (uniformsRef.current?.uSpeed) {
+					uniformsRef.current.uSpeed = { type: "1f", value: DEFAULT_SPEED };
+				}
+				animateAmplitude(0, DEFAULT_TRANSITION);
+				animateFrequency(0, DEFAULT_TRANSITION);
+				animateOpacity(1.0, DEFAULT_TRANSITION);
+				return;
+			case "listening":
+				if (uniformsRef.current?.uSpeed) {
+					uniformsRef.current.uSpeed = { type: "1f", value: DEFAULT_SPEED };
+				}
+				animateAmplitude(DEFAULT_AMPLITUDE, DEFAULT_TRANSITION);
+				animateFrequency(DEFAULT_FREQUENCY, DEFAULT_TRANSITION);
+				animateOpacity([1.0, 0.3], {
+					duration: 0.75,
+					repeat: Number.POSITIVE_INFINITY,
+					repeatType: "mirror",
+				});
+				return;
+			case "thinking":
+			case "connecting":
+			case "initializing":
+				if (uniformsRef.current?.uSpeed) {
+					uniformsRef.current.uSpeed = { type: "1f", value: DEFAULT_SPEED * 4 };
+				}
+				animateAmplitude(DEFAULT_AMPLITUDE / 4, DEFAULT_TRANSITION);
+				animateFrequency(DEFAULT_FREQUENCY * 4, DEFAULT_TRANSITION);
+				animateOpacity([1.0, 0.3], {
+					duration: 0.4,
+					repeat: Number.POSITIVE_INFINITY,
+					repeatType: "mirror",
+				});
+				return;
+			default:
+				if (uniformsRef.current?.uSpeed) {
+					uniformsRef.current.uSpeed = { type: "1f", value: DEFAULT_SPEED * 2 };
+				}
+				animateAmplitude(DEFAULT_AMPLITUDE, DEFAULT_TRANSITION);
+				animateFrequency(DEFAULT_FREQUENCY, DEFAULT_TRANSITION);
+				animateOpacity(1.0, DEFAULT_TRANSITION);
+				return;
+		}
+	}, [state, uniformsRef, animateAmplitude, animateFrequency, animateOpacity]);
+
+	useEffect(() => {
+		if (state === "speaking") {
+			animateAmplitude(0.015 + 0.4 * audioLevel, { duration: 0 });
+			animateFrequency(20 + 60 * audioLevel, { duration: 0 });
+		}
+	}, [state, audioLevel, animateAmplitude, animateFrequency]);
+}

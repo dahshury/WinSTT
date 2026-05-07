@@ -7,7 +7,7 @@ import logging
 import threading
 from collections.abc import Callable, Iterable
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from src.building_blocks.clock import Clock
 from src.building_blocks.event_bus import EventBus
@@ -81,6 +81,7 @@ class AudioToTextRecorder:
         device: str = "cuda",
         on_recording_start: SimpleCallback | None = None,
         on_recording_stop: SimpleCallback | None = None,
+        on_no_audio_detected: SimpleCallback | None = None,
         on_transcription_start: SimpleCallback | None = None,
         ensure_sentence_starting_uppercase: bool = True,
         ensure_sentence_ends_with_period: bool = True,
@@ -226,6 +227,7 @@ class AudioToTextRecorder:
         self._callbacks: CallbackMap = {
             "on_recording_start": on_recording_start,
             "on_recording_stop": on_recording_stop,
+            "on_no_audio_detected": on_no_audio_detected,
             "on_transcription_start": on_transcription_start,
             "on_vad_start": on_vad_start,
             "on_vad_stop": on_vad_stop,
@@ -267,37 +269,13 @@ class AudioToTextRecorder:
             if self._service is not None:
                 return self._service
             from src.recorder.bootstrap import (
-                CALLBACK_EVENT_MAP,
                 DownloadCallbacks,
                 build_realtime_transcriber,
                 build_transcriber,
-                wire_callback,
-                wire_callback_with_audio,
-                wire_callback_with_level,
-                wire_callback_with_text,
-            )
-            from src.recorder.domain.events import (
-                AudioLevelComputed,
-                RealtimeTranscriptionStabilized,
-                RealtimeTranscriptionUpdate,
-                TranscriptionStarted,
+                wire_all_callbacks,
             )
 
-            # Wire callbacks
-            for cb_name, cb_func in self._callbacks.items():
-                if cb_func is None:
-                    continue
-                event_type = CALLBACK_EVENT_MAP.get(cb_name)
-                if event_type is None:
-                    continue
-                if event_type in {RealtimeTranscriptionUpdate, RealtimeTranscriptionStabilized}:
-                    wire_callback_with_text(self._event_bus, event_type, cast(TextCallback, cb_func))
-                elif event_type is TranscriptionStarted:
-                    wire_callback_with_audio(self._event_bus, event_type, cast(SimpleCallback, cb_func))
-                elif event_type is AudioLevelComputed:
-                    wire_callback_with_level(self._event_bus, event_type, cast(LevelCallback, cb_func))
-                else:
-                    wire_callback(self._event_bus, event_type, cast(SimpleCallback, cb_func))
+            wire_all_callbacks(self._event_bus, self._callbacks)
 
             # Build audio source
             from src.recorder.domain.ports.audio_source import IAudioSource

@@ -41,5 +41,16 @@
   },
   "files": {
     "includes": ["!!*.d.ts", "!!spec/generated"]
-  }
+  },
+  // Third-party adapted code — too many lint violations to fix without diverging from upstream
+  "overrides": [
+    {
+      "includes": ["src/features/audio-visualizer/ui/ReactShaderToy.tsx"],
+      "linter": { "enabled": false }
+    },
+    {
+      "includes": ["scripts/**"],
+      "linter": { "enabled": false }
+    }
+  ]
 }

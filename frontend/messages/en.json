@@ -31,6 +31,15 @@
     "tabDictionary": "Dictionary",
     "tabSnippets": "Snippets",
     "tabLlm": "LLM",
+    "tabDesktop": "Desktop",
+    "tabGeneralTooltip": "Recording mode, language, sound, and startup behavior.",
+    "tabModelTooltip": "Choose the speech-to-text model and configure the LLM post-processor.",
+    "tabAudioTooltip": "Microphone, voice activity detection, and silence handling.",
+    "tabProcessingTooltip": "Live preview, smart endpointing, and text formatting.",
+    "tabHotkeyTooltip": "Configure the push-to-talk keyboard shortcut.",
+    "tabDictionaryTooltip": "Automatically replace words or phrases in transcribed text.",
+    "tabSnippetsTooltip": "Expand short triggers into longer pre-defined text.",
+    "tabDesktopTooltip": "Native desktop integrations: menu, clipboard, updater, and telemetry.",
     "minimize": "Minimize",
     "close": "Close"
   },
@@ -63,6 +72,25 @@
     "showRecordingOverlay": "Recording overlay",
     "showRecordingOverlayCaption": "Show floating visualizer while recording",
     "showRecordingOverlayTooltip": "Display a floating window with audio visualizer at the bottom of the screen during recording (PTT and toggle modes only)",
+    "visualizerSize": "Visualizer Size",
+    "visualizerSizeCaption": "Pixel size of the overlay visualizer (10–200)",
+    "visualizerSizeTooltip": "Width and height in pixels of the floating visualizer shown during recording.",
+    "showLiveTranscription": "Live transcription",
+    "showLiveTranscriptionCaption": "Show transcribed text under the visualizer",
+    "showLiveTranscriptionTooltip": "Display the live transcription text below the recording visualizer.",
+    "visualizerType": "Visualizer Style",
+    "visualizerTypeCaption": "Audio visualizer animation style",
+    "visualizerTypeTooltip": "Choose the visual style for the audio visualizer. Bar: vertical bars. Grid: dot-matrix grid. Radial: circular expanding bars. Wave: oscilloscope waveform (WebGL). Aura: organic glowing aura (WebGL).",
+    "visualizerBar": "Bar",
+    "visualizerGrid": "Grid",
+    "visualizerRadial": "Radial",
+    "visualizerWave": "Wave",
+    "visualizerAura": "Aura",
+    "visualizerBarCount": "Bar Count",
+    "visualizerBarCountCaption": "Number of bars in the bar visualizer (3–21)",
+    "visualizerBarCountTooltip": "Adjust how many bars the bar-style visualizer renders. Higher counts give a denser look; lower counts feel chunkier.",
+    "visualizerColor": "Visualizer Color",
+    "visualizerColorCaption": "Accent color for the visualizer",
     "fileTranscription": "File Transcription",
     "fileTranscriptionFormat": "Format",
     "fileTranscriptionFormatCaption": "Output format for transcribed files",
@@ -74,7 +102,14 @@
     "minimizeToTray": "Minimize to Tray",
     "minimizeToTrayCaption": "Keep running in system tray",
     "language": "Language",
-    "languageCaption": "Display language for the interface"
+    "languageCaption": "Display language for the interface",
+    "languageTooltip": "Language used for the interface (menus, settings, tooltips). Independent from the transcription language.",
+    "visualizerColorTooltip": "Accent color used by the audio visualizer animation.",
+    "soundFileTooltip": "Custom .wav or .mp3 file played when recording starts. Drop a file or browse to select one.",
+    "fileTranscriptionFormatTooltip": "Output file format for transcribed audio/video files. TXT is plain text; SRT includes timestamps for subtitles.",
+    "startOnLoginTooltip": "Automatically launch WinSTT each time you sign in to Windows.",
+    "startMinimizedTooltip": "When launched, start hidden in the system tray instead of opening the main window.",
+    "minimizeToTrayTooltip": "Closing the main window keeps WinSTT running in the system tray instead of quitting."
   },
   "model": {
     "mainModel": "Main Model",
@@ -99,7 +134,11 @@
     "realtimeBeamSize": "Realtime Beam Size",
     "realtimeBeamSizeCaption": "Search width for realtime",
     "realtimeBeamSizeTooltip": "Beam size for the realtime preview model. Lower values give faster live feedback at the cost of some accuracy. This only affects the live preview, not the final transcription.",
-    "llm": "Large Language Model"
+    "llm": "Large Language Model",
+    "computeDefaultLabel": "Default (model's native precision)",
+    "computeAutoLabel": "Auto (best for your hardware)",
+    "deviceAutoLabel": "Auto",
+    "deviceCpuLabel": "CPU"
   },
   "audio": {
     "inputDevice": "Input Device",
@@ -142,8 +181,10 @@
     "formatting": "Formatting",
     "uppercaseFirst": "Uppercase First Letter",
     "uppercaseFirstCaption": "Auto-capitalize sentence starts",
+    "uppercaseFirstTooltip": "Capitalize the first letter of each transcribed sentence automatically.",
     "endWithPeriod": "End with Period",
     "endWithPeriodCaption": "Auto-add period to sentences",
+    "endWithPeriodTooltip": "Append a period to transcribed sentences that don't already end with punctuation.",
     "smartEndpoint": "Smart Endpoint",
     "smartEndpointLabel": "Smart Endpoint",
     "smartEndpointCaption": "AI-powered sentence detection",
@@ -156,10 +197,13 @@
     "configuration": "Hotkey Configuration",
     "pushToTalkKey": "Push-to-Talk Key",
     "pushToTalkKeyCaption": "Click Record, press your key combo, then click Stop",
+    "pushToTalkKeyTooltip": "The keyboard shortcut that triggers recording. Click Record, press the key combination you want, then click Stop.",
     "pressKeys": "Press keys...",
     "record": "Record",
     "stop": "Stop",
-    "switchToPtt": "Switch to Push-to-Talk"
+    "switchToPtt": "Switch to Push-to-Talk",
+    "displayTooltip": "Push-to-talk hotkey. Change it in Settings → Hotkey.",
+    "displayTooltipDisconnected": "Push-to-talk hotkey (inactive — server disconnected). Change it in Settings → Hotkey."
   },
   "dictionary": {
     "title": "Word Replacements",
@@ -187,17 +231,27 @@
     "connecting": "CONNECTING",
     "error": "ERROR",
     "offline": "OFFLINE",
-    "loopbackIdle": "Loopback Idle"
+    "loopbackIdle": "Loopback Idle",
+    "connectingTooltip": "Establishing a connection to the speech-to-text server...",
+    "errorTooltip": "Failed to connect to the speech-to-text server. Check that the server process is running.",
+    "offlineTooltip": "Disconnected from the speech-to-text server.",
+    "gpuTooltip": "GPU accelerated: {name}. Faster transcription. Change in Settings → Model → Device.",
+    "cpuTooltip": "Running on CPU: {name}. Transcription will be noticeably slower than on a GPU.",
+    "modelTooltip": "Active speech-to-text model: {model}. Change it in Settings → Model.",
+    "loopbackActiveTooltip": "Listening to system audio from this loopback device. Change it in Settings → General → Loopback Device.",
+    "loopbackIdleTooltip": "Listen mode is configured but no audio is being captured yet."
   },
   "transcription": {
     "waiting": "Waiting for speech...",
-    "serverOffline": "Server offline"
+    "serverOffline": "Server offline",
+    "noAudioDetected": "(no audio detected)"
   },
   "mainPage": {
     "pttButton": "PTT"
   },
   "audioDisplay": {
-    "dropToTranscribe": "Drop file to transcribe"
+    "dropToTranscribe": "Drop file to transcribe",
+    "ariaLabel": "Audio display and file drop zone"
   },
   "download": {
     "downloadingModel": "Downloading {model}...",
@@ -233,7 +287,12 @@
     "ollamaNotAvailableDescription": "Ollama is not running or was uninstalled. Transcriptions will work normally, but LLM post-processing is disabled. Please install Ollama and ensure it's running to use this feature.",
     "ollamaRequired": "Ollama Required",
     "ollamaRequiredDescription": "LLM post-processing requires Ollama to be installed and running. Please download and install Ollama from the official website, then try again.",
-    "downloadOllama": "Download Ollama"
+    "ollamaNotRunning": "Ollama Not Running",
+    "ollamaNotRunningDescription": "Ollama is installed but not currently running. Start it to enable LLM post-processing.",
+    "downloadOllama": "Download Ollama",
+    "runOllama": "Run Ollama",
+    "starting": "Starting…",
+    "ollamaStartFailed": "Failed to start Ollama. Please launch it manually."
   },
   "errors": {
     "somethingWentWrong": "Something went wrong",
@@ -241,5 +300,61 @@
     "tryAgain": "Try again",
     "pageNotFound": "Page not found",
     "notFoundDescription": "The page you're looking for doesn't exist."
+  },
+  "tray": {
+    "showWindow": "Show Window",
+    "openSettings": "Settings",
+    "transcribeFile": "Transcribe File...",
+    "checkForUpdates": "Check for Updates",
+    "quit": "Quit",
+    "modePtt": "PTT",
+    "modeToggle": "Toggle",
+    "modeListen": "Listen",
+    "audioFiles": "Audio Files",
+    "videoFiles": "Video Files",
+    "allFiles": "All Files",
+    "selectFileTitle": "Select Audio or Video File to Transcribe"
+  },
+  "desktop": {
+    "title": "Desktop Tools",
+    "active": "Electrobun-inspired desktop controls are active for this settings window.",
+    "unavailable": "Electron API is unavailable in this runtime.",
+    "menuEditor": "Application Menu Editor",
+    "menuJsonLabel": "Menu JSON",
+    "menuJsonCaption": "Edit JSON and apply it to the native application menu.",
+    "applyJson": "Apply JSON",
+    "loadDemo": "Load Demo",
+    "resetMenu": "Reset Native Menu",
+    "appliedMenu": "Applied {count} top-level menu item(s).",
+    "menuReset": "Application menu reset.",
+    "contextMenuTitle": "Context Menu Playground",
+    "contextMenuHint": "Right-click in this box to open a native context menu.",
+    "openContextMenu": "Open Context Menu",
+    "contextMenuClosed": "Context menu closed without selection.",
+    "contextMenuSelected": "Selected: {id}",
+    "contextMenuInitial": "No context-menu action yet.",
+    "clipboardTitle": "Clipboard Panel",
+    "clipboardLabel": "Text",
+    "clipboardCaption": "Read from and write to the native clipboard.",
+    "clipboardPlaceholder": "Clipboard text",
+    "readClipboard": "Read Clipboard",
+    "writeClipboard": "Write Clipboard",
+    "clearClipboard": "Clear Clipboard",
+    "clipboardLoaded": "Clipboard content loaded.",
+    "clipboardUpdated": "Clipboard updated.",
+    "clipboardCleared": "Clipboard cleared.",
+    "updaterTitle": "Updater Timeline",
+    "refreshHistory": "Refresh History",
+    "clearHistory": "Clear History",
+    "updaterRefreshed": "Updater history refreshed.",
+    "updaterCleared": "Updater history cleared.",
+    "noUpdaterEntries": "No updater entries yet.",
+    "telemetryTitle": "Window Telemetry",
+    "telemetryLabel": "Live Stream",
+    "telemetryCaption": "Track move/resize/focus events from this window.",
+    "telemetryClear": "Clear",
+    "telemetryClearCaption": "Drop all captured events from the panel.",
+    "clearEvents": "Clear Events",
+    "noTelemetry": "No telemetry captured yet."
   }
 }

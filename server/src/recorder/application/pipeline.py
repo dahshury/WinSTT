@@ -16,6 +16,7 @@ from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import (
     AudioChunkRecorded,
     AudioLevelComputed,
+    NoAudioDetected,
     RecordingStarted,
     RecordingStopped,
     TurnDetectionStarted,
@@ -100,11 +101,16 @@ class RecordingPipeline(Worker):
 
     def request_stop(self, backdate_seconds: float = 0.0) -> None:
         if not self._sm.is_recording:
+            if not self._silence_endpoint_enabled:
+                self._event_bus.publish(NoAudioDetected(timestamp=self._clock.get_current_time()))
             return
         elapsed = self._clock.get_current_time() - self._recording_start_time
         if elapsed < self._config.vad.min_length_of_recording:
+            if not self._silence_endpoint_enabled:
+                self._event_bus.publish(NoAudioDetected(timestamp=self._clock.get_current_time()))
             return
         if not self._silence_endpoint_enabled and not self._speech_detected_in_recording:
+            self._event_bus.publish(NoAudioDetected(timestamp=self._clock.get_current_time()))
             self.request_abort()
             return
         if backdate_seconds > 0:

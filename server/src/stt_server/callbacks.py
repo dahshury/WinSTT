@@ -34,6 +34,7 @@ def make_callback(
 _SIMPLE_EVENTS: list[str] = [
     "recording_start",
     "recording_stop",
+    "no_audio_detected",
     "vad_detect_start",
     "vad_detect_stop",
     "wakeword_detected",

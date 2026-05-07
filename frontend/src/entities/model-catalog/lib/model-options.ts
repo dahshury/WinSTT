@@ -10,7 +10,7 @@ const FAMILY_LABELS: Record<string, string> = {
 };
 
 /** Build grouped select options from a model catalog, prefixed by family label. */
-export function buildModelOpts(models: ModelInfo[]): SelectOption[] {
+export function buildModelOpts(models: readonly ModelInfo[]): SelectOption[] {
 	const grouped = new Map<string, ModelInfo[]>();
 	for (const m of models) {
 		const list = grouped.get(m.family) ?? [];
@@ -31,6 +31,6 @@ export function buildModelOpts(models: ModelInfo[]): SelectOption[] {
 }
 
 /** Build select options filtered to models that support realtime transcription. */
-export function buildRealtimeOpts(models: ModelInfo[]): SelectOption[] {
+export function buildRealtimeOpts(models: readonly ModelInfo[]): SelectOption[] {
 	return buildModelOpts(models.filter((m) => m.supportsRealtime));
 }

@@ -1,8 +1,8 @@
 "use client";
 
-import type { components } from "@spec/schema";
 import { useEffect, useRef } from "react";
-import { useConnectionStore } from "@/features/connect-server";
+import { useConnectionStore } from "@/entities/connection";
+import { useSettingsStore } from "@/entities/setting";
 import {
 	autostartSet,
 	onSettingsChanged,
@@ -10,10 +10,8 @@ import {
 	settingsSave,
 	sttSetParameter,
 } from "@/shared/api/ipc-client";
-import { useSettingsStore } from "../model/settings-store";
-
-type AllowedParameter = components["schemas"]["AllowedParameter"];
-type AppSettings = components["schemas"]["AppSettings"];
+import type { AllowedParameter, AppSettingsSaveInput as AppSettings } from "@/shared/api/models";
+import { decodeSettingsPayload } from "@/shared/api/settings-codec";
 
 /** camelCase → snake_case mapping for audio parameters sent to the STT server */
 const AUDIO_PARAM_MAP: Record<string, AllowedParameter> = {
@@ -110,7 +108,7 @@ function syncToServer(settings: AppSettings, prev?: AppSettings) {
 	syncSystemParams(settings, prev);
 }
 
-export function useSyncSettings() {
+export function useSyncSettings(): void {
 	const settings = useSettingsStore((s) => s.settings);
 	const isLoaded = useSettingsStore((s) => s.isLoaded);
 	const setSettings = useSettingsStore((s) => s.setSettings);
@@ -128,19 +126,18 @@ export function useSyncSettings() {
 	// localStorage hydration already set isLoaded, so this just patches any drift.
 	useEffect(() => {
 		settingsLoad().then((loaded) => {
-			if (loaded && typeof loaded === "object" && Object.keys(loaded).length > 0) {
-				fromIpcLoadRef.current = true;
-				setSettings(loaded);
-			}
+			fromIpcLoadRef.current = true;
+			setSettings(loaded);
 		});
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount
 	}, [setSettings]);
 
 	// Listen for settings changed from other windows (e.g. settings window → main window)
+	// Validate through Zod schema to ensure defaults are filled for any missing fields.
 	useEffect(() => {
 		const unsub = onSettingsChanged((incoming: AppSettings) => {
 			fromBroadcastRef.current = true;
-			setSettings(incoming);
+			setSettings(decodeSettingsPayload(incoming));
 		});
 		return unsub;
 	}, [setSettings]);

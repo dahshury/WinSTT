@@ -1,6 +1,23 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { IPC } from "../src/shared/api/ipc-channels";
+import {
+	decryptIpcPayload,
+	type EncryptedIpcPayload,
+	encryptIpcPayload,
+	type JsonValue,
+} from "./ipc/ipc-payload-crypto";
 
 type IpcCallback = (...args: unknown[]) => void;
+type SecureInvokeChannel =
+	| typeof IPC.CLIPBOARD_OPERATE
+	| typeof IPC.UPDATER_GET_STATUS_HISTORY
+	| typeof IPC.UPDATER_CLEAR_STATUS_HISTORY;
+
+interface SecureInvokeResponse {
+	ok: boolean;
+	error?: string;
+	result?: unknown;
+}
 
 /** Channels the renderer may fire-and-forget to the main process */
 const ALLOWED_SEND_CHANNELS = [
@@ -16,6 +33,9 @@ const ALLOWED_SEND_CHANNELS = [
 	"window:close",
 	"window:open-settings",
 	"window:close-self",
+	"window:show",
+	"window:quit",
+	"tray-menu:close",
 	"loopback:start",
 	"loopback:stop",
 ] as const;
@@ -42,12 +62,21 @@ const ALLOWED_INVOKE_CHANNELS = [
 	"sound:get-data",
 	"llm:scan-models",
 	"llm:process-text",
+	"llm:detect-ollama",
+	"llm:start-ollama",
+	"app-menu:set-template",
+	"app-menu:reset",
+	"context-menu:show",
+	"clipboard:operate",
+	"updater:get-status-history",
+	"updater:clear-status-history",
 ] as const;
 
 /** Channels the main process may push to the renderer */
 const ALLOWED_ON_CHANNELS = [
 	"stt:realtime-text",
 	"stt:full-sentence",
+	"stt:no-audio-detected",
 	"stt:recording-start",
 	"stt:recording-stop",
 	"stt:vad-start",
@@ -68,6 +97,7 @@ const ALLOWED_ON_CHANNELS = [
 	"hotkey:recording-update",
 	"hotkey:recording-done",
 	"settings:changed",
+	"settings:save-error",
 	"file:transcription-progress",
 	"file:transcription-complete",
 	"file:transcription-error",
@@ -75,7 +105,54 @@ const ALLOWED_ON_CHANNELS = [
 	"stt:loopback-stopped",
 	"sound:play",
 	"llm:catalog",
+	"updater:status",
+	"window:telemetry",
 ] as const;
+
+const ALLOWED_SECURE_INVOKE_CHANNELS: readonly SecureInvokeChannel[] = [
+	IPC.CLIPBOARD_OPERATE,
+	IPC.UPDATER_GET_STATUS_HISTORY,
+	IPC.UPDATER_CLEAR_STATUS_HISTORY,
+] as const;
+
+let secureIpcKeyPromise: Promise<Uint8Array> | null = null;
+
+function getSecureIpcKey(): Promise<Uint8Array> {
+	if (!secureIpcKeyPromise) {
+		secureIpcKeyPromise = ipcRenderer
+			.invoke(IPC.SECURE_GET_KEY)
+			.then((value) => {
+				if (typeof value !== "string") {
+					throw new Error("Main process returned invalid secure IPC key");
+				}
+				return Buffer.from(value, "base64url");
+			})
+			.catch((error) => {
+				secureIpcKeyPromise = null;
+				throw error;
+			});
+	}
+	return secureIpcKeyPromise;
+}
+
+async function secureInvoke(channel: SecureInvokeChannel, payload?: JsonValue): Promise<unknown> {
+	if (!ALLOWED_SECURE_INVOKE_CHANNELS.includes(channel)) {
+		throw new Error(`Blocked secure invoke on channel: ${channel}`);
+	}
+
+	const key = await getSecureIpcKey();
+	const encryptedRequest = await encryptIpcPayload({ channel, payload }, key);
+	const encryptedResponse = (await ipcRenderer.invoke(
+		IPC.SECURE_INVOKE,
+		encryptedRequest
+	)) as EncryptedIpcPayload;
+	const response = await decryptIpcPayload<SecureInvokeResponse>(encryptedResponse, key);
+
+	if (!response.ok) {
+		throw new Error(response.error ?? "Secure IPC request failed");
+	}
+	return response.result;
+}
 
 contextBridge.exposeInMainWorld("electronAPI", {
 	getPathForFile(file: File) {
@@ -91,6 +168,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			return ipcRenderer.invoke(channel, ...args);
 		}
 		return Promise.reject(new Error(`Blocked IPC invoke on channel: ${channel}`));
+	},
+	secureInvoke(channel: SecureInvokeChannel, payload?: JsonValue) {
+		return secureInvoke(channel, payload);
 	},
 	on(channel: string, callback: IpcCallback) {
 		if (!(ALLOWED_ON_CHANNELS as readonly string[]).includes(channel)) {

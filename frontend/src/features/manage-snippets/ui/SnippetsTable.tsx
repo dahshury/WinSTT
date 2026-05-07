@@ -1,5 +1,6 @@
 "use client";
 
+import { Form } from "@base-ui/react/form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -12,6 +13,7 @@ import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { FormControl } from "@/shared/ui/form-control";
 import { TextField } from "@/shared/ui/text-field";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 type SnippetEntry = components["schemas"]["SnippetEntry"];
 
@@ -41,7 +43,8 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 	const expansionValue = watch("expansion");
 
 	const onSubmit = (data: AddSnippetEntry) => {
-		onAdd({ trigger: data.trigger.trim(), expansion: data.expansion.trim() });
+		// Zod schema applies .trim() during validation, no manual trimming needed
+		onAdd(data);
 		reset();
 	};
 
@@ -51,7 +54,7 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 
 	return (
 		<div className="flex flex-col gap-3">
-			<form className="flex items-end gap-2" onSubmit={handleSubmit(onSubmit)}>
+			<Form className="flex items-end gap-2" onSubmit={handleSubmit(onSubmit)}>
 				<div className="w-1/3">
 					<FormControl error={errors.trigger?.message} label={t("trigger")}>
 						<TextField
@@ -77,17 +80,17 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 					</FormControl>
 				</div>
 				<Button
-					className="h-8 rounded-md bg-accent px-3 font-medium text-[13px] text-black transition-colors duration-150 hover:bg-accent-hover"
+					className="h-8 rounded-md bg-accent px-3 font-medium text-black text-body transition-colors duration-150 hover:bg-accent-hover"
 					disabled={isAddDisabled}
 					type="submit"
 				>
 					{tc("add")}
 				</Button>
-			</form>
+			</Form>
 			<div className="flex flex-col gap-1">
 				{entries.map((entry) => (
 					<div
-						className="flex items-center justify-between rounded border border-border bg-surface-tertiary px-3 py-2 text-[13px]"
+						className="flex items-center justify-between rounded border border-border bg-surface-tertiary px-3 py-2 text-body"
 						key={entry.id}
 					>
 						<span>
@@ -95,17 +98,19 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 							<span className="text-foreground-muted">{" → "}</span>
 							<span className="text-foreground">{entry.expansion}</span>
 						</span>
-						<Button
-							aria-label={`${tc("delete")} "${entry.trigger}"`}
-							className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
-							onClick={() => onRemove(entry.id)}
-						>
-							<HugeiconsIcon icon={Delete02Icon} size={14} />
-						</Button>
+						<Tooltip content={tc("delete")}>
+							<Button
+								aria-label={`${tc("delete")} "${entry.trigger}"`}
+								className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
+								onClick={() => onRemove(entry.id)}
+							>
+								<HugeiconsIcon icon={Delete02Icon} size={14} />
+							</Button>
+						</Tooltip>
 					</div>
 				))}
 				{entries.length === 0 && (
-					<p className="py-4 text-center text-[13px] text-foreground-muted">{t("emptyState")}</p>
+					<p className="py-4 text-center text-body text-foreground-muted">{t("emptyState")}</p>
 				)}
 			</div>
 			{onClearAll && (

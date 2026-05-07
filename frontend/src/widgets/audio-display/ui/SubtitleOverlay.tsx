@@ -1,8 +1,9 @@
 "use client";
 
 import { memo, useEffect, useRef, useState } from "react";
+import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/features/live-transcription";
-import { useSettingsStore } from "@/features/update-settings";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 
 const VISIBLE_COUNT = 3;
 const FADE_OPACITIES = [1, 0.4, 0.15];
@@ -12,29 +13,50 @@ const FADE_AFTER_MS = 5000;
 /** Items are fully transparent after this many ms. */
 const GONE_AFTER_MS = 8000;
 
-function timeFade(timestamp: number, now: number): number {
+/** Ephemeral status messages (e.g. "no audio detected") fade faster. */
+const EPHEMERAL_FADE_AFTER_MS = 2000;
+const EPHEMERAL_GONE_AFTER_MS = 3000;
+
+function fadeBetween(timestamp: number, now: number, fadeAfter: number, goneAfter: number): number {
 	const age = now - timestamp;
-	if (age < FADE_AFTER_MS) {
+	if (age < fadeAfter) {
 		return 1;
 	}
-	if (age > GONE_AFTER_MS) {
+	if (age > goneAfter) {
 		return 0;
 	}
-	return 1 - (age - FADE_AFTER_MS) / (GONE_AFTER_MS - FADE_AFTER_MS);
+	return 1 - (age - fadeAfter) / (goneAfter - fadeAfter);
+}
+
+function timeFade(timestamp: number, now: number): number {
+	return fadeBetween(timestamp, now, FADE_AFTER_MS, GONE_AFTER_MS);
 }
 
 export const SubtitleOverlay = memo(function SubtitleOverlay() {
 	const items = useTranscriptionStore((s) => s.items);
 	const currentRealtime = useTranscriptionStore((s) => s.currentRealtime);
+	const ephemeral = useTranscriptionStore((s) => s.ephemeral);
+	const clearEphemeral = useTranscriptionStore((s) => s.clearEphemeral);
 	const isListenMode = useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [now, setNow] = useState(Date.now);
 
-	// Tick every 500ms so time-based fading updates smoothly.
+	// Tick every 250ms so time-based fading (incl. shorter ephemeral fade) stays smooth.
 	useEffect(() => {
-		const id = setInterval(() => setNow(Date.now()), 500);
+		const id = setInterval(() => setNow(Date.now()), 250);
 		return () => clearInterval(id);
 	}, []);
+
+	const ephemeralOpacity = ephemeral
+		? fadeBetween(ephemeral.timestamp, now, EPHEMERAL_FADE_AFTER_MS, EPHEMERAL_GONE_AFTER_MS)
+		: 0;
+
+	// Drop ephemeral from store once fully faded so it doesn't re-show on remount.
+	useEffect(() => {
+		if (ephemeral && ephemeralOpacity <= 0) {
+			clearEphemeral();
+		}
+	}, [ephemeral, ephemeralOpacity, clearEphemeral]);
 
 	// Auto-scroll to bottom in listen mode when content changes.
 	// items.length and currentRealtime are intentional triggers (not used in the body).
@@ -45,20 +67,23 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 		}
 	}, [isListenMode, items.length, currentRealtime]);
 
+	const showEphemeral = ephemeral !== null && ephemeralOpacity > 0;
+
 	if (isListenMode) {
-		const hasContent = items.length > 0 || currentRealtime;
+		const hasContent = items.length > 0 || currentRealtime || showEphemeral;
 		if (!hasContent) {
 			return null;
 		}
 
 		return (
-			<div
-				className="titlebar-no-drag absolute inset-0 flex flex-col justify-end overflow-y-auto"
-				ref={scrollRef}
+			<ScrollArea
+				className="titlebar-no-drag absolute inset-0"
 				style={{
 					maskImage: "linear-gradient(to bottom, transparent 0%, black 40%)",
 					WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 40%)",
 				}}
+				viewportClassName="flex flex-col justify-end"
+				viewportRef={scrollRef}
 			>
 				<div className="flex flex-col items-center gap-0.5 px-5 pt-12 pb-3">
 					{items.map((item) => {
@@ -68,7 +93,7 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 						}
 						return (
 							<p
-								className="max-w-full text-center font-sans text-[13px] text-foreground leading-snug"
+								className="max-w-full text-center font-sans text-body text-foreground leading-snug"
 								key={item.id}
 								style={{ opacity: tf, transition: "opacity 300ms ease-out" }}
 							>
@@ -77,18 +102,26 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 						);
 					})}
 					{currentRealtime && (
-						<p className="max-w-full text-center font-sans text-[13px] text-foreground/60 italic leading-snug">
+						<p className="max-w-full text-center font-sans text-body text-foreground/60 italic leading-snug">
 							{currentRealtime}
 						</p>
 					)}
+					{showEphemeral && ephemeral && (
+						<p
+							className="max-w-full text-center font-sans text-body text-foreground/70 italic leading-snug"
+							style={{ opacity: ephemeralOpacity, transition: "opacity 200ms ease-out" }}
+						>
+							{ephemeral.text}
+						</p>
+					)}
 				</div>
-			</div>
+			</ScrollArea>
 		);
 	}
 
 	// Normal mode — show last 3 items with discrete opacity + time-based fade
 	const visibleItems = items.slice(-VISIBLE_COUNT);
-	const hasContent = visibleItems.length > 0 || currentRealtime;
+	const hasContent = visibleItems.length > 0 || currentRealtime || showEphemeral;
 
 	if (!hasContent) {
 		return null;
@@ -111,7 +144,7 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 				}
 				return (
 					<p
-						className="max-w-full text-center font-sans text-[13px] text-foreground leading-snug"
+						className="max-w-full text-center font-sans text-body text-foreground leading-snug"
 						key={item.id}
 						style={{ opacity, transition: "opacity 300ms ease-out" }}
 					>
@@ -120,8 +153,16 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 				);
 			})}
 			{currentRealtime && (
-				<p className="max-w-full text-center font-sans text-[13px] text-foreground/60 italic leading-snug">
+				<p className="max-w-full text-center font-sans text-body text-foreground/60 italic leading-snug">
 					{currentRealtime}
+				</p>
+			)}
+			{showEphemeral && ephemeral && (
+				<p
+					className="max-w-full text-center font-sans text-body text-foreground/70 italic leading-snug"
+					style={{ opacity: ephemeralOpacity, transition: "opacity 200ms ease-out" }}
+				>
+					{ephemeral.text}
 				</p>
 			)}
 		</div>

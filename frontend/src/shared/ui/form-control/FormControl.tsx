@@ -29,14 +29,14 @@ export function FormControl({
 		>
 			{label && (
 				<div className="flex items-center gap-1">
-					<Field.Label className="font-medium text-[13px] text-foreground leading-4">
+					<Field.Label className="font-medium text-body text-foreground leading-4">
 						{label}
 					</Field.Label>
 					{tooltip && <InfoTooltip content={tooltip} />}
 				</div>
 			)}
 			{caption && (
-				<Field.Description className="mt-0.5 text-[11px] text-foreground-dim leading-[14px]">
+				<Field.Description className="mt-0.5 text-foreground-dim text-xs-tight leading-[14px]">
 					{caption}
 				</Field.Description>
 			)}
@@ -44,7 +44,7 @@ export function FormControl({
 			{error && (
 				<Field.Error
 					aria-live="assertive"
-					className="mt-0.5 text-[11px] text-error leading-[14px]"
+					className="mt-0.5 text-error text-xs-tight leading-[14px]"
 					role="alert"
 				>
 					{error}

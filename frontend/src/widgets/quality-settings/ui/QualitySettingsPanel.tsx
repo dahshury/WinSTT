@@ -1,8 +1,8 @@
 "use client";
 
+import { AiMagicIcon, Clock01Icon, SparklesIcon, TextSquareIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
-import { SettingSection } from "@/entities/setting";
-import { useSettingsStore } from "@/features/update-settings";
+import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { FormControl } from "@/shared/ui/form-control";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Toggle } from "@/shared/ui/toggle";
@@ -16,7 +16,7 @@ export function QualitySettingsPanel() {
 		<div className="flex flex-col gap-5">
 			{/* ── Realtime Preview (visible only when realtime is enabled in Model tab) */}
 			{(q?.enableRealtimeTranscription ?? true) && (
-				<SettingSection title={t("realtimePreview")}>
+				<SettingSection icon={AiMagicIcon} title={t("realtimePreview")}>
 					<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
 						<FormControl
 							caption={t("useMainModelCaption")}
@@ -46,7 +46,7 @@ export function QualitySettingsPanel() {
 
 			{/* ── Smart Endpoint ─────────────────────────────── */}
 			{(q?.enableRealtimeTranscription ?? true) && (
-				<SettingSection title={t("smartEndpoint")}>
+				<SettingSection icon={SparklesIcon} title={t("smartEndpoint")}>
 					<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
 						<FormControl
 							caption={t("smartEndpointCaption")}
@@ -78,7 +78,7 @@ export function QualitySettingsPanel() {
 			)}
 
 			{/* ── Timing ─────────────────────────────────────── */}
-			<SettingSection title={t("timing")}>
+			<SettingSection icon={Clock01Icon} title={t("timing")}>
 				<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
 					<FormControl
 						caption={t("earlyTranscriptionCaption")}
@@ -96,15 +96,23 @@ export function QualitySettingsPanel() {
 			</SettingSection>
 
 			{/* ── Formatting ─────────────────────────────────── */}
-			<SettingSection title={t("formatting")}>
+			<SettingSection icon={TextSquareIcon} title={t("formatting")}>
 				<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
-					<FormControl caption={t("uppercaseFirstCaption")} label={t("uppercaseFirst")}>
+					<FormControl
+						caption={t("uppercaseFirstCaption")}
+						label={t("uppercaseFirst")}
+						tooltip={t("uppercaseFirstTooltip")}
+					>
 						<Toggle
 							checked={q?.ensureSentenceStartingUppercase ?? true}
 							onCheckedChange={(v) => update({ ensureSentenceStartingUppercase: v })}
 						/>
 					</FormControl>
-					<FormControl caption={t("endWithPeriodCaption")} label={t("endWithPeriod")}>
+					<FormControl
+						caption={t("endWithPeriodCaption")}
+						label={t("endWithPeriod")}
+						tooltip={t("endWithPeriodTooltip")}
+					>
 						<Toggle
 							checked={q?.ensureSentenceEndsWithPeriod ?? true}
 							onCheckedChange={(v) => update({ ensureSentenceEndsWithPeriod: v })}

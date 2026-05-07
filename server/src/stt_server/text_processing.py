@@ -55,6 +55,9 @@ def text_detected(text: str, state: ServerState, loop: asyncio.AbstractEventLoop
     """Handle realtime transcription text — adjust silence timing and enqueue for broadcast."""
     text = preprocess_text(text)
 
+    if not text:
+        return
+
     if state.silence_timing and not state.loopback_capture.is_active:
         assert state.recorder is not None, "recorder must be initialized before text_detected is called"
 

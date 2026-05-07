@@ -21,6 +21,7 @@ from src.recorder.application.pipeline import RecordingPipeline
 from src.recorder.domain.audio_buffer import AudioBuffer
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import (
+    NoAudioDetected,
     RealtimeTranscriptionUpdate,
     TranscriptionCompleted,
     TranscriptionStarted,
@@ -164,8 +165,14 @@ class RecorderService:
         injected silence frames to trigger the silence timeout.
         """
         self._microphone_enabled = microphone_on
-        if not microphone_on and not self._pipeline.silence_endpoint_enabled:
-            self._pipeline.request_stop()
+        if not microphone_on:
+            if not self._pipeline.silence_endpoint_enabled:
+                self._pipeline.request_stop()
+            elif self._state_machine.state in (RecorderState.LISTENING, RecorderState.INACTIVE):
+                # Smart-endpoint PTT mode: pipeline auto-stops via silence detection
+                # only after RECORDING. If we never left LISTENING, the user released
+                # without producing any speech — surface that.
+                self._event_bus.publish(NoAudioDetected(timestamp=self._clock.get_current_time()))
 
     def clear_feed_buffer(self) -> None:
         """Discard any partial audio data buffered by ``feed_audio``."""

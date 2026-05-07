@@ -31,6 +31,15 @@
     "tabDictionary": "القاموس",
     "tabSnippets": "المقتطفات",
     "tabLlm": "نموذج اللغة",
+    "tabDesktop": "سطح المكتب",
+    "tabGeneralTooltip": "وضع التسجيل واللغة والصوت وسلوك بدء التشغيل.",
+    "tabModelTooltip": "اختر نموذج تحويل الكلام إلى نص واضبط معالج نموذج اللغة.",
+    "tabAudioTooltip": "الميكروفون واكتشاف نشاط الصوت ومعالجة الصمت.",
+    "tabProcessingTooltip": "المعاينة المباشرة وتحديد نهايات الجمل الذكي وتنسيق النص.",
+    "tabHotkeyTooltip": "اضبط اختصار لوحة المفاتيح للضغط للتحدث.",
+    "tabDictionaryTooltip": "استبدل الكلمات أو العبارات تلقائيًا في النص المنسوخ.",
+    "tabSnippetsTooltip": "وسّع المشغّلات القصيرة إلى نصوص أطول معدّة مسبقًا.",
+    "tabDesktopTooltip": "تكاملات سطح المكتب الأصلية: القائمة والحافظة والمُحدِّث والقياس عن بُعد.",
     "minimize": "تصغير",
     "close": "إغلاق"
   },
@@ -63,6 +72,25 @@
     "showRecordingOverlay": "تراكب التسجيل",
     "showRecordingOverlayCaption": "إظهار المصور العائم أثناء التسجيل",
     "showRecordingOverlayTooltip": "عرض نافذة عائمة مع مصور الصوت في أسفل الشاشة أثناء التسجيل (أوضاع الضغط للتحدث والتبديل فقط)",
+    "visualizerSize": "حجم المصور",
+    "visualizerSizeCaption": "حجم المصور العائم بالبكسل (10–200)",
+    "visualizerSizeTooltip": "عرض وارتفاع المصور العائم بالبكسل أثناء التسجيل.",
+    "showLiveTranscription": "النسخ المباشر",
+    "showLiveTranscriptionCaption": "إظهار النص المنسوخ أسفل المصور",
+    "showLiveTranscriptionTooltip": "عرض النص المنسوخ مباشرة أسفل مصور التسجيل.",
+    "visualizerType": "نمط المرئيات",
+    "visualizerTypeCaption": "نمط حركة المرئيات الصوتية",
+    "visualizerTypeTooltip": "اختر النمط البصري للمرئيات الصوتية. أشرطة: أعمدة عمودية. شبكة: مصفوفة نقطية. شعاعي: أعمدة تتمدد بشكل دائري. موجة: شكل موجي (WebGL). هالة: هالة متوهجة عضوية (WebGL).",
+    "visualizerBar": "أشرطة",
+    "visualizerGrid": "شبكة",
+    "visualizerRadial": "شعاعي",
+    "visualizerWave": "موجة",
+    "visualizerAura": "هالة",
+    "visualizerBarCount": "عدد الأشرطة",
+    "visualizerBarCountCaption": "عدد الأشرطة في المرئيات الشريطية (3–21)",
+    "visualizerBarCountTooltip": "اضبط عدد الأشرطة التي يعرضها النمط الشريطي. الأعداد الأعلى تعطي مظهراً أكثر كثافة.",
+    "visualizerColor": "لون المرئيات",
+    "visualizerColorCaption": "لون التمييز للمرئيات",
     "fileTranscription": "نسخ الملفات",
     "fileTranscriptionFormat": "التنسيق",
     "fileTranscriptionFormatCaption": "تنسيق الإخراج للملفات المنسوخة",
@@ -74,7 +102,14 @@
     "minimizeToTray": "التصغير إلى علبة النظام",
     "minimizeToTrayCaption": "الاستمرار في العمل من علبة النظام",
     "language": "اللغة",
-    "languageCaption": "لغة العرض للواجهة"
+    "languageCaption": "لغة العرض للواجهة",
+    "languageTooltip": "اللغة المستخدمة للواجهة (القوائم، الإعدادات، التلميحات). مستقلة عن لغة النسخ.",
+    "visualizerColorTooltip": "لون التمييز المستخدم في حركة المرئيات الصوتية.",
+    "soundFileTooltip": "ملف .wav أو .mp3 مخصص يتم تشغيله عند بدء التسجيل. أسقط ملفًا أو استعرض لتحديده.",
+    "fileTranscriptionFormatTooltip": "تنسيق ملف الإخراج لملفات الصوت/الفيديو المنسوخة. TXT نص عادي، أما SRT فيتضمن طوابع زمنية للترجمات.",
+    "startOnLoginTooltip": "تشغيل WinSTT تلقائيًا في كل مرة تسجّل فيها الدخول إلى Windows.",
+    "startMinimizedTooltip": "عند التشغيل، ابدأ مخفيًا في علبة النظام بدلاً من فتح النافذة الرئيسية.",
+    "minimizeToTrayTooltip": "إغلاق النافذة الرئيسية يبقي WinSTT يعمل في علبة النظام بدلاً من إنهائه."
   },
   "model": {
     "mainModel": "النموذج الرئيسي",
@@ -99,7 +134,11 @@
     "realtimeBeamSize": "حجم شعاع الوقت الفعلي",
     "realtimeBeamSizeCaption": "عرض البحث للوقت الفعلي",
     "realtimeBeamSizeTooltip": "حجم الشعاع لنموذج معاينة الوقت الفعلي. القيم الأقل تعطي تغذية راجعة مباشرة أسرع على حساب بعض الدقة. يؤثر فقط على المعاينة المباشرة وليس النسخ النهائي.",
-    "llm": "نموذج لغوي كبير"
+    "llm": "نموذج لغوي كبير",
+    "computeDefaultLabel": "افتراضي (الدقة الأصلية للنموذج)",
+    "computeAutoLabel": "تلقائي (الأفضل لجهازك)",
+    "deviceAutoLabel": "تلقائي",
+    "deviceCpuLabel": "وحدة المعالجة المركزية"
   },
   "audio": {
     "inputDevice": "جهاز الإدخال",
@@ -142,8 +181,10 @@
     "formatting": "التنسيق",
     "uppercaseFirst": "الحرف الأول كبير",
     "uppercaseFirstCaption": "كتابة بداية الجمل بحرف كبير تلقائيًا",
+    "uppercaseFirstTooltip": "كتابة الحرف الأول من كل جملة منسوخة بحرف كبير تلقائيًا.",
     "endWithPeriod": "الإنهاء بنقطة",
     "endWithPeriodCaption": "إضافة نقطة تلقائيًا للجمل",
+    "endWithPeriodTooltip": "إضافة نقطة في نهاية الجمل المنسوخة التي لا تنتهي بعلامة ترقيم.",
     "smartEndpoint": "نقطة النهاية الذكية",
     "smartEndpointLabel": "نقطة النهاية الذكية",
     "smartEndpointCaption": "كشف الجمل بالذكاء الاصطناعي",
@@ -156,10 +197,13 @@
     "configuration": "إعداد مفتاح الاختصار",
     "pushToTalkKey": "مفتاح اضغط للتحدث",
     "pushToTalkKeyCaption": "انقر تسجيل، اضغط مجموعة المفاتيح، ثم انقر إيقاف",
+    "pushToTalkKeyTooltip": "اختصار لوحة المفاتيح الذي يبدأ التسجيل. انقر تسجيل، اضغط على مجموعة المفاتيح المطلوبة، ثم انقر إيقاف.",
     "pressKeys": "اضغط المفاتيح...",
     "record": "تسجيل",
     "stop": "إيقاف",
-    "switchToPtt": "التبديل إلى اضغط للتحدث"
+    "switchToPtt": "التبديل إلى اضغط للتحدث",
+    "displayTooltip": "اختصار الضغط للتحدث. غيّره من الإعدادات ← اختصار.",
+    "displayTooltipDisconnected": "اختصار الضغط للتحدث (غير نشط — تم قطع الاتصال بالخادم). غيّره من الإعدادات ← اختصار."
   },
   "dictionary": {
     "title": "استبدال الكلمات",
@@ -187,17 +231,27 @@
     "connecting": "جارٍ الاتصال",
     "error": "خطأ",
     "offline": "غير متصل",
-    "loopbackIdle": "الاسترجاع خامل"
+    "loopbackIdle": "الاسترجاع خامل",
+    "connectingTooltip": "جاري إنشاء اتصال بخادم تحويل الكلام إلى نص...",
+    "errorTooltip": "تعذّر الاتصال بخادم تحويل الكلام إلى نص. تحقق من تشغيل عملية الخادم.",
+    "offlineTooltip": "غير متصل بخادم تحويل الكلام إلى نص.",
+    "gpuTooltip": "يستخدم الخادم تسريع GPU للنسخ.",
+    "cpuTooltip": "يعمل الخادم على وحدة المعالجة المركزية. سيكون النسخ أبطأ بشكل ملحوظ مقارنة بـ GPU.",
+    "modelTooltip": "نموذج تحويل الكلام إلى نص النشط: {model}. غيّره من الإعدادات ← النموذج.",
+    "loopbackActiveTooltip": "يستمع إلى صوت النظام من جهاز الاسترجاع هذا. غيّره من الإعدادات ← عام ← جهاز الاسترجاع.",
+    "loopbackIdleTooltip": "تم تكوين وضع الاستماع، ولكن لم يتم التقاط أي صوت بعد."
   },
   "transcription": {
     "waiting": "في انتظار الكلام...",
-    "serverOffline": "الخادم غير متصل"
+    "serverOffline": "الخادم غير متصل",
+    "noAudioDetected": "(لم يتم اكتشاف صوت)"
   },
   "mainPage": {
     "pttButton": "PTT"
   },
   "audioDisplay": {
-    "dropToTranscribe": "أسقط الملف لنسخه"
+    "dropToTranscribe": "أسقط الملف لنسخه",
+    "ariaLabel": "عرض الصوت ومنطقة إسقاط الملفات"
   },
   "download": {
     "downloadingModel": "جارٍ تحميل {model}...",
@@ -233,7 +287,12 @@
     "ollamaNotAvailableDescription": "Ollama غير قيد التشغيل أو تمت إزالة تثبيته. ستعمل عمليات النسخ بشكل طبيعي، لكن المعالجة بنموذج اللغة معطلة. يرجى تثبيت Ollama والتأكد من تشغيله لاستخدام هذه الميزة.",
     "ollamaRequired": "Ollama مطلوب",
     "ollamaRequiredDescription": "تتطلب المعالجة بنموذج اللغة تثبيت Ollama وتشغيله. يرجى تنزيل وتثبيت Ollama من الموقع الرسمي، ثم حاول مرة أخرى.",
-    "downloadOllama": "تنزيل Ollama"
+    "ollamaNotRunning": "Ollama غير مُشغّل",
+    "ollamaNotRunningDescription": "Ollama مثبت لكنه غير مُشغّل حالياً. ابدأ تشغيله لتمكين المعالجة اللاحقة بنموذج اللغة.",
+    "downloadOllama": "تنزيل Ollama",
+    "runOllama": "تشغيل Ollama",
+    "starting": "جارٍ التشغيل…",
+    "ollamaStartFailed": "فشل تشغيل Ollama. يرجى تشغيله يدوياً."
   },
   "errors": {
     "somethingWentWrong": "حدث خطأ ما",
@@ -241,5 +300,61 @@
     "tryAgain": "حاول مرة أخرى",
     "pageNotFound": "الصفحة غير موجودة",
     "notFoundDescription": "الصفحة التي تبحث عنها غير موجودة."
+  },
+  "tray": {
+    "showWindow": "إظهار النافذة",
+    "openSettings": "الإعدادات",
+    "transcribeFile": "نسخ ملف...",
+    "checkForUpdates": "التحقق من التحديثات",
+    "quit": "خروج",
+    "modePtt": "PTT",
+    "modeToggle": "تبديل",
+    "modeListen": "استماع",
+    "audioFiles": "ملفات صوتية",
+    "videoFiles": "ملفات فيديو",
+    "allFiles": "كل الملفات",
+    "selectFileTitle": "اختر ملف صوت أو فيديو لنسخه"
+  },
+  "desktop": {
+    "title": "أدوات سطح المكتب",
+    "active": "أدوات سطح المكتب المستوحاة من Electrobun فعّالة لنافذة الإعدادات هذه.",
+    "unavailable": "واجهة Electron API غير متاحة في وقت التشغيل هذا.",
+    "menuEditor": "محرر قائمة التطبيق",
+    "menuJsonLabel": "JSON القائمة",
+    "menuJsonCaption": "حرّر JSON وطبّقه على القائمة الأصلية للتطبيق.",
+    "applyJson": "تطبيق JSON",
+    "loadDemo": "تحميل العرض التوضيحي",
+    "resetMenu": "إعادة تعيين القائمة الأصلية",
+    "appliedMenu": "تم تطبيق {count} عنصر(عناصر) من المستوى الأعلى.",
+    "menuReset": "تمت إعادة تعيين قائمة التطبيق.",
+    "contextMenuTitle": "ساحة قائمة السياق",
+    "contextMenuHint": "انقر بزر الفأرة الأيمن في هذا المربع لفتح قائمة سياق أصلية.",
+    "openContextMenu": "فتح قائمة السياق",
+    "contextMenuClosed": "تم إغلاق قائمة السياق دون اختيار.",
+    "contextMenuSelected": "تم اختيار: {id}",
+    "contextMenuInitial": "لا يوجد إجراء قائمة سياق بعد.",
+    "clipboardTitle": "لوحة الحافظة",
+    "clipboardLabel": "النص",
+    "clipboardCaption": "اقرأ من الحافظة الأصلية واكتب إليها.",
+    "clipboardPlaceholder": "نص الحافظة",
+    "readClipboard": "قراءة الحافظة",
+    "writeClipboard": "كتابة إلى الحافظة",
+    "clearClipboard": "مسح الحافظة",
+    "clipboardLoaded": "تم تحميل محتوى الحافظة.",
+    "clipboardUpdated": "تم تحديث الحافظة.",
+    "clipboardCleared": "تم مسح الحافظة.",
+    "updaterTitle": "خط زمني للمُحدِّث",
+    "refreshHistory": "تحديث السجل",
+    "clearHistory": "مسح السجل",
+    "updaterRefreshed": "تم تحديث سجل المُحدِّث.",
+    "updaterCleared": "تم مسح سجل المُحدِّث.",
+    "noUpdaterEntries": "لا توجد إدخالات للمُحدِّث بعد.",
+    "telemetryTitle": "قياس النافذة عن بُعد",
+    "telemetryLabel": "بث مباشر",
+    "telemetryCaption": "تتبع أحداث الحركة/تغيير الحجم/التركيز لهذه النافذة.",
+    "telemetryClear": "مسح",
+    "telemetryClearCaption": "حذف جميع الأحداث الملتقطة من اللوحة.",
+    "clearEvents": "مسح الأحداث",
+    "noTelemetry": "لم يتم التقاط أي قياس بعد."
   }
 }

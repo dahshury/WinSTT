@@ -4,11 +4,15 @@ import { Separator } from "@base-ui/react/separator";
 import { AiAudioIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { ConnectionIndicator, useConnectionStore } from "@/features/connect-server";
+import { useConnectionStore } from "@/entities/connection";
+import { useSettingsStore } from "@/entities/setting";
+import { ConnectionIndicator } from "@/features/connect-server";
 import { useListenStore } from "@/features/listen-mode";
 import { useDownloadStore } from "@/features/model-download";
 import { HotkeyDisplay } from "@/features/push-to-talk";
-import { useSettingsStore } from "@/features/update-settings";
+import { Tooltip } from "@/shared/ui/tooltip";
+
+const FOOTER_TOOLTIP_DELAY = 1500;
 
 /** Strip driver/loopback suffixes: "LG TV (NVIDIA …) [Loopback]" → "LG TV" */
 const DEVICE_SUFFIX_RE = /\s*[([].*/;
@@ -37,29 +41,41 @@ export function StatusBar() {
 			<ConnectionIndicator />
 			<div className="flex items-center gap-1.5">
 				{recordingMode === "listen" ? (
-					<span className="inline-flex max-w-[120px] items-center gap-1.5 text-[10px]">
-						{isListening && (
-							<span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-success" />
-						)}
-						<span className={`truncate ${isListening ? "text-success" : "text-foreground-dim"}`}>
-							{listenDeviceName ? shortDeviceName(listenDeviceName) : t("loopbackIdle")}
+					<Tooltip
+						content={isListening ? t("loopbackActiveTooltip") : t("loopbackIdleTooltip")}
+						delay={FOOTER_TOOLTIP_DELAY}
+						side="top"
+					>
+						<span className="inline-flex max-w-[120px] cursor-help items-center gap-1.5 text-2xs">
+							{isListening && (
+								<span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-success" />
+							)}
+							<span className={`truncate ${isListening ? "text-success" : "text-foreground-dim"}`}>
+								{listenDeviceName ? shortDeviceName(listenDeviceName) : t("loopbackIdle")}
+							</span>
 						</span>
-					</span>
+					</Tooltip>
 				) : (
 					<HotkeyDisplay isConnected={connectionStatus === "connected"} />
 				)}
 				{currentModel && (
 					<>
 						<Separator className="h-3 w-px bg-border" orientation="vertical" />
-						<span className="flex items-center gap-1 text-[10px] text-foreground-dim">
-							<HugeiconsIcon
-								aria-hidden="true"
-								color="var(--color-foreground-dim)"
-								icon={AiAudioIcon}
-								size={11}
-							/>
-							<span className="truncate">{currentModel}</span>
-						</span>
+						<Tooltip
+							content={t("modelTooltip", { model: currentModel })}
+							delay={FOOTER_TOOLTIP_DELAY}
+							side="top"
+						>
+							<span className="flex cursor-help items-center gap-1 text-2xs text-foreground-dim">
+								<HugeiconsIcon
+									aria-hidden="true"
+									color="var(--color-foreground-dim)"
+									icon={AiAudioIcon}
+									size={11}
+								/>
+								<span className="truncate">{currentModel}</span>
+							</span>
+						</Tooltip>
 					</>
 				)}
 			</div>

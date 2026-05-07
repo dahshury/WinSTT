@@ -28,7 +28,7 @@ export function Slider({
 			disabled={disabled}
 			max={max}
 			min={min}
-			onValueChange={(v) => onChange(v as number)}
+			onValueChange={(v: number) => onChange(v)}
 			step={step}
 			value={value}
 		>

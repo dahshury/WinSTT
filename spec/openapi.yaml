@@ -20,6 +20,7 @@ components:
           fullSentence: "#/components/schemas/FullSentenceEvent"
           recording_start: "#/components/schemas/RecordingStartEvent"
           recording_stop: "#/components/schemas/RecordingStopEvent"
+          no_audio_detected: "#/components/schemas/NoAudioDetectedEvent"
           loopback_started: "#/components/schemas/LoopbackStartedEvent"
           loopback_stopped: "#/components/schemas/LoopbackStoppedEvent"
           vad_detect_start: "#/components/schemas/VadDetectStartEvent"
@@ -39,6 +40,7 @@ components:
         - $ref: "#/components/schemas/FullSentenceEvent"
         - $ref: "#/components/schemas/RecordingStartEvent"
         - $ref: "#/components/schemas/RecordingStopEvent"
+        - $ref: "#/components/schemas/NoAudioDetectedEvent"
         - $ref: "#/components/schemas/LoopbackStartedEvent"
         - $ref: "#/components/schemas/LoopbackStoppedEvent"
         - $ref: "#/components/schemas/VadDetectStartEvent"
@@ -107,6 +109,17 @@ components:
         type:
           type: string
           const: recording_stop
+
+    NoAudioDetectedEvent:
+      type: object
+      description: >
+        Emitted when a manual stop (e.g. push-to-talk release) finishes
+        without producing a transcription because no speech was captured.
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: no_audio_detected
 
     VadDetectStartEvent:
       type: object
@@ -616,6 +629,22 @@ components:
           nullable: true
         showRecordingOverlay:
           type: boolean
+        visualizerSize:
+          type: integer
+          minimum: 10
+          maximum: 200
+        showLiveTranscription:
+          type: boolean
+        visualizerType:
+          type: string
+          enum: [bar, grid, radial, wave, aura]
+        visualizerBarCount:
+          type: integer
+          minimum: 3
+          maximum: 21
+        visualizerColor:
+          type: string
+          pattern: "^#[0-9a-fA-F]{6}$"
 
     HotkeySettings:
       type: object
@@ -683,6 +712,32 @@ components:
         modifiedAt:
           type: string
           format: date-time
+
+    OllamaScanResult:
+      type: object
+      required: [models, reachable]
+      properties:
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/OllamaModel"
+        reachable:
+          type: boolean
+          description: True if the Ollama API responded (even with HTTP error). False if connection failed.
+        error:
+          type: string
+          description: Human-readable failure reason when not reachable or models couldn't be parsed.
+
+    OllamaDetectResult:
+      type: object
+      required: [installed]
+      properties:
+        installed:
+          type: boolean
+          description: True if an `ollama` executable can be located on PATH or in default install locations.
+        path:
+          type: string
+          description: Resolved path to the ollama executable, when installed.
 
     AppSettings:
       type: object

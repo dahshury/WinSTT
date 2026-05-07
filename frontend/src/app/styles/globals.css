@@ -2,56 +2,56 @@
 
 /* ── Theme: design tokens → Tailwind utilities ── */
 @theme {
-	/* Surface — original darkness, blue-shifted (hue ~245) */
-	--color-surface: #080a10;
-	--color-surface-primary: #0b0d14;
-	--color-surface-secondary: #0f111a;
-	--color-surface-tertiary: #151822;
-	--color-surface-elevated: #1b1f2a;
-	--color-surface-hover: #222834;
-	--color-surface-active: #282e3c;
+	/* Surface — original darkness, blue-shifted (hue ~265) */
+	--color-surface: oklch(7.5% 0.015 265);
+	--color-surface-primary: oklch(9.5% 0.015 265);
+	--color-surface-secondary: oklch(12% 0.015 265);
+	--color-surface-tertiary: oklch(15.5% 0.013 265);
+	--color-surface-elevated: oklch(19% 0.013 265);
+	--color-surface-hover: oklch(22.5% 0.015 265);
+	--color-surface-active: oklch(25% 0.015 265);
 
 	/* Foreground — blue-tinted whites */
-	--color-foreground: #e8ecf4;
-	--color-foreground-secondary: #a0aabe;
-	--color-foreground-muted: #6b7a94;
-	--color-foreground-dim: #3e4a62;
+	--color-foreground: oklch(94% 0.015 265);
+	--color-foreground-secondary: oklch(73% 0.025 260);
+	--color-foreground-muted: oklch(55% 0.035 255);
+	--color-foreground-dim: oklch(38% 0.035 260);
 
 	/* Accent — Docker Blue (primary interactive: buttons, dropdowns, focus rings) */
-	--color-accent: #3b82f6;
-	--color-accent-hover: #60a5fa;
-	--color-accent-muted: #2563eb;
-	--color-accent-dim: #0c1830;
-	--color-accent-glow: rgba(59, 130, 246, 0.12);
-	--color-accent-glow-strong: rgba(59, 130, 246, 0.25);
+	--color-accent: oklch(62% 0.19 260);
+	--color-accent-hover: oklch(70% 0.155 255);
+	--color-accent-muted: oklch(55% 0.2 262);
+	--color-accent-dim: oklch(14% 0.04 265);
+	--color-accent-glow: oklch(62% 0.19 260 / 0.12);
+	--color-accent-glow-strong: oklch(62% 0.19 260 / 0.25);
 
 	/* Teal → Bright Blue (waveform, toggles, sliders, progress, sidebar indicator) */
-	--color-teal: #58a6ff;
-	--color-teal-hover: #79b8ff;
-	--color-teal-dim: #0c1832;
+	--color-teal: oklch(71% 0.13 245);
+	--color-teal-hover: oklch(77% 0.1 245);
+	--color-teal-dim: oklch(14.5% 0.04 260);
 
 	/* Purple → Soft Blue (settings section headers, snippet triggers, highlights) */
-	--color-purple: #79b8ff;
-	--color-purple-hover: #a5d0ff;
-	--color-purple-dim: #0e1c36;
+	--color-purple: oklch(77% 0.1 245);
+	--color-purple-hover: oklch(84% 0.07 240);
+	--color-purple-dim: oklch(16% 0.04 260);
 
 	/* Orange → Accent Blue (hotkey pressed, recording indicators) */
-	--color-orange: #3b82f6;
-	--color-orange-hover: #60a5fa;
-	--color-orange-dim: #0c1830;
+	--color-orange: oklch(62% 0.19 260);
+	--color-orange-hover: oklch(70% 0.155 255);
+	--color-orange-dim: oklch(14% 0.04 265);
 
 	/* Status — functional colors */
-	--color-success: #22c55e;
-	--color-success-dim: #052e16;
-	--color-warning: #eab308;
-	--color-warning-dim: #422006;
-	--color-error: #ef4444;
-	--color-error-dim: #450a0a;
+	--color-success: oklch(68% 0.17 150);
+	--color-success-dim: oklch(18% 0.04 155);
+	--color-warning: oklch(80% 0.17 90);
+	--color-warning-dim: oklch(27% 0.06 60);
+	--color-error: oklch(59% 0.22 25);
+	--color-error-dim: oklch(20% 0.06 25);
 
 	/* Border — blue-tinted dark edges */
-	--color-border: #1e2330;
-	--color-border-hover: #2a3144;
-	--color-border-accent: rgba(59, 130, 246, 0.25);
+	--color-border: oklch(19% 0.015 260);
+	--color-border-hover: oklch(25% 0.015 260);
+	--color-border-accent: oklch(62% 0.19 260 / 0.25);
 
 	/* Radii — rounded-xs, rounded-sm, rounded-md, rounded-lg */
 	--radius-xs: 3px;
@@ -63,11 +63,21 @@
 	--font-sans: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
 	--font-mono: var(--font-geist-mono), "SF Mono", "Cascadia Code", monospace;
 
+	/* Text sizes — text-2xs, text-xs-tight, text-body, text-body-sm */
+	--text-2xs: 10px;
+	--text-2xs--line-height: 1.4;
+	--text-xs-tight: 11px;
+	--text-xs-tight--line-height: 1.4;
+	--text-body-sm: 12px;
+	--text-body-sm--line-height: 1.5;
+	--text-body: 13px;
+	--text-body--line-height: 1.5;
+
 	/* Shadows */
-	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.6);
-	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
-	--shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
-	--shadow-glow: 0 0 20px rgba(59, 130, 246, 0.08);
+	--shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.6);
+	--shadow-md: 0 4px 12px oklch(0% 0 0 / 0.5);
+	--shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.6);
+	--shadow-glow: 0 0 20px oklch(62% 0.19 260 / 0.08);
 
 	/* Animations — animate-fade-in, animate-slide-in, etc. */
 	--animate-fade-in: fade-in 200ms ease-out;

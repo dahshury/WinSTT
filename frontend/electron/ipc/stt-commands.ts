@@ -1,20 +1,67 @@
 import { ipcMain } from "electron";
-import { dbg } from "../lib/debug-log";
+import { dbg, dbgVerbose } from "../lib/debug-log";
 import type { SttClient } from "../ws/stt-client";
 
-export function setupSttCommandHandlers(sttClient: SttClient) {
+/**
+ * Allowlists for STT parameters and methods that the renderer may invoke.
+ * Must stay in sync with the OpenAPI spec (AllowedParameter / AllowedMethod).
+ */
+const ALLOWED_PARAMETERS = new Set([
+	"model",
+	"language",
+	"silero_sensitivity",
+	"wake_word_activation_delay",
+	"post_speech_silence_duration",
+	"listen_start",
+	"recording_stop_time",
+	"last_transcription_bytes",
+	"last_transcription_bytes_b64",
+	"speech_end_silence_start",
+	"is_recording",
+	"use_wake_words",
+	"silence_timing",
+	"silence_endpoint_enabled",
+	"smart_endpoint_enabled",
+	"detection_speed",
+]);
+
+const ALLOWED_METHODS = new Set([
+	"set_microphone",
+	"abort",
+	"stop",
+	"clear_audio_queue",
+	"wakeup",
+	"shutdown",
+	"text",
+]);
+
+export function setupSttCommandHandlers(sttClient: SttClient): void {
 	ipcMain.on("stt:set-parameter", (_event, payload: { parameter: string; value: unknown }) => {
+		if (!payload || typeof payload.parameter !== "string") {
+			dbg("stt-cmd", "set-parameter REJECTED (invalid payload)");
+			return;
+		}
+		if (!ALLOWED_PARAMETERS.has(payload.parameter)) {
+			dbg("stt-cmd", "set-parameter REJECTED (disallowed):", payload.parameter);
+			return;
+		}
 		if (!sttClient.isConnected) {
 			dbg("stt-cmd", "set-parameter DROPPED (not connected):", payload.parameter);
 			return;
 		}
-		dbg("stt-cmd", "set-parameter:", payload.parameter, "=", JSON.stringify(payload.value));
+		dbgVerbose("stt-cmd", "set-parameter:", payload.parameter, "=", JSON.stringify(payload.value));
 		sttClient.setParameter(payload.parameter, payload.value);
 	});
 
 	ipcMain.handle("stt:is-connected", () => sttClient.isConnected);
 
 	ipcMain.handle("stt:get-parameter", (_event, payload: { parameter: string }) => {
+		if (!payload || typeof payload.parameter !== "string") {
+			return Promise.reject(new Error("Invalid payload: parameter must be a string"));
+		}
+		if (!ALLOWED_PARAMETERS.has(payload.parameter)) {
+			return Promise.reject(new Error(`Disallowed parameter: ${payload.parameter}`));
+		}
 		if (!sttClient.isConnected) {
 			return Promise.reject(new Error("STT client is not connected"));
 		}
@@ -22,22 +69,37 @@ export function setupSttCommandHandlers(sttClient: SttClient) {
 	});
 
 	ipcMain.on("stt:call-method", (_event, payload: { method: string; args?: unknown[] }) => {
+		if (!payload || typeof payload.method !== "string") {
+			dbg("stt-cmd", "call-method REJECTED (invalid payload)");
+			return;
+		}
+		if (!ALLOWED_METHODS.has(payload.method)) {
+			dbg("stt-cmd", "call-method REJECTED (disallowed):", payload.method);
+			return;
+		}
+		if (payload.args !== undefined && !Array.isArray(payload.args)) {
+			dbg("stt-cmd", "call-method REJECTED (args must be array):", payload.method);
+			return;
+		}
 		if (!sttClient.isConnected) {
 			dbg("stt-cmd", "call-method DROPPED (not connected):", payload.method);
 			return;
 		}
-		dbg("stt-cmd", "call-method:", payload.method, JSON.stringify(payload.args ?? []));
+		dbgVerbose("stt-cmd", "call-method:", payload.method, JSON.stringify(payload.args ?? []));
 		sttClient.callMethod(payload.method, payload.args);
 	});
 
 	ipcMain.handle("gpu:get-info", async () => {
 		try {
-			const { execSync } = await import("node:child_process");
-			const output = execSync("nvidia-smi --query-gpu=name --format=csv,noheader,nounits", {
-				encoding: "utf8",
-				timeout: 5000,
-				windowsHide: true,
-			}).trim();
+			const { execFile } = await import("node:child_process");
+			const { promisify } = await import("node:util");
+			const execFileAsync = promisify(execFile);
+			const { stdout } = await execFileAsync(
+				"nvidia-smi",
+				["--query-gpu=name", "--format=csv,noheader,nounits"],
+				{ windowsHide: true, timeout: 5000 }
+			);
+			const output = stdout.trim();
 			const name = output.split("\n")[0]?.trim() ?? "NVIDIA GPU";
 			return { name, available: true };
 		} catch {
@@ -46,6 +108,9 @@ export function setupSttCommandHandlers(sttClient: SttClient) {
 	});
 
 	ipcMain.handle("audio:get-devices", async () => {
+		if (process.platform !== "win32") {
+			return [];
+		}
 		try {
 			const { execFile } = await import("node:child_process");
 			const { promisify } = await import("node:util");
@@ -153,11 +218,14 @@ Add-Type -TypeDefinition $code -Language CSharp
 			const devices: Array<{ index: number; name: string; isDefault: boolean }> = [];
 			for (const line of stdout.trim().split("\n")) {
 				const parts = line.trim().split("|");
-				if (parts.length >= 3) {
+				const indexStr = parts[0];
+				const nameStr = parts[1];
+				const defaultStr = parts[2];
+				if (indexStr !== undefined && nameStr !== undefined && defaultStr !== undefined) {
 					devices.push({
-						index: Number.parseInt(parts[0] as string, 10),
-						name: (parts[1] as string).trim(),
-						isDefault: parts[2] === "1",
+						index: Number.parseInt(indexStr, 10),
+						name: nameStr.trim(),
+						isDefault: defaultStr === "1",
 					});
 				}
 			}

@@ -10,12 +10,18 @@ from __future__ import annotations
 import contextlib
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
 if TYPE_CHECKING:
     from src.recorder import AudioToTextRecorder
+
+
+class _AudioStream(Protocol):
+    def read(self, num_frames: int, *, exception_on_overflow: bool = ...) -> bytes: ...
+    def stop_stream(self) -> None: ...
+    def close(self) -> None: ...
 
 
 TARGET_PEAK: float = 8000.0  # Target peak amplitude (out of 32768)
@@ -204,7 +210,7 @@ class LoopbackCapture:
 
     # ── Internal ──────────────────────────────────────────────────────
 
-    def _capture_loop(self, recorder: AudioToTextRecorder, stream: Any) -> None:
+    def _capture_loop(self, recorder: AudioToTextRecorder, stream: _AudioStream) -> None:
         """Read audio frames from WASAPI loopback and feed to recorder."""
         from src.building_blocks.terminal import TerminalColors as bcolors
 

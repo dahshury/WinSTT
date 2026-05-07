@@ -20,7 +20,7 @@ const FADE_DECAY = 0.06;
  * Subscribes to recording / VAD / audio-level IPC events and drives the
  * visualizer store with real RMS audio levels from the server.
  */
-export function useVisualizerSync() {
+export function useVisualizerSync(): void {
 	const setRecording = useVisualizerStore((s) => s.setRecording);
 	const setSpeaking = useVisualizerStore((s) => s.setSpeaking);
 	const setAudioLevel = useVisualizerStore((s) => s.setAudioLevel);

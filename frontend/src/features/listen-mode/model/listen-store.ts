@@ -15,7 +15,7 @@ interface ListenStore {
 	setDevices: (devices: LoopbackDevice[]) => void;
 }
 
-export const useListenStore = create<ListenStore>((set) => ({
+export const useListenStore = create<ListenStore>()((set) => ({
 	isListening: false,
 	deviceName: "",
 	devices: [],

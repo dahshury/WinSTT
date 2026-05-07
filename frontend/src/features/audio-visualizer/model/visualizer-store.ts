@@ -22,7 +22,7 @@ interface VisualizerState {
 	setSentencePulse: (v: number) => void;
 }
 
-export const useVisualizerStore = create<VisualizerState>((set) => ({
+export const useVisualizerStore = create<VisualizerState>()((set) => ({
 	isRecording: false,
 	isSpeaking: false,
 	audioLevel: 0,

@@ -9,7 +9,10 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { useConnectionStore } from "../model/connection-store";
+import { useConnectionStore } from "@/entities/connection";
+import { Tooltip } from "@/shared/ui/tooltip";
+
+const FOOTER_TOOLTIP_DELAY = 1500;
 
 const RE_VENDOR = /^(NVIDIA|AMD|Intel)\s+/i;
 const RE_FAMILY = /^(GeForce|Radeon|Instinct)\s+/i;
@@ -37,28 +40,34 @@ export function ConnectionIndicator() {
 
 	if (status === "connecting") {
 		return (
-			<output className="flex items-center gap-1">
-				<HugeiconsIcon className="text-warning" icon={CloudIcon} size={12} />
-				<span className="font-medium text-[10px] text-warning">{t("connecting")}</span>
-			</output>
+			<Tooltip content={t("connectingTooltip")} delay={FOOTER_TOOLTIP_DELAY} side="top">
+				<output className="flex cursor-help items-center gap-1">
+					<HugeiconsIcon className="text-warning" icon={CloudIcon} size={12} />
+					<span className="font-medium text-2xs text-warning">{t("connecting")}</span>
+				</output>
+			</Tooltip>
 		);
 	}
 
 	if (status === "error") {
 		return (
-			<output className="flex items-center gap-1">
-				<HugeiconsIcon className="text-error" icon={Plug01Icon} size={12} />
-				<span className="font-medium text-[10px] text-error">{t("error")}</span>
-			</output>
+			<Tooltip content={t("errorTooltip")} delay={FOOTER_TOOLTIP_DELAY} side="top">
+				<output className="flex cursor-help items-center gap-1">
+					<HugeiconsIcon className="text-error" icon={Plug01Icon} size={12} />
+					<span className="font-medium text-2xs text-error">{t("error")}</span>
+				</output>
+			</Tooltip>
 		);
 	}
 
 	if (status !== "connected" || !gpuInfo) {
 		return (
-			<output className="flex items-center gap-1">
-				<HugeiconsIcon className="text-error" icon={WifiDisconnected01Icon} size={12} />
-				<span className="font-medium text-[10px] text-error">{t("offline")}</span>
-			</output>
+			<Tooltip content={t("offlineTooltip")} delay={FOOTER_TOOLTIP_DELAY} side="top">
+				<output className="flex cursor-help items-center gap-1">
+					<HugeiconsIcon className="text-error" icon={WifiDisconnected01Icon} size={12} />
+					<span className="font-medium text-2xs text-error">{t("offline")}</span>
+				</output>
+			</Tooltip>
 		);
 	}
 
@@ -66,18 +75,23 @@ export function ConnectionIndicator() {
 	const icon = isGpu ? GpuIcon : CpuIcon;
 	const label = isGpu ? "GPU" : "CPU";
 	const shortName = shortenGpuName(gpuInfo.name);
+	const tooltipContent = isGpu
+		? t("gpuTooltip", { name: gpuInfo.name })
+		: t("cpuTooltip", { name: gpuInfo.name });
 
 	return (
-		<output className="flex items-center gap-1">
-			<HugeiconsIcon
-				className={isGpu ? "text-success" : "text-foreground-dim"}
-				icon={icon}
-				size={12}
-			/>
-			<span className={`font-medium text-[10px] ${isGpu ? "text-success" : "text-foreground-dim"}`}>
-				{label}
-			</span>
-			<span className="text-[9px] text-foreground-dim/60">{shortName}</span>
-		</output>
+		<Tooltip content={tooltipContent} delay={FOOTER_TOOLTIP_DELAY} side="top">
+			<output className="flex cursor-help items-center gap-1">
+				<HugeiconsIcon
+					className={isGpu ? "text-success" : "text-foreground-dim"}
+					icon={icon}
+					size={12}
+				/>
+				<span className={`font-medium text-2xs ${isGpu ? "text-success" : "text-foreground-dim"}`}>
+					{label}
+				</span>
+				<span className="text-[9px] text-foreground-dim/60">{shortName}</span>
+			</output>
+		</Tooltip>
 	);
 }

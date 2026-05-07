@@ -12,6 +12,7 @@ from src.building_blocks.clock import Clock
 from src.building_blocks.event_bus import EventBus
 from src.recorder.application.recorder_service import RecorderService
 from src.recorder.domain.config import RecorderConfig
+from src.recorder.domain.events import NoAudioDetected
 from src.recorder.domain.ports.transcriber import TranscriptionResult
 from src.recorder.domain.state_machine import RecorderState
 from tests.fakes.fake_audio_source import FakeAudioSource
@@ -395,6 +396,21 @@ class TestRecorderService:
         service.set_microphone(False)
         time.sleep(0.2)
         assert service.state != RecorderState.RECORDING
+        service.shutdown()
+
+    def test_set_microphone_off_emits_no_audio_when_listening_with_smart_endpoint(self) -> None:
+        """Smart endpoint PTT: releasing while still LISTENING emits NoAudioDetected."""
+        service, _, event_bus, _ = self._make_service()
+
+        no_audio_events: list[object] = []
+        event_bus.subscribe(NoAudioDetected, no_audio_events.append)
+
+        service.listen()
+        # silence_endpoint stays enabled (default True); state never reaches RECORDING
+        assert service.state == RecorderState.LISTENING
+
+        service.set_microphone(False)
+        assert len(no_audio_events) == 1
         service.shutdown()
 
     def test_use_microphone_initial(self) -> None:

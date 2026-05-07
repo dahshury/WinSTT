@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useSettingsStore } from "@/features/update-settings";
+import { useSettingsStore } from "@/entities/setting";
 import {
 	hotkeyRegister,
 	hotkeyUnregister,
@@ -13,12 +13,12 @@ import {
 } from "@/shared/api/ipc-client";
 import { useHotkeyStore } from "../model/hotkey-store";
 
-export function usePushToTalk() {
+export function usePushToTalk(): void {
 	const setPressed = useHotkeyStore((s) => s.setPressed);
 	const setActive = useHotkeyStore((s) => s.setActive);
 	const setAccelerator = useHotkeyStore((s) => s.setAccelerator);
 	const accelerator = useHotkeyStore((s) => s.accelerator);
-	const hotkeySettings = useSettingsStore((s) => s.settings.hotkey);
+	const pushToTalkKey = useSettingsStore((s) => s.settings.hotkey?.pushToTalkKey);
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const smartEndpoint = useSettingsStore((s) => s.settings.quality?.smartEndpoint ?? false);
 	const isActiveRef = useRef(false);
@@ -29,10 +29,10 @@ export function usePushToTalk() {
 
 	// Sync accelerator from settings store
 	useEffect(() => {
-		if (hotkeySettings?.pushToTalkKey) {
-			setAccelerator(hotkeySettings.pushToTalkKey);
+		if (pushToTalkKey) {
+			setAccelerator(pushToTalkKey);
 		}
-	}, [hotkeySettings?.pushToTalkKey, setAccelerator]);
+	}, [pushToTalkKey, setAccelerator]);
 
 	// Register the global hotkey — only re-runs when accelerator actually changes
 	useEffect(() => {

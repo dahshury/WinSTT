@@ -1,19 +1,57 @@
+import { execFile, spawn } from "node:child_process";
+import { promises as fsPromises } from "node:fs";
+import path from "node:path";
+import { promisify } from "node:util";
 import { ipcMain } from "electron";
-import type Store from "electron-store";
+import { z } from "zod";
+import { PRESET_PROMPTS } from "../../src/entities/llm-catalog/lib/ollama-client";
 import { IPC } from "../../src/shared/api/ipc-channels";
-import type { AppSettingsOutput } from "../../src/shared/config/settings-schema";
 import {
 	ConnectionError,
 	getErrorMessage,
 	TimeoutError,
 	ValidationError,
 } from "../../src/shared/lib/errors";
+import { buildOllamaApiUrl, normalizeOllamaEndpoint } from "../../src/shared/lib/ollama-endpoint";
 import { dbg } from "../lib/debug-log";
+import { getStoreValue } from "../lib/store";
+
+const execFileAsync = promisify(execFile);
+const NEWLINE_RE = /\r?\n/;
+
+// ── Zod schemas for Ollama API responses (external boundary) ──────────
+
+const ollamaTagsModelSchema = z.object({
+	name: z.string(),
+	size: z.number(),
+	modified_at: z.string().optional(),
+	modifiedAt: z.string().optional(),
+});
+
+const ollamaTagsResponseSchema = z.object({
+	models: z.array(ollamaTagsModelSchema).optional(),
+});
+
+const ollamaChatResponseSchema = z.object({
+	model: z.string(),
+	created_at: z.string(),
+	message: z.object({
+		role: z.string(),
+		content: z.string(),
+	}),
+	done: z.boolean(),
+});
 
 interface OllamaModel {
 	name: string;
 	size: number;
-	modified_at: string;
+	modifiedAt: string;
+}
+
+interface OllamaScanResult {
+	models: OllamaModel[];
+	reachable: boolean;
+	error?: string;
 }
 
 interface OllamaChatMessage {
@@ -21,64 +59,49 @@ interface OllamaChatMessage {
 	content: string;
 }
 
-interface OllamaChatResponse {
-	model: string;
-	created_at: string;
-	message: {
-		role: string;
-		content: string;
-	};
-	done: boolean;
-}
-
-async function scanOllamaModels(endpoint: string): Promise<OllamaModel[]> {
+export async function scanOllamaModels(endpoint: string): Promise<OllamaScanResult> {
 	// Validate endpoint
 	if (!endpoint || typeof endpoint !== "string") {
 		throw new ValidationError("LLM endpoint is required", "endpoint");
 	}
+	const normalizedEndpoint = normalizeOllamaEndpoint(endpoint);
+	if (!normalizedEndpoint) {
+		throw new ValidationError("LLM endpoint is required", "endpoint");
+	}
 
+	let response: Response;
 	try {
-		const response = await fetch(`${endpoint}/api/tags`, {
+		response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/tags"), {
 			method: "GET",
 			headers: { "Content-Type": "application/json" },
 			signal: AbortSignal.timeout(5000),
 		});
-
-		if (!response.ok) {
-			throw new ConnectionError(
-				`Failed to connect to Ollama API: HTTP ${response.status}`,
-				endpoint,
-				true
-			);
-		}
-
-		const data = (await response.json()) as { models: OllamaModel[] };
-		return data.models ?? [];
 	} catch (err) {
-		dbg("llm", "Failed to scan Ollama models:", getErrorMessage(err));
-
-		// Re-throw typed errors as-is
-		if (
-			err instanceof ConnectionError ||
-			err instanceof TimeoutError ||
-			err instanceof ValidationError
-		) {
-			throw err;
-		}
-
-		// Handle timeout
-		if (err instanceof Error && err.name === "TimeoutError") {
-			throw new TimeoutError(5000, "scanOllamaModels", { endpoint, originalError: err });
-		}
-
-		// Wrap unknown errors
-		throw new ConnectionError(
-			`Could not connect to Ollama at ${endpoint}. Ensure Ollama is running and accessible.`,
-			endpoint,
-			true,
-			{ originalError: err }
-		);
+		// Connection failures (Ollama not running) are expected — log once and degrade.
+		const message = getErrorMessage(err);
+		dbg("llm", `Ollama unreachable at ${normalizedEndpoint}:`, message);
+		return { models: [], reachable: false, error: message };
 	}
+
+	// Ollama answered, so it's reachable — even if the response is an error.
+	if (!response.ok) {
+		const message = `Ollama /api/tags returned HTTP ${response.status}`;
+		dbg("llm", `${message} at ${normalizedEndpoint}`);
+		return { models: [], reachable: true, error: message };
+	}
+
+	const json: unknown = await response.json();
+	const parsed = ollamaTagsResponseSchema.safeParse(json);
+	if (!parsed.success) {
+		dbg("llm", "Ollama /api/tags response did not match expected schema:", parsed.error.message);
+		return { models: [], reachable: true, error: "Unexpected response shape from Ollama" };
+	}
+	const models = (parsed.data.models ?? []).map((modelItem) => ({
+		name: modelItem.name,
+		size: modelItem.size,
+		modifiedAt: modelItem.modifiedAt ?? modelItem.modified_at ?? "",
+	}));
+	return { models, reachable: true };
 }
 
 /**
@@ -102,20 +125,15 @@ export async function processText(
 	if (!endpoint || typeof endpoint !== "string") {
 		throw new ValidationError("LLM endpoint is required", "endpoint");
 	}
-
-	const PRESET_PROMPTS: Record<string, string> = {
-		neutral: "Fix grammar and punctuation only. Preserve the original tone and style.",
-		formal: "Convert to professional business English with formal tone.",
-		friendly: "Make the text warm, conversational, and approachable.",
-		technical: "Use precise technical terminology and formal structure.",
-		casual: "Make relaxed and conversational with natural contractions.",
-		concise: "Remove unnecessary words while keeping all key information.",
-	};
+	const normalizedEndpoint = normalizeOllamaEndpoint(endpoint);
+	if (!normalizedEndpoint) {
+		throw new ValidationError("LLM endpoint is required", "endpoint");
+	}
 
 	const systemPrompt =
-		PRESET_PROMPTS[preset] ||
-		PRESET_PROMPTS.neutral ||
-		"Fix grammar and punctuation only. Preserve the original tone and style.";
+		(preset in PRESET_PROMPTS
+			? PRESET_PROMPTS[preset as keyof typeof PRESET_PROMPTS]
+			: undefined) ?? PRESET_PROMPTS.neutral;
 	const userPrompt = `Transform the following text according to the style guide above. Return ONLY the transformed text with no additional commentary, explanations, or JSON formatting. Just the plain transformed text.\n\nText to transform:\n${text}`;
 
 	const messages: OllamaChatMessage[] = [
@@ -125,7 +143,7 @@ export async function processText(
 
 	try {
 		// Use /api/chat endpoint for better system prompt support
-		const response = await fetch(`${endpoint}/api/chat`, {
+		const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/chat"), {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
@@ -145,14 +163,23 @@ export async function processText(
 			const errorText = await response.text().catch(() => "Unknown error");
 			throw new ConnectionError(
 				`LLM API request failed: HTTP ${response.status} - ${errorText}`,
-				endpoint,
+				normalizedEndpoint,
 				false,
 				{ model, preset, statusCode: response.status }
 			);
 		}
 
-		const data = (await response.json()) as OllamaChatResponse;
-		const generated = data.message?.content?.trim() ?? "";
+		const chatJson: unknown = await response.json();
+		const chatParsed = ollamaChatResponseSchema.safeParse(chatJson);
+		if (!chatParsed.success) {
+			dbg(
+				"llm",
+				"Ollama /api/chat response did not match expected schema:",
+				chatParsed.error.message
+			);
+			return text;
+		}
+		const generated = chatParsed.data.message.content.trim();
 
 		if (!generated) {
 			dbg("llm", "Empty response from LLM, using original text");
@@ -176,7 +203,7 @@ export async function processText(
 		// Handle timeout
 		if (err instanceof Error && err.name === "TimeoutError") {
 			throw new TimeoutError(timeout, "LLM text processing", {
-				endpoint,
+				endpoint: normalizedEndpoint,
 				model,
 				preset,
 				textLength: text.length,
@@ -190,25 +217,121 @@ export async function processText(
 	}
 }
 
-export function setupLlm(store: Store<AppSettingsOutput>): () => void {
-	const handleScanModels = async () => {
+interface OllamaDetectResult {
+	installed: boolean;
+	path?: string;
+}
+
+/**
+ * Locate an `ollama` executable on PATH or in known default install locations.
+ * Returns `installed: true` only if the file actually exists on disk.
+ */
+export async function detectOllama(): Promise<OllamaDetectResult> {
+	if (process.platform !== "win32") {
+		// On non-Windows, just probe PATH via `which`.
 		try {
-			const endpoint = (store.get("llm.endpoint") as string) ?? "http://localhost:11434";
-			return await scanOllamaModels(endpoint);
-		} catch (error) {
-			console.error("[llm] Failed to scan models:", getErrorMessage(error));
-			throw error;
+			const { stdout } = await execFileAsync("which", ["ollama"], { timeout: 2000 });
+			const resolved = stdout.trim();
+			if (resolved) {
+				return { installed: true, path: resolved };
+			}
+		} catch {
+			// fall through
 		}
+		return { installed: false };
+	}
+
+	// Windows: try `where ollama` first.
+	try {
+		const { stdout } = await execFileAsync("where", ["ollama"], { timeout: 2000 });
+		const firstLine = stdout.split(NEWLINE_RE).find((l) => l.trim().length > 0);
+		if (firstLine) {
+			return { installed: true, path: firstLine.trim() };
+		}
+	} catch {
+		// `where` failed — keep probing default locations.
+	}
+
+	const candidates: string[] = [];
+	const localAppData = process.env.LOCALAPPDATA;
+	if (localAppData) {
+		candidates.push(path.join(localAppData, "Programs", "Ollama", "ollama.exe"));
+	}
+	const programFiles = process.env.ProgramFiles;
+	if (programFiles) {
+		candidates.push(path.join(programFiles, "Ollama", "ollama.exe"));
+	}
+
+	for (const candidate of candidates) {
+		try {
+			await fsPromises.access(candidate);
+			return { installed: true, path: candidate };
+		} catch {
+			// try next
+		}
+	}
+	return { installed: false };
+}
+
+/**
+ * Launch the Ollama process detached. The Windows installer registers `ollama app.exe`
+ * which boots the system-tray app + serves the API; falling back to `ollama serve` works
+ * when only the CLI is on PATH.
+ */
+export async function startOllama(): Promise<{ started: boolean; error?: string }> {
+	const detected = await detectOllama();
+	if (!(detected.installed && detected.path)) {
+		return { started: false, error: "Ollama is not installed" };
+	}
+	try {
+		const child = spawn(detected.path, ["serve"], {
+			detached: true,
+			stdio: "ignore",
+			windowsHide: true,
+		});
+		child.on("error", (err) => {
+			dbg("llm", "Ollama spawn error:", err.message);
+		});
+		child.unref();
+		dbg("llm", `Started Ollama from ${detected.path}`);
+		return { started: true };
+	} catch (err) {
+		const message = getErrorMessage(err);
+		dbg("llm", "Failed to start Ollama:", message);
+		return { started: false, error: message };
+	}
+}
+
+export function setupLlm(): () => void {
+	const handleScanModels = async () => {
+		const endpoint = getStoreValue("llm.endpoint");
+		return await scanOllamaModels(endpoint);
 	};
+
+	const handleDetectOllama = async () => detectOllama();
+
+	const handleStartOllama = async () => startOllama();
 
 	const handleProcessText = async (
 		_event: unknown,
 		payload: { text: string; model: string; preset: string }
 	) => {
 		try {
+			if (!payload || typeof payload !== "object") {
+				throw new ValidationError("LLM process-text payload must be an object", "payload");
+			}
+			if (typeof payload.text !== "string") {
+				throw new ValidationError("LLM process-text payload.text must be a string", "text");
+			}
+			if (typeof payload.model !== "string") {
+				throw new ValidationError("LLM process-text payload.model must be a string", "model");
+			}
+			if (typeof payload.preset !== "string") {
+				throw new ValidationError("LLM process-text payload.preset must be a string", "preset");
+			}
 			const { text, model, preset } = payload;
-			const endpoint = (store.get("llm.endpoint") as string) ?? "http://localhost:11434";
-			const timeout = (store.get("llm.timeout") as number) ?? 5000;
+			const endpoint = getStoreValue("llm.endpoint");
+			const timeout = getStoreValue("llm.timeout");
 			return await processText(text, model, preset, endpoint, timeout);
 		} catch (error) {
 			console.error("[llm] Failed to process text:", getErrorMessage(error));
@@ -218,9 +341,13 @@ export function setupLlm(store: Store<AppSettingsOutput>): () => void {
 
 	ipcMain.handle(IPC.LLM_SCAN_MODELS, handleScanModels);
 	ipcMain.handle(IPC.LLM_PROCESS_TEXT, handleProcessText);
+	ipcMain.handle(IPC.LLM_DETECT_OLLAMA, handleDetectOllama);
+	ipcMain.handle(IPC.LLM_START_OLLAMA, handleStartOllama);
 
 	return () => {
 		ipcMain.removeHandler(IPC.LLM_SCAN_MODELS);
 		ipcMain.removeHandler(IPC.LLM_PROCESS_TEXT);
+		ipcMain.removeHandler(IPC.LLM_DETECT_OLLAMA);
+		ipcMain.removeHandler(IPC.LLM_START_OLLAMA);
 	};
 }

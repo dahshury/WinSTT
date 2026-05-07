@@ -1,9 +1,9 @@
 "use client";
 
+import { Mic01Icon, VoiceIdIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import { SettingSection } from "@/entities/setting";
-import { useSettingsStore } from "@/features/update-settings";
+import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { audioGetDevices } from "@/shared/api/ipc-client";
 import { FormControl } from "@/shared/ui/form-control";
 import { NumberStepper } from "@/shared/ui/number-stepper";
@@ -40,7 +40,7 @@ export function AudioSettingsPanel() {
 		<div className="flex flex-col gap-5">
 			{/* ── Input Device (hidden in Listen mode — loopback device is used instead) */}
 			{recordingMode !== "listen" && (
-				<SettingSection title={t("inputDevice")}>
+				<SettingSection icon={Mic01Icon} title={t("inputDevice")}>
 					<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
 						<FormControl
 							caption={t("deviceCaption")}
@@ -63,6 +63,7 @@ export function AudioSettingsPanel() {
 
 			{/* ── Voice Activity Detection ─────────────────────── */}
 			<SettingSection
+				icon={VoiceIdIcon}
 				onToggle={(v) => update({ sileroDeactivityDetection: v })}
 				title={t("vad")}
 				toggled={audio?.sileroDeactivityDetection ?? true}
