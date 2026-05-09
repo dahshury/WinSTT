@@ -42,14 +42,14 @@ const gridContainerVariants = cva("grid", {
 });
 
 interface GridCellProps {
+	columnCount: number;
+	highlightedCoordinate: Coordinate;
 	index: number;
-	state: AgentState;
 	interval: number;
 	rowCount: number;
-	columnCount: number;
-	volumeBands: number[];
-	highlightedCoordinate: Coordinate;
 	size: VisualizerSize;
+	state: AgentState;
+	volumeBands: number[];
 }
 
 const GridCell = memo(function GridCell({
@@ -95,13 +95,13 @@ const GridCell = memo(function GridCell({
 });
 
 export interface AudioVisualizerGridProps {
-	size?: VisualizerSize;
+	className?: string;
 	color?: `#${string}`;
-	rowCount?: number;
 	columnCount?: number;
 	interval?: number;
 	radius?: number;
-	className?: string;
+	rowCount?: number;
+	size?: VisualizerSize;
 }
 
 export function AudioVisualizerGrid({
@@ -118,8 +118,12 @@ export function AudioVisualizerGrid({
 	const state = useAgentState();
 	const columnCount = _columnCount;
 	const rowCount = _rowCount;
-	const items = useMemo(
-		() => new Array(columnCount * rowCount).fill(0).map((_, idx) => idx),
+	const cells = useMemo(
+		() =>
+			Array.from({ length: columnCount * rowCount }, (_, position) => ({
+				id: `grid-${columnCount}x${rowCount}-${position}`,
+				position,
+			})),
 		[columnCount, rowCount]
 	);
 
@@ -135,13 +139,13 @@ export function AudioVisualizerGrid({
 			}
 			{...props}
 		>
-			{items.map((idx) => (
+			{cells.map((cell) => (
 				<GridCell
 					columnCount={columnCount}
 					highlightedCoordinate={highlightedCoordinate}
-					index={idx}
+					index={cell.position}
 					interval={interval}
-					key={idx}
+					key={cell.id}
 					rowCount={rowCount}
 					size={size ?? "md"}
 					state={state}

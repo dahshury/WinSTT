@@ -36,6 +36,7 @@ function getChangedFiles(diffBase: string, srcDir: string): string[] | null {
 
 interface Violation {
 	file: string;
+	importPath?: string;
 	line?: number;
 	message: string;
 	severity: "critical" | "high" | "medium" | "low";
@@ -43,34 +44,33 @@ interface Violation {
 	// Additional context for more specific information
 	targetLayer?: string | null;
 	targetSlice?: string | null;
-	importPath?: string;
 }
 
 interface ViolationReport {
-	forbiddenSegments: Violation[];
-	crossLayerImports: Violation[];
-	nestedSegments: Violation[];
-	wildcardExports: Violation[];
-	circularImports: Violation[];
-	deepRelativeImports: Violation[];
-	deepAliasImports: Violation[];
-	selfImports: Violation[];
-	missingPublicApi: Violation[];
-	artifactFiles: Violation[];
-	hardcodedUrls: Violation[];
 	appLayerSlices: Violation[];
-	sharedLayerSlices: Violation[];
-	domainBasedFileNaming: Violation[];
+	artifactFiles: Violation[];
 	businessLogicInShared: Violation[];
-	processesLayer: Violation[];
-	godSlices: Violation[];
-	insignificantSlices: Violation[];
+	circularImports: Violation[];
+	crossLayerImports: Violation[];
+	deepAliasImports: Violation[];
+	deepRelativeImports: Violation[];
+	domainBasedFileNaming: Violation[];
 	excessiveSlicing: Violation[];
+	forbiddenSegments: Violation[];
+	godSlices: Violation[];
+	hardcodedUrls: Violation[];
+	insignificantSlices: Violation[];
+	missingPublicApi: Violation[];
+	nestedSegments: Violation[];
+	processesLayer: Violation[];
+	selfImports: Violation[];
+	sharedLayerSlices: Violation[];
 	summary: {
 		total: number;
 		bySeverity: Record<string, number>;
 		byCategory: Record<string, number>;
 	};
+	wildcardExports: Violation[];
 }
 
 // FSD Layer hierarchy (top to bottom)
@@ -78,16 +78,25 @@ interface ViolationReport {
 // The FSD semantic role is identical — views is the route-level composition layer.
 const LAYERS = ["app", "views", "widgets", "features", "entities", "shared"] as const;
 type Layer = (typeof LAYERS)[number];
+const LAYERS_SET = new Set<string>(LAYERS);
+const APP_OR_SHARED_SET = new Set<string>(["app", "shared"]);
+const COMPOSITION_LAYERS_SET = new Set<string>(["features", "widgets", "views"]);
+const ENTITY_TIER_SET = new Set<string>(["entities", "features", "widgets"]);
+const ENTITY_TIER_WITH_VIEWS_SET = new Set<string>(["entities", "features", "widgets", "views"]);
+const NON_SHARED_COMPOSITION_SET = new Set<string>(["features", "widgets", "views", "app"]);
 
 // Allowed segments (per FSD rules section 3 and section 5)
 const ALLOWED_SEGMENTS = ["ui", "api", "model", "lib", "config", "@x", "routes", "i18n"] as const;
+const ALLOWED_SEGMENTS_SET = new Set<string>(ALLOWED_SEGMENTS);
 
 // Allowed organizational directories for app layer (per FSD rules section 12)
 const APP_LAYER_ALLOWED_DIRS = ["providers", "layouts", "styles", "assets", "api-routes"] as const;
+const APP_LAYER_ALLOWED_DIRS_SET = new Set<string>(APP_LAYER_ALLOWED_DIRS);
 
 // Allowed organizational directories for shared layer beyond segments
 // These are common patterns that extend FSD for real-world projects
 const SHARED_LAYER_ALLOWED_DIRS = ["infrastructure", "ports", "styles"] as const;
+const SHARED_LAYER_ALLOWED_DIRS_SET = new Set<string>(SHARED_LAYER_ALLOWED_DIRS);
 
 // Forbidden segment names
 const FORBIDDEN_SEGMENTS = [
@@ -98,6 +107,7 @@ const FORBIDDEN_SEGMENTS = [
 	"helpers",
 	"constants",
 ] as const;
+const FORBIDDEN_SEGMENTS_SET = new Set<string>(FORBIDDEN_SEGMENTS);
 
 // Regex patterns (defined at top level for performance)
 const PATH_SEPARATOR_REGEX = /[/\\]/;
@@ -148,12 +158,15 @@ const FORBIDDEN_FILE_BASENAMES = [
 	"actions",
 	"thunks",
 ] as const;
+const FORBIDDEN_FILE_BASENAMES_SET = new Set<string>(FORBIDDEN_FILE_BASENAMES);
 
 // Layers that contain slices (domain-based file naming applies only here)
 const SLICED_LAYERS: readonly Layer[] = ["views", "widgets", "features", "entities"] as const;
+const SLICED_LAYERS_SET = new Set<string>(SLICED_LAYERS);
 
 // Segments where domain-based file naming is enforced
 const ENFORCED_SEGMENTS = ["model", "ui", "api", "lib", "config"] as const;
+const ENFORCED_SEGMENTS_SET = new Set<string>(ENFORCED_SEGMENTS);
 
 // God slice thresholds per layer (source files only, tests excluded).
 // FSD v2.1: "Pages own substantial logic" and features can be complex.
@@ -238,7 +251,7 @@ function getLayerFromPath(filePath: string): Layer | null {
 	const relativePath = relative(srcPath, filePath);
 	const parts = relativePath.split(PATH_SEPARATOR_REGEX);
 	const layer = parts[0] as Layer;
-	return LAYERS.includes(layer) ? layer : null;
+	return LAYERS_SET.has(layer) ? layer : null;
 }
 
 /**
@@ -263,7 +276,7 @@ function getSliceFromPath(filePath: string, layer?: Layer | null): string | null
 function hasForbiddenSegment(filePath: string): boolean {
 	const parts = filePath.split(PATH_SEPARATOR_REGEX);
 	for (const part of parts) {
-		if (FORBIDDEN_SEGMENTS.includes(part as (typeof FORBIDDEN_SEGMENTS)[number])) {
+		if (FORBIDDEN_SEGMENTS_SET.has(part)) {
 			return true;
 		}
 	}
@@ -279,10 +292,10 @@ function getSegmentFromPath(filePath: string): string | null {
 
 	// Find the first segment in the path
 	for (const part of parts) {
-		if (ALLOWED_SEGMENTS.includes(part as (typeof ALLOWED_SEGMENTS)[number])) {
+		if (ALLOWED_SEGMENTS_SET.has(part)) {
 			return part;
 		}
-		if (FORBIDDEN_SEGMENTS.includes(part as (typeof FORBIDDEN_SEGMENTS)[number])) {
+		if (FORBIDDEN_SEGMENTS_SET.has(part)) {
 			return part;
 		}
 	}
@@ -318,14 +331,14 @@ function hasNestedSegment(filePath: string): boolean {
 	}
 
 	const layer = parts[0];
-	if (!LAYERS.includes(layer as Layer)) {
+	if (!(layer && LAYERS_SET.has(layer))) {
 		return false;
 	}
 
 	// Determine the segment index based on whether the layer has slices
 	// Layers WITHOUT slices: app, shared -> segment at index 1
 	// Layers WITH slices: pages, widgets, features, entities -> segment at index 2
-	const hasSlices = layer !== undefined && !["app", "shared"].includes(layer);
+	const hasSlices = layer !== undefined && !APP_OR_SHARED_SET.has(layer);
 	const segmentIndex = hasSlices ? 2 : 1;
 
 	// Get the segment at the expected position
@@ -335,9 +348,7 @@ function hasNestedSegment(filePath: string): boolean {
 	}
 
 	// Only check if the first part is actually a segment
-	const isFirstPartSegment = ALLOWED_SEGMENTS.includes(
-		segmentName as (typeof ALLOWED_SEGMENTS)[number]
-	);
+	const isFirstPartSegment = ALLOWED_SEGMENTS_SET.has(segmentName);
 	if (!isFirstPartSegment) {
 		return false;
 	}
@@ -358,7 +369,7 @@ function hasNestedSegment(filePath: string): boolean {
 			continue;
 		}
 		// Check if this subdirectory uses a forbidden segment name
-		if (FORBIDDEN_SEGMENTS.includes(part as (typeof FORBIDDEN_SEGMENTS)[number])) {
+		if (FORBIDDEN_SEGMENTS_SET.has(part)) {
 			// EXCEPTION: shared/lib/hooks/ is FSD-prescribed for reusable utility hooks
 			if (
 				layer === "shared" &&
@@ -429,7 +440,7 @@ function parseImport(
 		const parts = importPath.split("/");
 		layer = parts[0] as Layer;
 
-		if (!LAYERS.includes(layer)) {
+		if (!LAYERS_SET.has(layer)) {
 			return null;
 		}
 
@@ -565,7 +576,7 @@ function parseImport(
 		}
 
 		// Features, widgets, pages should not import from each other
-		if (["features", "widgets", "views"].includes(layer)) {
+		if (COMPOSITION_LAYERS_SET.has(layer)) {
 			return {
 				layer,
 				slice,
@@ -616,14 +627,12 @@ async function checkAppLayerSlices(): Promise<void> {
 				continue;
 			}
 			// Check if it's a segment (allowed)
-			const isSegment = ALLOWED_SEGMENTS.includes(entry.name as (typeof ALLOWED_SEGMENTS)[number]);
+			const isSegment = ALLOWED_SEGMENTS_SET.has(entry.name);
 			if (isSegment) {
 				continue;
 			}
 			// Check if it's an allowed organizational directory for app layer
-			const isAllowedAppDir = APP_LAYER_ALLOWED_DIRS.includes(
-				entry.name as (typeof APP_LAYER_ALLOWED_DIRS)[number]
-			);
+			const isAllowedAppDir = APP_LAYER_ALLOWED_DIRS_SET.has(entry.name);
 			if (isAllowedAppDir) {
 				continue;
 			}
@@ -667,14 +676,12 @@ async function checkSharedLayerSlices(): Promise<void> {
 				continue;
 			}
 			// Check if it's a segment (allowed)
-			const isSegment = ALLOWED_SEGMENTS.includes(entry.name as (typeof ALLOWED_SEGMENTS)[number]);
+			const isSegment = ALLOWED_SEGMENTS_SET.has(entry.name);
 			if (isSegment) {
 				continue;
 			}
 			// Check if it's an allowed extended directory for shared layer
-			const isAllowedSharedDir = SHARED_LAYER_ALLOWED_DIRS.includes(
-				entry.name as (typeof SHARED_LAYER_ALLOWED_DIRS)[number]
-			);
+			const isAllowedSharedDir = SHARED_LAYER_ALLOWED_DIRS_SET.has(entry.name);
 			if (isAllowedSharedDir) {
 				continue;
 			}
@@ -1036,7 +1043,7 @@ function buildSliceImportGraph(allFiles: readonly string[]): SliceGraph {
 			const importPath = aliasMatch[1];
 			const parts = importPath.split("/");
 			const importLayer = parts[0] as Layer;
-			if (!LAYERS.includes(importLayer) || importLayer === "app" || importLayer === "shared") {
+			if (!LAYERS_SET.has(importLayer) || importLayer === "app" || importLayer === "shared") {
 				continue;
 			}
 			const importSlice = parts[1];
@@ -1342,7 +1349,7 @@ async function analyzeFile(filePath: string): Promise<void> {
 		// Check for forbidden segment names in path
 		if (hasForbiddenSegment(filePath)) {
 			const segment = getSegmentFromPath(filePath);
-			if (segment && FORBIDDEN_SEGMENTS.includes(segment as (typeof FORBIDDEN_SEGMENTS)[number])) {
+			if (segment && FORBIDDEN_SEGMENTS_SET.has(segment)) {
 				let suggestion = "";
 				switch (segment) {
 					case "hooks":
@@ -1392,7 +1399,7 @@ async function analyzeFile(filePath: string): Promise<void> {
 		// Check for generic technical-role file names within slice segments (Rule 4-4)
 		// Only applies to sliced layers (pages, widgets, features, entities)
 		// Only checks files inside known segments (model/, ui/, api/, lib/, config/)
-		if (layer && SLICED_LAYERS.includes(layer) && !isTestFile(filePath)) {
+		if (layer && SLICED_LAYERS_SET.has(layer) && !isTestFile(filePath)) {
 			const parts = relativePath.split(PATH_SEPARATOR_REGEX);
 			// Expected structure: layer/slice/segment/...file
 			// parts[0] = layer, parts[1] = slice, parts[2] = segment, last = filename
@@ -1403,10 +1410,8 @@ async function analyzeFile(filePath: string): Promise<void> {
 
 				if (
 					segmentName &&
-					ENFORCED_SEGMENTS.includes(segmentName as (typeof ENFORCED_SEGMENTS)[number]) &&
-					FORBIDDEN_FILE_BASENAMES.includes(
-						fileBaseName as (typeof FORBIDDEN_FILE_BASENAMES)[number]
-					)
+					ENFORCED_SEGMENTS_SET.has(segmentName) &&
+					FORBIDDEN_FILE_BASENAMES_SET.has(fileBaseName)
 				) {
 					const slice = parts[1] ?? "unknown";
 					let suggestion = "";
@@ -1503,7 +1508,7 @@ async function analyzeFile(filePath: string): Promise<void> {
 
 		// Check for hardcoded URLs in entities/features/widgets (not allowed below pages layer)
 		// Per FSD Section 14: Lower layers never hardcode URLs.
-		if (layer && ["entities", "features", "widgets"].includes(layer)) {
+		if (layer && ENTITY_TIER_SET.has(layer)) {
 			const lines = content.split("\n");
 			for (let index = 0; index < lines.length; index++) {
 				const line = lines[index];
@@ -1562,7 +1567,7 @@ async function analyzeFile(filePath: string): Promise<void> {
 		}
 
 		// Check for self-imports via own index.ts and deep alias imports into other slices
-		if (layer && !["app", "shared"].includes(layer)) {
+		if (layer && !APP_OR_SHARED_SET.has(layer)) {
 			const currentSlice = getSliceFromPath(filePath, layer);
 			if (currentSlice) {
 				const lines = content.split("\n");
@@ -1596,7 +1601,7 @@ async function analyzeFile(filePath: string): Promise<void> {
 					const importLayer = importParts[0] as Layer;
 					const importSlice = importParts[1];
 
-					if (!LAYERS.includes(importLayer)) {
+					if (!LAYERS_SET.has(importLayer)) {
 						continue;
 					}
 
@@ -1636,7 +1641,7 @@ async function analyzeFile(filePath: string): Promise<void> {
 					// e.g. "@/entities/event/model/event.types" instead of "@/entities/event"
 					// Only applies to layers with slices (entities, features, widgets, pages)
 					if (
-						["entities", "features", "widgets", "views"].includes(importLayer) &&
+						ENTITY_TIER_WITH_VIEWS_SET.has(importLayer) &&
 						importSlice &&
 						importParts.length > 2 &&
 						!(importLayer === layer && importSlice === currentSlice) // Skip self (handled above)
@@ -1692,7 +1697,7 @@ async function analyzeFile(filePath: string): Promise<void> {
 						if (
 							layer === "shared" &&
 							importInfo.layer &&
-							["features", "widgets", "views", "app"].includes(importInfo.layer)
+							NON_SHARED_COMPOSITION_SET.has(importInfo.layer)
 						) {
 							violations.crossLayerImports.push({
 								file: relativePath,
@@ -1745,10 +1750,7 @@ async function analyzeFile(filePath: string): Promise<void> {
 								targetSlice: importInfo.slice ?? null,
 								importPath: line,
 							});
-						} else if (
-							importInfo.isCrossSlice &&
-							["features", "widgets", "views"].includes(layer)
-						) {
+						} else if (importInfo.isCrossSlice && COMPOSITION_LAYERS_SET.has(layer)) {
 							violations.crossLayerImports.push({
 								file: relativePath,
 								line: index + 1,
@@ -1789,7 +1791,7 @@ async function analyzeFile(filePath: string): Promise<void> {
 					const importPath = match[1];
 					const parts = importPath.split("/");
 					const importLayer = parts[0] as Layer;
-					if (!LAYERS.includes(importLayer)) {
+					if (!LAYERS_SET.has(importLayer)) {
 						continue;
 					}
 					const importSlice = parts.length > 1 ? (parts[1] ?? null) : null;
@@ -2825,14 +2827,16 @@ async function main(): Promise<void> {
 	}
 
 	// Structure checks always run in full (they check directory structure, not file contents)
-	await checkAppLayerSlices();
-	await checkSharedLayerSlices();
-	await checkMissingPublicApis();
-	await checkArtifactFiles(srcPath);
+	await Promise.all([
+		checkAppLayerSlices(),
+		checkSharedLayerSlices(),
+		checkMissingPublicApis(),
+		checkArtifactFiles(srcPath),
+		checkGodSlices(),
+		checkBusinessLogicInShared(),
+		checkExcessiveSlicing(),
+	]);
 	checkProcessesLayer();
-	await checkGodSlices();
-	await checkBusinessLogicInShared();
-	await checkExcessiveSlicing();
 
 	const files = incrementalFiles ?? (await scanDirectory(srcPath));
 	console.log(`Found ${files.length} files to analyze\n`);

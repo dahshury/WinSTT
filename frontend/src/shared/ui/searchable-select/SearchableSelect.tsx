@@ -7,12 +7,12 @@ import type { SelectOption } from "@/shared/ui/select";
 import "./searchable-select.css";
 
 export interface SearchableSelectProps {
-	options: readonly SelectOption[];
-	value: string;
+	disabled?: boolean;
 	onChange: (value: string) => void;
 	onOpenChange?: (open: boolean) => void;
+	options: readonly SelectOption[];
 	placeholder?: string;
-	disabled?: boolean;
+	value: string;
 }
 
 function getItemLabel(item: SelectOption | null): string {
@@ -94,7 +94,7 @@ function CheckIcon() {
 			width="10"
 		>
 			<title>Selected</title>
-			<path d="M9.1603 1.12218C9.50684 1.34873 9.60427 1.81354 9.37792 2.16038L5.13603 8.66012C5.01614 8.8438 4.82192 8.96576 4.60451 8.99384C4.3871 9.02194 4.1683 8.95335 4.00574 8.80615L1.24664 6.30769C0.939709 6.02975 0.916013 5.55541 1.19372 5.24822C1.47142 4.94102 1.94536 4.91731 2.2523 5.19524L4.36085 7.10461L8.12299 1.33999C8.34934 0.993152 8.81376 0.895638 9.1603 1.12218Z" />
+			<path d="M9.16 1.12C9.51 1.35 9.6 1.81 9.38 2.16L5.14 8.66C5.02 8.84 4.82 8.97 4.6 9C4.39 9.02 4.17 8.95 4.01 8.81L1.25 6.31C0.94 6.03 0.92 5.56 1.19 5.25C1.47 4.94 1.95 4.92 2.25 5.2L4.36 7.1L8.12 1.34C8.35 0.99 8.81 0.9 9.16 1.12Z" />
 		</svg>
 	);
 }

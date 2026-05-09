@@ -2,9 +2,9 @@
 
 import { Mic01Icon, VoiceIdIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
+import { useInputDevices } from "@/entities/audio-device";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
-import { audioGetDevices } from "@/shared/api/ipc-client";
 import { FormControl } from "@/shared/ui/form-control";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Select, type SelectOption } from "@/shared/ui/select";
@@ -15,23 +15,17 @@ export function AudioSettingsPanel() {
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const update = useSettingsStore((s) => s.updateAudioSettings);
 	const t = useTranslations("audio");
-	const [deviceOptions, setDeviceOptions] = useState<SelectOption[]>([
-		{ id: "default", label: t("systemDefault") },
-	]);
-
-	useEffect(() => {
-		audioGetDevices().then((devices) => {
-			const defaultDevice = devices.find((d) => d.isDefault);
-			const defaultLabel = defaultDevice
-				? `${t("systemDefault")} (${defaultDevice.name})`
-				: t("systemDefault");
-			const opts: SelectOption[] = [{ id: "default", label: defaultLabel }];
-			for (const d of devices) {
-				opts.push({ id: String(d.index), label: d.name });
-			}
-			setDeviceOptions(opts);
-		});
-	}, [t]);
+	const { devices, defaultDevice } = useInputDevices();
+	const deviceOptions = useMemo<SelectOption[]>(() => {
+		const defaultLabel = defaultDevice
+			? `${t("systemDefault")} (${defaultDevice.name})`
+			: t("systemDefault");
+		const opts: SelectOption[] = [{ id: "default", label: defaultLabel }];
+		for (const d of devices) {
+			opts.push({ id: String(d.index), label: d.name });
+		}
+		return opts;
+	}, [devices, defaultDevice, t]);
 
 	const currentDeviceId =
 		audio?.inputDeviceIndex == null ? "default" : String(audio.inputDeviceIndex);

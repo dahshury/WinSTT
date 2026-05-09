@@ -14,8 +14,8 @@ type SecureInvokeChannel =
 	| typeof IPC.UPDATER_CLEAR_STATUS_HISTORY;
 
 interface SecureInvokeResponse {
-	ok: boolean;
 	error?: string;
+	ok: boolean;
 	result?: unknown;
 }
 
@@ -64,6 +64,10 @@ const ALLOWED_INVOKE_CHANNELS = [
 	"llm:process-text",
 	"llm:detect-ollama",
 	"llm:start-ollama",
+	"llm:scan-openrouter-models",
+	"llm:pull-model",
+	"llm:cancel-pull-model",
+	"llm:delete-model",
 	"app-menu:set-template",
 	"app-menu:reset",
 	"context-menu:show",
@@ -105,6 +109,7 @@ const ALLOWED_ON_CHANNELS = [
 	"stt:loopback-stopped",
 	"sound:play",
 	"llm:catalog",
+	"llm:pull-progress",
 	"updater:status",
 	"window:telemetry",
 ] as const;

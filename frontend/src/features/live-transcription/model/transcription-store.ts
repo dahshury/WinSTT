@@ -9,14 +9,14 @@ interface EphemeralMessage {
 }
 
 interface TranscriptionState {
-	items: TranscriptionItem[];
+	addFinalSentence: (text: string) => void;
+	clearAll: () => void;
+	clearEphemeral: () => void;
 	currentRealtime: string;
 	ephemeral: EphemeralMessage | null;
-	addFinalSentence: (text: string) => void;
+	items: TranscriptionItem[];
 	setRealtimeText: (text: string) => void;
 	showEphemeral: (text: string) => void;
-	clearEphemeral: () => void;
-	clearAll: () => void;
 }
 
 export const useTranscriptionStore = create<TranscriptionState>()((set) => ({

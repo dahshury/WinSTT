@@ -71,9 +71,9 @@ async function* walk(dir: string): AsyncGenerator<string> {
 }
 
 interface Reference {
-	namespace: string;
-	key: string;
 	file: string;
+	key: string;
+	namespace: string;
 }
 
 const T_VAR_RE =

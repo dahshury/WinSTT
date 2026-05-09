@@ -20,9 +20,9 @@ export interface AppMenuController {
 }
 
 export interface RegisterAppMenuIpcHandlersOptions {
+	actionHandlers: Readonly<Record<string, () => void>>;
 	ipcMain: IpcMainLike;
 	menuController: AppMenuController;
-	actionHandlers: Readonly<Record<string, () => void>>;
 }
 
 export function registerAppMenuIpcHandlers({

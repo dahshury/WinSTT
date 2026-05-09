@@ -3,13 +3,13 @@
 import { Slider as BaseSlider } from "@base-ui/react/slider";
 
 export interface SliderProps {
-	value: number;
-	onChange: (value: number) => void;
-	min: number;
-	max: number;
-	step: number;
-	disabled?: boolean;
 	"aria-label"?: string;
+	disabled?: boolean;
+	max: number;
+	min: number;
+	onChange: (value: number) => void;
+	step: number;
+	value: number;
 }
 
 export function Slider({

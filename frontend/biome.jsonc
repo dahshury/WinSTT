@@ -40,7 +40,13 @@
     }
   },
   "files": {
-    "includes": ["!!*.d.ts", "!!spec/generated"]
+    "includes": [
+      "!!*.d.ts",
+      "!!spec/generated",
+      "!!reports",
+      "!!coverage",
+      "!!playwright-report"
+    ]
   },
   // Third-party adapted code — too many lint violations to fix without diverging from upstream
   "overrides": [
@@ -51,6 +57,31 @@
     {
       "includes": ["scripts/**"],
       "linter": { "enabled": false }
+    },
+    {
+      // Test files use patterns that are conventional in test code:
+      //  - regex literals inline (e.g., `getByRole({ name: /save/i })`)
+      //  - `async () => { ... }` wrappers without await (test runner contracts)
+      //  - `import * as foo` for bulk-mocking modules
+      //  - template-curly inside expectation strings
+      //  - <img> without next/image (no Next runtime in tests)
+      "includes": ["**/*.test.ts", "**/*.test.tsx", "e2e/**", "test/**"],
+      "linter": {
+        "rules": {
+          "performance": {
+            "useTopLevelRegex": "off",
+            "noNamespaceImport": "off",
+            "noImgElement": "off"
+          },
+          "correctness": {
+            "useImageSize": "off"
+          },
+          "suspicious": {
+            "useAwait": "off",
+            "noTemplateCurlyInString": "off"
+          }
+        }
+      }
     }
   ]
 }

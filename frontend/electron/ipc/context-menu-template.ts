@@ -3,16 +3,16 @@ import type { MenuItemConstructorOptions } from "electron";
 export type ContextMenuItemType = "normal" | "checkbox" | "radio";
 
 interface ContextMenuSharedItem {
-	id?: string;
-	type?: ContextMenuItemType;
-	label?: string;
-	sublabel?: string;
-	role?: MenuItemConstructorOptions["role"];
 	accelerator?: string;
-	enabled?: boolean;
-	visible?: boolean;
 	checked?: boolean;
+	enabled?: boolean;
+	id?: string;
+	label?: string;
+	role?: MenuItemConstructorOptions["role"];
+	sublabel?: string;
 	submenu?: ContextMenuTemplateItem[];
+	type?: ContextMenuItemType;
+	visible?: boolean;
 }
 
 export type ContextMenuTemplateItem = { type: "separator" } | ContextMenuSharedItem;

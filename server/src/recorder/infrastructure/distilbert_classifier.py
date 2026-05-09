@@ -33,7 +33,7 @@ class DistilBertClassifier(ISentenceClassifier):
     def _load(self) -> None:
         try:
             import torch
-            from transformers import (  # type: ignore[attr-defined]
+            from transformers import (
                 DistilBertForSequenceClassification,
                 DistilBertTokenizerFast,
             )
@@ -43,7 +43,7 @@ class DistilBertClassifier(ISentenceClassifier):
                 device = "cpu"
 
             self._tokenizer = DistilBertTokenizerFast.from_pretrained(self._model_name)
-            self._model = DistilBertForSequenceClassification.from_pretrained(self._model_name).to(device)  # type: ignore[arg-type]
+            self._model = DistilBertForSequenceClassification.from_pretrained(self._model_name).to(device)
             self._model.eval()
             self._device = device
             self._available = True

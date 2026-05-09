@@ -1,6 +1,6 @@
 "use client";
 
-import { AiMagicIcon, Clock01Icon, SparklesIcon, TextSquareIcon } from "@hugeicons/core-free-icons";
+import { Clock01Icon, SparklesIcon, TextSquareIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { FormControl } from "@/shared/ui/form-control";
@@ -14,37 +14,7 @@ export function QualitySettingsPanel() {
 
 	return (
 		<div className="flex flex-col gap-5">
-			{/* ── Realtime Preview (visible only when realtime is enabled in Model tab) */}
-			{(q?.enableRealtimeTranscription ?? true) && (
-				<SettingSection icon={AiMagicIcon} title={t("realtimePreview")}>
-					<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
-						<FormControl
-							caption={t("useMainModelCaption")}
-							label={t("useMainModel")}
-							tooltip={t("useMainModelTooltip")}
-						>
-							<Toggle
-								checked={q?.useMainModelForRealtime ?? false}
-								onCheckedChange={(v) => update({ useMainModelForRealtime: v })}
-							/>
-						</FormControl>
-						<FormControl
-							caption={t("updateIntervalCaption")}
-							label={t("updateInterval")}
-							tooltip={t("updateIntervalTooltip")}
-						>
-							<NumberStepper
-								min={0.01}
-								onChange={(v) => update({ realtimeProcessingPause: v })}
-								step={0.01}
-								value={q?.realtimeProcessingPause ?? 0.02}
-							/>
-						</FormControl>
-					</div>
-				</SettingSection>
-			)}
-
-			{/* ── Smart Endpoint ─────────────────────────────── */}
+			{/* ── Smart Endpoint (visible only when realtime is enabled in Model tab) */}
 			{(q?.enableRealtimeTranscription ?? true) && (
 				<SettingSection icon={SparklesIcon} title={t("smartEndpoint")}>
 					<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">

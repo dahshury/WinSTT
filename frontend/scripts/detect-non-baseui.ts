@@ -25,11 +25,11 @@ const PATTERNS: Array<{ regex: RegExp; element: string; replacement: string }> =
 ];
 
 interface Violation {
+	context: string;
+	element: string;
 	file: string;
 	line: number;
-	element: string;
 	replacement: string;
-	context: string;
 }
 
 function walk(dir: string): string[] {

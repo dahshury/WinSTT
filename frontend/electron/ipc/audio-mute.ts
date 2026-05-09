@@ -79,11 +79,11 @@ const setMuteScriptPath = path.join(tempDir, "winstt-mute.ps1");
 const toggleScriptPath = path.join(tempDir, "winstt-mute-toggle.ps1");
 
 interface RunResult {
-	ok: boolean;
 	code: number | null;
+	error?: string;
+	ok: boolean;
 	stderr: string;
 	stdout: string;
-	error?: string;
 }
 
 function runPowerShell(scriptPath: string): Promise<RunResult> {
@@ -116,56 +116,101 @@ function runPowerShell(scriptPath: string): Promise<RunResult> {
 }
 
 let toggleFallbackEnabled = true;
+// Latches off after first failure: Add-Type -TypeDefinition COM-interop compile
+// is slow and Defender-scanned, so it routinely times out. Once it fails this
+// session, skip straight to the keypress toggle to avoid log spam and 8s stalls.
+let setMutePrimaryEnabled = true;
+
+function formatRunErr(r: RunResult): string {
+	return r.stderr || r.error || "no stderr";
+}
+
+async function writeAndRun(
+	scriptPath: string,
+	script: string,
+	writeErrLabel: string
+): Promise<RunResult | null> {
+	try {
+		await fs.promises.writeFile(scriptPath, script, "utf-8");
+	} catch (err) {
+		dbg("audio-mute", writeErrLabel, (err as Error).message);
+		return null;
+	}
+	return runPowerShell(scriptPath);
+}
+
+function processPrimaryResult(result: RunResult | null): boolean {
+	if (result?.ok) {
+		return true;
+	}
+	if (result) {
+		dbg(
+			"audio-mute",
+			`SetMute failed (exit=${result.code}): ${formatRunErr(result)} — disabling primary path for this session`
+		);
+	}
+	setMutePrimaryEnabled = false;
+	return false;
+}
+
+function processFallbackResult(result: RunResult | null): boolean {
+	if (result?.ok) {
+		return true;
+	}
+	if (result) {
+		dbg("audio-mute", `Toggle fallback failed (exit=${result.code}): ${formatRunErr(result)}`);
+	}
+	// Stop trying to avoid log spam — first failure tells us PowerShell + Add-Type is unavailable.
+	toggleFallbackEnabled = false;
+	return false;
+}
+
+async function tryPrimaryPath(targetMuted: boolean): Promise<boolean> {
+	if (!setMutePrimaryEnabled) {
+		return false;
+	}
+	const script = PS_MUTE_SCRIPT.replace("%MUTE_VALUE%", targetMuted ? "$true" : "$false");
+	return processPrimaryResult(
+		await writeAndRun(setMuteScriptPath, script, "Failed to write mute script:")
+	);
+}
+
+async function tryFallbackPath(): Promise<boolean> {
+	if (!toggleFallbackEnabled) {
+		return false;
+	}
+	return processFallbackResult(
+		await writeAndRun(toggleScriptPath, PS_TOGGLE_SCRIPT, "Failed to write toggle script:")
+	);
+}
+
+async function runMuteWithFallback(targetMuted: boolean): Promise<string | null> {
+	if (await tryPrimaryPath(targetMuted)) {
+		return "";
+	}
+	if (await tryFallbackPath()) {
+		return " (via VK_VOLUME_MUTE)";
+	}
+	return null;
+}
+
+function shouldSkipMute(targetMuted: boolean): boolean {
+	return process.platform !== "win32" || isMuted === targetMuted;
+}
+
+function commitMutedState(target: boolean, suffix: string): void {
+	isMuted = target;
+	dbg("audio-mute", `System audio ${target ? "muted" : "unmuted"}${suffix}`);
+}
 
 async function applyMute(targetMuted: boolean): Promise<void> {
-	if (process.platform !== "win32" || isMuted === targetMuted) {
+	if (shouldSkipMute(targetMuted)) {
 		return;
 	}
-
-	const script = PS_MUTE_SCRIPT.replace("%MUTE_VALUE%", targetMuted ? "$true" : "$false");
-	try {
-		await fs.promises.writeFile(setMuteScriptPath, script, "utf-8");
-	} catch (err) {
-		dbg("audio-mute", "Failed to write mute script:", (err as Error).message);
-		return;
+	const successSuffix = await runMuteWithFallback(targetMuted);
+	if (successSuffix !== null) {
+		commitMutedState(targetMuted, successSuffix);
 	}
-
-	const primary = await runPowerShell(setMuteScriptPath);
-	if (primary.ok) {
-		isMuted = targetMuted;
-		dbg("audio-mute", `System audio ${targetMuted ? "muted" : "unmuted"}`);
-		return;
-	}
-
-	dbg(
-		"audio-mute",
-		`SetMute failed (exit=${primary.code}): ${primary.stderr || primary.error || "no stderr"}`
-	);
-
-	// Fallback: toggle mute via VK_VOLUME_MUTE keypress.
-	// Only fires when JS state and target disagree, so a successful toggle reaches the desired state.
-	if (!toggleFallbackEnabled) {
-		return;
-	}
-	try {
-		await fs.promises.writeFile(toggleScriptPath, PS_TOGGLE_SCRIPT, "utf-8");
-	} catch (err) {
-		dbg("audio-mute", "Failed to write toggle script:", (err as Error).message);
-		return;
-	}
-	const fallback = await runPowerShell(toggleScriptPath);
-	if (fallback.ok) {
-		isMuted = targetMuted;
-		dbg("audio-mute", `System audio ${targetMuted ? "muted" : "unmuted"} (via VK_VOLUME_MUTE)`);
-		return;
-	}
-
-	dbg(
-		"audio-mute",
-		`Toggle fallback failed (exit=${fallback.code}): ${fallback.stderr || fallback.error || "no stderr"}`
-	);
-	// Stop trying the fallback to avoid log spam — first failure tells us PowerShell + Add-Type is unavailable.
-	toggleFallbackEnabled = false;
 }
 
 function setSystemMute(targetMuted: boolean): void {
@@ -174,6 +219,19 @@ function setSystemMute(targetMuted: boolean): void {
 	inFlight = next.catch(() => {
 		// errors already logged inside applyMute
 	});
+}
+
+/** Test hook: await any pending mute work. */
+export function flushMutePending(): Promise<void> {
+	return inFlight ?? Promise.resolve();
+}
+
+/** Test hook: reset module-level latches so each test starts from a known state. */
+export function __resetAudioMuteForTesting__(): void {
+	isMuted = false;
+	inFlight = null;
+	setMutePrimaryEnabled = true;
+	toggleFallbackEnabled = true;
 }
 
 /** Mute system audio. Returns true if it actually issued a mute. */

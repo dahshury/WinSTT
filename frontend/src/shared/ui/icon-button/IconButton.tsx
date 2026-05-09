@@ -6,14 +6,14 @@ import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
 
 export interface IconButtonProps {
-	icon: ReactNode;
-	onClick?: () => void;
-	disabled?: boolean;
 	/** Accessible label — required for icon-only buttons (WCAG 4.1.2) */
 	"aria-label": string;
+	className?: string;
+	disabled?: boolean;
+	icon: ReactNode;
+	onClick?: () => void;
 	/** Tooltip text — defaults to aria-label */
 	tooltip?: string;
-	className?: string;
 }
 
 export function IconButton({

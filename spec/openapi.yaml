@@ -471,6 +471,33 @@ components:
         request_id:
           type: integer
 
+    InputDevice:
+      type: object
+      required: [index, name, isDefault]
+      properties:
+        index:
+          type: integer
+        name:
+          type: string
+        isDefault:
+          type: boolean
+        defaultSampleRate:
+          type: integer
+        hostApi:
+          type: integer
+        maxInputChannels:
+          type: integer
+
+    ListInputDevicesCommand:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          const: list_input_devices
+        request_id:
+          type: integer
+
     StartLoopbackCommand:
       type: object
       required: [command, device_index]
@@ -630,11 +657,15 @@ components:
         showRecordingOverlay:
           type: boolean
         visualizerSize:
-          type: integer
-          minimum: 10
-          maximum: 200
+          type: string
+          enum: [xs, sm, md, lg, xl]
+          description: Overlay-popup visualizer height preset (xs–xl).
         showLiveTranscription:
           type: boolean
+          description: Show live transcription text under the floating recording pill (overlay window).
+        showInAppLiveTranscription:
+          type: boolean
+          description: Show live transcription text inside the main app window (subtitle overlay and transcription feed).
         visualizerType:
           type: string
           enum: [bar, grid, radial, wave, aura]
@@ -681,18 +712,44 @@ components:
         expansion:
           type: string
 
+    LlmProvider:
+      type: string
+      enum: [ollama, openrouter]
+      description: Which LLM backend to use for text transformation.
+
     LlmSettings:
       type: object
       properties:
         enabled:
           type: boolean
           default: false
+        provider:
+          $ref: "#/components/schemas/LlmProvider"
         endpoint:
           type: string
           default: "http://localhost:11434"
+          description: Ollama endpoint (only used when provider is "ollama").
         model:
           type: string
           default: ""
+          description: Ollama model name (only used when provider is "ollama").
+        openrouterApiKey:
+          type: string
+          default: ""
+          description: OpenRouter API key (only used when provider is "openrouter").
+        openrouterModel:
+          type: string
+          default: ""
+          description: >-
+            OpenRouter model selection encoded as `modelId` or `modelId@providerSlug`.
+            Empty string means "OpenRouter Auto".
+        openrouterFallbackModel:
+          type: string
+          default: ""
+          description: >-
+            Optional fallback model. Same encoding as `openrouterModel`. When set,
+            the LLM IPC retries with this model if the primary model errors or times
+            out. Empty string disables fallback.
         preset:
           type: string
           enum: [neutral, formal, friendly, technical, casual, concise]
@@ -738,6 +795,222 @@ components:
         path:
           type: string
           description: Resolved path to the ollama executable, when installed.
+
+    OllamaPullProgressStatus:
+      type: string
+      enum:
+        - pulling
+        - downloading
+        - verifying
+        - writing
+        - success
+        - error
+        - cancelled
+      description: |
+        Coalesced status from the streaming `/api/pull` response. The raw status
+        text from Ollama is mapped to one of these stages so the UI can render a
+        stable progress bar.
+
+    OllamaPullProgress:
+      type: object
+      required: [model, status]
+      description: |
+        Streaming progress event for a model pull. Emitted by the Electron main
+        process to the renderer over IPC channel `llm:pull-progress`.
+      properties:
+        model:
+          type: string
+          description: The fully-qualified model name being pulled (e.g. `llama3.2:1b`).
+        status:
+          $ref: "#/components/schemas/OllamaPullProgressStatus"
+        statusText:
+          type: string
+          description: Raw status string from Ollama (`pulling manifest`, digest hash, etc.).
+        digest:
+          type: string
+          description: SHA256 digest of the layer currently being downloaded, when applicable.
+        completed:
+          type: integer
+          format: int64
+          description: Bytes transferred for the current layer.
+        total:
+          type: integer
+          format: int64
+          description: Total bytes for the current layer.
+        percent:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Percent of the current layer transferred (0–100).
+        error:
+          type: string
+          description: Human-readable error when status is `error`.
+
+    OllamaPullResult:
+      type: object
+      required: [success, model]
+      properties:
+        success:
+          type: boolean
+        model:
+          type: string
+        cancelled:
+          type: boolean
+          description: True when the pull was cancelled by the user.
+        error:
+          type: string
+          description: Human-readable error when `success` is false.
+
+    OllamaDeleteResult:
+      type: object
+      required: [success, model]
+      properties:
+        success:
+          type: boolean
+        model:
+          type: string
+        error:
+          type: string
+
+    RecommendedOllamaModel:
+      type: object
+      required: [name, displayName, paramSize, sizeBytes, description]
+      description: |
+        A curated entry shown in the "Recommended" tab of the model manager.
+        Restricted to small, fast, instruction-tuned models suitable for the
+        text-transformation presets used by WinSTT's LLM post-processing.
+      properties:
+        name:
+          type: string
+          description: Ollama model identifier including tag (e.g. `llama3.2:1b`).
+        displayName:
+          type: string
+          description: Human-readable name shown in the UI.
+        family:
+          type: string
+          description: Model family (e.g. `llama`, `gemma`, `qwen`, `phi`).
+        paramSize:
+          type: string
+          description: Parameter count label (e.g. `1.2B`, `3B`).
+        sizeBytes:
+          type: integer
+          format: int64
+          description: Approximate on-disk size of the default quantization, in bytes.
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+          description: Free-form tags, e.g. `fast`, `tiny`, `instruct`.
+
+    OpenRouterPricing:
+      type: object
+      description: Pricing per token (string-encoded decimal — OpenRouter format).
+      properties:
+        prompt:
+          type: string
+        completion:
+          type: string
+        request:
+          type: string
+        image:
+          type: string
+        web_search:
+          type: string
+        internal_reasoning:
+          type: string
+        input_cache_read:
+          type: string
+        input_cache_write:
+          type: string
+
+    OpenRouterEndpoint:
+      type: object
+      required: [name, model_name, context_length, pricing, provider_name, tag]
+      properties:
+        name:
+          type: string
+        model_name:
+          type: string
+        context_length:
+          type: integer
+        pricing:
+          $ref: "#/components/schemas/OpenRouterPricing"
+        provider_name:
+          type: string
+          description: Human-readable provider (e.g. "DeepInfra", "Together").
+        tag:
+          type: string
+          description: Provider slug used to route requests (e.g. "deepinfra").
+        max_completion_tokens:
+          type: integer
+          nullable: true
+        supported_parameters:
+          type: array
+          items:
+            type: string
+        quantization:
+          type: string
+          nullable: true
+        status:
+          type: integer
+          nullable: true
+        uptime_last_30m:
+          type: number
+          nullable: true
+
+    OpenRouterModel:
+      type: object
+      required: [id, name]
+      description: A model returned by OpenRouter `/api/v1/models`.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        context_length:
+          type: integer
+        pricing:
+          $ref: "#/components/schemas/OpenRouterPricing"
+        provider:
+          type: string
+          description: Provider slug (always "openrouter" for top-level catalog entries).
+        maker:
+          type: string
+          description: Model maker (e.g. "openai", "anthropic", "google") parsed from the id.
+        model_name:
+          type: string
+          description: Display name without the maker prefix.
+        variant:
+          type: string
+          enum: [free, extended, exacto, nitro, floor, thinking, online]
+          nullable: true
+        endpoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenRouterEndpoint"
+        supported_parameters:
+          type: array
+          items:
+            type: string
+
+    OpenRouterScanResult:
+      type: object
+      required: [models, reachable]
+      properties:
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenRouterModel"
+        reachable:
+          type: boolean
+          description: True if the OpenRouter API responded (even with HTTP error). False if connection failed.
+        error:
+          type: string
+          description: Human-readable failure reason when not reachable.
 
     AppSettings:
       type: object

@@ -32,6 +32,79 @@ function getExtension(name: string): string {
 	return i >= 0 ? name.slice(i).toLowerCase() : "";
 }
 
+type TranslateFn = ReturnType<typeof useTranslations>;
+
+interface DropValidation {
+	errorMessage?: string;
+	fileName?: string;
+	filePath?: string;
+	ok: boolean;
+}
+
+function checkExtension(file: File, tf: TranslateFn): DropValidation | null {
+	const ext = getExtension(file.name);
+	if (SUPPORTED_EXTENSIONS.has(ext)) {
+		return null;
+	}
+	return { ok: false, fileName: file.name, errorMessage: tf("unsupportedFormat", { ext }) };
+}
+
+function checkFilePath(file: File, tf: TranslateFn): DropValidation {
+	const filePath = getFilePath(file);
+	if (!filePath) {
+		return { ok: false, fileName: file.name, errorMessage: tf("cannotDetermineFilePath") };
+	}
+	return { ok: true, fileName: file.name, filePath };
+}
+
+function validateDroppedFile(file: File | undefined, tf: TranslateFn): DropValidation {
+	if (!file) {
+		return { ok: false };
+	}
+	return checkExtension(file, tf) ?? checkFilePath(file, tf);
+}
+
+function extractErrorMessage(err: unknown, tf: TranslateFn): string {
+	return err instanceof Error ? err.message : tf("transcriptionFailed");
+}
+
+interface RunTranscriptionDeps {
+	setError: (name: string, msg: string) => void;
+	setProcessing: (name: string) => void;
+	tf: TranslateFn;
+}
+
+async function runTranscription(
+	fileName: string,
+	filePath: string,
+	deps: RunTranscriptionDeps
+): Promise<void> {
+	deps.setProcessing(fileName);
+	try {
+		await fileTranscribe(filePath);
+	} catch (err) {
+		deps.setError(fileName, extractErrorMessage(err, deps.tf));
+	}
+}
+
+function getContainerClassName(isListenMode: boolean): string {
+	const base =
+		"relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-surface-secondary";
+	const border = isListenMode ? "" : "rounded-lg border border-border";
+	return `${base} ${border}`;
+}
+
+function DropZoneOverlay({ visible, label }: { visible: boolean; label: string }) {
+	if (!visible) {
+		return null;
+	}
+	return (
+		<div className="absolute inset-0 z-20 flex items-center justify-center border-2 border-accent border-dashed bg-surface-secondary/90">
+			<p className="font-medium text-accent text-sm">{label}</p>
+		</div>
+	);
+}
+
 export function AudioDisplay() {
 	const isListenMode = useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
 	const setProcessing = useFileTranscriptionStore((s) => s.setProcessing);
@@ -74,30 +147,19 @@ export function AudioDisplay() {
 			dragCounter.current = 0;
 			setIsDragOver(false);
 
-			const files = Array.from(e.dataTransfer.files);
-			const file = files[0];
-			if (!file) {
+			const file = Array.from(e.dataTransfer.files)[0];
+			const result = validateDroppedFile(file, tf);
+			if (!result.ok) {
+				if (result.errorMessage && result.fileName) {
+					setError(result.fileName, result.errorMessage);
+				}
 				return;
 			}
-
-			const ext = getExtension(file.name);
-			if (!SUPPORTED_EXTENSIONS.has(ext)) {
-				setError(file.name, tf("unsupportedFormat", { ext }));
-				return;
-			}
-
-			const filePath = getFilePath(file);
-			if (!filePath) {
-				setError(file.name, tf("cannotDetermineFilePath"));
-				return;
-			}
-
-			setProcessing(file.name);
-			try {
-				await fileTranscribe(filePath);
-			} catch (err) {
-				setError(file.name, err instanceof Error ? err.message : tf("transcriptionFailed"));
-			}
+			await runTranscription(result.fileName as string, result.filePath as string, {
+				setProcessing,
+				setError,
+				tf,
+			});
 		},
 		[setProcessing, setError, tf]
 	);
@@ -106,7 +168,7 @@ export function AudioDisplay() {
 		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: drop zone for file transcription
 		<section
 			aria-label={t("ariaLabel")}
-			className={`relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-surface-secondary ${isListenMode ? "" : "rounded-lg border border-border"}`}
+			className={getContainerClassName(isListenMode)}
 			onDragEnter={handleDragEnter}
 			onDragLeave={handleDragLeave}
 			onDragOver={handleDragOver}
@@ -116,12 +178,7 @@ export function AudioDisplay() {
 				<AudioVisualizer size="auto" />
 			</div>
 
-			{/* Drag-over drop zone overlay */}
-			{isDragOver && (
-				<div className="absolute inset-0 z-20 flex items-center justify-center border-2 border-accent border-dashed bg-surface-secondary/90">
-					<p className="font-medium text-accent text-sm">{t("dropToTranscribe")}</p>
-				</div>
-			)}
+			<DropZoneOverlay label={t("dropToTranscribe")} visible={isDragOver} />
 
 			<DownloadOverlay />
 			<FileOverlay />
@@ -129,3 +186,13 @@ export function AudioDisplay() {
 		</section>
 	);
 }
+
+// Test-only exports — pure helpers extracted from drag/drop handling.
+export const __audio_display_test_helpers__ = {
+	getExtension,
+	validateDroppedFile,
+	extractErrorMessage,
+	runTranscription,
+	getContainerClassName,
+	SUPPORTED_EXTENSIONS,
+};

@@ -104,7 +104,7 @@ export const DownloadOverlay = memo(function DownloadOverlay() {
 				</Progress.Track>
 
 				<div className="text-center font-mono text-foreground-muted text-xs tabular-nums">
-					{progress != null ? `${progress}%` : ""}
+					{progress == null ? "" : `${progress}%`}
 					{statsLine && ` \u2014 ${statsLine}`}
 				</div>
 			</Progress.Root>

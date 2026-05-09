@@ -25,10 +25,16 @@ import { DesktopToolsSettingsPanel } from "@/widgets/desktop-tools-settings";
 import { DictionarySettingsPanel } from "@/widgets/dictionary-settings";
 import { GeneralSettingsPanel } from "@/widgets/general-settings";
 import { HotkeySettingsPanel } from "@/widgets/hotkey-settings";
+import { LlmSettingsPanel } from "@/widgets/llm-settings";
 import { ModelSettingsPanel } from "@/widgets/model-settings";
+import { OllamaModelManagerDialog } from "@/widgets/ollama-model-manager";
 import { QualitySettingsPanel } from "@/widgets/quality-settings";
 import { SnippetsSettingsPanel } from "@/widgets/snippets-settings";
 import { SettingsSidebar, type SidebarLink } from "./SettingsSidebar";
+
+const llmSettingsSlot = (
+	<LlmSettingsPanel renderOllamaManager={(props) => <OllamaModelManagerDialog {...props} />} />
+);
 
 export function SettingsPage() {
 	const resetSettings = useSettingsStore((s) => s.resetSettings);
@@ -123,7 +129,7 @@ export function SettingsPage() {
 							<GeneralSettingsPanel />
 						</Tabs.Panel>
 						<Tabs.Panel value="model">
-							<ModelSettingsPanel />
+							<ModelSettingsPanel llmSlot={llmSettingsSlot} />
 						</Tabs.Panel>
 						<Tabs.Panel value="audio">
 							<AudioSettingsPanel />

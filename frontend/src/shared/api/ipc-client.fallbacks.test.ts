@@ -40,6 +40,6 @@ describe("ipc-client non-electron fallbacks", () => {
 		expect(await updaterClearStatusHistory()).toEqual({ cleared: true });
 		expect(await fileTranscribe("C:\\test.wav")).toEqual({ requestId: "" });
 		expect(await clipboardReadText()).toBe("");
-		expect(await processWithLlm("hello", "mock-model", "neutral")).toBe("hello");
+		expect(await processWithLlm("hello")).toBe("hello");
 	});
 });

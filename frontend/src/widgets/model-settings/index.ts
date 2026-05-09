@@ -1,1 +1,4 @@
-export { ModelSettingsPanel } from "./ui/ModelSettingsPanel";
+export {
+	ModelSettingsPanel,
+	type ModelSettingsPanelProps,
+} from "./ui/ModelSettingsPanel";

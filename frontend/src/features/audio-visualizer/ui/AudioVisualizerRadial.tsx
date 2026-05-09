@@ -34,11 +34,11 @@ const radialVariants = cva(
 );
 
 export interface AudioVisualizerRadialProps {
-	size?: VisualizerSize;
-	color?: `#${string}`;
-	radius?: number;
 	barCount?: number;
 	className?: string;
+	color?: `#${string}`;
+	radius?: number;
+	size?: VisualizerSize;
 }
 
 export function AudioVisualizerRadial({
@@ -99,9 +99,7 @@ export function AudioVisualizerRadial({
 		[state, volumeBands, _barCount]
 	);
 
-	const dotSize = useMemo(() => {
-		return (distanceFromCenter * Math.PI) / _barCount;
-	}, [distanceFromCenter, _barCount]);
+	const dotSize = (distanceFromCenter * Math.PI) / _barCount;
 
 	// Available space from the radial ring out to the container edge.
 	// Mirrors the heights in `radialVariants` above (icon 24, sm 56, md 112, lg 224, xl 448);
@@ -124,9 +122,9 @@ export function AudioVisualizerRadial({
 				const angle = (idx / _barCount) * Math.PI * 2;
 				return (
 					<div
-						className="absolute top-1/2 left-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2"
+						className="absolute top-1/2 left-1/2 size-1 -translate-x-1/2 -translate-y-1/2"
 						data-lk-state={state}
-						key={`${_barCount}-${idx}`}
+						key={`radial-${_barCount}-angle-${angle.toFixed(4)}`}
 						style={{
 							transformOrigin: "center",
 							transform: `rotate(${angle}rad) translateY(${distanceFromCenter}px)`,

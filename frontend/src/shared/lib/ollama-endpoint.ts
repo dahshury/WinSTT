@@ -5,33 +5,30 @@ function stripTrailingSlashes(value: string): string {
 	return value.replace(TRAILING_SLASHES, "");
 }
 
+function stripTrailingApiSegments(value: string): string {
+	let result = stripTrailingSlashes(value);
+	while (TRAILING_API_PATH.test(result)) {
+		result = stripTrailingSlashes(result.replace(TRAILING_API_PATH, ""));
+	}
+	return result;
+}
+
 export function normalizeOllamaEndpoint(endpoint: string): string {
 	const trimmed = endpoint.trim();
-	if (!trimmed) {
-		return trimmed;
-	}
-
 	try {
 		const url = new URL(trimmed);
-		let pathname = stripTrailingSlashes(url.pathname);
-
-		while (TRAILING_API_PATH.test(pathname)) {
-			pathname = pathname.replace(TRAILING_API_PATH, "");
-			pathname = stripTrailingSlashes(pathname);
-		}
-
-		url.pathname = pathname || "/";
+		// URL spec: assigning an empty pathname to an http/https URL is
+		// auto-normalized back to "/", so an explicit `|| "/"` fallback is
+		// redundant.
+		url.pathname = stripTrailingApiSegments(url.pathname);
 		url.search = "";
 		url.hash = "";
-
 		return stripTrailingSlashes(url.toString());
 	} catch {
-		let normalized = stripTrailingSlashes(trimmed);
-		while (TRAILING_API_PATH.test(normalized)) {
-			normalized = normalized.replace(TRAILING_API_PATH, "");
-			normalized = stripTrailingSlashes(normalized);
-		}
-		return normalized;
+		// Empty input and non-URL strings both flow here. The while loop
+		// is a no-op for empty input, so the early-return guard is also
+		// redundant.
+		return stripTrailingApiSegments(trimmed);
 	}
 }
 
@@ -41,7 +38,9 @@ export function buildOllamaApiUrl(endpoint: string, apiPath: `/api/${string}`): 
 
 	try {
 		const url = new URL(normalized);
-		const basePath = url.pathname === "/" ? "" : stripTrailingSlashes(url.pathname);
+		// stripTrailingSlashes("/") === "" so the explicit pathname==="/"
+		// branch is redundant — both produce the same basePath.
+		const basePath = stripTrailingSlashes(url.pathname);
 		url.pathname = `${basePath}${normalizedApiPath}`;
 		return url.toString();
 	} catch {

@@ -3,7 +3,7 @@ name = "winstt-server"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "kink>=0.6.5",
+    "kink>=0.6.5,<0.7",
     "pydantic>=2.0",
     "PyAudio>=0.2.14",
     "PyAudioWPatch>=0.2.12",
@@ -23,7 +23,10 @@ dependencies = [
     "colorama>=0.4.6",
     "websockets>=16.0",
     "onnx-asr[hub]",
-    "transformers>=4.30",
+    # transformers v5 ships breaking renames in tokenizer/model APIs; pin to v4
+    # until DistilBertForSequenceClassification/DistilBertTokenizerFast usage in
+    # `distilbert_classifier.py` is verified against v5.
+    "transformers>=4.30,<5",
 ]
 
 [dependency-groups]
@@ -36,16 +39,16 @@ dev = [
 ]
 
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.uv]
 link-mode = "copy"
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu124" }]
-torchaudio = [{ index = "pytorch-cu124" }]
+torch = [{ index = "pytorch-cu128" }]
+torchaudio = [{ index = "pytorch-cu128" }]
 onnx-asr = { path = "../examples/onnx-asr", editable = true }
 
 [project.scripts]
@@ -64,7 +67,6 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E","W","F","I","UP","B","SIM","ANN","RUF"]
-ignore = ["ANN101","ANN102"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
@@ -87,7 +89,7 @@ warn_no_return = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","faster_whisper.*","torch.*","torchaudio.*","scipy.*","soundfile.*","halo.*","websocket.*","websockets.*","colorama.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnxruntime.*","transformers.*"]
+module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","faster_whisper.*","torch.*","torchaudio.*","scipy.*","soundfile.*","websocket.*","websockets.*","colorama.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnxruntime.*","transformers.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

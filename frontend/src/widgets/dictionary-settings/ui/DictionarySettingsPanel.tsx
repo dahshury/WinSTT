@@ -4,6 +4,7 @@ import { TextIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { DictionaryTable } from "@/features/manage-dictionary";
+import { generateId } from "@/shared/lib/generate-id";
 
 export function DictionarySettingsPanel() {
 	const dictionary = useSettingsStore((s) => s.settings.dictionary) ?? [];
@@ -17,7 +18,7 @@ export function DictionarySettingsPanel() {
 				<DictionaryTable
 					entries={dictionary}
 					onAdd={(entry) => {
-						updateDictionary([...dictionary, { ...entry, id: crypto.randomUUID() }]);
+						updateDictionary([...dictionary, { ...entry, id: generateId() }]);
 					}}
 					onClearAll={() => {
 						updateDictionary([]);

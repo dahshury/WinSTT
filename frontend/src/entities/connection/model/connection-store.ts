@@ -6,11 +6,11 @@ type ConnectionStatus = components["schemas"]["ConnectionStatus"];
 
 interface ConnectionState {
 	connectionStatus: ConnectionStatus;
-	serverStatus: ServerStatus;
 	gpuInfo: GpuInfo | null;
+	serverStatus: ServerStatus;
 	setConnectionStatus: (status: ConnectionStatus) => void;
-	setServerStatus: (status: ServerStatus) => void;
 	setGpuInfo: (info: GpuInfo | null) => void;
+	setServerStatus: (status: ServerStatus) => void;
 }
 
 export const useConnectionStore = create<ConnectionState>()((set) => ({

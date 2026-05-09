@@ -106,9 +106,14 @@ export const IPC = {
 	LLM_PROCESS_TEXT: "llm:process-text",
 	LLM_DETECT_OLLAMA: "llm:detect-ollama",
 	LLM_START_OLLAMA: "llm:start-ollama",
+	LLM_SCAN_OPENROUTER_MODELS: "llm:scan-openrouter-models",
+	LLM_PULL_MODEL: "llm:pull-model",
+	LLM_CANCEL_PULL_MODEL: "llm:cancel-pull-model",
+	LLM_DELETE_MODEL: "llm:delete-model",
 
 	// LLM events (main → renderer)
 	LLM_CATALOG: "llm:catalog",
+	LLM_PULL_PROGRESS: "llm:pull-progress",
 	UPDATER_GET_STATUS_HISTORY: "updater:get-status-history",
 	UPDATER_CLEAR_STATUS_HISTORY: "updater:clear-status-history",
 	UPDATER_STATUS: "updater:status",

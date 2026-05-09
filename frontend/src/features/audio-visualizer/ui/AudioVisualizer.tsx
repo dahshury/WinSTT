@@ -11,12 +11,12 @@ import { AudioVisualizerRadial } from "./AudioVisualizerRadial";
 import { AudioVisualizerWave } from "./AudioVisualizerWave";
 
 interface AudioVisualizerProps {
+	className?: string;
 	/**
 	 * Fixed size variant or `"auto"` to pick the largest variant that fits the
 	 * available space (measured via ResizeObserver on a wrapping div).
 	 */
 	size?: VisualizerSize | "auto";
-	className?: string;
 }
 
 /**
@@ -47,14 +47,22 @@ export const AudioVisualizer = memo(function AudioVisualizer({
 		);
 	}
 
-	return renderVariant(visualizerType, { size, className, color: visualizerColor, barCount });
+	return (
+		<VisualizerVariant
+			barCount={barCount}
+			className={className}
+			color={visualizerColor}
+			size={size}
+			type={visualizerType}
+		/>
+	);
 });
 
 interface AutoSizedVisualizerProps {
-	type: VisualizerType;
+	barCount?: number;
 	className?: string;
 	color?: `#${string}`;
-	barCount?: number;
+	type: VisualizerType;
 }
 
 function AutoSizedVisualizer({ type, className, color, barCount }: AutoSizedVisualizerProps) {
@@ -63,20 +71,26 @@ function AutoSizedVisualizer({ type, className, color, barCount }: AutoSizedVisu
 
 	return (
 		<div className="flex h-full w-full items-center justify-center" ref={containerRef}>
-			{renderVariant(type, { size: fitSize, className, color, barCount })}
+			<VisualizerVariant
+				barCount={barCount}
+				className={className}
+				color={color}
+				size={fitSize}
+				type={type}
+			/>
 		</div>
 	);
 }
 
-interface VariantProps {
-	size: VisualizerSize;
+interface VisualizerVariantProps {
+	barCount?: number;
 	className?: string;
 	color?: `#${string}`;
-	barCount?: number;
+	size: VisualizerSize;
+	type: VisualizerType;
 }
 
-function renderVariant(type: VisualizerType, props: VariantProps) {
-	const { barCount, ...common } = props;
+function VisualizerVariant({ type, barCount, ...common }: VisualizerVariantProps) {
 	switch (type) {
 		case "grid":
 			return <AudioVisualizerGrid {...common} />;

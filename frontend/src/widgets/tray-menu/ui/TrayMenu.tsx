@@ -1,8 +1,11 @@
 "use client";
 
 import { Separator } from "@base-ui/react/separator";
+import { ArrowDown01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useInputDevices } from "@/entities/audio-device";
 import { IPC } from "@/shared/api/ipc-channels";
 import {
 	dialogOpenFile,
@@ -21,13 +24,18 @@ type RecordingMode = "ptt" | "toggle" | "listen";
 
 export function TrayMenu() {
 	const [recordingMode, setRecordingMode] = useState<RecordingMode>("ptt");
+	const [inputDeviceIndex, setInputDeviceIndex] = useState<number | null>(null);
+	const [isDeviceListOpen, setIsDeviceListOpen] = useState(false);
 	const [isConnected, setIsConnected] = useState(false);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const t = useTranslations("tray");
+	const tAudio = useTranslations("audio");
+	const { devices, defaultDevice } = useInputDevices();
 
 	useEffect(() => {
 		settingsLoad().then((settings) => {
 			setRecordingMode(settings.general.recordingMode);
+			setInputDeviceIndex(settings.audio?.inputDeviceIndex ?? null);
 		});
 
 		// Get initial connection state + listen for changes
@@ -75,6 +83,17 @@ export function TrayMenu() {
 		});
 	};
 
+	const handleDeviceChange = async (id: string) => {
+		const next = id === "default" ? null : Number.parseInt(id, 10);
+		setInputDeviceIndex(next);
+		setIsDeviceListOpen(false);
+		const settings = await settingsLoad();
+		await settingsSave({
+			...settings,
+			audio: { ...settings.audio, inputDeviceIndex: next },
+		});
+	};
+
 	const handleTranscribeFile = async () => {
 		const filePath = await dialogOpenFile(
 			[
@@ -101,6 +120,23 @@ export function TrayMenu() {
 		{ value: "listen", label: t("modeListen") },
 	];
 
+	const { deviceOptions, currentDeviceId, currentDeviceLabel } = useMemo(() => {
+		const defaultLabel = defaultDevice
+			? `${tAudio("systemDefault")} (${defaultDevice.name})`
+			: tAudio("systemDefault");
+		const opts: { id: string; label: string }[] = [{ id: "default", label: defaultLabel }];
+		for (const d of devices) {
+			opts.push({ id: String(d.index), label: d.name });
+		}
+		const id = inputDeviceIndex == null ? "default" : String(inputDeviceIndex);
+		const found = opts.find((o) => o.id === id);
+		return {
+			deviceOptions: opts,
+			currentDeviceId: id,
+			currentDeviceLabel: found?.label ?? defaultLabel,
+		};
+	}, [devices, defaultDevice, inputDeviceIndex, tAudio]);
+
 	return (
 		<div
 			className={cn(
@@ -118,13 +154,61 @@ export function TrayMenu() {
 
 			<MenuSeparator />
 
-			<div className="px-2 py-1.5">
+			<div className="p-1">
 				<Switcher
+					fullWidth
 					onChange={handleModeChange}
 					options={recordingModeOptions}
 					value={recordingMode}
 				/>
 			</div>
+
+			<MenuSeparator />
+
+			<Button
+				aria-expanded={isDeviceListOpen}
+				className={cn(
+					"w-full justify-between gap-3 rounded px-3 py-1.5 text-left transition-colors",
+					"hover:bg-surface-hover hover:text-foreground active:bg-surface-active"
+				)}
+				onClick={() => setIsDeviceListOpen((v) => !v)}
+			>
+				<span className="flex min-w-0 items-center gap-2">
+					<HugeiconsIcon
+						aria-hidden="true"
+						className="shrink-0 text-foreground-dim"
+						icon={Mic01Icon}
+						size={13}
+					/>
+					<span className="truncate">{currentDeviceLabel}</span>
+				</span>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className={cn(
+						"shrink-0 text-foreground-muted transition-transform",
+						isDeviceListOpen && "rotate-180"
+					)}
+					icon={ArrowDown01Icon}
+					size={11}
+				/>
+			</Button>
+			{isDeviceListOpen && (
+				<div className="mx-1 mt-0.5 max-h-48 overflow-y-auto rounded-sm border border-border bg-surface-secondary py-0.5">
+					{deviceOptions.map((opt) => (
+						<Button
+							aria-pressed={opt.id === currentDeviceId}
+							className={cn(
+								"w-full justify-start truncate rounded px-2 py-1 text-left text-2xs transition-colors hover:bg-surface-hover",
+								opt.id === currentDeviceId ? "text-accent" : "text-foreground-dim"
+							)}
+							key={opt.id}
+							onClick={() => handleDeviceChange(opt.id)}
+						>
+							<span className="truncate">{opt.label}</span>
+						</Button>
+					))}
+				</div>
+			)}
 
 			<MenuSeparator />
 
@@ -144,8 +228,8 @@ export function TrayMenu() {
 
 interface MenuItemProps {
 	children: React.ReactNode;
-	onClick?: () => void;
 	disabled?: boolean;
+	onClick?: () => void;
 	shortcut?: string;
 }
 

@@ -18,10 +18,10 @@ export type ContextMenuIpcHandler = (
 ) => Promise<ContextMenuIpcResponse>;
 
 interface PopupInput {
+	onClose: () => void;
 	template: MenuItemConstructorOptions[];
 	x?: number;
 	y?: number;
-	onClose: () => void;
 }
 
 export interface ContextMenuPopupAdapter {

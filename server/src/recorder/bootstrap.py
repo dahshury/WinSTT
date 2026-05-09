@@ -234,7 +234,9 @@ def build_realtime_transcriber(
         download_root=config.transcription.download_root,
         beam_size=config.realtime.beam_size_realtime,
         initial_prompt=config.realtime.initial_prompt_realtime,
+        suppress_tokens=config.transcription.suppress_tokens,
         batch_size=config.realtime.realtime_batch_size,
+        vad_filter=config.transcription.faster_whisper_vad_filter,
         on_download_progress=progress_handler,
         cancel_check=download_callbacks.cancel_check if download_callbacks else None,
     )

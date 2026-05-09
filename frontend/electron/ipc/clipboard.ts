@@ -15,9 +15,9 @@ export type ClipboardHandlerResult =
 	| { operation: "clear" };
 
 export interface ClipboardAdapter {
+	clear: () => void;
 	readText: () => string;
 	writeText: (text: string) => void;
-	clear: () => void;
 }
 
 function normalizeOperation(operation: unknown): ClipboardOperation {

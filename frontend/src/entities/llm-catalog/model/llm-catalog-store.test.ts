@@ -12,9 +12,18 @@ const fetchSpy = mock(async () => {
 
 const noop = () => undefined;
 
+// Provide a complete-enough shim so other tests' imports of the same module
+// (mock-cached globally by bun:test) do not error on missing exports.
 mock.module("@/shared/api/ipc-client", () => ({
 	fetchOllamaModels: fetchSpy,
 	onLlmCatalog: () => noop,
+	onOllamaPullProgress: () => noop,
+	pullOllamaModel: async (model: string) => ({ success: true, model }),
+	cancelOllamaModelPull: async () => ({ cancelled: false }),
+	deleteOllamaModel: async (model: string) => ({ success: true, model }),
+	fetchOpenRouterModels: async () => ({ models: [], reachable: false }),
+	fetchModelCatalog: async () => [],
+	onModelCatalog: () => () => undefined,
 }));
 
 const { useLlmCatalogStore } = await import("./llm-catalog-store");
@@ -59,6 +68,45 @@ describe("useLlmCatalogStore.scanModels — concurrent-call gating", () => {
 		expect(state.isReachable).toBe(false);
 		expect(state.error).toBe("Ollama unreachable");
 		expect(state.models).toEqual([]);
+		expect(state.isLoaded).toBe(true);
+	});
+
+	test("captures thrown errors from the fetcher and resets isScanning", async () => {
+		fetchSpy.mockImplementationOnce(async () => {
+			throw new Error("network down");
+		});
+		const { scanModels } = useLlmCatalogStore.getState();
+		await scanModels();
+		const state = useLlmCatalogStore.getState();
+		expect(state.isScanning).toBe(false);
+		expect(state.isReachable).toBe(false);
+		expect(state.error).toContain("network down");
+		expect(state.isLoaded).toBe(true);
+	});
+});
+
+describe("useLlmCatalogStore mutators", () => {
+	test("setModels marks isLoaded true and clears error", () => {
+		useLlmCatalogStore.setState({ isLoaded: false, error: "old" });
+		useLlmCatalogStore.getState().setModels([{ name: "m", size: 1, modifiedAt: "" }]);
+		const state = useLlmCatalogStore.getState();
+		expect(state.isLoaded).toBe(true);
+		expect(state.error).toBeNull();
+		expect(state.models).toHaveLength(1);
+	});
+
+	test("setScanning toggles isScanning flag", () => {
+		useLlmCatalogStore.getState().setScanning(true);
+		expect(useLlmCatalogStore.getState().isScanning).toBe(true);
+		useLlmCatalogStore.getState().setScanning(false);
+		expect(useLlmCatalogStore.getState().isScanning).toBe(false);
+	});
+
+	test("setError marks isLoaded true and stores the message", () => {
+		useLlmCatalogStore.setState({ isLoaded: false, error: null });
+		useLlmCatalogStore.getState().setError("boom");
+		const state = useLlmCatalogStore.getState();
+		expect(state.error).toBe("boom");
 		expect(state.isLoaded).toBe(true);
 	});
 });

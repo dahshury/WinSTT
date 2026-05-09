@@ -26,9 +26,44 @@ function hasValidExtension(name: string): boolean {
 // biome-ignore lint/suspicious/noExplicitAny: next-intl Translator uses namespace-parameterized generics; narrowing breaks assignability at the call site.
 type TranslatorFn = (key: any, values?: any) => string;
 
+type DropValidationResult = { ok: true; filePath: string } | { ok: false; error: string };
+
+async function checkSoundFileDuration(file: File, t: TranslatorFn): Promise<string | null> {
+	try {
+		const duration = await getAudioDuration(file);
+		if (duration > MAX_DURATION_SECONDS) {
+			return t("soundFileTooLong", {
+				max: MAX_DURATION_SECONDS,
+				duration: duration.toFixed(1),
+			});
+		}
+		return null;
+	} catch {
+		return t("soundFileUnreadable");
+	}
+}
+
+function buildDropResultFromFilePath(filePath: string | null): DropValidationResult {
+	return filePath ? { ok: true, filePath } : { ok: false, error: "" };
+}
+
+async function validateDroppedSoundFile(
+	file: File,
+	t: TranslatorFn
+): Promise<DropValidationResult> {
+	if (!hasValidExtension(file.name)) {
+		return { ok: false, error: t("soundFileDropError") };
+	}
+	const durationError = await checkSoundFileDuration(file, t);
+	if (durationError) {
+		return { ok: false, error: durationError };
+	}
+	return buildDropResultFromFilePath(getFilePath(file));
+}
+
 interface UseSoundFileDropOptions {
-	update: (patch: { recordingSoundPath: string }) => void;
 	t: TranslatorFn;
+	update: (patch: { recordingSoundPath: string }) => void;
 }
 
 /**
@@ -38,54 +73,44 @@ interface UseSoundFileDropOptions {
 interface UseSoundFileDropReturn {
 	dragOver: boolean;
 	dropError: string;
+	handleBrowse: () => Promise<void>;
+	handleReset: () => void;
 	handlers: {
 		onDrop: (e: DragEvent<HTMLDivElement>) => void;
 		onDragOver: (e: DragEvent<HTMLDivElement>) => void;
 		onDragLeave: () => void;
 	};
-	handleBrowse: () => Promise<void>;
-	handleReset: () => void;
 }
 
 export function useSoundFileDrop({ update, t }: UseSoundFileDropOptions): UseSoundFileDropReturn {
 	const [dragOver, setDragOver] = useState(false);
 	const [dropError, setDropError] = useState("");
 
+	const applyValidatedDrop = useCallback(
+		(result: DropValidationResult) => {
+			if (result.ok) {
+				update({ recordingSoundPath: result.filePath });
+				return;
+			}
+			if (result.error) {
+				setDropError(result.error);
+			}
+		},
+		[update]
+	);
+
 	const handleDrop = useCallback(
 		async (e: DragEvent<HTMLDivElement>) => {
 			e.preventDefault();
 			setDragOver(false);
 			setDropError("");
-
 			const file = e.dataTransfer.files[0];
 			if (!file) {
 				return;
 			}
-
-			if (!hasValidExtension(file.name)) {
-				setDropError(t("soundFileDropError"));
-				return;
-			}
-
-			try {
-				const duration = await getAudioDuration(file);
-				if (duration > MAX_DURATION_SECONDS) {
-					setDropError(
-						t("soundFileTooLong", { max: MAX_DURATION_SECONDS, duration: duration.toFixed(1) })
-					);
-					return;
-				}
-			} catch {
-				setDropError(t("soundFileUnreadable"));
-				return;
-			}
-
-			const filePath = getFilePath(file);
-			if (filePath) {
-				update({ recordingSoundPath: filePath });
-			}
+			applyValidatedDrop(await validateDroppedSoundFile(file, t));
 		},
-		[update, t]
+		[t, applyValidatedDrop]
 	);
 
 	const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
@@ -121,3 +146,13 @@ export function useSoundFileDrop({ update, t }: UseSoundFileDropOptions): UseSou
 		handleReset,
 	};
 }
+
+// Test-only exports — pure helpers for unit testing.
+export const __use_sound_file_drop_test_helpers__ = {
+	hasValidExtension,
+	checkSoundFileDuration,
+	buildDropResultFromFilePath,
+	validateDroppedSoundFile,
+	ACCEPTED_EXTENSIONS,
+	MAX_DURATION_SECONDS,
+};

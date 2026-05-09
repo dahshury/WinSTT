@@ -8,10 +8,10 @@ export interface ScrollAreaProps extends ComponentPropsWithoutRef<"div"> {
 	children: ReactNode;
 	/** Class applied to the inner viewport (the scrollable region). */
 	viewportClassName?: string;
-	/** Inline style applied to the inner viewport. */
-	viewportStyle?: React.CSSProperties;
 	/** Ref to the inner viewport — use for programmatic scrolling. */
 	viewportRef?: Ref<HTMLDivElement>;
+	/** Inline style applied to the inner viewport. */
+	viewportStyle?: React.CSSProperties;
 }
 
 export function ScrollArea({

@@ -20,6 +20,8 @@ const loopbackDeviceSchema = z.object({
 	maxOutputChannels: z.number(),
 });
 
+type LoopbackDevice = z.infer<typeof loopbackDeviceSchema>;
+
 export function useListenMode(): void {
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const loopbackDeviceIndex = useSettingsStore(
@@ -59,10 +61,13 @@ export function useListenMode(): void {
 				}
 
 				if (Array.isArray(devices)) {
-					const validated = devices
-						.map((d) => loopbackDeviceSchema.safeParse(d))
-						.filter((r) => r.success)
-						.map((r) => r.data);
+					const validated: LoopbackDevice[] = [];
+					for (const d of devices) {
+						const parsed = loopbackDeviceSchema.safeParse(d);
+						if (parsed.success) {
+							validated.push(parsed.data);
+						}
+					}
 					setDevices(validated);
 				} else {
 					console.warn("[useListenMode] Invalid devices response:", devices);
@@ -97,11 +102,12 @@ export function useListenMode(): void {
 	}, [recordingMode, loopbackDeviceIndex, connectionStatus]);
 
 	// Stop loopback on unmount if active
-	useEffect(() => {
-		return () => {
+	useEffect(
+		() => () => {
 			if (prevModeRef.current === "listen") {
 				loopbackStop();
 			}
-		};
-	}, []);
+		},
+		[]
+	);
 }

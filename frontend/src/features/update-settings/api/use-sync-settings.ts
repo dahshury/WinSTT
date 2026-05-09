@@ -219,5 +219,12 @@ export function useSyncSettings(): void {
 				debounceRef.current = null;
 			}, 300);
 		}
+
+		return () => {
+			if (debounceRef.current) {
+				clearTimeout(debounceRef.current);
+				debounceRef.current = null;
+			}
+		};
 	}, [settings, isLoaded]);
 }

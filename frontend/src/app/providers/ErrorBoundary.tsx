@@ -13,9 +13,9 @@ interface ErrorBoundaryProps {
 }
 
 interface ErrorBoundaryState {
-	hasError: boolean;
 	error: Error | null;
 	errorInfo: string | null;
+	hasError: boolean;
 }
 
 /**

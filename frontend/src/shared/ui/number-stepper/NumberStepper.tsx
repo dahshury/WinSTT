@@ -3,13 +3,13 @@
 import { NumberField } from "@base-ui/react/number-field";
 
 export interface NumberStepperProps {
-	value: number;
-	onChange: (value: number) => void;
-	min?: number;
-	max?: number;
-	step?: number;
-	smallStep?: number;
 	disabled?: boolean;
+	max?: number;
+	min?: number;
+	onChange: (value: number) => void;
+	smallStep?: number;
+	step?: number;
+	value: number;
 }
 
 export function NumberStepper({

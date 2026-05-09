@@ -5,9 +5,9 @@ import type { ReactNode } from "react";
 import { dialogAnimation } from "@/shared/ui/dialog-animation";
 
 export interface ModalProps {
+	children: ReactNode;
 	isOpen: boolean;
 	onClose: () => void;
-	children: ReactNode;
 }
 
 export function Modal({ isOpen, onClose, children }: ModalProps) {

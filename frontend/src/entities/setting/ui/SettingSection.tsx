@@ -7,14 +7,14 @@ import type { ReactNode } from "react";
 import { Toggle } from "@/shared/ui/toggle";
 
 export interface SettingSectionProps {
-	title: string;
 	children: ReactNode;
 	/** Optional leading icon shown before the title */
 	icon?: IconSvgElement;
+	onToggle?: (checked: boolean) => void;
+	title: string;
+	toggleDisabled?: boolean;
 	/** When provided, renders a toggle switch inline with the section title. */
 	toggled?: boolean;
-	onToggle?: (checked: boolean) => void;
-	toggleDisabled?: boolean;
 }
 
 export function SettingSection({

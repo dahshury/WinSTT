@@ -5,16 +5,16 @@ import { create } from "zustand";
 import { fetchModelCatalog, onModelCatalog } from "@/shared/api/ipc-client";
 
 export interface ModelInfo {
-	id: string;
-	displayName: string;
 	backend: "faster_whisper" | "onnx_asr";
-	family: "whisper" | "nemo" | "gigaam" | "kaldi" | "t-one";
-	languages: string[];
-	supportsLanguageDetection: boolean;
-	sizeLabel: string;
-	supportsRealtime: boolean;
-	onnxModelName: string | null;
 	description: string;
+	displayName: string;
+	family: "whisper" | "nemo" | "gigaam" | "kaldi" | "t-one";
+	id: string;
+	languages: string[];
+	onnxModelName: string | null;
+	sizeLabel: string;
+	supportsLanguageDetection: boolean;
+	supportsRealtime: boolean;
 }
 
 /** Zod schema for server-sent model catalog items (snake_case). */
@@ -49,19 +49,22 @@ function mapModel(raw: RawModelInfo): ModelInfo {
 }
 
 interface CatalogState {
-	models: ModelInfo[];
-	isLoaded: boolean;
-	setModels: (raw: unknown[]) => void;
-	getModel: (id: string) => ModelInfo | undefined;
 	getFamilies: () => string[];
+	getModel: (id: string) => ModelInfo | undefined;
+	isLoaded: boolean;
+	models: ModelInfo[];
+	setModels: (raw: unknown[]) => void;
 }
 
 function applyRaw(raw: unknown[]): { models: ModelInfo[]; isLoaded: boolean } {
-	const validated = raw
-		.map((item) => rawModelInfoSchema.safeParse(item))
-		.filter((r) => r.success)
-		.map((r) => r.data);
-	return { models: validated.map(mapModel), isLoaded: true };
+	const models: ModelInfo[] = [];
+	for (const item of raw) {
+		const parsed = rawModelInfoSchema.safeParse(item);
+		if (parsed.success) {
+			models.push(mapModel(parsed.data));
+		}
+	}
+	return { models, isLoaded: true };
 }
 
 export const useCatalogStore = create<CatalogState>()((set, get) => ({

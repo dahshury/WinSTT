@@ -12,8 +12,9 @@ const storeValueSchemas = {
 	"general.recordingSoundPath": z.string().catch(""),
 	"general.fileTranscriptionFormat": z.enum(["txt", "srt"]).catch("txt"),
 	"general.showRecordingOverlay": z.boolean().catch(true),
-	"general.visualizerSize": z.number().int().min(10).max(200).catch(20),
+	"general.visualizerSize": z.enum(["xs", "sm", "md", "lg", "xl"]).catch("xs"),
 	"general.showLiveTranscription": z.boolean().catch(true),
+	"general.showInAppLiveTranscription": z.boolean().catch(true),
 	"general.muteSystemAudioWhileDictating": z.boolean().catch(false),
 	// quality
 	"quality.enableRealtimeTranscription": z.boolean().catch(true),
@@ -24,11 +25,15 @@ const storeValueSchemas = {
 	"audio.sileroDeactivityDetection": z.boolean().catch(true),
 	// llm
 	"llm.enabled": z.boolean().catch(false),
+	"llm.provider": z.enum(["ollama", "openrouter"]).catch("ollama"),
 	"llm.model": z.string().catch(""),
 	"llm.preset": z
 		.enum(["neutral", "formal", "friendly", "technical", "casual", "concise"])
 		.catch("neutral"),
 	"llm.endpoint": z.string().catch("http://localhost:11434"),
+	"llm.openrouterApiKey": z.string().catch(""),
+	"llm.openrouterModel": z.string().catch(""),
+	"llm.openrouterFallbackModel": z.string().catch(""),
 	"llm.timeout": z.number().int().catch(5000),
 	// schema version (internal)
 	_schemaVersion: z.number().optional().catch(undefined),
@@ -43,9 +48,14 @@ type StoreValueSchemas = typeof storeValueSchemas;
 export function getStoreValue<K extends keyof StoreValueSchemas>(
 	key: K
 ): z.output<StoreValueSchemas[K]> {
-	const raw = store.get(key);
+	// electron-store v11 narrowed `get`'s key type to `DotNotationKeyOf<T>` and
+	// disallows arbitrary string keys at the type level. Our dot-path keys
+	// (e.g. "general.recordingMode") and the internal "_schemaVersion" key
+	// don't live under the typed defaults shape, so cast to `string` to fall
+	// through to the runtime get-by-path implementation.
+	const raw = store.get(key as string);
 	const schema = storeValueSchemas[key];
-	return (schema as z.ZodType).parse(raw);
+	return (schema as unknown as z.ZodType<z.output<StoreValueSchemas[K]>>).parse(raw);
 }
 
 /**
@@ -56,12 +66,12 @@ export function getStoreValue<K extends keyof StoreValueSchemas>(
 export function getStoreRaw(key: string): string | number | boolean | undefined {
 	const raw = store.get(key);
 	if (raw == null) {
-		return undefined;
+		return;
 	}
 	if (typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean") {
 		return raw;
 	}
-	return undefined;
+	return;
 }
 
 export const store = new Store({
@@ -117,8 +127,9 @@ export const store = new Store({
 			recordingMode: "ptt",
 			loopbackDeviceIndex: null,
 			showRecordingOverlay: true,
-			visualizerSize: 20,
+			visualizerSize: "xs" as const,
 			showLiveTranscription: true,
+			showInAppLiveTranscription: true,
 			visualizerType: "bar",
 			visualizerBarCount: 9,
 			visualizerColor: "#58a6ff",
@@ -130,8 +141,12 @@ export const store = new Store({
 		snippets: [],
 		llm: {
 			enabled: false,
+			provider: "ollama" as const,
 			endpoint: "http://localhost:11434",
 			model: "",
+			openrouterApiKey: "",
+			openrouterModel: "",
+			openrouterFallbackModel: "",
 			preset: "neutral" as const,
 			timeout: 5000,
 		},
@@ -142,7 +157,7 @@ export const store = new Store({
 // ── One-time migration for stale persisted values ────────────────────
 // electron-store defaults only apply when a key is missing. If old defaults
 // were persisted via settings:save, they override new defaults silently.
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const currentVersion = getStoreValue("_schemaVersion") ?? 1;
 
 if (currentVersion < SCHEMA_VERSION) {
@@ -158,6 +173,13 @@ if (currentVersion < SCHEMA_VERSION) {
 	const silero = getStoreValue("audio.sileroSensitivity");
 	if (silero === 0.05) {
 		store.set("audio.sileroSensitivity", 0.4);
+	}
+	if (currentVersion < 4) {
+		// v4: stale audio.inputDeviceIndex carried a Windows MMDevice index, but
+		// the recorder uses PyAudio's index space. The two don't line up, so
+		// any persisted index points at the wrong device (or none). Reset to
+		// system default; users will re-pick from the now-correct list.
+		store.set("audio.inputDeviceIndex", null);
 	}
 	console.log("[store] Migration applied: _schemaVersion", currentVersion, "→", SCHEMA_VERSION);
 	store.set("_schemaVersion", SCHEMA_VERSION);

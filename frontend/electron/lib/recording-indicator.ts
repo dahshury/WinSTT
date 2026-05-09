@@ -52,6 +52,20 @@ let rollingPeak = PEAK_FLOOR;
 
 // ── Public API ───────────────────────────────────────────────────────
 
+function tryGenerateLevelIcons(base: NativeImage): NativeImage[] {
+	try {
+		return generateLevelIcons(base);
+	} catch (err) {
+		dbg("indicator", "Failed to generate level icons:", String(err));
+		return [];
+	}
+}
+
+function logInitialized(base: NativeImage, icons: NativeImage[]): void {
+	const size = base.getSize();
+	dbg("indicator", `Initialized: ${size.width}x${size.height} base, ${icons.length} level icons`);
+}
+
 export function initRecordingIndicator(tray: Tray, win: BrowserWindow, iconPath: string): void {
 	trayRef = tray;
 	winRef = win;
@@ -60,19 +74,10 @@ export function initRecordingIndicator(tray: Tray, win: BrowserWindow, iconPath:
 	if (baseIcon.isEmpty()) {
 		dbg("indicator", "Base icon is empty — indicator disabled");
 		levelIcons = [];
-	} else {
-		try {
-			levelIcons = generateLevelIcons(baseIcon);
-		} catch (err) {
-			dbg("indicator", "Failed to generate level icons:", String(err));
-			levelIcons = [];
-		}
-		const size = baseIcon.getSize();
-		dbg(
-			"indicator",
-			`Initialized: ${size.width}x${size.height} base, ${levelIcons.length} level icons`
-		);
+		return;
 	}
+	levelIcons = tryGenerateLevelIcons(baseIcon);
+	logInitialized(baseIcon, levelIcons);
 }
 
 export function onRecordingStart(): void {
@@ -90,12 +95,7 @@ export function onRecordingStop(): void {
 	revertIcons();
 }
 
-export function onAudioLevel(level: number): void {
-	if (!isRecording) {
-		return;
-	}
-
-	// ── Adaptive peak tracking (runs on every sample, not throttled) ──
+function updateRollingPeak(level: number): void {
 	if (level > rollingPeak) {
 		// Rise fast toward louder input
 		rollingPeak += PEAK_ATTACK * (level - rollingPeak);
@@ -104,25 +104,37 @@ export function onAudioLevel(level: number): void {
 		rollingPeak *= PEAK_DECAY;
 	}
 	rollingPeak = Math.max(rollingPeak, PEAK_FLOOR);
+}
 
-	// ── Throttle icon updates ────────────────────────────────────────
-	const now = Date.now();
-	if (now - lastUpdateTs < THROTTLE_MS) {
-		return;
-	}
+function shouldThrottle(now: number): boolean {
+	return now - lastUpdateTs < THROTTLE_MS;
+}
 
-	// Normalize against rolling peak, apply power curve, enforce minimum
+function computeLevelIndex(level: number): number {
 	const normalized = Math.min(1, level / rollingPeak);
 	const curved = normalized ** CURVE_EXP;
 	const visual = MIN_VISUAL + curved * (1 - MIN_VISUAL);
+	return Math.min(LEVELS, Math.max(0, Math.round(visual * LEVELS)));
+}
 
-	const index = Math.min(LEVELS, Math.max(0, Math.round(visual * LEVELS)));
+function maybeApplyThrottledLevel(level: number, now: number): void {
+	if (shouldThrottle(now)) {
+		return;
+	}
+	const index = computeLevelIndex(level);
 	if (index === currentIndex) {
 		return;
 	}
-
 	lastUpdateTs = now;
 	applyLevel(index);
+}
+
+export function onAudioLevel(level: number): void {
+	if (!isRecording) {
+		return;
+	}
+	updateRollingPeak(level);
+	maybeApplyThrottledLevel(level, Date.now());
 }
 
 export function cleanupRecordingIndicator(): void {
@@ -136,46 +148,77 @@ export function cleanupRecordingIndicator(): void {
 
 // ── Icon generation (via pngjs) ──────────────────────────────────────
 
+function blendPixel(data: Buffer, idx: number): void {
+	const a = data[idx + 3]!;
+	if (a === 0) {
+		return;
+	}
+	data[idx] = Math.round(data[idx]! * (1 - BLEND_ALPHA) + TINT_R * BLEND_ALPHA);
+	data[idx + 1] = Math.round(data[idx + 1]! * (1 - BLEND_ALPHA) + TINT_G * BLEND_ALPHA);
+	data[idx + 2] = Math.round(data[idx + 2]! * (1 - BLEND_ALPHA) + TINT_B * BLEND_ALPHA);
+}
+
+function blendRow(data: Buffer, y: number, width: number): void {
+	for (let x = 0; x < width; x++) {
+		const idx = (y * width + x) * 4;
+		blendPixel(data, idx);
+	}
+}
+
+function blendBottomRows(data: Buffer, width: number, height: number, startRow: number): void {
+	for (let y = startRow; y < height; y++) {
+		blendRow(data, y, width);
+	}
+}
+
+function buildLevelIcon(
+	basePng: { width: number; height: number; data: Buffer },
+	lvl: number
+): NativeImage {
+	const { width, height } = basePng;
+	const fraction = lvl / LEVELS;
+	const greenRows = Math.round(height * fraction);
+	const startRow = height - greenRows;
+	const data = Buffer.from(basePng.data);
+	blendBottomRows(data, width, height, startRow);
+
+	const out = new PNG({ width, height });
+	out.data = data;
+	const pngBuf = PNG.sync.write(out);
+	return nativeImage.createFromBuffer(pngBuf);
+}
+
 function generateLevelIcons(base: NativeImage): NativeImage[] {
 	const basePngBuf = base.toPNG();
 	const basePng = PNG.sync.read(basePngBuf);
-	const { width, height } = basePng;
-
 	const icons: NativeImage[] = [];
-
 	for (let lvl = 0; lvl <= LEVELS; lvl++) {
-		const fraction = lvl / LEVELS;
-		const greenRows = Math.round(height * fraction);
-		const startRow = height - greenRows;
-
-		// Clone pixel data (RGBA)
-		const data = Buffer.from(basePng.data);
-
-		// Blend green into the bottom `greenRows` of non-transparent pixels
-		for (let y = startRow; y < height; y++) {
-			for (let x = 0; x < width; x++) {
-				const idx = (y * width + x) * 4;
-				const a = data[idx + 3]!;
-				if (a === 0) {
-					continue;
-				}
-
-				data[idx] = Math.round(data[idx]! * (1 - BLEND_ALPHA) + TINT_R * BLEND_ALPHA);
-				data[idx + 1] = Math.round(data[idx + 1]! * (1 - BLEND_ALPHA) + TINT_G * BLEND_ALPHA);
-				data[idx + 2] = Math.round(data[idx + 2]! * (1 - BLEND_ALPHA) + TINT_B * BLEND_ALPHA);
-			}
-		}
-
-		const out = new PNG({ width, height });
-		out.data = data;
-		const pngBuf = PNG.sync.write(out);
-		icons.push(nativeImage.createFromBuffer(pngBuf));
+		icons.push(buildLevelIcon(basePng, lvl));
 	}
-
 	return icons;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+function trayIsLive(): boolean {
+	return trayRef !== null && !trayRef.isDestroyed();
+}
+
+function winIsLive(): boolean {
+	return winRef !== null && !winRef.isDestroyed();
+}
+
+function setIconOnTray(icon: NativeImage): void {
+	if (trayIsLive()) {
+		trayRef?.setImage(icon);
+	}
+}
+
+function setIconOnWin(icon: NativeImage): void {
+	if (winIsLive()) {
+		winRef?.setIcon(icon);
+	}
+}
 
 function applyLevel(index: number): void {
 	currentIndex = index;
@@ -183,26 +226,37 @@ function applyLevel(index: number): void {
 	if (!icon) {
 		return;
 	}
+	setIconOnTray(icon);
+	setIconOnWin(icon);
+}
 
-	if (trayRef && !trayRef.isDestroyed()) {
-		trayRef.setImage(icon);
-	}
-
-	if (winRef && !winRef.isDestroyed()) {
-		winRef.setIcon(icon);
-	}
+function baseIconUsable(): boolean {
+	return baseIcon !== null && !baseIcon.isEmpty();
 }
 
 function revertIcons(): void {
-	if (!baseIcon || baseIcon.isEmpty()) {
+	if (!baseIconUsable()) {
 		return;
 	}
-
-	if (trayRef && !trayRef.isDestroyed()) {
-		trayRef.setImage(baseIcon);
-	}
-
-	if (winRef && !winRef.isDestroyed()) {
-		winRef.setIcon(baseIcon);
-	}
+	const icon = baseIcon as NativeImage;
+	setIconOnTray(icon);
+	setIconOnWin(icon);
 }
+
+export const __recording_indicator_test_helpers__ = {
+	tryGenerateLevelIcons,
+	logInitialized,
+	updateRollingPeak,
+	shouldThrottle,
+	computeLevelIndex,
+	maybeApplyThrottledLevel,
+	blendPixel,
+	blendRow,
+	blendBottomRows,
+	buildLevelIcon,
+	trayIsLive,
+	winIsLive,
+	setIconOnTray,
+	setIconOnWin,
+	baseIconUsable,
+};

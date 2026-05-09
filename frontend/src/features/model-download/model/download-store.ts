@@ -2,15 +2,14 @@ import { create } from "zustand";
 import { cancelDownload as ipcCancelDownload } from "@/shared/api/ipc-client";
 
 interface DownloadState {
+	cancelDownload: () => void;
+	cancelled: boolean;
+	downloadedBytes: number;
+	etaSeconds: number;
 	isDownloading: boolean;
 	modelName: string | null;
 	progress: number | null; // 0–100, null = indeterminate
-	downloadedBytes: number;
-	totalBytes: number;
-	speedBps: number;
-	etaSeconds: number;
-	cancelled: boolean;
-	setDownloadStart: (model: string) => void;
+	setDownloadComplete: (cancelled?: boolean) => void;
 	setDownloadProgress: (payload: {
 		progress: number;
 		downloadedBytes?: number;
@@ -18,8 +17,9 @@ interface DownloadState {
 		speedBps?: number;
 		etaSeconds?: number;
 	}) => void;
-	setDownloadComplete: (cancelled?: boolean) => void;
-	cancelDownload: () => void;
+	setDownloadStart: (model: string) => void;
+	speedBps: number;
+	totalBytes: number;
 }
 
 export const useDownloadStore = create<DownloadState>()((set) => ({

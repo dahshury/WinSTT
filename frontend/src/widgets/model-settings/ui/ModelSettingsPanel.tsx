@@ -1,62 +1,44 @@
 "use client";
 
-import {
-	AiBrain02Icon,
-	AiChat02Icon,
-	AiMagicIcon,
-	ArrowReloadHorizontalIcon,
-	BookOpen01Icon,
-	BrushIcon,
-	HappyIcon,
-	PencilIcon,
-	Suit01Icon,
-	WavingHand01Icon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { AiChat02Icon, AiMagicIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { useShallow } from "zustand/react/shallow";
+import { type ReactNode, useCallback, useMemo } from "react";
 import { useConnectionStore } from "@/entities/connection";
-import { useLlmCatalogStore } from "@/entities/llm-catalog";
 import { buildModelOpts, buildRealtimeOpts, useCatalogStore } from "@/entities/model-catalog";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
-import { detectOllama, fetchOllamaModels, startOllama } from "@/shared/api/ipc-client";
 import { COMPUTE_TYPES, LANGUAGES, WHISPER_MODELS } from "@/shared/config/defaults";
-import { buildOllamaApiUrl } from "@/shared/lib/ollama-endpoint";
-import { Button } from "@/shared/ui/button";
 import { FormControl } from "@/shared/ui/form-control";
-import { Modal } from "@/shared/ui/modal";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
 import { Select } from "@/shared/ui/select";
-import { Switcher } from "@/shared/ui/switcher";
-import { TextField } from "@/shared/ui/text-field";
-import { Tooltip } from "@/shared/ui/tooltip";
+import { Toggle } from "@/shared/ui/toggle";
+
+export interface ModelSettingsPanelProps {
+	llmSlot?: ReactNode;
+}
 
 type TFn = ReturnType<typeof useTranslations>;
 
 type SettingsStoreState = ReturnType<typeof useSettingsStore.getState>;
 type ModelSettings = SettingsStoreState["settings"]["model"];
-type LlmSettings = SettingsStoreState["settings"]["llm"];
+type QualitySettings = SettingsStoreState["settings"]["quality"];
 type UpdateModelFn = SettingsStoreState["updateModelSettings"];
-type UpdateLlmFn = SettingsStoreState["updateLlmSettings"];
-type LlmPreset = NonNullable<LlmSettings>["preset"];
-type LlmPresetOptions = ReadonlyArray<{ value: LlmPreset; label: string }>;
+type UpdateQualityFn = SettingsStoreState["updateQualitySettings"];
 
 interface MainModelSectionProps {
-	t: TFn;
-	settings: ModelSettings | undefined;
-	update: UpdateModelFn;
-	modelOpts: SelectOption[];
-	langOpts: SelectOption[];
 	computeOpts: SelectOption[];
 	deviceOpts: SelectOption[];
 	deviceValue: string;
 	gpuAvailable: boolean;
-	isWhisperBackend: boolean;
-	selectedModel: string;
 	handleModelChange: (v: string) => void;
+	isWhisperBackend: boolean;
+	langOpts: SelectOption[];
+	modelOpts: SelectOption[];
+	selectedModel: string;
+	settings: ModelSettings | undefined;
+	t: TFn;
+	update: UpdateModelFn;
 }
 
 function MainModelSection({
@@ -134,19 +116,23 @@ function MainModelSection({
 }
 
 interface RealtimeModelSectionProps {
-	t: TFn;
-	settings: ModelSettings | undefined;
-	update: UpdateModelFn;
-	realtimeOpts: SelectOption[];
-	realtimeEnabled: boolean;
-	onToggle: (v: boolean) => void;
 	isWhisperBackend: boolean;
+	onToggle: (v: boolean) => void;
+	quality: QualitySettings | undefined;
+	realtimeEnabled: boolean;
+	realtimeOpts: SelectOption[];
+	settings: ModelSettings | undefined;
+	t: TFn;
+	update: UpdateModelFn;
+	updateQuality: UpdateQualityFn;
 }
 
 function RealtimeModelSection({
 	t,
 	settings,
 	update,
+	quality,
+	updateQuality,
 	realtimeOpts,
 	realtimeEnabled,
 	onToggle,
@@ -160,6 +146,28 @@ function RealtimeModelSection({
 			toggled={realtimeEnabled}
 		>
 			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+				<FormControl
+					caption={t("useMainModelCaption")}
+					label={t("useMainModel")}
+					tooltip={t("useMainModelTooltip")}
+				>
+					<Toggle
+						checked={quality?.useMainModelForRealtime ?? false}
+						onCheckedChange={(v) => updateQuality({ useMainModelForRealtime: v })}
+					/>
+				</FormControl>
+				<FormControl
+					caption={t("updateIntervalCaption")}
+					label={t("updateInterval")}
+					tooltip={t("updateIntervalTooltip")}
+				>
+					<NumberStepper
+						min={0.01}
+						onChange={(v) => updateQuality({ realtimeProcessingPause: v })}
+						step={0.01}
+						value={quality?.realtimeProcessingPause ?? 0.02}
+					/>
+				</FormControl>
 				<FormControl
 					caption={t("realtimeModelCaption")}
 					label={t("realtimeModel")}
@@ -188,216 +196,6 @@ function RealtimeModelSection({
 				)}
 			</div>
 		</SettingSection>
-	);
-}
-
-interface LlmSectionProps {
-	t: TFn;
-	tc: TFn;
-	tl: TFn;
-	llm: LlmSettings | undefined;
-	updateLlm: UpdateLlmFn;
-	llmEnabled: boolean;
-	llmEndpoint: string;
-	llmModel: string;
-	llmPreset: LlmPreset;
-	llmModelOpts: Array<{ id: string; label: string }>;
-	llmPresetOpts: LlmPresetOptions;
-	isScanning: boolean;
-	scanModels: () => void;
-	handleLlmToggle: (enabled: boolean) => Promise<void>;
-	handleLlmDropdownOpen: (open: boolean) => void;
-	llmError: string | null | undefined;
-	ollamaInstalled: boolean | null;
-}
-
-function LlmSection({
-	t,
-	tc,
-	tl,
-	updateLlm,
-	llmEnabled,
-	llmEndpoint,
-	llmModel,
-	llmPreset,
-	llmModelOpts,
-	llmPresetOpts,
-	isScanning,
-	scanModels,
-	handleLlmToggle,
-	handleLlmDropdownOpen,
-	llmError,
-	ollamaInstalled,
-}: LlmSectionProps): ReactNode {
-	return (
-		<SettingSection
-			icon={AiBrain02Icon}
-			onToggle={handleLlmToggle}
-			title={t("llm")}
-			toggled={llmEnabled}
-		>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
-				<FormControl
-					caption={tl("endpointCaption")}
-					label={tl("endpoint")}
-					tooltip={tl("endpointTooltip")}
-				>
-					<TextField
-						onChange={(e) => updateLlm({ endpoint: e.target.value })}
-						placeholder="http://localhost:11434"
-						value={llmEndpoint}
-					/>
-				</FormControl>
-
-				<FormControl caption={tl("modelCaption")} label={tl("model")} tooltip={tl("modelTooltip")}>
-					<div className="flex gap-2">
-						<div className="flex-1">
-							<SearchableSelect
-								disabled={isScanning || !llmEnabled}
-								onChange={(v) => updateLlm({ model: v })}
-								onOpenChange={handleLlmDropdownOpen}
-								options={llmModelOpts}
-								placeholder={isScanning ? tc("scanning") : tl("selectModel")}
-								value={llmModel}
-							/>
-						</div>
-						<Tooltip content={tc("refresh")}>
-							<Button
-								aria-label={tc("refresh")}
-								className="flex size-8 items-center justify-center rounded-md border border-border bg-surface-secondary font-medium text-body transition-colors duration-150 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
-								disabled={isScanning || !llmEnabled}
-								onClick={scanModels}
-							>
-								<HugeiconsIcon
-									className={isScanning ? "animate-spin" : ""}
-									icon={ArrowReloadHorizontalIcon}
-									size={16}
-								/>
-							</Button>
-						</Tooltip>
-					</div>
-				</FormControl>
-
-				<div className="col-span-2">
-					<FormControl
-						caption={tl("presetCaption")}
-						label={tl("preset")}
-						tooltip={tl("presetTooltip")}
-					>
-						<Switcher
-							onChange={(v) => updateLlm({ preset: v })}
-							options={llmPresetOpts}
-							value={llmPreset}
-						/>
-					</FormControl>
-				</div>
-
-				{llmError && (
-					<div className="col-span-2 rounded bg-error/10 p-3 text-error text-sm">{llmError}</div>
-				)}
-
-				{llmEnabled && ollamaInstalled === false && (
-					<div className="col-span-2 rounded bg-warning/10 p-3 text-sm text-warning">
-						<div className="font-medium">{tl("ollamaNotAvailable")}</div>
-						<div className="mt-1">{tl("ollamaNotAvailableDescription")}</div>
-					</div>
-				)}
-			</div>
-		</SettingSection>
-	);
-}
-
-interface OllamaDialogProps {
-	tc: TFn;
-	tl: TFn;
-	isOpen: boolean;
-	onClose: () => void;
-	onStarted: () => void;
-}
-
-function OllamaDialog({ tc, tl, isOpen, onClose, onStarted }: OllamaDialogProps): ReactNode {
-	const [installed, setInstalled] = useState<boolean | null>(null);
-	const [starting, setStarting] = useState(false);
-	const [startError, setStartError] = useState<string | null>(null);
-
-	useEffect(() => {
-		if (!isOpen) {
-			return;
-		}
-		setStartError(null);
-		setStarting(false);
-		let cancelled = false;
-		(async () => {
-			const result = await detectOllama();
-			if (!cancelled) {
-				setInstalled(result.installed);
-			}
-		})();
-		return () => {
-			cancelled = true;
-		};
-	}, [isOpen]);
-
-	const openDownload = () => {
-		window.open("https://ollama.com", "_blank");
-		onClose();
-	};
-
-	const handleStart = async () => {
-		setStarting(true);
-		setStartError(null);
-		const result = await startOllama();
-		if (!result.started) {
-			setStarting(false);
-			setStartError(result.error ?? tl("ollamaStartFailed"));
-			return;
-		}
-		// Give Ollama a moment to bind the port before parents re-scan.
-		setTimeout(() => {
-			setStarting(false);
-			onStarted();
-		}, 1500);
-	};
-
-	const showRun = installed === true;
-	const title = showRun ? tl("ollamaNotRunning") : tl("ollamaRequired");
-	const description = showRun ? tl("ollamaNotRunningDescription") : tl("ollamaRequiredDescription");
-
-	return (
-		<Modal isOpen={isOpen} onClose={onClose}>
-			<div className="flex flex-col gap-4 p-6">
-				<h2 className="font-semibold text-foreground text-lg">{title}</h2>
-				<p className="text-foreground-secondary text-sm">{description}</p>
-				{startError && (
-					<div className="rounded bg-error/10 p-2 text-error text-xs">{startError}</div>
-				)}
-				<div className="flex gap-3">
-					{showRun ? (
-						<Button
-							className="flex-1 rounded-md border border-accent bg-accent px-4 py-2 font-medium text-white transition-colors duration-150 hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-60"
-							disabled={starting}
-							onClick={handleStart}
-						>
-							{starting ? tl("starting") : tl("runOllama")}
-						</Button>
-					) : (
-						<Button
-							className="flex-1 rounded-md border border-accent bg-accent px-4 py-2 font-medium text-white transition-colors duration-150 hover:bg-accent-dim"
-							onClick={openDownload}
-						>
-							{tl("downloadOllama")}
-						</Button>
-					)}
-					<Button
-						className="flex-1 rounded-md border border-border bg-surface-secondary px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover"
-						disabled={starting}
-						onClick={onClose}
-					>
-						{tc("cancel")}
-					</Button>
-				</div>
-			</div>
-		</Modal>
 	);
 }
 
@@ -431,7 +229,7 @@ function buildDeviceOpts(t: TFn, gpuAvailable: boolean): SelectOption[] {
 	return [{ id: "auto", label: t("deviceAutoLabel") }, cpu];
 }
 
-export function ModelSettingsPanel() {
+export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
 	const settings = useSettingsStore((s) => s.settings.model);
 	const update = useSettingsStore((s) => s.updateModelSettings);
 	const quality = useSettingsStore((s) => s.settings.quality);
@@ -440,8 +238,6 @@ export function ModelSettingsPanel() {
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
 	const gpuAvailable = gpuInfo?.available ?? true;
 	const t = useTranslations("model");
-	const tc = useTranslations("common");
-	const tl = useTranslations("llm");
 	const deviceOpts = useMemo(() => buildDeviceOpts(t, gpuAvailable), [t, gpuAvailable]);
 	const computeOpts = useMemo(() => buildComputeOpts(t), [t]);
 	const deviceValue = gpuAvailable ? (settings?.device ?? "auto") : "cpu";
@@ -449,27 +245,6 @@ export function ModelSettingsPanel() {
 	const catalogModels = useCatalogStore((s) => s.models);
 	const catalogLoaded = useCatalogStore((s) => s.isLoaded);
 	const getModel = useCatalogStore((s) => s.getModel);
-
-	// LLM state
-	const llm = useSettingsStore((s) => s.settings.llm);
-	const updateLlm = useSettingsStore((s) => s.updateLlmSettings);
-	const {
-		models: llmModels,
-		isLoaded: llmLoaded,
-		isScanning,
-		error: llmError,
-		scanModels,
-	} = useLlmCatalogStore(
-		useShallow((s) => ({
-			models: s.models,
-			isLoaded: s.isLoaded,
-			isScanning: s.isScanning,
-			error: s.error,
-			scanModels: s.scanModels,
-		}))
-	);
-	const [showOllamaDialog, setShowOllamaDialog] = useState(false);
-	const [ollamaInstalled, setOllamaInstalled] = useState<boolean | null>(null);
 
 	const modelOpts = useMemo(
 		() =>
@@ -511,118 +286,6 @@ export function ModelSettingsPanel() {
 		[update, getModel]
 	);
 
-	// Check if Ollama is reachable
-	const checkOllama = useCallback(async () => {
-		const endpoint = llm?.endpoint ?? "http://localhost:11434";
-
-		// In Electron, probe Ollama through IPC to avoid renderer CORS limitations.
-		if (window.electronAPI != null) {
-			const result = await fetchOllamaModels();
-			setOllamaInstalled(result.reachable);
-			return result.reachable;
-		}
-
-		try {
-			const response = await fetch(buildOllamaApiUrl(endpoint, "/api/tags"), {
-				method: "GET",
-				signal: AbortSignal.timeout(2000),
-			});
-			setOllamaInstalled(response.ok);
-			return response.ok;
-		} catch {
-			setOllamaInstalled(false);
-			return false;
-		}
-	}, [llm?.endpoint]);
-
-	// Check Ollama on mount and when loading LLM models
-	useEffect(() => {
-		if (!llmLoaded) {
-			checkOllama();
-		}
-	}, [llmLoaded, checkOllama]);
-
-	// Check Ollama status when the component mounts if LLM is already enabled
-	useEffect(() => {
-		if (llm?.enabled) {
-			checkOllama();
-		}
-	}, [llm?.enabled, checkOllama]);
-
-	// After a scan, ensure llm.model points at an available model:
-	// - keep the previous selection if it's still installed,
-	// - otherwise fall back to the first model returned.
-	useEffect(() => {
-		if (llmModels.length === 0) {
-			return;
-		}
-		const current = llm?.model ?? "";
-		const stillInstalled = current && llmModels.some((m) => m.name === current);
-		if (stillInstalled) {
-			return;
-		}
-		const first = llmModels[0]?.name;
-		if (first && first !== current) {
-			updateLlm({ model: first });
-		}
-	}, [llmModels, llm?.model, updateLlm]);
-
-	// Handle LLM toggle
-	const handleLlmToggle = useCallback(
-		async (enabled: boolean) => {
-			if (enabled) {
-				const installed = await checkOllama();
-				if (!installed) {
-					setShowOllamaDialog(true);
-					return;
-				}
-				// Scan models when enabling
-				if (!llmLoaded) {
-					scanModels();
-				}
-			}
-			updateLlm({ enabled });
-		},
-		[checkOllama, llmLoaded, scanModels, updateLlm]
-	);
-
-	const llmModelOpts = llmModels.map((m) => ({
-		id: m.name,
-		label: `${m.name} (${((m.size ?? 0) / 1e9).toFixed(1)} GB)`,
-	}));
-
-	// Handle dropdown open to auto-refresh models
-	const handleLlmDropdownOpen = useCallback(
-		(open: boolean) => {
-			if (open && !isScanning) {
-				scanModels();
-			}
-		},
-		[isScanning, scanModels]
-	);
-
-	const llmPresetOpts = [
-		{ value: "neutral", label: tl("presetNeutral"), icon: PencilIcon },
-		{ value: "formal", label: tl("presetFormal"), icon: Suit01Icon },
-		{ value: "friendly", label: tl("presetFriendly"), icon: WavingHand01Icon },
-		{ value: "technical", label: tl("presetTechnical"), icon: BookOpen01Icon },
-		{ value: "casual", label: tl("presetCasual"), icon: HappyIcon },
-		{ value: "concise", label: tl("presetConcise"), icon: BrushIcon },
-	] as const;
-
-	const llmEnabled = llm?.enabled ?? false;
-	const llmEndpoint = llm?.endpoint ?? "http://localhost:11434";
-	const llmModel = llm?.model ?? "";
-	const llmPreset = llm?.preset ?? "neutral";
-
-	const closeOllamaDialog = useCallback(() => setShowOllamaDialog(false), []);
-	const handleOllamaStarted = useCallback(() => {
-		setShowOllamaDialog(false);
-		// Re-scan to populate models and clear the unreachable error.
-		scanModels();
-		// Now that Ollama is running, finally enable the LLM setting.
-		updateLlm({ enabled: true });
-	}, [scanModels, updateLlm]);
 	const handleRealtimeToggle = useCallback(
 		(v: boolean) => updateQuality({ enableRealtimeTranscription: v }),
 		[updateQuality]
@@ -647,38 +310,15 @@ export function ModelSettingsPanel() {
 			<RealtimeModelSection
 				isWhisperBackend={isWhisperBackend}
 				onToggle={handleRealtimeToggle}
+				quality={quality}
 				realtimeEnabled={realtimeEnabled}
 				realtimeOpts={realtimeOpts}
 				settings={settings}
 				t={t}
 				update={update}
+				updateQuality={updateQuality}
 			/>
-			<LlmSection
-				handleLlmDropdownOpen={handleLlmDropdownOpen}
-				handleLlmToggle={handleLlmToggle}
-				isScanning={isScanning}
-				llm={llm}
-				llmEnabled={llmEnabled}
-				llmEndpoint={llmEndpoint}
-				llmError={llmError}
-				llmModel={llmModel}
-				llmModelOpts={llmModelOpts}
-				llmPreset={llmPreset}
-				llmPresetOpts={llmPresetOpts}
-				ollamaInstalled={ollamaInstalled}
-				scanModels={scanModels}
-				t={t}
-				tc={tc}
-				tl={tl}
-				updateLlm={updateLlm}
-			/>
-			<OllamaDialog
-				isOpen={showOllamaDialog}
-				onClose={closeOllamaDialog}
-				onStarted={handleOllamaStarted}
-				tc={tc}
-				tl={tl}
-			/>
+			{llmSlot}
 		</div>
 	);
 }

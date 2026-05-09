@@ -155,11 +155,11 @@ const auraVariants = cva(["aspect-square"], {
 });
 
 export interface AudioVisualizerAuraProps {
-	size?: VisualizerSize;
+	className?: string;
 	color?: `#${string}`;
 	colorShift?: number;
+	size?: VisualizerSize;
 	themeMode?: "dark" | "light";
-	className?: string;
 }
 
 export function AudioVisualizerAura({

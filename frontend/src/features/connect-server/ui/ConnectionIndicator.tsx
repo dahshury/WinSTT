@@ -14,25 +14,6 @@ import { Tooltip } from "@/shared/ui/tooltip";
 
 const FOOTER_TOOLTIP_DELAY = 1500;
 
-const RE_VENDOR = /^(NVIDIA|AMD|Intel)\s+/i;
-const RE_FAMILY = /^(GeForce|Radeon|Instinct)\s+/i;
-const RE_BUS = /[-\s](?:SXM\d?|PCIe|PCI-E|NVLink)[-\s]?\d*\w*/gi;
-const RE_MEM = /[-\s]\d+\s?GB$/i;
-const RE_SUPER = /\bSUPER\b/i;
-const RE_LAPTOP = /\bLAPTOP\s*GPU\b/i;
-
-/** Shorten a GPU/CPU name to its essential model identifier. */
-function shortenGpuName(raw: string): string {
-	let name = raw.trim();
-	name = name.replace(RE_VENDOR, "");
-	name = name.replace(RE_FAMILY, "");
-	name = name.replace(RE_BUS, "");
-	name = name.replace(RE_MEM, "");
-	name = name.replace(RE_SUPER, "S");
-	name = name.replace(RE_LAPTOP, "");
-	return name.trim() || raw.trim();
-}
-
 export function ConnectionIndicator() {
 	const status = useConnectionStore((s) => s.connectionStatus);
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
@@ -74,7 +55,6 @@ export function ConnectionIndicator() {
 	const isGpu = gpuInfo.available;
 	const icon = isGpu ? GpuIcon : CpuIcon;
 	const label = isGpu ? "GPU" : "CPU";
-	const shortName = shortenGpuName(gpuInfo.name);
 	const tooltipContent = isGpu
 		? t("gpuTooltip", { name: gpuInfo.name })
 		: t("cpuTooltip", { name: gpuInfo.name });
@@ -90,7 +70,6 @@ export function ConnectionIndicator() {
 				<span className={`font-medium text-2xs ${isGpu ? "text-success" : "text-foreground-dim"}`}>
 					{label}
 				</span>
-				<span className="text-[9px] text-foreground-dim/60">{shortName}</span>
 			</output>
 		</Tooltip>
 	);

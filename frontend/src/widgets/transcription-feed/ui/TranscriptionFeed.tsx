@@ -3,6 +3,7 @@
 import { ScrollArea } from "@base-ui/react/scroll-area";
 import { useTranslations } from "next-intl";
 import { useConnectionStore } from "@/entities/connection";
+import { useSettingsStore } from "@/entities/setting";
 import { TranscriptionLine } from "@/entities/transcription";
 import { useTranscriptionStore } from "@/features/live-transcription";
 import { useAutoScroll } from "../lib/use-auto-scroll";
@@ -10,8 +11,10 @@ import { useAutoScroll } from "../lib/use-auto-scroll";
 export function TranscriptionFeed() {
 	const items = useTranscriptionStore((s) => s.items);
 	const currentRealtime = useTranscriptionStore((s) => s.currentRealtime);
+	const showInApp = useSettingsStore((s) => s.settings.general?.showInAppLiveTranscription ?? true);
+	const liveText = showInApp ? currentRealtime : "";
 	const connectionStatus = useConnectionStore((s) => s.connectionStatus);
-	const scrollRef = useAutoScroll<HTMLDivElement>([items.length, currentRealtime]);
+	const scrollRef = useAutoScroll<HTMLDivElement>([items.length, liveText]);
 
 	return (
 		<ScrollArea.Root className="flex flex-1 flex-col rounded-lg border border-border bg-surface-secondary">
@@ -26,18 +29,18 @@ export function TranscriptionFeed() {
 					{items.map((item, index) => (
 						<TranscriptionLine index={index} item={item} key={item.id} />
 					))}
-					{currentRealtime && (
+					{liveText && (
 						<TranscriptionLine
 							index={items.length}
 							item={{
 								id: "realtime",
 								type: "realtime",
-								text: currentRealtime,
+								text: liveText,
 								timestamp: 0,
 							}}
 						/>
 					)}
-					{items.length === 0 && !currentRealtime && (
+					{items.length === 0 && !liveText && (
 						<EmptyState connected={connectionStatus === "connected"} />
 					)}
 				</ScrollArea.Content>
@@ -56,10 +59,10 @@ function EmptyState({ connected }: { connected: boolean }) {
 		<div className="flex flex-1 flex-col items-center justify-center gap-3 py-8">
 			{/* Stylized waveform icon */}
 			<div className="flex items-end gap-0.5 opacity-20" style={{ height: "24px" }}>
-				{[8, 16, 24, 20, 12, 18, 10, 22, 14].map((h, i) => (
+				{[8, 16, 24, 20, 12, 18, 10, 22, 14].map((h) => (
 					<div
 						className="w-0.5 rounded-[1px] bg-foreground-muted"
-						key={`empty-bar-${i}`}
+						key={`empty-bar-${h}`}
 						style={{ height: `${h}px` }}
 					/>
 				))}

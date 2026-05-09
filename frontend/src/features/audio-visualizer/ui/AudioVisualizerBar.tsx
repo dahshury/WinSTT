@@ -41,10 +41,10 @@ const barContainerVariants = cva("relative flex items-center justify-center", {
 });
 
 export interface AudioVisualizerBarProps {
-	size?: VisualizerSize;
-	color?: `#${string}`;
 	barCount?: number;
 	className?: string;
+	color?: `#${string}`;
+	size?: VisualizerSize;
 }
 
 export function AudioVisualizerBar({
@@ -92,6 +92,10 @@ export function AudioVisualizerBar({
 		() => (state === "speaking" ? volumeBands : new Array(_barCount).fill(0)),
 		[state, volumeBands, _barCount]
 	);
+	const barIds = useMemo(
+		() => Array.from({ length: _barCount }, (_, i) => `bar-${_barCount}-${i}`),
+		[_barCount]
+	);
 
 	return (
 		<div
@@ -100,15 +104,18 @@ export function AudioVisualizerBar({
 			style={{ ...style, color } as CSSProperties}
 			{...props}
 		>
-			{bands.map((band: number, idx: number) => (
-				<div
-					className={cn(barElementVariants({ size }))}
-					data-lk-highlighted={highlightedIndices.includes(idx)}
-					data-lk-index={idx}
-					key={idx}
-					style={{ height: `${band * 100}%` }}
-				/>
-			))}
+			{barIds.map((id, position) => {
+				const band = bands[position] ?? 0;
+				return (
+					<div
+						className={cn(barElementVariants({ size }))}
+						data-lk-highlighted={highlightedIndices.includes(position)}
+						data-lk-index={position}
+						key={id}
+						style={{ height: `${band * 100}%` }}
+					/>
+				);
+			})}
 		</div>
 	);
 }

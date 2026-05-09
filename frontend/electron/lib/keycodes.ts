@@ -168,7 +168,7 @@ export const MODIFIER_ORDER: Record<number, number> = {
 };
 
 export function sortKeycodes(codes: readonly number[]): number[] {
-	return [...codes].sort((a, b) => {
+	return codes.toSorted((a, b) => {
 		const oa = MODIFIER_ORDER[a] ?? 100;
 		const ob = MODIFIER_ORDER[b] ?? 100;
 		if (oa !== ob) {
@@ -179,7 +179,12 @@ export function sortKeycodes(codes: readonly number[]): number[] {
 }
 
 export function codesToNames(codes: readonly number[]): string[] {
-	return sortKeycodes(codes)
-		.map((c) => KEYCODE_TO_NAME[c])
-		.filter((name): name is string => name != null);
+	const out: string[] = [];
+	for (const c of sortKeycodes(codes)) {
+		const name = KEYCODE_TO_NAME[c];
+		if (name != null) {
+			out.push(name);
+		}
+	}
+	return out;
 }

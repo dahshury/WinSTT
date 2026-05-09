@@ -6,19 +6,19 @@ import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 
 export interface SelectOption {
-	id: string;
-	label: string;
-	/** Optional leading icon shown before the label */
-	icon?: IconSvgElement;
 	/** Optional short badge text shown before the label (e.g. "EN", "中") */
 	badge?: string;
+	/** Optional leading icon shown before the label */
+	icon?: IconSvgElement;
+	id: string;
+	label: string;
 }
 
 export interface SelectProps {
+	"aria-label"?: string;
+	onChange: (value: string) => void;
 	options: readonly SelectOption[];
 	value: string;
-	onChange: (value: string) => void;
-	"aria-label"?: string;
 }
 
 function OptionContent({ option }: { option: SelectOption }) {

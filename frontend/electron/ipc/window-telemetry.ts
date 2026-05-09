@@ -11,21 +11,21 @@ export type WindowTelemetryEventName =
 	| "unmaximized";
 
 interface WindowBoundsLike {
+	height: number;
+	width: number;
 	x: number;
 	y: number;
-	width: number;
-	height: number;
 }
 
 export interface WindowTelemetryPayload {
-	event: WindowTelemetryEventName;
 	bounds: WindowBoundsLike;
+	event: WindowTelemetryEventName;
 }
 
 interface BrowserWindowLike {
-	on(eventName: string, listener: () => void): void;
-	off(eventName: string, listener: () => void): void;
 	getBounds(): WindowBoundsLike;
+	off(eventName: string, listener: () => void): void;
+	on(eventName: string, listener: () => void): void;
 }
 
 interface WindowEventMapEntry {

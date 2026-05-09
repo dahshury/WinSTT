@@ -12,6 +12,7 @@ const ALLOWED_SETTINGS_KEYS = new Set([
 	"hotkey",
 	"dictionary",
 	"snippets",
+	"llm",
 ]);
 
 /**
@@ -62,71 +63,85 @@ function handleBeforeQuit(): void {
 	clearRestartTimer();
 }
 
+function readNestedValue(settings: Record<string, unknown>, section: string, key: string): unknown {
+	const sectionVal = settings[section];
+	if (sectionVal == null || typeof sectionVal !== "object") {
+		return;
+	}
+	return (sectionVal as Record<string, unknown>)[key];
+}
+
+function checkOneStartupKey(
+	dotPath: string,
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
+): boolean {
+	const [section, key] = dotPath.split(".");
+	if (!(section && key)) {
+		return false;
+	}
+	const oldVal = readNestedValue(oldSettings, section, key);
+	const newVal = readNestedValue(newSettings, section, key);
+	if (oldVal === newVal) {
+		return false;
+	}
+	console.log(
+		`[settings] Startup-only key changed: ${dotPath} (${String(oldVal)} → ${String(newVal)})`
+	);
+	return true;
+}
+
+function findChangedStartupKey(
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
+): string | null {
+	for (const dotPath of STARTUP_ONLY_KEYS) {
+		if (checkOneStartupKey(dotPath, oldSettings, newSettings)) {
+			return dotPath;
+		}
+	}
+	return null;
+}
+
+function isRestartActionable(): boolean {
+	const managed = isSttProcessRunning();
+	const connected = sttClientRef?.isConnected ?? false;
+	return (managed || connected) && !isShuttingDown;
+}
+
+function performRestart(): void {
+	restartTimer = null;
+	if (isShuttingDown) {
+		return;
+	}
+	if (isSttProcessRunning()) {
+		// Electron-managed server — kill and respawn with updated CLI args
+		console.log("[settings] Restarting Electron-managed STT server");
+		restartSttProcess();
+		return;
+	}
+	// External server — cannot restart from Electron. These settings
+	// will take effect on the next manual server restart.
+	console.log(
+		"[settings] Startup-only setting changed but server is not managed by Electron." +
+			" Restart the server manually to apply the change."
+	);
+}
+
 /** Check if any startup-only settings changed between old and new, trigger restart if so. */
 function checkForRestartNeeded(
 	oldSettings: Record<string, unknown>,
 	newSettings: Record<string, unknown>
-) {
-	let needsRestart = false;
-
-	for (const dotPath of STARTUP_ONLY_KEYS) {
-		const [section, key] = dotPath.split(".");
-		if (!(section && key)) {
-			continue;
-		}
-		const oldSection = oldSettings[section];
-		const newSection = newSettings[section];
-		const oldVal =
-			oldSection != null && typeof oldSection === "object"
-				? (oldSection as Record<string, unknown>)[key]
-				: undefined;
-		const newVal =
-			newSection != null && typeof newSection === "object"
-				? (newSection as Record<string, unknown>)[key]
-				: undefined;
-		if (oldVal !== newVal) {
-			needsRestart = true;
-			console.log(
-				`[settings] Startup-only key changed: ${dotPath} (${String(oldVal)} → ${String(newVal)})`
-			);
-			break;
-		}
-	}
-
-	if (!needsRestart) {
+): void {
+	if (!findChangedStartupKey(oldSettings, newSettings)) {
 		return;
 	}
-
-	const managed = isSttProcessRunning();
-	const connected = sttClientRef?.isConnected ?? false;
-
-	if (!(managed || connected)) {
+	if (!isRestartActionable()) {
 		return;
 	}
-	if (isShuttingDown) {
-		return;
-	}
-
 	// Debounce restart so rapid changes don't cause multiple restarts
 	clearRestartTimer();
-	restartTimer = setTimeout(() => {
-		restartTimer = null;
-		if (isShuttingDown) {
-			return;
-		}
-		if (isSttProcessRunning()) {
-			// Electron-managed server — kill and respawn with updated CLI args
-			console.log("[settings] Restarting Electron-managed STT server");
-			restartSttProcess();
-		} else {
-			// External server — cannot restart from Electron. These settings
-			// will take effect on the next manual server restart.
-			console.log(
-				"[settings] Startup-only setting changed but server is not managed by Electron." +
-					" Restart the server manually to apply the change."
-			);
-		}
-	}, 500);
+	restartTimer = setTimeout(performRestart, 500);
 }
 
 export function setupSettingsHandlers(sttClient?: SttClient): void {
@@ -149,45 +164,61 @@ export function setupSettingsHandlers(sttClient?: SttClient): void {
 	if (settingsSaveListener) {
 		ipcMain.off("settings:save", settingsSaveListener);
 	}
-	settingsSaveListener = (event, { settings }: { settings: Record<string, unknown> }) => {
-		try {
-			// Validate settings object
-			if (!settings || typeof settings !== "object") {
-				throw new ValidationError("Invalid settings object", "settings");
-			}
-
-			// Snapshot old values before applying changes
-			const oldSettings: Record<string, unknown> = {};
-			for (const key of ALLOWED_SETTINGS_KEYS) {
-				oldSettings[key] = store.get(key);
-			}
-
-			for (const [key, value] of Object.entries(settings)) {
-				if (ALLOWED_SETTINGS_KEYS.has(key)) {
-					store.set(key, value);
-				}
-			}
-
-			// Check if startup-only settings changed → auto-restart server
-			checkForRestartNeeded(oldSettings, settings);
-
-			// Forward updated settings to all OTHER windows so their stores stay in sync
-			const allWindows = BrowserWindow.getAllWindows();
-			for (const win of allWindows) {
-				if (win.webContents.id !== event.sender.id) {
-					win.webContents.send("settings:changed", { settings });
-				}
-			}
-		} catch (error) {
-			console.error("[settings] Failed to save settings:", getErrorMessage(error));
-			// Settings save is fire-and-forget (ipcMain.on), can't return error to renderer
-			// Emit error event for renderer to handle
-			event.sender.send("settings:save-error", {
-				error: getErrorMessage(error),
-			});
-		}
-	};
+	settingsSaveListener = settingsSaveImpl;
 	ipcMain.on("settings:save", settingsSaveListener);
+}
+
+function snapshotSettings(): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const key of ALLOWED_SETTINGS_KEYS) {
+		out[key] = store.get(key);
+	}
+	return out;
+}
+
+function applySettings(settings: Record<string, unknown>): void {
+	for (const [key, value] of Object.entries(settings)) {
+		if (ALLOWED_SETTINGS_KEYS.has(key)) {
+			store.set(key, value);
+		}
+	}
+}
+
+function broadcastSettingsToOtherWindows(
+	senderId: number,
+	settings: Record<string, unknown>
+): void {
+	for (const win of BrowserWindow.getAllWindows()) {
+		if (win.webContents.id !== senderId) {
+			win.webContents.send("settings:changed", { settings });
+		}
+	}
+}
+
+function validateSettingsObject(settings: unknown): void {
+	if (!settings || typeof settings !== "object") {
+		throw new ValidationError("Invalid settings object", "settings");
+	}
+}
+
+function settingsSaveImpl(
+	event: Electron.IpcMainEvent,
+	{ settings }: { settings: Record<string, unknown> }
+): void {
+	try {
+		validateSettingsObject(settings);
+		const oldSettings = snapshotSettings();
+		applySettings(settings);
+		checkForRestartNeeded(oldSettings, settings);
+		broadcastSettingsToOtherWindows(event.sender.id, settings);
+	} catch (error) {
+		console.error("[settings] Failed to save settings:", getErrorMessage(error));
+		// Settings save is fire-and-forget (ipcMain.on), can't return error to renderer
+		// Emit error event for renderer to handle
+		event.sender.send("settings:save-error", {
+			error: getErrorMessage(error),
+		});
+	}
 }
 
 export function cleanupSettingsHandlers(): void {

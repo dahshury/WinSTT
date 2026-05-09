@@ -7,9 +7,9 @@ export type UpdaterStatus =
 	| "error";
 
 export interface UpdaterStatusEntryInput {
+	message?: string;
 	status: UpdaterStatus;
 	version?: string;
-	message?: string;
 }
 
 export interface UpdaterStatusEntry extends UpdaterStatusEntryInput {
@@ -22,9 +22,9 @@ interface UpdaterStatusHistoryOptions {
 }
 
 export interface UpdaterStatusHistory {
-	record(entry: UpdaterStatusEntryInput): UpdaterStatusEntry;
-	getHistory(): UpdaterStatusEntry[];
 	clear(): void;
+	getHistory(): UpdaterStatusEntry[];
+	record(entry: UpdaterStatusEntryInput): UpdaterStatusEntry;
 }
 
 export function createUpdaterStatusHistory(

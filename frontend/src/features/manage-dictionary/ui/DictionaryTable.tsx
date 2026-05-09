@@ -20,9 +20,9 @@ type DictionaryEntry = components["schemas"]["DictionaryEntry"];
 export interface DictionaryTableProps {
 	entries: DictionaryEntry[];
 	onAdd: (entry: Omit<DictionaryEntry, "id">) => void;
+	onClearAll?: () => void;
 	onRemove: (id: string) => void;
 	onUpdate: (id: string, entry: Partial<DictionaryEntry>) => void;
-	onClearAll?: () => void;
 }
 
 export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: DictionaryTableProps) {

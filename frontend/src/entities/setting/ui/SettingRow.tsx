@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 
 export interface SettingRowProps {
-	label: string;
-	description?: string;
 	children: ReactNode;
+	description?: string;
+	label: string;
 }
 
 export function SettingRow({ label, description, children }: SettingRowProps) {

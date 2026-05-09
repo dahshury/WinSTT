@@ -30,14 +30,17 @@ function rebuildDictPatterns() {
 		cachedDictPatterns = [];
 		return;
 	}
-	cachedDictPatterns = dictionary
-		.filter((e) => e.find)
-		.map((entry) => {
-			const escaped = entry.find.replace(REGEX_ESCAPE_RE, "\\$&");
-			const pattern = entry.wholeWord ? `\\b${escaped}\\b` : escaped;
-			const flags = entry.caseSensitive ? "g" : "gi";
-			return { regex: new RegExp(pattern, flags), replace: entry.replace };
-		});
+	const next: CompiledDictEntry[] = [];
+	for (const entry of dictionary) {
+		if (!entry.find) {
+			continue;
+		}
+		const escaped = entry.find.replace(REGEX_ESCAPE_RE, "\\$&");
+		const pattern = entry.wholeWord ? `\\b${escaped}\\b` : escaped;
+		const flags = entry.caseSensitive ? "g" : "gi";
+		next.push({ regex: new RegExp(pattern, flags), replace: entry.replace });
+	}
+	cachedDictPatterns = next;
 }
 
 function rebuildSnippets() {

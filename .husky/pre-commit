@@ -1,0 +1,36 @@
+#!/usr/bin/env sh
+
+# Stop on first failure
+set -e
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+
+# 1. Gitleaks — always scan staged content for secrets
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --no-banner
+else
+  echo "pre-commit: gitleaks not found on PATH" >&2
+  exit 1
+fi
+
+# 2. Frontend checks — only if any frontend/* file is staged
+if echo "$STAGED" | grep -qE '^frontend/'; then
+  echo "pre-commit: running frontend checks"
+  (
+    cd frontend
+    bun run typecheck
+    bunx ultracite check
+    bun run check:fsd
+    bun run check:react-doctor
+  )
+fi
+
+# 3. Server checks — only if any server/* file is staged
+if echo "$STAGED" | grep -qE '^server/'; then
+  echo "pre-commit: running server checks"
+  (
+    cd server
+    uv run ruff check .
+    uv run mypy src/ --strict
+  )
+fi

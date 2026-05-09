@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
@@ -17,11 +17,12 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
-    "baseUrl": ".",
+    "types": ["bun"],
     "paths": {
       "@/*": ["./src/*"],
       "@spec/*": ["../spec/generated/ts/*"],
-      "@electron/*": ["./electron/*"]
+      "@electron/*": ["./electron/*"],
+      "@test/*": ["./test/*"]
     },
     "plugins": [
       {

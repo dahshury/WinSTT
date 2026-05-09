@@ -1,7 +1,6 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useEffect } from "react";
 import { cn } from "@/shared/lib/cn";
 import { formatKeyName } from "@/shared/lib/format-key-name";
 import { Button } from "@/shared/ui/button";
@@ -17,14 +16,10 @@ function formatCombo(combo: string): string {
 }
 
 export function HotkeyRecorder({ currentKey, onKeyRecorded }: HotkeyRecorderProps) {
-	const { recording, key, liveKeys, startRecording, stopRecording } = useKeyRecorder();
+	const { recording, liveKeys, startRecording, stopRecording } = useKeyRecorder({
+		onKeyRecorded,
+	});
 	const t = useTranslations("hotkey");
-
-	useEffect(() => {
-		if (key && !recording) {
-			onKeyRecorded(key);
-		}
-	}, [key, recording, onKeyRecorded]);
 
 	function getDisplayText(): string {
 		if (!recording) {

@@ -1,0 +1,96 @@
+import { describe, expect, mock, test } from "bun:test";
+import { uiohookMock } from "@test/mocks/uiohook-napi";
+
+// Mock uiohook-napi at module load — its native binary may not load under bun:test.
+// Use the SHARED shim so other test files mocking uiohook-napi don't poison
+// keycodes.ts's module-init iteration of `Object.entries(KEYCODE_TO_NAME)`.
+mock.module("uiohook-napi", () => uiohookMock());
+
+const {
+	codesToNames,
+	KEYCODE_TO_NAME,
+	MODIFIER_ORDER,
+	NAME_TO_KEYCODE,
+	parseAccelerator,
+	sortKeycodes,
+} = await import("./keycodes");
+
+describe("KEYCODE_TO_NAME / NAME_TO_KEYCODE", () => {
+	test("modifier keys map both directions", () => {
+		expect(KEYCODE_TO_NAME[1]).toBe("LCtrl");
+		expect(NAME_TO_KEYCODE.LCtrl).toBe(1);
+		expect(KEYCODE_TO_NAME[8]).toBe("RMeta");
+		expect(NAME_TO_KEYCODE.RMeta).toBe(8);
+	});
+
+	test("letters map both directions", () => {
+		expect(KEYCODE_TO_NAME[30]).toBe("A");
+		expect(NAME_TO_KEYCODE.A).toBe(30);
+	});
+});
+
+describe("parseAccelerator", () => {
+	test("parses a single modifier", () => {
+		expect(parseAccelerator("LCtrl")).toEqual(new Set([1]));
+	});
+
+	test("parses a compound accelerator", () => {
+		const codes = parseAccelerator("LCtrl+LAlt+A");
+		expect(codes).toEqual(new Set([1, 3, 30]));
+	});
+
+	test("trims whitespace around each part", () => {
+		expect(parseAccelerator(" LCtrl + A ")).toEqual(new Set([1, 30]));
+	});
+
+	test("falls back to capitalized lookup (e.g. 'lctrl' → 'LCtrl' fails capital fallback)", () => {
+		// 'lctrl' uppercased becomes 'LCTRL' (not 'LCtrl'), which is not in the map.
+		// charAt(0).toUpperCase() + slice(1) becomes 'Lctrl', also not in the map.
+		// So this returns null — verifies the fallback logic does not over-match.
+		expect(parseAccelerator("lctrl")).toBeNull();
+	});
+
+	test("returns null for an unknown segment", () => {
+		expect(parseAccelerator("LCtrl+ZZ")).toBeNull();
+	});
+
+	test("returns null for an empty string", () => {
+		expect(parseAccelerator("")).toBeNull();
+	});
+
+	test("a single lowercase letter is matched via uppercase fallback", () => {
+		expect(parseAccelerator("a")).toEqual(new Set([30]));
+	});
+});
+
+describe("MODIFIER_ORDER and sortKeycodes", () => {
+	test("modifier order keeps Ctrl before Alt before Shift before Meta", () => {
+		expect(MODIFIER_ORDER[1]).toBeLessThan(MODIFIER_ORDER[3] ?? 999);
+		expect(MODIFIER_ORDER[3]).toBeLessThan(MODIFIER_ORDER[5] ?? 999);
+		expect(MODIFIER_ORDER[5]).toBeLessThan(MODIFIER_ORDER[7] ?? 999);
+	});
+
+	test("sortKeycodes places modifiers before non-modifiers", () => {
+		const sorted = sortKeycodes([30, 1, 5]); // A, LCtrl, LShift
+		expect(sorted).toEqual([1, 5, 30]);
+	});
+
+	test("non-modifier keys are sorted by numeric code", () => {
+		const sorted = sortKeycodes([55, 30, 40]); // Z, A, K
+		expect(sorted).toEqual([30, 40, 55]);
+	});
+});
+
+describe("codesToNames", () => {
+	test("maps and sorts codes into name strings", () => {
+		expect(codesToNames([30, 1, 5])).toEqual(["LCtrl", "LShift", "A"]);
+	});
+
+	test("filters out unknown codes", () => {
+		expect(codesToNames([1, 9999, 30])).toEqual(["LCtrl", "A"]);
+	});
+
+	test("returns empty array for empty input", () => {
+		expect(codesToNames([])).toEqual([]);
+	});
+});

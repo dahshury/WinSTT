@@ -5,11 +5,8 @@ export function decodeSettingsPayload(payload: unknown): AppSettingsOutput {
 	if (parsed.success) {
 		return parsed.data;
 	}
-	// Fallback: use safeParse to avoid throwing at a boundary
-	const fallback = appSettingsSchema.safeParse({});
-	if (fallback.success) {
-		return fallback.data;
-	}
-	// Schema defaults should always parse; this is a defensive last resort
-	throw new Error(`Settings schema failed to produce defaults: ${fallback.error.message}`);
+	// Fall back to schema defaults. `parse({})` throws if the schema can't
+	// produce defaults — that's a programming error in the schema, not a
+	// runtime concern, so propagating the throw is correct.
+	return appSettingsSchema.parse({});
 }

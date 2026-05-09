@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Mutation testing scoped to pure-logic files where surviving mutants reliably indicate weak tests or real bugs. Uses the command runner because there is no Stryker-Bun runner. Each mutant kills bun-test scoped to the matching test file, so killing time is bounded per mutant.",
+  "packageManager": "npm",
+  "reporters": ["progress", "clear-text", "html", "json"],
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  },
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "bun test src/shared/lib/errors.test.ts src/shared/api/settings-codec.test.ts src/shared/lib/openrouter-model-selection.test.ts src/shared/lib/ollama-endpoint.test.ts src/widgets/openrouter-model-selector/lib/model-exclusion.test.ts"
+  },
+  "coverageAnalysis": "off",
+  "mutate": [
+    "src/shared/lib/errors.ts",
+    "src/shared/api/settings-codec.ts",
+    "src/shared/lib/openrouter-model-selection.ts",
+    "src/shared/lib/ollama-endpoint.ts",
+    "src/widgets/openrouter-model-selector/lib/model-exclusion.ts"
+  ],
+  "thresholds": {
+    "high": 90,
+    "low": 70,
+    "break": 0
+  },
+  "timeoutMS": 30000,
+  "concurrency": 2,
+  "htmlReporter": {
+    "fileName": "reports/mutation/mutation.html"
+  }
+}

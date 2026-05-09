@@ -37,22 +37,25 @@ function generateListeningSequence(columns: number): number[][] {
 	]);
 }
 
+function buildSequence(state: AgentState, barCount: number): number[][] {
+	if (state === "thinking" || state === "listening") {
+		return generateListeningSequence(barCount);
+	}
+	if (state === "connecting" || state === "initializing") {
+		return generateConnectingSequence(barCount);
+	}
+	if (state === "speaking") {
+		return [new Array(barCount).fill(0).map((_, idx) => idx)];
+	}
+	return [[]];
+}
+
 export function useRadialAnimator(state: AgentState, barCount: number, interval: number): number[] {
 	const [index, setIndex] = useState(0);
-	const [sequence, setSequence] = useState<number[][]>([[]]);
+	const [sequence, setSequence] = useState<number[][]>(() => buildSequence(state, barCount));
 
 	useEffect(() => {
-		if (state === "thinking") {
-			setSequence(generateListeningSequence(barCount));
-		} else if (state === "connecting" || state === "initializing") {
-			setSequence(generateConnectingSequence(barCount));
-		} else if (state === "listening") {
-			setSequence(generateListeningSequence(barCount));
-		} else if (state === "speaking") {
-			setSequence([new Array(barCount).fill(0).map((_, idx) => idx)]);
-		} else {
-			setSequence([[]]);
-		}
+		setSequence(buildSequence(state, barCount));
 		setIndex(0);
 	}, [state, barCount]);
 

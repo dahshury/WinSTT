@@ -103,12 +103,12 @@ const waveVariants = cva(["aspect-square"], {
 });
 
 export interface AudioVisualizerWaveProps {
-	size?: VisualizerSize;
+	blur?: number;
+	className?: string;
 	color?: `#${string}`;
 	colorShift?: number;
 	lineWidth?: number;
-	blur?: number;
-	className?: string;
+	size?: VisualizerSize;
 }
 
 export function AudioVisualizerWave({

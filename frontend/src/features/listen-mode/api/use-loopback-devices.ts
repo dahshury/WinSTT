@@ -14,14 +14,44 @@ const loopbackDeviceSchema = z.object({
 	isDefault: z.boolean().optional(),
 });
 
+type LoopbackDevice = z.infer<typeof loopbackDeviceSchema>;
+
 /**
  * Fetches loopback audio devices via IPC when in "listen" recording mode,
  * maps them to select options, and resolves the current selection ID.
  */
 interface UseLoopbackDevicesReturn {
-	options: SelectOption[];
 	currentId: string;
 	handleChange: (v: string) => void;
+	options: SelectOption[];
+}
+
+function parseDevices(devices: unknown): LoopbackDevice[] {
+	if (!Array.isArray(devices)) {
+		return [];
+	}
+	const typed: LoopbackDevice[] = [];
+	for (const d of devices) {
+		const parsed = loopbackDeviceSchema.safeParse(d);
+		if (parsed.success) {
+			typed.push(parsed.data);
+		}
+	}
+	return typed;
+}
+
+function buildLoopbackOptions(typed: LoopbackDevice[]): {
+	options: SelectOption[];
+	defaultIndex: number | null;
+} {
+	const defaultDev = typed.find((d) => d.isDefault);
+	const defaultLabel = defaultDev ? `System Default (${defaultDev.name})` : "System Default";
+	const defaultIndex = defaultDev?.index ?? null;
+	const options: SelectOption[] = [
+		{ id: "default", label: defaultLabel },
+		...typed.map((d) => ({ id: String(d.index), label: d.name })),
+	];
+	return { options, defaultIndex };
 }
 
 export function useLoopbackDevices(): UseLoopbackDevicesReturn {
@@ -39,36 +69,25 @@ export function useLoopbackDevices(): UseLoopbackDevicesReturn {
 
 		let isCancelled = false;
 
+		const handleDevices = (devices: unknown) => {
+			if (isCancelled) {
+				return;
+			}
+			if (!Array.isArray(devices)) {
+				console.warn("[useLoopbackDevices] Invalid devices response:", devices);
+				return;
+			}
+			const typed = parseDevices(devices);
+			const { options: opts, defaultIndex: defIdx } = buildLoopbackOptions(typed);
+			setDefaultIndex(defIdx);
+			setOptions(opts);
+			if (general?.loopbackDeviceIndex == null && defIdx != null) {
+				update({ loopbackDeviceIndex: defIdx });
+			}
+		};
+
 		loopbackListDevices()
-			.then((devices) => {
-				if (isCancelled) {
-					return;
-				}
-
-				if (!Array.isArray(devices)) {
-					console.warn("[useLoopbackDevices] Invalid devices response:", devices);
-					return;
-				}
-				const typed = devices
-					.map((d) => loopbackDeviceSchema.safeParse(d))
-					.filter((r) => r.success)
-					.map((r) => r.data);
-				const defaultDev = typed.find((d) => d.isDefault);
-				const defaultLabel = defaultDev ? `System Default (${defaultDev.name})` : "System Default";
-				const defIdx = defaultDev?.index ?? null;
-				setDefaultIndex(defIdx);
-
-				const opts: SelectOption[] = [
-					{ id: "default", label: defaultLabel },
-					...typed.map((d) => ({ id: String(d.index), label: d.name })),
-				];
-				setOptions(opts);
-
-				// Auto-select default device if none chosen yet
-				if (general?.loopbackDeviceIndex == null && defIdx != null) {
-					update({ loopbackDeviceIndex: defIdx });
-				}
-			})
+			.then(handleDevices)
 			.catch((err: unknown) => {
 				if (isCancelled) {
 					return;

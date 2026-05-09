@@ -3,15 +3,15 @@ import { create } from "zustand";
 type FileTranscriptionStatus = "idle" | "processing" | "complete" | "error";
 
 interface FileTranscriptionState {
-	status: FileTranscriptionStatus;
-	progress: number;
-	message: string;
 	fileName: string;
-	setProcessing: (fileName: string) => void;
-	setProgress: (progress: number, message: string) => void;
+	message: string;
+	progress: number;
+	reset: () => void;
 	setComplete: (fileName: string) => void;
 	setError: (fileName: string, error: string) => void;
-	reset: () => void;
+	setProcessing: (fileName: string) => void;
+	setProgress: (progress: number, message: string) => void;
+	status: FileTranscriptionStatus;
 }
 
 export const useFileTranscriptionStore = create<FileTranscriptionState>()((set) => ({

@@ -1,8 +1,8 @@
 import type { TranscriptionItem } from "../model/transcription";
 
 export interface TranscriptionLineProps {
-	item: TranscriptionItem;
 	index: number;
+	item: TranscriptionItem;
 }
 
 export function TranscriptionLine({ item, index }: TranscriptionLineProps) {

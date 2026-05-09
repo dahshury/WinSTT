@@ -39,8 +39,8 @@ export interface SttClientOptions {
 }
 
 interface PendingRequest {
-	resolve: (value: unknown) => void;
 	reject: (error: Error) => void;
+	resolve: (value: unknown) => void;
 	timer: ReturnType<typeof setTimeout>;
 }
 
@@ -207,6 +207,10 @@ export class SttClient extends EventEmitter {
 
 	listLoopbackDevices(): Promise<unknown> {
 		return this.sendRequest({ command: "list_loopback_devices" }, "listLoopbackDevices");
+	}
+
+	listInputDevices(): Promise<unknown> {
+		return this.sendRequest({ command: "list_input_devices" }, "listInputDevices");
 	}
 
 	startLoopback(deviceIndex: number): void {

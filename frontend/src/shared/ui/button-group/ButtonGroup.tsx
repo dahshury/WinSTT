@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 
 export interface ButtonGroupProps {
+	"aria-label"?: string;
 	children: ReactNode;
 	className?: string;
-	"aria-label"?: string;
 }
 
 export function ButtonGroup({ children, className, "aria-label": ariaLabel }: ButtonGroupProps) {

@@ -51,20 +51,25 @@ function handleProgressEvent(event: Record<string, unknown>, safeSend: SafeSend)
 	});
 }
 
+function deriveFileName(fileName: string | undefined, filePath: unknown): string {
+	if (fileName) {
+		return fileName;
+	}
+	return typeof filePath === "string" ? path.basename(filePath) : "";
+}
+
 function handleErrorEvent(
 	event: Record<string, unknown>,
 	pendingRequests: Map<string, string>,
 	safeSend: SafeSend
 ): void {
 	const requestId = asString(event.request_id);
-	const fileName = asOptionalString(event.file_name);
 	if (requestId) {
 		pendingRequests.delete(requestId);
 	}
 	safeSend("file:transcription-error", {
 		requestId,
-		fileName:
-			fileName ?? (typeof event.file_path === "string" ? path.basename(event.file_path) : ""),
+		fileName: deriveFileName(asOptionalString(event.file_name), event.file_path),
 		error: asString(event.error) || "Unknown error",
 	});
 }
@@ -103,58 +108,93 @@ async function writeTranscriptionOutput(
 	}
 }
 
-async function handleCompleteEvent(
-	event: Record<string, unknown>,
+interface CompleteEventFields {
+	fileName: string;
+	filePath: string;
+	fmt: string;
+	requestId: string;
+	text: string;
+}
+
+function allTruthy(...args: unknown[]): boolean {
+	return args.every(Boolean);
+}
+
+function extractCompleteEventFields(event: Record<string, unknown>): CompleteEventFields | null {
+	const requestId = asString(event.request_id);
+	const filePath = asString(event.file_path);
+	const fileName = asString(event.file_name);
+	if (!allTruthy(requestId, filePath, fileName)) {
+		return null;
+	}
+	return {
+		requestId,
+		filePath,
+		fileName,
+		text: asString(event.text),
+		fmt: asString(event.format) || "txt",
+	};
+}
+
+function isPathMatch(actual: string, expected: string | undefined): boolean {
+	return Boolean(expected && path.resolve(actual) === path.resolve(expected));
+}
+
+function buildOutputPath(filePath: string, fmt: string): string {
+	// Sanitize format extension to prevent path traversal via format field
+	const safeFmt = fmt.replace(/[^a-zA-Z0-9]/g, "") || "txt";
+	return `${filePath}.${safeFmt}`;
+}
+
+async function writeAndNotifyComplete(
+	outputPath: string,
+	fields: CompleteEventFields,
 	pendingRequests: Map<string, string>,
 	safeSend: SafeSend
 ): Promise<void> {
-	const requestId = asString(event.request_id);
-	const filePath = asString(event.file_path);
-	const text = asString(event.text);
-	const fileName = asString(event.file_name);
-	const fmt = asString(event.format) || "txt";
-
-	if (!(requestId && filePath && fileName)) {
-		console.error("[file-transcribe] Incomplete transcription_complete event, skipping");
-		return;
-	}
-
-	// Validate that the filePath was one we actually requested (prevent arbitrary writes)
-	const expectedPath = pendingRequests.get(requestId);
-	if (!expectedPath || path.resolve(filePath) !== path.resolve(expectedPath)) {
-		console.error(
-			"[file-transcribe] file_path mismatch — expected:",
-			expectedPath,
-			"got:",
-			filePath
-		);
-		pendingRequests.delete(requestId);
-		return;
-	}
-
-	// Sanitize format extension to prevent path traversal via format field
-	const safeFmt = fmt.replace(/[^a-zA-Z0-9]/g, "") || "txt";
-	const outputPath = `${filePath}.${safeFmt}`;
-
 	const written = await writeTranscriptionOutput(
 		outputPath,
-		text,
-		requestId,
-		fileName,
+		fields.text,
+		fields.requestId,
+		fields.fileName,
 		pendingRequests,
 		safeSend
 	);
 	if (!written) {
 		return;
 	}
-
-	pendingRequests.delete(requestId);
+	pendingRequests.delete(fields.requestId);
 	safeSend("file:transcription-complete", {
-		requestId,
-		fileName,
-		text,
+		requestId: fields.requestId,
+		fileName: fields.fileName,
+		text: fields.text,
 		outputPath,
 	});
+}
+
+async function handleCompleteEvent(
+	event: Record<string, unknown>,
+	pendingRequests: Map<string, string>,
+	safeSend: SafeSend
+): Promise<void> {
+	const fields = extractCompleteEventFields(event);
+	if (!fields) {
+		console.error("[file-transcribe] Incomplete transcription_complete event, skipping");
+		return;
+	}
+	const expectedPath = pendingRequests.get(fields.requestId);
+	if (!isPathMatch(fields.filePath, expectedPath)) {
+		console.error(
+			"[file-transcribe] file_path mismatch — expected:",
+			expectedPath,
+			"got:",
+			fields.filePath
+		);
+		pendingRequests.delete(fields.requestId);
+		return;
+	}
+	const outputPath = buildOutputPath(fields.filePath, fields.fmt);
+	await writeAndNotifyComplete(outputPath, fields, pendingRequests, safeSend);
 }
 
 /**
@@ -209,6 +249,18 @@ export async function transcribeFile(
 	return { requestId };
 }
 
+// Test-only exports — pure helpers used by the IPC layer.
+export const __file_transcribe_test_helpers__ = {
+	asString,
+	asOptionalString,
+	asOptionalNumber,
+	allTruthy,
+	deriveFileName,
+	isPathMatch,
+	buildOutputPath,
+	extractCompleteEventFields,
+};
+
 export function setupFileTranscribeHandlers(
 	win: BrowserWindow,
 	client: SttClient
@@ -228,23 +280,21 @@ export function setupFileTranscribeHandlers(
 
 	const safeSend = createSafeSender(win);
 
+	const dataEventDispatch: Record<
+		string,
+		(event: Record<string, unknown>) => Promise<void> | void
+	> = {
+		file_transcription_progress: (e) => handleProgressEvent(e, safeSend),
+		file_transcription_complete: (e) => handleCompleteEvent(e, pendingRequests, safeSend),
+		file_transcription_error: (e) => handleErrorEvent(e, pendingRequests, safeSend),
+	};
+
 	const handleDataEvent = async (event: Record<string, unknown>): Promise<void> => {
 		const type = event.type;
 		if (typeof type !== "string") {
 			return;
 		}
-
-		if (type === "file_transcription_progress") {
-			handleProgressEvent(event, safeSend);
-			return;
-		}
-		if (type === "file_transcription_complete") {
-			await handleCompleteEvent(event, pendingRequests, safeSend);
-			return;
-		}
-		if (type === "file_transcription_error") {
-			handleErrorEvent(event, pendingRequests, safeSend);
-		}
+		await dataEventDispatch[type]?.(event);
 	};
 
 	const onDataEvent = (event: Record<string, unknown>) => {

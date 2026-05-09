@@ -1,18 +1,18 @@
 import { create } from "zustand";
 
 interface LoopbackDevice {
-	index: number;
-	name: string;
 	defaultSampleRate: number;
+	index: number;
 	maxOutputChannels: number;
+	name: string;
 }
 
 interface ListenStore {
-	isListening: boolean;
 	deviceName: string;
 	devices: LoopbackDevice[];
-	setListening: (listening: boolean, deviceName?: string) => void;
+	isListening: boolean;
 	setDevices: (devices: LoopbackDevice[]) => void;
+	setListening: (listening: boolean, deviceName?: string) => void;
 }
 
 export const useListenStore = create<ListenStore>()((set) => ({

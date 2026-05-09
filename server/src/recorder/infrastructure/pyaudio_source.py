@@ -52,42 +52,71 @@ class PyAudioSource(IAudioSource):
             self._audio_interface = pyaudio.PyAudio()
             pa: Any = self._audio_interface
 
-            if self._input_device_index is None:
-                try:
-                    info: Any = pa.get_default_input_device_info()
-                    self._input_device_index = int(info["index"])
-                except Exception as e:
-                    msg = f"Failed to get default input device: {e}"
-                    raise DeviceError(msg) from e
-
-            self._device_sample_rate = self._get_best_sample_rate(self._input_device_index)
-
+            requested_index = self._input_device_index
             try:
-                self._stream = pa.open(
-                    format=pyaudio.paInt16,
-                    channels=1,
-                    rate=self._device_sample_rate,
-                    input=True,
-                    frames_per_buffer=self._buffer_size,
-                    input_device_index=self._input_device_index,
+                self._open_stream(pa, requested_index)
+            except DeviceError as primary_err:
+                # The configured device is gone, indices have shifted (e.g. user
+                # unplugged the headset between sessions), or the index space
+                # never matched in the first place. Fall back to the system
+                # default so the user still gets *some* audio path; they can
+                # re-pick their device in Settings, which triggers a restart.
+                if requested_index is None:
+                    raise
+                logger.warning(
+                    "Configured input device %s unavailable (%s); falling back to system default",
+                    requested_index,
+                    primary_err,
                 )
-            except Exception as e:
-                msg = (
-                    f"Failed to open audio stream "
-                    f"(device {self._input_device_index}, rate {self._device_sample_rate}Hz): {e}"
-                )
-                raise DeviceError(
-                    msg, device_index=self._input_device_index, sample_rate=self._device_sample_rate
-                ) from e
+                self._input_device_index = None
+                self._device_sample_rate = None
+                self._open_stream(pa, None)
 
             self._active = True
         except DeviceError:
-            # Clean up on failure
             if self._audio_interface is not None:
                 with contextlib.suppress(Exception):
                     self._audio_interface.terminate()
                 self._audio_interface = None
             raise
+
+    def _open_stream(self, pa: Any, device_index: int | None) -> None:  # noqa: ANN401
+        """Resolve the device index, probe a sample rate, and open a stream.
+
+        Raises ``DeviceError`` if no default exists or the open call fails.
+        """
+        from src.building_blocks.errors import DeviceError
+
+        if device_index is None:
+            try:
+                info: Any = pa.get_default_input_device_info()
+                device_index = int(info["index"])
+            except Exception as e:
+                msg = f"Failed to get default input device: {e}"
+                raise DeviceError(msg) from e
+
+        sample_rate = self._get_best_sample_rate(device_index)
+
+        try:
+            self._stream = pa.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=sample_rate,
+                input=True,
+                frames_per_buffer=self._buffer_size,
+                input_device_index=device_index,
+            )
+        except Exception as e:
+            msg = (
+                f"Failed to open audio stream "
+                f"(device {device_index}, rate {sample_rate}Hz): {e}"
+            )
+            raise DeviceError(
+                msg, device_index=device_index, sample_rate=sample_rate
+            ) from e
+
+        self._input_device_index = device_index
+        self._device_sample_rate = sample_rate
 
     @override
     def read_chunk(self) -> AudioChunk:

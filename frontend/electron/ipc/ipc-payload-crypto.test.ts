@@ -40,7 +40,7 @@ describe("ipc-payload-crypto", () => {
 			ciphertext: tamperSegment(encrypted.ciphertext),
 		};
 
-		expect(decryptIpcPayload(tampered, key)).rejects.toThrow("authentication failed");
+		await expect(decryptIpcPayload(tampered, key)).rejects.toThrow("authentication failed");
 	});
 
 	test("detects tampering in auth tag", async () => {
@@ -51,12 +51,12 @@ describe("ipc-payload-crypto", () => {
 			authTag: tamperSegment(encrypted.authTag),
 		};
 
-		expect(decryptIpcPayload(tampered, key)).rejects.toThrow("authentication failed");
+		await expect(decryptIpcPayload(tampered, key)).rejects.toThrow("authentication failed");
 	});
 
 	test("rejects invalid key length", async () => {
 		const shortKey = Buffer.alloc(16, 1);
 
-		expect(encryptIpcPayload({ ok: true }, shortKey)).rejects.toThrow("32-byte key");
+		await expect(encryptIpcPayload({ ok: true }, shortKey)).rejects.toThrow("32-byte key");
 	});
 });

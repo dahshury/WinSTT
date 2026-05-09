@@ -4,6 +4,7 @@ import { Note01Icon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { SnippetsTable } from "@/features/manage-snippets";
+import { generateId } from "@/shared/lib/generate-id";
 
 export function SnippetsSettingsPanel() {
 	const snippets = useSettingsStore((s) => s.settings.snippets) ?? [];
@@ -17,7 +18,7 @@ export function SnippetsSettingsPanel() {
 				<SnippetsTable
 					entries={snippets}
 					onAdd={(entry) => {
-						updateSnippets([...snippets, { ...entry, id: crypto.randomUUID() }]);
+						updateSnippets([...snippets, { ...entry, id: generateId() }]);
 					}}
 					onClearAll={() => {
 						updateSnippets([]);

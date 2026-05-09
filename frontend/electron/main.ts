@@ -116,8 +116,8 @@ interface SecureInvokeSuccess {
 }
 
 interface SecureInvokeFailure {
-	ok: false;
 	error: string;
+	ok: false;
 }
 
 type SecureInvokeResponse = SecureInvokeSuccess | SecureInvokeFailure;
@@ -149,7 +149,7 @@ function getWindowIconPath(): string | undefined {
 	if (process.platform === "win32") {
 		return path.join(import.meta.dirname, "..", "build", "icon.ico");
 	}
-	return undefined;
+	return;
 }
 
 function setRendererBaseUrl(baseUrl: string): void {
@@ -348,8 +348,7 @@ async function initAutoUpdater(): Promise<void> {
 	}
 
 	try {
-		const updaterModuleName = "electron-updater";
-		const updaterModule = (await import(updaterModuleName)) as {
+		const updaterModule = (await import("electron-updater")) as {
 			autoUpdater: {
 				autoDownload: boolean;
 				on: (event: string, listener: (...args: unknown[]) => void) => void;
@@ -537,6 +536,20 @@ if (gotTheLock) {
 			settingsWindow.destroy();
 		}
 		settingsWindow = null;
+	});
+
+	// Under `bun electron:dev`, electronmon supervises this process and would
+	// otherwise wait for a file change to relaunch instead of letting the dev
+	// session terminate. Killing its parent lets `concurrently -k` tear down
+	// the rest of the stack on user-initiated quit.
+	app.on("will-quit", () => {
+		if (process.env.ELECTRONMON_LOGLEVEL && process.ppid) {
+			try {
+				process.kill(process.ppid, "SIGTERM");
+			} catch {
+				// best-effort; process is exiting anyway
+			}
+		}
 	});
 } else {
 	app.quit();
@@ -878,16 +891,16 @@ function createWindow() {
 	}
 
 	// Capture renderer console output to debug.log
-	mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+	mainWindow.webContents.on("console-message", ({ level, message, lineNumber, sourceId }) => {
 		let tag: string;
-		if (level <= 0) {
+		if (level === "info" || level === "debug") {
 			tag = "renderer:log";
-		} else if (level === 1) {
+		} else if (level === "warning") {
 			tag = "renderer:warn";
 		} else {
 			tag = "renderer:error";
 		}
-		const src = sourceId ? ` (${sourceId}:${line})` : "";
+		const src = sourceId ? ` (${sourceId}:${lineNumber})` : "";
 		dbg(tag, message + src);
 	});
 

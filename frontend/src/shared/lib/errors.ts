@@ -12,10 +12,9 @@ export class ApplicationError extends Error {
 		this.context = context;
 		this.timestamp = Date.now();
 
-		// Maintains proper stack trace for where error was thrown (V8 only)
-		if (Error.captureStackTrace) {
-			Error.captureStackTrace(this, this.constructor);
-		}
+		// Maintains proper stack trace for where error was thrown.
+		// V8 (Electron main + renderer) and JSC (Bun) both define this.
+		Error.captureStackTrace(this, this.constructor);
 	}
 
 	toJSON(): Record<string, unknown> {
@@ -213,17 +212,21 @@ export function isApplicationError(error: unknown): error is ApplicationError {
 	return error instanceof ApplicationError;
 }
 
+// Error instances pass through this duck-typing predicate unchanged:
+// `Error.prototype.message === ""` so even a default `new Error()`
+// satisfies `"message" in error`.
+function isMessageBearer(error: unknown): error is { message: unknown } {
+	return Boolean(error && typeof error === "object" && "message" in error);
+}
+
 /**
  * Extract a safe error message from unknown error type.
  */
 export function getErrorMessage(error: unknown): string {
-	if (error instanceof Error) {
-		return error.message;
-	}
 	if (typeof error === "string") {
 		return error;
 	}
-	if (error && typeof error === "object" && "message" in error) {
+	if (isMessageBearer(error)) {
 		return String(error.message);
 	}
 	return "Unknown error occurred";
@@ -236,33 +239,62 @@ export function getErrorStack(error: unknown): string | undefined {
 	if (error instanceof Error) {
 		return error.stack;
 	}
-	return undefined;
+	return;
+}
+
+function formatErrorContext(error: unknown): string {
+	return isApplicationError(error) && error.context
+		? `\nContext: ${JSON.stringify(error.context, null, 2)}`
+		: "";
+}
+
+function formatErrorPrefix(prefix: string, message: string): string {
+	return prefix ? `${prefix}: ${message}` : message;
 }
 
 /**
  * Format error for logging with full context.
  */
 export function formatErrorForLog(error: unknown, prefix = ""): string {
-	const message = getErrorMessage(error);
+	const head = formatErrorPrefix(prefix, getErrorMessage(error));
 	const stack = getErrorStack(error);
+	return `${head}${formatErrorContext(error)}${stack ? `\n${stack}` : ""}`;
+}
 
-	let result = prefix ? `${prefix}: ${message}` : message;
+interface RetryConfig {
+	backoffMultiplier: number;
+	delayMs: number;
+	maxAttempts: number;
+	onRetry?: (error: unknown, attempt: number) => void;
+	shouldRetry: (error: unknown, attempt: number) => boolean;
+}
 
-	if (isApplicationError(error) && error.context) {
-		result += `\nContext: ${JSON.stringify(error.context, null, 2)}`;
+function shouldKeepRetrying(attempt: number, error: unknown, cfg: RetryConfig): boolean {
+	return attempt < cfg.maxAttempts && cfg.shouldRetry(error, attempt);
+}
+
+async function waitBeforeRetry(error: unknown, attempt: number, cfg: RetryConfig): Promise<void> {
+	cfg.onRetry?.(error, attempt);
+	const delay = cfg.delayMs * cfg.backoffMultiplier ** (attempt - 1);
+	await new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+async function tryAttempt<T>(fn: () => Promise<T>, attempt: number, cfg: RetryConfig): Promise<T> {
+	try {
+		return await fn();
+	} catch (error) {
+		if (!shouldKeepRetrying(attempt, error, cfg)) {
+			throw error;
+		}
+		await waitBeforeRetry(error, attempt, cfg);
+		return tryAttempt(fn, attempt + 1, cfg);
 	}
-
-	if (stack) {
-		result += `\n${stack}`;
-	}
-
-	return result;
 }
 
 /**
  * Retry wrapper for async operations with exponential backoff.
  */
-export async function retryAsync<T>(
+export function retryAsync<T>(
 	fn: () => Promise<T>,
 	options: {
 		maxAttempts?: number;
@@ -272,34 +304,13 @@ export async function retryAsync<T>(
 		onRetry?: (error: unknown, attempt: number) => void;
 	} = {}
 ): Promise<T> {
-	const {
-		maxAttempts = 3,
-		delayMs = 1000,
-		backoffMultiplier = 2,
-		shouldRetry = () => true,
-		onRetry,
-	} = options;
-
-	let lastError: unknown;
-
-	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-		try {
-			return await fn();
-		} catch (error) {
-			lastError = error;
-
-			if (attempt === maxAttempts || !shouldRetry(error, attempt)) {
-				throw error;
-			}
-
-			onRetry?.(error, attempt);
-
-			const delay = delayMs * backoffMultiplier ** (attempt - 1);
-			await new Promise((resolve) => setTimeout(resolve, delay));
-		}
-	}
-
-	throw lastError;
+	return tryAttempt(fn, 1, {
+		maxAttempts: options.maxAttempts ?? 3,
+		delayMs: options.delayMs ?? 1000,
+		backoffMultiplier: options.backoffMultiplier ?? 2,
+		shouldRetry: options.shouldRetry ?? (() => true),
+		onRetry: options.onRetry,
+	});
 }
 
 /**
@@ -315,7 +326,7 @@ export function wrapAsync<TArgs extends unknown[], TReturn>(
 		} catch (error) {
 			errorHandler?.(error, args);
 			console.error(formatErrorForLog(error, `Error in ${fn.name || "async function"}`));
-			return undefined;
+			return;
 		}
 	};
 }

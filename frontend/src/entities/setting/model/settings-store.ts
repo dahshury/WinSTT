@@ -5,19 +5,19 @@ import { type AppSettingsOutput, appSettingsSchema } from "@/shared/config/setti
 const DEFAULTS: AppSettingsOutput = appSettingsSchema.parse({});
 
 interface SettingsState {
-	settings: AppSettingsOutput;
 	isLoaded: boolean;
+	resetSettings: () => void;
+	setLoaded: (loaded: boolean) => void;
 	setSettings: (settings: AppSettingsOutput) => void;
-	updateModelSettings: (patch: Partial<AppSettingsOutput["model"]>) => void;
-	updateQualitySettings: (patch: Partial<AppSettingsOutput["quality"]>) => void;
+	settings: AppSettingsOutput;
 	updateAudioSettings: (patch: Partial<AppSettingsOutput["audio"]>) => void;
+	updateDictionary: (dictionary: AppSettingsOutput["dictionary"]) => void;
 	updateGeneralSettings: (patch: Partial<AppSettingsOutput["general"]>) => void;
 	updateHotkeySettings: (patch: Partial<AppSettingsOutput["hotkey"]>) => void;
 	updateLlmSettings: (patch: Partial<AppSettingsOutput["llm"]>) => void;
-	updateDictionary: (dictionary: AppSettingsOutput["dictionary"]) => void;
+	updateModelSettings: (patch: Partial<AppSettingsOutput["model"]>) => void;
+	updateQualitySettings: (patch: Partial<AppSettingsOutput["quality"]>) => void;
 	updateSnippets: (snippets: AppSettingsOutput["snippets"]) => void;
-	resetSettings: () => void;
-	setLoaded: (loaded: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(

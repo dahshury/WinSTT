@@ -20,8 +20,8 @@ type SnippetEntry = components["schemas"]["SnippetEntry"];
 export interface SnippetsTableProps {
 	entries: SnippetEntry[];
 	onAdd: (entry: Omit<SnippetEntry, "id">) => void;
-	onRemove: (id: string) => void;
 	onClearAll?: () => void;
+	onRemove: (id: string) => void;
 }
 
 export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: SnippetsTableProps) {

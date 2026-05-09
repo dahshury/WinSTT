@@ -5,14 +5,14 @@ import type { ReactNode } from "react";
 import { InfoTooltip } from "@/shared/ui/info-tooltip";
 
 export interface FormControlProps {
-	label?: string;
 	caption?: string;
-	error?: string;
-	/** Help text shown in an info-icon tooltip next to the label */
-	tooltip?: string;
+	children: ReactNode;
 	/** Visually dim the label, caption, and children */
 	disabled?: boolean;
-	children: ReactNode;
+	error?: string;
+	label?: string;
+	/** Help text shown in an info-icon tooltip next to the label */
+	tooltip?: string;
 }
 
 export function FormControl({
@@ -42,13 +42,13 @@ export function FormControl({
 			)}
 			<div className={disabled ? "pointer-events-none mt-1.5" : "mt-1.5"}>{children}</div>
 			{error && (
-				<Field.Error
+				<div
 					aria-live="assertive"
 					className="mt-0.5 text-error text-xs-tight leading-[14px]"
 					role="alert"
 				>
 					{error}
-				</Field.Error>
+				</div>
 			)}
 		</Field.Root>
 	);

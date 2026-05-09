@@ -21,12 +21,86 @@ function getRendererRouteUrl(route: string): string {
 	return new URL(normalizedRoute, `${getRendererBaseUrl()}/`).toString();
 }
 
-export function createTrayMenuWindow(): BrowserWindow {
-	if (trayMenuWindow && !trayMenuWindow.isDestroyed()) {
-		return trayMenuWindow;
-	}
+function isWindowAlive(win: BrowserWindow | null): win is BrowserWindow {
+	return win !== null && !win.isDestroyed();
+}
 
-	trayMenuWindow = new BrowserWindow({
+function clearFadeTimer(): void {
+	if (fadeTimer) {
+		clearInterval(fadeTimer);
+	}
+	fadeTimer = null;
+}
+
+function moveOffscreen(win: BrowserWindow): void {
+	win.setOpacity(0);
+	win.setPosition(OFFSCREEN, OFFSCREEN);
+}
+
+function hideAliveWindow(win: BrowserWindow | null): void {
+	if (!isWindowAlive(win)) {
+		return;
+	}
+	clearFadeTimer();
+	moveOffscreen(win);
+}
+
+function handleBlur(): void {
+	hideAliveWindow(trayMenuWindow);
+}
+
+function applyTrayMenuStyles(win: BrowserWindow | null | undefined): void {
+	win?.webContents.insertCSS(
+		"html, body { background: transparent !important; overflow: hidden !important; " +
+			"height: 100% !important; width: 100% !important; margin: 0 !important; padding: 0 !important; } " +
+			"body { display: flex !important; align-items: flex-end !important; }"
+	);
+	// Show the window offscreen so it's ready — avoids OS show/hide animations later
+	win?.showInactive();
+}
+
+function handleDidFinishLoad(): void {
+	applyTrayMenuStyles(trayMenuWindow);
+	pageLoaded = true;
+}
+
+function isSameOrigin(url: string, baseUrl: string): boolean {
+	try {
+		return new URL(url).origin === new URL(baseUrl).origin;
+	} catch {
+		return false;
+	}
+}
+
+function handleWillNavigate(event: Electron.Event, url: string): void {
+	if (isSameOrigin(url, getRendererBaseUrl())) {
+		return;
+	}
+	event.preventDefault();
+}
+
+function isHttpUrl(url: string): boolean {
+	return url.startsWith("https://") || url.startsWith("http://");
+}
+
+function handleWindowOpen({ url }: { url: string }): { action: "deny" } {
+	if (isHttpUrl(url)) {
+		// biome-ignore lint/suspicious/noEmptyBlockStatements: intentional no-op error handler
+		shell.openExternal(url).catch(() => {});
+	}
+	return { action: "deny" };
+}
+
+function logTrayMenuLoadError(error: unknown): void {
+	dbg(
+		"tray-menu",
+		"Failed to load tray menu window:",
+		error instanceof Error ? error.message : String(error)
+	);
+}
+
+function buildTrayMenuWindow(): BrowserWindow {
+	return new BrowserWindow({
 		width: 260,
 		height: 290,
 		x: OFFSCREEN,
@@ -45,143 +119,158 @@ export function createTrayMenuWindow(): BrowserWindow {
 			sandbox: true,
 		},
 	});
+}
 
+function attachTrayMenuListeners(win: BrowserWindow): void {
 	// Protect against navigation to untrusted origins
-	trayMenuWindow.webContents.on("will-navigate", (event, url) => {
-		try {
-			const urlOrigin = new URL(url).origin;
-			const baseOrigin = new URL(getRendererBaseUrl()).origin;
-			if (urlOrigin === baseOrigin) {
-				return;
-			}
-		} catch {
-			// Invalid URL — block
-		}
-		event.preventDefault();
-	});
-
-	trayMenuWindow.webContents.setWindowOpenHandler(({ url }) => {
-		if (url.startsWith("https://") || url.startsWith("http://")) {
-			// biome-ignore lint/suspicious/noEmptyBlockStatements: intentional no-op error handler
-			shell.openExternal(url).catch(() => {});
-		}
-		return { action: "deny" };
-	});
-
-	trayMenuWindow.webContents.once("did-finish-load", () => {
-		trayMenuWindow?.webContents.insertCSS(
-			"html, body { background: transparent !important; overflow: hidden !important; " +
-				"height: 100% !important; width: 100% !important; margin: 0 !important; padding: 0 !important; } " +
-				"body { display: flex !important; align-items: flex-end !important; }"
-		);
-		// Show the window offscreen so it's ready — avoids OS show/hide animations later
-		trayMenuWindow?.showInactive();
-		pageLoaded = true;
-	});
-
+	win.webContents.on("will-navigate", handleWillNavigate);
+	win.webContents.setWindowOpenHandler(handleWindowOpen);
+	win.webContents.once("did-finish-load", handleDidFinishLoad);
 	// Load the tray menu page from the renderer server.
-	trayMenuWindow.loadURL(getRendererRouteUrl("/tray-menu")).catch((error) => {
-		dbg(
-			"tray-menu",
-			"Failed to load tray menu window:",
-			error instanceof Error ? error.message : String(error)
-		);
-	});
-
+	win.loadURL(getRendererRouteUrl("/tray-menu")).catch(logTrayMenuLoadError);
 	// When the menu loses focus, move it offscreen
-	trayMenuWindow.on("blur", () => {
-		if (trayMenuWindow && !trayMenuWindow.isDestroyed()) {
-			if (fadeTimer) {
-				clearInterval(fadeTimer);
-			}
-			trayMenuWindow.setOpacity(0);
-			trayMenuWindow.setPosition(OFFSCREEN, OFFSCREEN);
-		}
-	});
+	win.on("blur", handleBlur);
+}
 
+export function createTrayMenuWindow(): BrowserWindow {
+	if (isWindowAlive(trayMenuWindow)) {
+		return trayMenuWindow;
+	}
+	trayMenuWindow = buildTrayMenuWindow();
+	attachTrayMenuListeners(trayMenuWindow);
 	return trayMenuWindow;
 }
 
-function fadeIn(win: BrowserWindow): void {
-	if (fadeTimer) {
-		clearInterval(fadeTimer);
+function stepFadeIn(win: BrowserWindow, opacity: number): number {
+	const next = Math.min(1, opacity + 0.125);
+	win.setOpacity(next);
+	if (next >= 1) {
+		clearFadeTimer();
 	}
+	return next;
+}
+
+function fadeIn(win: BrowserWindow): void {
+	clearFadeTimer();
 	let opacity = 0;
 	win.setOpacity(0);
 	fadeTimer = setInterval(() => {
-		opacity = Math.min(1, opacity + 0.125);
-		win.setOpacity(opacity);
-		if (opacity >= 1) {
-			if (fadeTimer) {
-				clearInterval(fadeTimer);
-			}
-			fadeTimer = null;
-		}
+		opacity = stepFadeIn(win, opacity);
 	}, 10);
 }
 
-export function showTrayMenuAt(x: number, y: number): void {
-	const menu = createTrayMenuWindow();
+interface MenuPosition {
+	x: number;
+	y: number;
+}
 
-	if (!pageLoaded) {
-		menu.webContents.once("did-finish-load", () => {
-			showTrayMenuAt(x, y);
-		});
-		return;
-	}
+function clampToWorkArea(
+	desired: MenuPosition,
+	menuSize: { width: number; height: number },
+	workArea: { x: number; y: number; width: number; height: number }
+): MenuPosition {
+	const maxX = workArea.x + workArea.width - menuSize.width;
+	const maxY = workArea.y + workArea.height - menuSize.height - TASKBAR_MARGIN;
+	const clampedX = Math.min(Math.max(desired.x, workArea.x), maxX);
+	const clampedY = Math.min(Math.max(desired.y, workArea.y), maxY);
+	return { x: clampedX, y: clampedY };
+}
 
+function deferShowUntilLoaded(menu: BrowserWindow, x: number, y: number): void {
+	menu.webContents.once("did-finish-load", () => {
+		showTrayMenuAt(x, y);
+	});
+}
+
+function placeAndShowMenu(menu: BrowserWindow, x: number, y: number): void {
 	const menuBounds = menu.getBounds();
-
-	// Get the display where the cursor is
 	const display = screen.getDisplayNearestPoint({ x, y });
-	const { workArea } = display;
-
-	let menuX = x;
-	let menuY = y;
-
-	// Adjust if menu would go off right edge
-	if (menuX + menuBounds.width > workArea.x + workArea.width) {
-		menuX = workArea.x + workArea.width - menuBounds.width;
-	}
-
-	// Adjust if menu would go off bottom edge (pushes it above the taskbar)
-	if (menuY + menuBounds.height > workArea.y + workArea.height - TASKBAR_MARGIN) {
-		menuY = workArea.y + workArea.height - menuBounds.height - TASKBAR_MARGIN;
-	}
-
-	// Adjust if menu would go off left edge
-	if (menuX < workArea.x) {
-		menuX = workArea.x;
-	}
-
-	// Adjust if menu would go off top edge
-	if (menuY < workArea.y) {
-		menuY = workArea.y;
-	}
-
+	const { x: menuX, y: menuY } = clampToWorkArea({ x, y }, menuBounds, display.workArea);
 	menu.setPosition(menuX, menuY);
 	lastShownAt = { x, y };
 	fadeIn(menu);
 	menu.focus();
 }
 
-export function hideTrayMenu(): void {
-	if (trayMenuWindow && !trayMenuWindow.isDestroyed()) {
-		if (fadeTimer) {
-			clearInterval(fadeTimer);
-		}
-		trayMenuWindow.setOpacity(0);
-		trayMenuWindow.setPosition(OFFSCREEN, OFFSCREEN);
+export function showTrayMenuAt(x: number, y: number): void {
+	const menu = createTrayMenuWindow();
+	if (!pageLoaded) {
+		deferShowUntilLoaded(menu, x, y);
+		return;
 	}
+	placeAndShowMenu(menu, x, y);
+}
+
+export function hideTrayMenu(): void {
+	hideAliveWindow(trayMenuWindow);
 	lastShownAt = null;
 }
 
 function isMenuVisible(): boolean {
-	if (!trayMenuWindow || trayMenuWindow.isDestroyed()) {
+	if (!isWindowAlive(trayMenuWindow)) {
 		return false;
 	}
 	const [, posY] = trayMenuWindow.getPosition();
 	return posY !== OFFSCREEN;
+}
+
+function normalizeResizePayload(payload: { width: number; height: number }): {
+	width: number;
+	height: number;
+} {
+	return {
+		width: Math.max(1, Math.ceil(payload.width)),
+		height: Math.max(1, Math.ceil(payload.height)),
+	};
+}
+
+function sizeUnchanged(
+	current: { width: number; height: number },
+	next: { width: number; height: number }
+): boolean {
+	return current.width === next.width && current.height === next.height;
+}
+
+function reanchorMenuIfVisible(): void {
+	if (isMenuVisible() && lastShownAt) {
+		showTrayMenuAt(lastShownAt.x, lastShownAt.y);
+	}
+}
+
+function applyResize(win: BrowserWindow, payload: { width: number; height: number }): void {
+	const next = normalizeResizePayload(payload);
+	if (sizeUnchanged(win.getBounds(), next)) {
+		return;
+	}
+	win.setSize(next.width, next.height);
+	// If the menu is currently shown, re-apply positioning so the
+	// new size is anchored correctly to the original cursor point.
+	reanchorMenuIfVisible();
+}
+
+function handleResize(
+	_event: Electron.IpcMainEvent,
+	payload: { width: number; height: number }
+): void {
+	if (!isWindowAlive(trayMenuWindow)) {
+		return;
+	}
+	applyResize(trayMenuWindow, payload);
+}
+
+function destroyTrayMenuWindow(): void {
+	if (isWindowAlive(trayMenuWindow)) {
+		trayMenuWindow.destroy();
+	}
+	trayMenuWindow = null;
+	pageLoaded = false;
+}
+
+function teardownTrayMenu(closeHandler: () => void): void {
+	ipcMain.off("tray-menu:close", closeHandler);
+	ipcMain.off("tray-menu:resize", handleResize);
+	clearFadeTimer();
+	destroyTrayMenuWindow();
 }
 
 export function setupTrayMenuHandlers(): () => void {
@@ -192,40 +281,24 @@ export function setupTrayMenuHandlers(): () => void {
 		hideTrayMenu();
 	};
 
-	const resizeHandler = (
-		_event: Electron.IpcMainEvent,
-		payload: { width: number; height: number }
-	) => {
-		if (!trayMenuWindow || trayMenuWindow.isDestroyed()) {
-			return;
-		}
-		const width = Math.max(1, Math.ceil(payload.width));
-		const height = Math.max(1, Math.ceil(payload.height));
-		const current = trayMenuWindow.getBounds();
-		if (current.width === width && current.height === height) {
-			return;
-		}
-		trayMenuWindow.setSize(width, height);
-		// If the menu is currently shown, re-apply positioning so the
-		// new size is anchored correctly to the original cursor point.
-		if (isMenuVisible() && lastShownAt) {
-			showTrayMenuAt(lastShownAt.x, lastShownAt.y);
-		}
-	};
-
 	ipcMain.on("tray-menu:close", closeHandler);
-	ipcMain.on("tray-menu:resize", resizeHandler);
+	ipcMain.on("tray-menu:resize", handleResize);
 
 	return () => {
-		ipcMain.off("tray-menu:close", closeHandler);
-		ipcMain.off("tray-menu:resize", resizeHandler);
-		if (fadeTimer) {
-			clearInterval(fadeTimer);
-		}
-		if (trayMenuWindow && !trayMenuWindow.isDestroyed()) {
-			trayMenuWindow.destroy();
-		}
-		trayMenuWindow = null;
-		pageLoaded = false;
+		teardownTrayMenu(closeHandler);
 	};
 }
+
+export const __tray_menu_window_test_helpers__ = {
+	isWindowAlive,
+	clearFadeTimer,
+	moveOffscreen,
+	hideAliveWindow,
+	isSameOrigin,
+	isHttpUrl,
+	handleWindowOpen,
+	clampToWorkArea,
+	stepFadeIn,
+	normalizeResizePayload,
+	sizeUnchanged,
+};

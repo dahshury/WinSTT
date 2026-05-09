@@ -63,9 +63,10 @@ export function usePushToTalk(): void {
 			}
 			setPressed(true);
 
+			// The server WS handler bundles `wakeup()` with `set_microphone(true)`,
+			// so one frame per press is enough.
 			if (mode === "ptt") {
 				sttCallMethod("set_microphone", [true]);
-				sttCallMethod("wakeup");
 			} else {
 				const nowActive = !isActiveRef.current;
 				isActiveRef.current = nowActive;
@@ -73,7 +74,6 @@ export function usePushToTalk(): void {
 
 				if (nowActive) {
 					sttCallMethod("set_microphone", [true]);
-					sttCallMethod("wakeup");
 				} else {
 					sttCallMethod("set_microphone", [false]);
 				}

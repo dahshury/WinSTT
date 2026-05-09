@@ -12,6 +12,7 @@
 import { type ComponentPropsWithoutRef, type CSSProperties, useEffect, useRef } from "react";
 
 const PRECISIONS = ["lowp", "mediump", "highp"];
+const EMPTY_CONTEXT_ATTRIBUTES: Record<string, unknown> = {};
 const FS_MAIN_SHADER = `\nvoid main(void){
     vec4 color = vec4(0.0,0.0,0.0,1.0);
     mainImage( color, gl_FragCoord.xy );
@@ -131,17 +132,17 @@ type Uniform = { type: string; value: number[] | number };
 export type Uniforms = Record<string, Uniform>;
 
 export interface ReactShaderToyProps {
-	fs: string;
-	vs?: string;
-	uniforms?: Uniforms;
+	animateWhenNotVisible?: boolean;
 	clearColor?: [number, number, number, number];
-	precision?: "highp" | "lowp" | "mediump";
-	style?: CSSProperties;
 	contextAttributes?: Record<string, unknown>;
 	devicePixelRatio?: number;
+	fs: string;
 	onError?: (error: string) => void;
 	onWarning?: (warning: string) => void;
-	animateWhenNotVisible?: boolean;
+	precision?: "highp" | "lowp" | "mediump";
+	style?: CSSProperties;
+	uniforms?: Uniforms;
+	vs?: string;
 }
 
 export function ReactShaderToy({
@@ -151,7 +152,7 @@ export function ReactShaderToy({
 	clearColor = [0, 0, 0, 1],
 	precision = "highp",
 	style,
-	contextAttributes = {},
+	contextAttributes = EMPTY_CONTEXT_ATTRIBUTES,
 	devicePixelRatio = 1,
 	onError = console.error,
 	onWarning = console.warn,

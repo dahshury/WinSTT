@@ -1,12 +1,12 @@
 import { create } from "zustand";
 
 interface HotkeyState {
-	isPressed: boolean;
-	isActive: boolean;
 	accelerator: string;
-	setPressed: (pressed: boolean) => void;
-	setActive: (active: boolean) => void;
+	isActive: boolean;
+	isPressed: boolean;
 	setAccelerator: (accelerator: string) => void;
+	setActive: (active: boolean) => void;
+	setPressed: (pressed: boolean) => void;
 }
 
 export const useHotkeyStore = create<HotkeyState>()((set) => ({

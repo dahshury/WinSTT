@@ -38,6 +38,8 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 	const ephemeral = useTranscriptionStore((s) => s.ephemeral);
 	const clearEphemeral = useTranscriptionStore((s) => s.clearEphemeral);
 	const isListenMode = useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
+	const showInApp = useSettingsStore((s) => s.settings.general?.showInAppLiveTranscription ?? true);
+	const liveText = showInApp ? currentRealtime : "";
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [now, setNow] = useState(Date.now);
 
@@ -59,18 +61,18 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 	}, [ephemeral, ephemeralOpacity, clearEphemeral]);
 
 	// Auto-scroll to bottom in listen mode when content changes.
-	// items.length and currentRealtime are intentional triggers (not used in the body).
+	// items.length and liveText are intentional triggers (not used in the body).
 	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional scroll triggers
 	useEffect(() => {
 		if (isListenMode && scrollRef.current) {
 			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
 		}
-	}, [isListenMode, items.length, currentRealtime]);
+	}, [isListenMode, items.length, liveText]);
 
 	const showEphemeral = ephemeral !== null && ephemeralOpacity > 0;
 
 	if (isListenMode) {
-		const hasContent = items.length > 0 || currentRealtime || showEphemeral;
+		const hasContent = items.length > 0 || liveText || showEphemeral;
 		if (!hasContent) {
 			return null;
 		}
@@ -101,9 +103,9 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 							</p>
 						);
 					})}
-					{currentRealtime && (
+					{liveText && (
 						<p className="max-w-full text-center font-sans text-body text-foreground/60 italic leading-snug">
-							{currentRealtime}
+							{liveText}
 						</p>
 					)}
 					{showEphemeral && ephemeral && (
@@ -121,7 +123,7 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 
 	// Normal mode — show last 3 items with discrete opacity + time-based fade
 	const visibleItems = items.slice(-VISIBLE_COUNT);
-	const hasContent = visibleItems.length > 0 || currentRealtime || showEphemeral;
+	const hasContent = visibleItems.length > 0 || liveText || showEphemeral;
 
 	if (!hasContent) {
 		return null;
@@ -152,9 +154,9 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 					</p>
 				);
 			})}
-			{currentRealtime && (
+			{liveText && (
 				<p className="max-w-full text-center font-sans text-body text-foreground/60 italic leading-snug">
-					{currentRealtime}
+					{liveText}
 				</p>
 			)}
 			{showEphemeral && ephemeral && (

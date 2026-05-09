@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import {
 	hotkeyStartRecording,
 	hotkeyStopRecording,
@@ -8,50 +8,85 @@ import {
 	onHotkeyRecordingUpdate,
 } from "@/shared/api/ipc-client";
 
+interface UseKeyRecorderOptions {
+	onKeyRecorded?: (key: string) => void;
+}
+
 interface UseKeyRecorderReturn {
-	recording: boolean;
 	key: string | null;
 	liveKeys: string[];
+	recording: boolean;
 	startRecording: () => void;
 	stopRecording: () => void;
 }
 
-export function useKeyRecorder(): UseKeyRecorderReturn {
-	const [recording, setRecording] = useState(false);
-	const [key, setKey] = useState<string | null>(null);
-	const [liveKeys, setLiveKeys] = useState<string[]>([]);
+interface RecorderState {
+	key: string | null;
+	liveKeys: string[];
+	recording: boolean;
+}
+
+type RecorderAction =
+	| { type: "start" }
+	| { type: "stop" }
+	| { type: "live"; keys: string[] }
+	| { type: "done"; combo: string | null };
+
+const INITIAL_STATE: RecorderState = { key: null, liveKeys: [], recording: false };
+
+function recorderReducer(state: RecorderState, action: RecorderAction): RecorderState {
+	switch (action.type) {
+		case "start":
+			return { key: null, liveKeys: [], recording: true };
+		case "stop":
+			return { ...state, recording: false };
+		case "live":
+			return { ...state, liveKeys: action.keys };
+		case "done":
+			return {
+				key: action.combo ?? state.key,
+				liveKeys: [],
+				recording: false,
+			};
+		default:
+			return state;
+	}
+}
+
+export function useKeyRecorder({
+	onKeyRecorded,
+}: UseKeyRecorderOptions = {}): UseKeyRecorderReturn {
+	const [state, dispatch] = useReducer(recorderReducer, INITIAL_STATE);
 	const recordingRef = useRef(false);
+	const onKeyRecordedRef = useRef(onKeyRecorded);
+	onKeyRecordedRef.current = onKeyRecorded;
 
 	const startRecording = useCallback(() => {
-		setRecording(true);
-		setKey(null);
-		setLiveKeys([]);
 		recordingRef.current = true;
+		dispatch({ type: "start" });
 		hotkeyStartRecording();
 	}, []);
 
 	const stopRecording = useCallback(() => {
 		if (recordingRef.current) {
 			recordingRef.current = false;
-			setRecording(false);
+			dispatch({ type: "stop" });
 			hotkeyStopRecording();
-			// liveKeys kept until done event clears them
 		}
 	}, []);
 
 	useEffect(() => {
 		const unsubUpdate = onHotkeyRecordingUpdate((keys) => {
 			if (recordingRef.current) {
-				setLiveKeys(keys);
+				dispatch({ type: "live", keys });
 			}
 		});
 
 		const unsubDone = onHotkeyRecordingDone((combo) => {
 			recordingRef.current = false;
-			setRecording(false);
-			setLiveKeys([]);
+			dispatch({ type: "done", combo });
 			if (combo) {
-				setKey(combo);
+				onKeyRecordedRef.current?.(combo);
 			}
 		});
 
@@ -61,5 +96,11 @@ export function useKeyRecorder(): UseKeyRecorderReturn {
 		};
 	}, []);
 
-	return { recording, key, liveKeys, startRecording, stopRecording };
+	return {
+		recording: state.recording,
+		key: state.key,
+		liveKeys: state.liveKeys,
+		startRecording,
+		stopRecording,
+	};
 }

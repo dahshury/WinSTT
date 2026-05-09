@@ -14,46 +14,78 @@ import { muteSystemAudio, unmuteSystemAudio } from "./audio-mute";
 import { processText } from "./llm";
 import { hideOverlay, showOverlay } from "./overlay";
 
+function extractEventText(event: Record<string, unknown>): string {
+	return String(event.text ?? "");
+}
+
+function hasLlmModel(provider: unknown): boolean {
+	if (provider === "openrouter") {
+		return Boolean(getStoreValue("llm.openrouterApiKey"));
+	}
+	return Boolean(getStoreValue("llm.model"));
+}
+
+function isLlmConfigured(): boolean {
+	const enabled = getStoreValue("llm.enabled");
+	return enabled === true && hasLlmModel(getStoreValue("llm.provider"));
+}
+
+async function tryLlmProcess(text: string): Promise<string> {
+	try {
+		const out = await processText(text);
+		dbg("relay", `LLM processed: ${out.slice(0, 80)}`);
+		return out;
+	} catch (err) {
+		dbg("relay", "LLM processing failed, using original:", String(err));
+		return text;
+	}
+}
+
+function maybeRunLlm(text: string): Promise<string> {
+	if (!isLlmConfigured()) {
+		return Promise.resolve(text);
+	}
+	return tryLlmProcess(text);
+}
+
+function notifyEmptyResult(mode: unknown, safeSend: SafeSend): void {
+	if (mode !== "listen") {
+		dbg("relay", "fullSentence: empty result, treating as no_audio_detected");
+		safeSend("stt:no-audio-detected");
+	}
+}
+
+function pasteIfDictating(mode: unknown, text: string): void {
+	if (mode !== "listen") {
+		pasteText(`${text} `);
+	}
+}
+
 async function handleFullSentence(
 	event: Record<string, unknown>,
 	safeSend: SafeSend
 ): Promise<void> {
-	const rawText = String(event.text ?? "");
+	const rawText = extractEventText(event);
 	const mode = getStoreValue("general.recordingMode");
 
 	// Empty/whitespace-only result means VAD found no transcribable audio.
 	// Surface this as a "no audio detected" hint instead of an empty subtitle.
 	if (rawText.trim().length === 0) {
-		if (mode !== "listen") {
-			dbg("relay", "fullSentence: empty result, treating as no_audio_detected");
-			safeSend("stt:no-audio-detected");
-		}
+		notifyEmptyResult(mode, safeSend);
 		return;
 	}
 
-	let processed = applyPostProcessing(rawText);
-
-	const llmEnabled = getStoreValue("llm.enabled");
-	const llmModel = getStoreValue("llm.model");
-	const llmPreset = getStoreValue("llm.preset");
-	const llmEndpoint = getStoreValue("llm.endpoint");
-	const llmTimeout = getStoreValue("llm.timeout");
-
-	if (llmEnabled && llmModel) {
-		try {
-			processed = await processText(processed, llmModel, llmPreset, llmEndpoint, llmTimeout);
-			dbg("relay", `LLM processed: ${processed.slice(0, 80)}`);
-		} catch (err) {
-			dbg("relay", "LLM processing failed, using original:", String(err));
-		}
-	}
+	const processed = await maybeRunLlm(applyPostProcessing(rawText));
 
 	dbg("relay", `fullSentence: text=${JSON.stringify(processed)} mode=${mode}`);
 	safeSend("stt:full-sentence", { text: processed });
 	// Skip auto-paste in listen mode (passive monitoring, not dictation)
-	if (mode !== "listen") {
-		pasteText(`${processed} `);
-	}
+	pasteIfDictating(mode, processed);
+}
+
+function shouldMuteForDictation(): boolean {
+	const enabled = getStoreValue("general.muteSystemAudioWhileDictating");
+	return enabled === true && getStoreValue("general.recordingMode") !== "listen";
 }
 
 function handleRecordingStart(safeSend: SafeSend): { muted: boolean; attempted: boolean } {
@@ -61,10 +93,7 @@ function handleRecordingStart(safeSend: SafeSend): { muted: boolean; attempted: 
 	onRecordingStart();
 	showOverlay();
 	// Skip mute in listen mode — would silence the audio being transcribed
-	if (
-		getStoreValue("general.muteSystemAudioWhileDictating") &&
-		getStoreValue("general.recordingMode") !== "listen"
-	) {
+	if (shouldMuteForDictation()) {
 		return { muted: muteSystemAudio(), attempted: true };
 	}
 	return { muted: false, attempted: false };
@@ -107,51 +136,126 @@ function handleRecordingStop(wasMuted: boolean, safeSend: SafeSend): boolean {
 	return wasMuted;
 }
 
+type SimpleHandler = (event: Record<string, unknown>, safeSend: SafeSend) => void;
+
+const SIMPLE_RELAY_HANDLERS: Record<string, SimpleHandler> = {
+	no_audio_detected: (_e, send) => send("stt:no-audio-detected"),
+	vad_detect_start: (_e, send) => send("stt:vad-start"),
+	vad_detect_stop: (_e, send) => send("stt:vad-stop"),
+	transcription_start: (e, send) =>
+		send("stt:transcription-start", { audioBase64: e.audio_bytes_base64 }),
+	wakeword_detected: (_e, send) => send("stt:wakeword-detected"),
+	wakeword_detection_start: (_e, send) => send("stt:wakeword-detection-start"),
+	wakeword_detection_end: (_e, send) => send("stt:wakeword-detection-end"),
+	model_download_start: (e, send) => send("stt:model-download-start", { model: e.model }),
+	model_download_complete: (e, send) =>
+		send("stt:model-download-complete", {
+			model: e.model,
+			cancelled: e.cancelled ?? false,
+		}),
+	loopback_started: (e, send) => send("stt:loopback-started", { deviceName: e.deviceName }),
+	loopback_stopped: (_e, send) => send("stt:loopback-stopped"),
+};
+
 function handleSimpleRelayEvent(
 	type: string,
 	event: Record<string, unknown>,
 	safeSend: SafeSend
 ): boolean {
-	switch (type) {
-		case "no_audio_detected":
-			safeSend("stt:no-audio-detected");
-			return true;
-		case "vad_detect_start":
-			safeSend("stt:vad-start");
-			return true;
-		case "vad_detect_stop":
-			safeSend("stt:vad-stop");
-			return true;
-		case "transcription_start":
-			safeSend("stt:transcription-start", { audioBase64: event.audio_bytes_base64 });
-			return true;
-		case "wakeword_detected":
-			safeSend("stt:wakeword-detected");
-			return true;
-		case "wakeword_detection_start":
-			safeSend("stt:wakeword-detection-start");
-			return true;
-		case "wakeword_detection_end":
-			safeSend("stt:wakeword-detection-end");
-			return true;
-		case "model_download_start":
-			safeSend("stt:model-download-start", { model: event.model });
-			return true;
-		case "model_download_complete":
-			safeSend("stt:model-download-complete", {
-				model: event.model,
-				cancelled: event.cancelled ?? false,
-			});
-			return true;
-		case "loopback_started":
-			safeSend("stt:loopback-started", { deviceName: event.deviceName });
-			return true;
-		case "loopback_stopped":
-			safeSend("stt:loopback-stopped");
-			return true;
-		default:
-			return false;
+	const handler = SIMPLE_RELAY_HANDLERS[type];
+	if (!handler) {
+		return false;
 	}
+	handler(event, safeSend);
+	return true;
+}
+
+const OVERLAY_RELEVANT_SIMPLE_TYPES = new Set([
+	"no_audio_detected",
+	"vad_detect_start",
+	"vad_detect_stop",
+]);
+
+interface DispatchContext {
+	broadcast: SafeSend;
+	getMuted: () => boolean;
+	mainSend: SafeSend;
+	setMuted: (value: boolean) => void;
+}
+
+type DataEventHandler = (
+	event: Record<string, unknown>,
+	ctx: DispatchContext
+) => Promise<void> | void;
+
+const DATA_EVENT_HANDLERS: Record<string, DataEventHandler> = {
+	realtime: (event, ctx) => handleRealtimeEvent(event, ctx.broadcast),
+	fullSentence: (event, ctx) => handleFullSentence(event, ctx.broadcast),
+	recording_start: (_event, ctx) => {
+		const result = handleRecordingStart(ctx.broadcast);
+		if (result.attempted) {
+			ctx.setMuted(result.muted);
+		}
+	},
+	recording_stop: (_event, ctx) => {
+		ctx.setMuted(handleRecordingStop(ctx.getMuted(), ctx.broadcast));
+	},
+	audio_level: (event, ctx) => handleAudioLevel(event, ctx.broadcast),
+	model_download_progress: (event, ctx) => handleModelDownloadProgress(event, ctx.mainSend),
+};
+
+function pickSenderForSimpleEvent(type: string, ctx: DispatchContext): SafeSend {
+	return OVERLAY_RELEVANT_SIMPLE_TYPES.has(type) ? ctx.broadcast : ctx.mainSend;
+}
+
+async function dispatchDataEvent(
+	type: string,
+	event: Record<string, unknown>,
+	ctx: DispatchContext
+): Promise<void> {
+	const handler = DATA_EVENT_HANDLERS[type];
+	if (handler) {
+		await handler(event, ctx);
+		return;
+	}
+	// no_audio_detected and vad_* are overlay-relevant; the rest stay main-only.
+	handleSimpleRelayEvent(type, event, pickSenderForSimpleEvent(type, ctx));
+}
+
+function broadcastToAll(channel: string, ...args: unknown[]): void {
+	for (const bw of BrowserWindow.getAllWindows()) {
+		if (!bw.isDestroyed()) {
+			bw.webContents.send(channel, ...args);
+		}
+	}
+}
+
+function logServerRealtimeWarning(val: unknown): void {
+	dbgVerbose("relay", "SERVER reports enable_realtime_transcription=", val);
+	if (!val) {
+		dbg(
+			"relay",
+			"WARNING: Server has realtime transcription DISABLED. " +
+				"Pass --enable_realtime_transcription when starting the server, " +
+				"or restart via the Electron app."
+		);
+	}
+}
+
+function logServerRealtimeError(err: unknown): void {
+	dbg("relay", "Could not query server realtime config:", String(err));
+}
+
+function logServerRealtimeConfig(): void {
+	dbgVerbose(
+		"relay",
+		"Store realtime config: enableRealtimeTranscription=",
+		store.get("quality.enableRealtimeTranscription"),
+		"useMainModelForRealtime=",
+		store.get("quality.useMainModelForRealtime"),
+		"realtimeModel=",
+		store.get("model.realtimeModel")
+	);
 }
 
 export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
@@ -182,51 +286,16 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 	// state, VAD, no-audio hint). Broadcast to every renderer so the overlay
 	// receives them alongside the main window.
 	const broadcast: SafeSend = (channel: string, ...args: unknown[]) => {
-		for (const bw of BrowserWindow.getAllWindows()) {
-			if (!bw.isDestroyed()) {
-				bw.webContents.send(channel, ...args);
-			}
-		}
+		broadcastToAll(channel, ...args);
 	};
 
-	const dispatchDataEvent = async (type: string, event: Record<string, unknown>): Promise<void> => {
-		if (type === "realtime") {
-			handleRealtimeEvent(event, broadcast);
-			return;
-		}
-		if (type === "fullSentence") {
-			await handleFullSentence(event, broadcast);
-			return;
-		}
-		if (type === "recording_start") {
-			const result = handleRecordingStart(broadcast);
-			if (result.attempted) {
-				didMuteAudio = result.muted;
-			}
-			return;
-		}
-		if (type === "recording_stop") {
-			didMuteAudio = handleRecordingStop(didMuteAudio, broadcast);
-			return;
-		}
-		if (type === "audio_level") {
-			handleAudioLevel(event, broadcast);
-			return;
-		}
-		if (type === "model_download_progress") {
-			handleModelDownloadProgress(event, mainSend);
-			return;
-		}
-		// no_audio_detected and vad_* are overlay-relevant; the rest stay main-only.
-		if (
-			type === "no_audio_detected" ||
-			type === "vad_detect_start" ||
-			type === "vad_detect_stop"
-		) {
-			handleSimpleRelayEvent(type, event, broadcast);
-			return;
-		}
-		handleSimpleRelayEvent(type, event, mainSend);
+	const ctx: DispatchContext = {
+		broadcast,
+		mainSend,
+		getMuted: () => didMuteAudio,
+		setMuted: (value: boolean) => {
+			didMuteAudio = value;
+		},
 	};
 
 	const onDataEvent = async (event: Record<string, unknown>): Promise<void> => {
@@ -238,15 +307,11 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		if (type !== "audio_level") {
 			dbgVerbose("relay", `data-event: ${type}`);
 		}
-		await dispatchDataEvent(type, event);
+		await dispatchDataEvent(type, event, ctx);
 	};
 
 	const broadcastConnectionChange = (connected: boolean) => {
-		for (const bw of BrowserWindow.getAllWindows()) {
-			if (!bw.isDestroyed()) {
-				bw.webContents.send("stt:connection-change", { connected });
-			}
-		}
+		broadcastToAll("stt:connection-change", { connected });
 	};
 
 	const onConnected = () => {
@@ -264,44 +329,20 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 	const onModelCatalog = (models: unknown[]) => {
 		cachedModelCatalog = models;
 		// Broadcast to ALL windows (main + settings) so every renderer gets the catalog
-		for (const bw of BrowserWindow.getAllWindows()) {
-			if (!bw.isDestroyed()) {
-				bw.webContents.send("stt:model-catalog", { models });
-			}
-		}
+		broadcastToAll("stt:model-catalog", { models });
 	};
 
 	const onServerReady = () => {
 		dbg("relay", "Server READY — recorder initialized, sending status=running to renderer");
-		dbgVerbose(
-			"relay",
-			"Store realtime config: enableRealtimeTranscription=",
-			store.get("quality.enableRealtimeTranscription"),
-			"useMainModelForRealtime=",
-			store.get("quality.useMainModelForRealtime"),
-			"realtimeModel=",
-			store.get("model.realtimeModel")
-		);
+		logServerRealtimeConfig();
 		serverIsReady = true;
 		mainSend("stt:server-status", { status: "running" });
 
 		// Diagnostic: query the server's actual realtime transcription config
 		client
 			.getParameter("enable_realtime_transcription")
-			.then((val) => {
-				dbgVerbose("relay", "SERVER reports enable_realtime_transcription=", val);
-				if (!val) {
-					dbg(
-						"relay",
-						"WARNING: Server has realtime transcription DISABLED. " +
-							"Pass --enable_realtime_transcription when starting the server, " +
-							"or restart via the Electron app."
-					);
-				}
-			})
-			.catch((err) => {
-				dbg("relay", "Could not query server realtime config:", String(err));
-			});
+			.then(logServerRealtimeWarning)
+			.catch(logServerRealtimeError);
 	};
 
 	client.on("data-event", onDataEvent);
@@ -322,3 +363,30 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		cleanupPostProcessing();
 	};
 }
+
+export const __relay_test_helpers__ = {
+	extractEventText,
+	hasLlmModel,
+	isLlmConfigured,
+	tryLlmProcess,
+	maybeRunLlm,
+	notifyEmptyResult,
+	pasteIfDictating,
+	shouldMuteForDictation,
+	pickSenderForSimpleEvent,
+	broadcastToAll,
+	logServerRealtimeWarning,
+	logServerRealtimeError,
+	logServerRealtimeConfig,
+	dispatchDataEvent,
+	handleSimpleRelayEvent,
+	handleFullSentence,
+	handleRecordingStart,
+	handleRecordingStop,
+	handleRealtimeEvent,
+	handleAudioLevel,
+	handleModelDownloadProgress,
+	SIMPLE_RELAY_HANDLERS,
+	DATA_EVENT_HANDLERS,
+	OVERLAY_RELEVANT_SIMPLE_TYPES,
+};

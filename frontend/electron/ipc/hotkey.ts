@@ -76,6 +76,12 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		recordingSender = null;
 	};
 
+	const updatePeakSnapshot = () => {
+		if (recordingPressed.size > peakSnapshot.length && recordingPressed.size <= MAX_COMBO_KEYS) {
+			peakSnapshot = [...recordingPressed];
+		}
+	};
+
 	const handleRecordingKeyDown = (code: number) => {
 		// Escape cancels recording
 		if (code === UiohookKey.Escape) {
@@ -85,31 +91,82 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		}
 
 		recordingPressed.add(code);
-
-		// Track the peak set of simultaneously pressed keys (up to max)
-		if (recordingPressed.size > peakSnapshot.length && recordingPressed.size <= MAX_COMBO_KEYS) {
-			peakSnapshot = [...recordingPressed];
-		}
-
-		// Send live preview
+		updatePeakSnapshot();
 		recordingSend("hotkey:recording-update", {
 			keys: codesToNames(peakSnapshot),
 		});
 	};
 
-	/** Check if combo keys were released and fire hotkey:released if needed. */
-	const checkDeferredRelease = () => {
-		if (isActive && !checkCombo()) {
-			isActive = false;
-			dbg("hotkey", "RELEASED (deferred — key released during paste guard)");
-			safeSend("hotkey:released");
-		}
-		if (!comboFullyReleased && targetKeyCodes) {
-			const anyHeld = [...targetKeyCodes].some((c) => pressedKeys.has(c));
-			if (!anyHeld) {
-				comboFullyReleased = true;
+	const allComboKeysReleased = (codes: Set<number>): boolean => {
+		for (const c of codes) {
+			if (pressedKeys.has(c)) {
+				return false;
 			}
 		}
+		return true;
+	};
+
+	const canMarkComboFullyReleased = (): boolean => {
+		if (comboFullyReleased) {
+			return false;
+		}
+		if (!targetKeyCodes) {
+			return false;
+		}
+		return allComboKeysReleased(targetKeyCodes);
+	};
+
+	const updateComboReleaseState = () => {
+		if (canMarkComboFullyReleased()) {
+			comboFullyReleased = true;
+		}
+	};
+
+	const fireDeferredReleaseIfNeeded = () => {
+		if (!isActive || checkCombo()) {
+			return;
+		}
+		isActive = false;
+		dbg("hotkey", "RELEASED (deferred — key released during paste guard)");
+		safeSend("hotkey:released");
+	};
+
+	/** Check if combo keys were released and fire hotkey:released if needed. */
+	const checkDeferredRelease = () => {
+		fireDeferredReleaseIfNeeded();
+		updateComboReleaseState();
+	};
+
+	const logComboKeyDown = (code: number) => {
+		if (!targetKeyCodes?.has(code)) {
+			return;
+		}
+		const name = KEYCODE_TO_NAME[code] ?? `?${code}`;
+		const held = [...pressedKeys].map((c) => KEYCODE_TO_NAME[c] ?? `?${c}`).join("+");
+		const need = [...targetKeyCodes].map((c) => KEYCODE_TO_NAME[c] ?? `?${c}`).join("+");
+		dbgVerbose(
+			"hotkey",
+			`combo-key DOWN: ${name} | held=[${held}] need=[${need}] isActive=${isActive}`
+		);
+	};
+
+	const shouldPlayRecordingSound = (mode: unknown): boolean =>
+		mode !== "listen" && sttClient.isConnected;
+
+	const canActivateCombo = (): boolean => !isActive && comboFullyReleased && checkCombo();
+
+	const tryActivateCombo = () => {
+		if (!canActivateCombo()) {
+			return;
+		}
+		isActive = true;
+		comboFullyReleased = false;
+		const mode = getStoreValue("general.recordingMode");
+		dbg("hotkey", `PRESSED — combo matched, mode=${mode}, connected=${sttClient.isConnected}`);
+		if (shouldPlayRecordingSound(mode)) {
+			playRecordingSound();
+		}
+		safeSend("hotkey:pressed");
 	};
 
 	const onKeyDown = (e: { keycode: number }) => {
@@ -117,82 +174,54 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 			return;
 		}
 		const code = e.keycode;
-
 		if (isRecording) {
 			handleRecordingKeyDown(code);
 			return;
 		}
-
 		// ── Normal hotkey detection ─────────────────────────────────
 		pressedKeys.add(code);
+		logComboKeyDown(code);
+		tryActivateCombo();
+	};
 
-		// Log when a combo key is pressed (diagnose whether uiohook sees it)
-		if (targetKeyCodes?.has(code)) {
-			const name = KEYCODE_TO_NAME[code] ?? `?${code}`;
-			const held = [...pressedKeys].map((c) => KEYCODE_TO_NAME[c] ?? `?${c}`).join("+");
-			const need = [...(targetKeyCodes ?? [])].map((c) => KEYCODE_TO_NAME[c] ?? `?${c}`).join("+");
-			dbgVerbose(
-				"hotkey",
-				`combo-key DOWN: ${name} | held=[${held}] need=[${need}] isActive=${isActive}`
-			);
-		}
+	const handleRecordingKeyUp = (code: number) => {
+		recordingPressed.delete(code);
+		// Send live update (shows currently held keys, peak preserved)
+		recordingSend("hotkey:recording-update", {
+			keys: codesToNames(peakSnapshot),
+		});
+		// Do NOT auto-finalize — wait for explicit stop from renderer
+	};
 
-		if (!isActive && comboFullyReleased && checkCombo()) {
-			isActive = true;
-			comboFullyReleased = false;
-			const mode = getStoreValue("general.recordingMode");
-			dbg("hotkey", `PRESSED — combo matched, mode=${mode}, connected=${sttClient.isConnected}`);
-			// Skip recording sound in listen mode and when server is offline
-			if (mode !== "listen" && sttClient.isConnected) {
-				playRecordingSound();
-			}
-			safeSend("hotkey:pressed");
+	const releaseHotkeyIfNeeded = () => {
+		if (!isActive || checkCombo()) {
+			return;
 		}
+		isActive = false;
+		dbg("hotkey", "RELEASED");
+		safeSend("hotkey:released");
 	};
 
 	const onKeyUp = (e: { keycode: number }) => {
 		const code = e.keycode;
-
-		// ── Recording mode ──────────────────────────────────────────
 		if (isRecording) {
-			recordingPressed.delete(code);
-
-			// Send live update (shows currently held keys, peak preserved)
-			recordingSend("hotkey:recording-update", {
-				keys: codesToNames(peakSnapshot),
-			});
-			// Do NOT auto-finalize — wait for explicit stop from renderer
+			handleRecordingKeyUp(code);
 			return;
 		}
-
 		// Always track physical key releases, even during paste guard.
 		// Synthetic keybd_event releases from the paste script target
 		// specific VK codes (0xA0–0xA5, 0x5B–0x5C) that rarely overlap
 		// with the hotkey combo, but real releases MUST be tracked so
 		// we can fire the deferred hotkey:released when the guard lifts.
 		pressedKeys.delete(code);
-
 		if (pasteGuard) {
 			// Schedule a deferred check — when the guard lifts,
 			// setPasteGuard(false) will call checkDeferredRelease().
 			onPasteGuardLifted = checkDeferredRelease;
 			return;
 		}
-
-		// ── Normal hotkey detection ─────────────────────────────────
-		if (isActive && !checkCombo()) {
-			isActive = false;
-			dbg("hotkey", "RELEASED");
-			safeSend("hotkey:released");
-		}
-
-		// Allow next activation only after ALL combo keys are released
-		if (!comboFullyReleased && targetKeyCodes) {
-			const anyHeld = [...targetKeyCodes].some((c) => pressedKeys.has(c));
-			if (!anyHeld) {
-				comboFullyReleased = true;
-			}
-		}
+		releaseHotkeyIfNeeded();
+		updateComboReleaseState();
 	};
 
 	uIOhook.on("keydown", onKeyDown);
@@ -203,15 +232,25 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		hotkeyStarted = true;
 	}
 
+	const extractAcceleratorString = (acc: unknown): string | null =>
+		typeof acc === "string" && acc !== "" ? acc : null;
+
+	const extractAccelerator = (p: unknown): string | null => {
+		if (!p || typeof p !== "object") {
+			return null;
+		}
+		return extractAcceleratorString((p as { accelerator?: unknown }).accelerator);
+	};
+
 	const handleRegister = (
 		_event: Electron.IpcMainInvokeEvent,
 		payload: { accelerator: string }
 	) => {
-		if (!payload || typeof payload.accelerator !== "string" || !payload.accelerator) {
+		const accelerator = extractAccelerator(payload);
+		if (!accelerator) {
 			dbg("hotkey", "Register FAILED — invalid payload");
 			return false;
 		}
-		const { accelerator } = payload;
 		const codes = parseAccelerator(accelerator);
 		if (!codes) {
 			dbg("hotkey", `Register FAILED — unknown accelerator: "${accelerator}"`);

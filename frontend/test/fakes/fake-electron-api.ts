@@ -19,7 +19,7 @@ export function createFakeElectronApi() {
 				if (handler) {
 					return handler(...args);
 				}
-				return undefined;
+				return;
 			},
 			on(channel: string, callback: IpcHandler) {
 				if (!handlers.has(channel)) {

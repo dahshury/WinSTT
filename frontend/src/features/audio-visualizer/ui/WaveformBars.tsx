@@ -34,12 +34,12 @@ const ACTIVITY_THRESHOLD = 0.02;
 interface WaveLayer {
 	/** Frequency multiplier (higher = more oscillations across width). */
 	freq: number;
+	/** Phase offset. */
+	phase: number;
 	/** Time speed (rad/s). */
 	speed: number;
 	/** Amplitude weight (summed then normalized). */
 	weight: number;
-	/** Phase offset. */
-	phase: number;
 }
 
 const WAVE_LAYERS: WaveLayer[] = [
@@ -170,12 +170,27 @@ function lerpColor(a: string, b: string, t: number): string {
 }
 
 interface RenderParams {
-	targetAmp: number;
 	color: string;
-	strokeAlpha: number;
 	fillAlpha: number;
 	lineWidthMain: number;
 	lineWidthMirror: number;
+	strokeAlpha: number;
+	targetAmp: number;
+}
+
+function computeTargetAmp(
+	isRecording: boolean,
+	isSpeaking: boolean,
+	audioLevel: number,
+	sentencePulse: number
+): number {
+	if (!(isRecording || audioLevel > 0)) {
+		return 0;
+	}
+	const speechContrib = audioLevel * SPEECH_AMP;
+	const vadBoost = isSpeaking ? 0.04 : 0;
+	const pulseContrib = sentencePulse * PULSE_EXTRA_AMP;
+	return IDLE_AMP + speechContrib + vadBoost + pulseContrib;
 }
 
 function computeRenderParams(
@@ -185,14 +200,7 @@ function computeRenderParams(
 	sentencePulse: number,
 	smoothedActivity: number
 ): RenderParams {
-	let targetAmp = 0;
-	if (isRecording || audioLevel > 0) {
-		const speechContrib = audioLevel * SPEECH_AMP;
-		const vadBoost = isSpeaking ? 0.04 : 0;
-		const pulseContrib = sentencePulse * PULSE_EXTRA_AMP;
-		targetAmp = IDLE_AMP + speechContrib + vadBoost + pulseContrib;
-	}
-
+	const targetAmp = computeTargetAmp(isRecording, isSpeaking, audioLevel, sentencePulse);
 	// Smooth color/opacity interpolation based on smoothedActivity
 	const color = lerpColor(IDLE_COLOR, ACCENT, smoothedActivity);
 	const strokeAlpha =
@@ -204,6 +212,68 @@ function computeRenderParams(
 	const lineWidthMirror = 0.5 + 0.5 * smoothedActivity;
 
 	return { targetAmp, color, strokeAlpha, fillAlpha, lineWidthMain, lineWidthMirror };
+}
+
+function getDpr(): number {
+	return window.devicePixelRatio || 1;
+}
+
+function ensureCanvasSize(canvas: HTMLCanvasElement, w: number, h: number, dpr: number): void {
+	const cw = Math.round(w * dpr);
+	const ch = Math.round(h * dpr);
+	if (canvas.width !== cw || canvas.height !== ch) {
+		canvas.width = cw;
+		canvas.height = ch;
+	}
+}
+
+interface CanvasMetrics {
+	ctx: CanvasRenderingContext2D;
+	dpr: number;
+	h: number;
+	w: number;
+}
+
+function getCanvasMetrics(
+	canvas: HTMLCanvasElement,
+	container: HTMLDivElement
+): CanvasMetrics | null {
+	const rect = container.getBoundingClientRect();
+	const dpr = getDpr();
+	const w = rect.width;
+	const h = rect.height;
+	ensureCanvasSize(canvas, w, h, dpr);
+	const ctx = canvas.getContext("2d");
+	if (!ctx) {
+		return null;
+	}
+	return { ctx, w, h, dpr };
+}
+
+function hasAudioInput(isRecording: boolean, audioLevel: number): boolean {
+	return isRecording || audioLevel > 0;
+}
+
+function isAudioActive(isSpeaking: boolean, audioLevel: number): boolean {
+	return isSpeaking || audioLevel > ACTIVITY_THRESHOLD;
+}
+
+function computeActivityTarget(
+	isRecording: boolean,
+	isSpeaking: boolean,
+	audioLevel: number
+): number {
+	return hasAudioInput(isRecording, audioLevel) && isAudioActive(isSpeaking, audioLevel) ? 1 : 0;
+}
+
+function drawBaseline(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+	const midY = h / 2;
+	ctx.beginPath();
+	ctx.moveTo(0, midY);
+	ctx.lineTo(w, midY);
+	ctx.strokeStyle = makeStrokeGradient(ctx, w, STROKE_ALPHA_IDLE, IDLE_COLOR);
+	ctx.lineWidth = 1;
+	ctx.stroke();
 }
 
 function drawFrame(
@@ -240,37 +310,13 @@ export const WaveformBars = memo(function WaveformBars() {
 	const smoothedAmpRef = useRef(0);
 	const smoothedActivityRef = useRef(0);
 
-	const render = useCallback(() => {
-		const canvas = canvasRef.current;
-		const container = containerRef.current;
-		if (!(canvas && container)) {
-			return;
-		}
-
+	const renderFrame = useCallback((metrics: CanvasMetrics) => {
+		const { ctx, w, h, dpr } = metrics;
 		const { isRecording, isSpeaking, audioLevel, sentencePulse } = useVisualizerStore.getState();
-
-		const rect = container.getBoundingClientRect();
-		const w = rect.width;
-		const h = rect.height;
-		const dpr = window.devicePixelRatio || 1;
-		const cw = Math.round(w * dpr);
-		const ch = Math.round(h * dpr);
-		if (canvas.width !== cw || canvas.height !== ch) {
-			canvas.width = cw;
-			canvas.height = ch;
-		}
-
-		const ctx = canvas.getContext("2d");
-		if (!ctx) {
-			return;
-		}
-
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, w, h);
 
-		// Smooth activity: interpolate toward target (1 when active, 0 when idle)
-		const activityTarget =
-			(isRecording || audioLevel > 0) && (isSpeaking || audioLevel > ACTIVITY_THRESHOLD) ? 1 : 0;
+		const activityTarget = computeActivityTarget(isRecording, isSpeaking, audioLevel);
 		const prevActivity = smoothedActivityRef.current;
 		const activity = prevActivity + (activityTarget - prevActivity) * ACTIVITY_SMOOTHING;
 		smoothedActivityRef.current = activity;
@@ -287,21 +333,24 @@ export const WaveformBars = memo(function WaveformBars() {
 		const amp = prevAmp + (params.targetAmp - prevAmp) * AMP_SMOOTHING;
 		smoothedAmpRef.current = amp;
 
-		// Always draw the center baseline
-		const midY = h / 2;
-		ctx.beginPath();
-		ctx.moveTo(0, midY);
-		ctx.lineTo(w, midY);
-		ctx.strokeStyle = makeStrokeGradient(ctx, w, STROKE_ALPHA_IDLE, IDLE_COLOR);
-		ctx.lineWidth = 1;
-		ctx.stroke();
-
+		drawBaseline(ctx, w, h);
 		if (amp >= 0.001) {
 			drawFrame(ctx, w, h, amp, params);
 		}
-
-		rafRef.current = requestAnimationFrame(render);
 	}, []);
+
+	const render = useCallback(() => {
+		const canvas = canvasRef.current;
+		const container = containerRef.current;
+		if (!(canvas && container)) {
+			return;
+		}
+		const metrics = getCanvasMetrics(canvas, container);
+		if (metrics) {
+			renderFrame(metrics);
+		}
+		rafRef.current = requestAnimationFrame(render);
+	}, [renderFrame]);
 
 	useEffect(() => {
 		rafRef.current = requestAnimationFrame(render);
@@ -314,3 +363,18 @@ export const WaveformBars = memo(function WaveformBars() {
 		</div>
 	);
 });
+
+// Test-only exports — pure helpers extracted from the render loop. Not part
+// of the public surface; consumers should use the WaveformBars component.
+export const __waveform_test_helpers__ = {
+	computeTargetAmp,
+	computeRenderParams,
+	computeActivityTarget,
+	hasAudioInput,
+	isAudioActive,
+	getDpr,
+	ensureCanvasSize,
+	getCanvasMetrics,
+	drawBaseline,
+	tracePath,
+};

@@ -75,7 +75,7 @@ def _log_get(name: str, value: str) -> None:
 _UNSET: object = object()
 
 # Commands that can be handled before the recorder is ready
-PRE_READY_COMMANDS: set[str] = {"list_models"}
+PRE_READY_COMMANDS: set[str] = {"list_models", "list_input_devices"}
 
 
 async def control_handler(websocket: ServerConnection, state: ServerState) -> None:
@@ -138,6 +138,7 @@ async def _dispatch_command(
         "call_method": _handle_call_method,
         "transcribe_file": _handle_transcribe_file,
         "list_models": _handle_list_models,
+        "list_input_devices": _handle_list_input_devices,
         "list_loopback_devices": _handle_list_loopback_devices,
         "start_loopback": _handle_start_loopback,
         "stop_loopback": _handle_stop_loopback,
@@ -269,8 +270,22 @@ async def _handle_call_method(ws: ServerConnection, state: ServerState, data: di
             args = data.get("args", [])
             kwargs = data.get("kwargs", {})
             method(*args, **kwargs)
-            arg_repr = ", ".join(repr(a) for a in args) if args else None
-            _log_call(method_name, arg_repr)
+            # PTT/toggle press: a remote `set_microphone(True)` always wants to also
+            # begin a listening session. Bundling here lets the renderer send one
+            # WebSocket frame per record start instead of two — fewer round trips,
+            # one log line, and identical semantics. Loopback callers go through
+            # `recorder.set_microphone(True)` directly (not via WebSocket) and so
+            # are unaffected.
+            wakeup = getattr(state.recorder, "wakeup", None)
+            wakeup_paired = (
+                method_name == "set_microphone" and len(args) == 1 and args[0] is True and callable(wakeup)
+            )
+            if wakeup_paired and callable(wakeup):
+                wakeup()
+                _log_call("set_microphone+wakeup", "True")
+            else:
+                arg_repr = ", ".join(repr(a) for a in args) if args else None
+                _log_call(method_name, arg_repr)
             await ws.send(json.dumps({"status": "success", "message": f"Method {method_name} called"}))
         else:
             print(f"{bcolors.WARNING}Recorder does not have method {method_name}{bcolors.ENDC}")
@@ -298,6 +313,72 @@ async def _handle_list_models(ws: ServerConnection, state: ServerState, data: di
 
     catalog = ModelCatalog()
     await ws.send(json.dumps({"status": "success", "command": "list_models", "models": catalog.to_dicts()}))
+
+
+async def _handle_list_input_devices(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    request_id = data.get("request_id")
+    try:
+        devices = _enumerate_input_devices()
+        response_payload: dict[str, Any] = {"status": "success", "value": devices}
+        if request_id is not None:
+            response_payload["request_id"] = request_id
+        await ws.send(json.dumps(response_payload))
+    except Exception as e:
+        error_msg = f"Failed to list input devices: {type(e).__name__}: {e}"
+        print(f"{bcolors.FAIL}{error_msg}{bcolors.ENDC}")
+        error_payload: dict[str, Any] = {
+            "status": "error",
+            "message": error_msg,
+            "value": [],
+        }
+        if request_id is not None:
+            error_payload["request_id"] = request_id
+        await ws.send(json.dumps(error_payload))
+
+
+def _enumerate_input_devices() -> list[dict[str, Any]]:
+    """Return PyAudio input-capable devices (the index space the recorder uses).
+
+    Indices match what PyAudioSource passes to ``pa.open(input_device_index=...)``,
+    so the Settings UI must use these — Windows MMDevice indices do NOT match.
+    Default device flagged via ``get_default_input_device_info``; missing default
+    (no input hardware) is non-fatal.
+
+    NOTE: must import plain ``pyaudio`` (NOT ``pyaudiowpatch``). The two ship
+    different bundled PortAudio builds and their device-index spaces diverge —
+    pyaudiowpatch replaces WDM-KS entries with loopback entries. PyAudioSource
+    opens via ``pyaudio``, so the enumeration we hand the UI must come from the
+    same package or the user's pick will address a different device.
+    """
+    import pyaudio
+
+    audio = pyaudio.PyAudio()
+    try:
+        try:
+            default_index: int = int(audio.get_default_input_device_info()["index"])
+        except Exception:
+            default_index = -1
+        devices: list[dict[str, Any]] = []
+        for i in range(audio.get_device_count()):
+            try:
+                dev: dict[str, Any] = audio.get_device_info_by_index(i)
+            except Exception:
+                continue
+            if int(dev.get("maxInputChannels", 0)) <= 0:
+                continue
+            devices.append(
+                {
+                    "index": int(dev["index"]),
+                    "name": str(dev.get("name", f"Device {i}")),
+                    "isDefault": int(dev["index"]) == default_index,
+                    "defaultSampleRate": int(dev.get("defaultSampleRate", 0)),
+                    "hostApi": int(dev.get("hostApi", -1)),
+                    "maxInputChannels": int(dev.get("maxInputChannels", 0)),
+                }
+            )
+        return devices
+    finally:
+        audio.terminate()
 
 
 async def _handle_list_loopback_devices(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:

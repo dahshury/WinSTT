@@ -1,1 +1,5 @@
-export { LlmSettingsPanel } from "./ui/LlmSettingsPanel";
+export {
+	type LlmOllamaManagerSlotProps,
+	LlmSettingsPanel,
+	type LlmSettingsPanelProps,
+} from "./ui/LlmSettingsPanel";

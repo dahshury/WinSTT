@@ -9,9 +9,9 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 
 export interface EncryptedIpcPayload {
 	algorithm: typeof IPC_PAYLOAD_ALGORITHM;
-	iv: string;
-	ciphertext: string;
 	authTag: string;
+	ciphertext: string;
+	iv: string;
 }
 
 function assertKeyLength(key: Uint8Array): void {

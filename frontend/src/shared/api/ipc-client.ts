@@ -7,9 +7,13 @@ import type {
 	AppSettingsSaveInput,
 	AudioDevice,
 	GpuInfo,
+	OllamaDeleteResult,
 	OllamaDetectResult,
 	OllamaModel,
+	OllamaPullProgress,
+	OllamaPullResult,
 	OllamaScanResult,
+	OpenRouterScanResult,
 	ServerStatus,
 } from "./models";
 import { decodeSettingsPayload } from "./settings-codec";
@@ -83,7 +87,7 @@ function on(channel: string, callback: (...args: unknown[]) => void): () => void
 	return noop;
 }
 
-export { send as ipcSend, invoke as ipcInvoke, on as ipcOn };
+export { invoke as ipcInvoke, on as ipcOn, send as ipcSend };
 
 /** Subscribe to an IPC channel, cast the payload to `T`, extract a value, and pass it to the callback. */
 function onTyped<T, V>(
@@ -206,12 +210,12 @@ export const onModelDownloadStart = (cb: (model: string) => void) =>
 	onTyped(IPC.STT_MODEL_DOWNLOAD_START, (d: { model: string }) => d.model, cb);
 
 export interface DownloadProgressPayload {
+	downloadedBytes?: number;
+	etaSeconds?: number;
 	model: string;
 	progress: number;
-	downloadedBytes?: number;
-	totalBytes?: number;
 	speedBps?: number;
-	etaSeconds?: number;
+	totalBytes?: number;
 }
 
 export const onModelDownloadProgress = (cb: (payload: DownloadProgressPayload) => void) =>
@@ -334,10 +338,10 @@ export const clipboardClear = () =>
 	);
 
 export interface UpdaterStatusEntry {
+	message?: string;
 	status: "idle" | "checking" | "available" | "not-available" | "downloaded" | "error";
 	timestamp: number;
 	version?: string;
-	message?: string;
 }
 
 export const updaterGetStatusHistory = () =>
@@ -350,6 +354,7 @@ export const onUpdaterStatus = (cb: (entry: UpdaterStatusEntry) => void) =>
 	onCast(IPC.UPDATER_STATUS, cb);
 
 export interface WindowTelemetryPayload {
+	bounds: { x: number; y: number; width: number; height: number };
 	event:
 		| "moved"
 		| "resized"
@@ -361,7 +366,6 @@ export interface WindowTelemetryPayload {
 		| "restored"
 		| "maximized"
 		| "unmaximized";
-	bounds: { x: number; y: number; width: number; height: number };
 }
 
 export const onWindowTelemetry = (cb: (payload: WindowTelemetryPayload) => void) =>
@@ -384,7 +388,20 @@ export const onFileTranscriptionError = (
 ) => onCast(IPC.FILE_TRANSCRIPTION_ERROR, cb);
 
 // LLM
-export type { OllamaDetectResult, OllamaModel, OllamaScanResult } from "./models";
+export type {
+	OllamaDeleteResult,
+	OllamaDetectResult,
+	OllamaModel,
+	OllamaPullProgress,
+	OllamaPullProgressStatus,
+	OllamaPullResult,
+	OllamaScanResult,
+	OpenRouterEndpoint,
+	OpenRouterModel,
+	OpenRouterPricing,
+	OpenRouterScanResult,
+	RecommendedOllamaModel,
+} from "./models";
 
 const OLLAMA_SCAN_FALLBACK: OllamaScanResult = {
 	models: [],
@@ -393,6 +410,12 @@ const OLLAMA_SCAN_FALLBACK: OllamaScanResult = {
 };
 
 const OLLAMA_DETECT_FALLBACK: OllamaDetectResult = { installed: false };
+
+const OPENROUTER_SCAN_FALLBACK: OpenRouterScanResult = {
+	models: [],
+	reachable: false,
+	error: "IPC unavailable",
+};
 
 export const fetchOllamaModels = (): Promise<OllamaScanResult> =>
 	invokeOrDefault<OllamaScanResult>(IPC.LLM_SCAN_MODELS, OLLAMA_SCAN_FALLBACK);
@@ -406,8 +429,11 @@ export const startOllama = (): Promise<{ started: boolean; error?: string }> =>
 		error: "IPC unavailable",
 	});
 
-export const processWithLlm = (text: string, model: string, preset: string): Promise<string> =>
-	invokeOrDefault<string>(IPC.LLM_PROCESS_TEXT, text, { text, model, preset });
+export const fetchOpenRouterModels = (): Promise<OpenRouterScanResult> =>
+	invokeOrDefault<OpenRouterScanResult>(IPC.LLM_SCAN_OPENROUTER_MODELS, OPENROUTER_SCAN_FALLBACK);
+
+export const processWithLlm = (text: string): Promise<string> =>
+	invokeOrDefault<string>(IPC.LLM_PROCESS_TEXT, text, { text });
 
 export const onLlmCatalog = (callback: (models: OllamaModel[]) => void): (() => void) => {
 	if (!isElectron()) {
@@ -415,3 +441,31 @@ export const onLlmCatalog = (callback: (models: OllamaModel[]) => void): (() => 
 	}
 	return onTyped(IPC.LLM_CATALOG, (d: { models: OllamaModel[] }) => d.models, callback);
 };
+
+const OLLAMA_PULL_FALLBACK: OllamaPullResult = {
+	success: false,
+	model: "",
+	error: "IPC unavailable",
+};
+
+const OLLAMA_DELETE_FALLBACK: OllamaDeleteResult = {
+	success: false,
+	model: "",
+	error: "IPC unavailable",
+};
+
+export const pullOllamaModel = (model: string): Promise<OllamaPullResult> =>
+	invokeOrDefault<OllamaPullResult>(IPC.LLM_PULL_MODEL, OLLAMA_PULL_FALLBACK, { model });
+
+export const cancelOllamaModelPull = (model: string): Promise<{ cancelled: boolean }> =>
+	invokeOrDefault<{ cancelled: boolean }>(
+		IPC.LLM_CANCEL_PULL_MODEL,
+		{ cancelled: false },
+		{ model }
+	);
+
+export const deleteOllamaModel = (model: string): Promise<OllamaDeleteResult> =>
+	invokeOrDefault<OllamaDeleteResult>(IPC.LLM_DELETE_MODEL, OLLAMA_DELETE_FALLBACK, { model });
+
+export const onOllamaPullProgress = (cb: (progress: OllamaPullProgress) => void): (() => void) =>
+	onCast(IPC.LLM_PULL_PROGRESS, cb);

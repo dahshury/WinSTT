@@ -11,9 +11,9 @@ import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { Tooltip } from "@/shared/ui/tooltip";
 
 export interface SidebarLink {
+	icon: IconSvgElement;
 	key: string;
 	label: string;
-	icon: IconSvgElement;
 	/** Tooltip explaining what the tab configures */
 	tooltip?: string;
 }
@@ -44,7 +44,7 @@ export function SettingsSidebar({ links, onReset }: SettingsSidebarProps) {
 		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: sidebar wrapper uses focus/hover events to drive visual expansion only
 		// biome-ignore lint/a11y/noStaticElementInteractions: sidebar wrapper uses focus/hover events to drive visual expansion only
 		<div
-			className="flex h-full shrink-0 flex-col overflow-hidden bg-surface-primary shadow-[inset_-1px_0_0_0_var(--color-border)]"
+			className="flex h-full shrink-0 flex-col overflow-hidden bg-surface-primary shadow-[inset_-1px_0_0_0_var(--color-border)] transition-[width] duration-200 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
 			onBlur={(e) => {
 				if (!e.currentTarget.contains(e.relatedTarget)) {
 					setExpanded(false);
@@ -53,11 +53,7 @@ export function SettingsSidebar({ links, onReset }: SettingsSidebarProps) {
 			onFocus={() => setExpanded(true)}
 			onMouseEnter={() => setExpanded(true)}
 			onMouseLeave={() => setExpanded(false)}
-			style={{
-				width: expanded ? 170 : 52,
-				willChange: "width",
-				transition: "width 200ms cubic-bezier(0.25, 0.1, 0.25, 1)",
-			}}
+			style={{ width: expanded ? 170 : 52 }}
 		>
 			<Tabs.List className="relative flex flex-1 flex-col gap-1 px-[8px] py-3">
 				{links.map((link) => {

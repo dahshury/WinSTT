@@ -52,6 +52,28 @@ function generateThinkingSequence(rows: number, columns: number): Coordinate[] {
 	return seq;
 }
 
+function buildGridSequence(
+	state: AgentState,
+	rows: number,
+	columns: number,
+	radius: number | undefined
+): Coordinate[] {
+	const clampedRadius = radius
+		? Math.min(radius, Math.floor(Math.max(rows, columns) / 2))
+		: Math.floor(Math.max(rows, columns) / 2);
+
+	if (state === "thinking") {
+		return generateThinkingSequence(rows, columns);
+	}
+	if (state === "connecting" || state === "initializing") {
+		return [...generateConnectingSequence(rows, columns, clampedRadius)];
+	}
+	if (state === "listening") {
+		return generateListeningSequence(rows, columns);
+	}
+	return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
+}
+
 export function useGridAnimator(
 	state: AgentState,
 	rows: number,
@@ -60,24 +82,12 @@ export function useGridAnimator(
 	radius?: number
 ): Coordinate {
 	const [index, setIndex] = useState(0);
-	const [sequence, setSequence] = useState<Coordinate[]>(() => [
-		{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) },
-	]);
+	const [sequence, setSequence] = useState<Coordinate[]>(() =>
+		buildGridSequence(state, rows, columns, radius)
+	);
 
 	useEffect(() => {
-		const clampedRadius = radius
-			? Math.min(radius, Math.floor(Math.max(rows, columns) / 2))
-			: Math.floor(Math.max(rows, columns) / 2);
-
-		if (state === "thinking") {
-			setSequence(generateThinkingSequence(rows, columns));
-		} else if (state === "connecting" || state === "initializing") {
-			setSequence([...generateConnectingSequence(rows, columns, clampedRadius)]);
-		} else if (state === "listening") {
-			setSequence(generateListeningSequence(rows, columns));
-		} else {
-			setSequence([{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }]);
-		}
+		setSequence(buildGridSequence(state, rows, columns, radius));
 		setIndex(0);
 	}, [state, rows, columns, radius]);
 

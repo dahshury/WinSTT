@@ -56,8 +56,12 @@ export const generalSettingsSchema = z.object({
 	recordingMode: z.enum(["ptt", "toggle", "listen"]).default("ptt"),
 	loopbackDeviceIndex: z.number().int().nullable().default(null),
 	showRecordingOverlay: z.boolean().default(true),
-	visualizerSize: z.number().int().min(10).max(200).default(20),
+	// `.catch` covers older builds that persisted an integer pixel value;
+	// without it an integer here fails the whole settings parse and the codec
+	// falls back to ALL defaults, wiping unrelated settings on upgrade.
+	visualizerSize: z.enum(["xs", "sm", "md", "lg", "xl"]).default("xs").catch("xs"),
 	showLiveTranscription: z.boolean().default(true),
+	showInAppLiveTranscription: z.boolean().default(true),
 	visualizerType: z.enum(["bar", "grid", "radial", "wave", "aura"]).default("bar"),
 	visualizerBarCount: z.number().int().min(3).max(21).default(9),
 	visualizerColor: z
@@ -100,8 +104,12 @@ export type AddSnippetEntry = z.infer<typeof addSnippetEntrySchema>;
 
 export const llmSettingsSchema = z.object({
 	enabled: z.boolean().default(false),
+	provider: z.enum(["ollama", "openrouter"]).default("ollama"),
 	endpoint: z.string().url().default("http://localhost:11434"),
 	model: z.string().default(""),
+	openrouterApiKey: z.string().default(""),
+	openrouterModel: z.string().default(""),
+	openrouterFallbackModel: z.string().default(""),
 	preset: z
 		.enum(["neutral", "formal", "friendly", "technical", "casual", "concise"])
 		.default("neutral"),
@@ -109,14 +117,14 @@ export const llmSettingsSchema = z.object({
 });
 
 export const appSettingsSchema = z.object({
-	model: modelSettingsSchema.default({}),
-	quality: qualitySettingsSchema.default({}),
-	audio: audioSettingsSchema.default({}),
-	general: generalSettingsSchema.default({}),
-	hotkey: hotkeySettingsSchema.default({}),
+	model: modelSettingsSchema.prefault({}),
+	quality: qualitySettingsSchema.prefault({}),
+	audio: audioSettingsSchema.prefault({}),
+	general: generalSettingsSchema.prefault({}),
+	hotkey: hotkeySettingsSchema.prefault({}),
 	dictionary: z.array(dictionaryEntrySchema).default([]),
 	snippets: z.array(snippetEntrySchema).default([]),
-	llm: llmSettingsSchema.default({}),
+	llm: llmSettingsSchema.prefault({}),
 });
 
 export type AppSettingsInput = z.input<typeof appSettingsSchema>;

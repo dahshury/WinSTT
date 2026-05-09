@@ -5,13 +5,13 @@ import { Button } from "@/shared/ui/button";
 import { dialogAnimation } from "@/shared/ui/dialog-animation";
 
 export interface ConfirmDialogProps {
-	open: boolean;
-	onOpenChange: (open: boolean) => void;
-	title: string;
-	description: string;
-	confirmLabel?: string;
 	cancelLabel?: string;
+	confirmLabel?: string;
+	description: string;
 	onConfirm: () => void;
+	onOpenChange: (open: boolean) => void;
+	open: boolean;
+	title: string;
 }
 
 export function ConfirmDialog({

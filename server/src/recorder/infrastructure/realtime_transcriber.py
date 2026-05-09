@@ -32,7 +32,9 @@ class RealtimeTranscriber(ITranscriber):
         download_root: str | None = None,
         beam_size: int = 3,
         initial_prompt: str | list[int] | None = None,
+        suppress_tokens: list[int] | None = None,
         batch_size: int = 16,
+        vad_filter: bool = True,
         on_download_progress: Callable[[DownloadProgress], None] | None = None,
         cancel_check: Callable[[], bool] | None = None,
     ) -> None:
@@ -41,7 +43,9 @@ class RealtimeTranscriber(ITranscriber):
             raise RuntimeError(msg)
         self._beam_size = beam_size
         self._initial_prompt = initial_prompt
+        self._suppress_tokens = suppress_tokens or [-1]
         self._batch_size = batch_size
+        self._vad_filter = vad_filter
         self._ready = False
 
         actual_device = resolve_device(device)
@@ -80,12 +84,22 @@ class RealtimeTranscriber(ITranscriber):
             "language": language if language else None,
             "beam_size": self._beam_size,
             "initial_prompt": prompt,
+            "suppress_tokens": self._suppress_tokens,
+            # Required so BatchedInferencePipeline can slide its 30s context
+            # window over longer audio; without it, recordings >30s produce
+            # repeating output that trips the noise-repetition detector.
+            "vad_filter": self._vad_filter,
         }
         if self._batch_size > 0:
             kwargs["batch_size"] = self._batch_size
 
-        segments, info = self._model.transcribe(audio, **kwargs)
-        text = " ".join(seg.text for seg in segments).strip()
+        try:
+            segments, info = self._model.transcribe(audio, **kwargs)
+            text = " ".join(seg.text for seg in segments).strip()
+        except RuntimeError:
+            # BatchedInferencePipeline raises when VAD finds no speech in audio
+            text = ""
+            info = None
         elapsed = time.time() - start_t
 
         return TranscriptionResult(

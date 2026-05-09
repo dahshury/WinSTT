@@ -3,10 +3,10 @@
 import { Switch } from "@base-ui/react/switch";
 
 export interface ToggleProps {
-	checked: boolean;
-	onCheckedChange: (checked: boolean) => void;
-	disabled?: boolean;
 	"aria-label"?: string;
+	checked: boolean;
+	disabled?: boolean;
+	onCheckedChange: (checked: boolean) => void;
 }
 
 export function Toggle({

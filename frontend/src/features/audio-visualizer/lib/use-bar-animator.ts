@@ -14,22 +14,25 @@ function generateListeningSequence(columns: number): number[][] {
 	return [[center], [-1]];
 }
 
+function buildSequence(state: AgentState, columns: number): number[][] {
+	if (state === "thinking" || state === "listening") {
+		return generateListeningSequence(columns);
+	}
+	if (state === "connecting" || state === "initializing") {
+		return [...generateConnectingSequence(columns)];
+	}
+	if (state === "speaking") {
+		return [new Array(columns).fill(0).map((_, idx) => idx)];
+	}
+	return [[]];
+}
+
 export function useBarAnimator(state: AgentState, columns: number, interval: number): number[] {
 	const [index, setIndex] = useState(0);
-	const [sequence, setSequence] = useState<number[][]>([[]]);
+	const [sequence, setSequence] = useState<number[][]>(() => buildSequence(state, columns));
 
 	useEffect(() => {
-		if (state === "thinking") {
-			setSequence(generateListeningSequence(columns));
-		} else if (state === "connecting" || state === "initializing") {
-			setSequence([...generateConnectingSequence(columns)]);
-		} else if (state === "listening") {
-			setSequence(generateListeningSequence(columns));
-		} else if (state === "speaking") {
-			setSequence([new Array(columns).fill(0).map((_, idx) => idx)]);
-		} else {
-			setSequence([[]]);
-		}
+		setSequence(buildSequence(state, columns));
 		setIndex(0);
 	}, [state, columns]);
 

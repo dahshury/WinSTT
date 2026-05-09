@@ -6,10 +6,10 @@ import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
 
 export interface InfoTooltipProps {
-	/** The help text shown on hover/focus */
-	content: string;
 	/** Localized aria-label for the trigger button */
 	ariaLabel?: string;
+	/** The help text shown on hover/focus */
+	content: string;
 }
 
 export function InfoTooltip({ content, ariaLabel = "More info" }: InfoTooltipProps) {
