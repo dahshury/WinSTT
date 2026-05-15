@@ -45,6 +45,7 @@ gpu = [
     "nvidia-curand-cu12>=10.3",
     "nvidia-cusparse-cu12>=12.0",
     "nvidia-cusolver-cu12>=11.0",
+    "nvidia-nvjitlink-cu12>=12.4",
 ]
 # Optional sentence-finished classifier (DistilBERT via transformers).
 # Fail-soft: the adapter falls back to ``is_available() == False`` if these
@@ -71,6 +72,20 @@ link-mode = "copy"
 # CPU and GPU ORT wheels are mutually exclusive — picking both would cause
 # DLL conflicts. uv enforces the constraint at resolution time.
 conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]
+# openwakeword hard-pins ``onnxruntime`` (CPU). If left alone, ``uv sync
+# --extra gpu`` pulls BOTH ``onnxruntime`` and ``onnxruntime-gpu`` into the
+# same venv — they share the ``onnxruntime/`` package directory, so the CPU
+# install overwrites the GPU ``.pyd`` files and CUDA stops working. The
+# override below makes uv treat openwakeword's ``onnxruntime`` requirement
+# as unsatisfiable on real platforms; ``onnxruntime-gpu`` provides the same
+# import name at runtime, so openwakeword still works.
+#
+# Side effect: the ``cpu`` extra below — which legitimately wants
+# ``onnxruntime`` — must request ``onnxruntime-gpu`` or be installed without
+# the override active. For now we keep ``onnxruntime>=1.18.1`` in the cpu
+# extra; the override applies there too, so cpu builds need to drop this
+# block (or we'll wire a marker-aware override later).
+override-dependencies = ["onnxruntime; sys_platform == 'never'"]
 
 [tool.uv.sources]
 onnx-asr = { path = "../examples/onnx-asr", editable = true }

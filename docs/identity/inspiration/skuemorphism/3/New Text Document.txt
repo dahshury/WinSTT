@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Skeuomorphic Toolbar</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: #2a2a2a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "Lucida Grande", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    overflow: hidden;
+  }
+
+  /* Outer dark frame (window chrome) */
+  .frame {
+    width: 1500px;
+    padding: 14px 16px;
+    background: linear-gradient(180deg, #1a1a1a 0%, #2d2d2d 50%, #1a1a1a 100%);
+    border-radius: 6px;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.08),
+      0 20px 60px rgba(0,0,0,0.6);
+  }
+
+  /* Main metallic bar */
+  .toolbar {
+    height: 84px;
+    border-radius: 4px;
+    padding: 0 22px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: #efede9;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.9),
+      inset 0 -1px 0 rgba(0,0,0,0.12),
+      inset 0 0 0 1px rgba(0,0,0,0.08),
+      0 1px 0 rgba(255,255,255,0.4);
+    position: relative;
+    transition: background 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  /* DARK MODE */
+  body.dark { background: #0a0a0a; }
+  body.dark .toolbar {
+    background: #2a2722;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.08),
+      inset 0 -1px 0 rgba(0,0,0,0.5),
+      inset 0 0 0 1px rgba(0,0,0,0.6),
+      0 1px 0 rgba(255,255,255,0.05);
+  }
+  body.dark .metal {
+    color: #f0ece4;
+    background:
+      repeating-radial-gradient(
+        rgba(80,72,66,0) 0,
+        rgba(80,72,66,0.18) 2px
+      ),
+      radial-gradient(rgba(40,34,30,0.3) 0, rgba(40,34,30,0) 40%),
+      conic-gradient(
+        #4a423c,
+        #38322c,
+        #322c26,
+        #3e3830,
+        #4a423c,
+        #544a42,
+        #322c26,
+        #3e3830,
+        #3e3830,
+        #4e463e,
+        #3e3830,
+        #4a423c
+      );
+    box-shadow:
+      inset 0 2px 2px rgba(255,255,255,0.15),
+      inset 0 -2px 2px rgba(0,0,0,0.7),
+      inset 0 0 0 1px rgba(0,0,0,0.7),
+      0 -1px 2px rgba(0,0,0,0.2),
+      0 1px 0 rgba(255,255,255,0.08),
+      0 2px 3px rgba(0,0,0,0.5),
+      0 4px 6px rgba(0,0,0,0.4),
+      0 6px 12px rgba(0,0,0,0.3);
+  }
+  body.dark .metal-light {
+    background:
+      repeating-radial-gradient(
+        rgba(110,100,92,0) 0,
+        rgba(110,100,92,0.18) 2px
+      ),
+      radial-gradient(rgba(60,52,46,0.3) 0, rgba(60,52,46,0) 40%),
+      conic-gradient(
+        #6a5e54,
+        #56504a,
+        #4e4842,
+        #5e564e,
+        #6a5e54,
+        #76685e,
+        #4e4842,
+        #5e564e,
+        #5e564e,
+        #70645a,
+        #5e564e,
+        #6a5e54
+      );
+  }
+  body.dark .metal svg { filter: drop-shadow(0 -1px 1px rgba(0,0,0,0.7)) drop-shadow(0 1px 1px rgba(255,255,255,0.2)); }
+
+  body.dark .search-wrap {
+    background: linear-gradient(180deg, #1a1814 0%, #2a2620 35%, #3a342c 100%);
+    box-shadow:
+      inset 0 3px 6px rgba(0,0,0,0.8),
+      inset 0 2px 3px rgba(0,0,0,0.6),
+      inset 0 6px 8px -4px rgba(0,0,0,0.7),
+      inset 0 -2px 1px rgba(255,255,255,0.1),
+      inset 0 0 0 1px rgba(0,0,0,0.7),
+      0 1px 0 rgba(255,255,255,0.08);
+  }
+  body.dark .search-wrap svg { color: #b8b0a4; filter: drop-shadow(0 1px 0 rgba(0,0,0,0.5)); }
+  body.dark .search-wrap input { color: #ebe5d9; text-shadow: 0 1px 0 rgba(0,0,0,0.6); }
+  body.dark .search-wrap input::placeholder { color: #8a8174; }
+
+  /* Brushed metal noise overlay */
+  .toolbar::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 4px;
+    pointer-events: none;
+    opacity: 0;
+  }
+
+  /* Metallic button — conic + repeating-radial brushed in warm bronze */
+  .metal {
+    border: none;
+    cursor: pointer;
+    position: relative;
+    color: #1a1a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+      repeating-radial-gradient(
+        rgba(138,128,120,0) 0,
+        rgba(138,128,120,0.15) 2px
+      ),
+      radial-gradient(rgba(110,100,92,0.25) 0, rgba(110,100,92,0) 40%),
+      conic-gradient(
+        #968c84,
+        #847a72,
+        #7e7468,
+        #8a8078,
+        #968c84,
+        #a09690,
+        #7e7468,
+        #8a8078,
+        #8a8078,
+        #9c928a,
+        #8a8078,
+        #968c84
+      );
+    box-shadow:
+      inset 0 2px 2px rgba(255,255,255,0.5),
+      inset 0 -2px 2px rgba(0,0,0,0.55),
+      inset 0 0 0 1px rgba(0,0,0,0.5),
+      0 -1px 2px rgba(0,0,0,0.06),
+      0 1px 0 rgba(255,255,255,0.5),
+      0 2px 3px rgba(0,0,0,0.3),
+      0 4px 6px rgba(0,0,0,0.22),
+      0 6px 12px rgba(0,0,0,0.15);
+    transition: background 0.3s ease, box-shadow 0.3s ease, color 0.3s ease, transform 0.06s ease;
+  }
+  .metal:active {
+    transform: translateY(1px);
+    box-shadow:
+      inset 0 -2px 2px rgba(255,255,255,0.4),
+      inset 0 2px 3px rgba(0,0,0,0.55),
+      inset 0 0 0 1px rgba(0,0,0,0.5),
+      0 1px 0 rgba(255,255,255,0.4),
+      0 1px 1px rgba(0,0,0,0.15);
+  }
+
+  /* Lighter variant — #bfbaae dominant (grid button) */
+  .metal-light {
+    background:
+      repeating-radial-gradient(
+        rgba(190,184,174,0) 0,
+        rgba(190,184,174,0.15) 2px
+      ),
+      radial-gradient(rgba(148,142,130,0.2) 0, rgba(148,142,130,0) 40%),
+      conic-gradient(
+        #c5beb2,
+        #b3ada1,
+        #ada79b,
+        #bfbaae,
+        #c5beb2,
+        #cfc8bc,
+        #ada79b,
+        #bfbaae,
+        #bfbaae,
+        #cbc4b8,
+        #bfbaae,
+        #c5beb2
+      );
+  }
+
+  /* Circular nav buttons */
+  .nav-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+  }
+
+  /* Segmented view toggle */
+  .segmented {
+    display: flex;
+    margin-left: 6px;
+    border-radius: 7px;
+    filter: drop-shadow(0 2px 2px rgba(0,0,0,0.22)) drop-shadow(0 4px 6px rgba(0,0,0,0.18));
+  }
+  .seg-btn {
+    width: 56px;
+    height: 44px;
+  }
+  .seg-btn:first-child { border-radius: 7px 0 0 7px; }
+  .seg-btn:last-child  { border-radius: 0 7px 7px 0; margin-left: -1px; }
+
+  /* Search field (deep inset) */
+  .search-wrap {
+    flex: 1;
+    height: 40px;
+    margin: 0 14px;
+    border-radius: 999px;
+    background:
+      linear-gradient(180deg, #8d8676 0%, #b5ae9e 35%, #d8d2c4 100%);
+    box-shadow:
+      /* deep inner shadow */
+      inset 0 3px 6px rgba(0,0,0,0.5),
+      inset 0 2px 3px rgba(0,0,0,0.35),
+      inset 0 6px 8px -4px rgba(0,0,0,0.4),
+      /* bottom inner highlight */
+      inset 0 -2px 1px rgba(255,255,255,0.65),
+      /* hard inner border */
+      inset 0 0 0 1px rgba(0,0,0,0.45),
+      /* outer highlight below */
+      0 1px 0 rgba(255,255,255,0.75),
+      0 2px 0 rgba(255,255,255,0.2);
+    display: flex;
+    align-items: center;
+    padding: 0 18px;
+    gap: 10px;
+  }
+  .search-wrap svg { color: #3a3a3a; flex-shrink: 0; filter: drop-shadow(0 1px 0 rgba(255,255,255,0.5)); }
+  .search-wrap input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 16px;
+    color: #1a1a1a;
+    font-family: inherit;
+    letter-spacing: 0.2px;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+  }
+  .search-wrap input::placeholder {
+    color: #5a5446;
+    font-style: normal;
+  }
+
+  /* Right side icon buttons */
+  .icon-btn {
+    width: 52px;
+    height: 44px;
+    border-radius: 7px;
+  }
+  .icon-btn.caret { width: 60px; }
+  .metal { color: #0a0a0a; }
+  .metal svg { filter: drop-shadow(0 -1px 1px rgba(0,0,0,0.5)) drop-shadow(0 1px 1px rgba(255,255,255,0.7)); }
+</style>
+</head>
+<body>
+
+<div class="frame">
+  <div class="toolbar">
+
+    <!-- Back -->
+    <button class="metal nav-btn" aria-label="Back">
+      
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d="M10 3 L5 8 L10 13" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      
+    </button>
+
+    <!-- Forward -->
+    <button class="metal nav-btn" aria-label="Forward">
+      
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d="M6 3 L11 8 L6 13" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      
+    </button>
+
+    <!-- View toggle: grid + list -->
+    <div class="segmented" role="group">
+      <button class="metal metal-light seg-btn" aria-label="Grid view">
+        
+        <svg width="22" height="16" viewBox="0 0 22 16" fill="currentColor">
+          <rect x="0" y="1"  width="6" height="3" rx="0.5"/>
+          <rect x="8" y="1"  width="14" height="3" rx="0.5"/>
+          <rect x="0" y="6.5" width="6" height="3" rx="0.5"/>
+          <rect x="8" y="6.5" width="14" height="3" rx="0.5"/>
+          <rect x="0" y="12" width="6" height="3" rx="0.5"/>
+          <rect x="8" y="12" width="14" height="3" rx="0.5"/>
+        </svg>
+        
+      </button>
+      <button class="metal seg-btn" aria-label="List view">
+        
+        <svg width="20" height="16" viewBox="0 0 20 16" fill="currentColor">
+          <rect x="0" y="1"   width="20" height="3" rx="0.5"/>
+          <rect x="0" y="6.5" width="20" height="3" rx="0.5"/>
+          <rect x="0" y="12"  width="20" height="3" rx="0.5"/>
+        </svg>
+        
+      </button>
+    </div>
+
+    <!-- Search -->
+    <div class="search-wrap">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.8"/>
+        <path d="M11 11 L14 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+      <input type="text" placeholder="Search everything…">
+    </div>
+
+    <!-- Brightness -->
+    <button class="metal icon-btn" id="theme-toggle" aria-label="Brightness">
+      
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+        <circle cx="12" cy="12" r="4.5"/>
+        <g stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="12" y1="1.5" x2="12" y2="4"/>
+          <line x1="12" y1="20" x2="12" y2="22.5"/>
+          <line x1="1.5" y1="12" x2="4" y2="12"/>
+          <line x1="20" y1="12" x2="22.5" y2="12"/>
+          <line x1="4.5" y1="4.5" x2="6.3" y2="6.3"/>
+          <line x1="17.7" y1="17.7" x2="19.5" y2="19.5"/>
+          <line x1="19.5" y1="4.5" x2="17.7" y2="6.3"/>
+          <line x1="6.3" y1="17.7" x2="4.5" y2="19.5"/>
+        </g>
+      </svg>
+      
+    </button>
+
+    <!-- Bell -->
+    <button class="metal icon-btn" aria-label="Notifications">
+      
+      <svg width="20" height="22" viewBox="0 0 20 22" fill="currentColor">
+        <path d="M10 1.5 C6.5 1.5 4 4 4 7.5 V11 L2 14 V15 H18 V14 L16 11 V7.5 C16 4 13.5 1.5 10 1.5 Z"/>
+        <path d="M8 17 C8 18.4 8.9 19.5 10 19.5 C11.1 19.5 12 18.4 12 17"/>
+      </svg>
+      
+    </button>
+
+    <!-- Caret dropdown -->
+    <button class="metal icon-btn caret" aria-label="More">
+      
+      <svg width="12" height="8" viewBox="0 0 12 8" fill="currentColor">
+        <path d="M0 1 L6 7 L12 1 Z"/>
+      </svg>
+      
+    </button>
+
+  </div>
+</div>
+
+<script>
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    document.body.classList.toggle('dark');
+  });
+</script>
+
+</body>
+</html>

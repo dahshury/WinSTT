@@ -1,0 +1,46 @@
+appId: com.winstt.app
+productName: WinSTT
+asar: true
+asarUnpack:
+  - "node_modules/uiohook-napi/**/*"
+  - "node_modules/node-gyp-build/**/*"
+  - "out/standalone/**/*"
+directories:
+  output: dist
+  buildResources: build
+files:
+  - "!**/*"
+  - dist-electron/**/*
+  - out/**/*
+  - package.json
+  - "node_modules/uiohook-napi/**/*"
+  - "node_modules/node-gyp-build/**/*"
+  - "node_modules/pngjs/**/*"
+# CPU flavor: bundles the lightweight stt-server (onnxruntime CPU-only).
+# Built by ``pwsh ../server/build/build.ps1 -Flavor cpu`` → outputs
+# frontend/stt-server-dist-cpu/.
+extraResources:
+  - from: stt-server-dist-cpu/
+    to: stt-server
+    filter:
+      - "**/*"
+  - from: electron/native/bin/
+    to: native/bin
+    filter:
+      - "winstt-paste.exe"
+      - "winstt-context.exe"
+win:
+  target:
+    - nsis
+  icon: build/icon.ico
+  # Differentiate the installer filename so the GitHub Release page shows
+  # two distinct downloads. electron-updater treats both installers as
+  # separate update channels — users stay on the channel they installed.
+  artifactName: ${productName}-CPU-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+publish:
+  - provider: github
+    releaseType: release

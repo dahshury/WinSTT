@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Skeuomorphic Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@800;900&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 30px 20px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    background:
+      radial-gradient(ellipse at top, #2a2a2a 0%, #0a0a0a 100%);
+  }
+
+  /* ===== Outer leather case ===== */
+  .case {
+    width: 360px;
+    padding: 22px 18px 30px;
+    border-radius: 28px;
+    position: relative;
+    background:
+      linear-gradient(180deg, #2a2725 0%, #1f1c1a 50%, #161413 100%);
+    box-shadow:
+      0 30px 60px rgba(0,0,0,0.85),
+      0 0 0 1px rgba(0,0,0,0.7);
+  }
+
+  /* Leather grain on case */
+  .case::before {
+    content: '';
+    position: absolute; inset: 0;
+    border-radius: inherit;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.6' numOctaves='2' seed='8' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1.1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    background-size: 240px 240px;
+    opacity: 0.7;
+    mix-blend-mode: overlay;
+    pointer-events: none;
+  }
+
+  /* ===== Panel base (shared) ===== */
+  .panel {
+    position: relative;
+    border-radius: 16px;
+    background:
+      linear-gradient(160deg, #2c2c2c, #1a1a1a);
+    box-shadow:
+      0 4px 8px rgba(0,0,0,0.6),
+      0 1px 0 rgba(255,255,255,0.06) inset,
+      0 -2px 4px rgba(0,0,0,0.4) inset;
+    z-index: 1;
+  }
+
+  /* ===== Dashboard pill ===== */
+  .dashboard-pill {
+    margin: 6px 4px 18px;
+    padding: 14px 22px;
+    border-radius: 22px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: linear-gradient(180deg, #3a3a3a 0%, #1c1c1c 100%);
+    box-shadow:
+      0 4px 10px rgba(0,0,0,0.7),
+      inset 0 1px 1px rgba(255,255,255,0.12),
+      inset 0 -2px 3px rgba(0,0,0,0.5);
+  }
+  .dashboard-pill .led {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #ddd, #555 70%, #222);
+    box-shadow: inset 0 -1px 1px rgba(0,0,0,0.6), 0 0 2px rgba(0,0,0,0.8);
+  }
+  .dashboard-pill h1 {
+    flex: 1;
+    text-align: center;
+    font-size: 17px;
+    letter-spacing: 4px;
+    font-weight: 700;
+    color: #f0f0f0;
+    text-shadow:
+      0 -1px 0 rgba(0,0,0,0.8),
+      0 1px 0 rgba(255,255,255,0.12);
+    margin-right: 24px;
+  }
+
+  /* ===== Overview (selected) ===== */
+  .overview {
+    margin: 0 4px 14px;
+    padding: 14px 18px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: linear-gradient(180deg, #2f2f2f, #1d1d1d);
+    box-shadow:
+      0 6px 12px rgba(0,0,0,0.7),
+      inset 0 1px 1px rgba(255,255,255,0.15),
+      inset 0 -2px 4px rgba(0,0,0,0.5),
+      0 0 0 1px rgba(255,255,255,0.04);
+  }
+  .overview .label {
+    font-size: 16px;
+    letter-spacing: 2.5px;
+    font-weight: 700;
+    color: #ffffff;
+    text-shadow: 0 -1px 0 rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.15);
+  }
+
+  /* 4-square blue icon */
+  .icon-overview {
+    width: 30px; height: 30px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 3px;
+    padding: 2px;
+    border-radius: 4px;
+    filter: drop-shadow(0 1px 1px rgba(0,0,0,0.6));
+  }
+  .icon-overview span {
+    background: linear-gradient(160deg, #6ba6ff, #1e5fc4);
+    border-radius: 2px;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      inset 0 -1px 0 rgba(0,0,0,0.3);
+  }
+  .icon-overview span:first-child {
+    background: linear-gradient(160deg, #e8e8e8, #b0b0b0);
+  }
+
+  /* ===== Menu — inner card with bevel + stitching ===== */
+  .menu {
+    position: relative;
+    margin: 0 4px;
+    padding: 10px 0;
+    border-radius: 16px;
+    overflow: hidden;
+    background: linear-gradient(180deg, #322f2d 0%, #2c2a29 50%, #25231f 100%);
+    box-shadow:
+      0 6px 14px rgba(0,0,0,0.55),
+      0 0 0 1px rgba(0,0,0,0.75),
+      inset 0 2px 0 rgba(255,255,255,0.22),
+      inset 0 6px 10px rgba(255,255,255,0.06),
+      inset 8px 0 18px -2px rgba(0,0,0,0.6),
+      inset -8px 0 18px -2px rgba(0,0,0,0.6),
+      inset 0 -6px 12px rgba(0,0,0,0.55);
+  }
+
+  /* Strong uniform leather grain on menu */
+  .menu::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.6' numOctaves='2' seed='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1.1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    background-size: 240px 240px;
+    opacity: 0.75;
+    mix-blend-mode: overlay;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Stitching on menu card */
+  .menu::after {
+    content: '';
+    position: absolute; inset: 6px;
+    border-radius: 12px;
+    border: 1.3px dashed #c9a76a;
+    opacity: 0.7;
+    pointer-events: none;
+    z-index: 3;
+  }
+
+  .menu-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 14px 20px;
+    cursor: pointer;
+    z-index: 1;
+  }
+
+  /* Engraved separator — inset so it doesn't cross the stitching */
+  .menu-item + .menu-item::before {
+    content: '';
+    position: absolute;
+    left: 14px; right: 14px; top: 0;
+    height: 2px;
+    background: linear-gradient(180deg,
+      rgba(0,0,0,0.85) 0%,
+      rgba(0,0,0,0.85) 50%,
+      rgba(255,255,255,0.13) 50%,
+      rgba(255,255,255,0.13) 100%);
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  .menu-item:hover { background: rgba(255,255,255,0.025); }
+
+  .menu-item .text {
+    position: relative; z-index: 2;
+    font-size: 15px;
+    letter-spacing: 2.5px;
+    font-weight: 700;
+    color: #ededed;
+    text-shadow:
+      0 -1px 0 rgba(0,0,0,0.85),
+      0 1px 0 rgba(255,255,255,0.1);
+  }
+  .menu-item .icn { position: relative; z-index: 2; }
+
+  /* Skeuomorphic icon plates */
+  .icn {
+    width: 30px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+    filter: drop-shadow(0 1px 1px rgba(0,0,0,0.7));
+  }
+  .icn svg { width: 100%; height: 100%; }
+
+  /* ===== System Status ===== */
+  .system-status {
+    margin: 28px 4px 4px;
+    padding: 20px 22px 26px;
+    border-radius: 18px;
+    background: linear-gradient(180deg, #322f2d 0%, #2c2a29 50%, #25231f 100%);
+    box-shadow:
+      0 8px 16px rgba(0,0,0,0.7),
+      0 0 0 1px rgba(0,0,0,0.75),
+      inset 0 2px 0 rgba(255,255,255,0.22),
+      inset 0 6px 10px rgba(255,255,255,0.06),
+      inset 8px 0 18px -2px rgba(0,0,0,0.6),
+      inset -8px 0 18px -2px rgba(0,0,0,0.6),
+      inset 0 -6px 12px rgba(0,0,0,0.55);
+    position: relative;
+    overflow: hidden;
+  }
+  /* Strong uniform leather grain on system-status */
+  .system-status::after {
+    content: '';
+    position: absolute; inset: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.6' numOctaves='2' seed='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1.1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    background-size: 240px 240px;
+    opacity: 0.75;
+    mix-blend-mode: overlay;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .system-status::before {
+    content: '';
+    position: absolute; inset: 6px;
+    border-radius: 14px;
+    border: 1.3px dashed #c9a76a;
+    opacity: 0.65;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .system-status > * { position: relative; z-index: 2; }
+
+  .ss-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+    padding: 0 4px;
+  }
+  .ss-head h2 {
+    font-size: 14px;
+    letter-spacing: 2.5px;
+    font-weight: 700;
+    color: #e8e8e8;
+    text-shadow: 0 -1px 0 rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.1);
+  }
+  .ss-led {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #b6ff7a, #4caf2c 55%, #1a5d0c 100%);
+    box-shadow:
+      0 0 8px rgba(120,255,80,0.7),
+      0 0 16px rgba(120,255,80,0.4),
+      inset 0 -1px 1px rgba(0,0,0,0.4);
+  }
+
+  .ss-sub {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 4px 14px;
+    border-bottom: 1px solid rgba(0,0,0,0.5);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.05);
+    margin-bottom: 16px;
+  }
+  .ss-sub .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #c5ff8a, #4caf2c 60%, #1a5d0c);
+    box-shadow: 0 0 6px rgba(120,255,80,0.6);
+  }
+  .ss-sub span {
+    font-family: 'Courier New', monospace;
+    font-style: italic;
+    font-size: 13px;
+    color: #9bd96a;
+    letter-spacing: 0.5px;
+    text-shadow: 0 0 4px rgba(120,255,80,0.4);
+  }
+
+  /* Metric rows */
+  .metric { margin-bottom: 14px; padding: 0 4px; }
+  .metric:last-child { margin-bottom: 0; }
+  .metric-head {
+    display: flex; justify-content: space-between;
+    font-size: 11px; letter-spacing: 1.8px; font-weight: 600;
+    color: #c8c8c8;
+    margin-bottom: 6px;
+    text-shadow: 0 -1px 0 rgba(0,0,0,0.6);
+  }
+  .bar-track {
+    height: 14px;
+    border-radius: 7px;
+    background: linear-gradient(180deg, #0a0a0a, #1a1a1a);
+    box-shadow:
+      inset 0 2px 3px rgba(0,0,0,0.9),
+      inset 0 -1px 0 rgba(255,255,255,0.05),
+      0 1px 0 rgba(255,255,255,0.04);
+    padding: 2px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 5px;
+    background:
+      linear-gradient(180deg, #b8ff70 0%, #6ed028 45%, #4ba51c 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      inset 0 -1px 1px rgba(0,0,0,0.3),
+      0 0 8px rgba(120,255,80,0.5);
+    position: relative;
+  }
+  .bar-fill::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+    border-radius: inherit;
+  }
+
+</style>
+</head>
+<body>
+
+<!-- SVG filter defs for embossed text -->
+<svg width="0" height="0" aria-hidden="true" style="position:absolute">
+  <defs>
+    <filter id="grainy-text" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2"/>
+      <feColorMatrix type="saturate" values="0"/>
+      <feComposite in="SourceGraphic" operator="in"/>
+    </filter>
+
+    <filter id="sinset">
+      <feGaussianBlur stdDeviation="0.8"/>
+      <feComposite operator="out" in="SourceGraphic" result="inverse"/>
+      <feFlood flood-color="rgba(255,255,255,0.35)"/>
+      <feComposite operator="in" in2="inverse"/>
+      <feComposite operator="over" in2="SourceGraphic"/>
+    </filter>
+
+    <filter id="emboss">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1"/>
+      <feSpecularLighting surfaceScale="3" specularConstant="1" specularExponent="18" lighting-color="#f5f0e6">
+        <fePointLight x="50%" y="-300" z="180"/>
+      </feSpecularLighting>
+      <feComposite in2="SourceAlpha" operator="in"/>
+      <feComposite in="SourceGraphic" operator="arithmetic" k1="0" k2="1" k3="1" k4="0"/>
+    </filter>
+  </defs>
+</svg>
+
+<div class="case">
+
+  <!-- Dashboard pill -->
+  <div class="dashboard-pill">
+    <span class="led"></span>
+    <h1>DASHBOARD</h1>
+  </div>
+
+  <!-- Overview (selected) -->
+  <div class="overview">
+    <div class="icon-overview">
+      <span></span><span></span>
+      <span></span><span></span>
+    </div>
+    <div class="label">OVERVIEW</div>
+  </div>
+
+  <!-- Menu group -->
+  <div class="menu">
+
+    <div class="menu-item">
+      <div class="icn">
+        <!-- Folder -->
+        <svg viewBox="0 0 32 32">
+          <defs>
+            <linearGradient id="folderG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#d8d8d8"/>
+              <stop offset="1" stop-color="#888"/>
+            </linearGradient>
+          </defs>
+          <path d="M3 9 L13 9 L15 11 L29 11 L29 26 L3 26 Z"
+                fill="url(#folderG)"
+                stroke="#222" stroke-width="0.8"/>
+          <path d="M3 9 L13 9 L15 11 L29 11" fill="none"
+                stroke="rgba(255,255,255,0.5)" stroke-width="0.6"/>
+        </svg>
+      </div>
+      <div class="text">PROJECTS</div>
+    </div>
+
+    <div class="menu-item">
+      <div class="icn">
+        <!-- Checkbox -->
+        <svg viewBox="0 0 32 32">
+          <defs>
+            <linearGradient id="boxG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#dcdcdc"/>
+              <stop offset="1" stop-color="#888"/>
+            </linearGradient>
+          </defs>
+          <rect x="5" y="5" width="22" height="22" rx="4"
+                fill="url(#boxG)" stroke="#222" stroke-width="0.8"/>
+          <path d="M10 16 L14.5 20.5 L23 11" fill="none"
+                stroke="#2a2a2a" stroke-width="2.6"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="text">TASKS</div>
+    </div>
+
+    <div class="menu-item">
+      <div class="icn">
+        <!-- Calendar -->
+        <svg viewBox="0 0 32 32">
+          <defs>
+            <linearGradient id="calG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#dcdcdc"/>
+              <stop offset="1" stop-color="#888"/>
+            </linearGradient>
+          </defs>
+          <rect x="4" y="7" width="24" height="22" rx="2.5"
+                fill="url(#calG)" stroke="#222" stroke-width="0.8"/>
+          <rect x="4" y="7" width="24" height="6" fill="#3a3a3a"/>
+          <rect x="8" y="4" width="2.5" height="6" rx="1" fill="#444"/>
+          <rect x="21.5" y="4" width="2.5" height="6" rx="1" fill="#444"/>
+          <g fill="#2a2a2a">
+            <rect x="7" y="16" width="3" height="2.5"/>
+            <rect x="12" y="16" width="3" height="2.5"/>
+            <rect x="17" y="16" width="3" height="2.5"/>
+            <rect x="22" y="16" width="3" height="2.5"/>
+            <rect x="7" y="20" width="3" height="2.5"/>
+            <rect x="12" y="20" width="3" height="2.5"/>
+            <rect x="17" y="20" width="3" height="2.5"/>
+            <rect x="22" y="20" width="3" height="2.5"/>
+            <rect x="7" y="24" width="3" height="2.5"/>
+            <rect x="12" y="24" width="3" height="2.5"/>
+          </g>
+        </svg>
+      </div>
+      <div class="text">CALENDAR</div>
+    </div>
+
+    <div class="menu-item">
+      <div class="icn">
+        <!-- File / page -->
+        <svg viewBox="0 0 32 32">
+          <defs>
+            <linearGradient id="fileG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#e0e0e0"/>
+              <stop offset="1" stop-color="#909090"/>
+            </linearGradient>
+          </defs>
+          <path d="M7 4 L21 4 L27 10 L27 28 L7 28 Z"
+                fill="url(#fileG)" stroke="#222" stroke-width="0.8"/>
+          <path d="M21 4 L21 10 L27 10" fill="#b0b0b0"
+                stroke="#222" stroke-width="0.6"/>
+        </svg>
+      </div>
+      <div class="text">FILES</div>
+    </div>
+
+    <div class="menu-item">
+      <div class="icn">
+        <!-- Bar chart -->
+        <svg viewBox="0 0 32 32">
+          <defs>
+            <linearGradient id="barG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#dcdcdc"/>
+              <stop offset="1" stop-color="#888"/>
+            </linearGradient>
+          </defs>
+          <rect x="5"  y="18" width="5.5" height="10" rx="1"
+                fill="url(#barG)" stroke="#222" stroke-width="0.7"/>
+          <rect x="13" y="12" width="5.5" height="16" rx="1"
+                fill="url(#barG)" stroke="#222" stroke-width="0.7"/>
+          <rect x="21" y="5"  width="5.5" height="23" rx="1"
+                fill="url(#barG)" stroke="#222" stroke-width="0.7"/>
+        </svg>
+      </div>
+      <div class="text">REPORTS</div>
+    </div>
+
+    <div class="menu-item">
+      <div class="icn">
+        <!-- Team / people -->
+        <svg viewBox="0 0 32 32">
+          <defs>
+            <linearGradient id="ppG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#dcdcdc"/>
+              <stop offset="1" stop-color="#888"/>
+            </linearGradient>
+          </defs>
+          <circle cx="11" cy="11" r="4.5" fill="url(#ppG)" stroke="#222" stroke-width="0.7"/>
+          <circle cx="21" cy="12" r="3.8" fill="url(#ppG)" stroke="#222" stroke-width="0.7"/>
+          <path d="M3 26 C 4 19 18 19 19 26 Z" fill="url(#ppG)" stroke="#222" stroke-width="0.7"/>
+          <path d="M17 26 C 18 21 28 21 29 26 Z" fill="url(#ppG)" stroke="#222" stroke-width="0.7"/>
+        </svg>
+      </div>
+      <div class="text">TEAM</div>
+    </div>
+
+    <div class="menu-item">
+      <div class="icn">
+        <!-- Gear -->
+        <svg viewBox="0 0 32 32">
+          <defs>
+            <linearGradient id="gearG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#dcdcdc"/>
+              <stop offset="1" stop-color="#888"/>
+            </linearGradient>
+          </defs>
+          <g fill="url(#gearG)" stroke="#222" stroke-width="0.7">
+            <path d="M16 3 L18 3 L18.7 7 C19.7 7.3 20.6 7.7 21.4 8.2 L24.7 5.9 L26.1 7.3 L23.8 10.6 C24.3 11.4 24.7 12.3 25 13.3 L29 14 L29 16 L25 16.7 C24.7 17.7 24.3 18.6 23.8 19.4 L26.1 22.7 L24.7 24.1 L21.4 21.8 C20.6 22.3 19.7 22.7 18.7 23 L18 27 L16 27 L14 27 L13.3 23 C12.3 22.7 11.4 22.3 10.6 21.8 L7.3 24.1 L5.9 22.7 L8.2 19.4 C7.7 18.6 7.3 17.7 7 16.7 L3 16 L3 14 L7 13.3 C7.3 12.3 7.7 11.4 8.2 10.6 L5.9 7.3 L7.3 5.9 L10.6 8.2 C11.4 7.7 12.3 7.3 13.3 7 L14 3 Z"/>
+          </g>
+          <circle cx="16" cy="15" r="4" fill="#2a2a2a"/>
+        </svg>
+      </div>
+      <div class="text">SETTINGS</div>
+    </div>
+
+  </div>
+
+  <!-- System Status -->
+  <div class="system-status">
+    <div class="ss-head">
+      <h2>SYSTEM STATUS</h2>
+      <span class="ss-led"></span>
+    </div>
+    <div class="ss-sub">
+      <span class="dot"></span>
+      <span>All systems operational</span>
+    </div>
+
+    <div class="metric">
+      <div class="metric-head"><span>NETWORK</span><span>93%</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:93%"></div></div>
+    </div>
+    <div class="metric">
+      <div class="metric-head"><span>SERVER LOAD</span><span>45%</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:45%"></div></div>
+    </div>
+    <div class="metric">
+      <div class="metric-head"><span>DISK USAGE</span><span>68%</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:68%"></div></div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

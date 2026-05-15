@@ -62,5 +62,23 @@ yarn-error.log*
 
 # Temporary files
 *.tmp
+*.tmp.*
 *.temp
+*.bak
 ~*
+
+# Trace / profiling output
+trace.err
+trace.out
+.profile/
+
+# Local analysis & mutation testing artifacts
+crap-*.json
+frontend/reports/crap-*.json
+frontend/reports/mutation/
+test-skip.test.ts
+
+# Local agent skill installs (machine-specific)
+.claude/skills/
+.agents/skills/
+skills-lock.json

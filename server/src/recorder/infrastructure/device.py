@@ -47,8 +47,14 @@ GPU_PROVIDERS: frozenset[str] = frozenset(
 # on Windows (``bin``) or .so files on Linux (``lib``). The wheel layout is
 # ``site-packages/nvidia/<lib_name>/bin/`` per the upstream nvidia packaging.
 # Cover the full set ORT pulls into its provider DLL chain — cuBLAS, cuDNN,
-# cuFFT, cuRAND, cuSPARSE, cuSOLVER, cuda_runtime, and nvrtc. Missing any one
-# of these still produces the "Error 126" spam.
+# cuFFT, cuRAND, cuSPARSE, cuSOLVER, cuda_runtime, nvrtc, and nvJitLink.
+# Missing any one of these still produces the "Error 126" spam.
+#
+# Order matters for strategy 3 (preload pass): ``nvjitlink`` MUST come before
+# ``cusparse``/``cusolver`` because their DLLs have an implicit dep on
+# ``nvJitLink_120_0.dll``. Without preloading nvJitLink first, ``WinDLL`` on
+# cusparse64_12.dll fails with "Error 126" even when its own bin dir is on the
+# search path.
 _NVIDIA_PACKAGES = (
     "cublas",
     "cudnn",
@@ -56,6 +62,7 @@ _NVIDIA_PACKAGES = (
     "cuda_nvrtc",
     "cufft",
     "curand",
+    "nvjitlink",
     "cusparse",
     "cusolver",
 )

@@ -1,0 +1,45 @@
+appId: com.winstt.app
+productName: WinSTT
+asar: true
+asarUnpack:
+  - "node_modules/uiohook-napi/**/*"
+  - "node_modules/node-gyp-build/**/*"
+  - "out/standalone/**/*"
+directories:
+  output: dist
+  buildResources: build
+files:
+  - "!**/*"
+  - dist-electron/**/*
+  - out/**/*
+  - package.json
+  - "node_modules/uiohook-napi/**/*"
+  - "node_modules/node-gyp-build/**/*"
+  - "node_modules/pngjs/**/*"
+# GPU flavor: bundles the larger stt-server with onnxruntime-gpu + 8 NVIDIA
+# CUDA wheels (~2 GB). Falls back to CPU at runtime if the user's GPU /
+# driver isn't viable (see server/src/recorder/infrastructure/device.py
+# ``_probe_cuda_session``). Built by ``pwsh ../server/build/build.ps1
+# -Flavor gpu`` → outputs frontend/stt-server-dist-gpu/.
+extraResources:
+  - from: stt-server-dist-gpu/
+    to: stt-server
+    filter:
+      - "**/*"
+  - from: electron/native/bin/
+    to: native/bin
+    filter:
+      - "winstt-paste.exe"
+      - "winstt-context.exe"
+win:
+  target:
+    - nsis
+  icon: build/icon.ico
+  artifactName: ${productName}-GPU-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+publish:
+  - provider: github
+    releaseType: release

@@ -10,6 +10,9 @@ conflicts = [[
     { package = "winstt-server", extra = "gpu" },
 ]]
 
+[manifest]
+overrides = [{ name = "onnxruntime", marker = "sys_platform == 'never'" }]
+
 [[package]]
 name = "altgraph"
 version = "0.17.5"
@@ -1372,7 +1375,7 @@ name = "openwakeword"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "onnxruntime" },
+    { name = "onnxruntime", marker = "sys_platform == 'never' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "requests" },
     { name = "scikit-learn" },
     { name = "scipy" },
@@ -5479,7 +5482,7 @@ dependencies = [
 
 [package.optional-dependencies]
 cpu = [
-    { name = "onnxruntime" },
+    { name = "onnxruntime", marker = "sys_platform == 'never'" },
 ]
 gpu = [
     { name = "nvidia-cublas-cu12" },
@@ -5490,6 +5493,7 @@ gpu = [
     { name = "nvidia-curand-cu12" },
     { name = "nvidia-cusolver-cu12" },
     { name = "nvidia-cusparse-cu12" },
+    { name = "nvidia-nvjitlink-cu12" },
     { name = "onnxruntime-gpu" },
 ]
 sentence-classifier = [
@@ -5522,6 +5526,7 @@ requires-dist = [
     { name = "nvidia-curand-cu12", marker = "extra == 'gpu'", specifier = ">=10.3" },
     { name = "nvidia-cusolver-cu12", marker = "extra == 'gpu'", specifier = ">=11.0" },
     { name = "nvidia-cusparse-cu12", marker = "extra == 'gpu'", specifier = ">=12.0" },
+    { name = "nvidia-nvjitlink-cu12", marker = "extra == 'gpu'", specifier = ">=12.4" },
     { name = "onnx-asr", extras = ["hub"], editable = "../examples/onnx-asr" },
     { name = "onnxruntime", marker = "extra == 'cpu'", specifier = ">=1.18.1" },
     { name = "onnxruntime-gpu", marker = "extra == 'gpu'", specifier = ">=1.18.1" },

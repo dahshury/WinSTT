@@ -1,0 +1,24 @@
+{
+  "$schema": "https://www.react.doctor/schema/react-doctor.json",
+  "ignore": {
+    "files": ["scripts/**", "e2e/**"],
+    "overrides": [
+      {
+        "files": ["**/*.test.ts", "**/*.test.tsx"],
+        "rules": [
+          "react-doctor/nextjs-no-img-element",
+          "react-doctor/async-await-in-loop",
+          "react-doctor/no-barrel-import"
+        ]
+      },
+      {
+        "files": [
+          "src/widgets/openrouter-model-selector/ui/ModelSelectorTrigger.tsx",
+          "src/widgets/openrouter-model-selector/ui/ModelListContentVirtualized.tsx",
+          "src/widgets/openrouter-model-selector/ui/ProviderRail.tsx"
+        ],
+        "rules": ["react-doctor/nextjs-no-img-element"]
+      }
+    ]
+  }
+}
