@@ -10,7 +10,7 @@ import {
 	TouchInteraction03Icon,
 } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useReducer, useState } from "react";
 import { SettingSection } from "@/entities/setting";
 import {
 	appMenuReset,
@@ -124,31 +124,66 @@ async function showDemoContextMenuAction({
 	);
 }
 
+interface UpdaterEntriesState {
+	entries: UpdaterStatusEntry[];
+	status: string;
+}
+
+type UpdaterEntriesAction =
+	| { type: "set-entries"; entries: UpdaterStatusEntry[] }
+	| { type: "append-entry"; entry: UpdaterStatusEntry }
+	| { type: "set-status"; status: string };
+
+function updaterEntriesReducer(
+	state: UpdaterEntriesState,
+	action: UpdaterEntriesAction
+): UpdaterEntriesState {
+	switch (action.type) {
+		case "set-entries":
+			return { ...state, entries: action.entries };
+		case "append-entry":
+			return {
+				...state,
+				entries: appendBounded(state.entries, action.entry, MAX_UPDATER_ENTRIES),
+			};
+		case "set-status":
+			return { ...state, status: action.status };
+		default:
+			return state;
+	}
+}
+
 function useUpdaterEntries(hasElectron: boolean): {
 	entries: UpdaterStatusEntry[];
-	setEntries: React.Dispatch<React.SetStateAction<UpdaterStatusEntry[]>>;
+	setEntries: (value: UpdaterStatusEntry[]) => void;
 	updaterStatus: string;
 	setUpdaterStatus: (value: string) => void;
 } {
-	const [entries, setEntries] = useState<UpdaterStatusEntry[]>([]);
-	const [updaterStatus, setUpdaterStatus] = useState<string>("");
+	const [state, dispatch] = useReducer(updaterEntriesReducer, { entries: [], status: "" });
 
 	useEffect(() => {
 		if (!hasElectron) {
 			return;
 		}
 		updaterGetStatusHistory()
-			.then((items) => setEntries(items.slice(-MAX_UPDATER_ENTRIES)))
-			.catch((error) => setUpdaterStatus(errorToMessage(error)));
+			.then((items) =>
+				dispatch({ type: "set-entries", entries: items.slice(-MAX_UPDATER_ENTRIES) })
+			)
+			.catch((error) => dispatch({ type: "set-status", status: errorToMessage(error) }));
 		const unsubscribe = onUpdaterStatus((entry) => {
-			setEntries((prev) => appendBounded(prev, entry, MAX_UPDATER_ENTRIES));
+			dispatch({ type: "append-entry", entry });
 		});
 		return () => {
 			unsubscribe();
 		};
 	}, [hasElectron]);
 
-	return { entries, setEntries, updaterStatus, setUpdaterStatus };
+	return {
+		entries: state.entries,
+		updaterStatus: state.status,
+		setEntries: (value) => dispatch({ type: "set-entries", entries: value }),
+		setUpdaterStatus: (value) => dispatch({ type: "set-status", status: value }),
+	};
 }
 
 function useTelemetryRows(
@@ -234,7 +269,7 @@ function MenuEditorSection({
 
 	return (
 		<SettingSection icon={MenuSquareIcon} title={t("menuEditor")}>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 				<div className="col-span-2">
 					<FormControl caption={t("menuJsonCaption")} label={t("menuJsonLabel")}>
 						<Field.Control
@@ -300,7 +335,7 @@ function ContextMenuSection({
 
 	return (
 		<SettingSection icon={TouchInteraction03Icon} title={t("contextMenuTitle")}>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 				<div className="col-span-2">
 					<Button
 						className="rounded border border-border border-dashed bg-surface px-3 py-4 text-body-sm text-foreground-dim"
@@ -383,7 +418,7 @@ function ClipboardSection({
 
 	return (
 		<SettingSection icon={ClipboardIcon} title={t("clipboardTitle")}>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 				<div className="col-span-2">
 					<FormControl caption={t("clipboardCaption")} label={t("clipboardLabel")}>
 						<TextField
@@ -520,7 +555,7 @@ function UpdaterSection({
 
 	return (
 		<SettingSection icon={CloudIcon} title={t("updaterTitle")}>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 				<div className="col-span-2 flex flex-wrap gap-2">
 					<Button
 						className="rounded-md border border-border bg-surface px-3 py-1.5 text-body-sm hover:bg-surface-hover"
@@ -605,10 +640,12 @@ function TelemetrySection({
 }: TelemetrySectionProps): ReactNode {
 	return (
 		<SettingSection icon={Activity01Icon} title={t("telemetryTitle")}>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
-				<FormControl caption={t("telemetryCaption")} label={t("telemetryLabel")}>
-					<Toggle checked={telemetryEnabled} onCheckedChange={setTelemetryEnabled} />
-				</FormControl>
+			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+				<FormControl
+					caption={t("telemetryCaption")}
+					label={t("telemetryLabel")}
+					labelAddon={<Toggle checked={telemetryEnabled} onCheckedChange={setTelemetryEnabled} />}
+				/>
 				<FormControl caption={t("telemetryClearCaption")} label={t("telemetryClear")}>
 					<Button
 						className="h-8 rounded-md border border-border bg-surface px-3 py-1.5 text-body-sm hover:bg-surface-hover"
@@ -629,20 +666,66 @@ function detectElectron(): boolean {
 	return typeof window !== "undefined" && window.electronAPI != null;
 }
 
+interface PanelState {
+	clipboardInput: string;
+	clipboardStatus: string;
+	contextStatus: string;
+	menuJson: string;
+	menuStatus: string;
+	telemetryEnabled: boolean;
+}
+
+type PanelAction =
+	| { type: "menu-json"; value: string }
+	| { type: "menu-status"; value: string }
+	| { type: "context-status"; value: string }
+	| { type: "clipboard-input"; value: string }
+	| { type: "clipboard-status"; value: string }
+	| { type: "telemetry-enabled"; value: boolean };
+
+function panelReducer(state: PanelState, action: PanelAction): PanelState {
+	switch (action.type) {
+		case "menu-json":
+			return { ...state, menuJson: action.value };
+		case "menu-status":
+			return { ...state, menuStatus: action.value };
+		case "context-status":
+			return { ...state, contextStatus: action.value };
+		case "clipboard-input":
+			return { ...state, clipboardInput: action.value };
+		case "clipboard-status":
+			return { ...state, clipboardStatus: action.value };
+		case "telemetry-enabled":
+			return { ...state, telemetryEnabled: action.value };
+		default:
+			return state;
+	}
+}
+
 export function DesktopToolsSettingsPanel() {
 	const t = useTranslations("desktop");
-	const [menuJson, setMenuJson] = useState(() =>
-		JSON.stringify(DEFAULT_APP_MENU_TEMPLATE, null, 2)
+	const [state, dispatch] = useReducer(
+		panelReducer,
+		null,
+		(): PanelState => ({
+			menuJson: JSON.stringify(DEFAULT_APP_MENU_TEMPLATE, null, 2),
+			menuStatus: "",
+			contextStatus: t("contextMenuInitial"),
+			clipboardInput: "",
+			clipboardStatus: "",
+			telemetryEnabled: true,
+		})
 	);
-	const [menuStatus, setMenuStatus] = useState<string>("");
-	const [contextStatus, setContextStatus] = useState<string>(() => t("contextMenuInitial"));
-	const [clipboardInput, setClipboardInput] = useState("");
-	const [clipboardStatus, setClipboardStatus] = useState<string>("");
-	const [telemetryEnabled, setTelemetryEnabled] = useState(true);
+	const setMenuJson = (value: string) => dispatch({ type: "menu-json", value });
+	const setMenuStatus = (value: string) => dispatch({ type: "menu-status", value });
+	const setContextStatus = (value: string) => dispatch({ type: "context-status", value });
+	const setClipboardInput = (value: string) => dispatch({ type: "clipboard-input", value });
+	const setClipboardStatus = (value: string) => dispatch({ type: "clipboard-status", value });
+	const setTelemetryEnabled = (value: boolean) => dispatch({ type: "telemetry-enabled", value });
 	const hasElectron = detectElectron();
 
 	const { entries, setEntries, updaterStatus, setUpdaterStatus } = useUpdaterEntries(hasElectron);
-	const { rows, setRows } = useTelemetryRows(hasElectron, telemetryEnabled);
+	const { rows, setRows } = useTelemetryRows(hasElectron, state.telemetryEnabled);
 
 	const updaterEntriesDesc = useMemo(
 		() => entries.toSorted((a, b) => b.timestamp - a.timestamp),
@@ -650,25 +733,25 @@ export function DesktopToolsSettingsPanel() {
 	);
 
 	return (
-		<div className="flex flex-col gap-5">
+		<div className="flex flex-col gap-2">
 			<OverviewSection hasElectron={hasElectron} t={t} />
 			<MenuEditorSection
 				hasElectron={hasElectron}
-				menuJson={menuJson}
-				menuStatus={menuStatus}
+				menuJson={state.menuJson}
+				menuStatus={state.menuStatus}
 				setMenuJson={setMenuJson}
 				setMenuStatus={setMenuStatus}
 				t={t}
 			/>
 			<ContextMenuSection
-				contextStatus={contextStatus}
+				contextStatus={state.contextStatus}
 				hasElectron={hasElectron}
 				setContextStatus={setContextStatus}
 				t={t}
 			/>
 			<ClipboardSection
-				clipboardInput={clipboardInput}
-				clipboardStatus={clipboardStatus}
+				clipboardInput={state.clipboardInput}
+				clipboardStatus={state.clipboardStatus}
 				hasElectron={hasElectron}
 				setClipboardInput={setClipboardInput}
 				setClipboardStatus={setClipboardStatus}
@@ -688,7 +771,7 @@ export function DesktopToolsSettingsPanel() {
 				setRows={setRows}
 				setTelemetryEnabled={setTelemetryEnabled}
 				t={t}
-				telemetryEnabled={telemetryEnabled}
+				telemetryEnabled={state.telemetryEnabled}
 			/>
 		</div>
 	);

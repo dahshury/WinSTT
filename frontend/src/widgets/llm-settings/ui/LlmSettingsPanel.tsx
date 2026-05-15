@@ -2,17 +2,32 @@
 
 import {
 	AiBrain02Icon,
+	ArrangeIcon,
 	BookOpen01Icon,
 	BrushIcon,
 	HappyIcon,
+	Layout01Icon,
+	MagicWand01Icon,
 	PencilIcon,
+	StickyNote01Icon,
 	Suit01Icon,
 	WavingHand01Icon,
 } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { useLlmCatalogStore, useOpenRouterCatalogStore } from "@/entities/llm-catalog";
+import {
+	INDEPENDENT_PRESETS,
+	PRESET_LEVELS,
+	PRESETS_WITH_LEVELS,
+	type PresetEntry,
+	type PresetKey,
+	type PresetLevel,
+	TONE_GROUP,
+	useLlmCatalogStore,
+	useOpenRouterCatalogStore,
+} from "@/entities/llm-catalog";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { detectOllama, fetchOllamaModels, startOllama } from "@/shared/api/ipc-client";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
@@ -22,10 +37,13 @@ import { Modal } from "@/shared/ui/modal";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import { Switcher } from "@/shared/ui/switcher";
 import { TextField } from "@/shared/ui/text-field";
+import { Toggle } from "@/shared/ui/toggle";
 import {
 	computeModelExclusionConfig,
 	OpenRouterModelSelector,
 } from "@/widgets/openrouter-model-selector";
+import { ContextAwarenessSection } from "./ContextAwarenessSection";
+import { TransformsSection } from "./TransformsSection";
 
 export interface LlmOllamaManagerSlotProps {
 	currentModel: string;
@@ -48,7 +66,6 @@ interface OllamaModel {
 type LlmSettings = AppSettingsOutput["llm"];
 type LlmPatch = Partial<LlmSettings>;
 type UpdateLlmFn = (patch: LlmPatch) => void;
-type LlmPreset = LlmSettings["preset"];
 type LlmProvider = LlmSettings["provider"];
 
 interface LlmDraftSnapshot {
@@ -58,7 +75,7 @@ interface LlmDraftSnapshot {
 	openrouterApiKey: string;
 	openrouterFallbackModel: string;
 	openrouterModel: string;
-	preset: LlmPreset;
+	presets: readonly PresetEntry[];
 	provider: LlmProvider;
 }
 
@@ -67,14 +84,112 @@ const DEFAULT_LLM: LlmDraftSnapshot = {
 	provider: "ollama",
 	endpoint: "http://localhost:11434",
 	model: "",
-	preset: "neutral",
+	presets: [{ key: "neutral" }],
 	openrouterApiKey: "",
 	openrouterModel: "",
 	openrouterFallbackModel: "",
 };
 
+type ToneKey = (typeof TONE_GROUP)[number];
+type IndependentKey = (typeof INDEPENDENT_PRESETS)[number];
+
+const TONE_ICONS: Readonly<Record<ToneKey, IconSvgElement>> = {
+	neutral: PencilIcon,
+	formal: Suit01Icon,
+	friendly: WavingHand01Icon,
+	technical: BookOpen01Icon,
+	casual: HappyIcon,
+};
+
+const INDEPENDENT_PRESET_ICONS: Readonly<Record<IndependentKey, IconSvgElement>> = {
+	summarize: StickyNote01Icon,
+	concise: BrushIcon,
+	reorder: ArrangeIcon,
+	restructure: Layout01Icon,
+	rewordForClarity: MagicWand01Icon,
+};
+
+const PRESET_LABEL_KEY = {
+	neutral: "presetNeutral",
+	formal: "presetFormal",
+	friendly: "presetFriendly",
+	technical: "presetTechnical",
+	casual: "presetCasual",
+	concise: "presetConcise",
+	summarize: "presetSummarize",
+	reorder: "presetReorder",
+	restructure: "presetRestructure",
+	rewordForClarity: "presetRewordForClarity",
+} as const satisfies Record<PresetKey, string>;
+
+const LEVEL_LABEL_KEY = {
+	light: "levelLight",
+	medium: "levelMedium",
+	high: "levelHigh",
+} as const satisfies Record<PresetLevel, string>;
+
+const DEFAULT_LEVEL: PresetLevel = "medium";
+
 function readLlmSnapshot(llm: Partial<LlmSettings> | null | undefined): LlmDraftSnapshot {
-	return { ...DEFAULT_LLM, ...(llm ?? {}) };
+	const incoming = llm ?? {};
+	const presets =
+		Array.isArray(incoming.presets) && incoming.presets.length > 0
+			? (incoming.presets as readonly PresetEntry[])
+			: DEFAULT_LLM.presets;
+	return { ...DEFAULT_LLM, ...incoming, presets };
+}
+
+function getToneKey(presets: readonly PresetEntry[]): (typeof TONE_GROUP)[number] {
+	const tone = presets.find((p) => (TONE_GROUP as readonly string[]).includes(p.key));
+	return (tone?.key as (typeof TONE_GROUP)[number]) ?? "neutral";
+}
+
+function isIndependentEnabled(
+	presets: readonly PresetEntry[],
+	key: (typeof INDEPENDENT_PRESETS)[number]
+): boolean {
+	return presets.some((p) => p.key === key);
+}
+
+function getLevel(
+	presets: readonly PresetEntry[],
+	key: (typeof INDEPENDENT_PRESETS)[number]
+): PresetLevel {
+	const entry = presets.find((p) => p.key === key);
+	return entry?.level ?? DEFAULT_LEVEL;
+}
+
+function setTone(
+	presets: readonly PresetEntry[],
+	tone: (typeof TONE_GROUP)[number]
+): PresetEntry[] {
+	const withoutTone = presets.filter((p) => !(TONE_GROUP as readonly string[]).includes(p.key));
+	return [{ key: tone }, ...withoutTone];
+}
+
+function toggleIndependent(
+	presets: readonly PresetEntry[],
+	key: (typeof INDEPENDENT_PRESETS)[number],
+	enabled: boolean
+): PresetEntry[] {
+	if (!enabled) {
+		return presets.filter((p) => p.key !== key);
+	}
+	if (presets.some((p) => p.key === key)) {
+		return [...presets];
+	}
+	const entry: PresetEntry = (PRESETS_WITH_LEVELS as readonly string[]).includes(key)
+		? { key, level: DEFAULT_LEVEL }
+		: { key };
+	return [...presets, entry];
+}
+
+function setIndependentLevel(
+	presets: readonly PresetEntry[],
+	key: (typeof INDEPENDENT_PRESETS)[number],
+	level: PresetLevel
+): PresetEntry[] {
+	return presets.map((p) => (p.key === key ? { ...p, level } : p));
 }
 
 function buildOllamaModelOpts(
@@ -86,15 +201,19 @@ function buildOllamaModelOpts(
 	}));
 }
 
-function buildPresetOpts(t: TranslateFn) {
-	return [
-		{ value: "neutral", label: t("presetNeutral"), icon: PencilIcon },
-		{ value: "formal", label: t("presetFormal"), icon: Suit01Icon },
-		{ value: "friendly", label: t("presetFriendly"), icon: WavingHand01Icon },
-		{ value: "technical", label: t("presetTechnical"), icon: BookOpen01Icon },
-		{ value: "casual", label: t("presetCasual"), icon: HappyIcon },
-		{ value: "concise", label: t("presetConcise"), icon: BrushIcon },
-	] as const;
+function buildToneOpts(t: TranslateFn) {
+	return TONE_GROUP.map((key) => ({
+		value: key,
+		label: t(PRESET_LABEL_KEY[key]),
+		icon: TONE_ICONS[key],
+	}));
+}
+
+function buildLevelOpts(t: TranslateFn) {
+	return PRESET_LEVELS.map((lvl) => ({
+		value: lvl,
+		label: t(LEVEL_LABEL_KEY[lvl]),
+	}));
 }
 
 function buildProviderOpts(t: TranslateFn) {
@@ -398,6 +517,64 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 	);
 }
 
+interface IndependentPresetListProps {
+	levelOpts: ReadonlyArray<{ value: PresetLevel; label: string }>;
+	onLevelChange: (key: (typeof INDEPENDENT_PRESETS)[number], level: PresetLevel) => void;
+	onToggle: (key: (typeof INDEPENDENT_PRESETS)[number], on: boolean) => void;
+	presets: readonly PresetEntry[];
+	t: TranslateFn;
+}
+
+function IndependentPresetList({
+	levelOpts,
+	onLevelChange,
+	onToggle,
+	presets,
+	t,
+}: IndependentPresetListProps) {
+	return (
+		<div className="flex flex-col gap-2">
+			{INDEPENDENT_PRESETS.map((key) => {
+				const checked = isIndependentEnabled(presets, key);
+				const hasLevel = (PRESETS_WITH_LEVELS as readonly string[]).includes(key);
+				const labelId = `llm-preset-${key}`;
+				return (
+					<div
+						className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-surface-tertiary/40 px-3 py-2"
+						key={key}
+					>
+						<div className="flex items-center gap-2">
+							<HugeiconsIcon
+								aria-hidden="true"
+								className="shrink-0 text-foreground-dim"
+								icon={INDEPENDENT_PRESET_ICONS[key]}
+								size={16}
+							/>
+							<span className="font-medium text-body-sm" id={labelId}>
+								{t(PRESET_LABEL_KEY[key])}
+							</span>
+						</div>
+						<div className="flex items-center gap-3">
+							{checked && hasLevel ? (
+								<Switcher
+									onChange={(v) => onLevelChange(key, v as PresetLevel)}
+									options={levelOpts}
+									value={getLevel(presets, key)}
+								/>
+							) : null}
+							<Toggle
+								aria-label={t(PRESET_LABEL_KEY[key])}
+								checked={checked}
+								onCheckedChange={(on) => onToggle(key, on)}
+							/>
+						</div>
+					</div>
+				);
+			})}
+		</div>
+	);
+}
+
 export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps = {}) {
 	const llm = useSettingsStore((s) => s.settings.llm);
 	const update = useSettingsStore((s) => s.updateLlmSettings);
@@ -410,7 +587,7 @@ export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps 
 		provider,
 		endpoint,
 		model,
-		preset,
+		presets,
 		openrouterApiKey,
 		openrouterModel,
 		openrouterFallbackModel,
@@ -539,9 +716,11 @@ export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps 
 	);
 
 	const ollamaModelOpts = buildOllamaModelOpts(ollamaModels as readonly OllamaModel[]);
-	const presetOpts = buildPresetOpts(t);
+	const toneOpts = buildToneOpts(t);
+	const levelOpts = buildLevelOpts(t);
 	const providerOpts = buildProviderOpts(t);
 	const isOllamaProvider = provider === "ollama";
+	const activeTone = getToneKey(presets);
 
 	return (
 		<>
@@ -551,7 +730,7 @@ export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps 
 				title={t("title")}
 				toggled={enabled}
 			>
-				<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+				<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 					<div className="col-span-2">
 						<FormControl
 							caption={t("providerCaption")}
@@ -598,20 +777,39 @@ export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps 
 					)}
 
 					<div className="col-span-2">
-						<FormControl
-							caption={t("presetCaption")}
-							label={t("preset")}
-							tooltip={t("presetTooltip")}
-						>
+						<FormControl caption={t("toneCaption")} label={t("tone")} tooltip={t("toneTooltip")}>
 							<Switcher
-								onChange={(v) => update({ preset: v })}
-								options={presetOpts}
-								value={preset}
+								onChange={(v) =>
+									update({ presets: setTone(presets, v as (typeof TONE_GROUP)[number]) })
+								}
+								options={toneOpts}
+								value={activeTone}
+							/>
+						</FormControl>
+					</div>
+
+					<div className="col-span-2">
+						<FormControl
+							caption={t("modifiersCaption")}
+							label={t("modifiers")}
+							tooltip={t("modifiersTooltip")}
+						>
+							<IndependentPresetList
+								levelOpts={levelOpts}
+								onLevelChange={(key, lvl) =>
+									update({ presets: setIndependentLevel(presets, key, lvl) })
+								}
+								onToggle={(key, on) => update({ presets: toggleIndependent(presets, key, on) })}
+								presets={presets}
+								t={t}
 							/>
 						</FormControl>
 					</div>
 				</div>
 			</SettingSection>
+
+			<ContextAwarenessSection />
+			<TransformsSection />
 
 			<OllamaDialog
 				isOpen={showOllamaDialog}
@@ -707,22 +905,59 @@ function OllamaPrimaryButton(props: OllamaPrimaryButtonProps) {
 	);
 }
 
+interface OllamaDialogState {
+	installed: boolean | null;
+	startError: string | null;
+	starting: boolean;
+}
+
+type OllamaDialogAction =
+	| { type: "reset-status" }
+	| { type: "set-installed"; value: boolean | null }
+	| { type: "start-attempt" }
+	| { type: "start-failed"; error: string }
+	| { type: "start-succeeded" };
+
+function ollamaDialogReducer(
+	state: OllamaDialogState,
+	action: OllamaDialogAction
+): OllamaDialogState {
+	switch (action.type) {
+		case "reset-status":
+			return { ...state, startError: null, starting: false };
+		case "set-installed":
+			return { ...state, installed: action.value };
+		case "start-attempt":
+			return { ...state, starting: true, startError: null };
+		case "start-failed":
+			return { ...state, starting: false, startError: action.error };
+		case "start-succeeded":
+			return { ...state, starting: false };
+		default:
+			return state;
+	}
+}
+
+const INITIAL_OLLAMA_DIALOG_STATE: OllamaDialogState = {
+	installed: null,
+	starting: false,
+	startError: null,
+};
+
 function OllamaDialog({ t, tc, isOpen, onClose, onStarted }: OllamaDialogProps) {
-	const [installed, setInstalled] = useState<boolean | null>(null);
-	const [starting, setStarting] = useState(false);
-	const [startError, setStartError] = useState<string | null>(null);
+	const [state, dispatch] = useReducer(ollamaDialogReducer, INITIAL_OLLAMA_DIALOG_STATE);
+	const { installed, starting, startError } = state;
 
 	useEffect(() => {
 		if (!isOpen) {
 			return;
 		}
-		setStartError(null);
-		setStarting(false);
+		dispatch({ type: "reset-status" });
 		let cancelled = false;
 		(async () => {
 			const result = await detectOllama();
 			if (!cancelled) {
-				setInstalled(result.installed);
+				dispatch({ type: "set-installed", value: result.installed });
 			}
 		})();
 		return () => {
@@ -736,16 +971,14 @@ function OllamaDialog({ t, tc, isOpen, onClose, onStarted }: OllamaDialogProps) 
 	};
 
 	const handleStart = async () => {
-		setStarting(true);
-		setStartError(null);
+		dispatch({ type: "start-attempt" });
 		const result = await startOllama();
 		if (!result.started) {
-			setStarting(false);
-			setStartError(result.error ?? t("ollamaStartFailed"));
+			dispatch({ type: "start-failed", error: result.error ?? t("ollamaStartFailed") });
 			return;
 		}
 		setTimeout(() => {
-			setStarting(false);
+			dispatch({ type: "start-succeeded" });
 			onStarted();
 		}, 1500);
 	};
@@ -856,7 +1089,8 @@ function ApiKeyDialog({ t, tc, isOpen, onClose, onSave, initialKey }: ApiKeyDial
 export const __llm_settings_panel_test_helpers__ = {
 	readLlmSnapshot,
 	buildOllamaModelOpts,
-	buildPresetOpts,
+	buildToneOpts,
+	buildLevelOpts,
 	buildProviderOpts,
 	pickReplacementOllamaModel,
 	shouldSyncOllamaModel,
@@ -866,4 +1100,10 @@ export const __llm_settings_panel_test_helpers__ = {
 	performToggle,
 	getOllamaDialogTexts,
 	DEFAULT_LLM,
+	getToneKey,
+	isIndependentEnabled,
+	getLevel,
+	setTone,
+	toggleIndependent,
+	setIndependentLevel,
 };

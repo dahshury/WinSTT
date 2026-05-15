@@ -48,26 +48,76 @@ describe("LlmSettingsPanel helpers — buildOllamaModelOpts", () => {
 	});
 });
 
-describe("LlmSettingsPanel helpers — buildPresetOpts", () => {
-	test("returns 6 preset entries with stable values", () => {
-		const opts = helpers.buildPresetOpts(tStub);
-		expect(opts).toHaveLength(6);
+describe("LlmSettingsPanel helpers — buildToneOpts / buildLevelOpts", () => {
+	test("buildToneOpts returns the five tone entries with stable order", () => {
+		const opts = helpers.buildToneOpts(tStub);
 		expect(opts.map((o) => o.value)).toEqual([
 			"neutral",
 			"formal",
 			"friendly",
 			"technical",
 			"casual",
-			"concise",
 		]);
 	});
 
-	test("each preset has a label string and an icon", () => {
-		const opts = helpers.buildPresetOpts(tStub);
+	test("each tone option has a label and icon", () => {
+		const opts = helpers.buildToneOpts(tStub);
 		for (const opt of opts) {
 			expect(typeof opt.label).toBe("string");
 			expect(opt.icon).toBeDefined();
 		}
+	});
+
+	test("buildLevelOpts returns light/medium/high", () => {
+		const opts = helpers.buildLevelOpts(tStub);
+		expect(opts.map((o) => o.value)).toEqual(["light", "medium", "high"]);
+	});
+});
+
+describe("LlmSettingsPanel helpers — presets array mutators", () => {
+	test("getToneKey returns 'neutral' for empty list", () => {
+		expect(helpers.getToneKey([])).toBe("neutral");
+	});
+
+	test("setTone replaces the existing tone", () => {
+		const out = helpers.setTone([{ key: "formal" }, { key: "summarize" }], "casual");
+		expect(out.find((p) => p.key === "casual")).toBeDefined();
+		expect(out.find((p) => p.key === "formal")).toBeUndefined();
+		expect(out.find((p) => p.key === "summarize")).toBeDefined();
+	});
+
+	test("toggleIndependent adds with default level for leveled presets", () => {
+		const out = helpers.toggleIndependent([{ key: "neutral" }], "summarize", true);
+		expect(out).toContainEqual({ key: "summarize", level: "medium" });
+	});
+
+	test("toggleIndependent adds without level for non-leveled presets", () => {
+		const out = helpers.toggleIndependent([{ key: "neutral" }], "reorder", true);
+		expect(out).toContainEqual({ key: "reorder" });
+	});
+
+	test("toggleIndependent removes when set false", () => {
+		const out = helpers.toggleIndependent(
+			[{ key: "neutral" }, { key: "summarize", level: "high" }],
+			"summarize",
+			false
+		);
+		expect(out.some((p) => p.key === "summarize")).toBe(false);
+	});
+
+	test("setIndependentLevel updates only the matching key", () => {
+		const out = helpers.setIndependentLevel(
+			[
+				{ key: "summarize", level: "light" },
+				{ key: "concise", level: "high" },
+			],
+			"summarize",
+			"high"
+		);
+		expect(out).toEqual([
+			{ key: "summarize", level: "high" },
+			{ key: "concise", level: "high" },
+		]);
 	});
 });
 

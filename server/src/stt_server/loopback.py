@@ -107,43 +107,82 @@ class LoopbackCapture:
         if self._thread is not None and self._thread.is_alive():
             self._stop_locked(recorder)
 
-        self._audio = pyaudio.PyAudio()
-        dev_info: dict[str, Any] = self._audio.get_device_info_by_index(device_index)
-        self._device_rate = int(dev_info["defaultSampleRate"])
-        self._device_channels = max(int(dev_info.get("maxInputChannels", 0)), int(dev_info.get("maxOutputChannels", 0)))
-        if self._device_channels < 1:
-            self._device_channels = 2
+        # Stage all PyAudio setup inside a try block so that any failure
+        # (bad device index, format-unsupported, OS-level open failure)
+        # terminates the freshly-allocated PyAudio handle instead of
+        # leaking the PortAudio backend on every failed start. Mirrors
+        # PyAudioSource.setup()'s cleanup-on-error pattern at
+        # pyaudio_source.py:64-95.
+        audio = pyaudio.PyAudio()
+        try:
+            dev_info: dict[str, Any] = audio.get_device_info_by_index(device_index)
+            device_rate = int(dev_info["defaultSampleRate"])
+            device_channels = max(
+                int(dev_info.get("maxInputChannels", 0)),
+                int(dev_info.get("maxOutputChannels", 0)),
+            )
+            if device_channels < 1:
+                device_channels = 2
 
-        # Switch recorder to feed_audio mode — external audio mode first
-        # so the reader thread discards instead of injecting silence
-        recorder.set_external_audio_mode(True)
-        recorder.set_microphone(False)
+            # Pre-flight probe — same is_format_supported check used for
+            # regular input devices in control_handler._device_can_open.
+            # Without this, loopback start failures only surface when
+            # pa.open() throws, which is more expensive and less specific.
+            try:
+                audio.is_format_supported(
+                    device_rate,
+                    input_device=device_index,
+                    input_channels=device_channels,
+                    input_format=pyaudio.paInt16,
+                )
+            except ValueError as fmt_err:
+                msg = (
+                    f"Loopback device {device_index} ({dev_info.get('name', '')!r}) "
+                    f"does not support {device_rate}Hz / {device_channels}ch / int16: {fmt_err}"
+                )
+                raise RuntimeError(msg) from fmt_err
 
-        # Use a longer silence threshold for loopback (continuous audio)
-        self._saved_silence_duration = recorder.post_speech_silence_duration
-        recorder.post_speech_silence_duration = 2.0
+            # Switch recorder to feed_audio mode — external audio mode first
+            # so the reader thread discards instead of injecting silence
+            recorder.set_external_audio_mode(True)
+            recorder.set_microphone(False)
 
-        self._gain = 1.0  # Reset AGC
+            # Use a longer silence threshold for loopback (continuous audio)
+            self._saved_silence_duration = recorder.post_speech_silence_duration
+            recorder.post_speech_silence_duration = 2.0
 
-        # Clear stale audio from previous session so VAD doesn't get
-        # misaligned partial chunks on restart.
-        recorder.clear_feed_buffer()
+            self._gain = 1.0  # Reset AGC
 
-        self._stop_event.clear()
-        self._stream = self._audio.open(
-            format=pyaudio.paInt16,
-            channels=self._device_channels,
-            rate=self._device_rate,
-            input=True,
-            frames_per_buffer=512,
-            input_device_index=device_index,
-        )
+            # Clear stale audio from previous session so VAD doesn't get
+            # misaligned partial chunks on restart.
+            recorder.clear_feed_buffer()
+
+            self._stop_event.clear()
+            stream = audio.open(
+                format=pyaudio.paInt16,
+                channels=device_channels,
+                rate=device_rate,
+                input=True,
+                frames_per_buffer=512,
+                input_device_index=device_index,
+            )
+        except Exception:
+            # Caller's `start()` raises this back to the WS handler, which
+            # surfaces it to the renderer. Make sure we don't leak PortAudio.
+            with contextlib.suppress(Exception):
+                audio.terminate()
+            raise
+
+        # Commit to instance state only after every fallible step succeeded.
+        self._audio = audio
+        self._device_rate = device_rate
+        self._device_channels = device_channels
+        self._stream = stream
 
         recorder.wakeup()
 
-        # Pass stream as a local so the capture thread never touches a
-        # replaced self._stream after a concurrent start/stop cycle.
-        stream = self._stream
+        # Hand the stream to the capture thread as a local arg so it never
+        # touches a replaced self._stream after a concurrent start/stop cycle.
         self._thread = threading.Thread(
             target=self._capture_loop,
             args=(recorder, stream),
@@ -220,6 +259,11 @@ class LoopbackCapture:
         try:
             while not self._stop_event.is_set():
                 try:
+                    # Same rationale as PyAudioSource.read_chunk:
+                    # exception_on_overflow=False keeps the capture loop
+                    # alive across transient PortAudio overflows instead
+                    # of crashing the thread. For loopback we'd rather
+                    # drop a frame than tear down the WASAPI session.
                     data: bytes = stream.read(512, exception_on_overflow=False)
                     consecutive_errors = 0  # Reset on success
 

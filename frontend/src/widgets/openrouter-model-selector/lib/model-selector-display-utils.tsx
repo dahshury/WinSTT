@@ -23,27 +23,25 @@ function formatCurrency(value: number): string {
 	return PRICE_FORMATTER.format(value);
 }
 
+const VARIANT_ICON_MAP: Partial<Record<ModelVariant, typeof Tag01Icon>> = {
+	free: Tag01Icon,
+	nitro: ZapIcon,
+	extended: Layers01Icon,
+	exacto: Target01Icon,
+	thinking: SparklesIcon,
+	online: ServerStack01Icon,
+	floor: Coins01Icon,
+};
+
 export function getVariantIcon(variant: ModelVariant, className = "h-3 w-3"): React.ReactNode {
-	const iconClass = className;
-	switch (variant) {
-		case "free":
-			return <HugeiconsIcon className={iconClass} icon={Tag01Icon} />;
-		case "nitro":
-			return <HugeiconsIcon className={iconClass} icon={ZapIcon} />;
-		case "extended":
-			return <HugeiconsIcon className={iconClass} icon={Layers01Icon} />;
-		case "exacto":
-			return <HugeiconsIcon className={iconClass} icon={Target01Icon} />;
-		case "thinking":
-			return <HugeiconsIcon className={iconClass} icon={SparklesIcon} />;
-		case "online":
-			return <HugeiconsIcon className={iconClass} icon={ServerStack01Icon} />;
-		case "floor":
-			return <HugeiconsIcon className={iconClass} icon={Coins01Icon} />;
-		default:
-			return null;
+	const icon = VARIANT_ICON_MAP[variant];
+	if (!icon) {
+		return null;
 	}
+	return <HugeiconsIcon className={className} icon={icon} />;
 }
+
+export { VARIANT_ICON_MAP as __variantIconMap };
 
 export function getVariantClasses(variant: ModelVariant): {
 	bg: string;
@@ -81,49 +79,45 @@ function parsePricingValue(raw: string | number | undefined): number {
 	return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export function getPricingTier(pricing: OpenRouterPricing | undefined): {
+interface PricingTierResult {
+	className: string;
 	label: string;
 	tier: "free" | "low" | "medium" | "high";
-	className: string;
-} {
+}
+
+const FREE_PRICING_RESULT: PricingTierResult = {
+	label: "Free",
+	tier: "free",
+	className: "text-emerald-600 dark:text-emerald-400",
+};
+
+function classifyAvgCost(avgCost: number): Omit<PricingTierResult, "label"> {
+	if (avgCost < 1) {
+		return { tier: "low", className: "text-green-600 dark:text-green-400" };
+	}
+	if (avgCost < 10) {
+		return { tier: "medium", className: "text-amber-600 dark:text-amber-400" };
+	}
+	return { tier: "high", className: "text-rose-600 dark:text-rose-400" };
+}
+
+export function getPricingTier(pricing: OpenRouterPricing | undefined): PricingTierResult {
 	const prompt = parsePricingValue(pricing?.prompt);
 	const completion = parsePricingValue(pricing?.completion);
 
 	const promptPerMillion = prompt * 1_000_000;
 	const completionPerMillion = completion * 1_000_000;
-	const avgCost = (promptPerMillion + completionPerMillion) / 2;
 
 	if (prompt === 0 && completion === 0) {
-		return {
-			label: "Free",
-			tier: "free",
-			className: "text-emerald-600 dark:text-emerald-400",
-		};
+		return FREE_PRICING_RESULT;
 	}
-	const formattedPrompt = formatCurrency(promptPerMillion);
-	const formattedCompletion = formatCurrency(completionPerMillion);
-	const priceLabel = `${formattedPrompt}/${formattedCompletion}`;
 
-	if (avgCost < 1) {
-		return {
-			label: priceLabel,
-			tier: "low",
-			className: "text-green-600 dark:text-green-400",
-		};
-	}
-	if (avgCost < 10) {
-		return {
-			label: priceLabel,
-			tier: "medium",
-			className: "text-amber-600 dark:text-amber-400",
-		};
-	}
-	return {
-		label: priceLabel,
-		tier: "high",
-		className: "text-rose-600 dark:text-rose-400",
-	};
+	const priceLabel = `${formatCurrency(promptPerMillion)}/${formatCurrency(completionPerMillion)}`;
+	const avgCost = (promptPerMillion + completionPerMillion) / 2;
+	return { label: priceLabel, ...classifyAvgCost(avgCost) };
 }
+
+export { classifyAvgCost as __classifyAvgCost };
 
 export function formatPricing(pricing: OpenRouterPricing | undefined): string {
 	const prompt = parsePricingValue(pricing?.prompt);

@@ -27,7 +27,12 @@
 
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { analyze, type FunctionMetric, readBiomeLinterDisabledPaths } from "./crap/analyzer";
+import {
+	analyze,
+	type FunctionMetric,
+	readBiomeLinterDisabledPaths,
+	readCrapIgnorePaths,
+} from "./crap/analyzer";
 import { formatReport } from "./crap/formatter";
 import { parseLcov } from "./crap/lcov-parser";
 
@@ -98,11 +103,18 @@ async function main(): Promise<void> {
 		);
 	}
 
+	const crapIgnored = await readCrapIgnorePaths(root);
+	if (crapIgnored.length > 0) {
+		console.log(
+			`Excluding ${crapIgnored.length} crap-ignore path(s):\n  ${crapIgnored.join("\n  ")}`
+		);
+	}
+
 	const metrics: FunctionMetric[] = await analyze(root, lcov, {
 		roots: ["src", "electron"],
 		include: /\.tsx?$/,
 		exclude: /(?:\.test\.|\.spec\.|\.d\.|\.stories\.)tsx?$/,
-		excludePaths: biomeDisabled,
+		excludePaths: [...biomeDisabled, ...crapIgnored],
 	});
 
 	const report = formatReport(metrics, {

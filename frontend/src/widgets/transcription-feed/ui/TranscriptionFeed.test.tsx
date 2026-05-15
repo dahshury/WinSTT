@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useConnectionStore } from "@/entities/connection";
-import { useTranscriptionStore } from "@/features/live-transcription";
+import { useTranscriptionStore } from "@/entities/transcription";
 import { TranscriptionFeed } from "./TranscriptionFeed";
 
 beforeEach(() => {

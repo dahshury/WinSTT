@@ -22,6 +22,56 @@ const loopbackDeviceSchema = z.object({
 
 type LoopbackDevice = z.infer<typeof loopbackDeviceSchema>;
 
+/**
+ * Validates a raw device list via Zod and returns only the valid entries.
+ * Exported for unit testing.
+ */
+export function validateDevices(raw: unknown[]): LoopbackDevice[] {
+	const valid: LoopbackDevice[] = [];
+	for (const d of raw) {
+		const parsed = loopbackDeviceSchema.safeParse(d);
+		if (parsed.success) {
+			valid.push(parsed.data);
+		}
+	}
+	return valid;
+}
+
+function shouldStartLoopback(
+	recordingMode: string,
+	loopbackDeviceIndex: number | null,
+	connectionStatus: string
+): loopbackDeviceIndex is number {
+	return (
+		recordingMode === "listen" && loopbackDeviceIndex != null && connectionStatus === "connected"
+	);
+}
+
+function shouldStopLoopback(
+	recordingMode: string,
+	wasListen: boolean,
+	connectionStatus: string
+): boolean {
+	return wasListen && recordingMode !== "listen" && connectionStatus === "connected";
+}
+
+/**
+ * Applies loopback start/stop side effects when recording mode or connection
+ * status changes. Extracted for testability.
+ */
+export function applyLoopbackTransition(
+	recordingMode: string,
+	wasListen: boolean,
+	loopbackDeviceIndex: number | null,
+	connectionStatus: string
+): void {
+	if (shouldStartLoopback(recordingMode, loopbackDeviceIndex, connectionStatus)) {
+		loopbackStart(loopbackDeviceIndex);
+	} else if (shouldStopLoopback(recordingMode, wasListen, connectionStatus)) {
+		loopbackStop();
+	}
+}
+
 export function useListenMode(): void {
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const loopbackDeviceIndex = useSettingsStore(
@@ -59,16 +109,8 @@ export function useListenMode(): void {
 				if (isCancelled) {
 					return;
 				}
-
 				if (Array.isArray(devices)) {
-					const validated: LoopbackDevice[] = [];
-					for (const d of devices) {
-						const parsed = loopbackDeviceSchema.safeParse(d);
-						if (parsed.success) {
-							validated.push(parsed.data);
-						}
-					}
-					setDevices(validated);
+					setDevices(validateDevices(devices));
 				} else {
 					console.warn("[useListenMode] Invalid devices response:", devices);
 				}
@@ -89,16 +131,7 @@ export function useListenMode(): void {
 	useEffect(() => {
 		const wasListen = prevModeRef.current === "listen";
 		prevModeRef.current = recordingMode;
-
-		if (
-			recordingMode === "listen" &&
-			loopbackDeviceIndex != null &&
-			connectionStatus === "connected"
-		) {
-			loopbackStart(loopbackDeviceIndex);
-		} else if (wasListen && recordingMode !== "listen" && connectionStatus === "connected") {
-			loopbackStop();
-		}
+		applyLoopbackTransition(recordingMode, wasListen, loopbackDeviceIndex, connectionStatus);
 	}, [recordingMode, loopbackDeviceIndex, connectionStatus]);
 
 	// Stop loopback on unmount if active

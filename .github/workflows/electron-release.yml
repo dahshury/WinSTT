@@ -8,12 +8,23 @@ on:
 permissions:
   contents: write
 
+# Build CPU and GPU flavors as parallel jobs. Both publish to the same GitHub
+# Release on this tag — electron-builder appends each artifact under its
+# distinct ``artifactName`` (set in electron-builder.{cpu,gpu}.yml), so the
+# Release page ends up with two installers side by side. electron-updater
+# treats them as separate update channels: a user installed via CPU gets
+# only CPU updates, GPU users get GPU.
 jobs:
-  release-windows:
+  build:
+    name: Build (${{ matrix.flavor }})
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: frontend
+    strategy:
+      # Run both flavors regardless of one failing — easier to debug than
+      # bailing out half-way and re-running just the failing one needing
+      # special tag manipulation.
+      fail-fast: false
+      matrix:
+        flavor: [cpu, gpu]
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       WINSTT_ENABLE_AUTO_UPDATES: "1"
@@ -23,21 +34,32 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.6"
 
-      - name: Install Dependencies
+      # The PyInstaller build step lives outside the frontend's working
+      # directory; it installs Python deps and produces
+      # frontend/stt-server-dist-${flavor}/ which electron-builder reads.
+      - name: Build STT server (${{ matrix.flavor }})
+        shell: pwsh
+        run: pwsh server/packaging/build.ps1 -Flavor ${{ matrix.flavor }}
+
+      - name: Install Frontend Dependencies
+        working-directory: frontend
         run: bun install --frozen-lockfile
 
-      - name: Verify Bundled STT Server
-        shell: powershell
-        run: |
-          if (!(Test-Path "stt-server-dist")) {
-            Write-Error "Missing frontend/stt-server-dist. Build and commit/copy bundled STT server artifacts before tagging a release."
-            exit 1
-          }
-
-      - name: Build And Publish Electron Release
-        run: bun run electron:build:publish
+      - name: Build And Publish Electron Release (${{ matrix.flavor }})
+        working-directory: frontend
+        run: bun run electron:build:publish:${{ matrix.flavor }}

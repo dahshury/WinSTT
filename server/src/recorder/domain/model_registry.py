@@ -29,6 +29,13 @@ class ModelInfo:
     supports_realtime: bool = False
     onnx_model_name: str | None = None
     description: str = ""
+    #: Approximate parameter count for the model. Drives the hardware-fitness
+    #: estimate (memory headroom needed at run time). int8 quantization in
+    #: onnx-asr roughly stores 1 byte per parameter + per-op activation
+    #: overhead, so ``params * 1`` is a reasonable lower bound on resident
+    #: bytes; default fp32 onnx is ``params * 4``. Zero means "unknown" —
+    #: the catalog renders no warning for those.
+    param_count: int = 0
 
 
 def _whisper_models() -> list[ModelInfo]:
@@ -40,23 +47,24 @@ def _whisper_models() -> list[ModelInfo]:
     that's what onnx-asr's resolver actually loads.
     """
     # Only sizes shipped by onnx-community are included. large-v1 / v2 are
-    # absent because there's no upstream ONNX export for them.
-    multilingual: list[tuple[str, str, str]] = [
-        ("tiny", "Whisper Tiny", "39M"),
-        ("base", "Whisper Base", "74M"),
-        ("small", "Whisper Small", "244M"),
-        ("medium", "Whisper Medium", "769M"),
-        ("large-v3", "Whisper Large v3", "1.5B"),
-        ("large-v3-turbo", "Whisper Large v3 Turbo", "809M"),
+    # absent because there's no upstream ONNX export for them. param_count
+    # comes from OpenAI's published model spec — drives the fitness heuristic.
+    multilingual: list[tuple[str, str, str, int]] = [
+        ("tiny", "Whisper Tiny", "39M", 39_000_000),
+        ("base", "Whisper Base", "74M", 74_000_000),
+        ("small", "Whisper Small", "244M", 244_000_000),
+        ("medium", "Whisper Medium", "769M", 769_000_000),
+        ("large-v3", "Whisper Large v3", "1.5B", 1_540_000_000),
+        ("large-v3-turbo", "Whisper Large v3 Turbo", "809M", 809_000_000),
     ]
-    english_only: list[tuple[str, str, str]] = [
-        ("tiny.en", "Whisper Tiny (EN)", "39M"),
-        ("base.en", "Whisper Base (EN)", "74M"),
-        ("small.en", "Whisper Small (EN)", "244M"),
-        ("medium.en", "Whisper Medium (EN)", "769M"),
+    english_only: list[tuple[str, str, str, int]] = [
+        ("tiny.en", "Whisper Tiny (EN)", "39M", 39_000_000),
+        ("base.en", "Whisper Base (EN)", "74M", 74_000_000),
+        ("small.en", "Whisper Small (EN)", "244M", 244_000_000),
+        ("medium.en", "Whisper Medium (EN)", "769M", 769_000_000),
     ]
     models: list[ModelInfo] = []
-    for model_id, name, size in multilingual:
+    for model_id, name, size, params in multilingual:
         models.append(
             ModelInfo(
                 id=model_id,
@@ -69,9 +77,10 @@ def _whisper_models() -> list[ModelInfo]:
                 supports_realtime=True,
                 onnx_model_name=f"onnx-community/whisper-{model_id}",
                 description=f"OpenAI Whisper {model_id} ({size} params)",
+                param_count=params,
             )
         )
-    for model_id, name, size in english_only:
+    for model_id, name, size, params in english_only:
         models.append(
             ModelInfo(
                 id=model_id,
@@ -84,6 +93,7 @@ def _whisper_models() -> list[ModelInfo]:
                 supports_realtime=True,
                 onnx_model_name=f"onnx-community/whisper-{model_id}",
                 description=f"OpenAI Whisper {model_id} ({size} params, English only)",
+                param_count=params,
             )
         )
     return models
@@ -253,6 +263,25 @@ class ModelCatalog:
     def list_all(self) -> list[ModelInfo]:
         return list(self._models.values())
 
+    def is_language_compatible(self, model_id: str, language: str) -> bool:
+        """Return whether ``model_id`` can transcribe ``language``.
+
+        Empty ``language`` (= auto-detect) is always compatible. Unknown
+        models are treated as compatible — the catalog is not exhaustive of
+        every onnx-asr-resolvable name, so refusing here would be too strict.
+        Multilingual models (``languages == []``) and models that opt into
+        ``supports_language_detection`` accept any language tag. Otherwise
+        the language must appear in the model's ``languages`` list.
+        """
+        if not language:
+            return True
+        info = self._models.get(model_id)
+        if info is None:
+            return True
+        if info.supports_language_detection or not info.languages:
+            return True
+        return language in info.languages
+
     def to_dicts(self) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
         for m in self._models.values():
@@ -268,6 +297,7 @@ class ModelCatalog:
                     "supports_realtime": m.supports_realtime,
                     "onnx_model_name": m.onnx_model_name,
                     "description": m.description,
+                    "param_count": m.param_count,
                 }
             )
         return result

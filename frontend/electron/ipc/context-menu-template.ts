@@ -17,21 +17,17 @@ interface ContextMenuSharedItem {
 
 export type ContextMenuTemplateItem = { type: "separator" } | ContextMenuSharedItem;
 
+const TEXT_FIELDS = ["label", "sublabel", "role", "accelerator"] as const;
+type TextField = (typeof TEXT_FIELDS)[number];
+
 function applyOptionalTextFields(
 	menuItem: MenuItemConstructorOptions,
 	item: ContextMenuSharedItem
 ): void {
-	if (item.label !== undefined) {
-		menuItem.label = item.label;
-	}
-	if (item.sublabel !== undefined) {
-		menuItem.sublabel = item.sublabel;
-	}
-	if (item.role !== undefined) {
-		menuItem.role = item.role;
-	}
-	if (item.accelerator !== undefined) {
-		menuItem.accelerator = item.accelerator;
+	for (const field of TEXT_FIELDS) {
+		if (item[field] !== undefined) {
+			(menuItem as Record<TextField, unknown>)[field] = item[field];
+		}
 	}
 }
 
@@ -50,6 +46,23 @@ function applyOptionalStateFields(
 	}
 }
 
+function buildNonSeparatorItem(
+	item: ContextMenuSharedItem,
+	onSelected: (id: string) => void
+): MenuItemConstructorOptions {
+	const menuItem: MenuItemConstructorOptions = { type: item.type ?? "normal" };
+	applyOptionalTextFields(menuItem, item);
+	applyOptionalStateFields(menuItem, item);
+	if (item.submenu !== undefined) {
+		menuItem.submenu = convertContextMenuTemplate(item.submenu, onSelected);
+	}
+	const { id } = item;
+	if (id) {
+		menuItem.click = () => onSelected(id);
+	}
+	return menuItem;
+}
+
 function toContextMenuItem(
 	item: ContextMenuTemplateItem,
 	onSelected: (id: string) => void
@@ -57,23 +70,7 @@ function toContextMenuItem(
 	if (item.type === "separator") {
 		return { type: "separator" };
 	}
-
-	const menuItem: MenuItemConstructorOptions = {
-		type: item.type ?? "normal",
-	};
-
-	applyOptionalTextFields(menuItem, item);
-	applyOptionalStateFields(menuItem, item);
-
-	if (item.submenu !== undefined) {
-		menuItem.submenu = convertContextMenuTemplate(item.submenu, onSelected);
-	}
-	if (item.id) {
-		const { id } = item;
-		menuItem.click = () => onSelected(id);
-	}
-
-	return menuItem;
+	return buildNonSeparatorItem(item, onSelected);
 }
 
 export function convertContextMenuTemplate(

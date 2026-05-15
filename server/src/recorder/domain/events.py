@@ -134,3 +134,61 @@ class ModelDownloadProgress(RecorderEvent):
 @dataclass(frozen=True)
 class ModelDownloadCompleted(RecorderEvent):
     model: str
+
+
+@dataclass(frozen=True)
+class ModelSwapStarted(RecorderEvent):
+    """A model-swap (main or realtime) has begun.
+
+    ``kind`` is ``"main"`` or ``"realtime"``. ``name`` is the resolved HF
+    model id of the *new* model being loaded. The old model stays active
+    and serves transcription requests until the swap completes — so PTT
+    presses during a swap still work, just on the previous model.
+    """
+
+    kind: str
+    name: str
+
+
+@dataclass(frozen=True)
+class ModelSwapCompleted(RecorderEvent):
+    """The new model is loaded and is now the active transcriber.
+
+    The old model has been shut down by this point and its ORT sessions
+    are released. The next transcription call goes through the new model.
+    """
+
+    kind: str
+    name: str
+
+
+@dataclass(frozen=True)
+class ModelSwapFailed(RecorderEvent):
+    """A model swap aborted — load error, OOM, network failure, or cancel.
+
+    The current transcriber is unchanged (the previous model remains
+    active). The frontend should revert its picker to whatever the
+    server's current model name is, and surface ``reason`` to the user.
+    """
+
+    kind: str
+    name: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class DeviceSwitchFailed(RecorderEvent):
+    """A live input-device switch failed and the audio source fell back.
+
+    ``requested_index`` is the device the user (or settings sync) asked for.
+    ``error_message`` is the human-readable reason from PortAudio. When
+    ``fallback_index`` is None, the audio source has no working stream and
+    subsequent reads return silence; when it is an int, the audio source
+    fell back to that device (typically the system default) and audio is
+    flowing again — the UI should still revert the user's selection and
+    surface the failure.
+    """
+
+    requested_index: int
+    error_message: str
+    fallback_index: int | None

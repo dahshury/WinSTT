@@ -150,3 +150,30 @@ class TestModelCatalog:
     def test_transcriber_backend_values(self) -> None:
         assert TranscriberBackend.FASTER_WHISPER.value == "faster_whisper"
         assert TranscriberBackend.ONNX_ASR.value == "onnx_asr"
+
+    def test_is_language_compatible_empty_language_always_passes(self, catalog: ModelCatalog) -> None:
+        # Empty language = auto-detect; every model accepts that.
+        assert catalog.is_language_compatible("tiny.en", "") is True
+        assert catalog.is_language_compatible("large-v3", "") is True
+        assert catalog.is_language_compatible("gigaam-v3-ctc", "") is True
+
+    def test_is_language_compatible_unknown_model_passes(self, catalog: ModelCatalog) -> None:
+        # Catalog is not exhaustive — onnx-asr accepts raw HF repo paths.
+        assert catalog.is_language_compatible("unknown/model-xyz", "en") is True
+
+    def test_is_language_compatible_multilingual_accepts_any(self, catalog: ModelCatalog) -> None:
+        # Whisper multilingual models support language detection AND empty `languages`.
+        for lang in ("en", "es", "fr", "zh", "hi", "ar", "ru"):
+            assert catalog.is_language_compatible("large-v3", lang) is True
+            assert catalog.is_language_compatible("nemo-canary-1b-v2", lang) is True
+
+    def test_is_language_compatible_english_only_rejects_others(self, catalog: ModelCatalog) -> None:
+        assert catalog.is_language_compatible("tiny.en", "en") is True
+        assert catalog.is_language_compatible("tiny.en", "es") is False
+        assert catalog.is_language_compatible("tiny.en", "fr") is False
+
+    def test_is_language_compatible_russian_only_models(self, catalog: ModelCatalog) -> None:
+        assert catalog.is_language_compatible("gigaam-v3-ctc", "ru") is True
+        assert catalog.is_language_compatible("gigaam-v3-ctc", "en") is False
+        assert catalog.is_language_compatible("t-tech/t-one", "ru") is True
+        assert catalog.is_language_compatible("t-tech/t-one", "en") is False

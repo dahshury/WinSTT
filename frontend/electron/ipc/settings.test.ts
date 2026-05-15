@@ -70,7 +70,7 @@ mock.module("../lib/store", () => ({
 	},
 }));
 
-mock.module("./stt-process", () => ({
+mock.module("./stt-process-deps", () => ({
 	isSttProcessRunning: () => sttProcessState.running,
 	restartSttProcess: () => {
 		sttProcessState.restartCalled++;
@@ -165,6 +165,51 @@ describe("settings:save listener", () => {
 		expect(storeData.__evil).toBeUndefined();
 	});
 
+	test("saves the 'model' section to the store", () => {
+		// Locks down the "model" entry of ALLOWED_SETTINGS_KEYS at L8 — if the
+		// literal mutates to "" the model section would silently be dropped.
+		setupSettingsHandlers();
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: { model: { model: "tiny" } },
+		});
+		expect((storeData.model as Record<string, unknown>).model).toBe("tiny");
+	});
+
+	test("saves the 'quality' section to the store", () => {
+		// Locks down the "quality" entry of ALLOWED_SETTINGS_KEYS at L9.
+		setupSettingsHandlers();
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: { quality: { batchSize: 32 } },
+		});
+		expect((storeData.quality as Record<string, unknown>).batchSize).toBe(32);
+	});
+
+	test("saves the 'hotkey' section to the store", () => {
+		setupSettingsHandlers();
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: { hotkey: { pushToTalkKey: "Alt+X" } },
+		});
+		expect((storeData.hotkey as Record<string, unknown>).pushToTalkKey).toBe("Alt+X");
+	});
+
+	test("saves the 'dictionary', 'snippets', and 'llm' sections to the store", () => {
+		setupSettingsHandlers();
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: {
+				dictionary: [{ id: "1", find: "a", replace: "b" }],
+				snippets: [{ id: "2", trigger: "/x", expansion: "X" }],
+				llm: { enabled: true },
+			},
+		});
+		expect(storeData.dictionary).toEqual([{ id: "1", find: "a", replace: "b" }]);
+		expect(storeData.snippets).toEqual([{ id: "2", trigger: "/x", expansion: "X" }]);
+		expect((storeData.llm as Record<string, unknown>).enabled).toBe(true);
+	});
+
 	test("broadcasts settings:changed to OTHER windows but not the sender", () => {
 		setupSettingsHandlers();
 		const senderEvents: Array<{ channel: string; payload: unknown }> = [];
@@ -194,10 +239,10 @@ describe("settings:save listener", () => {
 	test("changing a startup-only key while STT is running schedules a restart", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		storeData.audio = { inputDeviceIndex: 1 };
+		storeData.audio = { webrtcSensitivity: 1 };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { inputDeviceIndex: 2 } },
+			settings: { audio: { webrtcSensitivity: 2 } },
 		});
 		await new Promise((r) => setTimeout(r, 600));
 		expect(sttProcessState.restartCalled).toBe(1);
@@ -208,7 +253,7 @@ describe("settings:save listener", () => {
 		sttProcessState.running = false;
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { inputDeviceIndex: 99 } },
+			settings: { audio: { webrtcSensitivity: 99 } },
 		});
 		await new Promise((r) => setTimeout(r, 600));
 		expect(sttProcessState.restartCalled).toBe(0);
@@ -217,16 +262,16 @@ describe("settings:save listener", () => {
 	test("rapid startup-only changes are debounced into a single restart", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		storeData.audio = { inputDeviceIndex: 0 };
+		storeData.audio = { webrtcSensitivity: 0 };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { inputDeviceIndex: 1 } },
+			settings: { audio: { webrtcSensitivity: 1 } },
 		});
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { inputDeviceIndex: 2 } },
+			settings: { audio: { webrtcSensitivity: 2 } },
 		});
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { inputDeviceIndex: 3 } },
+			settings: { audio: { webrtcSensitivity: 3 } },
 		});
 		await new Promise((r) => setTimeout(r, 700));
 		expect(sttProcessState.restartCalled).toBe(1);
@@ -235,15 +280,30 @@ describe("settings:save listener", () => {
 	test("before-quit cancels a pending restart", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		storeData.audio = { inputDeviceIndex: 0 };
+		storeData.audio = { webrtcSensitivity: 0 };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { inputDeviceIndex: 7 } },
+			settings: { audio: { webrtcSensitivity: 2 } },
 		});
 		// Fire before-quit immediately (sets isShuttingDown + clears timer)
 		for (const cb of appListeners.get("before-quit") ?? []) {
 			cb();
 		}
+		await new Promise((r) => setTimeout(r, 600));
+		expect(sttProcessState.restartCalled).toBe(0);
+	});
+
+	test("inputDeviceIndex change does NOT trigger restart (live-swapped via control msg)", async () => {
+		// Regression: inputDeviceIndex used to be a startup-only key, which
+		// caused a full server restart on every device pick.  It now flows
+		// through sttSetParameter("input_device_index") for an in-place swap.
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		storeData.audio = { inputDeviceIndex: 1 };
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: { audio: { inputDeviceIndex: 5 } },
+		});
 		await new Promise((r) => setTimeout(r, 600));
 		expect(sttProcessState.restartCalled).toBe(0);
 	});
@@ -264,7 +324,7 @@ describe("settings:save listener", () => {
 		storeData = { general: {}, model: {}, audio: undefined, quality: {} };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { inputDeviceIndex: 1 } },
+			settings: { audio: { webrtcSensitivity: 1 } },
 		});
 		await new Promise((r) => setTimeout(r, 600));
 		expect(sttProcessState.restartCalled).toBe(1);

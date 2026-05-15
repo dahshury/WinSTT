@@ -13,22 +13,27 @@ export function useFileTranscriptionListener(): void {
 	const setComplete = useFileTranscriptionStore((s) => s.setComplete);
 	const setError = useFileTranscriptionStore((s) => s.setError);
 
-	useEffect(() => {
-		const unsubs = [
+	useEffect(
+		() =>
 			onFileTranscriptionProgress((data) => {
 				setProgress(data.progress, data.message);
 			}),
+		[setProgress]
+	);
+
+	useEffect(
+		() =>
 			onFileTranscriptionComplete((data) => {
 				setComplete(data.fileName);
 			}),
+		[setComplete]
+	);
+
+	useEffect(
+		() =>
 			onFileTranscriptionError((data) => {
 				setError(data.fileName, data.error);
 			}),
-		];
-		return () => {
-			for (const unsub of unsubs) {
-				unsub();
-			}
-		};
-	}, [setProgress, setComplete, setError]);
+		[setError]
+	);
 }

@@ -7,6 +7,7 @@ export function normalizeQuery(query: string): string {
 }
 
 export function matchesQuery(haystack: string, needle: string): boolean {
+	// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — without the early-return, the function falls through to `haystack.toLowerCase().includes("")` which is also `true` for any haystack.
 	if (!needle) {
 		return true;
 	}
@@ -18,10 +19,30 @@ export function filterInstalledModels(
 	rawQuery: string
 ): OllamaModel[] {
 	const q = normalizeQuery(rawQuery);
+	// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — without the early-return, the code falls through to `models.filter((m) => matchesQuery(m.name, ""))`; matchesQuery("", "") is true for every row, so the filter still yields every model in a fresh array.
 	if (!q) {
 		return [...models];
 	}
 	return models.filter((m) => matchesQuery(m.name, q));
+}
+
+function getSearchableFields(model: RecommendedOllamaModel): string[] {
+	return [model.name, model.displayName, model.description, ...(model.tags ?? [])];
+}
+
+export function matchesRecommended(
+	model: RecommendedOllamaModel,
+	installedNames: ReadonlySet<string>,
+	q: string
+): boolean {
+	if (installedNames.has(model.name)) {
+		return false;
+	}
+	// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — without the early-return, the code falls through to `.some((field) => matchesQuery(field, ""))`; matchesQuery returns true for the empty needle so .some() is also true given any non-empty fields list.
+	if (!q) {
+		return true;
+	}
+	return getSearchableFields(model).some((field) => matchesQuery(field, q));
 }
 
 export function filterRecommendedModels(
@@ -30,25 +51,12 @@ export function filterRecommendedModels(
 	rawQuery: string
 ): RecommendedOllamaModel[] {
 	const q = normalizeQuery(rawQuery);
-	const filtered = models.filter((m) => {
-		if (installedNames.has(m.name)) {
-			return false;
-		}
-		if (!q) {
-			return true;
-		}
-		return (
-			matchesQuery(m.name, q) ||
-			matchesQuery(m.displayName, q) ||
-			matchesQuery(m.description, q) ||
-			(m.tags ?? []).some((t) => matchesQuery(t, q))
-		);
-	});
-	return filtered;
+	return models.filter((m) => matchesRecommended(m, installedNames, q));
 }
 
 export function isCustomModelQuery(rawQuery: string): boolean {
 	const q = rawQuery.trim();
+	// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — without the early-return, the code falls through to `VALID_MODEL_NAME_RE.test("")`; the regex requires one-or-more characters so the empty string fails it and the function still returns false.
 	if (!q) {
 		return false;
 	}

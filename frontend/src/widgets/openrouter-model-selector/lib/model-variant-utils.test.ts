@@ -6,7 +6,9 @@ import {
 	getModelVariant,
 	hasAnyVariant,
 	hasVariant,
+	MODEL_VARIANT_INFO,
 	MODEL_VARIANTS,
+	type ModelVariant,
 	parseModelVariant,
 	setModelVariant,
 } from "./model-variant-utils";
@@ -103,5 +105,125 @@ describe("filterByVariant", () => {
 
 	test("specific variant → returns only that variant's models", () => {
 		expect(filterByVariant(["a", "b:free", "c", "d:free"], "free")).toEqual(["b:free", "d:free"]);
+	});
+});
+
+// ─── MODEL_VARIANT_INFO data contract ────────────────────────────────
+// MODEL_VARIANT_INFO is a giant `Record<ModelVariant, ModelVariantInfo>`
+// where every entry contains a label, description and four CSS class
+// strings. Stryker generates a StringLiteral mutant for each such literal
+// and an ObjectLiteral mutant for each entry. Today none of those strings
+// is asserted by any test, so all 57 mutants survive. We pin down the
+// canonical shape (each entry has the right id, a non-empty label /
+// description, and class strings that actually reference the entry's
+// Tailwind color family). That's enough to kill every literal mutant.
+describe("MODEL_VARIANT_INFO entries", () => {
+	test("has an entry for every advertised variant", () => {
+		for (const variant of MODEL_VARIANTS) {
+			expect(MODEL_VARIANT_INFO[variant]).toBeDefined();
+		}
+	});
+
+	// Per-variant Tailwind color family. If Stryker mutates one of the
+	// `bg-emerald-...` strings to "", `bg-blue-...` to "", etc., the
+	// expectation that the bgClass CONTAINS the family name will fire.
+	const COLOR_FAMILY: Record<ModelVariant, string> = {
+		free: "emerald",
+		extended: "blue",
+		exacto: "rose",
+		nitro: "amber",
+		floor: "cyan",
+		thinking: "violet",
+		online: "sky",
+	};
+
+	for (const variant of MODEL_VARIANTS) {
+		const info = MODEL_VARIANT_INFO[variant];
+		const family = COLOR_FAMILY[variant];
+
+		test(`${variant}.id matches its key (locks in the L39/48/57/66/75/84/93 'id' literals)`, () => {
+			expect(info.id).toBe(variant);
+		});
+
+		test(`${variant}.label is non-empty (locks in the L40/49/... 'label' literals)`, () => {
+			expect(info.label).toBeDefined();
+			expect(typeof info.label).toBe("string");
+			expect(info.label.length).toBeGreaterThan(0);
+		});
+
+		test(`${variant}.description is non-empty (locks in the L41/50/... 'description' literals)`, () => {
+			expect(info.description).toBeDefined();
+			expect(typeof info.description).toBe("string");
+			expect(info.description.length).toBeGreaterThan(0);
+		});
+
+		test(`${variant}.bgClass references the ${family} color family (locks in the L42/51/... 'bgClass' literals)`, () => {
+			expect(info.bgClass).toContain(family);
+			expect(info.bgClass).toContain("bg-");
+			expect(info.bgClass).toContain("dark:");
+		});
+
+		test(`${variant}.textClass references the ${family} color family (locks in the L43/52/... 'textClass' literals)`, () => {
+			expect(info.textClass).toContain(family);
+			expect(info.textClass).toContain("text-");
+		});
+
+		test(`${variant}.borderClass references the ${family} color family (locks in the L44/53/... 'borderClass' literals)`, () => {
+			expect(info.borderClass).toContain(family);
+			expect(info.borderClass).toContain("border-");
+		});
+
+		test(`${variant}.gradientClass references the ${family} color family (locks in the L45/54/... 'gradientClass' literals)`, () => {
+			expect(info.gradientClass).toContain(family);
+			expect(info.gradientClass).toContain("from-");
+		});
+	}
+
+	// Specific label/description literals — pin down ONE deterministic
+	// string per entry so the StringLiteral mutator that swaps the label
+	// to "" is killed by an exact-equality assertion (the .length>0 check
+	// above already does this, but a precise expectation is more robust).
+	const EXPECTED_LABELS: Record<ModelVariant, string> = {
+		free: "Free",
+		extended: "Extended",
+		exacto: "Exacto",
+		nitro: "Nitro",
+		floor: "Floor",
+		thinking: "Thinking",
+		online: "Online",
+	};
+
+	for (const variant of MODEL_VARIANTS) {
+		test(`${variant}.label is exactly '${EXPECTED_LABELS[variant]}'`, () => {
+			expect(MODEL_VARIANT_INFO[variant].label).toBe(EXPECTED_LABELS[variant]);
+		});
+	}
+});
+
+// ─── getAvailableVariants edge: input contains an unknown suffix ─────
+// Locks in the L144 ConditionalExpression `if (variant)` — the mutant
+// turning it into `if (true)` would push `undefined` into the variants
+// Set, so the resulting array would contain `undefined`. We validate
+// that the output contains ONLY valid ModelVariant strings.
+describe("getAvailableVariants — undefined-variant guard", () => {
+	test("ignores model ids that have no recognized variant suffix", () => {
+		// 'a' has no suffix; 'b:foo' has an unknown suffix; 'c:nitro' is valid.
+		const result = getAvailableVariants(["a", "b:foo", "c:nitro"]);
+		// Output must contain ONLY 'nitro' — no `undefined`, no 'foo'.
+		expect(result).toEqual(["nitro"]);
+		// No undefined leaked through (the L144 mutant `if (true)` would
+		// push the undefined `getModelVariant("a")` into the Set).
+		for (const item of result) {
+			expect(item).toBeDefined();
+			expect((MODEL_VARIANTS as readonly string[]).includes(item)).toBe(true);
+		}
+	});
+
+	test("an input list of ONLY no-variant ids yields an empty array", () => {
+		// Pure no-variant input. The `if (variant)` guard's job is to
+		// prevent the empty case from accidentally containing undefined.
+		const result = getAvailableVariants(["a", "b", "c"]);
+		expect(result).toEqual([]);
+		expect(result.length).toBe(0);
 	});
 });

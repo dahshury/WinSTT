@@ -12,6 +12,7 @@ import numpy as np
 
 from src.building_blocks.terminal import TerminalColors as bcolors
 from src.building_blocks.terminal import debug_print
+from src.recorder.bootstrap import CALLBACK_EVENT_MAP
 from src.recorder.domain.events import DownloadProgress
 from src.stt_server.cli import persist_setting
 from src.stt_server.state import ServerState
@@ -31,16 +32,37 @@ def make_callback(
 
 # ─── Simple event callbacks ──────────────────────────────────────────────
 
-_SIMPLE_EVENTS: list[str] = [
-    "recording_start",
-    "recording_stop",
-    "no_audio_detected",
-    "vad_detect_start",
-    "vad_detect_stop",
-    "wakeword_detected",
-    "wakeword_detection_start",
-    "wakeword_detection_end",
-]
+# Callbacks that need custom JSON shapes or are intentionally NOT relayed to
+# the client as a generic ``{"type": <name>}`` message. Adding a new callback
+# to ``CALLBACK_EVENT_MAP`` in bootstrap auto-promotes it to a simple event
+# unless it appears here. Listed once → keeps the protocol surface in one
+# place rather than scattered through specialised handlers.
+_NON_SIMPLE_CALLBACKS: frozenset[str] = frozenset(
+    {
+        # Specialised callbacks below have bespoke JSON shapes.
+        "on_transcription_start",
+        "on_audio_level",
+        "on_turn_detection_start",
+        "on_turn_detection_stop",
+        "on_device_switch_failed",
+        "on_model_swap_started",
+        "on_model_swap_completed",
+        "on_model_swap_failed",
+        # Domain events the server intentionally does not relay over the wire.
+        "on_vad_start",
+        "on_vad_stop",
+        "on_recorded_chunk",
+        "on_realtime_transcription_update",
+        "on_realtime_transcription_stabilized",
+        "on_wakeword_timeout",
+    }
+)
+
+# Derived from CALLBACK_EVENT_MAP — adding a new callback to the recorder
+# domain registers it as a simple event automatically, no edits here needed.
+_SIMPLE_EVENTS: list[str] = sorted(
+    name.removeprefix("on_") for name in CALLBACK_EVENT_MAP if name not in _NON_SIMPLE_CALLBACKS
+)
 
 
 def _make_simple_event_callback(
@@ -127,6 +149,89 @@ def on_turn_detection_stop(state: ServerState, loop: asyncio.AbstractEventLoop) 
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
 
 
+def on_model_swap_started(
+    kind: str,
+    name: str,
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Forward a model-swap-started event to the renderer.
+
+    UI shows the new model with a 'loading' badge in the picker. PTT keeps
+    working on the old model until ``on_model_swap_completed`` fires.
+    """
+    print(f"{bcolors.OKBLUE}[model-swap] start: kind={kind} name={name}{bcolors.ENDC}")
+    message = json.dumps({"type": "model_swap_started", "kind": kind, "name": name})
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
+
+def on_model_swap_completed(
+    kind: str,
+    name: str,
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Forward a model-swap-completed event — the new model is now live."""
+    print(f"{bcolors.OKGREEN}[model-swap] done: kind={kind} name={name}{bcolors.ENDC}")
+    persist_setting("model" if kind == "main" else "realtime_model_type", name)
+    message = json.dumps({"type": "model_swap_completed", "kind": kind, "name": name})
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+    # The HF cache state for this model just flipped to "cached" — push an
+    # invalidation event so the renderer can refresh its model selector
+    # badges without polling list_models_with_state.
+    cache_message = json.dumps({"type": "model_cache_changed", "model_id": name})
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(cache_message), loop)
+
+
+def on_model_swap_failed(
+    kind: str,
+    name: str,
+    reason: str,
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Forward a model-swap-failed event so the renderer can revert + toast.
+
+    The previous model is still active server-side — the frontend's
+    settings store should roll its picker back to whatever the server
+    currently reports via ``runtime_info``.
+    """
+    print(f"{bcolors.WARNING}[model-swap] failed: kind={kind} name={name} reason={reason}{bcolors.ENDC}")
+    message = json.dumps(
+        {"type": "model_swap_failed", "kind": kind, "name": name, "reason": reason}
+    )
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
+
+def on_device_switch_failed(
+    requested_index: int,
+    error_message: str,
+    fallback_index: int | None,
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Forward a runtime device-switch failure to the renderer.
+
+    Fires when the audio reader thread's pa.open() blew up on the queued
+    device — by then the synchronous probe in _handle_set_parameter has
+    already passed, so this is the race-condition / device-disappeared
+    safety net.
+    """
+    print(
+        f"{bcolors.WARNING}[device-switch] failed: requested={requested_index} "
+        f"fallback={fallback_index} reason={error_message}{bcolors.ENDC}",
+    )
+    message = json.dumps(
+        {
+            "type": "device_switch_failed",
+            "requested_index": requested_index,
+            "error_message": error_message,
+            "fallback_index": fallback_index,
+        }
+    )
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
+
 # ─── Builder ─────────────────────────────────────────────────────────────
 
 
@@ -161,6 +266,10 @@ def build_recorder_callbacks(state: ServerState, loop: asyncio.AbstractEventLoop
     callbacks["on_model_download_progress"] = _make_state_callback(loop, on_model_download_progress, state)
     callbacks["on_model_download_complete"] = _make_state_callback(loop, on_model_download_complete, state)
     callbacks["on_model_download_cancelled"] = _make_state_callback(loop, on_model_download_cancelled, state)
+    callbacks["on_device_switch_failed"] = _make_state_callback(loop, on_device_switch_failed, state)
+    callbacks["on_model_swap_started"] = _make_state_callback(loop, on_model_swap_started, state)
+    callbacks["on_model_swap_completed"] = _make_state_callback(loop, on_model_swap_completed, state)
+    callbacks["on_model_swap_failed"] = _make_state_callback(loop, on_model_swap_failed, state)
     callbacks["cancel_download_check"] = lambda: state.cancel_download_requested
 
     return callbacks

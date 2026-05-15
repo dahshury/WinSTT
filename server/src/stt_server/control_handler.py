@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import logging
 import threading
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -16,6 +20,57 @@ from src.building_blocks.terminal import debug_print
 from src.stt_server.cli import persist_setting
 from src.stt_server.file_transcribe import handle_transcribe_file
 from src.stt_server.state import ServerState
+
+logger = logging.getLogger(__name__)
+
+
+# ─── Command registry ────────────────────────────────────────────────────
+
+CommandHandler = Callable[[ServerConnection, ServerState, dict[str, Any]], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class _CommandSpec:
+    """Registry entry for one command name (a single handler can serve many aliases)."""
+
+    handler: CommandHandler
+    pre_ready: bool
+
+
+# Populated at import time by ``@register_command`` decorators on each handler.
+# Single source of truth for command dispatch AND pre-ready filtering — adding
+# a new command means defining the async handler and decorating it; no second
+# place to update.
+_COMMAND_REGISTRY: dict[str, _CommandSpec] = {}
+
+
+def register_command(
+    name: str | tuple[str, ...],
+    *,
+    pre_ready: bool = False,
+) -> Callable[[CommandHandler], CommandHandler]:
+    """Decorator: register an async handler under one or more command names.
+
+    ``pre_ready=True`` opts the command into being callable before the
+    recorder has finished initialising (used for model/device listings the
+    Settings UI needs to populate before the server is fully booted).
+    """
+    names: tuple[str, ...] = (name,) if isinstance(name, str) else name
+
+    def _wrap(fn: CommandHandler) -> CommandHandler:
+        for canonical in names:
+            _COMMAND_REGISTRY[canonical] = _CommandSpec(handler=fn, pre_ready=pre_ready)
+        return fn
+
+    return _wrap
+
+
+def is_pre_ready_command(name: str | None) -> bool:
+    """Return whether ``name`` is one of the pre-ready commands."""
+    if name is None:
+        return False
+    spec = _COMMAND_REGISTRY.get(name)
+    return spec is not None and spec.pre_ready
 
 # Define allowed methods and parameters for security
 ALLOWED_METHODS: list[str] = [
@@ -46,6 +101,7 @@ ALLOWED_PARAMETERS: list[str] = [
     "enable_realtime_transcription",
     "smart_endpoint_enabled",
     "detection_speed",
+    "input_device_index",
 ]
 
 
@@ -74,9 +130,6 @@ def _log_get(name: str, value: str) -> None:
 # whose getter raised.
 _UNSET: object = object()
 
-# Commands that can be handled before the recorder is ready
-PRE_READY_COMMANDS: set[str] = {"list_models", "list_input_devices"}
-
 
 async def control_handler(websocket: ServerConnection, state: ServerState) -> None:
     """Handle incoming control WebSocket messages."""
@@ -84,7 +137,16 @@ async def control_handler(websocket: ServerConnection, state: ServerState) -> No
     print(f"{bcolors.OKGREEN}Control client connected{bcolors.ENDC}")
     state.control_connections.add(websocket)
     if state.recorder_ready.is_set():
-        await websocket.send(json.dumps({"type": "server_ready"}))
+        ready_payload: dict[str, Any] = {"type": "server_ready"}
+        # Late-joining clients get the runtime snapshot on first hello so the
+        # GPU/CPU chip doesn't have to issue an extra request to find out
+        # whether the server is on CUDA / CPU / DML providers.
+        try:
+            if state.recorder is not None:
+                ready_payload["runtime_info"] = state.recorder.runtime_info()
+        except Exception:
+            pass
+        await websocket.send(json.dumps(ready_payload))
     try:
         async for message in websocket:
             msg_preview = message[:200] if isinstance(message, str) else message[:200].decode("utf-8", errors="replace")
@@ -93,7 +155,7 @@ async def control_handler(websocket: ServerConnection, state: ServerState) -> No
                 if isinstance(message, str):
                     try:
                         pre_data = json.loads(message)
-                        if pre_data.get("command") not in PRE_READY_COMMANDS:
+                        if not is_pre_ready_command(pre_data.get("command")):
                             continue
                     except json.JSONDecodeError:
                         continue
@@ -131,30 +193,19 @@ async def _dispatch_command(
     data: dict[str, Any],
     command: str | None,
 ) -> None:
-    """Route a parsed command to the appropriate handler."""
-    handlers: dict[str, Any] = {
-        "set_parameter": _handle_set_parameter,
-        "get_parameter": _handle_get_parameter,
-        "call_method": _handle_call_method,
-        "transcribe_file": _handle_transcribe_file,
-        "list_models": _handle_list_models,
-        "list_input_devices": _handle_list_input_devices,
-        "list_loopback_devices": _handle_list_loopback_devices,
-        "start_loopback": _handle_start_loopback,
-        "stop_loopback": _handle_stop_loopback,
-        "cancel_download": _handle_cancel_download,
-    }
-    handler = handlers.get(str(command))
-    if handler is not None:
-        await handler(ws, state, data)
-    else:
-        print(f"{bcolors.WARNING}Unknown command: {command}{bcolors.ENDC}")
-        await ws.send(json.dumps({"status": "error", "message": f"Unknown command {command}"}))
+    """Route a parsed command to the handler registered in ``_COMMAND_REGISTRY``."""
+    spec = _COMMAND_REGISTRY.get(str(command))
+    if spec is not None:
+        await spec.handler(ws, state, data)
+        return
+    print(f"{bcolors.WARNING}Unknown command: {command}{bcolors.ENDC}")
+    await ws.send(json.dumps({"status": "error", "message": f"Unknown command {command}"}))
 
 
 # ─── Individual command handlers ─────────────────────────────────────────
 
 
+@register_command("set_parameter")
 async def _handle_set_parameter(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     parameter = data.get("parameter")
     value = data.get("value")
@@ -173,12 +224,8 @@ async def _handle_set_parameter(ws: ServerConnection, state: ServerState, data: 
 
     if parameter == "smart_endpoint_enabled":
         new_value = bool(value)
-        if state.smart_endpoint_enabled == new_value and (
-            not new_value or state.sentence_classifier is not None
-        ):
-            await ws.send(
-                json.dumps({"status": "success", "message": "Parameter smart_endpoint_enabled unchanged"})
-            )
+        if state.smart_endpoint_enabled == new_value and (not new_value or state.sentence_classifier is not None):
+            await ws.send(json.dumps({"status": "success", "message": "Parameter smart_endpoint_enabled unchanged"}))
             return
         state.smart_endpoint_enabled = new_value
         if state.smart_endpoint_enabled and state.sentence_classifier is None:
@@ -216,10 +263,45 @@ async def _handle_set_parameter(ws: ServerConnection, state: ServerState, data: 
         except Exception:
             current = _UNSET
         if current == value:
-            await ws.send(
-                json.dumps({"status": "success", "message": f"Parameter {parameter} unchanged"})
-            )
+            await ws.send(json.dumps({"status": "success", "message": f"Parameter {parameter} unchanged"}))
             return
+        # Pre-flight: input_device_index switches go through the audio reader
+        # thread asynchronously, which means any open() failure is silent from
+        # the WebSocket caller's perspective. Probe is_format_supported here
+        # (synchronously, on the asyncio loop — fast metadata-only call) so we
+        # can refuse cleanly with an error response instead of "success" +
+        # silent fallback to default. The async runtime callback is still the
+        # safety net for races where the device disappears between probe and
+        # actual open.
+        if parameter == "input_device_index" and value is not None:
+            probe_error = _probe_input_device(int(value))
+            if probe_error is not None:
+                logger.warning(
+                    "Refusing input_device_index switch to %s — probe failed: %s",
+                    value,
+                    probe_error,
+                )
+                # Also broadcast the same "device_switch_failed" data event the
+                # async path emits, so the renderer has a single channel to
+                # listen on for both probe-time and open-time failures.
+                event_message = json.dumps(
+                    {
+                        "type": "device_switch_failed",
+                        "requested_index": int(value),
+                        "error_message": probe_error,
+                        "fallback_index": None,
+                    }
+                )
+                asyncio.run_coroutine_threadsafe(state.audio_queue.put(event_message), asyncio.get_running_loop())
+                await ws.send(
+                    json.dumps(
+                        {
+                            "status": "error",
+                            "message": f"Cannot open input device {value}: {probe_error}",
+                        }
+                    )
+                )
+                return
         setattr(state.recorder, parameter, value)
         persist_setting(parameter, value)
         _log_set(f"recorder.{parameter}", value)
@@ -236,6 +318,7 @@ async def _handle_set_parameter(ws: ServerConnection, state: ServerState, data: 
         )
 
 
+@register_command("get_parameter")
 async def _handle_get_parameter(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     parameter = data.get("parameter")
     request_id = data.get("request_id")
@@ -262,6 +345,7 @@ async def _handle_get_parameter(ws: ServerConnection, state: ServerState, data: 
         )
 
 
+@register_command("call_method")
 async def _handle_call_method(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     method_name = data.get("method")
     if method_name in ALLOWED_METHODS:
@@ -277,9 +361,7 @@ async def _handle_call_method(ws: ServerConnection, state: ServerState, data: di
             # `recorder.set_microphone(True)` directly (not via WebSocket) and so
             # are unaffected.
             wakeup = getattr(state.recorder, "wakeup", None)
-            wakeup_paired = (
-                method_name == "set_microphone" and len(args) == 1 and args[0] is True and callable(wakeup)
-            )
+            wakeup_paired = method_name == "set_microphone" and len(args) == 1 and args[0] is True and callable(wakeup)
             if wakeup_paired and callable(wakeup):
                 wakeup()
                 _log_call("set_microphone+wakeup", "True")
@@ -295,6 +377,7 @@ async def _handle_call_method(ws: ServerConnection, state: ServerState, data: di
         await ws.send(json.dumps({"status": "error", "message": f"Method {method_name} is not allowed"}))
 
 
+@register_command("transcribe_file")
 async def _handle_transcribe_file(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     request_id = data.get("request_id", "")
     file_path = data.get("file_path", "")
@@ -308,6 +391,7 @@ async def _handle_transcribe_file(ws: ServerConnection, state: ServerState, data
     await ws.send(json.dumps({"status": "success", "message": "File transcription started"}))
 
 
+@register_command("list_models", pre_ready=True)
 async def _handle_list_models(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     from src.recorder.domain.model_registry import ModelCatalog
 
@@ -315,6 +399,101 @@ async def _handle_list_models(ws: ServerConnection, state: ServerState, data: di
     await ws.send(json.dumps({"status": "success", "command": "list_models", "models": catalog.to_dicts()}))
 
 
+@register_command("list_models_with_state")
+async def _handle_list_models_with_state(
+    ws: ServerConnection,
+    state: ServerState,
+    data: dict[str, Any],
+) -> None:
+    """Return the catalog augmented with per-model cache state and hardware fitness.
+
+    Renderer calls this when the settings panel opens. The shape is
+    ``{models: [...], states: [{id, cache, estimated_bytes, comfortable_on_gpu,
+    comfortable_on_cpu}], system_info: {total_ram_bytes, gpus}}`` —
+    keeping ``states`` separate from ``models`` lets the renderer
+    cache the (slow-changing) catalog and only refresh the (fast-changing)
+    states after a download completes.
+    """
+    from src.recorder.domain.model_registry import ModelCatalog
+    from src.recorder.infrastructure.model_state import (
+        model_state_dict,
+        system_info_dict,
+    )
+    from src.recorder.infrastructure.system_info import get_system_info
+
+    catalog = ModelCatalog()
+    sys_info = get_system_info()
+    states = [model_state_dict(m, sys_info) for m in catalog.list_all()]
+    request_id = data.get("request_id")
+    # Wrap in ``value`` so SttClient.sendRequest() resolves the promise
+    # with the full payload (it reads ``data.value`` by convention).
+    payload: dict[str, Any] = {
+        "status": "success",
+        "command": "list_models_with_state",
+        "value": {
+            "models": catalog.to_dicts(),
+            "states": states,
+            "system_info": system_info_dict(sys_info),
+        },
+    }
+    if request_id is not None:
+        payload["request_id"] = request_id
+    await ws.send(json.dumps(payload))
+
+
+@register_command(("reload_main_model", "reload_realtime_model"))
+async def _handle_reload_model(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Kick off a background model swap on the recorder.
+
+    Accepts ``reload_main_model`` / ``reload_realtime_model``. The ``model``
+    field is the new HF model id (e.g. ``"base.en"`` — onnx-asr resolves
+    that against the catalog). Returns immediately; UI watches the
+    ``model_download_progress`` and ``model_swap_*`` data-channel events
+    for live state.
+    """
+    command = data.get("command", "")
+    model = data.get("model")
+    if not isinstance(model, str) or not model:
+        await ws.send(json.dumps({"status": "error", "message": "missing or invalid 'model' field"}))
+        return
+    if state.recorder is None:
+        await ws.send(json.dumps({"status": "error", "message": "recorder not initialized"}))
+        return
+    kind = "main" if command == "reload_main_model" else "realtime"
+    try:
+        state.recorder.request_model_swap(kind, model)
+    except Exception as e:  # pragma: no cover — request_model_swap rejects unknown kinds via ValueError
+        await ws.send(json.dumps({"status": "error", "message": f"{type(e).__name__}: {e}"}))
+        return
+    _log_call(f"request_model_swap({kind}", model + ")")
+    await ws.send(
+        json.dumps({"status": "success", "message": f"model swap requested: kind={kind} name={model}"})
+    )
+
+
+@register_command("get_runtime_info")
+async def _handle_get_runtime_info(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Reply with the active ORT runtime snapshot — drives the GPU/CPU chip.
+
+    Honest about the *live* state of inference: a CPU-only onnxruntime
+    install on a CUDA-capable machine reports ``is_gpu=False`` here, even
+    when ``device=cuda`` is configured. Late-joining clients can call this
+    if they missed the ``server_ready`` payload's ``runtime_info`` field.
+    """
+    request_id = data.get("request_id")
+    info: dict[str, Any] | None = None
+    if state.recorder is not None:
+        try:
+            info = state.recorder.runtime_info()
+        except Exception as e:  # pragma: no cover — defensive
+            print(f"{bcolors.WARNING}runtime_info() raised: {e}{bcolors.ENDC}")
+    payload: dict[str, Any] = {"status": "success", "command": "get_runtime_info", "value": info}
+    if request_id is not None:
+        payload["request_id"] = request_id
+    await ws.send(json.dumps(payload))
+
+
+@register_command("list_input_devices", pre_ready=True)
 async def _handle_list_input_devices(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     request_id = data.get("request_id")
     try:
@@ -337,12 +516,26 @@ async def _handle_list_input_devices(ws: ServerConnection, state: ServerState, d
 
 
 def _enumerate_input_devices() -> list[dict[str, Any]]:
-    """Return PyAudio input-capable devices (the index space the recorder uses).
+    """Return PyAudio input-capable devices that we can actually open.
 
     Indices match what PyAudioSource passes to ``pa.open(input_device_index=...)``,
     so the Settings UI must use these — Windows MMDevice indices do NOT match.
     Default device flagged via ``get_default_input_device_info``; missing default
     (no input hardware) is non-fatal.
+
+    Each candidate is probed with ``is_format_supported`` to confirm the
+    recorder can actually open it. Without this check, drivers that report
+    ``maxInputChannels > 0`` but fail at ``pa.open()`` (the ``Errno -9999
+    Unanticipated host error`` family) end up listed in the UI dropdown,
+    the user picks one, and the switch silently fails. ``is_format_supported``
+    is the canonical PyAudio pre-flight (system_info.py:59-68 in the
+    reference) — a fast metadata check, no stream is opened.
+
+    Probing is best-effort: if it raises with anything other than ValueError
+    we keep the device (better to over-list than under-list — some drivers
+    return ambiguous errors on the probe but still open fine). The host API
+    name is resolved so the UI can disambiguate duplicate device names
+    coming from MME / DirectSound / WASAPI variants of the same hardware.
 
     NOTE: must import plain ``pyaudio`` (NOT ``pyaudiowpatch``). The two ship
     different bundled PortAudio builds and their device-index spaces diverge —
@@ -358,22 +551,54 @@ def _enumerate_input_devices() -> list[dict[str, Any]]:
             default_index: int = int(audio.get_default_input_device_info()["index"])
         except Exception:
             default_index = -1
+
+        host_api_names: dict[int, str] = {}
+        try:
+            for h in range(audio.get_host_api_count()):
+                try:
+                    info: dict[str, Any] = audio.get_host_api_info_by_index(h)
+                    host_api_names[int(info["index"])] = str(info.get("name", ""))
+                except Exception:
+                    continue
+        except Exception:
+            host_api_names = {}
+
         devices: list[dict[str, Any]] = []
         for i in range(audio.get_device_count()):
             try:
                 dev: dict[str, Any] = audio.get_device_info_by_index(i)
             except Exception:
                 continue
-            if int(dev.get("maxInputChannels", 0)) <= 0:
+            max_input = int(dev.get("maxInputChannels", 0))
+            if max_input <= 0:
                 continue
+
+            # Pre-flight: probe at the rate the recorder will actually open
+            # at (16 kHz mono int16). If that's unsupported, also try the
+            # device's reported defaultSampleRate before giving up.
+            if not _device_can_open(
+                audio,
+                int(dev["index"]),
+                preferred_channels=min(max_input, 1),
+                fallback_sample_rate=int(dev.get("defaultSampleRate", 0)),
+            ):
+                logger.info(
+                    "Skipping input device %s (%s) — failed is_format_supported probe",
+                    dev.get("index"),
+                    dev.get("name"),
+                )
+                continue
+
+            host_api_index = int(dev.get("hostApi", -1))
             devices.append(
                 {
                     "index": int(dev["index"]),
                     "name": str(dev.get("name", f"Device {i}")),
                     "isDefault": int(dev["index"]) == default_index,
                     "defaultSampleRate": int(dev.get("defaultSampleRate", 0)),
-                    "hostApi": int(dev.get("hostApi", -1)),
-                    "maxInputChannels": int(dev.get("maxInputChannels", 0)),
+                    "hostApi": host_api_index,
+                    "hostApiName": host_api_names.get(host_api_index, ""),
+                    "maxInputChannels": max_input,
                 }
             )
         return devices
@@ -381,6 +606,87 @@ def _enumerate_input_devices() -> list[dict[str, Any]]:
         audio.terminate()
 
 
+def _probe_input_device(device_index: int) -> str | None:
+    """Synchronous fast probe — returns None if the device is openable, else
+    a human-readable reason string. Spins up a short-lived PyAudio handle
+    just for the check; the recorder's own audio_interface is left alone.
+    """
+    try:
+        import pyaudio
+    except ImportError:
+        return None  # No PyAudio at all → don't block; setattr will surface.
+
+    try:
+        audio = pyaudio.PyAudio()
+    except Exception as e:
+        return f"audio subsystem unavailable: {e}"
+    try:
+        try:
+            info: dict[str, Any] = audio.get_device_info_by_index(device_index)
+        except Exception as e:
+            return f"device index {device_index} not found ({e})"
+        max_input = int(info.get("maxInputChannels", 0))
+        if max_input <= 0:
+            return f"device {info.get('name', device_index)!r} is not an input device"
+        if not _device_can_open(
+            audio,
+            device_index,
+            preferred_channels=min(max_input, 1),
+            fallback_sample_rate=int(info.get("defaultSampleRate", 0)),
+        ):
+            return (
+                f"device {info.get('name', device_index)!r} reports input channels "
+                "but does not accept the recorder's format (16 kHz int16 mono)"
+            )
+        return None
+    finally:
+        with contextlib.suppress(Exception):
+            audio.terminate()
+
+
+def _device_can_open(
+    audio: Any,  # noqa: ANN401
+    device_index: int,
+    *,
+    preferred_channels: int,
+    fallback_sample_rate: int,
+) -> bool:
+    """Return True iff ``device_index`` can be opened for input by us.
+
+    Tries 16 kHz first (the recorder's target rate) then the device's
+    reported default rate. ``is_format_supported`` raises ValueError with
+    a PortAudio error code on unsupported configurations (see PyAudio
+    reference src/pyaudio.py:888-940). Any other exception type is treated
+    as a probe failure rather than a hard reject — drivers occasionally
+    surface non-ValueError noise during probing while still being openable.
+    """
+    import pyaudio
+
+    channels = max(1, preferred_channels)
+    candidate_rates: list[int] = [16000]
+    if fallback_sample_rate and fallback_sample_rate not in candidate_rates:
+        candidate_rates.append(fallback_sample_rate)
+
+    saw_value_error = False
+    for rate in candidate_rates:
+        try:
+            if audio.is_format_supported(
+                rate,
+                input_device=device_index,
+                input_channels=channels,
+                input_format=pyaudio.paInt16,
+            ):
+                return True
+        except ValueError:
+            saw_value_error = True
+            continue
+        except Exception:
+            # Probe itself crashed — be lenient, see docstring.
+            return True
+    return not saw_value_error
+
+
+@register_command("list_loopback_devices")
 async def _handle_list_loopback_devices(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     request_id = data.get("request_id")
     try:
@@ -402,6 +708,7 @@ async def _handle_list_loopback_devices(ws: ServerConnection, state: ServerState
         await ws.send(json.dumps(error_payload))
 
 
+@register_command("start_loopback")
 async def _handle_start_loopback(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     device_index = data.get("device_index")
     if device_index is None or state.recorder is None:
@@ -424,6 +731,7 @@ async def _handle_start_loopback(ws: ServerConnection, state: ServerState, data:
         await ws.send(json.dumps({"status": "error", "message": error_msg}))
 
 
+@register_command("stop_loopback")
 async def _handle_stop_loopback(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     if state.recorder is not None and state.loopback_capture.is_active:
         state.loopback_capture.stop(state.recorder)
@@ -434,6 +742,7 @@ async def _handle_stop_loopback(ws: ServerConnection, state: ServerState, data: 
     await ws.send(json.dumps({"status": "success", "message": "Loopback stopped"}))
 
 
+@register_command("cancel_download")
 async def _handle_cancel_download(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     state.cancel_download_requested = True
     print(f"{bcolors.WARNING}[download] cancel requested by client{bcolors.ENDC}")

@@ -291,26 +291,30 @@ async function tryAttempt<T>(fn: () => Promise<T>, attempt: number, cfg: RetryCo
 	}
 }
 
+interface RetryOptions {
+	backoffMultiplier?: number;
+	delayMs?: number;
+	maxAttempts?: number;
+	onRetry?: (error: unknown, attempt: number) => void;
+	shouldRetry?: (error: unknown, attempt: number) => boolean;
+}
+
+const RETRY_DEFAULTS = {
+	maxAttempts: 3,
+	delayMs: 1000,
+	backoffMultiplier: 2,
+	shouldRetry: () => true,
+} satisfies Partial<RetryConfig>;
+
+function buildRetryConfig(options: RetryOptions): RetryConfig {
+	return { ...RETRY_DEFAULTS, ...options } as RetryConfig;
+}
+
 /**
  * Retry wrapper for async operations with exponential backoff.
  */
-export function retryAsync<T>(
-	fn: () => Promise<T>,
-	options: {
-		maxAttempts?: number;
-		delayMs?: number;
-		backoffMultiplier?: number;
-		shouldRetry?: (error: unknown, attempt: number) => boolean;
-		onRetry?: (error: unknown, attempt: number) => void;
-	} = {}
-): Promise<T> {
-	return tryAttempt(fn, 1, {
-		maxAttempts: options.maxAttempts ?? 3,
-		delayMs: options.delayMs ?? 1000,
-		backoffMultiplier: options.backoffMultiplier ?? 2,
-		shouldRetry: options.shouldRetry ?? (() => true),
-		onRetry: options.onRetry,
-	});
+export function retryAsync<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
+	return tryAttempt(fn, 1, buildRetryConfig(options));
 }
 
 /**

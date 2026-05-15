@@ -223,4 +223,54 @@ describe("ProviderRail helpers", () => {
 			expect(helpers.SCROLL_BUTTON_CONFIG.down.label).toBe("Scroll providers down");
 		});
 	});
+
+	describe("applyWheelDebounce", () => {
+		function makeWheelEvent(deltaX: number, deltaY: number): WheelEvent {
+			return { deltaX, deltaY, preventDefault: mock(() => undefined) } as unknown as WheelEvent;
+		}
+		function makeEl(): HTMLDivElement {
+			return { scrollBy: mock(() => undefined) } as unknown as HTMLDivElement;
+		}
+
+		test("ignores horizontal wheel events (no scroll applied)", () => {
+			const event = makeWheelEvent(100, 10); // |deltaX| > |deltaY|
+			const el = makeEl();
+			const result = helpers.applyWheelDebounce(event, el, 1000, 0, 200);
+			expect(result.handled).toBe(false);
+			expect((el.scrollBy as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+		});
+
+		test("prevents default and skips scroll when within debounce window", () => {
+			const event = makeWheelEvent(0, 50);
+			const el = makeEl();
+			// now=100, lockedUntil=500 → still locked
+			const result = helpers.applyWheelDebounce(event, el, 100, 500, 200);
+			expect(result.handled).toBe(false);
+			expect(result.nextLockedUntil).toBe(500); // unchanged
+			expect((event.preventDefault as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+		});
+
+		test("applies scroll and updates lockedUntil when debounce window has passed", () => {
+			const event = makeWheelEvent(0, 50);
+			const el = makeEl();
+			// now=1000, lockedUntil=100 → expired
+			const result = helpers.applyWheelDebounce(event, el, 1000, 100, 200);
+			expect(result.handled).toBe(true);
+			expect(result.nextLockedUntil).toBe(1200);
+			expect((el.scrollBy as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+		});
+	});
+
+	describe("scrollRefByAmount", () => {
+		test("calls scrollBy on the element with the given delta", () => {
+			const scrollBy = mock(() => undefined);
+			const el = { scrollBy } as unknown as HTMLDivElement;
+			helpers.scrollRefByAmount(el, -180);
+			expect(scrollBy).toHaveBeenCalledWith({ top: -180, behavior: "smooth" });
+		});
+
+		test("is a no-op when el is null", () => {
+			expect(() => helpers.scrollRefByAmount(null, 180)).not.toThrow();
+		});
+	});
 });

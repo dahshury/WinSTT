@@ -10,6 +10,7 @@ from typing_extensions import override
 from src.building_blocks.types import AudioArray
 from src.recorder.domain.events import DownloadProgress
 from src.recorder.domain.ports.transcriber import ITranscriber, TranscriptionResult
+from src.recorder.infrastructure.device import GPU_PROVIDERS
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,42 @@ def _make_progress_adapter(model_name: str, sink: Callable[[DownloadProgress], N
     return _on_progress
 
 
+def _snapshot_providers(model: Any) -> list[str]:  # noqa: ANN401 — walks loosely-typed onnx_asr internals
+    """Find the ORT providers attached to ``model``'s primary InferenceSession.
+
+    onnx-asr models hold several ORT sessions (preprocessor, encoder,
+    decoder, vad, …). For "is this running on GPU?" the decoder/encoder is
+    the meaningful answer — falling back to any other session that exposes
+    ``get_providers`` if those aren't visible. Returns ``[]`` when nothing
+    walkable is found so callers can fail safely closed (i.e. assume CPU).
+    """
+    # Preferred attribute order: decoder is the heavy compute path; encoder
+    # is next; "_model" is the catch-all (used by Silero etc.). Anything not
+    # found falls through to a generic walk.
+    for attr in ("_decoder", "decoder", "_encoder", "encoder", "_model"):
+        sess = getattr(model, attr, None)
+        get_providers = getattr(sess, "get_providers", None) if sess is not None else None
+        if callable(get_providers):
+            try:
+                providers = get_providers()
+            except Exception:
+                logger.debug("get_providers() on %s.%s raised", type(model).__name__, attr, exc_info=True)
+                continue
+            if providers:
+                return [str(p) for p in providers]
+    # Generic walk over instance attributes — first session with providers wins.
+    for value in vars(model).values():
+        get_providers = getattr(value, "get_providers", None)
+        if callable(get_providers):
+            try:
+                providers = get_providers()
+            except Exception:
+                continue
+            if providers:
+                return [str(p) for p in providers]
+    return []
+
+
 class OnnxAsrTranscriber(ITranscriber):
     """ITranscriber adapter backed by the onnx-asr library.
 
@@ -86,7 +123,28 @@ class OnnxAsrTranscriber(ITranscriber):
         logger.info("Loading onnx-asr model %s (quantization=%s)", model_name, quantization)
         self._model: Any = onnx_asr.load_model(model_name, **kwargs)
         self._ready = True
-        logger.info("onnx-asr model %s loaded", model_name)
+        self._model_name = model_name
+        # Snapshot the actual ORT providers attached to a representative
+        # session (decoder for Whisper, otherwise the first session walked).
+        # Used by the runtime-info accessor to drive the frontend GPU/CPU
+        # chip honestly — the user's onnxruntime install determines whether
+        # CUDA / DML actually attach, regardless of what was requested.
+        self._active_providers = _snapshot_providers(self._model)
+        logger.info("onnx-asr model %s loaded; providers=%s", model_name, self._active_providers)
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    @property
+    def active_providers(self) -> list[str]:
+        """Snapshot of ORT execution providers used by this model's primary session."""
+        return list(self._active_providers)
+
+    @property
+    def is_gpu(self) -> bool:
+        """True if any GPU-class ORT provider is active (CUDA / TensorRT / DirectML / ROCm)."""
+        return any(p in GPU_PROVIDERS for p in self._active_providers)
 
     @override
     def transcribe(

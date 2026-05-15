@@ -50,6 +50,23 @@ Each sub-project has its own detailed `CLAUDE.md`:
 | `bun generate` | Regenerate TS types from OpenAPI spec |
 | `bun knip` | Detect unused exports/files |
 
+### Packaging (release builds — produces two NSIS installers)
+
+WinSTT ships in two flavors per release: **CPU** (~150 MB) and **GPU** (~2 GB, bundles `onnxruntime-gpu` + all 8 NVIDIA CUDA wheels). Both wrap the same Electron app; only the bundled `stt-server.exe` differs. The runtime in `server/src/recorder/infrastructure/device.py` falls back to CPU automatically when CUDA isn't viable, so a user who installs the GPU build on a machine without a working CUDA stack still gets a functional app.
+
+| Command | Description |
+|---|---|
+| `pwsh server/packaging/build.ps1 -Flavor cpu` | Build the CPU `stt-server.exe` → `frontend/stt-server-dist-cpu/` |
+| `pwsh server/packaging/build.ps1 -Flavor gpu` | Build the GPU `stt-server.exe` → `frontend/stt-server-dist-gpu/` |
+| `bun run electron:build:cpu` | Build the CPU installer (reads `electron-builder.cpu.yml`, requires `stt-server-dist-cpu/`) |
+| `bun run electron:build:gpu` | Build the GPU installer (reads `electron-builder.gpu.yml`, requires `stt-server-dist-gpu/`) |
+
+The release workflow `.github/workflows/electron-release.yml` runs the CPU and GPU jobs as a matrix on tag push, publishing both installers to the same GitHub Release. Users see two download buttons:
+- `WinSTT-CPU-Setup-<version>.exe`
+- `WinSTT-GPU-Setup-<version>.exe`
+
+To cut a release: `git tag v0.X.0 && git push --tags`. The PyInstaller spec at `server/packaging/stt-server.spec` auto-detects whether `nvidia` is in the venv and bundles DLLs accordingly — the build script picks the right `[cpu]` or `[gpu]` extra before invoking it.
+
 ## Architecture
 
 ### Type Contract: OpenAPI Spec

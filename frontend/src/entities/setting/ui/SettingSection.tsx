@@ -29,8 +29,8 @@ export function SettingSection({
 	const isDisabled = hasToggle && !toggled;
 
 	return (
-		<div className="mb-4">
-			<div className="mb-1.5 flex items-center gap-2 px-1">
+		<div>
+			<div className="mb-2 flex items-center gap-2 px-1">
 				{icon && (
 					<HugeiconsIcon
 						aria-hidden="true"
@@ -53,7 +53,7 @@ export function SettingSection({
 				<Separator className="h-px flex-1 bg-border" />
 			</div>
 			<div
-				className={`rounded-lg border border-border bg-surface-secondary px-3 py-1 transition-opacity duration-150 ${isDisabled ? "pointer-events-none opacity-40" : ""}`}
+				className={`rounded-lg border border-border bg-surface-secondary px-5 py-4 transition-opacity duration-150 ${isDisabled ? "pointer-events-none opacity-40" : ""}`}
 			>
 				{children}
 			</div>

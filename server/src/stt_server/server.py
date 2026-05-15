@@ -40,14 +40,17 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import faulthandler
 import json
 import os
+import shutil
 import signal
 import sys
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import websockets
 from colorama import init
@@ -104,11 +107,26 @@ def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> Non
         raise
     print(f"{bcolors.OKGREEN}Models loaded, warming up CUDA kernels...{bcolors.ENDC}")
     state.recorder.warmup()
-    print(f"{bcolors.OKGREEN}{bcolors.BOLD}RealtimeSTT initialized{bcolors.ENDC}")
+    # Backend-agnostic ready marker — Electron's stt-process.ts greps for this
+    # exact phrase to flip the spawned-server status to "running".  Keep the
+    # text stable across backend swaps (faster-whisper, onnx-asr, …) so the
+    # detection survives transcriber refactors.
+    print(f"{bcolors.OKGREEN}{bcolors.BOLD}Recorder initialized{bcolors.ENDC}")
     state.recorder_ready.set()
 
-    # Broadcast server_ready to all connected control clients
-    msg = json.dumps({"type": "server_ready"})
+    # Broadcast server_ready to all connected control clients. We include the
+    # runtime snapshot (providers / is_gpu / model names) so the renderer can
+    # paint an honest GPU/CPU chip without an extra round-trip — the value
+    # is also fetchable per-connection via the ``get_runtime_info`` control
+    # command for late joiners.
+    try:
+        runtime_info = state.recorder.runtime_info() if state.recorder is not None else None
+    except Exception:
+        runtime_info = None
+    msg_payload: dict[str, Any] = {"type": "server_ready"}
+    if runtime_info is not None:
+        msg_payload["runtime_info"] = runtime_info
+    msg = json.dumps(msg_payload)
     for ws in list(state.control_connections):
         asyncio.run_coroutine_threadsafe(ws.send(msg), loop)
 
@@ -220,8 +238,24 @@ async def main_async() -> None:
     }
 
     try:
-        control_server = await websockets.serve(lambda ws: control_handler(ws, state), "localhost", args.control)
-        data_server = await websockets.serve(lambda ws: data_handler(ws, state), "localhost", args.data)
+        # Disable websockets' built-in keepalive ping for localhost connections.
+        # The default 20s ping_interval / 20s ping_timeout tears the connection
+        # down whenever a dictation session goes idle for ~40s — and a localhost
+        # link has no network to detect failures on, so the keepalive is pure
+        # overhead.  The Electron client reconnects automatically if the socket
+        # actually dies (e.g. because the server crashed), so we lose nothing.
+        control_server = await websockets.serve(
+            lambda ws: control_handler(ws, state),
+            "localhost",
+            args.control,
+            ping_interval=None,
+        )
+        data_server = await websockets.serve(
+            lambda ws: data_handler(ws, state),
+            "localhost",
+            args.data,
+            ping_interval=None,
+        )
         print(f"{bcolors.OKGREEN}Control server started on {bcolors.OKBLUE}ws://localhost:{args.control}{bcolors.ENDC}")
         print(f"{bcolors.OKGREEN}Data server started on {bcolors.OKBLUE}ws://localhost:{args.data}{bcolors.ENDC}")
 
@@ -350,14 +384,18 @@ async def shutdown_procedure(state: ServerState) -> None:
 
 def _clear_pycache() -> None:
     """Remove all __pycache__ directories under src/ so stale .pyc files never mask source changes."""
-    import shutil
-
     src_root = Path(__file__).resolve().parent.parent  # src/
     for cache_dir in src_root.rglob("__pycache__"):
         shutil.rmtree(cache_dir, ignore_errors=True)
 
 
 def main() -> None:
+    # Dump a native Python+C stack trace to stderr on SIGSEGV / SIGABRT /
+    # SIGFPE / SIGBUS / SIGILL.  Without this a crash in PyAudio, CTranslate2,
+    # ONNX Runtime, or any other native dependency prints only
+    # "Segmentation fault" with no clue which thread or call site triggered
+    # it.  Signal-safe; adds no overhead until a signal fires.
+    faulthandler.enable()
     print(f"{bcolors.BOLD}{bcolors.OKCYAN}Starting server, please wait...{bcolors.ENDC}")
     _clear_pycache()
     try:

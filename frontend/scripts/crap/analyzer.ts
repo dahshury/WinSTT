@@ -54,16 +54,82 @@ export async function readBiomeLinterDisabledPaths(projectRoot: string): Promise
 	return out;
 }
 
+/**
+ * Read `crap.ignore.json` and return its `ignore` array. This list decouples
+ * the CRAP gate from lint enforcement — pure-UI React files (which we still
+ * lint) can be excluded from CRAP scoring without disabling biome on them.
+ * Returns an empty array if the file is missing.
+ */
+export async function readCrapIgnorePaths(projectRoot: string): Promise<string[]> {
+	const ignorePath = resolve(projectRoot, "crap.ignore.json");
+	const file = Bun.file(ignorePath);
+	if (!(await file.exists())) return [];
+	const raw = await file.text();
+	const config = JSON.parse(raw) as { ignore?: string[] };
+	return config.ignore ?? [];
+}
+
+/**
+ * Convert a glob-ish pattern into an anchored RegExp. We handle:
+ *   - `**`  → `.*`        (any number of path segments, including slashes)
+ *   - `*`   → `[^/]*`     (anything within a single segment)
+ *   - everything else escaped as a literal
+ * The pattern is anchored with `^…$`.
+ */
+function globToRegExp(pattern: string): RegExp {
+	let out = "";
+	for (let i = 0; i < pattern.length; i++) {
+		const ch = pattern[i];
+		if (ch === "*") {
+			if (pattern[i + 1] === "*") {
+				out += ".*";
+				i++;
+			} else {
+				out += "[^/]*";
+			}
+		} else if (ch !== undefined && /[.+?^${}()|[\]\\]/.test(ch)) {
+			out += `\\${ch}`;
+		} else {
+			out += ch;
+		}
+	}
+	return new RegExp(`^${out}$`);
+}
+
 function pathMatchesAnyPattern(path: string, patterns: string[]): boolean {
 	for (const p of patterns) {
 		if (p === path) return true;
-		// crude glob: trailing /** matches any descendant; leading **/ ignored
-		if (p.endsWith("/**")) {
+		// Fast path: trailing /** matches any descendant.
+		if (p.endsWith("/**") && !p.slice(0, -3).includes("*")) {
 			const prefix = p.slice(0, -3);
 			if (path.startsWith(`${prefix}/`)) return true;
+			continue;
+		}
+		// General glob — `*` segments may appear in the middle, e.g.
+		// `src/entities/*/ui/**` → `src/entities/audio-device/ui/Foo.tsx`.
+		if (p.includes("*")) {
+			if (globToRegExp(p).test(path)) return true;
 		}
 	}
 	return false;
+}
+
+/**
+ * Returns the set of 1-indexed line numbers whose nearest preceding non-blank
+ * line carries a `@crap-exclude` annotation. We scan up to 5 lines preceding
+ * the target line for the marker — enough to clear a typical comment block
+ * and a single dependency-array closing bracket, but tight enough not to
+ * leak across unrelated declarations.
+ */
+function collectCrapExcludeLines(text: string): Set<number> {
+	const lines = text.split(/\r?\n/);
+	const out = new Set<number>();
+	for (let i = 0; i < lines.length; i++) {
+		if (!lines[i]?.includes("@crap-exclude")) continue;
+		// Mark this line and the next 6 lines (1-indexed) as exclusion-bearing.
+		for (let j = 0; j <= 6; j++) out.add(i + 1 + j);
+	}
+	return out;
 }
 
 export async function analyze(
@@ -82,9 +148,11 @@ export async function analyze(
 			const fullRel = `${root}/${rel}`.replace(/\\/g, "/");
 			if (pathMatchesAnyPattern(fullRel, excludePaths)) continue;
 			const text = await Bun.file(resolve(projectRoot, fullRel)).text();
+			const excludedLines = collectCrapExcludeLines(text);
 			const fns = parseFunctions(fullRel, text);
 			const fileCoverage = coverage.get(fullRel) ?? coverage.get(fullRel.replace(/\//g, "\\"));
 			for (const fn of fns) {
+				if (excludedLines.has(fn.startLine)) continue;
 				const cov = fileCoverage
 					? functionCoverageFraction(fileCoverage.lineHits, fn.startLine, fn.endLine)
 					: null;

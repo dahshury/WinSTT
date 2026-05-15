@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
-import { AudioVisualizerBar } from "./AudioVisualizerBar";
+import {
+	AudioVisualizerBar,
+	resolveBarCount,
+	resolveBarSequencerInterval,
+} from "./AudioVisualizerBar";
 
 describe("AudioVisualizerBar", () => {
 	test("renders 9 bars at default 'md' size", () => {
@@ -47,5 +51,48 @@ describe("AudioVisualizerBar", () => {
 		const root = container.firstElementChild as HTMLElement;
 		// happy-dom does not normalize CSS colors to rgb(...) — keeps the hex literal
 		expect(root.style.color.toLowerCase()).toBe("#ff00ff");
+	});
+});
+
+describe("resolveBarCount", () => {
+	test("returns explicit barCount when provided", () => {
+		expect(resolveBarCount(11, "md")).toBe(11);
+	});
+
+	test("returns 5 for icon size", () => {
+		expect(resolveBarCount(undefined, "icon")).toBe(5);
+	});
+
+	test("returns 7 for sm size", () => {
+		expect(resolveBarCount(undefined, "sm")).toBe(7);
+	});
+
+	test("returns 9 for other sizes", () => {
+		expect(resolveBarCount(undefined, "md")).toBe(9);
+		expect(resolveBarCount(undefined, "lg")).toBe(9);
+		expect(resolveBarCount(undefined, "xl")).toBe(9);
+	});
+});
+
+describe("resolveBarSequencerInterval", () => {
+	test("connecting: 2000/barCount", () => {
+		expect(resolveBarSequencerInterval("connecting", 5)).toBe(400);
+	});
+
+	test("initializing: 2000", () => {
+		expect(resolveBarSequencerInterval("initializing", 5)).toBe(2000);
+	});
+
+	test("listening: 500", () => {
+		expect(resolveBarSequencerInterval("listening", 5)).toBe(500);
+	});
+
+	test("thinking: 150", () => {
+		expect(resolveBarSequencerInterval("thinking", 5)).toBe(150);
+	});
+
+	test("speaking/disconnected: 1000 (default)", () => {
+		expect(resolveBarSequencerInterval("speaking", 5)).toBe(1000);
+		expect(resolveBarSequencerInterval("disconnected", 5)).toBe(1000);
 	});
 });

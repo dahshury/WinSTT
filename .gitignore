@@ -30,6 +30,13 @@ release/
 *.dmg
 *.AppImage
 
+# Packaged STT server bundles — produced by server/packaging/build.ps1
+# from a PyInstaller spec. Each is multi-GB (especially the GPU flavor)
+# and rebuilt fresh per release tag.
+stt-server-dist/
+stt-server-dist-cpu/
+stt-server-dist-gpu/
+
 # Environment
 .env
 .env.local

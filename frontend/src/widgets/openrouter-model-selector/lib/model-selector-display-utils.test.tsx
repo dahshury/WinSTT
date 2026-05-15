@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { OpenRouterEndpoint, OpenRouterPricing } from "@/shared/api/models";
 import {
+	__classifyAvgCost,
+	__variantIconMap,
 	formatContextLength,
 	formatPricing,
 	getPricingTier,
@@ -131,5 +133,49 @@ describe("getVariantIcon and getVariantClasses", () => {
 		expect(classes.text).toBeDefined();
 		expect(classes.border).toBeDefined();
 		expect(classes.gradient).toBeDefined();
+	});
+});
+
+describe("classifyAvgCost (extracted from getPricingTier)", () => {
+	test("avgCost < 1 → low tier", () => {
+		expect(__classifyAvgCost(0.5).tier).toBe("low");
+	});
+
+	test("avgCost in [1, 10) → medium tier", () => {
+		expect(__classifyAvgCost(5).tier).toBe("medium");
+		expect(__classifyAvgCost(1).tier).toBe("medium");
+	});
+
+	test("avgCost >= 10 → high tier", () => {
+		expect(__classifyAvgCost(10).tier).toBe("high");
+		expect(__classifyAvgCost(100).tier).toBe("high");
+	});
+
+	test("low tier has green class", () => {
+		expect(__classifyAvgCost(0.1).className).toContain("green");
+	});
+
+	test("medium tier has amber class", () => {
+		expect(__classifyAvgCost(5).className).toContain("amber");
+	});
+
+	test("high tier has rose class", () => {
+		expect(__classifyAvgCost(50).className).toContain("rose");
+	});
+});
+
+describe("VARIANT_ICON_MAP", () => {
+	test("maps every known variant to an icon", () => {
+		for (const variant of [
+			"free",
+			"nitro",
+			"extended",
+			"exacto",
+			"thinking",
+			"online",
+			"floor",
+		] as const) {
+			expect(__variantIconMap[variant]).toBeDefined();
+		}
 	});
 });

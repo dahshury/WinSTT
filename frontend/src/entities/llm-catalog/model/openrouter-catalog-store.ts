@@ -12,6 +12,29 @@ interface OpenRouterCatalogState {
 	scanModels: () => Promise<void>;
 }
 
+function makeScanErrorState(err: unknown) {
+	return {
+		error: String(err),
+		isReachable: false as const,
+		isScanning: false as const,
+		isLoaded: true as const,
+	};
+}
+
+function makeScanSuccessState(result: {
+	models: OpenRouterModel[];
+	reachable: boolean;
+	error?: string;
+}) {
+	return {
+		models: result.models,
+		isReachable: result.reachable,
+		error: result.error ?? null,
+		isLoaded: true as const,
+		isScanning: false as const,
+	};
+}
+
 export const useOpenRouterCatalogStore = create<OpenRouterCatalogState>()((set, get) => ({
 	models: [],
 	isLoaded: false,
@@ -25,20 +48,9 @@ export const useOpenRouterCatalogStore = create<OpenRouterCatalogState>()((set, 
 		set({ isScanning: true, error: null });
 		try {
 			const result = await fetchOpenRouterModels();
-			set({
-				models: result.models,
-				isReachable: result.reachable,
-				error: result.error ?? null,
-				isLoaded: true,
-				isScanning: false,
-			});
+			set(makeScanSuccessState(result));
 		} catch (err) {
-			set({
-				error: String(err),
-				isReachable: false,
-				isScanning: false,
-				isLoaded: true,
-			});
+			set(makeScanErrorState(err));
 		}
 	},
 }));

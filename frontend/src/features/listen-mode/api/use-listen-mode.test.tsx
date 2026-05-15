@@ -4,7 +4,7 @@ import { useConnectionStore } from "@/entities/connection";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import { useListenStore } from "../model/listen-store";
-import { useListenMode } from "./use-listen-mode";
+import { applyLoopbackTransition, useListenMode, validateDevices } from "./use-listen-mode";
 
 const originalApi = window.electronAPI;
 const initialSettings = useSettingsStore.getState().settings;
@@ -51,6 +51,58 @@ function fire(channel: string, ...args: unknown[]) {
 		cb(...args);
 	}
 }
+
+describe("validateDevices", () => {
+	test("returns valid devices from a raw array", () => {
+		const raw = [
+			{ index: 0, name: "Speakers", defaultSampleRate: 48_000, maxOutputChannels: 2 },
+			{ index: 1, name: "Mic", defaultSampleRate: 44_100, maxOutputChannels: 0 },
+		];
+		const result = validateDevices(raw);
+		expect(result).toHaveLength(2);
+		expect(result[0]?.name).toBe("Speakers");
+	});
+
+	test("drops entries that fail Zod validation", () => {
+		const raw = [
+			{ index: 0, name: "Valid", defaultSampleRate: 48_000, maxOutputChannels: 2 },
+			{ index: "bad", name: 42 }, // invalid
+		];
+		const result = validateDevices(raw);
+		expect(result).toHaveLength(1);
+		expect(result[0]?.name).toBe("Valid");
+	});
+
+	test("returns empty array for empty input", () => {
+		expect(validateDevices([])).toEqual([]);
+	});
+});
+
+describe("applyLoopbackTransition", () => {
+	test("calls loopbackStart when mode=listen, device set, and connected", () => {
+		window.electronAPI = makeApi();
+		applyLoopbackTransition("listen", false, 3, "connected");
+		expect(sentChannels).toContain(IPC.LOOPBACK_START);
+	});
+
+	test("does not call loopbackStart when device index is null", () => {
+		window.electronAPI = makeApi();
+		applyLoopbackTransition("listen", false, null, "connected");
+		expect(sentChannels).not.toContain(IPC.LOOPBACK_START);
+	});
+
+	test("calls loopbackStop when transitioning away from listen mode", () => {
+		window.electronAPI = makeApi();
+		applyLoopbackTransition("ptt", true, null, "connected");
+		expect(sentChannels).toContain(IPC.LOOPBACK_STOP);
+	});
+
+	test("does not call loopbackStop when not connected", () => {
+		window.electronAPI = makeApi();
+		applyLoopbackTransition("ptt", true, null, "disconnected");
+		expect(sentChannels).not.toContain(IPC.LOOPBACK_STOP);
+	});
+});
 
 describe("useListenMode", () => {
 	test("subscribes to loopback started/stopped events", () => {

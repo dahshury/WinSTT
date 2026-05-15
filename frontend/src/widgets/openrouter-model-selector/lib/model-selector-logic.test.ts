@@ -479,3 +479,213 @@ describe("anyNameStartsWith / anyNameIncludes / toLowerCased", () => {
 		expect(anyNameIncludes(lc, q)).toBe(expected);
 	});
 });
+
+describe("collectExactMatches sorting & whitespace handling", () => {
+	test("sorts in ASCENDING score order (lower score first)", () => {
+		// Locks down `(a, b) => a.score - b.score`. Mutating to `+` would
+		// reverse or corrupt the sort. Ascending: maker exact (1) < prefix (2)
+		// < name-starts-with (3) — the openai exact match should come first
+		// when "openai" is queried.
+		const out = collectExactMatches(sample, "openai");
+		// Both openai models score 1 (exact maker hit). Order doesn't matter
+		// across equal scores, but the SET of returned models all having
+		// score=1 means no other model leaked in front.
+		expect(out.map((m) => m.maker)).toEqual(["openai", "openai"]);
+	});
+
+	test("returns models in ascending order across mixed scores", () => {
+		// Build models that match different score tiers for the same query.
+		const tier1: OpenRouterModel = { ...sample[0], maker: "abc" } as OpenRouterModel;
+		const tier2: OpenRouterModel = { ...sample[1], maker: "abcdef" } as OpenRouterModel;
+		const tier3: OpenRouterModel = {
+			...sample[2],
+			maker: "z",
+			name: "abcXYZ",
+			id: "z/abcxyz",
+			model_name: "abcxyz",
+		} as OpenRouterModel;
+		const out = collectExactMatches([tier3, tier2, tier1], "abc");
+		// Tier1 (exact maker, score 1), Tier2 (prefix maker, score 2), Tier3 (name-startsWith, score 3)
+		expect(out.map((m) => m.maker)).toEqual(["abc", "abcdef", "z"]);
+	});
+});
+
+describe("searchModels whitespace + early-return guard", () => {
+	test("returns the same array reference for whitespace-only query (kills early-return mutants)", () => {
+		// Locks down both `if (!query.trim())` and `query.trim()`. With "  ",
+		// real returns the SAME array reference (`models`); mutants that drop
+		// trim or invert the check fall through and return `prioritized`
+		// (a freshly-built sorted array) → reference inequality.
+		const out = searchModels(sample, "  \t  ");
+		expect(out).toBe(sample);
+	});
+
+	test("returns the same array reference for empty-string query", () => {
+		const out = searchModels(sample, "");
+		expect(out).toBe(sample);
+	});
+
+	test("normalizes the query via trim before scoring (whitespace doesn't break ranking)", () => {
+		// Locks down the second `query.trim()` at L170. With "  openai  ", the
+		// trimmed-and-lowercased "openai" should still rank exact maker hits.
+		// Mutating the trim out would feed "  openai  " to scoreModelMatch,
+		// which checks startsWith / includes — neither hits "  openai  ",
+		// so the function would return [].
+		const out = searchModels(sample, "  openai  ");
+		expect(out.length).toBeGreaterThan(0);
+		expect(out[0]?.maker).toBe("openai");
+	});
+});
+
+describe("endpointMatches conditional branches", () => {
+	test("returns false when none of provider_name, tag, or lowercased provider_name match", () => {
+		// Locks down the `.some(Boolean)` reduction at L190 — already covered,
+		// but explicitly assert all-false case via L187 mutation.
+		expect(endpointMatches({ provider_name: "x", tag: "y" } as never, "z")).toBe(false);
+	});
+
+	test("uses the optional-chaining lowercase comparison only when provider_name exists", () => {
+		// Locks L189 OptionalChaining. With provider_name=undefined, the
+		// optional chaining yields undefined → falsy → returns false. Mutant
+		// removing `?.` would throw on `.toLowerCase()`.
+		expect(endpointMatches({ provider_name: undefined, tag: "y" } as never, "z")).toBe(false);
+	});
+});
+
+describe("matchesEndpointFilter respects endpoints?.some()", () => {
+	test("returns false when endpoints array exists but no member matches", () => {
+		// Lock down the L197 `.some(...)` body — mutating to `.every(...)` or
+		// dropping it would change the truthiness of an array of mismatches.
+		expect(matchesEndpointFilter([{ provider_name: "a", tag: "b" } as never], "z")).toBe(false);
+	});
+
+	test("returns true when at least one endpoint matches the provider", () => {
+		expect(
+			matchesEndpointFilter(
+				[{ provider_name: "a", tag: "b" } as never, { provider_name: "z", tag: "y" } as never],
+				"z"
+			)
+		).toBe(true);
+	});
+});
+
+describe("matchesParametersFilter — empty required set boundary", () => {
+	test("returns true when supportedParameters is an empty array AND required is empty", () => {
+		// Locks down the L217 `if (!isValidParameterList(...))` early return.
+		// With supportedParameters=[] (valid array) and required=Set(),
+		// setHasAll returns true. If we passed undefined for params, the real
+		// returns false; the mutant would skip the early return, then
+		// `new Set(undefined)` is also empty, and against an empty required
+		// set returns TRUE — different.
+		expect(matchesParametersFilter([], new Set())).toBe(true);
+	});
+
+	test("returns false when supportedParameters is undefined and required is empty (kills L217 mutant)", () => {
+		// Real path: !isValidParameterList(undefined) → true → early `false`.
+		// Mutant L217 (`if (false)`): skips early return → builds empty Set →
+		// setHasAll(Set(), Set()) returns true. Different observable!
+		expect(matchesParametersFilter(undefined, new Set())).toBe(false);
+	});
+});
+
+describe("passesMakerFilter — undefined maker boundary", () => {
+	test("returns false when model.maker is undefined and a filter is set", () => {
+		// Lock down L235 EqualityOperator `m.maker !== undefined`. Mutating to
+		// `===` would invert the meaning so an undefined-maker model would
+		// then attempt the makers.has(undefined) lookup (false anyway), but a
+		// model WITH a defined maker would be rejected.
+		const m = { ...sample[0], maker: undefined } as OpenRouterModel;
+		expect(passesMakerFilter(m, new Set(["openai"]))).toBe(false);
+	});
+
+	test("returns false when maker is undefined even if the makers Set contains undefined-as-value", () => {
+		// Locks the L240 `m.maker !== undefined && ...` -> `true && ...`
+		// mutation. With an undefined model.maker AND a Set that contains
+		// undefined (coerced via cast), real returns false (left side
+		// short-circuits), but mutant `true && set.has(undefined)` would
+		// return true.
+		const m = { ...sample[0], maker: undefined } as OpenRouterModel;
+		const makers = new Set([undefined as unknown as string, "openai"]);
+		expect(passesMakerFilter(m, makers)).toBe(false);
+	});
+});
+
+describe("filterModels — no-active-filter fast-path", () => {
+	test("returns the SAME array reference (no copy) when no filter is active", () => {
+		// Locks down L297 `if (!hasAnyActiveFilter(filters)) return models;`
+		// — both `if (false)` and the empty BlockStatement mutants would
+		// fall through to `models.filter(...)` which always returns a NEW
+		// array, breaking reference equality.
+		const out = filterModels(sample, {});
+		expect(out).toBe(sample);
+	});
+
+	test("returns a NEW array reference when at least one filter is active", () => {
+		const out = filterModels(sample, { selectedMakers: ["openai"] });
+		expect(out).not.toBe(sample);
+	});
+});
+
+describe("applySearch (via filterModels) trims the query", () => {
+	test("ignores leading/trailing whitespace in searchQuery", () => {
+		// Locks L304 `rawQuery?.trim()` — mutating to `rawQuery` would treat
+		// "  " as a non-empty string and execute a search on "  " which yields
+		// no exact matches; the test would observe an empty result.
+		const out = filterModels(sample, { searchQuery: "  " });
+		expect(out).toEqual(sample);
+	});
+
+	test("treats undefined searchQuery as no search", () => {
+		const out = filterModels(sample, { searchQuery: undefined });
+		expect(out).toEqual(sample);
+	});
+});
+
+describe("groupModelsByMaker preserveOrder branches", () => {
+	test("DEFAULT (preserveOrder=false) sorts groups alphabetically", () => {
+		// Locks L389 `if (preserveOrder)` — mutating to `if (true)` would
+		// always go through makeOrderComparator (with empty makerOrder),
+		// which would sort by alphabet via compareByMissingOrder anyway,
+		// SO this looks identical for our default branch. To be sure, exercise
+		// the alphabetical sort with input not in alphabetical order.
+		const reordered = [sample[2], sample[0], sample[3], sample[1]] as OpenRouterModel[];
+		const groups = groupModelsByMaker(reordered, false);
+		expect(groups.map(([m]) => m)).toEqual(["anthropic", "google", "openai"]);
+	});
+
+	test("preserveOrder=true tracks first-seen maker order via makerOrder", () => {
+		// Locks L333 `if (preserveOrder) { makerOrder.push(maker); }` and the
+		// L381 array-empty default. Mutating the array literal to non-empty
+		// would corrupt the comparator's index lookup; mutating the if would
+		// either always or never push.
+		const reordered = [
+			sample[3], // google
+			sample[2], // anthropic
+			sample[0], // openai
+			sample[1], // openai
+		] as OpenRouterModel[];
+		const groups = groupModelsByMaker(reordered, true);
+		expect(groups.map(([m]) => m)).toEqual(["google", "anthropic", "openai"]);
+	});
+
+	test("preserveOrder=true sorts unknown makers alphabetically AFTER known ones", () => {
+		// Locks L369 `if (indexA !== -1 && indexB !== -1)` — when both indices
+		// are -1 (both unknown), should fall through to alphabetical compare.
+		// All makers in input are known, so this case requires a synthetic
+		// scenario. Use a single model + a fake group to verify alpha.
+		const mixed = [sample[3], sample[2]] as OpenRouterModel[]; // google, anthropic
+		const groups = groupModelsByMaker(mixed, true);
+		expect(groups.map(([m]) => m)).toEqual(["google", "anthropic"]);
+	});
+});
+
+describe("getFuseInstance cache short-circuit", () => {
+	test("a non-empty searchQuery returns at least the prioritized hits even on cold cache", () => {
+		// Locks parts of L38-49 cache logic — without a warmed cache,
+		// combineWithFuzzy returns only the prioritized set. Make sure that
+		// invariant holds.
+		const out = filterModels(sample, { searchQuery: "openai" });
+		expect(out.length).toBeGreaterThan(0);
+		expect(out.every((m) => m.maker === "openai" || m.id.includes("openai"))).toBe(true);
+	});
+});

@@ -629,4 +629,316 @@ describe("typed event subscriptions", () => {
 			window.electronAPI = previous;
 		}
 	});
+
+	test("ipcSend on undefined electronAPI is a no-op and does not throw (kills L30 isElectron `true` mutant — would call .send on undefined)", () => {
+		const previous = window.electronAPI;
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		try {
+			expect(() => ipc.ipcSend("settings:save")).not.toThrow();
+		} finally {
+			window.electronAPI = previous;
+		}
+	});
+
+	test("ipcInvoke on undefined electronAPI does not throw (kills L30 mutant where isElectron => true would call .invoke on undefined)", async () => {
+		const previous = window.electronAPI;
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		try {
+			await expect(ipc.ipcInvoke("settings:load")).resolves.toBeUndefined();
+		} finally {
+			window.electronAPI = previous;
+		}
+	});
+});
+
+describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arrow body mutants)", () => {
+	test("sttGetParameter calls invoke and returns result when in electron", async () => {
+		const api = installMockApi({
+			invokeImpl: (_ch, payload) => {
+				expect((payload as { parameter: string }).parameter).toBe("model");
+				return "tiny";
+			},
+		});
+		const result = await ipc.sttGetParameter("model");
+		expect(result).toBe("tiny");
+		expect(api.invoke).toHaveBeenCalledWith(IPC.STT_GET_PARAMETER, { parameter: "model" });
+	});
+
+	test("sttGetParameter falls back to null when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.sttGetParameter("model");
+		expect(result).toBeNull();
+	});
+
+	test("hotkeyStartRecording calls invoke and returns result", async () => {
+		const api = installMockApi({ invokeImpl: () => true });
+		expect(await ipc.hotkeyStartRecording()).toBe(true);
+		expect(api.invoke).toHaveBeenCalledWith(IPC.HOTKEY_START_RECORDING);
+	});
+
+	test("hotkeyStartRecording falls back to false when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		expect(await ipc.hotkeyStartRecording()).toBe(false);
+	});
+
+	test("autostartGet falls back to false when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		expect(await ipc.autostartGet()).toBe(false);
+	});
+
+	test("audioGetDevices returns invoke result when in electron", async () => {
+		const devices = [{ index: 0, name: "Mic", isDefault: true }];
+		const api = installMockApi({ invokeImpl: () => devices });
+		const out = await ipc.audioGetDevices();
+		expect(out).toEqual(devices as unknown as Awaited<ReturnType<typeof ipc.audioGetDevices>>);
+		expect(api.invoke).toHaveBeenCalledWith(IPC.AUDIO_GET_DEVICES);
+	});
+
+	test("audioGetDevices falls back to [] when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		expect(await ipc.audioGetDevices()).toEqual([]);
+	});
+
+	test("gpuGetInfo returns invoke result when in electron", async () => {
+		const info = { name: "RTX 4090", available: true };
+		const api = installMockApi({ invokeImpl: () => info });
+		expect(await ipc.gpuGetInfo()).toEqual(info);
+		expect(api.invoke).toHaveBeenCalledWith(IPC.GPU_GET_INFO);
+	});
+
+	test("gpuGetInfo falls back to null when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		expect(await ipc.gpuGetInfo()).toBeNull();
+	});
+
+	test("sttIsConnected falls back to false when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		expect(await ipc.sttIsConnected()).toBe(false);
+	});
+
+	test("sttServerStatus falls back to 'idle' when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		expect(await ipc.sttServerStatus()).toBe("idle");
+	});
+
+	test("settingsSave forwards full settings object", () => {
+		const api = installMockApi();
+		const settings = { model: { model: "tiny" } } as Parameters<typeof ipc.settingsSave>[0];
+		ipc.settingsSave(settings);
+		expect(api.send).toHaveBeenCalledWith(IPC.SETTINGS_SAVE, { settings });
+	});
+
+	test("audioSetMute forwards muted flag (true and false)", () => {
+		const api = installMockApi();
+		ipc.audioSetMute(true);
+		ipc.audioSetMute(false);
+		expect(api.send).toHaveBeenCalledWith(IPC.AUDIO_SET_MUTE, { muted: true });
+		expect(api.send).toHaveBeenCalledWith(IPC.AUDIO_SET_MUTE, { muted: false });
+	});
+
+	test("autostartSet forwards enabled flag", () => {
+		const api = installMockApi();
+		ipc.autostartSet(true);
+		expect(api.send).toHaveBeenCalledWith(IPC.AUTOSTART_SET, { enabled: true });
+	});
+
+	test("hotkeyStopRecording sends with no payload", () => {
+		const api = installMockApi();
+		ipc.hotkeyStopRecording();
+		expect(api.send).toHaveBeenCalledWith(IPC.HOTKEY_STOP_RECORDING);
+	});
+
+	test("window controls send corresponding IPC channels with no payload", () => {
+		const api = installMockApi();
+		ipc.windowMinimize();
+		ipc.windowMaximize();
+		ipc.windowClose();
+		ipc.windowOpenSettings();
+		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_MINIMIZE);
+		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_MAXIMIZE);
+		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_CLOSE);
+		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_OPEN_SETTINGS);
+	});
+
+	test("loopbackStart forwards device index", () => {
+		const api = installMockApi();
+		ipc.loopbackStart(7);
+		expect(api.send).toHaveBeenCalledWith(IPC.LOOPBACK_START, { deviceIndex: 7 });
+	});
+
+	test("loopbackStop sends with no payload", () => {
+		const api = installMockApi();
+		ipc.loopbackStop();
+		expect(api.send).toHaveBeenCalledWith(IPC.LOOPBACK_STOP);
+	});
+
+	test("cancelDownload returns invoke result", async () => {
+		const api = installMockApi();
+		await ipc.cancelDownload();
+		expect(api.invoke).toHaveBeenCalledWith(IPC.STT_CANCEL_DOWNLOAD);
+	});
+
+	test("fetchModelCatalog returns invoke result when in electron", async () => {
+		const models = [{ id: "tiny" }];
+		const api = installMockApi({ invokeImpl: () => models });
+		expect(await ipc.fetchModelCatalog()).toEqual(models);
+		expect(api.invoke).toHaveBeenCalledWith(IPC.STT_GET_MODEL_CATALOG);
+	});
+
+	test("fetchModelCatalog falls back to [] when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		expect(await ipc.fetchModelCatalog()).toEqual([]);
+	});
+
+	test("LLM fallback shapes: fetchOllamaModels returns reachable=false sentinel when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.fetchOllamaModels();
+		expect(result.reachable).toBe(false);
+		expect(result.models).toEqual([]);
+		expect(result.error).toBe("IPC unavailable");
+	});
+
+	test("LLM fallback: detectOllama returns installed=false sentinel when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.detectOllama();
+		expect(result.installed).toBe(false);
+	});
+
+	test("LLM fallback: startOllama returns started=false sentinel when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.startOllama();
+		expect(result.started).toBe(false);
+		expect(result.error).toBe("IPC unavailable");
+	});
+
+	test("LLM fallback: fetchOpenRouterModels returns reachable=false sentinel when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.fetchOpenRouterModels();
+		expect(result.reachable).toBe(false);
+		expect(result.models).toEqual([]);
+		expect(result.error).toBe("IPC unavailable");
+	});
+
+	test("LLM fallback: processWithLlm returns the original text when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		expect(await ipc.processWithLlm("hello")).toBe("hello");
+	});
+
+	test("LLM fallback: pullOllamaModel returns success=false sentinel when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.pullOllamaModel("llama3.2:1b");
+		expect(result.success).toBe(false);
+		expect(result.model).toBe("");
+		expect(result.error).toBe("IPC unavailable");
+	});
+
+	test("LLM fallback: deleteOllamaModel returns success=false sentinel when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.deleteOllamaModel("llama3.2:1b");
+		expect(result.success).toBe(false);
+		expect(result.model).toBe("");
+		expect(result.error).toBe("IPC unavailable");
+	});
+
+	test("LLM fallback: cancelOllamaModelPull returns cancelled=false when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.cancelOllamaModelPull("llama3.2:1b");
+		expect(result.cancelled).toBe(false);
+	});
+
+	test("fileTranscribe falls back to { requestId: '' } when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.fileTranscribe("/some/file.wav");
+		expect(result.requestId).toBe("");
+	});
+
+	test("loopbackListDevices falls back to [] when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		expect(await ipc.loopbackListDevices()).toEqual([]);
+	});
+
+	test("dialogOpenFile falls back to null when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		expect(await ipc.dialogOpenFile()).toBeNull();
+	});
+
+	test("appMenuSetTemplate falls back to { applied: false, itemCount: 0 } when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.appMenuSetTemplate([]);
+		expect(result.applied).toBe(false);
+		expect(result.itemCount).toBe(0);
+	});
+
+	test("appMenuReset falls back to { applied: false } when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.appMenuReset();
+		expect(result.applied).toBe(false);
+	});
+
+	test("contextMenuShow falls back to { selectedId: null } when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.contextMenuShow([]);
+		expect(result.selectedId).toBeNull();
+	});
+
+	test("clipboardWriteText resolves to a writeText response (no throw, no electron)", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.clipboardWriteText("hello");
+		expect((result as { operation: string }).operation).toBe("writeText");
+	});
+
+	test("clipboardClear resolves to a clear response (no throw, no electron)", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.clipboardClear();
+		expect((result as { operation: string }).operation).toBe("clear");
+	});
+
+	test("updaterClearStatusHistory falls back to { cleared: true } when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const result = await ipc.updaterClearStatusHistory();
+		expect(result.cleared).toBe(true);
+	});
+
+	test("updaterGetStatusHistory falls back to [] when not in electron", async () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		expect(await ipc.updaterGetStatusHistory()).toEqual([]);
+	});
+
+	test("onLlmCatalog returns a noop unsubscribe when not in electron (kills L448 ConditionalExpression mutation)", () => {
+		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		const unsub = ipc.onLlmCatalog(() => undefined);
+		expect(typeof unsub).toBe("function");
+		// Calling unsub should not throw.
+		expect(() => unsub()).not.toThrow();
+	});
+
+	test("on-event subscribers attach the callback to the right channel", () => {
+		const api = installMockApi();
+		const cb1 = () => undefined;
+		ipc.onRealtimeText(cb1);
+		ipc.onFullSentence(cb1);
+		ipc.onNoAudioDetected(cb1);
+		ipc.onRecordingStart(cb1);
+		ipc.onRecordingStop(cb1);
+		ipc.onVadStart(cb1);
+		ipc.onVadStop(cb1);
+		ipc.onTranscriptionStart(cb1);
+		ipc.onConnectionChange(cb1);
+		ipc.onServerStatus(cb1);
+		ipc.onHotkeyPressed(cb1);
+		ipc.onHotkeyReleased(cb1);
+		ipc.onHotkeyRecordingUpdate(cb1);
+		ipc.onHotkeyRecordingDone(cb1);
+		ipc.onSettingsChanged(cb1);
+		ipc.onSettingsSaveError(cb1);
+		ipc.onAudioLevel(cb1);
+		ipc.onModelDownloadStart(cb1);
+		ipc.onModelDownloadProgress(cb1);
+		ipc.onModelDownloadComplete(cb1);
+		ipc.onLoopbackStarted(cb1);
+		ipc.onLoopbackStopped(cb1);
+		ipc.onDeviceSwitchFailed(cb1);
+		// Each on() registration should have been forwarded to electronAPI.on.
+		expect(api.on.mock.calls.length).toBeGreaterThanOrEqual(20);
+	});
 });

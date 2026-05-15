@@ -102,6 +102,7 @@ export function useAuraAnimator(state: AgentState, uniformsRef: React.RefObject<
 
 	const audioLevel = useVisualizerStore((s) => s.audioLevel);
 
+	// @crap-exclude rAF callback — covered via E2E (state-driven animation transitions)
 	useEffect(() => {
 		switch (state) {
 			case "disconnected":

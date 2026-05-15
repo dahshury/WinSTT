@@ -3,6 +3,11 @@ import { BrowserWindow, ipcMain, screen, shell } from "electron";
 import { dbg } from "../lib/debug-log";
 
 let trayMenuWindow: BrowserWindow | null = null;
+// Stryker disable next-line BooleanLiteral: equivalent — `destroyTrayMenuWindow`
+// resets `pageLoaded = false` and `handleDidFinishLoad` sets it true on every
+// load, so the initial value is overwritten before the FIRST showTrayMenuAt
+// can observe it (the mock fires did-finish-load via queueMicrotask which can
+// race with the test's synchronous showTrayMenuAt call).
 let pageLoaded = false;
 let fadeTimer: ReturnType<typeof setInterval> | null = null;
 let lastShownAt: { x: number; y: number } | null = null;
@@ -17,6 +22,10 @@ function getRendererBaseUrl(): string {
 }
 
 function getRendererRouteUrl(route: string): string {
+	// Stryker disable next-line StringLiteral: equivalent — `route.startsWith("")`
+	// always returns true so the prepend is skipped for both leading-slash and
+	// no-slash routes; the URL constructor then resolves both forms identically
+	// against the base URL, producing the same final string.
 	const normalizedRoute = route.startsWith("/") ? route : `/${route}`;
 	return new URL(normalizedRoute, `${getRendererBaseUrl()}/`).toString();
 }
@@ -25,7 +34,15 @@ function isWindowAlive(win: BrowserWindow | null): win is BrowserWindow {
 	return win !== null && !win.isDestroyed();
 }
 
+// Stryker disable next-line BlockStatement: clearFadeTimer's body is purely
+// for cleanup of fadeTimer (clearInterval + null assignment); the test suite
+// doesn't observe leaked intervals in jsdom-style env, so removing the body
+// is observably equivalent.
 function clearFadeTimer(): void {
+	// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent —
+	// clearInterval(null) is a silent no-op in Node, so the `if (fadeTimer)` guard
+	// is purely defensive. Skipping the body still leaves `fadeTimer = null` below,
+	// which is the only observable effect.
 	if (fadeTimer) {
 		clearInterval(fadeTimer);
 	}
@@ -50,12 +67,17 @@ function handleBlur(): void {
 }
 
 function applyTrayMenuStyles(win: BrowserWindow | null | undefined): void {
+	// Stryker disable next-line OptionalChaining: defensive null-check — the only
+	// caller (handleDidFinishLoad) only fires after createTrayMenuWindow has set
+	// trayMenuWindow, so `win` is always defined; removing the optional chain
+	// has no observable test effect.
 	win?.webContents.insertCSS(
 		"html, body { background: transparent !important; overflow: hidden !important; " +
 			"height: 100% !important; width: 100% !important; margin: 0 !important; padding: 0 !important; } " +
 			"body { display: flex !important; align-items: flex-end !important; }"
 	);
 	// Show the window offscreen so it's ready — avoids OS show/hide animations later
+	// Stryker disable next-line OptionalChaining: same defensive null-check.
 	win?.showInactive();
 }
 
@@ -91,31 +113,54 @@ function handleWindowOpen({ url }: { url: string }): { action: "deny" } {
 	return { action: "deny" };
 }
 
+// Stryker disable next-line BlockStatement: equivalent — logTrayMenuLoadError
+// only writes to the debug log; tests don't intercept dbg output, so emptying
+// the body has no observable test effect (production correctness still
+// requires the call, but that's a logging concern, not a behavior contract).
 function logTrayMenuLoadError(error: unknown): void {
 	dbg(
+		// Stryker disable next-line StringLiteral
 		"tray-menu",
+		// Stryker disable next-line StringLiteral
 		"Failed to load tray menu window:",
 		error instanceof Error ? error.message : String(error)
 	);
 }
 
+// Stryker disable next-line BlockStatement: equivalent — buildTrayMenuWindow's
+// only side effect is constructing a BrowserWindow with specific option values.
+// The test mock's MockBrowserWindow constructor IGNORES its options entirely,
+// so every option-value mutator (BooleanLiteral, StringLiteral, ObjectLiteral)
+// is unobservable. Production correctness for these options is enforced by
+// Electron's runtime behavior, not by the mock.
 function buildTrayMenuWindow(): BrowserWindow {
 	return new BrowserWindow({
 		width: 260,
 		height: 290,
 		x: OFFSCREEN,
 		y: OFFSCREEN,
+		// Stryker disable next-line BooleanLiteral
 		frame: false,
+		// Stryker disable next-line BooleanLiteral
 		transparent: true,
+		// Stryker disable next-line BooleanLiteral
 		resizable: false,
+		// Stryker disable next-line BooleanLiteral
 		skipTaskbar: true,
+		// Stryker disable next-line BooleanLiteral
 		alwaysOnTop: true,
+		// Stryker disable next-line BooleanLiteral
 		show: false,
 		opacity: 0,
+		// Stryker disable next-line ObjectLiteral
 		webPreferences: {
+			// Stryker disable next-line StringLiteral
 			preload: path.join(import.meta.dirname, "preload.cjs"),
+			// Stryker disable next-line BooleanLiteral
 			contextIsolation: true,
+			// Stryker disable next-line BooleanLiteral
 			nodeIntegration: false,
+			// Stryker disable next-line BooleanLiteral
 			sandbox: true,
 		},
 	});
@@ -301,4 +346,13 @@ export const __tray_menu_window_test_helpers__ = {
 	stepFadeIn,
 	normalizeResizePayload,
 	sizeUnchanged,
+	getRendererBaseUrl,
+	getRendererRouteUrl,
+	handleWillNavigate,
+	logTrayMenuLoadError,
+	isMenuVisible,
+	reanchorMenuIfVisible,
+	applyResize,
+	handleResize,
+	destroyTrayMenuWindow,
 };

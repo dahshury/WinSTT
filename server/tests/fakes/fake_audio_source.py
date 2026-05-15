@@ -21,7 +21,11 @@ class FakeAudioSource(IAudioSource):
         self._sample_rate = sample_rate
         self._buffer_size = buffer_size
         self._active = False
+        self._capturing = True  # tests don't care about pause state by default
         self._setup_called = False
+        self._switched_to: list[int | None] = []
+        self._pause_count = 0
+        self._resume_count = 0
 
     @override
     def setup(self) -> None:
@@ -46,6 +50,25 @@ class FakeAudioSource(IAudioSource):
 
     @property
     @override
+    def is_capturing(self) -> bool:
+        return self._capturing
+
+    @override
+    def pause(self) -> None:
+        self._pause_count += 1
+        self._capturing = False
+
+    @override
+    def resume(self) -> None:
+        self._resume_count += 1
+        self._capturing = True
+
+    @override
+    def switch_device(self, device_index: int | None) -> None:
+        self._switched_to.append(device_index)
+
+    @property
+    @override
     def sample_rate(self) -> SampleRate:
         return self._sample_rate
 
@@ -60,3 +83,7 @@ class FakeAudioSource(IAudioSource):
     @property
     def setup_called(self) -> bool:
         return self._setup_called
+
+    @property
+    def switched_to(self) -> list[int | None]:
+        return list(self._switched_to)

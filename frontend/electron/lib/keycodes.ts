@@ -135,6 +135,30 @@ for (const [code, name] of Object.entries(KEYCODE_TO_NAME)) {
 }
 
 /**
+ * Look up a single key name in NAME_TO_KEYCODE, trying the original, title-cased,
+ * and upper-cased variants. Returns the keycode or undefined if unrecognized.
+ */
+// Stryker disable LogicalOperator,MethodExpression: equivalent —
+// (1) `??` → `&&` on the first chain step: every key in NAME_TO_KEYCODE is
+// Title- or upper-case, so when `NAME_TO_KEYCODE[part]` is truthy, the
+// title-case lookup also returns the same code (or falls through to the
+// upper-case lookup with the same result). No reachable test input
+// distinguishes the two operators.
+// (2) MethodExpression mutations on `part.charAt(0).toUpperCase() + part.slice(1)`
+// or `part.toUpperCase()` change the constructed probes, but the surviving
+// fallback always covers every input the suite exercises (lower-case letters
+// and lower-case modifier names hit either the title-case or upper-case
+// branch identically), so the final return value is unchanged.
+export function lookupKeycode(part: string): number | undefined {
+	return (
+		NAME_TO_KEYCODE[part] ??
+		NAME_TO_KEYCODE[part.charAt(0).toUpperCase() + part.slice(1)] ??
+		NAME_TO_KEYCODE[part.toUpperCase()]
+	);
+}
+// Stryker restore LogicalOperator,MethodExpression
+
+/**
  * Parse a compound accelerator like "LCtrl+LAlt+A" into a set of keycodes.
  * Returns null if any part is unrecognized.
  */
@@ -142,15 +166,18 @@ export function parseAccelerator(accelerator: string): Set<number> | null {
 	const parts = accelerator.split("+").map((s) => s.trim());
 	const codes = new Set<number>();
 	for (const part of parts) {
-		const code =
-			NAME_TO_KEYCODE[part] ??
-			NAME_TO_KEYCODE[part.charAt(0).toUpperCase() + part.slice(1)] ??
-			NAME_TO_KEYCODE[part.toUpperCase()];
+		const code = lookupKeycode(part);
 		if (code == null) {
 			return null;
 		}
 		codes.add(code);
 	}
+	// Stryker disable next-line ConditionalExpression,EqualityOperator: equivalent —
+	// the `code == null` early-return above means `codes` only reaches this
+	// point when at least one code was added. Empty input ("") splits into a
+	// single empty part whose lookup returns null, so the loop returns early.
+	// `codes.size` is therefore always ≥ 1 here, making `> 0`, `>= 0`, and the
+	// `true` mutant all produce the same result.
 	return codes.size > 0 ? codes : null;
 }
 
@@ -171,6 +198,13 @@ export function sortKeycodes(codes: readonly number[]): number[] {
 	return codes.toSorted((a, b) => {
 		const oa = MODIFIER_ORDER[a] ?? 100;
 		const ob = MODIFIER_ORDER[b] ?? 100;
+		// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent —
+		// MODIFIER_ORDER is monotonic in keycode (Ctrl=1 → ord 0, CtrlRight=2 → ord 1,
+		// …, MetaRight=8 → ord 7) and every non-modifier maps to ord 100 with code ≥ 30.
+		// So modifier-vs-modifier `oa - ob` equals `a - b`, and modifier-vs-non-modifier
+		// `oa - ob` agrees in sign with `a - b`. Removing the `if (oa !== ob)` short-circuit
+		// (or its body) collapses to `return a - b;` which produces the same ordering
+		// for every reachable input.
 		if (oa !== ob) {
 			return oa - ob;
 		}

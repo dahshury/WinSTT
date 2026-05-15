@@ -4,6 +4,7 @@ import { Tabs } from "@base-ui/react/tabs";
 import {
 	AiChat02Icon,
 	Cancel01Icon,
+	ChartHistogramIcon,
 	CpuChargeIcon,
 	KeyboardIcon,
 	LaptopIcon,
@@ -30,6 +31,7 @@ import { ModelSettingsPanel } from "@/widgets/model-settings";
 import { OllamaModelManagerDialog } from "@/widgets/ollama-model-manager";
 import { QualitySettingsPanel } from "@/widgets/quality-settings";
 import { SnippetsSettingsPanel } from "@/widgets/snippets-settings";
+import { TranscriptionHistoryPanel } from "@/widgets/transcription-history-settings";
 import { SettingsSidebar, type SidebarLink } from "./SettingsSidebar";
 
 const llmSettingsSlot = (
@@ -91,6 +93,12 @@ export function SettingsPage() {
 			icon: LaptopIcon,
 			tooltip: t("tabDesktopTooltip"),
 		},
+		{
+			key: "history",
+			label: t("tabHistory"),
+			icon: ChartHistogramIcon,
+			tooltip: t("tabHistoryTooltip"),
+		},
 	];
 
 	return (
@@ -148,6 +156,9 @@ export function SettingsPage() {
 						</Tabs.Panel>
 						<Tabs.Panel value="desktop">
 							<DesktopToolsSettingsPanel />
+						</Tabs.Panel>
+						<Tabs.Panel value="history">
+							<TranscriptionHistoryPanel />
 						</Tabs.Panel>
 					</ScrollArea>
 				</Tabs.Root>

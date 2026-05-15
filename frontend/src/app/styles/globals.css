@@ -11,6 +11,28 @@
 	--color-surface-hover: oklch(22.5% 0.015 265);
 	--color-surface-active: oklch(25% 0.015 265);
 
+	/* Surface elevation scale (1 darkest → 8 brightest), paired with shadow-surface-N.
+	   Page substrate: surface-1. Section cards: surface-3. Inset controls: surface-5. */
+	--color-surface-1: oklch(7.5% 0.015 265);
+	--color-surface-2: oklch(9.5% 0.015 265);
+	--color-surface-3: oklch(12% 0.015 265);
+	--color-surface-4: oklch(15.5% 0.013 265);
+	--color-surface-5: oklch(19% 0.013 265);
+	--color-surface-6: oklch(22.5% 0.015 265);
+	--color-surface-7: oklch(26% 0.015 265);
+	--color-surface-8: oklch(30% 0.015 260);
+
+	--shadow-surface-1: none;
+	--shadow-surface-2: 0 1px 1px oklch(0% 0 0 / 0.45);
+	--shadow-surface-3:
+		0 1px 2px oklch(0% 0 0 / 0.55), 0 0 0 1px oklch(0% 0 0 / 0.25) inset;
+	--shadow-surface-4: 0 2px 4px oklch(0% 0 0 / 0.5);
+	--shadow-surface-5:
+		0 4px 10px oklch(0% 0 0 / 0.55), 0 0 0 1px oklch(100% 0 0 / 0.02) inset;
+	--shadow-surface-6: 0 6px 16px oklch(0% 0 0 / 0.55);
+	--shadow-surface-7: 0 8px 24px oklch(0% 0 0 / 0.6);
+	--shadow-surface-8: 0 12px 32px oklch(0% 0 0 / 0.65);
+
 	/* Foreground — blue-tinted whites */
 	--color-foreground: oklch(94% 0.015 265);
 	--color-foreground-secondary: oklch(73% 0.025 260);
@@ -150,6 +172,33 @@
 	}
 }
 
+@keyframes shimmer {
+	0% {
+		background-position: 0% 0;
+	}
+	100% {
+		background-position: 100% 0;
+	}
+}
+
+/* Used by the ThinkingIndicator component to give status text a moving
+   light-grey gradient shimmer. */
+.shimmer-text {
+	color: transparent;
+	background: linear-gradient(
+		90deg,
+		oklch(73% 0.025 260) 0%,
+		oklch(73% 0.025 260) 35%,
+		oklch(94% 0.015 265) 50%,
+		oklch(73% 0.025 260) 65%,
+		oklch(73% 0.025 260) 100%
+	);
+	-webkit-background-clip: text;
+	background-clip: text;
+	background-size: 300% 100%;
+	animation: shimmer 1.5s ease-in-out infinite;
+}
+
 /* ── Base layer: resets, global styles, drag regions ── */
 @layer base {
 	* {
@@ -185,9 +234,15 @@
 		-webkit-app-region: no-drag;
 	}
 
-	/* Scrollbar */
+	/* Scrollbar
+	   The thumb deliberately uses a foreground (not border) token: --color-border
+	   sits at the same 19% lightness as --color-surface-elevated, so a border-
+	   colored thumb is invisible inside dropdown popups (Select, FooterMenuChip,
+	   any Base UI Menu.Popup). foreground-dim contrasts against every step of
+	   the surface elevation scale. */
 	::-webkit-scrollbar {
-		width: 5px;
+		width: 8px;
+		height: 8px;
 	}
 
 	::-webkit-scrollbar-track {
@@ -195,12 +250,18 @@
 	}
 
 	::-webkit-scrollbar-thumb {
-		background: var(--color-border);
+		background: var(--color-foreground-dim);
 		border-radius: 999px;
 	}
 
 	::-webkit-scrollbar-thumb:hover {
-		background: var(--color-border-hover);
+		background: var(--color-foreground-muted);
+	}
+
+	/* Firefox / standards-track equivalent */
+	* {
+		scrollbar-color: var(--color-foreground-dim) transparent;
+		scrollbar-width: thin;
 	}
 
 	/* Hide native number input spinners */

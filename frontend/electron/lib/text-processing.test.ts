@@ -200,3 +200,123 @@ describe("cleanupPostProcessing", () => {
 		expect(applyPostProcessing("x")).toBe("x");
 	});
 });
+
+describe("SENTENCE_END_RE end-anchor (mutation guard)", () => {
+	test("does NOT add a period to text that already contains '.' but ends with non-punct", () => {
+		// Mutating /[.!?]$/ → /[.!?]/ would let "hello. world" match as already
+		// punctuated (because '.' appears anywhere), wrongly skipping the period.
+		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
+		expect(applyPostProcessing("hello. world")).toBe("hello. world.");
+	});
+
+	test("does NOT add a period when text ends in a question mark mid-sentence", () => {
+		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
+		// "what? indeed" — the '?' is in middle, end is 'd' → MUST add period.
+		expect(applyPostProcessing("what? indeed")).toBe("what? indeed.");
+	});
+});
+
+describe("compileDictEntry flags (mutation guard)", () => {
+	test("default (caseSensitive=undefined) replaces case-insensitively (gi flags)", () => {
+		// Mutating flags = "gi" → "" would lose both g and i flags; "gi"→"g"
+		// would keep only global. Test that case-insensitive replacement works
+		// by default.
+		setStoreValue("dictionary", [
+			{ find: "foo", replace: "bar", caseSensitive: false, wholeWord: false },
+		]);
+		expect(applyPostProcessing("FOO foo Foo")).toBe("bar bar bar");
+	});
+
+	test("default applies replacement globally (every occurrence)", () => {
+		// Mutating away the 'g' flag would replace only the first match.
+		setStoreValue("dictionary", [
+			{ find: "x", replace: "y", caseSensitive: true, wholeWord: false },
+		]);
+		expect(applyPostProcessing("xxx")).toBe("yyy");
+	});
+
+	test("caseSensitive=true uses 'g' (only — case mismatches don't replace)", () => {
+		setStoreValue("dictionary", [
+			{ find: "x", replace: "y", caseSensitive: true, wholeWord: false },
+		]);
+		expect(applyPostProcessing("xX")).toBe("yX");
+	});
+});
+
+describe("maybePunctuate trailing whitespace (mutation guard for trimEnd)", () => {
+	test("text with leading whitespace + trailing whitespace gets trimmed only at end", () => {
+		// Mutating .trimEnd() to .trimStart() in maybePunctuate would
+		// strip leading instead of trailing whitespace and produce a different
+		// output. Verify the leading whitespace is PRESERVED.
+		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
+		expect(applyPostProcessing("  hello   ")).toBe("  hello.");
+	});
+
+	test("text ending in '.' followed by whitespace: regex check uses trimEnd (mutation guard)", () => {
+		// L94 has two .trimEnd() calls. The FIRST one is inside the regex test:
+		// `!SENTENCE_END_RE.test(text.trimEnd())`. If mutated to .trimStart(),
+		// "hello.   " → trimStart → "hello.   " (no leading ws to strip) →
+		// regex test on "hello.   " ends with space, doesn't match → adds period.
+		// Original: "hello.   " → trimEnd → "hello." → ends with "." → matches →
+		// no period added.
+		// So the original returns "hello." (after the second trimEnd in the
+		// no-action branch returns text), mutated returns "hello.   ." .
+		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
+		expect(applyPostProcessing("hello.   ")).toBe("hello.   ");
+	});
+});
+
+describe("rebuild handles missing/null store data", () => {
+	test("dictionary explicitly set to undefined: applyPostProcessing returns input untouched", () => {
+		// Mutating `if (!dictionary?.length)` (any of -> false / -> {} / -> length)
+		// would change handling of empty/missing dict. Verify it's a no-op.
+		setStoreValue("dictionary", undefined);
+		expect(applyPostProcessing("hello")).toBe("hello");
+	});
+
+	test("dictionary set to empty array: still no-op", () => {
+		setStoreValue("dictionary", []);
+		expect(applyPostProcessing("hello")).toBe("hello");
+	});
+
+	test("snippets explicitly set to undefined: applyPostProcessing returns input untouched", () => {
+		// Mutating `snippets?.filter(...) ?? []` would change handling of missing
+		// snippets array. Verify it's a no-op.
+		setStoreValue("snippets", undefined);
+		expect(applyPostProcessing("hello")).toBe("hello");
+	});
+
+	test("snippets array filters out empty triggers (kills filter mutation)", () => {
+		setStoreValue("snippets", [
+			{ trigger: "", expansion: "DEAD" },
+			{ trigger: "/x", expansion: "OK" },
+		]);
+		// If filter is removed, the empty trigger entry would be kept → its
+		// `replaceAll("", "DEAD")` would inject "DEAD" between every char.
+		// With filter intact, only "/x" applies.
+		expect(applyPostProcessing("/x")).toBe("OK");
+		expect(applyPostProcessing("abc")).toBe("abc"); // no inserts
+	});
+});
+
+describe("disposeWatchers cleanup (mutation guard for L75 BlockStatement)", () => {
+	test("calling cleanupPostProcessing twice is safe (no-op the second time)", () => {
+		// Mutating the disposeWatchers arrow body to {} would skip dispose calls.
+		// We can't directly observe dispose, but we can verify cleanup is idempotent.
+		setStoreValue("dictionary", [
+			{ find: "a", replace: "b", caseSensitive: false, wholeWord: false },
+		]);
+		expect(applyPostProcessing("a")).toBe("b");
+		cleanupPostProcessing();
+		// Now changing the store should NOT trigger any rebuild because watcher
+		// dispose was called.
+		setStoreValue("dictionary", [
+			{ find: "x", replace: "y", caseSensitive: false, wholeWord: false },
+		]);
+		// Cache stays empty because cleanup cleared it AND dispose detached the
+		// listener (so the change above doesn't rebuild).
+		expect(applyPostProcessing("x")).toBe("x");
+		// A second cleanup call should not throw.
+		expect(() => cleanupPostProcessing()).not.toThrow();
+	});
+});

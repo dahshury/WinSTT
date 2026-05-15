@@ -70,6 +70,15 @@ describe("setupAutostartHandlers", () => {
 		expect(await handler!({})).toBe(false);
 	});
 
+	test("autostart:get returns false on linux EVEN when openAtLogin is true (kills `if (false)` and `{}` mutants on the unsupported-platform guard)", async () => {
+		// Set openAtLogin=true so a mutant that drops the guard would return true.
+		// The genuine guard MUST return false because the platform is unsupported.
+		appState.loginItemSettings = { openAtLogin: true };
+		setPlatform("linux");
+		const handler = handlers.get("autostart:get");
+		expect(await handler!({})).toBe(false);
+	});
+
 	test("autostart:get returns the login item setting on win32", async () => {
 		setPlatform("win32");
 		appState.loginItemSettings = { openAtLogin: true };

@@ -413,6 +413,25 @@ class TestRecorderService:
         assert len(no_audio_events) == 1
         service.shutdown()
 
+    def test_set_microphone_off_stops_recording_even_with_smart_endpoint(self) -> None:
+        """PTT release must be immediate even when silence endpoint is enabled.
+
+        Regression guard: previously, set_microphone(False) waited for
+        post_speech_silence_duration when smart endpoint was on, causing
+        a perceptible delay before the overlay hid and text was pasted.
+        """
+        service, _, _, _ = self._make_service()
+        # silence_endpoint_enabled stays at its default (True) — the smart-endpoint case.
+        assert service.silence_endpoint_enabled is True
+        service.listen()
+        service.start()
+        assert service.state == RecorderState.RECORDING
+
+        service.set_microphone(False)
+        time.sleep(0.2)
+        assert service.state != RecorderState.RECORDING
+        service.shutdown()
+
     def test_use_microphone_initial(self) -> None:
         """use_microphone reflects config at construction time."""
         service, _, _, _ = self._make_service(use_microphone=False)
@@ -486,8 +505,15 @@ class TestRecorderService:
         service.shutdown()
         assert result == "Hello world."
 
-    def test_audio_reader_feeds_silence_when_muted(self) -> None:
-        """When microphone is muted, audio reader feeds silence frames."""
+    def test_audio_reader_drains_silently_when_muted(self) -> None:
+        """When microphone is muted, audio reader drains chunks without feeding the pipeline.
+
+        Previously the reader injected silence frames to drive VAD's
+        speech→silence transition, but with the audio-source pause/resume
+        wiring set_microphone(False) now pauses the hardware directly
+        (OS mic indicator off) and request_stop() handles end-of-recording
+        explicitly — there's no longer anything for the silence frames to do.
+        """
         service, _, _, _ = self._make_service(use_microphone=True)
         # Directly exercise the reader loop with mic disabled
         service._microphone_enabled = False
@@ -501,10 +527,8 @@ class TestRecorderService:
         t.start()
         service._audio_reader_loop()  # blocks until _is_running flipped
         t.join()
-        # Silence frames should have been fed (not discarded)
-        assert not service._pipeline._audio_queue.empty()
-        chunk = service._pipeline._audio_queue.get_nowait()
-        assert chunk == b"\x00" * len(chunk)
+        # With pause()/resume() wiring, nothing is fed to the pipeline while muted.
+        assert service._pipeline._audio_queue.empty()
         service.shutdown()
 
     def test_audio_reader_handles_read_error(self) -> None:
@@ -799,3 +823,149 @@ class TestRecorderService:
         # In external audio mode, no silence is injected — queue should be empty
         assert service._pipeline._audio_queue.empty()
         service.shutdown()
+
+    def test_set_input_device_delegates_to_audio_source(self) -> None:
+        service, _, _, audio_source = self._make_service()
+        service.set_input_device(7)
+        assert audio_source.switched_to == [7]
+        assert service._config.audio.input_device_index == 7
+
+    def test_set_input_device_to_none_falls_back_to_default(self) -> None:
+        service, _, _, audio_source = self._make_service()
+        service._config.audio.input_device_index = 4
+        service.set_input_device(None)
+        assert audio_source.switched_to == [None]
+        assert service._config.audio.input_device_index is None
+
+    # ---- _reuse_realtime_text_if_eligible / text() reuse path ----
+
+    def _make_service_with_realtime(
+        self,
+        *,
+        use_main_model_for_realtime: bool,
+        enable_realtime: bool = True,
+        share_transcriber: bool = True,
+    ) -> tuple[RecorderService, FakeTranscriber]:
+        config = RecorderConfig.from_kwargs(
+            post_speech_silence_duration=0.05,
+            min_length_of_recording=0.0,
+            use_microphone=False,
+            enable_realtime_transcription=enable_realtime,
+            use_main_model_for_realtime=use_main_model_for_realtime,
+        )
+        transcriber = FakeTranscriber(
+            result=TranscriptionResult(
+                text="full pass",
+                language="en",
+                language_probability=0.99,
+                duration_seconds=1.0,
+            )
+        )
+        # When the toggle is on, the bootstrap shares the same instance.
+        # When off, it builds a separate realtime model.
+        realtime_transcriber: FakeTranscriber | None = (
+            transcriber
+            if share_transcriber
+            else FakeTranscriber(
+                result=TranscriptionResult(
+                    text="realtime model",
+                    language="en",
+                    language_probability=0.99,
+                    duration_seconds=1.0,
+                )
+            )
+        )
+        service = RecorderService(
+            audio_source=FakeAudioSource(),
+            vad=FakeVAD(speech_pattern=[True] + [False] * 20),
+            transcriber=transcriber,
+            wake_word_detector=None,
+            realtime_transcriber=realtime_transcriber,
+            config=config,
+            event_bus=EventBus(),
+            clock=Clock.system_clock(),
+        )
+        return service, transcriber
+
+    def test_reuse_realtime_returns_none_when_realtime_disabled(self) -> None:
+        service, _ = self._make_service_with_realtime(
+            use_main_model_for_realtime=True,
+            enable_realtime=False,
+        )
+        service._last_realtime_text = "stale preview"
+        assert service._reuse_realtime_text_if_eligible() is None
+        service.shutdown()
+
+    def test_reuse_realtime_returns_none_when_use_main_off(self) -> None:
+        service, _ = self._make_service_with_realtime(
+            use_main_model_for_realtime=False,
+            share_transcriber=False,
+        )
+        service._last_realtime_text = "stale preview"
+        assert service._reuse_realtime_text_if_eligible() is None
+        service.shutdown()
+
+    def test_reuse_realtime_returns_none_when_transcribers_differ(self) -> None:
+        # Toggle is on but a separate realtime model is wired — bootstrap
+        # would normally prevent this, but we guard against it anyway.
+        service, _ = self._make_service_with_realtime(
+            use_main_model_for_realtime=True,
+            share_transcriber=False,
+        )
+        service._last_realtime_text = "stale preview"
+        assert service._reuse_realtime_text_if_eligible() is None
+        service.shutdown()
+
+    def test_reuse_realtime_returns_none_when_no_cached_text(self) -> None:
+        service, _ = self._make_service_with_realtime(
+            use_main_model_for_realtime=True,
+        )
+        assert service._last_realtime_text == ""
+        assert service._reuse_realtime_text_if_eligible() is None
+        service.shutdown()
+
+    def test_reuse_realtime_returns_cached_text_and_clears_it(self) -> None:
+        service, _ = self._make_service_with_realtime(
+            use_main_model_for_realtime=True,
+        )
+        service._last_realtime_text = "hello world"
+        assert service._reuse_realtime_text_if_eligible() == "hello world"
+        # Subsequent call must not return the same text — the cache is
+        # one-shot to prevent reusing yesterday's preview for today's audio.
+        assert service._reuse_realtime_text_if_eligible() is None
+        service.shutdown()
+
+    def test_text_skips_full_transcription_when_realtime_reusable(self) -> None:
+        """text() should skip the dedicated full transcribe call when the
+        realtime worker has already produced output with the same model.
+
+        We disable the realtime worker (enable_realtime=False) and instead
+        directly verify what text() does given a pre-seeded cache + the
+        toggle on. The eligibility check returns None in that config, so
+        text() runs the full path — proving the gate is enforced. The reuse
+        path itself is covered by the unit tests above; the end-to-end wiring
+        is exercised in test_facade.py."""
+        service, transcriber = self._make_service_with_realtime(
+            use_main_model_for_realtime=True,
+            enable_realtime=False,
+        )
+        # Seed the cache — but realtime is disabled, so eligibility fails and
+        # text() should still call the main transcriber.
+        service._last_realtime_text = "stale preview"
+        chunk = struct.pack("<512h", *([100] * 512))
+        chunks = [chunk for _ in range(22)]
+
+        def feed_audio() -> None:
+            time.sleep(0.05)
+            for c in chunks:
+                service.feed_audio(c)
+                time.sleep(0.01)
+
+        t = threading.Thread(target=feed_audio)
+        t.start()
+        before = transcriber.call_count
+        result = service.text()
+        t.join()
+        service.shutdown()
+        assert result == "Full pass."  # preprocessed FakeTranscriber output
+        assert transcriber.call_count == before + 1

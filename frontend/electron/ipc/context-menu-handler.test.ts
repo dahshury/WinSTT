@@ -53,6 +53,59 @@ describe("createContextMenuIpcHandler", () => {
 			"Context menu request must contain a template array."
 		);
 	});
+
+	test("rejects non-finite x coordinate", () => {
+		const handler = createContextMenuIpcHandler({ popup: () => undefined });
+		expect(handler({}, { template: [], x: Number.NaN })).rejects.toThrow(
+			"x must be a finite number"
+		);
+	});
+
+	test("rejects non-finite y coordinate", () => {
+		const handler = createContextMenuIpcHandler({ popup: () => undefined });
+		expect(handler({}, { template: [], y: Number.POSITIVE_INFINITY })).rejects.toThrow(
+			"y must be a finite number"
+		);
+	});
+
+	test("rejects non-numeric x coordinate (e.g., string)", () => {
+		// Kills the L95 ConditionalExpression mutant where the entire
+		// `typeof value === "number" && Number.isFinite(value)` is replaced
+		// with `true`. A string "10" passes typeof check fail-fast in the real
+		// guard but the mutant would let it through, then the popup adapter
+		// would receive an invalid x.
+		const handler = createContextMenuIpcHandler({ popup: () => undefined });
+		expect(handler({}, { template: [], x: "10" as unknown as number })).rejects.toThrow(
+			"x must be a finite number"
+		);
+	});
+
+	test("rejects non-numeric y coordinate (e.g., null)", () => {
+		const handler = createContextMenuIpcHandler({ popup: () => undefined });
+		expect(handler({}, { template: [], y: null as unknown as number })).rejects.toThrow(
+			"y must be a finite number"
+		);
+	});
+
+	test("accepts valid x and y coordinates", async () => {
+		const handler = createContextMenuIpcHandler({
+			popup: ({ onClose }) => {
+				onClose();
+			},
+		});
+		const result = await handler({}, { template: [], x: 10, y: 20 });
+		expect(result).toEqual({ selectedId: null });
+	});
+
+	test("omits x and y when not provided", async () => {
+		const handler = createContextMenuIpcHandler({
+			popup: ({ onClose, x: _x, y: _y }) => {
+				onClose();
+			},
+		});
+		const result = await handler({}, { template: [] });
+		expect(result).toEqual({ selectedId: null });
+	});
 });
 
 describe("registerContextMenuIpcHandler", () => {

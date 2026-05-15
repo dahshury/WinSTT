@@ -3,14 +3,18 @@
 import { cva } from "class-variance-authority";
 import { type ComponentProps, type CSSProperties, useMemo } from "react";
 import { cn } from "@/shared/lib/cn";
-import type { VisualizerSize } from "../lib/audio-visualizer";
+import type { AgentState, VisualizerSize } from "../lib/audio-visualizer";
 import { useAgentState } from "../lib/use-agent-state";
 import { useMultibandVolume } from "../lib/use-multiband-volume";
 import { useRadialAnimator } from "../lib/use-radial-animator";
 
 const radialVariants = cva(
 	[
-		"relative flex items-center justify-center",
+		// `aspect-square` reserves layout width equal to the height. Without it the
+		// container collapses to 0 width (children are absolute-positioned only),
+		// which causes dots to render outside the layout box and get clipped by
+		// `overflow-hidden` ancestors like the recording overlay pill.
+		"relative flex aspect-square items-center justify-center",
 		"**:data-lk-index:bg-current/10",
 		"**:data-lk-index:absolute **:data-lk-index:top-1/2 **:data-lk-index:left-1/2 **:data-lk-index:origin-bottom **:data-lk-index:-translate-x-1/2",
 		"**:data-lk-index:data-[lk-highlighted=true]:bg-current **:data-lk-index:rounded-full **:data-lk-index:transition-colors **:data-lk-index:duration-150 **:data-lk-index:ease-linear",
@@ -41,6 +45,38 @@ export interface AudioVisualizerRadialProps {
 	size?: VisualizerSize;
 }
 
+export function resolveRadialBarCount(barCount: number | undefined, size: VisualizerSize): number {
+	if (barCount) {
+		return barCount;
+	}
+	return size === "icon" || size === "sm" ? 12 : 24;
+}
+
+const RADIAL_SEQUENCER_INTERVAL: Partial<Record<AgentState, number>> = {
+	connecting: 500,
+	listening: 500,
+	initializing: 250,
+	thinking: Number.POSITIVE_INFINITY,
+};
+
+export function resolveRadialSequencerInterval(state: AgentState): number {
+	return RADIAL_SEQUENCER_INTERVAL[state] ?? 1000;
+}
+
+const RADIAL_DISTANCE_BY_SIZE: Partial<Record<VisualizerSize, number>> = {
+	icon: 6,
+	xl: 128,
+	lg: 64,
+	sm: 16,
+};
+
+export function resolveRadialDistance(radius: number | undefined, size: VisualizerSize): number {
+	if (radius) {
+		return radius;
+	}
+	return RADIAL_DISTANCE_BY_SIZE[size] ?? 32;
+}
+
 export function AudioVisualizerRadial({
 	size = "md",
 	color,
@@ -52,46 +88,13 @@ export function AudioVisualizerRadial({
 }: AudioVisualizerRadialProps & ComponentProps<"div">) {
 	const state = useAgentState();
 
-	const _barCount = useMemo(() => {
-		if (barCount) {
-			return barCount;
-		}
-		return size === "icon" || size === "sm" ? 12 : 24;
-	}, [barCount, size]);
+	const _barCount = useMemo(() => resolveRadialBarCount(barCount, size), [barCount, size]);
 
 	const volumeBands = useMultibandVolume(_barCount);
 
-	const sequencerInterval = useMemo(() => {
-		switch (state) {
-			case "connecting":
-			case "listening":
-				return 500;
-			case "initializing":
-				return 250;
-			case "thinking":
-				return Number.POSITIVE_INFINITY;
-			default:
-				return 1000;
-		}
-	}, [state]);
+	const sequencerInterval = useMemo(() => resolveRadialSequencerInterval(state), [state]);
 
-	const distanceFromCenter = useMemo(() => {
-		if (radius) {
-			return radius;
-		}
-		switch (size) {
-			case "icon":
-				return 6;
-			case "xl":
-				return 128;
-			case "lg":
-				return 64;
-			case "sm":
-				return 16;
-			default:
-				return 32;
-		}
-	}, [size, radius]);
+	const distanceFromCenter = useMemo(() => resolveRadialDistance(radius, size), [size, radius]);
 
 	const highlightedIndices = useRadialAnimator(state, _barCount, sequencerInterval);
 	const bands = useMemo(

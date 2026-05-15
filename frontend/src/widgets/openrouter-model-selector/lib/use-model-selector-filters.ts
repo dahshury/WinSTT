@@ -9,6 +9,29 @@ import type { ModelVariant } from "./model-variant-utils";
 import type { FilterableParameter } from "./openrouter-provider-utils";
 import { useFavoriteProviders } from "./use-favorite-providers";
 
+/** Pure: appends provider-specific item strings for a model with multiple endpoints. */
+export function appendModelEndpointItems(items: string[], model: OpenRouterModel): void {
+	if (!(model.endpoints && model.endpoints.length > 1)) {
+		return;
+	}
+	const uniqueEndpoints = getUniqueEndpoints(model.endpoints);
+	for (const endpoint of uniqueEndpoints) {
+		items.push(`${model.id}@${endpoint.provider_name}`);
+	}
+}
+
+/** Pure: builds Combobox item value strings from grouped models. */
+export function buildComboboxItems(groupedModels: [string, OpenRouterModel[]][]): string[] {
+	const items: string[] = [];
+	for (const [, makerModels] of groupedModels) {
+		for (const model of makerModels) {
+			items.push(model.id);
+			appendModelEndpointItems(items, model);
+		}
+	}
+	return items;
+}
+
 interface UseModelSelectorFiltersProps {
 	isOpen?: boolean;
 	models: OpenRouterModel[];
@@ -22,6 +45,40 @@ interface UseModelSelectorFiltersProps {
 	setSelectedMakers: React.Dispatch<React.SetStateAction<string[]>>;
 	setSelectedParameters: React.Dispatch<React.SetStateAction<FilterableParameter[]>>;
 	setSelectedVariant: (variant: ModelVariant | "none" | null) => void;
+}
+
+/** Pure: returns true when any selection-type filter is active. */
+export function hasSelectionFilter(
+	selectedMakers: string[],
+	selectedVariant: ModelVariant | "none" | null,
+	selectedEndpointProvider: string | null,
+	selectedParameters: FilterableParameter[]
+): boolean {
+	return (
+		selectedMakers.length > 0 ||
+		selectedVariant !== null ||
+		selectedEndpointProvider !== null ||
+		selectedParameters.length > 0
+	);
+}
+
+/** Pure: returns true when any filter is active. */
+export function computeHasActiveFilters(
+	selectedMakers: string[],
+	searchQuery: string,
+	selectedVariant: ModelVariant | "none" | null,
+	selectedEndpointProvider: string | null,
+	selectedParameters: FilterableParameter[]
+): boolean {
+	return (
+		searchQuery.trim() !== "" ||
+		hasSelectionFilter(
+			selectedMakers,
+			selectedVariant,
+			selectedEndpointProvider,
+			selectedParameters
+		)
+	);
 }
 
 export function useModelSelectorFilters({
@@ -96,28 +153,16 @@ export function useModelSelectorFilters({
 		if (!(isOpen || searchQuery)) {
 			return [];
 		}
-
-		const items: string[] = [];
-		for (const [, makerModels] of groupedModelsAll) {
-			for (const model of makerModels) {
-				items.push(model.id);
-				if (model.endpoints && model.endpoints.length > 1) {
-					const uniqueEndpoints = getUniqueEndpoints(model.endpoints);
-					for (const endpoint of uniqueEndpoints) {
-						items.push(`${model.id}@${endpoint.provider_name}`);
-					}
-				}
-			}
-		}
-		return items;
+		return buildComboboxItems(groupedModelsAll);
 	}, [groupedModelsAll, isOpen, searchQuery]);
 
-	const hasActiveFilters =
-		selectedMakers.length > 0 ||
-		searchQuery.trim() !== "" ||
-		selectedVariant !== null ||
-		selectedEndpointProvider !== null ||
-		selectedParameters.length > 0;
+	const hasActiveFilters = computeHasActiveFilters(
+		selectedMakers,
+		searchQuery,
+		selectedVariant,
+		selectedEndpointProvider,
+		selectedParameters
+	);
 
 	const handleSearchChange = (query: string) => {
 		setSearchQuery(query);

@@ -12,6 +12,21 @@ describe("normalizeClipboardPayload", () => {
 		});
 	});
 
+	test("normalizes the bare 'read' alias to 'readText'", () => {
+		// Targets the CANONICAL_OPERATION["read"] entry specifically — without
+		// this case, the value mapping at L24 isn't exercised.
+		expect(normalizeClipboardPayload({ operation: "read" })).toEqual({
+			operation: "readText",
+		});
+	});
+
+	test("normalizes the bare 'write' alias to 'writeText'", () => {
+		expect(normalizeClipboardPayload({ operation: "write", text: "x" })).toEqual({
+			operation: "writeText",
+			text: "x",
+		});
+	});
+
 	test("normalizes write payload and line endings", () => {
 		expect(
 			normalizeClipboardPayload({

@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "@testing-library/react";
 import type { OpenRouterEndpoint } from "@/shared/api/models";
-import { EndpointFeatureIcons } from "./EndpointFeatureIcons";
+import {
+	EndpointFeatureIcons,
+	__endpoint_feature_icons_test_helpers__ as helpers,
+} from "./EndpointFeatureIcons";
 
 function makeEndpoint(opts?: Partial<OpenRouterEndpoint>): OpenRouterEndpoint {
 	return {
@@ -21,6 +24,151 @@ function renderIt(endpoint: OpenRouterEndpoint) {
 		</TooltipProvider.Provider>
 	);
 }
+
+describe("getChipSizeClass", () => {
+	test("showLabel=true, small → px-1 py-0.5", () => {
+		expect(helpers.getChipSizeClass({ flat: false, isSmall: true, shouldShowLabel: true })).toBe(
+			"px-1 py-0.5"
+		);
+	});
+
+	test("showLabel=true, not small → px-1.5 py-0.5", () => {
+		expect(helpers.getChipSizeClass({ flat: false, isSmall: false, shouldShowLabel: true })).toBe(
+			"px-1.5 py-0.5"
+		);
+	});
+
+	test("flat=true, small, no label → h-4 w-4", () => {
+		expect(helpers.getChipSizeClass({ flat: true, isSmall: true, shouldShowLabel: false })).toBe(
+			"h-4 w-4"
+		);
+	});
+
+	test("flat=true, not small, no label → h-5 w-5", () => {
+		expect(helpers.getChipSizeClass({ flat: true, isSmall: false, shouldShowLabel: false })).toBe(
+			"h-5 w-5"
+		);
+	});
+
+	test("flat=false, small, no label → h-4 w-4 p-0.5", () => {
+		expect(helpers.getChipSizeClass({ flat: false, isSmall: true, shouldShowLabel: false })).toBe(
+			"h-4 w-4 p-0.5"
+		);
+	});
+
+	test("flat=false, not small, no label → h-5 w-5 p-0.5", () => {
+		expect(helpers.getChipSizeClass({ flat: false, isSmall: false, shouldShowLabel: false })).toBe(
+			"h-5 w-5 p-0.5"
+		);
+	});
+
+	test("showLabel=true, flat=true, small → px-1 py-0.5 (label wins)", () => {
+		expect(helpers.getChipSizeClass({ flat: true, isSmall: true, shouldShowLabel: true })).toBe(
+			"px-1 py-0.5"
+		);
+	});
+
+	test("showLabel=true, flat=true, not small → px-1.5 py-0.5 (label wins)", () => {
+		expect(helpers.getChipSizeClass({ flat: true, isSmall: false, shouldShowLabel: true })).toBe(
+			"px-1.5 py-0.5"
+		);
+	});
+});
+
+describe("chipSizeKey", () => {
+	test("produces distinct keys for different combos", () => {
+		const keys = new Set([
+			helpers.chipSizeKey(true, true, true),
+			helpers.chipSizeKey(true, true, false),
+			helpers.chipSizeKey(true, false, true),
+			helpers.chipSizeKey(true, false, false),
+			helpers.chipSizeKey(false, true, true),
+			helpers.chipSizeKey(false, true, false),
+			helpers.chipSizeKey(false, false, true),
+			helpers.chipSizeKey(false, false, false),
+		]);
+		expect(keys.size).toBe(8);
+	});
+});
+
+describe("buildQuantizationFeature", () => {
+	test("returns a feature with the quantization key and label", () => {
+		const feature = helpers.buildQuantizationFeature("FP16");
+		expect(feature.key).toBe("quantization");
+		expect(feature.config.label).toBe("FP16");
+		expect(feature.config.shortLabel).toBe("FP16");
+		expect(feature.config.description).toContain("FP16");
+	});
+});
+
+describe("appendSupportedParams", () => {
+	test("appends up to maxIcons features from supported params", () => {
+		const features: Array<{ key: string; config: unknown }> = [];
+		const supported = new Set(["tools", "reasoning", "structured_outputs"]);
+		helpers.appendSupportedParams(features as never, supported, 2);
+		expect(features.length).toBe(2);
+		expect(features[0]?.key).toBe("tools");
+		expect(features[1]?.key).toBe("reasoning");
+	});
+
+	test("skips unsupported params", () => {
+		const features: Array<{ key: string; config: unknown }> = [];
+		const supported = new Set(["reasoning"]);
+		helpers.appendSupportedParams(features as never, supported, 4);
+		expect(features.length).toBe(1);
+		expect(features[0]?.key).toBe("reasoning");
+	});
+
+	test("is a no-op when features array is already at maxIcons", () => {
+		const features = [{ key: "existing", config: {} }];
+		helpers.appendSupportedParams(features as never, new Set(["tools"]), 1);
+		expect(features.length).toBe(1);
+	});
+});
+
+describe("getQuantizationLabel", () => {
+	test("returns undefined when quantization is null", () => {
+		expect(
+			helpers.getQuantizationLabel({ quantization: null } as unknown as OpenRouterEndpoint)
+		).toBeUndefined();
+	});
+
+	test("returns undefined for 'unknown' quantization", () => {
+		expect(
+			helpers.getQuantizationLabel({ quantization: "unknown" } as unknown as OpenRouterEndpoint)
+		).toBeUndefined();
+	});
+
+	test("returns label for known quantization", () => {
+		expect(
+			helpers.getQuantizationLabel({ quantization: "fp16" } as unknown as OpenRouterEndpoint)
+		).toBe("FP16");
+	});
+
+	test("returns label case-insensitively", () => {
+		expect(
+			helpers.getQuantizationLabel({ quantization: "INT4" } as unknown as OpenRouterEndpoint)
+		).toBe("INT4");
+	});
+});
+
+describe("resolveParamFeature", () => {
+	test("returns null when param is not in supportedParamsSet", () => {
+		expect(helpers.resolveParamFeature("tools", new Set<string>())).toBeNull();
+	});
+
+	test("returns null when param is in set but has no FEATURE_ICONS entry", () => {
+		expect(
+			helpers.resolveParamFeature("unknown_param_xyz", new Set(["unknown_param_xyz"]))
+		).toBeNull();
+	});
+
+	test("returns FeatureIconConfig when param is supported and recognized", () => {
+		const config = helpers.resolveParamFeature("tools", new Set(["tools"]));
+		expect(config).not.toBeNull();
+		expect(config?.shortLabel).toBe("FN");
+	});
+});
 
 describe("EndpointFeatureIcons", () => {
 	test("renders nothing when endpoint has no recognized features", () => {

@@ -2,15 +2,22 @@
 
 import { useEffect } from "react";
 import { useConnectionStore } from "@/entities/connection";
-import { ipcInvoke, onConnectionChange, onServerStatus } from "@/shared/api/ipc-client";
+import {
+	fetchRuntimeInfo,
+	ipcInvoke,
+	onConnectionChange,
+	onRuntimeInfo,
+	onServerStatus,
+} from "@/shared/api/ipc-client";
 import { getErrorMessage } from "@/shared/lib/errors";
 
 export function useConnectionListener(): void {
 	const setConnectionStatus = useConnectionStore((s) => s.setConnectionStatus);
 	const setServerStatus = useConnectionStore((s) => s.setServerStatus);
+	const setRuntimeInfo = useConnectionStore((s) => s.setRuntimeInfo);
 
+	// Initial connection status query — runs once.
 	useEffect(() => {
-		// Query current status on mount (connection may have been established before page loaded)
 		ipcInvoke("stt:is-connected")
 			.then((connected) => {
 				if (connected) {
@@ -23,8 +30,10 @@ export function useConnectionListener(): void {
 					getErrorMessage(error)
 				);
 			});
+	}, [setConnectionStatus]);
 
-		// Query server-ready status on mount (server_ready may have fired before renderer subscribed)
+	// Initial server-ready query — server_ready may have fired before this hook subscribed.
+	useEffect(() => {
 		ipcInvoke("stt:get-server-ready")
 			.then((ready) => {
 				if (ready) {
@@ -37,23 +46,39 @@ export function useConnectionListener(): void {
 					getErrorMessage(error)
 				);
 			});
+	}, [setServerStatus]);
 
-		// Listen for future connection changes
-		const unsubConnection = onConnectionChange((connected) => {
-			setConnectionStatus(connected ? "connected" : "disconnected");
-			if (!connected) {
-				setServerStatus("idle");
-			}
-		});
+	// Connection-change subscription — one disconnect must reset the server too.
+	useEffect(
+		() =>
+			onConnectionChange((connected) => {
+				setConnectionStatus(connected ? "connected" : "disconnected");
+				if (!connected) {
+					setServerStatus("idle");
+				}
+			}),
+		[setConnectionStatus, setServerStatus]
+	);
 
-		// Listen for server_ready signal (recorder fully initialized)
-		const unsubStatus = onServerStatus((status) => {
-			setServerStatus(status);
-		});
+	// Server-ready signal subscription.
+	useEffect(
+		() =>
+			onServerStatus((status) => {
+				setServerStatus(status);
+			}),
+		[setServerStatus]
+	);
 
-		return () => {
-			unsubConnection();
-			unsubStatus();
-		};
-	}, [setConnectionStatus, setServerStatus]);
+	// Runtime info — initial fetch covers renderers that mount after the
+	// server's server_ready broadcast (overlay/settings); the live
+	// subscription keeps it in sync if the runtime ever changes (model
+	// reload after settings change).
+	useEffect(() => {
+		fetchRuntimeInfo()
+			.then((info) => setRuntimeInfo(info))
+			.catch(() => {
+				// Non-fatal — chip will keep showing hardware-only info.
+			});
+		return onRuntimeInfo((info) => setRuntimeInfo(info));
+	}, [setRuntimeInfo]);
 }

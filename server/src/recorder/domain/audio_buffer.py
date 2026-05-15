@@ -46,6 +46,48 @@ class AudioBuffer:
         audio_int16 = np.frombuffer(raw, dtype=np.int16)
         return (audio_int16.astype(np.float32) / INT16_MAX_ABS_VALUE).astype(np.float32)
 
+    def get_recent_audio_array(self, max_seconds: float) -> AudioArray:
+        """Return the most recent ``max_seconds`` of audio as a float32 array.
+
+        Used by the realtime worker so the transcriber sees a bounded
+        sliding window. Without this cap, faster_whisper's
+        BatchedInferencePipeline splits audio at 30s VAD chunk boundaries
+        — the first chunk's transcribed text becomes identical on every
+        call, which inflates similarity past 0.99 and trips the
+        noise-repetition recorder stop in stt_server/text_processing.py.
+        """
+        if not self._frames or max_seconds <= 0:
+            return np.array([], dtype=np.float32)
+        frames_per_second = self._sample_rate / self._buffer_size
+        max_frames = max(1, int(max_seconds * frames_per_second))
+        recent_frames = self._frames[-max_frames:] if len(self._frames) > max_frames else self._frames
+        raw = b"".join(recent_frames)
+        audio_int16 = np.frombuffer(raw, dtype=np.int16)
+        return (audio_int16.astype(np.float32) / INT16_MAX_ABS_VALUE).astype(np.float32)
+
+    def get_audio_array_slice(self, start_frame: int, end_frame: int | None = None) -> AudioArray:
+        """Return audio between two frame indices as a float32 array.
+
+        Used by the realtime worker's stable-text accumulator: the worker
+        keeps a watermark of frames already committed to the stable text
+        and only transcribes audio past that watermark. ``frames`` is a
+        plain list so a torn read is at worst a stale length — never a
+        crash.
+        """
+        frames = self._frames
+        total = len(frames)
+        if start_frame >= total or start_frame < 0:
+            return np.array([], dtype=np.float32)
+        end = total if end_frame is None else min(end_frame, total)
+        if start_frame >= end:
+            return np.array([], dtype=np.float32)
+        raw = b"".join(frames[start_frame:end])
+        audio_int16 = np.frombuffer(raw, dtype=np.int16)
+        return (audio_int16.astype(np.float32) / INT16_MAX_ABS_VALUE).astype(np.float32)
+
+    def frames_per_second(self) -> float:
+        return self._sample_rate / self._buffer_size
+
     def backdate(self, seconds: float) -> None:
         if seconds <= 0 or not self._frames:
             return

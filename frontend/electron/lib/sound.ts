@@ -4,6 +4,7 @@ import type { BrowserWindow } from "electron";
 import { ipcMain } from "electron";
 import { getStoreValue } from "./store";
 
+// Stryker disable next-line StringLiteral: path segment strings join into the bundled splash path — only used at runtime
 const DEFAULT_SOUND_PATH = path.join(import.meta.dirname, "..", "build", "splash.wav");
 
 let win: BrowserWindow | null = null;
@@ -17,10 +18,12 @@ function getSoundPath(): string | null {
 		return null;
 	}
 	const custom = getStoreValue("general.recordingSoundPath");
+	// Stryker disable next-line ConditionalExpression,EqualityOperator: empty string also flows to default path via the extension check, so always-true variants are equivalent
 	if (custom && custom.length > 0) {
 		// Validate custom path: must have an allowed audio extension
 		const ext = path.extname(custom).toLowerCase();
 		if (!ALLOWED_SOUND_EXTENSIONS.has(ext)) {
+			// Stryker disable next-line StringLiteral: console.warn message is informational only
 			console.warn("[sound] Custom sound path rejected (bad extension):", ext);
 			return DEFAULT_SOUND_PATH;
 		}

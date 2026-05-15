@@ -222,4 +222,5 @@ export const __author_filter_submenu_test_helpers__ = {
 	getFavoriteTooltipText,
 	handleFavoriteButtonClick,
 	renderAuthorItem,
+	SelectedCountBadge,
 };

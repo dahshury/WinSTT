@@ -11,9 +11,6 @@ AudioArray = NDArray[np.float32]
 SampleRate = NewType("SampleRate", int)
 BufferSize = NewType("BufferSize", int)
 
-# ---------------------------------------------------------------------------
-# Callback type aliases
-# ---------------------------------------------------------------------------
 SimpleCallback = Callable[[], None]
 """Callback for state-change notifications (no arguments)."""
 
@@ -26,7 +23,26 @@ ChunkCallback = Callable[[bytes], None]
 LevelCallback = Callable[[float], None]
 """Callback that receives a normalized audio level (0.0-1.0)."""
 
-CallbackMap = dict[str, SimpleCallback | TextCallback | ChunkCallback | LevelCallback | None]
+DeviceSwitchFailedCallback = Callable[[int, str, int | None], None]
+"""Callback for input-device switch failures: (requested, error, fallback)."""
+
+ModelSwapCallback = Callable[[str, str], None]
+"""Callback for model-swap lifecycle: (kind, name). Used for started + completed."""
+
+ModelSwapFailedCallback = Callable[[str, str, str], None]
+"""Callback for model-swap failures: (kind, name, reason)."""
+
+CallbackMap = dict[
+    str,
+    SimpleCallback
+    | TextCallback
+    | ChunkCallback
+    | LevelCallback
+    | DeviceSwitchFailedCallback
+    | ModelSwapCallback
+    | ModelSwapFailedCallback
+    | None,
+]
 """Map of callback names to their handler functions (or ``None`` for unset)."""
 
 __all__ = [
@@ -35,7 +51,10 @@ __all__ = [
     "BufferSize",
     "CallbackMap",
     "ChunkCallback",
+    "DeviceSwitchFailedCallback",
     "LevelCallback",
+    "ModelSwapCallback",
+    "ModelSwapFailedCallback",
     "SampleRate",
     "SimpleCallback",
     "TextCallback",

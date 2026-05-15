@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
+from src.building_blocks.errors import ConfigurationError
 from src.building_blocks.event_bus import EventBus
-from src.recorder.bootstrap import CALLBACK_EVENT_MAP, wire_callback
+from src.recorder.bootstrap import CALLBACK_EVENT_MAP, _validate_language_against_model, wire_callback
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import RecordingStarted
 
@@ -37,3 +40,40 @@ class TestBootstrap:
         assert config.transcription.model == "base"
         assert config.transcription.language == "en"
         assert config.audio.use_microphone is False
+
+    def test_validate_language_passes_for_multilingual_model(self) -> None:
+        config = RecorderConfig.from_kwargs(model="large-v3", language="es")
+        # Should not raise — large-v3 is multilingual and supports detection.
+        _validate_language_against_model(config)
+
+    def test_validate_language_passes_for_empty_language(self) -> None:
+        # Empty language = auto-detect; never rejected.
+        config = RecorderConfig.from_kwargs(model="tiny.en", language="")
+        _validate_language_against_model(config)
+
+    def test_validate_language_passes_for_matching_english_only(self) -> None:
+        config = RecorderConfig.from_kwargs(model="tiny.en", language="en")
+        _validate_language_against_model(config)
+
+    def test_validate_language_rejects_unsupported_on_english_only(self) -> None:
+        config = RecorderConfig.from_kwargs(model="tiny.en", language="es")
+        with pytest.raises(ConfigurationError, match="does not support language"):
+            _validate_language_against_model(config)
+
+    def test_validate_language_rejects_unsupported_on_realtime_model(self) -> None:
+        # Main model is multilingual, but the realtime model is English-only —
+        # the realtime path would silently fail to transcribe Spanish.
+        config = RecorderConfig.from_kwargs(
+            model="large-v3",
+            language="es",
+            enable_realtime_transcription=True,
+            use_main_model_for_realtime=False,
+            realtime_model_type="tiny.en",
+        )
+        with pytest.raises(ConfigurationError, match="Realtime model"):
+            _validate_language_against_model(config)
+
+    def test_validate_language_unknown_model_passes(self) -> None:
+        # Catalog is not exhaustive — onnx-asr accepts arbitrary HF repo paths.
+        config = RecorderConfig.from_kwargs(model="org/some-unknown-model", language="ja")
+        _validate_language_against_model(config)

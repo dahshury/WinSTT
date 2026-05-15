@@ -1,0 +1,13 @@
+{
+  "ignore": [
+    "src/shared/ui/**",
+    "src/entities/*/ui/**",
+    "src/features/*/ui/**",
+    "src/widgets/*/ui/**",
+    "src/views/**",
+    "src/app/**",
+    "test/**",
+    "spec/generated/**",
+    "electron/native/bin/**"
+  ]
+}

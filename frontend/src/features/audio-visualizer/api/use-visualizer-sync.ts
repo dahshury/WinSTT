@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import {
 	onAudioLevel,
 	onFullSentence,
@@ -21,7 +21,8 @@ const FADE_DECAY = 0.06;
  * visualizer store with real RMS audio levels from the server.
  */
 export function useVisualizerSync(): void {
-	const setRecording = useVisualizerStore((s) => s.setRecording);
+	const recordingStarted = useVisualizerStore((s) => s.recordingStarted);
+	const recordingStopped = useVisualizerStore((s) => s.recordingStopped);
 	const setSpeaking = useVisualizerStore((s) => s.setSpeaking);
 	const setAudioLevel = useVisualizerStore((s) => s.setAudioLevel);
 	const setSentencePulse = useVisualizerStore((s) => s.setSentencePulse);
@@ -37,26 +38,30 @@ export function useVisualizerSync(): void {
 	// Smoothed values persisted across frames.
 	const pulseRef = useRef(0);
 
-	const animate = useCallback(() => {
-		// Fading: decay level toward 0, stop once negligible
+	// Hold the latest animate fn in a ref so subscription effects can schedule
+	// frames without listing it as a dependency (the function closes over
+	// store setters which are stable, but the ref keeps things honest).
+	// @crap-exclude rAF callback — covered via E2E
+	const animateRef = useRef<() => void>(() => {
+		// noop placeholder, replaced on every render below
+	});
+	animateRef.current = () => {
 		if (fadingRef.current) {
 			rawLevelRef.current = Math.max(0, rawLevelRef.current - FADE_DECAY);
 			setAudioLevel(rawLevelRef.current);
 
-			// Decay pulse during fade too
-			let pulse = pulseRef.current;
-			pulse = Math.max(0, pulse - PULSE_DECAY);
-			pulseRef.current = pulse;
-			setSentencePulse(pulse);
+			const decayedPulse = Math.max(0, pulseRef.current - PULSE_DECAY);
+			pulseRef.current = decayedPulse;
+			setSentencePulse(decayedPulse);
 
 			if (rawLevelRef.current < 0.001) {
 				fadingRef.current = false;
 				activeRef.current = false;
 				setAudioLevel(0);
 				setSentencePulse(0);
-				return; // Stop the rAF loop
+				return;
 			}
-			rafRef.current = requestAnimationFrame(animate);
+			rafRef.current = requestAnimationFrame(() => animateRef.current());
 			return;
 		}
 
@@ -64,10 +69,8 @@ export function useVisualizerSync(): void {
 			return;
 		}
 
-		// Write raw audio level to store
 		setAudioLevel(rawLevelRef.current);
 
-		// Sentence pulse: fire to 1 then decay
 		let pulse = pulseRef.current;
 		if (sentenceFiredRef.current) {
 			pulse = 1;
@@ -78,58 +81,73 @@ export function useVisualizerSync(): void {
 		pulseRef.current = pulse;
 		setSentencePulse(pulse);
 
-		rafRef.current = requestAnimationFrame(animate);
-	}, [setAudioLevel, setSentencePulse]);
+		rafRef.current = requestAnimationFrame(() => animateRef.current());
+	};
 
 	useEffect(() => {
-		const unsubRecStart = onRecordingStart(() => {
+		// Cancel any in-flight frame before scheduling a new one. Without
+		// this, rapid PTT cycles (recording_stop → fade in progress →
+		// recording_start) leak an extra rAF callback each cycle. The
+		// callbacks each call requestAnimationFrame(animate) again, so the
+		// scheduled-frame count grows exponentially and the renderer drowns
+		// — which keeps the overlay BrowserWindow too busy to process its
+		// hide() IPC, leaving the pill stuck on screen.
+		return onRecordingStart(() => {
+			cancelAnimationFrame(rafRef.current);
 			fadingRef.current = false;
 			activeRef.current = true;
-			setRecording(true);
 			rawLevelRef.current = 0;
 			pulseRef.current = 0;
-			rafRef.current = requestAnimationFrame(animate);
+			// Reset isRecording + audioLevel + sentencePulse in one store
+			// update so the visualizer doesn't briefly render the previous
+			// cycle's last frame after the pill re-shows.
+			recordingStarted();
+			rafRef.current = requestAnimationFrame(() => animateRef.current());
 		});
+	}, [recordingStarted]);
 
-		const unsubRecStop = onRecordingStop(() => {
-			setRecording(false);
-			setSpeaking(false);
-			// Start smooth fade-out instead of instant zero
-			fadingRef.current = true;
-			// rAF loop continues via fadingRef — animate() handles the decay
-			if (!activeRef.current) {
-				// If loop wasn't running, start it for the fade
-				activeRef.current = true;
-				rafRef.current = requestAnimationFrame(animate);
-			}
-		});
+	useEffect(
+		() =>
+			onRecordingStop(() => {
+				recordingStopped();
+				fadingRef.current = true;
+				if (!activeRef.current) {
+					cancelAnimationFrame(rafRef.current);
+					activeRef.current = true;
+					rafRef.current = requestAnimationFrame(() => animateRef.current());
+				}
+			}),
+		[recordingStopped]
+	);
 
-		const unsubVadStart = onVadStart(() => {
-			setSpeaking(true);
-		});
+	useEffect(() => {
+		const unsubVadStart = onVadStart(() => setSpeaking(true));
+		const unsubVadStop = onVadStop(() => setSpeaking(false));
+		return () => {
+			unsubVadStart();
+			unsubVadStop();
+		};
+	}, [setSpeaking]);
 
-		const unsubVadStop = onVadStop(() => {
-			setSpeaking(false);
-		});
-
+	useEffect(() => {
 		const unsubAudioLevel = onAudioLevel((level) => {
 			rawLevelRef.current = level;
 		});
-
 		const unsubSentence = onFullSentence(() => {
 			sentenceFiredRef.current = true;
 		});
-
 		return () => {
-			unsubRecStart();
-			unsubRecStop();
-			unsubVadStart();
-			unsubVadStop();
 			unsubAudioLevel();
 			unsubSentence();
+		};
+	}, []);
+
+	useEffect(
+		() => () => {
 			activeRef.current = false;
 			fadingRef.current = false;
 			cancelAnimationFrame(rafRef.current);
-		};
-	}, [setRecording, setSpeaking, animate]);
+		},
+		[]
+	);
 }

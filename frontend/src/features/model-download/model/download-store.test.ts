@@ -6,7 +6,7 @@ mock.module("@/shared/api/ipc-client", () => ({
 	cancelDownload: cancelSpy,
 }));
 
-const { useDownloadStore } = await import("./download-store");
+const { useDownloadStore, normalizeProgressPayload } = await import("./download-store");
 
 beforeEach(() => {
 	cancelSpy.mockClear();
@@ -32,6 +32,32 @@ afterEach(() => {
 		speedBps: 0,
 		etaSeconds: 0,
 		cancelled: false,
+	});
+});
+
+describe("normalizeProgressPayload", () => {
+	test("converts fractional progress to integer percentage", () => {
+		expect(normalizeProgressPayload({ progress: 0.456 }).progress).toBe(46);
+	});
+	test("defaults all optional fields to 0 when absent", () => {
+		const result = normalizeProgressPayload({ progress: 0.5 });
+		expect(result.downloadedBytes).toBe(0);
+		expect(result.totalBytes).toBe(0);
+		expect(result.speedBps).toBe(0);
+		expect(result.etaSeconds).toBe(0);
+	});
+	test("passes through provided optional values", () => {
+		const result = normalizeProgressPayload({
+			progress: 0.1,
+			downloadedBytes: 512,
+			totalBytes: 1024,
+			speedBps: 2048,
+			etaSeconds: 5,
+		});
+		expect(result.downloadedBytes).toBe(512);
+		expect(result.totalBytes).toBe(1024);
+		expect(result.speedBps).toBe(2048);
+		expect(result.etaSeconds).toBe(5);
 	});
 });
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
-import { useTranscriptionStore } from "@/features/live-transcription";
+import { useTranscriptionStore } from "@/entities/transcription";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 
 beforeEach(() => {

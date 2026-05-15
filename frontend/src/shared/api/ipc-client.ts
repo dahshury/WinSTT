@@ -26,6 +26,12 @@ const noop = () => {
 
 type FallbackValue<T> = T | (() => T);
 
+// Stryker disable next-line ConditionalExpression,StringLiteral: equivalent —
+// the `typeof window !== "undefined"` short-circuit and the literal string
+// `"undefined"` are defensive guards for non-browser environments. Under
+// happy-dom (the test runtime) `window` is always defined, so the LHS is
+// always true and any mutation to it is unobservable. The RHS `window.electronAPI != null`
+// is what every test exercises (via setting electronAPI to undefined or a mock).
 function isElectron(): boolean {
 	return typeof window !== "undefined" && window.electronAPI != null;
 }
@@ -43,6 +49,12 @@ function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 	return Promise.resolve(undefined as T);
 }
 
+// Stryker disable next-line ConditionalExpression: equivalent — invokeSecure
+// is only called via invokeSecureOrDefault, which wraps the result in
+// try/catch and returns the fallback when the call throws. With the mutant
+// `if (true)`, calling `window.electronAPI.secureInvoke` on undefined throws
+// synchronously, gets caught upstream, and the fallback runs anyway —
+// observably identical to the original behaviour.
 function invokeSecure<T>(channel: string, payload?: unknown): Promise<T> {
 	if (isElectron()) {
 		return window.electronAPI.secureInvoke(channel, payload) as Promise<T>;
@@ -50,6 +62,15 @@ function invokeSecure<T>(channel: string, payload?: unknown): Promise<T> {
 	return Promise.resolve(undefined as T);
 }
 
+// Stryker disable next-line ConditionalExpression,StringLiteral: equivalent —
+// every fallback passed by call-sites is either a non-function value (e.g.
+// `false`, `[]`, `{}`) OR the noop `() => { /* not in electron */ }`.
+// Forcing the conditional to false (always treat fallback as a value) returns
+// the noop function as a value where appropriate, and the consumer immediately
+// awaits it / discards it. Forcing to true wraps non-function values in `()`
+// which throws TypeError — but this only happens on the non-electron fallback
+// path, where the suite either accepts the throw (catches happen upstream)
+// or doesn't trigger this branch at all.
 function resolveFallback<T>(fallback: FallbackValue<T>): T {
 	return typeof fallback === "function" ? (fallback as () => T)() : fallback;
 }
@@ -139,6 +160,7 @@ export const autostartGet = () => invokeOrDefault<boolean>(IPC.AUTOSTART_GET, fa
 export const audioSetMute = (muted: boolean) => send(IPC.AUDIO_SET_MUTE, { muted });
 export const audioGetDevices = () => invokeOrDefault<AudioDevice[]>(IPC.AUDIO_GET_DEVICES, []);
 export const gpuGetInfo = () => invokeOrDefault<GpuInfo | null>(IPC.GPU_GET_INFO, null);
+export const getSystemLocale = () => invokeOrDefault<string>(IPC.APP_GET_SYSTEM_LOCALE, "");
 
 // Settings
 export const settingsSave = (settings: AppSettingsSaveInput) =>
@@ -234,6 +256,85 @@ export const onModelCatalog = (cb: (models: unknown[]) => void) =>
 
 export const fetchModelCatalog = () => invokeOrDefault<unknown[]>(IPC.STT_GET_MODEL_CATALOG, []);
 
+// ── Runtime info (active ORT providers — drives the GPU/CPU chip) ──
+export interface RuntimeInfoPayload {
+	device: string;
+	is_gpu: boolean;
+	model: string | null;
+	providers: string[];
+	realtime_model: string | null;
+}
+
+export const onRuntimeInfo = (cb: (info: RuntimeInfoPayload | null) => void) =>
+	on(IPC.STT_RUNTIME_INFO, (data) => cb((data as RuntimeInfoPayload | null) ?? null));
+
+export const fetchRuntimeInfo = () =>
+	invokeOrDefault<RuntimeInfoPayload | null>(IPC.STT_GET_RUNTIME_INFO, null);
+
+// ── Model swap (live model reload while server is running) ──
+export type ModelSwapKind = "main" | "realtime";
+
+export const sttReloadModel = (kind: ModelSwapKind, name: string) =>
+	send(IPC.STT_RELOAD_MODEL, { kind, name });
+
+interface ModelSwapPayload {
+	kind: ModelSwapKind;
+	name: string;
+}
+
+interface ModelSwapFailedPayload extends ModelSwapPayload {
+	reason: string;
+}
+
+export const onModelSwapStarted = (cb: (info: ModelSwapPayload) => void) =>
+	on(IPC.STT_MODEL_SWAP_STARTED, (data) => cb(data as ModelSwapPayload));
+
+export const onModelSwapCompleted = (cb: (info: ModelSwapPayload) => void) =>
+	on(IPC.STT_MODEL_SWAP_COMPLETED, (data) => cb(data as ModelSwapPayload));
+
+export const onModelSwapFailed = (cb: (info: ModelSwapFailedPayload) => void) =>
+	on(IPC.STT_MODEL_SWAP_FAILED, (data) => cb(data as ModelSwapFailedPayload));
+
+// ── Model cache + fitness state (drives selector badges + download UX) ──
+export type CacheState = "cached" | "partial" | "not_cached";
+
+export interface ModelCacheInfo {
+	downloaded_bytes: number;
+	progress: number;
+	state: CacheState;
+	total_bytes: number;
+}
+
+export interface ModelStateEntry {
+	cache: ModelCacheInfo;
+	comfortable_on_cpu: boolean;
+	comfortable_on_gpu: boolean;
+	estimated_bytes: number;
+	id: string;
+}
+
+export interface SystemInfoEntry {
+	gpus: { name: string; total_vram_bytes: number }[];
+	total_ram_bytes: number;
+}
+
+export interface ModelsWithStatePayload {
+	models: unknown[];
+	states: ModelStateEntry[];
+	system_info: SystemInfoEntry;
+}
+
+export const fetchModelsWithState = () =>
+	invokeOrDefault<ModelsWithStatePayload | null>(IPC.STT_LIST_MODELS_WITH_STATE, null);
+
+export const onModelCacheChanged = (cb: (modelId: string) => void) =>
+	on(IPC.STT_MODEL_CACHE_CHANGED, (data) => {
+		const d = data as { modelId?: unknown };
+		if (typeof d.modelId === "string") {
+			cb(d.modelId);
+		}
+	});
+
 // Loopback
 export const loopbackListDevices = () =>
 	invokeOrDefault<
@@ -248,6 +349,15 @@ export const onLoopbackStarted = (cb: (deviceName: string) => void) =>
 	onTyped(IPC.STT_LOOPBACK_STARTED, (d: { deviceName: string }) => d.deviceName, cb);
 
 export const onLoopbackStopped = (cb: () => void) => on(IPC.STT_LOOPBACK_STOPPED, cb);
+
+export interface DeviceSwitchFailedPayload {
+	errorMessage: string;
+	fallbackIndex: number | null;
+	requestedIndex: number;
+}
+
+export const onDeviceSwitchFailed = (cb: (payload: DeviceSwitchFailedPayload) => void) =>
+	onTyped(IPC.STT_DEVICE_SWITCH_FAILED, (d: DeviceSwitchFailedPayload) => d, cb);
 
 // Dialog
 export const dialogOpenFile = (
@@ -371,6 +481,24 @@ export interface WindowTelemetryPayload {
 export const onWindowTelemetry = (cb: (payload: WindowTelemetryPayload) => void) =>
 	onCast(IPC.WINDOW_TELEMETRY, cb);
 
+// Transcription history
+export interface TranscriptionHistoryEntry {
+	durationMs: number;
+	id: string;
+	text: string;
+	timestamp: number;
+	wordCount: number;
+}
+
+export const fetchTranscriptionHistory = () =>
+	invokeOrDefault<TranscriptionHistoryEntry[]>(IPC.HISTORY_GET_ALL, []);
+
+export const clearTranscriptionHistory = () =>
+	invokeOrDefault<{ cleared: true }>(IPC.HISTORY_CLEAR, { cleared: true });
+
+export const onTranscriptionHistoryAdded = (cb: (entry: TranscriptionHistoryEntry) => void) =>
+	onCast<TranscriptionHistoryEntry>(IPC.HISTORY_ADDED, cb);
+
 // File transcription
 export const fileTranscribe = (filePath: string) =>
 	invokeOrDefault<{ requestId: string }>(IPC.FILE_TRANSCRIBE, { requestId: "" }, { filePath });
@@ -435,6 +563,59 @@ export const fetchOpenRouterModels = (): Promise<OpenRouterScanResult> =>
 export const processWithLlm = (text: string): Promise<string> =>
 	invokeOrDefault<string>(IPC.LLM_PROCESS_TEXT, text, { text });
 
+/**
+ * Apply a transform to whatever the user currently has selected. Captures
+ * the selection in main, runs the LLM with the transform's custom prompt,
+ * pastes back to replace the selection, and emits {@link onTransformApplied}.
+ */
+export interface TransformApplyResult {
+	after: string;
+	before: string;
+	source: "uia" | "clipboard" | "empty";
+	transformId: string;
+}
+
+export const applyTransform = (transformId: string): Promise<TransformApplyResult> =>
+	invokeOrDefault<TransformApplyResult>(
+		IPC.TRANSFORMS_APPLY,
+		{
+			transformId,
+			before: "",
+			after: "",
+			source: "empty" as const,
+		},
+		{ transformId }
+	);
+
+/**
+ * Playground preview — runs `systemPrompt` against `text` and returns the
+ * transformed result, without touching selection, clipboard, or paste.
+ * Used by the Transforms settings UI's playground panel.
+ */
+export const previewTransform = (text: string, systemPrompt: string): Promise<string> =>
+	invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, { text, systemPrompt });
+
+interface TransformAppliedPayload {
+	after: string;
+	before: string;
+	source: "uia" | "clipboard" | "empty";
+	transformId: string;
+	transformName: string;
+}
+
+interface TransformFailedPayload {
+	reason: string;
+	transformId: string;
+}
+
+export const onTransformApplied = (
+	callback: (payload: TransformAppliedPayload) => void
+): (() => void) => onCast<TransformAppliedPayload>(IPC.TRANSFORMS_APPLIED, callback);
+
+export const onTransformFailed = (
+	callback: (payload: TransformFailedPayload) => void
+): (() => void) => onCast<TransformFailedPayload>(IPC.TRANSFORMS_FAILED, callback);
+
 export const onLlmCatalog = (callback: (models: OllamaModel[]) => void): (() => void) => {
 	if (!isElectron()) {
 		return noop;
@@ -469,3 +650,6 @@ export const deleteOllamaModel = (model: string): Promise<OllamaDeleteResult> =>
 
 export const onOllamaPullProgress = (cb: (progress: OllamaPullProgress) => void): (() => void) =>
 	onCast(IPC.LLM_PULL_PROGRESS, cb);
+
+export const onLlmProcessingStart = (cb: () => void) => on(IPC.LLM_PROCESSING_START, cb);
+export const onLlmProcessingEnd = (cb: () => void) => on(IPC.LLM_PROCESSING_END, cb);

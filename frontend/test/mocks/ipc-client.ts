@@ -80,6 +80,10 @@ export function ipcClientMock(): Record<string, unknown> {
 		// Model catalog
 		fetchModelCatalog: async () => [],
 		cancelDownload: async () => undefined,
+		// Model swap + cache state (Phase 3-5 additions)
+		fetchModelsWithState: async () => null,
+		sttReloadModel: noop,
+		fetchRuntimeInfo: async () => null,
 		// Helpers
 		getFilePath: () => "",
 		// LLM
@@ -118,5 +122,10 @@ export function ipcClientMock(): Record<string, unknown> {
 		onFileTranscriptionError: noopSubscribe,
 		onUpdaterStatus: noopSubscribe,
 		onWindowTelemetry: noopSubscribe,
+		onModelSwapStarted: noopSubscribe,
+		onModelSwapCompleted: noopSubscribe,
+		onModelSwapFailed: noopSubscribe,
+		onModelCacheChanged: noopSubscribe,
+		onRuntimeInfo: noopSubscribe,
 	};
 }

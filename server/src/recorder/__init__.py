@@ -128,6 +128,13 @@ class AudioToTextRecorder:
         on_wakeword_detection_end: SimpleCallback | None = None,
         on_recorded_chunk: ChunkCallback | None = None,
         on_audio_level: LevelCallback | None = None,
+        on_device_switch_failed: Callable[[int, str, int | None], None] | None = None,
+        # Model swap lifecycle (Phase 1) — fired when request_model_swap()
+        # begins, succeeds, or fails. ``started`` / ``completed`` get (kind, name);
+        # ``failed`` adds a third ``reason`` arg.
+        on_model_swap_started: Callable[[str, str], None] | None = None,
+        on_model_swap_completed: Callable[[str, str], None] | None = None,
+        on_model_swap_failed: Callable[[str, str, str], None] | None = None,
         debug_mode: bool = False,
         handle_buffer_overflow: bool = True,
         beam_size: int = 5,
@@ -143,7 +150,7 @@ class AudioToTextRecorder:
         no_log_file: bool = False,
         use_extended_logging: bool = False,
         faster_whisper_vad_filter: bool = True,
-        normalize_audio: bool = False,
+        normalize_audio: bool = True,
         start_callback_in_new_thread: bool = False,
         # Model download callbacks
         on_model_download_start: Callable[[str], None] | None = None,
@@ -243,6 +250,10 @@ class AudioToTextRecorder:
             "on_audio_level": on_audio_level,
             "on_realtime_transcription_update": on_realtime_transcription_update,
             "on_realtime_transcription_stabilized": on_realtime_transcription_stabilized,
+            "on_device_switch_failed": on_device_switch_failed,
+            "on_model_swap_started": on_model_swap_started,
+            "on_model_swap_completed": on_model_swap_completed,
+            "on_model_swap_failed": on_model_swap_failed,
         }
 
         # Download progress callbacks (typed separately — they accept model name / progress args)
@@ -282,12 +293,31 @@ class AudioToTextRecorder:
 
             audio_source: IAudioSource
             if self._config.audio.use_microphone:
+                from src.recorder.domain.events import DeviceSwitchFailed
                 from src.recorder.infrastructure.pyaudio_source import PyAudioSource
+
+                event_bus = self._event_bus
+                clock = self._clock
+
+                def _on_device_switch_failed(
+                    requested_index: int,
+                    error_message: str,
+                    fallback_index: int | None,
+                ) -> None:
+                    event_bus.publish(
+                        DeviceSwitchFailed(
+                            timestamp=clock.get_current_time(),
+                            requested_index=requested_index,
+                            error_message=error_message,
+                            fallback_index=fallback_index,
+                        )
+                    )
 
                 audio_source = PyAudioSource(
                     input_device_index=self._config.audio.input_device_index,
                     target_sample_rate=SampleRate(self._config.audio.sample_rate),
                     buffer_size=BufferSize(self._config.audio.buffer_size),
+                    on_device_switch_failed=_on_device_switch_failed,
                 )
             else:
                 audio_source = FileAudioSource(
@@ -338,6 +368,12 @@ class AudioToTextRecorder:
                 event_bus=self._event_bus,
                 clock=self._clock,
             )
+
+            # Wire model-swap download progress through the same callback
+            # chain used for boot-time downloads. The renderer only needs
+            # one subscription on the ``model_download_progress`` channel
+            # — swaps and initial loads use the exact same event shape.
+            self._service.set_swap_progress_sink(dl_cbs.make_progress_handler())
 
             # Sync any microphone state changes made before initialization
             if self.use_microphone.value != self._config.audio.use_microphone:
@@ -514,6 +550,25 @@ class AudioToTextRecorder:
         return self._config.realtime.enable_realtime_transcription
 
     @property
+    def input_device_index(self) -> int | None:
+        return self._config.audio.input_device_index
+
+    @input_device_index.setter
+    def input_device_index(self, value: int | None) -> None:
+        if value == self._config.audio.input_device_index:
+            return
+        # Update config first so an early-call from before the service is
+        # built still takes effect on the next setup().
+        self._config.audio.input_device_index = value
+        if self._service is None:
+            return
+        # ``set_input_device`` just queues the swap on PyAudioSource (single
+        # attribute write, applied by the audio reader thread on its next
+        # iteration).  No blocking, no thread spawn needed — safe to call
+        # directly from the asyncio control handler.
+        self._service.set_input_device(value)
+
+    @property
     def silero_sensitivity(self) -> float:
         return self._config.vad.silero_sensitivity
 
@@ -543,6 +598,20 @@ class AudioToTextRecorder:
 
     def wakeup(self) -> None:
         self._ensure_service().wakeup()
+
+    def runtime_info(self) -> dict[str, Any]:
+        """Snapshot of the live ORT runtime — see ``RecorderService.runtime_info``."""
+        return self._ensure_service().runtime_info()
+
+    def request_model_swap(self, kind: str, name: str) -> None:
+        """Kick off a background model swap. See ``RecorderService.request_model_swap``.
+
+        ``kind`` is ``"main"`` or ``"realtime"``. The current model keeps
+        serving transcribe() calls until the new one is loaded, then the
+        pointer is swapped atomically. Result is published as one of
+        ``ModelSwapStarted`` / ``ModelSwapCompleted`` / ``ModelSwapFailed``.
+        """
+        self._ensure_service().request_model_swap(kind, name)
 
     def clear_audio_queue(self) -> None:
         self._ensure_service().clear_audio_queue()

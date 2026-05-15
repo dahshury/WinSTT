@@ -19,6 +19,7 @@ import { Modal } from "@/shared/ui/modal";
 import { Spinner } from "@/shared/ui/spinner";
 import { Switcher } from "@/shared/ui/switcher";
 import { TextField } from "@/shared/ui/text-field";
+import { buildPullsMap, computePullPercent, pullStatusToI18nKey } from "../lib/dialog-helpers";
 import {
 	filterInstalledModels,
 	filterRecommendedModels,
@@ -48,23 +49,13 @@ function buildTabOptions(t: TranslateFn) {
 }
 
 function localizePullStatus(progress: OllamaPullProgress, t: TranslateFn): string {
-	if (progress.status === "downloading") {
-		return t("pullStatusDownloading");
-	}
-	if (progress.status === "verifying") {
-		return t("pullStatusVerifying");
-	}
-	if (progress.status === "writing") {
-		return t("pullStatusWriting");
-	}
-	if (progress.status === "success") {
-		return t("pullStatusSuccess");
-	}
-	return t("pullStatusPulling");
+	// pullStatusToI18nKey returns a string key that is always valid in the "llm" namespace.
+	// We cast through unknown to satisfy next-intl's strict key type.
+	return t(pullStatusToI18nKey(progress.status) as Parameters<TranslateFn>[0]);
 }
 
 function PullProgressBar({ progress, t }: { progress: OllamaPullProgress; t: TranslateFn }) {
-	const percent = Math.round(progress.percent ?? 0);
+	const percent = computePullPercent(progress);
 	const label = t("pullProgress", {
 		percent,
 		status: localizePullStatus(progress, t),
@@ -93,6 +84,29 @@ interface InstalledRowProps {
 	t: TranslateFn;
 }
 
+interface DeleteButtonProps {
+	deleting: boolean;
+	modelName: string;
+	onDelete: (name: string) => void;
+	t: TranslateFn;
+}
+
+function DeleteButton({ deleting, modelName, onDelete, t }: DeleteButtonProps) {
+	return (
+		<Button
+			className="flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-secondary px-2.5 text-error text-xs transition-colors hover:bg-error/10 disabled:cursor-not-allowed disabled:opacity-40"
+			disabled={deleting}
+			onClick={(e) => {
+				e.stopPropagation();
+				onDelete(modelName);
+			}}
+		>
+			{deleting ? <Spinner className="size-3" /> : <HugeiconsIcon icon={Delete02Icon} size={13} />}
+			<span>{deleting ? t("deleting") : t("delete")}</span>
+		</Button>
+	);
+}
+
 function InstalledRow({ model, current, t, deleting, onSelect, onDelete }: InstalledRowProps) {
 	return (
 		<button
@@ -112,21 +126,7 @@ function InstalledRow({ model, current, t, deleting, onSelect, onDelete }: Insta
 					{t("modelSizeLabel", { size: formatGigabytes(model.size ?? 0) })}
 				</div>
 			</div>
-			<Button
-				className="flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-secondary px-2.5 text-error text-xs transition-colors hover:bg-error/10 disabled:cursor-not-allowed disabled:opacity-40"
-				disabled={deleting}
-				onClick={(e) => {
-					e.stopPropagation();
-					onDelete(model.name);
-				}}
-			>
-				{deleting ? (
-					<Spinner className="size-3" />
-				) : (
-					<HugeiconsIcon icon={Delete02Icon} size={13} />
-				)}
-				<span>{deleting ? t("deleting") : t("delete")}</span>
-			</Button>
+			<DeleteButton deleting={deleting} modelName={model.name} onDelete={onDelete} t={t} />
 		</button>
 	);
 }
@@ -432,16 +432,6 @@ function DialogBody(props: BodyProps) {
 	);
 }
 
-function buildPullsMap(
-	pulls: Record<string, { progress: OllamaPullProgress; startedAt: number }>
-): Record<string, OllamaPullProgress> {
-	const out: Record<string, OllamaPullProgress> = {};
-	for (const [k, v] of Object.entries(pulls)) {
-		out[k] = v.progress;
-	}
-	return out;
-}
-
 export function OllamaModelManagerDialog(props: OllamaModelManagerDialogProps) {
 	const { isOpen, onClose, currentModel, onModelInstalled } = props;
 	const t = useTranslations("llm");
@@ -468,12 +458,7 @@ export function OllamaModelManagerDialog(props: OllamaModelManagerDialogProps) {
 	);
 	const pullProgress = useMemo(() => buildPullsMap(pulls), [pulls]);
 
-	const handlePull = async (name: string) => {
-		const result = await pullModel(name);
-		if (result.success && onModelInstalled) {
-			onModelInstalled(name);
-		}
-	};
+	const handlePull = createHandlePull(pullModel, onModelInstalled);
 
 	const handleConfirmDelete = async () => {
 		if (!pendingDelete) {
@@ -545,8 +530,23 @@ export function OllamaModelManagerDialog(props: OllamaModelManagerDialogProps) {
 	);
 }
 
+/**
+ * Creates a standalone handlePull function bound to the given pullModel and onModelInstalled.
+ * Exported for unit testing — avoids relying on Base UI tab-switch in happy-dom.
+ */
+export function createHandlePull(
+	pullModel: (name: string) => Promise<{ success: boolean }>,
+	onModelInstalled?: (name: string) => void
+) {
+	return async (name: string) => {
+		const result = await pullModel(name);
+		if (result.success && onModelInstalled) {
+			onModelInstalled(name);
+		}
+	};
+}
+
 export const __ollama_model_manager_test_helpers__ = {
 	buildTabOptions,
-	localizePullStatus,
-	buildPullsMap,
+	createHandlePull,
 };

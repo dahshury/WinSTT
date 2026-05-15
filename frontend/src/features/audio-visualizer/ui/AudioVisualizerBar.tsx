@@ -3,7 +3,7 @@
 import { cva } from "class-variance-authority";
 import { type ComponentProps, type CSSProperties, useMemo } from "react";
 import { cn } from "@/shared/lib/cn";
-import type { VisualizerSize } from "../lib/audio-visualizer";
+import type { AgentState, VisualizerSize } from "../lib/audio-visualizer";
 import { useAgentState } from "../lib/use-agent-state";
 import { useBarAnimator } from "../lib/use-bar-animator";
 import { useMultibandVolume } from "../lib/use-multiband-volume";
@@ -47,6 +47,35 @@ export interface AudioVisualizerBarProps {
 	size?: VisualizerSize;
 }
 
+export function resolveBarCount(barCount: number | undefined, size: VisualizerSize): number {
+	if (barCount) {
+		return barCount;
+	}
+	if (size === "icon") {
+		return 5;
+	}
+	if (size === "sm") {
+		return 7;
+	}
+	return 9;
+}
+
+const BAR_SEQUENCER_INTERVAL: Partial<Record<AgentState, number | ((barCount: number) => number)>> =
+	{
+		connecting: (barCount: number) => 2000 / barCount,
+		initializing: 2000,
+		listening: 500,
+		thinking: 150,
+	};
+
+export function resolveBarSequencerInterval(state: AgentState, barCount: number): number {
+	const entry = BAR_SEQUENCER_INTERVAL[state];
+	if (entry === undefined) {
+		return 1000;
+	}
+	return typeof entry === "function" ? entry(barCount) : entry;
+}
+
 export function AudioVisualizerBar({
 	size = "md",
 	color,
@@ -57,35 +86,14 @@ export function AudioVisualizerBar({
 }: AudioVisualizerBarProps & ComponentProps<"div">) {
 	const state = useAgentState();
 
-	const _barCount = useMemo(() => {
-		if (barCount) {
-			return barCount;
-		}
-		if (size === "icon") {
-			return 5;
-		}
-		if (size === "sm") {
-			return 7;
-		}
-		return 9;
-	}, [barCount, size]);
+	const _barCount = useMemo(() => resolveBarCount(barCount, size), [barCount, size]);
 
 	const volumeBands = useMultibandVolume(_barCount);
 
-	const sequencerInterval = useMemo(() => {
-		switch (state) {
-			case "connecting":
-				return 2000 / _barCount;
-			case "initializing":
-				return 2000;
-			case "listening":
-				return 500;
-			case "thinking":
-				return 150;
-			default:
-				return 1000;
-		}
-	}, [state, _barCount]);
+	const sequencerInterval = useMemo(
+		() => resolveBarSequencerInterval(state, _barCount),
+		[state, _barCount]
+	);
 
 	const highlightedIndices = useBarAnimator(state, _barCount, sequencerInterval);
 	const bands = useMemo(

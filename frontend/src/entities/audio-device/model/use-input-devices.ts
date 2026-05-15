@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { audioGetDevices } from "@/shared/api/ipc-client";
 import type { AudioDevice } from "./audio-device";
 
@@ -9,6 +9,16 @@ interface UseInputDevicesResult {
 	devices: AudioDevice[];
 	refresh: () => Promise<void>;
 }
+
+/**
+ * Window during which consecutive ``devicechange`` events collapse into a
+ * single enumeration call.  A failed PyAudio open (e.g. a stored
+ * inputDeviceIndex pointing at a Bluetooth output-only profile) flaps the
+ * device state and the browser fires several ``devicechange`` events
+ * within a handful of milliseconds; without this debounce the renderer
+ * hammers the server with 5-10 list_input_devices requests in a burst.
+ */
+const DEVICECHANGE_DEBOUNCE_MS = 200;
 
 /**
  * Returns the list of audio input devices reported by the OS via the main
@@ -23,6 +33,7 @@ interface UseInputDevicesResult {
  */
 export function useInputDevices(): UseInputDevicesResult {
 	const [devices, setDevices] = useState<AudioDevice[]>([]);
+	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const refresh = useCallback(async () => {
 		const list = await audioGetDevices();
@@ -35,11 +46,23 @@ export function useInputDevices(): UseInputDevicesResult {
 			return;
 		}
 		const handler = () => {
-			refresh().catch(() => undefined);
+			// Coalesce rapid devicechange bursts (5-10 events within ~10ms when
+			// a stream open fails and the OS retries) into a single enumeration.
+			if (debounceRef.current) {
+				clearTimeout(debounceRef.current);
+			}
+			debounceRef.current = setTimeout(() => {
+				debounceRef.current = null;
+				refresh().catch(() => undefined);
+			}, DEVICECHANGE_DEBOUNCE_MS);
 		};
 		navigator.mediaDevices.addEventListener("devicechange", handler);
 		return () => {
 			navigator.mediaDevices.removeEventListener("devicechange", handler);
+			if (debounceRef.current) {
+				clearTimeout(debounceRef.current);
+				debounceRef.current = null;
+			}
 		};
 	}, [refresh]);
 

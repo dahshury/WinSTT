@@ -35,12 +35,32 @@ function toggleParameterValue(
 	return [...current, param];
 }
 
+/** Pure: returns the count for `param` from the map, defaulting to 0. */
+export function getParamCount(
+	parameterCounts: Map<FilterableParameter, number>,
+	param: FilterableParameter
+): number {
+	return parameterCounts.get(param) ?? 0;
+}
+
+export function shouldShowSelectedTick(visible: boolean): boolean {
+	return visible;
+}
+
+export function shouldShowCountBadge(count: number): boolean {
+	return count > 0;
+}
+
+export function shouldShowClearAll(selectedCount: number): boolean {
+	return selectedCount > 0;
+}
+
 interface SelectedTickProps {
 	visible: boolean;
 }
 
 function SelectedTick({ visible }: SelectedTickProps) {
-	if (!visible) {
+	if (!shouldShowSelectedTick(visible)) {
 		return null;
 	}
 	return <HugeiconsIcon className="ms-2 size-4 text-accent" icon={Tick01Icon} />;
@@ -51,7 +71,7 @@ interface SelectedCountBadgeProps {
 }
 
 function SelectedCountBadge({ count }: SelectedCountBadgeProps) {
-	if (count <= 0) {
+	if (!shouldShowCountBadge(count)) {
 		return null;
 	}
 	return (
@@ -67,7 +87,7 @@ interface ClearAllSectionProps {
 }
 
 function ClearAllSection({ onClear, visible }: ClearAllSectionProps) {
-	if (!visible) {
+	if (!shouldShowClearAll(visible ? 1 : 0)) {
 		return null;
 	}
 	return (
@@ -115,7 +135,7 @@ export function ParametersFilterSubmenu({
 
 	const renderParameter = (param: FilterableParameter) => (
 		<ParameterMenuItem
-			count={parameterCounts.get(param) ?? 0}
+			count={getParamCount(parameterCounts, param)}
 			isSelected={selectedSet.has(param)}
 			key={param}
 			onToggle={() => toggleParameter(param)}
@@ -144,4 +164,12 @@ export function ParametersFilterSubmenu({
 
 export const __parameters_filter_submenu_test_helpers__ = {
 	toggleParameterValue,
+	getParamCount,
+	shouldShowSelectedTick,
+	shouldShowCountBadge,
+	shouldShowClearAll,
+	SelectedTick,
+	SelectedCountBadge,
+	ClearAllSection,
+	ParameterMenuItem,
 };

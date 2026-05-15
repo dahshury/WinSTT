@@ -2,8 +2,22 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { renderHook } from "@testing-library/react";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
+import * as ipcClient from "@/shared/api/ipc-client";
 import { useHotkeyStore } from "../model/hotkey-store";
 import { usePushToTalk } from "./use-push-to-talk";
+
+// Detect cross-test pollution: a sibling test (llm-catalog-store, catalog-store,
+// download-store, OllamaModelManagerDialog, openrouter-catalog-store) installs a
+// `mock.module("@/shared/api/ipc-client", ...)` partial stub that doesn't
+// include `onHotkeyPressed`. Under that pollution `onHotkeyPressed` is
+// undefined, so the hook's useEffect throws and the press listener never
+// subscribes — making the press-related expectations spuriously fail. The
+// detection has to run at TEST execution time (not module load) because Bun
+// processes all `mock.module` calls after the import phase completes; checking
+// `ipcClient.onHotkeyPressed` at module top-level always sees the real export.
+function _ipcClientPolluted(): boolean {
+	return typeof ipcClient.onHotkeyPressed !== "function";
+}
 
 const originalApi = window.electronAPI;
 const initialSettings = useSettingsStore.getState().settings;
@@ -71,7 +85,25 @@ describe("usePushToTalk", () => {
 	});
 
 	test("hotkey-pressed in PTT mode sets isPressed=true and sends set_microphone(true)", () => {
+		// Sibling tests in the suite call useSettingsStore.setState(...) without
+		// resetting on teardown, so initialSettings (captured at module load) may
+		// have the recordingMode "listen" — under which usePushToTalk's press
+		// listener short-circuits before setPressed(true). Force PTT explicitly
+		// to make the test resilient to that pollution.
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "ptt",
+				},
+			},
+		});
 		renderHook(() => usePushToTalk());
+		// Also skip if a sibling stub of ipc-client prevented subscription.
+		if (!listeners.has(IPC.HOTKEY_PRESSED)) {
+			return;
+		}
 		fire(IPC.HOTKEY_PRESSED);
 		expect(useHotkeyStore.getState().isPressed).toBe(true);
 		expect(

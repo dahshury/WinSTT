@@ -11,21 +11,29 @@ interface HotkeyDisplayProps {
 
 const FOOTER_TOOLTIP_DELAY = 1500;
 
+const KBD_CLASS_DISCONNECTED =
+	"border-border/50 bg-surface-tertiary/50 text-foreground-dim opacity-60";
+const KBD_CLASS_PRESSED =
+	"border-orange/30 bg-orange-dim text-orange shadow-[0_0_8px_rgba(59,130,246,0.15)]";
+const KBD_CLASS_IDLE = "border-border bg-surface-tertiary text-foreground-secondary";
+
+export function resolveKbdClass(isConnected: boolean, isPressed: boolean): string {
+	if (!isConnected) {
+		return KBD_CLASS_DISCONNECTED;
+	}
+	if (isPressed) {
+		return KBD_CLASS_PRESSED;
+	}
+	return KBD_CLASS_IDLE;
+}
+
 export function HotkeyDisplay({ isConnected }: HotkeyDisplayProps) {
 	const isPressed = useHotkeyStore((s) => s.isPressed);
 	const accelerator = useHotkeyStore((s) => s.accelerator);
 	const keys = accelerator.split("+").map(formatKeyName);
 	const t = useTranslations("hotkey");
 
-	let className: string;
-	if (!isConnected) {
-		className = "border-border/50 bg-surface-tertiary/50 text-foreground-dim opacity-60";
-	} else if (isPressed) {
-		className = "border-orange/30 bg-orange-dim text-orange shadow-[0_0_8px_rgba(59,130,246,0.15)]";
-	} else {
-		className = "border-border bg-surface-tertiary text-foreground-secondary";
-	}
-
+	const className = resolveKbdClass(isConnected, isPressed);
 	const tooltipContent = isConnected ? t("displayTooltip") : t("displayTooltipDisconnected");
 
 	return (

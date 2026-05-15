@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
-import { useLoopbackDevices } from "./use-loopback-devices";
+import { applyDevicesResult, useLoopbackDevices } from "./use-loopback-devices";
 
 const originalApi = window.electronAPI;
 const initialSettings = useSettingsStore.getState().settings;
@@ -33,6 +33,111 @@ beforeEach(() => {
 afterEach(() => {
 	window.electronAPI = originalApi;
 	useSettingsStore.setState({ settings: initialSettings });
+});
+
+describe("applyDevicesResult", () => {
+	test("does nothing when cancelled", () => {
+		const setOptions = (_opts: unknown[]) => {
+			throw new Error("should not call setOptions");
+		};
+		const handler = applyDevicesResult({
+			getIsCancelled: () => true,
+			currentDeviceIndex: null,
+			setDefaultIndex: () => undefined,
+			setOptions: setOptions as never,
+			update: () => undefined,
+		});
+		handler([{ index: 0, name: "X", defaultSampleRate: 48_000, maxOutputChannels: 2 }]);
+		// no throw = test passes
+	});
+
+	test("does nothing when devices is not an array", () => {
+		let called = false;
+		const handler = applyDevicesResult({
+			getIsCancelled: () => false,
+			currentDeviceIndex: null,
+			setDefaultIndex: () => {
+				called = true;
+			},
+			setOptions: () => undefined,
+			update: () => undefined,
+		});
+		handler("not-an-array");
+		expect(called).toBe(false);
+	});
+
+	test("sets options and defaultIndex from valid device list", () => {
+		let optsCount = 0;
+		let idx: number | null = null;
+		const handler = applyDevicesResult({
+			getIsCancelled: () => false,
+			currentDeviceIndex: null,
+			setDefaultIndex: (i) => {
+				idx = i;
+			},
+			setOptions: (o) => {
+				optsCount = o.length;
+			},
+			update: () => undefined,
+		});
+		handler([
+			{
+				index: 5,
+				name: "Speakers",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+				isDefault: true,
+			},
+		]);
+		expect(optsCount).toBeGreaterThan(0);
+		expect(idx as unknown as number).toBe(5);
+	});
+
+	test("calls update when currentDeviceIndex is null and defaultIndex is found", () => {
+		let updated = false;
+		const handler = applyDevicesResult({
+			getIsCancelled: () => false,
+			currentDeviceIndex: null,
+			setDefaultIndex: () => undefined,
+			setOptions: () => undefined,
+			update: () => {
+				updated = true;
+			},
+		});
+		handler([
+			{
+				index: 5,
+				name: "Speakers",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+				isDefault: true,
+			},
+		]);
+		expect(updated).toBe(true);
+	});
+
+	test("does not call update when currentDeviceIndex is already set", () => {
+		let updated = false;
+		const handler = applyDevicesResult({
+			getIsCancelled: () => false,
+			currentDeviceIndex: 3,
+			setDefaultIndex: () => undefined,
+			setOptions: () => undefined,
+			update: () => {
+				updated = true;
+			},
+		});
+		handler([
+			{
+				index: 5,
+				name: "Speakers",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+				isDefault: true,
+			},
+		]);
+		expect(updated).toBe(false);
+	});
 });
 
 describe("useLoopbackDevices", () => {

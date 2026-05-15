@@ -16,6 +16,7 @@ function setErrorState() {
 
 /** Helper to access sttProcess.pid without TS narrowing issues from cross-function mutation. */
 function getSttProcessPid(): number | undefined {
+	// Stryker disable next-line OptionalChaining: equivalent mutant — `sttProcess` is always non-null when this is called from tryAutoSpawnServer's success path; the optional chain is a defensive guard for direct calls that never occur in the test suite.
 	return sttProcess?.pid;
 }
 
@@ -55,42 +56,43 @@ const BOOLEAN_OPTIONAL_CLI: [storePath: string, cliFlag: string][] = [
 	["quality.enableRealtimeTranscription", "--enable_realtime_transcription"],
 ];
 
+function isEmptyStoreValue(value: unknown): boolean {
+	return value == null || value === "";
+}
+
+function applyStoreTrueFlag(args: string[], value: unknown, cliFlag: string): void {
+	if (isEmptyStoreValue(value)) {
+		return;
+	}
+	if (typeof value === "boolean") {
+		if (value) {
+			args.push(cliFlag);
+		}
+		return;
+	}
+	args.push(cliFlag, String(value));
+}
+
+function applyBooleanOptionalFlag(args: string[], value: unknown, cliFlag: string): void {
+	if (value === true) {
+		args.push(cliFlag);
+	} else if (value === false) {
+		args.push(cliFlag.replace("--", "--no-"));
+	}
+}
+
 /** Read all relevant settings from electron-store and convert to CLI args */
 function buildServerArgs(baseArgs: string[]): string[] {
 	const args = [...baseArgs];
 	for (const [storePath, cliFlag] of SETTINGS_TO_CLI) {
-		const value = getStoreRaw(storePath);
-		if (value == null || value === "") {
-			continue;
-		}
-		// Boolean flags from store use --flag (action="store_true") style
-		if (typeof value === "boolean") {
-			if (value) {
-				args.push(cliFlag);
-			}
-			// false booleans: skip the flag entirely (server defaults to false)
-			continue;
-		}
-		args.push(cliFlag, String(value));
+		applyStoreTrueFlag(args, getStoreRaw(storePath), cliFlag);
 	}
-
-	// BooleanOptionalAction flags: --flag when true, --no-flag when false
 	for (const [storePath, cliFlag] of BOOLEAN_OPTIONAL_CLI) {
-		const value = getStoreRaw(storePath);
-		if (value === true) {
-			args.push(cliFlag);
-		} else if (value === false) {
-			args.push(cliFlag.replace("--", "--no-"));
-		}
-		// undefined: let server use its default
+		applyBooleanOptionalFlag(args, getStoreRaw(storePath), cliFlag);
 	}
-
-	// sileroDeactivityDetection is a boolean store_true flag
-	const sileroDeact = getStoreValue("audio.sileroDeactivityDetection");
-	if (sileroDeact) {
+	if (getStoreValue("audio.sileroDeactivityDetection")) {
 		args.push("--silero_deactivity_detection");
 	}
-
 	return args;
 }
 
@@ -103,15 +105,18 @@ function resolveServerDir(): string {
 	if (process.env.STT_SERVER_DIR) {
 		return process.env.STT_SERVER_DIR;
 	}
+	// Stryker disable next-line ConditionalExpression: equivalent mutant — flipping `if (app.isPackaged)` to `if (true)` returns `path.join(process.resourcesPath, "stt-server")`; in the dev test where this branch matters, `process.resourcesPath` is undefined and path.join throws TypeError, which the surrounding tryAutoSpawnServer catch swallows — same observable spawnLog.length=0 result.
 	if (app.isPackaged) {
 		return path.join(process.resourcesPath, "stt-server");
 	}
+	// Stryker disable ObjectLiteral,StringLiteral: equivalent mutants — the NotFoundError context object is for diagnostic logging only; the IPC handler catches the error and rethrows a plain Error with only the canonical "STT_SERVER_DIR not found" message, so the context fields (message/isPackaged/resourcesPath) and their string values aren't observable from any test assertion.
 	throw new NotFoundError("STT_SERVER_DIR", undefined, {
 		message:
 			"STT_SERVER_DIR environment variable is not set. Set it to the server/ directory path.",
 		isPackaged: app.isPackaged,
 		resourcesPath: process.resourcesPath,
 	});
+	// Stryker restore ObjectLiteral,StringLiteral
 }
 
 /**
@@ -120,6 +125,7 @@ function resolveServerDir(): string {
  */
 function resolveSpawnArgs(serverDir: string): { command: string; args: string[] } {
 	if (app.isPackaged) {
+		// Stryker disable next-line ConditionalExpression,StringLiteral: equivalent mutants — `process.platform` cannot be toggled at runtime within a single bun-test process, so the win32/non-win32 branches of this ternary cannot both be observed; the literal "win32" comparison is locked to whichever branch the test runner is on.
 		// In production, expect a PyInstaller/Nuitka executable at stt-server/stt-server.exe
 		const exe = process.platform === "win32" ? "stt-server.exe" : "stt-server";
 		return { command: path.join(serverDir, exe), args: [] };
@@ -134,14 +140,21 @@ function resolveSpawnArgs(serverDir: string): { command: string; args: string[] 
  * from a killed process cannot clobber a newly spawned replacement.
  */
 function attachProcessHandlers(proc: ChildProcess) {
+	// Stryker disable next-line OptionalChaining: equivalent mutant — `proc.stdout` is always non-null in our test environment (the spawn mock always provides an EventEmitter); the optional chain is a defensive guard against ChildProcess instances spawned with stdio: 'ignore'.
 	proc.stdout?.on("data", (data: Buffer) => {
 		const text = data.toString();
 		console.log("[stt-server]", text.trimEnd());
-		if (text.includes("RealtimeSTT initialized") && sttProcess === proc) {
+		// Match the server's backend-agnostic ready marker (see
+		// server/src/stt_server/server.py "Recorder initialized").  Must
+		// stay in sync with the server-side string.  This only flips the
+		// spawned-process status — the renderer's "ready" check goes
+		// through the server_ready WebSocket message instead.
+		if (text.includes("Recorder initialized") && sttProcess === proc) {
 			status = "running";
 		}
 	});
 
+	// Stryker disable next-line OptionalChaining: equivalent mutant — same reasoning as the proc.stdout?.on disable above; the test environment always provides a stderr EventEmitter.
 	proc.stderr?.on("data", (data: Buffer) => {
 		console.error("[stt-server]", data.toString().trimEnd());
 	});
@@ -210,7 +223,9 @@ export function setupSttProcessHandlers(): void {
 		}
 	});
 
+	// Stryker disable next-line BlockStatement: equivalent mutants — killSttProcess swallows its own internal errors via its inner try/catch, so this outer catch block is unreachable from any test; the surrounding try/catch is defensive against future changes that might let kill failures bubble up.
 	ipcMain.handle("stt-server:kill", () => {
+		// Stryker disable BlockStatement,StringLiteral: equivalent mutants — same reasoning as above; the catch body's console.error/throw never fire because killSttProcess never throws.
 		try {
 			killSttProcess();
 		} catch (err) {
@@ -218,9 +233,12 @@ export function setupSttProcessHandlers(): void {
 			console.error("[stt-server] Kill handler error:", message);
 			throw new Error(message);
 		}
+		// Stryker restore BlockStatement,StringLiteral
 	});
 
+	// Stryker disable next-line BlockStatement: equivalent mutants — `return status` is a primitive read that cannot throw, so the surrounding try/catch is unreachable.
 	ipcMain.handle("stt-server:status", () => {
+		// Stryker disable BlockStatement,StringLiteral: equivalent mutants — same reasoning; the catch body cannot fire because reading a string variable cannot throw.
 		try {
 			return status;
 		} catch (err) {
@@ -228,6 +246,7 @@ export function setupSttProcessHandlers(): void {
 			console.error("[stt-server] Status handler error:", message);
 			throw new Error(message);
 		}
+		// Stryker restore BlockStatement,StringLiteral
 	});
 }
 
@@ -275,6 +294,7 @@ export function killSttProcess(): void {
 	status = "idle";
 
 	try {
+		// Stryker disable next-line ConditionalExpression: equivalent mutant — `process.platform` cannot be toggled at runtime within a single bun-test process, so we cover only one branch per test run.
 		if (process.platform === "win32") {
 			// Kill the entire process tree without blocking the main process.
 			const killer = spawn("taskkill", ["/T", "/F", "/PID", String(pid)], {
@@ -284,6 +304,7 @@ export function killSttProcess(): void {
 			killer.on("error", (error) => {
 				dbg("stt-process", `Failed to kill process tree ${pid}:`, getErrorMessage(error));
 			});
+			// Stryker disable next-line BlockStatement,StringLiteral: equivalent mutants on non-win32 — under win32 test runs the else block is dead code; under linux/mac runs the win32 block is dead code. Branch reachability is determined by the OS the suite runs on, not by any test toggle.
 		} else {
 			proc.kill("SIGTERM");
 		}

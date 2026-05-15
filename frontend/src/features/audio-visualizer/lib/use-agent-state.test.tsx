@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { renderHook } from "@testing-library/react";
 import { useVisualizerStore } from "../model/visualizer-store";
-import { useAgentState } from "./use-agent-state";
+import { deriveActiveState, isActivelySpeaking, useAgentState } from "./use-agent-state";
 
 beforeEach(() => {
 	useVisualizerStore.setState({
@@ -49,5 +49,45 @@ describe("useAgentState", () => {
 		useVisualizerStore.setState({ isRecording: false, audioLevel: 0.05 });
 		const { result } = renderHook(() => useAgentState());
 		expect(result.current).toBe("speaking");
+	});
+});
+
+describe("isActivelySpeaking", () => {
+	test("returns false when not recording regardless of other params", () => {
+		expect(isActivelySpeaking(false, true, 0.5)).toBe(false);
+	});
+
+	test("returns true when recording and VAD says speaking", () => {
+		expect(isActivelySpeaking(true, true, 0)).toBe(true);
+	});
+
+	test("returns true when recording and audioLevel exceeds threshold", () => {
+		expect(isActivelySpeaking(true, false, 0.05)).toBe(true);
+	});
+
+	test("returns false when recording but silent and no VAD", () => {
+		expect(isActivelySpeaking(true, false, 0.005)).toBe(false);
+	});
+});
+
+describe("deriveActiveState", () => {
+	test("returns 'speaking' when actively speaking", () => {
+		expect(deriveActiveState(true, true, 0.001)).toBe("speaking");
+	});
+
+	test("returns 'listening' when recording but not speaking", () => {
+		expect(deriveActiveState(true, false, 0.005)).toBe("listening");
+	});
+
+	test("returns 'speaking' when not recording but audio still active (fade-out)", () => {
+		expect(deriveActiveState(false, false, 0.05)).toBe("speaking");
+	});
+
+	test("returns 'disconnected' when not recording and audio at or below 0.01", () => {
+		expect(deriveActiveState(false, false, 0.005)).toBe("disconnected");
+	});
+
+	test("boundary: audioLevel exactly 0.01 is not above 0.01 → disconnected", () => {
+		expect(deriveActiveState(false, false, 0.01)).toBe("disconnected");
 	});
 });

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
-import { useFavoriteProviders } from "./use-favorite-providers";
+import {
+	__use_favorite_providers_test_helpers__ as helpers,
+	useFavoriteProviders,
+} from "./use-favorite-providers";
 
 const STORAGE_KEY = "winstt:openrouter-favorite-providers";
 
@@ -10,6 +13,63 @@ beforeEach(() => {
 
 afterEach(() => {
 	window.localStorage.removeItem(STORAGE_KEY);
+});
+
+describe("parseStoredFavorites", () => {
+	test("returns null for null input", () => {
+		expect(helpers.parseStoredFavorites(null)).toBeNull();
+	});
+
+	test("returns null for empty string input", () => {
+		expect(helpers.parseStoredFavorites("")).toBeNull();
+	});
+
+	test("returns parsed array when valid non-empty JSON array", () => {
+		expect(helpers.parseStoredFavorites('["openai","google"]')).toEqual(["openai", "google"]);
+	});
+
+	test("returns null when JSON is an empty array", () => {
+		expect(helpers.parseStoredFavorites("[]")).toBeNull();
+	});
+
+	test("throws for invalid JSON (let caller catch)", () => {
+		expect(() => helpers.parseStoredFavorites("{not-json")).toThrow();
+	});
+
+	test("returns null when parsed value is not an array", () => {
+		expect(helpers.parseStoredFavorites('"just a string"')).toBeNull();
+	});
+});
+
+describe("readStoredFavorites", () => {
+	const STORAGE_KEY = "winstt:openrouter-favorite-providers";
+
+	beforeEach(() => {
+		window.localStorage.removeItem(STORAGE_KEY);
+	});
+
+	afterEach(() => {
+		window.localStorage.removeItem(STORAGE_KEY);
+	});
+
+	test("returns null when localStorage has no value", () => {
+		expect(helpers.readStoredFavorites()).toBeNull();
+	});
+
+	test("returns the stored favorites when present", () => {
+		window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["openai"]));
+		expect(helpers.readStoredFavorites()).toEqual(["openai"]);
+	});
+
+	test("returns null when stored value is malformed JSON", () => {
+		window.localStorage.setItem(STORAGE_KEY, "{not-json");
+		expect(helpers.readStoredFavorites()).toBeNull();
+	});
+
+	test("returns null when stored array is empty", () => {
+		window.localStorage.setItem(STORAGE_KEY, "[]");
+		expect(helpers.readStoredFavorites()).toBeNull();
+	});
 });
 
 describe("useFavoriteProviders", () => {

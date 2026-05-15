@@ -46,7 +46,11 @@ class TranscriptionConfig(StrictMutableModel):
     suppress_tokens: list[int] | None = Field(default_factory=lambda: [-1])
     batch_size: int = 16
     faster_whisper_vad_filter: bool = True
-    normalize_audio: bool = False
+    # Peak-normalize audio to ~0.95 before Silero VAD + Whisper. Quiet mics
+    # (peak around 0.1-0.2) otherwise get rejected by Silero's confidence
+    # threshold and the entire utterance is dropped. Costs one O(n) numpy
+    # pass per transcribe — negligible.
+    normalize_audio: bool = True
     print_transcription_time: bool = False
     early_transcription_on_silence: float = 0
     allowed_latency_limit: int = 100

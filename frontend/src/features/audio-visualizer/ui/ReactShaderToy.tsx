@@ -9,7 +9,16 @@
 
 "use client";
 
-import { type ComponentPropsWithoutRef, type CSSProperties, useEffect, useRef } from "react";
+import {
+	type ComponentPropsWithoutRef,
+	type CSSProperties,
+	type RefObject,
+	useEffect,
+	useRef,
+} from "react";
+
+/** GLSL identifier tokenizer — used to collect every name referenced in a shader source. */
+const GLSL_IDENT_RE = /\b[A-Za-z_]\w*\b/g;
 
 const PRECISIONS = ["lowp", "mediump", "highp"];
 const EMPTY_CONTEXT_ATTRIBUTES: Record<string, unknown> = {};
@@ -145,21 +154,36 @@ export interface ReactShaderToyProps {
 	vs?: string;
 }
 
-export function ReactShaderToy({
-	fs,
-	vs = BASIC_VS,
-	uniforms: propUniforms,
-	clearColor = [0, 0, 0, 1],
-	precision = "highp",
-	style,
-	contextAttributes = EMPTY_CONTEXT_ATTRIBUTES,
-	devicePixelRatio = 1,
-	onError = console.error,
-	onWarning = console.warn,
-	animateWhenNotVisible = false,
-	...canvasProps
-}: ReactShaderToyProps & ComponentPropsWithoutRef<"canvas">) {
-	const canvasRef = useRef<HTMLCanvasElement>(null);
+function useShaderToyEngine(
+	canvasRef: RefObject<HTMLCanvasElement | null>,
+	{
+		fs,
+		vs,
+		uniforms: propUniforms,
+		clearColor,
+		precision,
+		contextAttributes,
+		devicePixelRatio,
+		onError,
+		onWarning,
+		animateWhenNotVisible,
+	}: Required<
+		Pick<
+			ReactShaderToyProps,
+			| "fs"
+			| "vs"
+			| "clearColor"
+			| "precision"
+			| "contextAttributes"
+			| "devicePixelRatio"
+			| "onError"
+			| "onWarning"
+			| "animateWhenNotVisible"
+		>
+	> & {
+		uniforms: Uniforms | undefined;
+	}
+): void {
 	const glRef = useRef<WebGLRenderingContext | null>(null);
 	const squareVerticesBufferRef = useRef<WebGLBuffer | null>(null);
 	const shaderProgramRef = useRef<WebGLProgram | null>(null);
@@ -296,8 +320,12 @@ export function ReactShaderToy({
 		let fragmentShader = precisionString
 			.concat(`#define DPR ${devicePixelRatio.toFixed(1)}\n`)
 			.concat(fragment.replace(/texture\(/g, "texture2D("));
+		// Tokenize the source once into a Set so each membership check below
+		// is O(1) instead of O(n) per uniform. Identifier-boundary matching
+		// also fixes a latent bug where `iTime` matched `iTimeDelta`.
+		const referencedNames = new Set(fragment.match(GLSL_IDENT_RE) ?? []);
 		for (const uniform of Object.keys(uniformsRef.current)) {
-			if (fragment.includes(uniform)) {
+			if (referencedNames.has(uniform)) {
 				const u = uniformsRef.current[uniform];
 				if (!u) {
 					continue;
@@ -453,6 +481,35 @@ export function ReactShaderToy({
 			cancelAnimationFrame(animFrameIdRef.current ?? 0);
 		};
 	}, []);
+}
+
+export function ReactShaderToy({
+	fs,
+	vs = BASIC_VS,
+	uniforms: propUniforms,
+	clearColor = [0, 0, 0, 1],
+	precision = "highp",
+	style,
+	contextAttributes = EMPTY_CONTEXT_ATTRIBUTES,
+	devicePixelRatio = 1,
+	onError = console.error,
+	onWarning = console.warn,
+	animateWhenNotVisible = false,
+	...canvasProps
+}: ReactShaderToyProps & ComponentPropsWithoutRef<"canvas">) {
+	const canvasRef = useRef<HTMLCanvasElement>(null);
+	useShaderToyEngine(canvasRef, {
+		fs,
+		vs,
+		uniforms: propUniforms,
+		clearColor,
+		precision,
+		contextAttributes,
+		devicePixelRatio,
+		onError,
+		onWarning,
+		animateWhenNotVisible,
+	});
 
 	return (
 		<canvas ref={canvasRef} style={{ height: "100%", width: "100%", ...style }} {...canvasProps} />

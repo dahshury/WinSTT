@@ -49,6 +49,33 @@ class FileAudioSource(IAudioSource):
 
     @property
     @override
+    def is_capturing(self) -> bool:
+        # File-backed sources have no hardware capture state. They're either
+        # set up (drained when fed) or torn down. Reporting True here matches
+        # historical behaviour — pause()/resume() are no-ops below.
+        return self._active
+
+    @override
+    def pause(self) -> None:
+        # No hardware to pause; loopback feeders push frames into the queue
+        # regardless of this flag.
+        return
+
+    @override
+    def resume(self) -> None:
+        # Mirror of pause() — no-op for file-backed sources.
+        return
+
+    @override
+    def switch_device(self, device_index: int | None) -> None:
+        # File-backed sources have no concept of an OS audio device — the
+        # external feed is the only input.  No-op so live device-switch
+        # control messages are a quiet pass-through in loopback / external-audio
+        # mode.
+        del device_index
+
+    @property
+    @override
     def sample_rate(self) -> SampleRate:
         return self._sample_rate
 

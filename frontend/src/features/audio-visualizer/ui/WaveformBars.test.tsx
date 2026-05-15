@@ -13,6 +13,11 @@ const {
 	getCanvasMetrics,
 	drawBaseline,
 	tracePath,
+	computeWaveY,
+	buildWavePoints,
+	drawWavePath,
+	drawFilledRegion,
+	lerpColor,
 } = __waveform_test_helpers__;
 
 describe("WaveformBars", () => {
@@ -198,5 +203,129 @@ describe("tracePath", () => {
 		const { ctx, calls } = makeCtx();
 		tracePath(ctx, []);
 		expect(calls).toEqual([]);
+	});
+});
+
+describe("computeWaveY", () => {
+	test("returns midY when amplitude is 0", () => {
+		const midY = 100;
+		// With amplitude 0, the wave term vanishes so y should be midY
+		const y = computeWaveY(0.5, 0, 0, midY);
+		expect(y).toBe(midY);
+	});
+
+	test("returns midY at t=0 (edge fade = sin(0) = 0)", () => {
+		// edgeFade = sin(t * PI). At t=0, edgeFade=0, so the contribution is 0.
+		const y = computeWaveY(0, 1, 0.5, 80);
+		expect(y).toBe(80);
+	});
+
+	test("returns midY at t=1 (edge fade = sin(PI) ≈ 0)", () => {
+		const y = computeWaveY(1, 1, 0.5, 80);
+		expect(Math.abs(y - 80)).toBeLessThan(1e-10);
+	});
+
+	test("returns a number for t=0.5 with non-zero amplitude", () => {
+		const y = computeWaveY(0.5, 0, 0.2, 100);
+		expect(typeof y).toBe("number");
+		expect(Number.isFinite(y)).toBe(true);
+	});
+});
+
+describe("buildWavePoints", () => {
+	test("returns RESOLUTION+1 points (121)", () => {
+		const pts = buildWavePoints(100, 50, 0, 0.1);
+		expect(pts).toHaveLength(121);
+	});
+
+	test("first point x is 0 and last point x equals w", () => {
+		const pts = buildWavePoints(200, 100, 0, 0.1);
+		expect(pts[0]![0]).toBe(0);
+		expect(pts[120]![0]).toBe(200);
+	});
+
+	test("all y values are finite numbers", () => {
+		const pts = buildWavePoints(100, 60, 1, 0.1);
+		for (const [, y] of pts) {
+			expect(Number.isFinite(y)).toBe(true);
+		}
+	});
+
+	test("zero amplitude produces all y = midY", () => {
+		const h = 80;
+		const midY = h / 2;
+		const pts = buildWavePoints(100, h, 0, 0);
+		for (const [, y] of pts) {
+			expect(Math.abs(y - midY)).toBeLessThan(1e-10);
+		}
+	});
+});
+
+function makeCanvasCtx() {
+	const calls: string[] = [];
+	const ctx = {
+		beginPath: () => calls.push("beginPath"),
+		moveTo: () => calls.push("moveTo"),
+		lineTo: () => calls.push("lineTo"),
+		closePath: () => calls.push("closePath"),
+		fill: () => calls.push("fill"),
+		stroke: () => calls.push("stroke"),
+		createLinearGradient: () => ({ addColorStop: () => undefined }),
+		strokeStyle: "" as unknown,
+		lineWidth: 0,
+		lineJoin: "" as unknown,
+		lineCap: "" as unknown,
+		fillStyle: "" as unknown,
+	} as unknown as CanvasRenderingContext2D;
+	return { ctx, calls };
+}
+
+describe("drawWavePath", () => {
+	test("calls beginPath and traces points without throwing (non-mirror)", () => {
+		const { ctx, calls } = makeCanvasCtx();
+		drawWavePath(ctx, 100, 60, 0, 0.1, false);
+		expect(calls).toContain("beginPath");
+		expect(calls).toContain("moveTo");
+	});
+
+	test("calls beginPath and traces points without throwing (mirror)", () => {
+		const { ctx, calls } = makeCanvasCtx();
+		drawWavePath(ctx, 100, 60, 0, 0.1, true);
+		expect(calls).toContain("beginPath");
+		expect(calls).toContain("moveTo");
+	});
+});
+
+describe("drawFilledRegion", () => {
+	test("calls beginPath, closePath, and fill", () => {
+		const { ctx, calls } = makeCanvasCtx();
+		drawFilledRegion(ctx, 100, 60, 0, 0.1, 0.05, "88, 166, 255");
+		expect(calls).toContain("beginPath");
+		expect(calls).toContain("closePath");
+		expect(calls).toContain("fill");
+	});
+
+	test("does not throw with zero amplitude", () => {
+		const { ctx } = makeCanvasCtx();
+		expect(() => drawFilledRegion(ctx, 100, 60, 0, 0, 0, "0, 0, 0")).not.toThrow();
+	});
+});
+
+describe("lerpColor", () => {
+	test("returns the start color when t=0", () => {
+		expect(lerpColor("0, 0, 0", "255, 255, 255", 0)).toBe("0, 0, 0");
+	});
+
+	test("returns the end color when t=1", () => {
+		expect(lerpColor("0, 0, 0", "255, 255, 255", 1)).toBe("255, 255, 255");
+	});
+
+	test("returns midpoint when t=0.5", () => {
+		expect(lerpColor("0, 0, 0", "100, 200, 50", 0.5)).toBe("50, 100, 25");
+	});
+
+	test("returns a string with two commas (r, g, b format)", () => {
+		const result = lerpColor("10, 20, 30", "90, 80, 70", 0.5);
+		expect(result.split(",")).toHaveLength(3);
 	});
 });

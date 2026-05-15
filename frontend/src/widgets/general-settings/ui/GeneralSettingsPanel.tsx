@@ -7,7 +7,6 @@ import {
 	DashboardCircleIcon,
 	EarIcon,
 	FileMusicIcon,
-	FileScriptIcon,
 	GlobeIcon,
 	GridIcon,
 	Mic01Icon,
@@ -15,10 +14,8 @@ import {
 	PowerSocket01Icon,
 	RadialIcon,
 	RefreshIcon,
-	SubtitleIcon,
 	ToggleOnIcon,
 	TouchInteraction01Icon,
-	Txt01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
@@ -26,6 +23,7 @@ import type { ReactNode } from "react";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { isVisualizerType } from "@/features/audio-visualizer";
 import { useLoopbackDevices } from "@/features/listen-mode";
+import { RECORDING_MODE_COLOR_HEX } from "@/shared/config/recording-mode-color";
 import { isLocale, LOCALE_NAMES, LOCALES, type Locale, useLocaleStore } from "@/shared/i18n";
 import { Button } from "@/shared/ui/button";
 import { ButtonGroup, ButtonGroupText } from "@/shared/ui/button-group";
@@ -81,22 +79,31 @@ function buildVisualizerTypeOptions(t: GeneralT): SelectOption[] {
 	] satisfies SelectOption[];
 }
 
-function buildRecordingModeOptions(
-	t: GeneralT
-): readonly { value: "ptt" | "toggle" | "listen"; label: string; icon: IconSvgElement }[] {
+function buildRecordingModeOptions(t: GeneralT): readonly {
+	value: "ptt" | "toggle" | "listen";
+	label: string;
+	icon: IconSvgElement;
+	color: string;
+}[] {
 	return [
-		{ value: "ptt", label: t("pushToTalk"), icon: TouchInteraction01Icon },
-		{ value: "toggle", label: t("toggle"), icon: ToggleOnIcon },
-		{ value: "listen", label: t("listen"), icon: EarIcon },
-	] as const;
-}
-
-function buildTranscriptionFormatOptions(
-	_t: GeneralT
-): readonly { value: "txt" | "srt"; label: string; icon: IconSvgElement }[] {
-	return [
-		{ value: "txt", label: "TXT", icon: Txt01Icon },
-		{ value: "srt", label: "SRT", icon: SubtitleIcon },
+		{
+			value: "ptt",
+			label: t("pushToTalk"),
+			icon: TouchInteraction01Icon,
+			color: RECORDING_MODE_COLOR_HEX.ptt,
+		},
+		{
+			value: "toggle",
+			label: t("toggle"),
+			icon: ToggleOnIcon,
+			color: RECORDING_MODE_COLOR_HEX.toggle,
+		},
+		{
+			value: "listen",
+			label: t("listen"),
+			icon: EarIcon,
+			color: RECORDING_MODE_COLOR_HEX.listen,
+		},
 	] as const;
 }
 
@@ -115,7 +122,7 @@ interface LanguageSectionProps {
 function LanguageSection({ locale, setLocale, t }: LanguageSectionProps): ReactNode {
 	return (
 		<SettingSection icon={GlobeIcon} title={t("language")}>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 				<FormControl
 					caption={t("languageCaption")}
 					label={t("language")}
@@ -191,7 +198,7 @@ function RecordingSection({
 	const recordingModeOptions = buildRecordingModeOptions(t);
 	return (
 		<SettingSection icon={Mic01Icon} title={t("recording")}>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 				<FormControl
 					caption={t("recordingModeCaption")}
 					label={t("recordingMode")}
@@ -215,14 +222,15 @@ function RecordingSection({
 					caption={muteCaption(isListenMode, t)}
 					disabled={isListenMode}
 					label={t("muteSystemAudio")}
+					labelAddon={
+						<Toggle
+							checked={muteChecked(isListenMode, general)}
+							disabled={isListenMode}
+							onCheckedChange={(v) => update({ muteSystemAudioWhileDictating: v })}
+						/>
+					}
 					tooltip={t("muteSystemAudioTooltip")}
-				>
-					<Toggle
-						checked={muteChecked(isListenMode, general)}
-						disabled={isListenMode}
-						onCheckedChange={(v) => update({ muteSystemAudioWhileDictating: v })}
-					/>
-				</FormControl>
+				/>
 			</div>
 		</SettingSection>
 	);
@@ -380,11 +388,11 @@ function SoundSection({
 		<SettingSection
 			icon={MusicNote01Icon}
 			onToggle={(v) => update({ recordingSound: v })}
-			title={t("sound")}
+			title={t("recordingSound")}
 			toggleDisabled={isListenMode}
 			toggled={soundToggleChecked(isListenMode, recordingSoundEnabled)}
 		>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 				<SoundFileControl
 					dragOver={dragOver}
 					dropError={dropError}
@@ -395,38 +403,6 @@ function SoundSection({
 					t={t}
 					tc={tc}
 				/>
-			</div>
-		</SettingSection>
-	);
-}
-
-interface FileTranscriptionSectionProps {
-	general: GeneralSettings | undefined;
-	t: GeneralT;
-	update: UpdateFn;
-}
-
-function FileTranscriptionSection({
-	t,
-	general,
-	update,
-}: FileTranscriptionSectionProps): ReactNode {
-	const transcriptionFormatOptions = buildTranscriptionFormatOptions(t);
-	const value = general?.fileTranscriptionFormat ?? "txt";
-	return (
-		<SettingSection icon={FileScriptIcon} title={t("fileTranscription")}>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
-				<FormControl
-					caption={t("fileTranscriptionFormatCaption")}
-					label={t("fileTranscriptionFormat")}
-					tooltip={t("fileTranscriptionFormatTooltip")}
-				>
-					<Switcher
-						onChange={(v) => update({ fileTranscriptionFormat: v })}
-						options={transcriptionFormatOptions}
-						value={value}
-					/>
-				</FormControl>
 			</div>
 		</SettingSection>
 	);
@@ -460,34 +436,37 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 	const flags = readStartupFlags(general);
 	return (
 		<SettingSection icon={PowerSocket01Icon} title={t("startup")}>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 				<FormControl
 					caption={t("startOnLoginCaption")}
 					label={t("startOnLogin")}
+					labelAddon={
+						<Toggle checked={flags.autoStart} onCheckedChange={(v) => update({ autoStart: v })} />
+					}
 					tooltip={t("startOnLoginTooltip")}
-				>
-					<Toggle checked={flags.autoStart} onCheckedChange={(v) => update({ autoStart: v })} />
-				</FormControl>
+				/>
 				<FormControl
 					caption={t("startMinimizedCaption")}
 					label={t("startMinimized")}
+					labelAddon={
+						<Toggle
+							checked={flags.startMinimized}
+							onCheckedChange={(v) => update({ startMinimized: v })}
+						/>
+					}
 					tooltip={t("startMinimizedTooltip")}
-				>
-					<Toggle
-						checked={flags.startMinimized}
-						onCheckedChange={(v) => update({ startMinimized: v })}
-					/>
-				</FormControl>
+				/>
 				<FormControl
 					caption={t("minimizeToTrayCaption")}
 					label={t("minimizeToTray")}
+					labelAddon={
+						<Toggle
+							checked={flags.minimizeToTray}
+							onCheckedChange={(v) => update({ minimizeToTray: v })}
+						/>
+					}
 					tooltip={t("minimizeToTrayTooltip")}
-				>
-					<Toggle
-						checked={flags.minimizeToTray}
-						onCheckedChange={(v) => update({ minimizeToTray: v })}
-					/>
-				</FormControl>
+				/>
 			</div>
 		</SettingSection>
 	);
@@ -522,7 +501,7 @@ export function GeneralSettingsPanel() {
 	const recordingSoundPath = general?.recordingSoundPath ?? "";
 
 	return (
-		<div className="flex flex-col gap-5">
+		<div className="flex flex-col gap-2">
 			<LanguageSection locale={locale} setLocale={setLocale} t={t} />
 			<RecordingSection
 				currentLoopbackId={currentLoopbackId}
@@ -553,7 +532,6 @@ export function GeneralSettingsPanel() {
 				tc={tc}
 				update={update}
 			/>
-			<FileTranscriptionSection general={general} t={t} update={update} />
 			<StartupSection general={general} t={t} update={update} />
 		</div>
 	);
@@ -567,9 +545,8 @@ interface DisplaySectionProps {
 }
 
 interface DisplayFlags {
-	inAppLiveDisabled: boolean;
+	liveDisplayDisabled: boolean;
 	overlayEnabled: boolean;
-	pillLiveDisabled: boolean;
 	subDisabled: boolean;
 }
 
@@ -581,121 +558,111 @@ function computeDisplayFlags(
 	const showOverlay = general?.showRecordingOverlay ?? true;
 	const overlayEnabled = !isListenMode && showOverlay;
 	const subDisabled = !overlayEnabled;
-	const pillLiveDisabled = subDisabled || !realtimeEnabled;
-	const inAppLiveDisabled = !realtimeEnabled;
-	return { overlayEnabled, subDisabled, pillLiveDisabled, inAppLiveDisabled };
+	// The combined live-transcription picker is disabled only when realtime
+	// transcription itself is off — otherwise every choice (in-app/in-pill/
+	// both/none) is meaningful. The pill choice still renders even when the
+	// overlay is hidden so the value survives toggling the overlay back on.
+	const liveDisplayDisabled = !realtimeEnabled;
+	return { overlayEnabled, subDisabled, liveDisplayDisabled };
+}
+
+type LiveTranscriptionDisplayValue = "none" | "in-app" | "in-pill" | "both";
+
+function isLiveTranscriptionDisplayValue(value: string): value is LiveTranscriptionDisplayValue {
+	return value === "none" || value === "in-app" || value === "in-pill" || value === "both";
 }
 
 function checkedOrFalseIfDisabled(disabled: boolean, value: boolean): boolean {
 	return disabled ? false : value;
 }
 
-interface OverlayToggleProps {
+interface OverlayControlProps {
 	general: GeneralSettings | undefined;
 	isListenMode: boolean;
-	t: GeneralT;
-	update: UpdateFn;
-}
-
-function OverlayToggle({ t, isListenMode, general, update }: OverlayToggleProps): ReactNode {
-	const showOverlay = general?.showRecordingOverlay ?? true;
-	return (
-		<FormControl
-			caption={t("showRecordingOverlayCaption")}
-			disabled={isListenMode}
-			label={t("showRecordingOverlay")}
-			tooltip={t("showRecordingOverlayTooltip")}
-		>
-			<Toggle
-				checked={checkedOrFalseIfDisabled(isListenMode, showOverlay)}
-				disabled={isListenMode}
-				onCheckedChange={(v) => update({ showRecordingOverlay: v })}
-			/>
-		</FormControl>
-	);
-}
-
-interface PillLiveToggleProps {
-	general: GeneralSettings | undefined;
-	pillLiveDisabled: boolean;
-	t: GeneralT;
-	update: UpdateFn;
-}
-
-function PillLiveToggle({ t, pillLiveDisabled, general, update }: PillLiveToggleProps): ReactNode {
-	const value = general?.showLiveTranscription ?? true;
-	return (
-		<FormControl
-			caption={t("showLiveTranscriptionCaption")}
-			disabled={pillLiveDisabled}
-			label={t("showLiveTranscription")}
-			tooltip={t("showLiveTranscriptionTooltip")}
-		>
-			<Toggle
-				checked={checkedOrFalseIfDisabled(pillLiveDisabled, value)}
-				disabled={pillLiveDisabled}
-				onCheckedChange={(v) => update({ showLiveTranscription: v })}
-			/>
-		</FormControl>
-	);
-}
-
-interface InAppLiveToggleProps {
-	general: GeneralSettings | undefined;
-	inAppLiveDisabled: boolean;
-	t: GeneralT;
-	update: UpdateFn;
-}
-
-function InAppLiveToggle({
-	t,
-	inAppLiveDisabled,
-	general,
-	update,
-}: InAppLiveToggleProps): ReactNode {
-	const value = general?.showInAppLiveTranscription ?? true;
-	return (
-		<FormControl
-			caption={t("showInAppLiveTranscriptionCaption")}
-			disabled={inAppLiveDisabled}
-			label={t("showInAppLiveTranscription")}
-			tooltip={t("showInAppLiveTranscriptionTooltip")}
-		>
-			<Toggle
-				checked={checkedOrFalseIfDisabled(inAppLiveDisabled, value)}
-				disabled={inAppLiveDisabled}
-				onCheckedChange={(v) => update({ showInAppLiveTranscription: v })}
-			/>
-		</FormControl>
-	);
-}
-
-interface VisualizerSizeControlProps {
-	general: GeneralSettings | undefined;
 	subDisabled: boolean;
 	t: GeneralT;
 	update: UpdateFn;
 }
 
-function VisualizerSizeControl({
+function OverlayControl({
 	t,
+	isListenMode,
 	subDisabled,
 	general,
 	update,
-}: VisualizerSizeControlProps): ReactNode {
-	const value = general?.visualizerSize ?? "sm";
+}: OverlayControlProps): ReactNode {
+	const showOverlay = general?.showRecordingOverlay ?? true;
+	const size = general?.visualizerSize ?? "sm";
 	return (
 		<FormControl
-			caption={t("visualizerSizeCaption")}
-			disabled={subDisabled}
-			label={t("visualizerSize")}
-			tooltip={t("visualizerSizeTooltip")}
+			caption={t("showRecordingOverlayCaption")}
+			disabled={isListenMode}
+			label={t("showRecordingOverlay")}
+			labelAddon={
+				<Toggle
+					checked={checkedOrFalseIfDisabled(isListenMode, showOverlay)}
+					disabled={isListenMode}
+					onCheckedChange={(v) => update({ showRecordingOverlay: v })}
+				/>
+			}
+			tooltip={t("showRecordingOverlayTooltip")}
 		>
-			<Switcher
-				onChange={(v) => update({ visualizerSize: v })}
-				options={VISUALIZER_SIZE_OPTIONS}
-				value={value}
-			/>
+			<div className={subDisabled ? "pointer-events-none opacity-40" : ""}>
+				<Switcher
+					onChange={(v) => update({ visualizerSize: v })}
+					options={VISUALIZER_SIZE_OPTIONS}
+					value={size}
+				/>
+			</div>
+		</FormControl>
+	);
+}
+
+function buildLiveTranscriptionDisplayOptions(t: GeneralT): readonly {
+	value: LiveTranscriptionDisplayValue;
+	label: string;
+}[] {
+	return [
+		{ value: "none", label: t("liveTranscriptionDisplayNone") },
+		{ value: "in-app", label: t("liveTranscriptionDisplayInApp") },
+		{ value: "in-pill", label: t("liveTranscriptionDisplayInPill") },
+		{ value: "both", label: t("liveTranscriptionDisplayBoth") },
+	] as const;
+}
+
+interface LiveTranscriptionDisplayControlProps {
+	general: GeneralSettings | undefined;
+	liveDisplayDisabled: boolean;
+	t: GeneralT;
+	update: UpdateFn;
+}
+
+function LiveTranscriptionDisplayControl({
+	t,
+	liveDisplayDisabled,
+	general,
+	update,
+}: LiveTranscriptionDisplayControlProps): ReactNode {
+	const value: LiveTranscriptionDisplayValue = general?.liveTranscriptionDisplay ?? "both";
+	const options = buildLiveTranscriptionDisplayOptions(t);
+	return (
+		<FormControl
+			caption={t("liveTranscriptionDisplayCaption")}
+			disabled={liveDisplayDisabled}
+			label={t("liveTranscriptionDisplay")}
+			tooltip={t("liveTranscriptionDisplayTooltip")}
+		>
+			<div className={liveDisplayDisabled ? "pointer-events-none opacity-40" : ""}>
+				<Switcher
+					onChange={(v) => {
+						if (isLiveTranscriptionDisplayValue(v)) {
+							update({ liveTranscriptionDisplay: v });
+						}
+					}}
+					options={options}
+					value={value}
+				/>
+			</div>
 		</FormControl>
 	);
 }
@@ -805,23 +772,17 @@ function DisplaySection({ isListenMode, t, update, visualizerTypeOptions }: Disp
 
 	return (
 		<SettingSection icon={DashboardCircleIcon} title={t("display")}>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
-				<OverlayToggle general={general} isListenMode={isListenMode} t={t} update={update} />
-				<PillLiveToggle
+			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+				<OverlayControl
 					general={general}
-					pillLiveDisabled={flags.pillLiveDisabled}
-					t={t}
-					update={update}
-				/>
-				<InAppLiveToggle
-					general={general}
-					inAppLiveDisabled={flags.inAppLiveDisabled}
-					t={t}
-					update={update}
-				/>
-				<VisualizerSizeControl
-					general={general}
+					isListenMode={isListenMode}
 					subDisabled={flags.subDisabled}
+					t={t}
+					update={update}
+				/>
+				<LiveTranscriptionDisplayControl
+					general={general}
+					liveDisplayDisabled={flags.liveDisplayDisabled}
 					t={t}
 					update={update}
 				/>
@@ -843,7 +804,6 @@ function DisplaySection({ isListenMode, t, update, visualizerTypeOptions }: Disp
 export const __general_settings_panel_test_helpers__ = {
 	buildVisualizerTypeOptions,
 	buildRecordingModeOptions,
-	buildTranscriptionFormatOptions,
 	pickLocale,
 	muteCaption,
 	muteChecked,

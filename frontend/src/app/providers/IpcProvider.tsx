@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { useConnectionStore } from "@/entities/connection";
+import { useDeviceSwitchFeedback } from "@/features/audio-device-feedback";
 import { useVisualizerSync } from "@/features/audio-visualizer";
 import { useConnectionListener } from "@/features/connect-server";
 import { useFileTranscriptionListener } from "@/features/file-transcription";
@@ -26,6 +27,7 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 	useDownloadListener();
 	useFileTranscriptionListener();
 	useListenMode();
+	useDeviceSwitchFeedback();
 	useRecordingSound();
 
 	// Model catalog is self-initializing — see catalog-store.ts

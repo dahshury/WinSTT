@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useHotkeyStore } from "../model/hotkey-store";
-import { HotkeyDisplay } from "./HotkeyDisplay";
+import { HotkeyDisplay, resolveKbdClass } from "./HotkeyDisplay";
 
 beforeEach(() => {
 	useHotkeyStore.setState({
@@ -27,6 +27,26 @@ function renderIt(isConnected: boolean) {
 		</IntlProvider>
 	);
 }
+
+describe("resolveKbdClass", () => {
+	test("returns disconnected class when isConnected=false", () => {
+		const cls = resolveKbdClass(false, false);
+		expect(cls).toContain("opacity-60");
+	});
+	test("returns disconnected class even when isPressed=true and not connected", () => {
+		const cls = resolveKbdClass(false, true);
+		expect(cls).toContain("opacity-60");
+	});
+	test("returns pressed class when connected and pressed", () => {
+		const cls = resolveKbdClass(true, true);
+		expect(cls).toContain("bg-orange-dim");
+	});
+	test("returns idle class when connected and not pressed", () => {
+		const cls = resolveKbdClass(true, false);
+		expect(cls).toContain("bg-surface-tertiary");
+		expect(cls).not.toContain("opacity-60");
+	});
+});
 
 describe("HotkeyDisplay", () => {
 	test("renders each accelerator part formatted via formatKeyName", () => {

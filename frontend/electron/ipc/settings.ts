@@ -1,19 +1,13 @@
 import { app, BrowserWindow, ipcMain } from "electron";
+import { appSettingsSchema } from "../../src/shared/config/settings-schema";
 import { getErrorMessage, ValidationError } from "../../src/shared/lib/errors";
 import { store } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
-import { isSttProcessRunning, restartSttProcess } from "./stt-process";
+import { isSttProcessRunning, restartSttProcess } from "./stt-process-deps";
 
-const ALLOWED_SETTINGS_KEYS = new Set([
-	"model",
-	"quality",
-	"audio",
-	"general",
-	"hotkey",
-	"dictionary",
-	"snippets",
-	"llm",
-]);
+// Derived from the Zod schema so new top-level sections automatically participate
+// in save/load without needing to update a second list.
+const ALLOWED_SETTINGS_KEYS: ReadonlySet<string> = new Set(Object.keys(appSettingsSchema.shape));
 
 /**
  * Settings keys that require a server restart when changed.
@@ -31,7 +25,9 @@ const STARTUP_ONLY_KEYS = new Set([
 	"model.beamSizeRealtime",
 	"model.initialPrompt",
 	"model.initialPromptRealtime",
-	"audio.inputDeviceIndex",
+	// audio.inputDeviceIndex is hot-swapped via sttSetParameter("input_device_index")
+	// in use-sync-settings.ts — do NOT include it here or device picks would
+	// trigger a full server restart and lose the loaded models.
 	"audio.webrtcSensitivity",
 	"audio.minLengthOfRecording",
 	"audio.sileroDeactivityDetection",

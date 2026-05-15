@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
-import { useTranscriptionStore } from "@/features/live-transcription";
+import { useTranscriptionStore } from "@/entities/transcription";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 
 const VISIBLE_COUNT = 3;
@@ -38,7 +38,10 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 	const ephemeral = useTranscriptionStore((s) => s.ephemeral);
 	const clearEphemeral = useTranscriptionStore((s) => s.clearEphemeral);
 	const isListenMode = useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
-	const showInApp = useSettingsStore((s) => s.settings.general?.showInAppLiveTranscription ?? true);
+	const liveDisplay = useSettingsStore(
+		(s) => s.settings.general?.liveTranscriptionDisplay ?? "both"
+	);
+	const showInApp = liveDisplay === "in-app" || liveDisplay === "both";
 	const liveText = showInApp ? currentRealtime : "";
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [now, setNow] = useState(Date.now);

@@ -44,4 +44,50 @@ describe("createUpdaterStatusHistory", () => {
 		history.clear();
 		expect(history.getHistory()).toEqual([]);
 	});
+
+	test("includes the message field in the recorded entry when provided", () => {
+		// Locks down the conditional spread `...(entry.message ? { message } : {})`.
+		// Mutating `{ message: entry.message }` to `{}` would drop the field
+		// silently — assert that getHistory()[0].message is exactly the input.
+		const history = createUpdaterStatusHistory({ maxEntries: 3, now: () => 100 });
+		const recorded = history.record({ status: "error", message: "boom" });
+		expect(recorded.message).toBe("boom");
+		const stored = history.getHistory()[0];
+		expect(stored?.message).toBe("boom");
+	});
+
+	test("does not include a message field when message is omitted", () => {
+		// Inverse direction — locks down that the conditional spread isn't
+		// just unconditionally adding `message: undefined`.
+		const history = createUpdaterStatusHistory({ maxEntries: 3, now: () => 200 });
+		const recorded = history.record({ status: "checking" });
+		expect(recorded.message).toBeUndefined();
+		expect(Object.hasOwn(recorded, "message")).toBe(false);
+	});
+
+	test("preserves the only entry when capacity is not yet exceeded", () => {
+		// Kills `if (entries.length > maxEntries)` -> `if (true)`. With a
+		// single record + maxEntries=5, the splice block must NOT run, so the
+		// just-pushed entry stays.
+		const history = createUpdaterStatusHistory({ maxEntries: 5, now: () => 1 });
+		history.record({ status: "checking" });
+		const stored = history.getHistory();
+		expect(stored).toHaveLength(1);
+		expect(stored[0]?.status).toBe("checking");
+	});
+
+	test("preserves all entries when count is exactly equal to maxEntries (boundary)", () => {
+		// Kills the EqualityOperator mutation `>` -> `>=`. With exactly
+		// maxEntries records, `entries.length > maxEntries` is false (no
+		// splice), but the mutant `entries.length >= maxEntries` would splice
+		// — dropping the oldest. Asserting all 3 statuses are present catches
+		// the off-by-one.
+		const history = createUpdaterStatusHistory({ maxEntries: 3, now: () => 1 });
+		history.record({ status: "checking" });
+		history.record({ status: "available" });
+		history.record({ status: "downloaded" });
+		const stored = history.getHistory();
+		expect(stored).toHaveLength(3);
+		expect(stored.map((e) => e.status)).toEqual(["checking", "available", "downloaded"]);
+	});
 });

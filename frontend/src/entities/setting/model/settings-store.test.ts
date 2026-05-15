@@ -43,9 +43,9 @@ describe("useSettingsStore mutators", () => {
 	});
 
 	test("updateLlmSettings merges patch", () => {
-		useSettingsStore.getState().updateLlmSettings({ enabled: true, preset: "formal" });
+		useSettingsStore.getState().updateLlmSettings({ enabled: true, presets: [{ key: "formal" }] });
 		expect(useSettingsStore.getState().settings.llm.enabled).toBe(true);
-		expect(useSettingsStore.getState().settings.llm.preset).toBe("formal");
+		expect(useSettingsStore.getState().settings.llm.presets).toEqual([{ key: "formal" }]);
 	});
 
 	test("updateDictionary replaces the dictionary list wholesale", () => {
@@ -89,5 +89,34 @@ describe("useSettingsStore mutators", () => {
 		const settings = useSettingsStore.getState().settings;
 		expect(settings.general.recordingMode).toBe("ptt"); // back to default
 		expect(settings.dictionary).toHaveLength(1); // preserved
+	});
+
+	test("persists state under the EXACT key 'winstt-settings' (kills `name: \"\"` and storage-name mutants)", () => {
+		// Mutate something so persist writes to localStorage.
+		useSettingsStore.getState().updateGeneralSettings({ recordingMode: "toggle" });
+		// The persist key MUST be "winstt-settings" — a mutant that changes
+		// the name to "" or anything else would write to a different key,
+		// leaving "winstt-settings" empty.
+		const stored = window.localStorage.getItem("winstt-settings");
+		expect(stored).not.toBeNull();
+		// Confirm the persisted blob is valid JSON containing the change.
+		expect(JSON.parse(stored as string)).toMatchObject({
+			state: { settings: { general: { recordingMode: "toggle" } } },
+		});
+	});
+
+	test("partialize only persists `settings` (NOT `isLoaded`) — kills `() => undefined` and `{}` mutants", () => {
+		useSettingsStore.getState().updateGeneralSettings({ recordingMode: "listen" });
+		const stored = window.localStorage.getItem("winstt-settings");
+		expect(stored).not.toBeNull();
+		const parsed = JSON.parse(stored as string) as { state: Record<string, unknown> };
+		// `settings` MUST be present in the persisted state.
+		expect(parsed.state.settings).toBeDefined();
+		// `isLoaded` MUST NOT be persisted — partialize is `(s) => ({ settings: s.settings })`.
+		// A mutant `(s) => undefined` would store `{ state: undefined }`;
+		// a mutant `{}` would store `{ state: {} }`. Either way `settings` would be
+		// missing or undefined.
+		expect((parsed.state.settings as Record<string, unknown>).general).toBeDefined();
+		expect("isLoaded" in parsed.state).toBe(false);
 	});
 });

@@ -13,20 +13,27 @@ export function useDownloadListener(): void {
 	const setDownloadProgress = useDownloadStore((s) => s.setDownloadProgress);
 	const setDownloadComplete = useDownloadStore((s) => s.setDownloadComplete);
 
-	useEffect(() => {
-		const unsub1 = onModelDownloadStart((model) => {
-			setDownloadStart(model);
-		});
-		const unsub2 = onModelDownloadProgress((payload) => {
-			setDownloadProgress(payload);
-		});
-		const unsub3 = onModelDownloadComplete((_model, cancelled) => {
-			setDownloadComplete(cancelled);
-		});
-		return () => {
-			unsub1();
-			unsub2();
-			unsub3();
-		};
-	}, [setDownloadStart, setDownloadProgress, setDownloadComplete]);
+	useEffect(
+		() =>
+			onModelDownloadStart((model) => {
+				setDownloadStart(model);
+			}),
+		[setDownloadStart]
+	);
+
+	useEffect(
+		() =>
+			onModelDownloadProgress((payload) => {
+				setDownloadProgress(payload);
+			}),
+		[setDownloadProgress]
+	);
+
+	useEffect(
+		() =>
+			onModelDownloadComplete((_model, cancelled) => {
+				setDownloadComplete(cancelled);
+			}),
+		[setDownloadComplete]
+	);
 }

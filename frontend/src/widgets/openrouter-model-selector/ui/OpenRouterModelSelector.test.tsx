@@ -7,6 +7,20 @@ import {
 	OpenRouterModelSelector,
 } from "./OpenRouterModelSelector";
 
+describe("SearchPendingIndicator", () => {
+	const { SearchPendingIndicator } = helpers;
+
+	test("returns null when pending=false", () => {
+		const { container } = render(<SearchPendingIndicator pending={false} />);
+		expect(container.firstChild).toBeNull();
+	});
+
+	test("renders spinner when pending=true", () => {
+		const { container } = render(<SearchPendingIndicator pending={true} />);
+		expect(container.firstChild).not.toBeNull();
+	});
+});
+
 describe("OpenRouterModelSelector", () => {
 	test("renders without crashing for empty model list", () => {
 		const { container } = render(
@@ -374,6 +388,90 @@ describe("OpenRouterModelSelector helpers", () => {
 				maker: "openai",
 				nonce: 6,
 			});
+		});
+	});
+
+	describe("applyToggleExpanded", () => {
+		test("adds modelId to an empty set when no nextOpen given", () => {
+			const result = helpers.applyToggleExpanded(new Set<string>(), "openai/gpt-4o");
+			expect(result.has("openai/gpt-4o")).toBe(true);
+		});
+
+		test("removes modelId from a set that already contains it", () => {
+			const prev = new Set(["openai/gpt-4o"]);
+			const result = helpers.applyToggleExpanded(prev, "openai/gpt-4o");
+			expect(result.has("openai/gpt-4o")).toBe(false);
+		});
+
+		test("forces open when nextOpen=true", () => {
+			const prev = new Set(["openai/gpt-4o"]);
+			const result = helpers.applyToggleExpanded(prev, "openai/gpt-4o", true);
+			expect(result.has("openai/gpt-4o")).toBe(true);
+		});
+
+		test("forces closed when nextOpen=false", () => {
+			const prev = new Set<string>();
+			const result = helpers.applyToggleExpanded(prev, "openai/gpt-4o", false);
+			expect(result.has("openai/gpt-4o")).toBe(false);
+		});
+
+		test("does not mutate the input set", () => {
+			const prev = new Set(["openai/gpt-4o"]);
+			helpers.applyToggleExpanded(prev, "openai/gpt-4o");
+			// Original set should still have the model id
+			expect(prev.has("openai/gpt-4o")).toBe(true);
+		});
+	});
+
+	describe("applyCloseWith", () => {
+		test("calls setOpen(false) and returns true when not intercepted", () => {
+			const openValues: boolean[] = [];
+			const result = helpers.applyCloseWith("outside-click", "item-press", false, (v) => {
+				openValues.push(v);
+			});
+			expect(result).toBe(true);
+			expect(openValues).toEqual([false]);
+		});
+
+		test("does not call setOpen and returns false when intercepted (inside popup)", () => {
+			let called = false;
+			const result = helpers.applyCloseWith("outside-click", "item-press", true, () => {
+				called = true;
+			});
+			expect(result).toBe(false);
+			expect(called).toBe(false);
+		});
+
+		test("does not call setOpen and returns false when reason is item-press inside popup", () => {
+			let called = false;
+			const result = helpers.applyCloseWith("item-press", "item-press", true, () => {
+				called = true;
+			});
+			// item-press reason is not intercepted even inside popup
+			expect(result).toBe(true);
+			expect(called).toBe(true);
+		});
+	});
+
+	describe("shouldInterceptClose", () => {
+		test("intercepts when reason is not item-press and target is inside popup", () => {
+			expect(helpers.shouldInterceptClose("outside-click", "item-press", true)).toBe(true);
+		});
+
+		test("does not intercept when reason is item-press", () => {
+			expect(helpers.shouldInterceptClose("item-press", "item-press", true)).toBe(false);
+		});
+
+		test("does not intercept when not inside popup", () => {
+			expect(helpers.shouldInterceptClose("outside-click", "item-press", false)).toBe(false);
+		});
+
+		test("does not intercept when reason is undefined and not inside popup", () => {
+			expect(helpers.shouldInterceptClose(undefined, "item-press", false)).toBe(false);
+		});
+
+		test("intercepts when reason is undefined and inside popup", () => {
+			expect(helpers.shouldInterceptClose(undefined, "item-press", true)).toBe(true);
 		});
 	});
 });

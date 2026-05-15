@@ -10,6 +10,13 @@ describe("messages bundle", () => {
 		}
 	});
 
+	test("does NOT contain bundles for locales outside LOCALES", () => {
+		const bundleKeys = new Set(Object.keys(messages));
+		const advertised = new Set<string>(LOCALES);
+		const extras = [...bundleKeys].filter((k) => !advertised.has(k));
+		expect(extras).toEqual([]);
+	});
+
 	test("English locale has at least one top-level key", () => {
 		const enKeys = Object.keys(messages.en as Record<string, unknown>);
 		expect(enKeys.length).toBeGreaterThan(0);

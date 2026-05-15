@@ -21,14 +21,21 @@ export type LcovCoverage = Map<string, FileCoverage>;
 export async function parseLcov(lcovPath: string): Promise<LcovCoverage> {
 	const text = await Bun.file(lcovPath).text();
 	const result: LcovCoverage = new Map();
-	let current: { file: string; cov: FileCoverage } | null = null;
+	let current: FileCoverage | null = null;
 
 	for (const rawLine of text.split("\n")) {
 		const line = rawLine.trim();
 		if (line.startsWith("SF:")) {
 			const file = normalizePath(line.slice(3));
-			current = { file, cov: { lineHits: new Map() } };
-			result.set(file, current.cov);
+			// Bun emits one record per (test file, source file) pair, so the
+			// same source can appear many times. Merge by accumulating hits
+			// into the existing FileCoverage instead of overwriting.
+			let cov = result.get(file);
+			if (!cov) {
+				cov = { lineHits: new Map() };
+				result.set(file, cov);
+			}
+			current = cov;
 			continue;
 		}
 		if (line.startsWith("DA:") && current !== null) {
@@ -37,7 +44,12 @@ export async function parseLcov(lcovPath: string): Promise<LcovCoverage> {
 				.split(",")
 				.map((s) => Number.parseInt(s, 10));
 			if (Number.isFinite(lineNum) && Number.isFinite(hits)) {
-				current.cov.lineHits.set(lineNum as number, hits as number);
+				const ln = lineNum as number;
+				const h = hits as number;
+				const prev = current.lineHits.get(ln) ?? 0;
+				// Sum hits across duplicate SF blocks so a line counts as
+				// "covered" when any test exercises it.
+				current.lineHits.set(ln, prev + h);
 			}
 			continue;
 		}

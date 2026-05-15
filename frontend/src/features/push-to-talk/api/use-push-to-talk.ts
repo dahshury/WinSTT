@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
 	hotkeyRegister,
@@ -27,12 +27,16 @@ export function usePushToTalk(): void {
 	recordingModeRef.current = recordingMode;
 	smartEndpointRef.current = smartEndpoint;
 
-	// Sync accelerator from settings store
-	useEffect(() => {
+	// Mirror pushToTalkKey from the settings store into the hotkey store using
+	// React's render-time adjustment pattern instead of useEffect — there's no
+	// async boundary, this is pure store-to-store derivation.
+	const [prevPushToTalkKey, setPrevPushToTalkKey] = useState(pushToTalkKey);
+	if (prevPushToTalkKey !== pushToTalkKey) {
+		setPrevPushToTalkKey(pushToTalkKey);
 		if (pushToTalkKey) {
 			setAccelerator(pushToTalkKey);
 		}
-	}, [pushToTalkKey, setAccelerator]);
+	}
 
 	// Register the global hotkey — only re-runs when accelerator actually changes
 	useEffect(() => {
@@ -51,11 +55,9 @@ export function usePushToTalk(): void {
 		}
 	}, [recordingMode, smartEndpoint]);
 
-	// Subscribe to press/release events — uses refs for mode to avoid re-subscribing
+	// Press handler — refs let us avoid re-subscribing when mode changes.
 	useEffect(() => {
-		let unsubRecordingStop: (() => void) | undefined;
-
-		const unsubPressed = onHotkeyPressed(() => {
+		return onHotkeyPressed(() => {
 			const mode = recordingModeRef.current;
 
 			if (mode === "listen") {
@@ -67,42 +69,47 @@ export function usePushToTalk(): void {
 			// so one frame per press is enough.
 			if (mode === "ptt") {
 				sttCallMethod("set_microphone", [true]);
-			} else {
-				const nowActive = !isActiveRef.current;
-				isActiveRef.current = nowActive;
-				setActive(nowActive);
-
-				if (nowActive) {
-					sttCallMethod("set_microphone", [true]);
-				} else {
-					sttCallMethod("set_microphone", [false]);
-				}
-			}
-		});
-
-		const unsubReleased = onHotkeyReleased(() => {
-			const mode = recordingModeRef.current;
-
-			if (mode === "listen") {
 				return;
 			}
-			setPressed(false);
-
-			if (mode === "ptt") {
-				sttCallMethod("set_microphone", [false]);
-			}
+			const nowActive = !isActiveRef.current;
+			isActiveRef.current = nowActive;
+			setActive(nowActive);
+			sttCallMethod("set_microphone", [nowActive]);
 		});
+	}, [setPressed, setActive]);
 
-		unsubRecordingStop = onRecordingStop(() => {
-			// Only relevant in toggle mode — auto-reset handled by server
+	// Release handler.
+	useEffect(
+		() =>
+			onHotkeyReleased(() => {
+				const mode = recordingModeRef.current;
+
+				if (mode === "listen") {
+					return;
+				}
+				setPressed(false);
+
+				if (mode === "ptt") {
+					sttCallMethod("set_microphone", [false]);
+				}
+			}),
+		[setPressed]
+	);
+
+	// Toggle-mode auto-reset is handled by the server; we still subscribe so the
+	// channel doesn't accumulate unbound listeners.
+	useEffect(() => {
+		return onRecordingStop(() => {
+			// no-op
 		});
+	}, []);
 
-		return () => {
-			unsubPressed();
-			unsubReleased();
-			unsubRecordingStop?.();
+	// Reset toggle state on unmount.
+	useEffect(
+		() => () => {
 			isActiveRef.current = false;
 			setActive(false);
-		};
-	}, [setPressed, setActive]);
+		},
+		[setActive]
+	);
 }

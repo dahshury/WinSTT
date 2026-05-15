@@ -29,6 +29,7 @@ describe("AudioVisualizer", () => {
 		"grid",
 		"radial",
 		"wave",
+		"aura",
 	] as const)("renders without throwing when settings.visualizerType=%s", (type) => {
 		useSettingsStore.setState({
 			settings: {

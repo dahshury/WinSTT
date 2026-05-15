@@ -50,19 +50,6 @@ describe("GeneralSettingsPanel helpers — buildRecordingModeOptions", () => {
 	});
 });
 
-describe("GeneralSettingsPanel helpers — buildTranscriptionFormatOptions", () => {
-	test("returns txt and srt formats", () => {
-		const opts = helpers.buildTranscriptionFormatOptions(tStub);
-		expect(opts.map((o) => o.value)).toEqual(["txt", "srt"]);
-	});
-
-	test("labels are TXT and SRT", () => {
-		const opts = helpers.buildTranscriptionFormatOptions(tStub);
-		expect(opts[0]?.label).toBe("TXT");
-		expect(opts[1]?.label).toBe("SRT");
-	});
-});
-
 describe("GeneralSettingsPanel helpers — pickLocale", () => {
 	test("calls setter for valid locale", () => {
 		const setLocale = mock(() => undefined);
@@ -116,23 +103,22 @@ describe("GeneralSettingsPanel helpers — computeDisplayFlags", () => {
 		expect(flags).toEqual({
 			overlayEnabled: true,
 			subDisabled: false,
-			pillLiveDisabled: false,
-			inAppLiveDisabled: false,
+			liveDisplayDisabled: false,
 		});
 	});
 
-	test("listen mode disables overlay-derived flags", () => {
+	test("listen mode disables the overlay/size picker but leaves the live-transcription picker enabled", () => {
+		// liveDisplayDisabled hinges only on realtime — listen mode keeps the
+		// in-app option meaningful so the picker stays interactable.
 		const flags = helpers.computeDisplayFlags(true, { showRecordingOverlay: true } as any, true);
 		expect(flags.overlayEnabled).toBe(false);
 		expect(flags.subDisabled).toBe(true);
-		expect(flags.pillLiveDisabled).toBe(true);
-		expect(flags.inAppLiveDisabled).toBe(false);
+		expect(flags.liveDisplayDisabled).toBe(false);
 	});
 
-	test("realtime off disables in-app live and pill live", () => {
+	test("realtime off disables the combined live-transcription picker", () => {
 		const flags = helpers.computeDisplayFlags(false, { showRecordingOverlay: true } as any, false);
-		expect(flags.pillLiveDisabled).toBe(true);
-		expect(flags.inAppLiveDisabled).toBe(true);
+		expect(flags.liveDisplayDisabled).toBe(true);
 	});
 });
 

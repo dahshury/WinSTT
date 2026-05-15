@@ -66,4 +66,79 @@ describe("registerWindowTelemetry", () => {
 		cleanup();
 		expect(fakeWindow.listenerCount("move")).toBe(0);
 	});
+
+	test.each<[string, WindowTelemetryEventName]>([
+		["move", "moved"],
+		["resize", "resized"],
+		["focus", "focused"],
+		["blur", "blurred"],
+		["show", "shown"],
+		["hide", "hidden"],
+		["minimize", "minimized"],
+		["restore", "restored"],
+		["maximize", "maximized"],
+		["unmaximize", "unmaximized"],
+	])("electron event %s maps to telemetry event %s", (electronEvent, telemetryEvent) => {
+		const fakeWindow = createFakeWindow();
+		const emitted: WindowTelemetryEventName[] = [];
+		const cleanup = registerWindowTelemetry(fakeWindow, (p) => emitted.push(p.event));
+		fakeWindow.emit(electronEvent);
+		expect(emitted).toEqual([telemetryEvent]);
+		cleanup();
+	});
+
+	test("registers exactly one listener per electron event and removes them all on cleanup", () => {
+		const fakeWindow = createFakeWindow();
+		const cleanup = registerWindowTelemetry(fakeWindow, () => undefined);
+		const electronEvents = [
+			"move",
+			"resize",
+			"focus",
+			"blur",
+			"show",
+			"hide",
+			"minimize",
+			"restore",
+			"maximize",
+			"unmaximize",
+		];
+		for (const ev of electronEvents) {
+			expect(fakeWindow.listenerCount(ev)).toBe(1);
+		}
+		cleanup();
+		for (const ev of electronEvents) {
+			expect(fakeWindow.listenerCount(ev)).toBe(0);
+		}
+	});
+
+	test("forwards live window bounds at the time the event fires", () => {
+		const bounds = { x: 1, y: 2, width: 3, height: 4 };
+		const fakeWindow = createFakeWindow(bounds);
+		const payloads: Array<{ event: WindowTelemetryEventName; bounds: typeof bounds }> = [];
+		const cleanup = registerWindowTelemetry(fakeWindow, (p) =>
+			payloads.push({ event: p.event, bounds: p.bounds })
+		);
+		// Mutate bounds before emit — getBounds returns the live reference.
+		bounds.x = 99;
+		bounds.width = 200;
+		fakeWindow.emit("resize");
+		expect(payloads[0]?.bounds).toEqual({ x: 99, y: 2, width: 200, height: 4 });
+		cleanup();
+	});
+});
+
+describe("createWindowTelemetryPayload (mutation guard)", () => {
+	test("never returns a reference to the input bounds (defensive copy guard)", () => {
+		// The implementation builds a new object: `bounds: { x, y, width, height }`.
+		// If any field were stripped from the literal, the test would fail.
+		const input = { x: 1, y: 2, width: 3, height: 4 };
+		const payload = createWindowTelemetryPayload("moved", input);
+		expect(payload.bounds).toEqual(input);
+		expect(payload.bounds).not.toBe(input);
+		// Each field is independently copied — verify all four exist.
+		expect(payload.bounds.x).toBe(1);
+		expect(payload.bounds.y).toBe(2);
+		expect(payload.bounds.width).toBe(3);
+		expect(payload.bounds.height).toBe(4);
+	});
 });

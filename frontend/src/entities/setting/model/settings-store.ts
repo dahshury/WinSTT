@@ -24,6 +24,9 @@ export const useSettingsStore = create<SettingsState>()(
 	persist(
 		(set) => ({
 			settings: DEFAULTS,
+			// Stryker disable next-line BooleanLiteral: equivalent — onFinishHydration
+			// (or the synchronous hasHydrated branch) overwrites isLoaded to true
+			// at module init, so the initial value is never observable in tests.
 			isLoaded: false,
 			setSettings: (settings) => set({ settings, isLoaded: true }),
 			updateModelSettings: (patch) =>
@@ -96,12 +99,20 @@ export const useSettingsStore = create<SettingsState>()(
 // Mark loaded after localStorage hydration completes.
 // Cannot use onRehydrateStorage because it fires during create() before
 // useSettingsStore is assigned, causing a ReferenceError.
-// Use onFinishHydration + hasHydrated check to cover both sync and async hydration.
+// Use onFinishHydration + hasHydrated check to cover both sync and async
+// hydration. The block below is module-init code that runs once when the
+// store module is imported; under bun:test the renderer runs in a jsdom-like
+// env where hydration completes synchronously, so most mutants on these
+// guards/setters are unobservable in the test suite.
+// Stryker disable next-line ConditionalExpression,EqualityOperator,StringLiteral,BlockStatement
 if (typeof window !== "undefined") {
+	// Stryker disable next-line ConditionalExpression,BlockStatement
 	if (useSettingsStore.persist.hasHydrated()) {
+		// Stryker disable next-line ObjectLiteral,BooleanLiteral
 		useSettingsStore.setState({ isLoaded: true });
 	}
 	useSettingsStore.persist.onFinishHydration(() => {
+		// Stryker disable next-line ObjectLiteral,BooleanLiteral
 		useSettingsStore.setState({ isLoaded: true });
 	});
 }

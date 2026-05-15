@@ -263,4 +263,45 @@ describe("app-menu-template pure helpers", () => {
 		expect(out.accelerator).toBe("Ctrl+S");
 		expect(typeof out.click).toBe("function");
 	});
+
+	test("assignDefined skips assignment when value is undefined (no own property added)", () => {
+		const target: Record<string, unknown> = {};
+		helpers.assignDefined(target as { x?: string }, "x", undefined);
+		// Mutation guard for L58 ConditionalExpression -> true: if condition were
+		// always true, target.x would be set to undefined and Object.hasOwn would
+		// return true.
+		expect(Object.hasOwn(target, "x")).toBe(false);
+	});
+
+	test("assignDefined preserves a falsy-but-defined value", () => {
+		const target: { x?: number } = {};
+		helpers.assignDefined(target, "x", 0);
+		expect(target.x).toBe(0);
+		expect(Object.hasOwn(target, "x")).toBe(true);
+	});
+
+	test("buildAppMenuTemplate returns items with type literal 'normal' (not empty)", () => {
+		const result = buildAppMenuTemplate([{ type: "normal", label: "Item", enabled: true }], {});
+		const item = result[0];
+		// Mutation guard for L159 StringLiteral -> "": catches "type" being
+		// replaced with empty string.
+		expect(item?.type).toBe("normal");
+		expect(item?.type).not.toBe("");
+	});
+
+	test("buildAppMenuTemplate handles separator items and preserves separator type literal", () => {
+		const result = buildAppMenuTemplate([{ type: "separator" }], {});
+		expect(result[0]).toEqual({ type: "separator" });
+		expect(result[0]?.type).toBe("separator");
+	});
 });
+
+// Equivalent mutants that survive but are semantically identical.
+// L125 [ConditionalExpression -> true] resolveClickHandler: even with the type
+// guard removed, actionId is typed as string|undefined and Record lookup with
+// undefined key returns undefined → same observable behavior.
+// L144 [ConditionalExpression -> true] pickBuiltOptional: if forced true,
+// the ternary still yields `item.checked` which (for undefined) flows into
+// assignDefined which then skips assignment → same observable result.
+// These are flagged as test gaps but covered by the assignDefined defensive
+// check; explicit tests would be tautological.

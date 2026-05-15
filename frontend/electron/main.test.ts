@@ -55,9 +55,15 @@ describe("electron/main.ts (source-level smoke test)", () => {
 	});
 
 	test("uses sandboxed contextIsolated webPreferences", () => {
-		expect(source).toContain("contextIsolation: true");
-		expect(source).toContain("nodeIntegration: false");
-		expect(source).toContain("sandbox: true");
+		// Match the property:value pair allowing for Stryker-instrumented source
+		// (where boolean literals get wrapped). The source-level smoke test runs
+		// inside Stryker's sandbox where the original `true`/`false` literals are
+		// rewritten as ternaries like `stryMutAct_9fa48("8") ? false : (stryCov_9fa48("8"), true)`.
+		// We just verify the property keys exist with `true` / `false` somewhere
+		// in the value position — covering both raw and instrumented forms.
+		expect(source).toMatch(/contextIsolation:\s*(true|stryMutAct.*true)/);
+		expect(source).toMatch(/nodeIntegration:\s*(false|stryMutAct.*false)/);
+		expect(source).toMatch(/sandbox:\s*(true|stryMutAct.*true)/);
 		expect(source).toContain("preload: path.join");
 	});
 
@@ -80,7 +86,7 @@ describe("electron/main.ts (source-level smoke test)", () => {
 	test("imports the auto-updater dynamically (so dev runs don't require it)", () => {
 		expect(source).toContain("electron-updater");
 		// dynamic `await import(...)` keeps it out of the synchronous boot path
-		expect(source).toMatch(/await import\(updaterModuleName\)/);
+		expect(source).toMatch(/await import\(["']electron-updater["']\)/);
 	});
 
 	test("guards renderer navigation against external origins", () => {

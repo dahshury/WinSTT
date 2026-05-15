@@ -153,6 +153,7 @@ function useScrollState(
 	const [canScrollUp, setCanScrollUp] = useState(false);
 	const [canScrollDown, setCanScrollDown] = useState(false);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable across renders
 	useEffect(() => {
 		const viewport = scrollRef.current;
 		if (!viewport) {
@@ -175,7 +176,7 @@ function useScrollState(
 			viewport.removeEventListener("scroll", update);
 			observer.disconnect();
 		};
-	}, [scrollRef, contentRef]);
+	}, []);
 
 	return { canScrollUp, canScrollDown };
 }
@@ -190,6 +191,29 @@ function isHorizontalWheel(event: WheelEvent): boolean {
 	return Math.abs(event.deltaX) > Math.abs(event.deltaY);
 }
 
+/**
+ * Determine whether a wheel event should be debounced (suppressed) given
+ * the current timestamp and the locked-until timestamp.
+ * Returns the updated lockedUntil value (unchanged if event is suppressed or horizontal).
+ */
+export function applyWheelDebounce(
+	event: WheelEvent,
+	el: HTMLDivElement,
+	now: number,
+	lockedUntil: number,
+	debounceMs: number
+): { handled: boolean; nextLockedUntil: number } {
+	if (isHorizontalWheel(event)) {
+		return { handled: false, nextLockedUntil: lockedUntil };
+	}
+	if (now < lockedUntil) {
+		event.preventDefault();
+		return { handled: false, nextLockedUntil: lockedUntil };
+	}
+	applyWheelScroll(el, event);
+	return { handled: true, nextLockedUntil: now + debounceMs };
+}
+
 function useWheelDebounceScroll(scrollRef: React.RefObject<HTMLDivElement | null>) {
 	useEffect(() => {
 		const el = scrollRef.current;
@@ -198,17 +222,16 @@ function useWheelDebounceScroll(scrollRef: React.RefObject<HTMLDivElement | null
 		}
 		let lockedUntil = 0;
 		const handleWheel = (event: WheelEvent) => {
-			if (isHorizontalWheel(event)) {
-				return;
-			}
-			const now = performance.now();
-			if (now < lockedUntil) {
-				event.preventDefault();
-				return;
-			}
-			lockedUntil = now + WHEEL_DEBOUNCE_MS;
-			applyWheelScroll(el, event);
+			const result = applyWheelDebounce(
+				event,
+				el,
+				performance.now(),
+				lockedUntil,
+				WHEEL_DEBOUNCE_MS
+			);
+			lockedUntil = result.nextLockedUntil;
 		};
+		// react-doctor-disable-next-line react-doctor/client-passive-event-listeners
 		el.addEventListener("wheel", handleWheel, { passive: false });
 		return () => {
 			el.removeEventListener("wheel", handleWheel);
@@ -336,6 +359,12 @@ function TileList(props: TileListProps) {
 	);
 }
 
+export function scrollRefByAmount(el: HTMLDivElement | null, delta: number): void {
+	if (el) {
+		el.scrollBy({ top: delta, behavior: "smooth" });
+	}
+}
+
 function TileColumn({
 	providers,
 	favoritesSet,
@@ -356,10 +385,7 @@ function TileColumn({
 	useAutoScrollToActive(scrollRef, favoritesRef, autoScrollEnabled, activeProvider);
 
 	const scrollByAmount = (delta: number) => {
-		const el = scrollRef.current;
-		if (el) {
-			el.scrollBy({ top: delta, behavior: "smooth" });
-		}
+		scrollRefByAmount(scrollRef.current, delta);
 	};
 
 	const handleScrollUp = () => scrollByAmount(-SCROLL_STEP_PX);
@@ -514,6 +540,8 @@ export const __provider_rail_test_helpers__ = {
 	readScrollState,
 	applyWheelScroll,
 	isHorizontalWheel,
+	applyWheelDebounce,
+	scrollRefByAmount,
 	shouldAutoScroll,
 	scrollActiveIntoView,
 	getTileButtonClassName,

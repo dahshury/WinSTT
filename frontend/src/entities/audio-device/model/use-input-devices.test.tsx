@@ -126,4 +126,36 @@ describe("useInputDevices", () => {
 		unmount();
 		expect(addedListeners.get("devicechange")?.length ?? 0).toBe(0);
 	});
+
+	test("coalesces a burst of devicechange events into a single re-fetch", async () => {
+		// A failed PyAudio open flaps the OS device state and fires 5-10
+		// devicechange events in rapid succession.  Without debouncing,
+		// each one triggers its own list_input_devices round-trip — a
+		// burst we observed at 11:16:15 in the debug log.  The hook
+		// should collapse them to one enumeration.
+		const { mediaDevices } = installFakeMediaDevices();
+		queueDevices([{ index: 0, name: "Built-in Mic", isDefault: true }]);
+		const { result } = renderHook(() => useInputDevices());
+		await waitFor(() => expect(result.current.devices.length).toBe(1));
+
+		const callsBeforeBurst = invokeCalls.filter((c) => c === "audio:get-devices").length;
+
+		// Queue the result for the (single) coalesced refetch.
+		queueDevices([
+			{ index: 0, name: "Built-in Mic", isDefault: true },
+			{ index: 3, name: "After Burst", isDefault: false },
+		]);
+		// Fire six events back-to-back within the debounce window.
+		act(() => {
+			for (let i = 0; i < 6; i++) {
+				mediaDevices.dispatchEvent(new Event("devicechange"));
+			}
+		});
+
+		await waitFor(() => expect(result.current.devices.length).toBe(2));
+
+		const callsAfterBurst = invokeCalls.filter((c) => c === "audio:get-devices").length;
+		// Exactly ONE additional call despite six events.
+		expect(callsAfterBurst - callsBeforeBurst).toBe(1);
+	});
 });

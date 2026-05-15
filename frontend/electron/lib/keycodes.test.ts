@@ -90,6 +90,17 @@ describe("codesToNames", () => {
 		expect(codesToNames([1, 9999, 30])).toEqual(["LCtrl", "A"]);
 	});
 
+	test("filters out unknown codes and array length is exactly the known count (kills L194 if(true) mutant that pushes undefined)", () => {
+		// If `if (name != null)` is mutated to `if (true)`, the unknown code (9999)
+		// would push `undefined` into the array, lengthening it by 1.
+		const result = codesToNames([1, 9999, 30]);
+		expect(result.length).toBe(2);
+		// And every entry must be a string — undefined would smuggle in.
+		for (const item of result) {
+			expect(typeof item).toBe("string");
+		}
+	});
+
 	test("returns empty array for empty input", () => {
 		expect(codesToNames([])).toEqual([]);
 	});

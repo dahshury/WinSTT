@@ -17,7 +17,7 @@ import {
 import { IPC } from "../src/shared/api/ipc-channels";
 import { registerAppMenuIpcHandlers } from "./ipc/app-menu-ipc";
 import type { AppMenuBuiltItem } from "./ipc/app-menu-template";
-import { setupAudioMuteHandlers } from "./ipc/audio-mute";
+import { flushMutePending, setupAudioMuteHandlers, unmuteSystemAudio } from "./ipc/audio-mute";
 import { setupAutostartHandlers } from "./ipc/autostart";
 import { createClipboardHandler } from "./ipc/clipboard";
 import {
@@ -35,11 +35,14 @@ import {
 } from "./ipc/ipc-payload-crypto";
 import { setupLlm } from "./ipc/llm";
 import { setupLoopbackHandlers } from "./ipc/loopback";
-import { setOverlayWindow, setupOverlayHandlers } from "./ipc/overlay";
+import { hideOverlay, setOverlayWindow, setupOverlayHandlers, showOverlay } from "./ipc/overlay";
 import { setupRelay } from "./ipc/relay";
 import { cleanupSettingsHandlers, setupSettingsHandlers } from "./ipc/settings";
 import { setupSttCommandHandlers } from "./ipc/stt-commands";
 import { killSttProcess, setupSttProcessHandlers, tryAutoSpawnServer } from "./ipc/stt-process";
+import { setupSystemLocaleHandler } from "./ipc/system-locale";
+import { setupTransformHotkeys } from "./ipc/transform-hotkeys";
+import { setupTransforms } from "./ipc/transforms";
 import { setupTray } from "./ipc/tray";
 import { setupTrayMenuHandlers } from "./ipc/tray-menu-window";
 import {
@@ -49,6 +52,7 @@ import {
 } from "./ipc/updater-status-history";
 import { registerWindowTelemetry } from "./ipc/window-telemetry";
 import { dbg } from "./lib/debug-log";
+import { shutdownPsHost } from "./lib/ps-host";
 import { cleanupRecordingIndicator, initRecordingIndicator } from "./lib/recording-indicator";
 import { cleanupSound, initSound } from "./lib/sound";
 import { getStoreValue, store } from "./lib/store";
@@ -62,6 +66,8 @@ let cleanupRelay: (() => void) | null = null;
 let cleanupHotkeys: (() => void) | null = null;
 let cleanupFileTranscribe: (() => void) | null = null;
 let cleanupLlm: (() => void) | null = null;
+let cleanupTransforms: (() => void) | null = null;
+let cleanupTransformHotkeys: (() => void) | null = null;
 let cleanupTrayMenu: (() => void) | null = null;
 let cleanupAppMenu: (() => void) | null = null;
 let cleanupContextMenu: (() => void) | null = null;
@@ -71,6 +77,7 @@ let cleanupUpdaterStatus: (() => void) | null = null;
 let cleanupSecureInvoke: (() => void) | null = null;
 let cleanupWindowControls: (() => void) | null = null;
 let cleanupOverlay: (() => void) | null = null;
+let cleanupSystemLocale: (() => void) | null = null;
 let autoUpdateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let rendererServerProcess: ChildProcess | null = null;
 let rendererBaseUrl = process.env.WINSTT_RENDERER_BASE_URL ?? "http://localhost:3000";
@@ -90,6 +97,7 @@ const sharedWebPreferences: Electron.WebPreferences = {
 
 /** Set to true during app.quit() so the main window close handler allows actual destruction. */
 let isQuitting = false;
+let hasFlushedAudioOnQuit = false;
 let cspHookInstalled = false;
 let disposeGeneralSettingsWatcher: (() => void) | null = null;
 
@@ -210,6 +218,7 @@ async function waitForRendererServer(baseUrl: string, timeoutMs = 15_000): Promi
 
 	while (Date.now() < deadline) {
 		try {
+			// react-doctor-disable-next-line async-await-in-loop
 			const response = await fetch(`${baseUrl}/settings`);
 			if (response.ok) {
 				return;
@@ -438,6 +447,14 @@ app.commandLine.appendSwitch(
 // native uIOhook, not a DOM event, so Chromium won't recognise it as user input)
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
+// E2E runs need their own userData path so they don't fight a parallel
+// dev session for the single-instance lock (and so settings don't leak
+// between test runs).
+if (process.env.WINSTT_E2E === "1") {
+	const e2eUserData = path.join(app.getPath("temp"), `winstt-e2e-${process.pid}`);
+	app.setPath("userData", e2eUserData);
+}
+
 // ── Single-instance lock ─────────────────────────────────────────────
 const gotTheLock = app.requestSingleInstanceLock();
 
@@ -489,14 +506,34 @@ if (gotTheLock) {
 	});
 
 	// ── Cleanup on quit ───────────────────────────────────────────────
-	app.on("before-quit", () => {
+	app.on("before-quit", (event) => {
 		isQuitting = true;
+		// If we ducked the master volume for dictation, schedule a restore
+		// and defer quit until the PS host has confirmed it (or timed out).
+		// Without this the user can be left at DUCK_LEVEL volume after a
+		// hotkey-triggered quit mid-recording.
+		if (!hasFlushedAudioOnQuit) {
+			hasFlushedAudioOnQuit = true;
+			unmuteSystemAudio();
+			const flushDeadline = new Promise<void>((resolve) => setTimeout(resolve, 1500));
+			event.preventDefault();
+			Promise.race([flushMutePending(), flushDeadline]).finally(() => {
+				shutdownPsHost();
+				app.quit();
+			});
+			return;
+		}
+		shutdownPsHost();
 		cleanupSound();
 		cleanupRecordingIndicator();
 		cleanupTrayMenu?.();
 		cleanupTrayMenu = null;
 		cleanupLlm?.();
 		cleanupLlm = null;
+		cleanupTransforms?.();
+		cleanupTransforms = null;
+		cleanupTransformHotkeys?.();
+		cleanupTransformHotkeys = null;
 		cleanupAppMenu?.();
 		cleanupAppMenu = null;
 		cleanupContextMenu?.();
@@ -513,6 +550,8 @@ if (gotTheLock) {
 		cleanupWindowControls = null;
 		cleanupOverlay?.();
 		cleanupOverlay = null;
+		cleanupSystemLocale?.();
+		cleanupSystemLocale = null;
 		disposeGeneralSettingsWatcher?.();
 		disposeGeneralSettingsWatcher = null;
 		cleanupSettingsHandlers();
@@ -537,20 +576,6 @@ if (gotTheLock) {
 		}
 		settingsWindow = null;
 	});
-
-	// Under `bun electron:dev`, electronmon supervises this process and would
-	// otherwise wait for a file change to relaunch instead of letting the dev
-	// session terminate. Killing its parent lets `concurrently -k` tear down
-	// the rest of the stack on user-initiated quit.
-	app.on("will-quit", () => {
-		if (process.env.ELECTRONMON_LOGLEVEL && process.ppid) {
-			try {
-				process.kill(process.ppid, "SIGTERM");
-			} catch {
-				// best-effort; process is exiting anyway
-			}
-		}
-	});
 } else {
 	app.quit();
 }
@@ -568,11 +593,14 @@ function setupGlobalIpcHandlers() {
 	cleanupOverlay = setupOverlayHandlers();
 	cleanupTrayMenu = setupTrayMenuHandlers();
 	cleanupLlm = setupLlm();
+	cleanupTransforms = setupTransforms();
+	cleanupTransformHotkeys = setupTransformHotkeys().dispose;
 	cleanupAppMenu = setupAppMenuHandlers();
 	cleanupContextMenu = setupContextMenuHandlers();
 	cleanupClipboard = setupClipboardHandlers();
 	cleanupUpdaterStatus = setupUpdaterStatusHandlers();
 	cleanupSecureInvoke = setupSecureInvokeHandlers();
+	cleanupSystemLocale = setupSystemLocaleHandler();
 }
 
 function setupAppMenuHandlers(): () => void {
@@ -749,7 +777,7 @@ function createSettingsWindow(): BrowserWindow {
 	settingsWindow = new BrowserWindow({
 		title: "WinSTT Settings",
 		...(iconPath ? { icon: iconPath } : {}),
-		...(mainWindow ? { parent: mainWindow } : {}),
+		...(mainWindow ? { parent: mainWindow, modal: true } : {}),
 		width: 700,
 		height: 560,
 		resizable: false,
@@ -864,6 +892,9 @@ function createWindow() {
 			const minimizeToTray = getStoreValue("general.minimizeToTray");
 			if (minimizeToTray) {
 				event.preventDefault();
+				if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isVisible()) {
+					settingsWindow.hide();
+				}
 				mainWindow?.hide();
 				return;
 			}
@@ -949,8 +980,12 @@ function createWindow() {
 		}
 	});
 
-	// Auto-spawn the STT server (production: bundled exe, dev: requires STT_SERVER_DIR env var)
-	tryAutoSpawnServer();
+	// Auto-spawn the STT server (production: bundled exe, dev: requires STT_SERVER_DIR env var).
+	// Skipped for E2E runs that only test pure-IPC behaviours like the overlay pill —
+	// avoids a slow / fragile dependency on the Python server during Playwright tests.
+	if (process.env.WINSTT_E2E_SKIP_STT !== "1") {
+		tryAutoSpawnServer();
+	}
 
 	// Auto-connect to STT server (reconnects with exponential backoff if not yet running)
 	dbg("stt-client", "Connecting to STT server...");
@@ -982,4 +1017,38 @@ function createWindow() {
 
 	// Pre-create hidden overlay window for instant display during recording
 	createOverlayWindow();
+
+	// E2E test hooks. Only wired up when WINSTT_E2E=1 — the env var is set
+	// by Playwright when launching the binary, and absent in normal dev /
+	// production runs. Exposing showOverlay/hideOverlay lets the E2E suite
+	// drive the pill directly instead of having to spin up the STT server
+	// and synthesize WebSocket events.
+	if (process.env.WINSTT_E2E === "1") {
+		const e2e = globalThis as unknown as {
+			__winsttE2E__?: {
+				showOverlay: () => void;
+				hideOverlay: () => void;
+				isOverlayVisible: () => boolean;
+				simulateHotkeyPress: () => void;
+				simulateRecordingStop: () => void;
+			};
+		};
+		// Lazy-import to avoid pulling these into the production bundle
+		// when WINSTT_E2E is unset.
+		const { notifyHotkeyPressed, notifyRecordingStop } = require("./lib/recording-state") as {
+			notifyHotkeyPressed: () => void;
+			notifyRecordingStop: () => void;
+		};
+		e2e.__winsttE2E__ = {
+			showOverlay,
+			hideOverlay,
+			isOverlayVisible: () => overlayWindow?.isVisible() ?? false,
+			// Simulate a hotkey press from the test harness — feeds the
+			// recording-state intent flag the same way uiohook would.
+			simulateHotkeyPress: () => notifyHotkeyPressed(),
+			// Simulate a server `recording_stop` — clears the intent flag
+			// so subsequent stray `recording_start` events get rejected.
+			simulateRecordingStop: () => notifyRecordingStop(),
+		};
+	}
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
 import { cn } from "@/shared/lib/cn";
 import { formatMaker } from "../lib/model-selector-utils";
 import { MODEL_VARIANT_INFO, type ModelVariant } from "../lib/model-variant-utils";
@@ -24,6 +24,41 @@ export interface ActiveFiltersBarProps {
 	selectedVariant: ModelVariant | "none" | null;
 }
 
+const FADE_TRANSITION = { duration: 0.15, ease: "easeOut" } as const;
+const FADE_EXIT = { opacity: 0, transition: { duration: 0.3, ease: "easeIn" } } as const;
+
+export function getVariantLabel(variant: ModelVariant | "none"): string {
+	return variant === "none" ? "Standard" : (MODEL_VARIANT_INFO[variant]?.label ?? variant);
+}
+
+export function hasActiveFilters(
+	selectedMakers: string[],
+	selectedVariant: ModelVariant | "none" | null,
+	selectedEndpointProvider: string | null,
+	selectedParameters: FilterableParameter[]
+): boolean {
+	return (
+		selectedMakers.length > 0 ||
+		selectedVariant !== null ||
+		selectedEndpointProvider !== null ||
+		selectedParameters.length > 0
+	);
+}
+
+function AnimatedBadge({ children, id }: { children: React.ReactNode; id: string }) {
+	return (
+		<m.div
+			animate={{ opacity: 1 }}
+			exit={FADE_EXIT}
+			initial={{ opacity: 0 }}
+			key={id}
+			transition={FADE_TRANSITION}
+		>
+			{children}
+		</m.div>
+	);
+}
+
 export function ActiveFiltersBar({
 	selectedMakers,
 	selectedVariant,
@@ -35,13 +70,9 @@ export function ActiveFiltersBar({
 	onRemoveParameter,
 	className,
 }: ActiveFiltersBarProps) {
-	const hasFilters =
-		selectedMakers.length > 0 ||
-		selectedVariant !== null ||
-		selectedEndpointProvider !== null ||
-		selectedParameters.length > 0;
-
-	if (!hasFilters) {
+	if (
+		!hasActiveFilters(selectedMakers, selectedVariant, selectedEndpointProvider, selectedParameters)
+	) {
 		return null;
 	}
 
@@ -52,75 +83,52 @@ export function ActiveFiltersBar({
 				"flex flex-wrap items-center gap-2 border-border border-b px-2 py-1.5",
 				className
 			)}
-			data-has-filters={hasFilters || undefined}
+			data-has-filters
 			data-slot="active-filters-bar"
 		>
-			<AnimatePresence initial={false}>
-				{selectedMakers.map((maker) => (
-					<motion.div
-						animate={{ opacity: 1 }}
-						exit={{ opacity: 0, transition: { duration: 0.3, ease: "easeIn" } }}
-						initial={{ opacity: 0 }}
-						key={`maker-${maker}`}
-						transition={{ duration: 0.15, ease: "easeOut" }}
-					>
-						<ActiveFilterBadge
-							label="Author"
-							onRemove={() => onMakerToggle(maker)}
-							value={formatMaker(maker)}
-						/>
-					</motion.div>
-				))}
-				{selectedVariant !== null && (
-					<motion.div
-						animate={{ opacity: 1 }}
-						exit={{ opacity: 0, transition: { duration: 0.3, ease: "easeIn" } }}
-						initial={{ opacity: 0 }}
-						key={`variant-${selectedVariant}`}
-						transition={{ duration: 0.15, ease: "easeOut" }}
-					>
-						<ActiveFilterBadge
-							label="Variant"
-							onRemove={() => onVariantSelect(null)}
-							value={
-								selectedVariant === "none"
-									? "Standard"
-									: (MODEL_VARIANT_INFO[selectedVariant]?.label ?? selectedVariant)
-							}
-						/>
-					</motion.div>
-				)}
-				{selectedEndpointProvider !== null && (
-					<motion.div
-						animate={{ opacity: 1 }}
-						exit={{ opacity: 0, transition: { duration: 0.3, ease: "easeIn" } }}
-						initial={{ opacity: 0 }}
-						key={`endpoint-${selectedEndpointProvider}`}
-						transition={{ duration: 0.15, ease: "easeOut" }}
-					>
-						<ActiveFilterBadge
-							label="Provider"
-							onRemove={() => onEndpointProviderSelect(null)}
-							value={formatProviderName(selectedEndpointProvider)}
-						/>
-					</motion.div>
-				)}
-				{selectedParameters.map((param) => (
-					<motion.div
-						animate={{ opacity: 1 }}
-						exit={{ opacity: 0, transition: { duration: 0.3, ease: "easeIn" } }}
-						initial={{ opacity: 0 }}
-						key={`param-${param}`}
-						transition={{ duration: 0.15, ease: "easeOut" }}
-					>
-						<ActiveFilterBadge
-							label="Param"
-							onRemove={() => onRemoveParameter(param)}
-							value={PARAMETER_INFO[param].label}
-						/>
-					</motion.div>
-				))}
-			</AnimatePresence>
+			<LazyMotion features={domAnimation}>
+				<AnimatePresence initial={false}>
+					{selectedMakers.map((maker) => (
+						<AnimatedBadge id={`maker-${maker}`} key={`maker-${maker}`}>
+							<ActiveFilterBadge
+								label="Author"
+								onRemove={() => onMakerToggle(maker)}
+								value={formatMaker(maker)}
+							/>
+						</AnimatedBadge>
+					))}
+					{selectedVariant !== null && (
+						<AnimatedBadge id={`variant-${selectedVariant}`} key={`variant-${selectedVariant}`}>
+							<ActiveFilterBadge
+								label="Variant"
+								onRemove={() => onVariantSelect(null)}
+								value={getVariantLabel(selectedVariant)}
+							/>
+						</AnimatedBadge>
+					)}
+					{selectedEndpointProvider !== null && (
+						<AnimatedBadge
+							id={`endpoint-${selectedEndpointProvider}`}
+							key={`endpoint-${selectedEndpointProvider}`}
+						>
+							<ActiveFilterBadge
+								label="Provider"
+								onRemove={() => onEndpointProviderSelect(null)}
+								value={formatProviderName(selectedEndpointProvider)}
+							/>
+						</AnimatedBadge>
+					)}
+					{selectedParameters.map((param) => (
+						<AnimatedBadge id={`param-${param}`} key={`param-${param}`}>
+							<ActiveFilterBadge
+								label="Param"
+								onRemove={() => onRemoveParameter(param)}
+								value={PARAMETER_INFO[param].label}
+							/>
+						</AnimatedBadge>
+					))}
+				</AnimatePresence>
+			</LazyMotion>
 		</section>
 	);
 }

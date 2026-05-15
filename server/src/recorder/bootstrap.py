@@ -18,6 +18,9 @@ from src.recorder.domain.events import (
     AudioLevelComputed,
     DeviceSwitchFailed,
     DownloadProgress,
+    ModelSwapCompleted,
+    ModelSwapFailed,
+    ModelSwapStarted,
     NoAudioDetected,
     RealtimeTranscriptionStabilized,
     RealtimeTranscriptionUpdate,
@@ -94,6 +97,9 @@ CALLBACK_EVENT_MAP: dict[str, type] = {
     "on_realtime_transcription_stabilized": RealtimeTranscriptionStabilized,
     "on_audio_level": AudioLevelComputed,
     "on_device_switch_failed": DeviceSwitchFailed,
+    "on_model_swap_started": ModelSwapStarted,
+    "on_model_swap_completed": ModelSwapCompleted,
+    "on_model_swap_failed": ModelSwapFailed,
 }
 
 
@@ -145,6 +151,34 @@ def wire_callback_with_device_switch(
     event_bus.subscribe(event_type, _handler)
 
 
+def wire_callback_with_model_swap(
+    event_bus: EventBus,
+    event_type: type,
+    callback: Callable[[str, str], None],
+) -> None:
+    """Wire ModelSwapStarted / ModelSwapCompleted callbacks (kind, name)."""
+
+    def _handler(event: object) -> None:
+        e = cast(ModelSwapStarted, event)  # same shape as ModelSwapCompleted
+        callback(e.kind, e.name)
+
+    event_bus.subscribe(event_type, _handler)
+
+
+def wire_callback_with_model_swap_failed(
+    event_bus: EventBus,
+    event_type: type,
+    callback: Callable[[str, str, str], None],
+) -> None:
+    """Wire ModelSwapFailed callback (kind, name, reason)."""
+
+    def _handler(event: object) -> None:
+        e = cast(ModelSwapFailed, event)
+        callback(e.kind, e.name, e.reason)
+
+    event_bus.subscribe(event_type, _handler)
+
+
 def wire_all_callbacks(event_bus: EventBus, callbacks: CallbackMap) -> None:
     """Bridge every legacy callback in ``callbacks`` to its matching domain event."""
     for cb_name, cb_func in callbacks.items():
@@ -165,8 +199,45 @@ def wire_all_callbacks(event_bus: EventBus, callbacks: CallbackMap) -> None:
                 event_type,
                 cast(Callable[[int, str, int | None], None], cb_func),
             )
+        elif event_type in {ModelSwapStarted, ModelSwapCompleted}:
+            wire_callback_with_model_swap(event_bus, event_type, cast(Callable[[str, str], None], cb_func))
+        elif event_type is ModelSwapFailed:
+            wire_callback_with_model_swap_failed(
+                event_bus, event_type, cast(Callable[[str, str, str], None], cb_func)
+            )
         else:
             wire_callback(event_bus, event_type, cast(SimpleCallback, cb_func))
+
+
+def _providers_for_device(device: str) -> list[str] | None:
+    """Translate a user-facing ``device`` string into a pinned ORT provider list.
+
+    ``"cuda"`` requests are honoured only when a GPU-class provider is
+    actually registered with onnxruntime — otherwise we fall back to CPU
+    instead of silently letting onnx-asr pick whatever ORT has available.
+    ``None`` means "let onnx-asr decide" (we use that for unknown values).
+
+    The GPU priority list is derived from ``onnxruntime.get_available_providers()``
+    filtered against the shared ``GPU_PROVIDERS`` set, so new ORT execution
+    providers (DirectML / TensorRT / ROCm / future EPs) are honoured
+    automatically without editing this function.
+    """
+    from src.recorder.infrastructure.device import GPU_PROVIDERS, resolve_device
+
+    resolved = resolve_device(device)
+    if resolved == "cpu":
+        return ["CPUExecutionProvider"]
+    if resolved != "cuda":
+        return None
+    try:
+        import onnxruntime as rt
+    except ImportError:
+        return ["CPUExecutionProvider"]
+    available = rt.get_available_providers()
+    gpu_providers = [p for p in available if p in GPU_PROVIDERS]
+    if not gpu_providers:
+        return ["CPUExecutionProvider"]
+    return [*gpu_providers, "CPUExecutionProvider"]
 
 
 def build_transcriber(
@@ -188,12 +259,14 @@ def build_transcriber(
     info = catalog.get(model_name)
     onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
     quantization = config.transcription.onnx_quantization or None
+    providers = _providers_for_device(config.transcription.device)
 
     from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
     return OnnxAsrTranscriber(
         model_name=onnx_name,
         quantization=quantization,
+        providers=providers,
         on_download_progress=progress_handler,
     )
 
@@ -213,14 +286,93 @@ def build_realtime_transcriber(
     info = catalog.get(model_name)
     onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
     quantization = config.transcription.onnx_quantization or None
+    providers = _providers_for_device(config.transcription.device)
 
     from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
     return OnnxAsrTranscriber(
         model_name=onnx_name,
         quantization=quantization,
+        providers=providers,
         on_download_progress=progress_handler,
     )
+
+
+def _build_porcupine_detector(config: RecorderConfig) -> IWakeWordDetector:
+    """Construct a Porcupine-backed wake-word detector from ``config``."""
+    from src.recorder.infrastructure.porcupine_detector import PorcupineDetector
+
+    words = [w.strip() for w in config.wake_word.wake_words.split(",") if w.strip()]
+    return PorcupineDetector(
+        access_key="",  # Must be provided by user
+        wake_words=words,
+        sensitivities=[config.wake_word.wake_words_sensitivity] * len(words),
+        buffer_size=config.audio.buffer_size,
+    )
+
+
+def _build_oww_detector(config: RecorderConfig) -> IWakeWordDetector:
+    """Construct an openWakeWord-backed detector from ``config``."""
+    from src.recorder.infrastructure.oww_detector import OWWDetector
+
+    model_paths = (
+        [p.strip() for p in config.wake_word.openwakeword_model_paths.split(",")]
+        if config.wake_word.openwakeword_model_paths
+        else None
+    )
+    return OWWDetector(
+        model_paths=model_paths,
+        inference_framework=config.wake_word.openwakeword_inference_framework,
+        sensitivity=config.wake_word.wake_words_sensitivity,
+    )
+
+
+# Registry of supported wake-word backends keyed by canonical name AND every
+# historical alias clients have ever sent. Adding a new backend means defining
+# a builder above and adding one or more entries here — there is no second
+# place to update.
+WAKE_WORD_BACKENDS: dict[str, Callable[[RecorderConfig], IWakeWordDetector]] = {
+    "pvp": _build_porcupine_detector,
+    "pvporcupine": _build_porcupine_detector,
+    "oww": _build_oww_detector,
+    "openwakeword": _build_oww_detector,
+    "openwakewords": _build_oww_detector,
+}
+
+
+def _validate_language_against_model(config: RecorderConfig) -> None:
+    """Fail fast if the requested language is incompatible with the chosen model.
+
+    Without this check a user picks ``language="es"`` on an English-only
+    Whisper variant (``tiny.en`` etc.) and onnx-asr silently degrades — no
+    output, no error. Catalog-aware models report their compatibility via
+    ``ModelCatalog.is_language_compatible`` so this single check covers
+    every family in the registry; unknown models pass through (the catalog
+    isn't exhaustive of every onnx-asr-resolvable name).
+    """
+    from src.building_blocks.errors import ConfigurationError
+    from src.recorder.domain.model_registry import ModelCatalog
+
+    catalog = ModelCatalog()
+    main_model = config.transcription.model
+    main_lang = config.transcription.language
+    if not catalog.is_language_compatible(main_model, main_lang):
+        info = catalog.get(main_model)
+        supported = ", ".join(info.languages) if info and info.languages else "(unknown)"
+        raise ConfigurationError(
+            f"Model {main_model!r} does not support language {main_lang!r}. "
+            f"Supported languages for this model: {supported}. "
+            f"Pick a multilingual model (e.g. 'large-v3') or leave language empty for auto-detect."
+        )
+    if config.realtime.enable_realtime_transcription and not config.realtime.use_main_model_for_realtime:
+        rt_model = config.realtime.realtime_model_type
+        if not catalog.is_language_compatible(rt_model, main_lang):
+            info = catalog.get(rt_model)
+            supported = ", ".join(info.languages) if info and info.languages else "(unknown)"
+            raise ConfigurationError(
+                f"Realtime model {rt_model!r} does not support language {main_lang!r}. "
+                f"Supported languages: {supported}."
+            )
 
 
 def bootstrap_di(
@@ -230,6 +382,8 @@ def bootstrap_di(
     download_callbacks: DownloadCallbacks | None = None,
 ) -> RecorderService:
     """Wire all ports to adapters and create RecorderService."""
+    _validate_language_against_model(config)
+
     event_bus = EventBus()
     clock = Clock.system_clock()
 
@@ -304,31 +458,11 @@ def bootstrap_di(
         else:
             realtime_transcriber = build_realtime_transcriber(config, download_callbacks=download_callbacks)
 
-    # Build wake word detector
+    # Build wake word detector — selected via ``WAKE_WORD_BACKENDS`` registry.
     wake_word_detector: IWakeWordDetector | None = None
-    if config.wake_word.wakeword_backend in {"pvp", "pvporcupine"}:
-        from src.recorder.infrastructure.porcupine_detector import PorcupineDetector
-
-        words = [w.strip() for w in config.wake_word.wake_words.split(",") if w.strip()]
-        wake_word_detector = PorcupineDetector(
-            access_key="",  # Must be provided by user
-            wake_words=words,
-            sensitivities=[config.wake_word.wake_words_sensitivity] * len(words),
-            buffer_size=config.audio.buffer_size,
-        )
-    elif config.wake_word.wakeword_backend in {"oww", "openwakeword", "openwakewords"}:
-        from src.recorder.infrastructure.oww_detector import OWWDetector
-
-        model_paths = (
-            [p.strip() for p in config.wake_word.openwakeword_model_paths.split(",")]
-            if config.wake_word.openwakeword_model_paths
-            else None
-        )
-        wake_word_detector = OWWDetector(
-            model_paths=model_paths,
-            inference_framework=config.wake_word.openwakeword_inference_framework,
-            sensitivity=config.wake_word.wake_words_sensitivity,
-        )
+    backend_factory = WAKE_WORD_BACKENDS.get(config.wake_word.wakeword_backend)
+    if backend_factory is not None:
+        wake_word_detector = backend_factory(config)
 
     # Register in DI container
     di[EventBus] = event_bus

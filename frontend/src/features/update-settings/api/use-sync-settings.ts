@@ -12,12 +12,27 @@ import {
 } from "@/shared/api/ipc-client";
 import type { AllowedParameter, AppSettingsSaveInput as AppSettings } from "@/shared/api/models";
 import { decodeSettingsPayload } from "@/shared/api/settings-codec";
+import {
+	advanceSkipRefs,
+	autoStartChanged,
+	computeSilenceTiming,
+	getPrevSmartEndpoint,
+	getRecordingMode,
+	getSmartEndpoint,
+	isModeChanged,
+	scheduleSave,
+	shouldSendInitial,
+	shouldSendOnChange,
+	shouldSyncOnConnect,
+	silenceTimingNeedsUpdate,
+} from "../lib/sync-helpers";
 
 /** camelCase → snake_case mapping for audio parameters sent to the STT server */
 const AUDIO_PARAM_MAP: Record<string, AllowedParameter> = {
 	sileroSensitivity: "silero_sensitivity",
 	postSpeechSilenceDuration: "post_speech_silence_duration",
 	wakeWordActivationDelay: "wake_word_activation_delay",
+	inputDeviceIndex: "input_device_index",
 };
 
 /** Send a parameter only when it changed (incremental) or is non-null (initial). */
@@ -27,11 +42,8 @@ function sendIfChanged<V>(
 	param: AllowedParameter,
 	isInitial: boolean
 ) {
-	if (isInitial) {
-		if (value != null) {
-			sttSetParameter(param, value);
-		}
-	} else if (value !== prevValue) {
+	const shouldSend = isInitial ? shouldSendInitial(value) : shouldSendOnChange(value, prevValue);
+	if (shouldSend) {
 		sttSetParameter(param, value);
 	}
 }
@@ -58,18 +70,25 @@ function syncModelParams(settings: AppSettings, prev: AppSettings | undefined) {
 }
 
 function syncQualityParams(settings: AppSettings, prev: AppSettings | undefined) {
-	const smartEndpoint = settings.quality?.smartEndpoint ?? false;
-	const prevSmartEndpoint = prev?.quality?.smartEndpoint ?? false;
-	const mode = settings.general?.recordingMode ?? "ptt";
-	const modeChanged = !prev || settings.general?.recordingMode !== prev.general?.recordingMode;
+	const smartEndpoint = getSmartEndpoint(settings);
+	const prevSmartEndpoint = getPrevSmartEndpoint(prev);
+	const mode = getRecordingMode(settings);
+	const isInitial = !prev;
 
-	if (modeChanged || smartEndpoint !== prevSmartEndpoint) {
-		sttSetParameter("silence_timing", smartEndpoint || mode === "toggle" || mode === "listen");
+	if (
+		silenceTimingNeedsUpdate(
+			smartEndpoint,
+			prevSmartEndpoint,
+			settings.general?.recordingMode,
+			prev?.general?.recordingMode,
+			isInitial
+		)
+	) {
+		sttSetParameter("silence_timing", computeSilenceTiming(smartEndpoint, mode));
 	}
 
 	const quality = settings.quality;
 	const prevQuality = prev?.quality;
-	const isInitial = !prev;
 	sendIfChanged(
 		quality?.smartEndpoint,
 		prevQuality?.smartEndpoint,
@@ -88,10 +107,8 @@ function syncSystemParams(settings: AppSettings, prev: AppSettings | undefined) 
 	if (!prev) {
 		return;
 	}
-	const general = settings.general;
-	const prevGeneral = prev.general;
-	if (general?.autoStart !== prevGeneral?.autoStart && general?.autoStart != null) {
-		autostartSet(general.autoStart);
+	if (autoStartChanged(settings, prev)) {
+		autostartSet(settings.general!.autoStart!);
 	}
 }
 
@@ -129,7 +146,6 @@ export function useSyncSettings(): void {
 			fromIpcLoadRef.current = true;
 			setSettings(loaded);
 		});
-		// eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount
 	}, [setSettings]);
 
 	// Listen for settings changed from other windows (e.g. settings window → main window)
@@ -144,7 +160,7 @@ export function useSyncSettings(): void {
 
 	// When server signals ready (recorder fully initialized), push all saved settings
 	useEffect(() => {
-		if (serverStatus === "running" && isLoaded && !hasSyncedOnConnect.current) {
+		if (shouldSyncOnConnect(serverStatus, isLoaded, hasSyncedOnConnect.current)) {
 			hasSyncedOnConnect.current = true;
 			syncToServer(latestSettingsRef.current);
 		}
@@ -179,24 +195,13 @@ export function useSyncSettings(): void {
 		const prev = prevRef.current;
 		prevRef.current = settings;
 
-		// Skip the very first sync after load — it's the initial hydration, not a user change
-		if (!loadedOnceRef.current) {
-			loadedOnceRef.current = true;
-			return;
-		}
-
-		// Skip saving to electron-store when change came from broadcast
-		// (the source window or tray already saved to electron-store).
-		// The tray handler sends server params directly, so no need to
-		// re-sync here — just update the Zustand store and return.
-		if (fromBroadcastRef.current) {
-			fromBroadcastRef.current = false;
-			return;
-		}
-
-		// Skip saving back when reconciling from electron-store on mount
-		if (fromIpcLoadRef.current) {
-			fromIpcLoadRef.current = false;
+		if (
+			advanceSkipRefs({
+				loadedOnce: loadedOnceRef,
+				fromBroadcast: fromBroadcastRef,
+				fromIpcLoad: fromIpcLoadRef,
+			})
+		) {
 			return;
 		}
 
@@ -206,19 +211,7 @@ export function useSyncSettings(): void {
 		// Save to electron-store: flush immediately for recording mode changes
 		// so the broadcast reaches other windows without delay.
 		// Debounce everything else to avoid rapid writes from sliders.
-		if (debounceRef.current) {
-			clearTimeout(debounceRef.current);
-		}
-		const modeChanged = settings.general?.recordingMode !== prev.general?.recordingMode;
-		if (modeChanged) {
-			settingsSave(settings);
-			debounceRef.current = null;
-		} else {
-			debounceRef.current = setTimeout(() => {
-				settingsSave(settings);
-				debounceRef.current = null;
-			}, 300);
-		}
+		scheduleSave(settings, isModeChanged(settings, prev), debounceRef, settingsSave, 300);
 
 		return () => {
 			if (debounceRef.current) {

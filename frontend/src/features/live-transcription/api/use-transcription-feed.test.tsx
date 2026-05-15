@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { renderHook } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
+import { useTranscriptionStore } from "@/entities/transcription";
 import { IPC } from "@/shared/api/ipc-channels";
-import { useTranscriptionStore } from "../model/transcription-store";
 import { useTranscriptionFeed } from "./use-transcription-feed";
 
 const originalApi = window.electronAPI;

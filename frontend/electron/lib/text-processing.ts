@@ -12,12 +12,30 @@ interface CompiledDictEntry {
 	replace: string;
 }
 
+// Stryker disable next-line ArrayDeclaration: equivalent — module-level initial value is always replaced by initPostProcessing() before applyPostProcessing() is observable.
 let cachedDictPatterns: CompiledDictEntry[] = [];
+// Stryker disable next-line ArrayDeclaration: equivalent — same as cachedDictPatterns above.
 let cachedSnippets: Array<{ trigger: string; expansion: string }> = [];
 
 /** Reference to the electron-store instance, set by initPostProcessing(). */
 let _store: typeof StoreType;
 let disposeWatchers: (() => void) | null = null;
+
+function compileDictEntry(entry: {
+	find: string;
+	replace: string;
+	caseSensitive?: boolean;
+	wholeWord?: boolean;
+}): CompiledDictEntry | null {
+	if (!entry.find) {
+		return null;
+	}
+	const escaped = entry.find.replace(REGEX_ESCAPE_RE, "\\$&");
+	const pattern = entry.wholeWord ? `\\b${escaped}\\b` : escaped;
+	const flags = entry.caseSensitive ? "g" : "gi";
+	// react-doctor-disable-next-line js-hoist-regexp
+	return { regex: new RegExp(pattern, flags), replace: entry.replace };
+}
 
 function rebuildDictPatterns() {
 	const dictionary = _store.get("dictionary") as
@@ -30,23 +48,15 @@ function rebuildDictPatterns() {
 		cachedDictPatterns = [];
 		return;
 	}
-	const next: CompiledDictEntry[] = [];
-	for (const entry of dictionary) {
-		if (!entry.find) {
-			continue;
-		}
-		const escaped = entry.find.replace(REGEX_ESCAPE_RE, "\\$&");
-		const pattern = entry.wholeWord ? `\\b${escaped}\\b` : escaped;
-		const flags = entry.caseSensitive ? "g" : "gi";
-		next.push({ regex: new RegExp(pattern, flags), replace: entry.replace });
-	}
-	cachedDictPatterns = next;
+	const compiled: Array<CompiledDictEntry | null> = dictionary.map(compileDictEntry);
+	cachedDictPatterns = compiled.filter((e): e is CompiledDictEntry => e !== null);
 }
 
 function rebuildSnippets() {
 	const snippets = _store.get("snippets") as
 		| Array<{ trigger: string; expansion: string }>
 		| undefined;
+	// Stryker disable next-line ArrayDeclaration: equivalent — when no snippets, fallback shape is empty; mutating to ["Stryker was here"] yields entries with no `.trigger` so applyPostProcessing's loop is observably a no-op either way.
 	cachedSnippets = snippets?.filter((e) => e.trigger) ?? [];
 }
 
@@ -81,18 +91,22 @@ export function cleanupPostProcessing(): void {
 	disposeWatchers?.();
 	disposeWatchers = null;
 	cachedDictPatterns = [];
+	// Stryker disable next-line ArrayDeclaration: equivalent — same reasoning as the rebuildSnippets fallback above; ["Stryker was here"] entries have no `.trigger` so applyPostProcessing's loop is a no-op.
 	cachedSnippets = [];
+}
+
+/** Ensure text ends with a period if the setting is enabled and punctuation is missing. */
+function maybePunctuate(text: string): string {
+	const addPeriod = getStoreValue("quality.ensureSentenceEndsWithPeriod");
+	if (addPeriod && text.length > 0 && !SENTENCE_END_RE.test(text.trimEnd())) {
+		return `${text.trimEnd()}.`;
+	}
+	return text;
 }
 
 /** Apply dictionary replacements and snippet expansions to text. */
 export function applyPostProcessing(text: string): string {
-	let result = text;
-
-	// Ensure sentence ends with period (if enabled and not already punctuated)
-	const addPeriod = getStoreValue("quality.ensureSentenceEndsWithPeriod");
-	if (addPeriod && result.length > 0 && !SENTENCE_END_RE.test(result.trimEnd())) {
-		result = `${result.trimEnd()}.`;
-	}
+	let result = maybePunctuate(text);
 
 	// Dictionary replacements (pre-compiled regexes)
 	for (const entry of cachedDictPatterns) {

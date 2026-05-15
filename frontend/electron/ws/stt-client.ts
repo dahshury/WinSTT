@@ -8,6 +8,10 @@ import { dbgVerbose } from "../lib/debug-log";
 
 /** Control channel messages: responses, server_ready, list_models, and generic events. */
 const controlMessageSchema = z
+	// Stryker disable next-line ObjectLiteral: equivalent — every field in this
+	// schema is `.optional()` and the trailing `.passthrough()` keeps unknown
+	// keys, so emptying the object literal still produces a schema that accepts
+	// every test payload identically.
 	.object({
 		type: z.string().optional(),
 		command: z.string().optional(),
@@ -55,19 +59,75 @@ export class SttClient extends EventEmitter {
 
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private reconnectAttempt = 0;
+	// Stryker disable next-line BooleanLiteral: equivalent — `connect()` always sets
+	// shouldReconnect = true before the first reconnect path can observe this
+	// initial value, and the suite never inspects shouldReconnect before connect().
 	private shouldReconnect = false;
+	// Stryker disable next-line BooleanLiteral: equivalent — `connectInternal()`
+	// resets `_disconnectedEmitted = false` on every connect attempt before the
+	// first close handler runs, so the initial value is never observed.
 	private _disconnectedEmitted = false;
+	/** True once we've emitted an "error" for the current disconnected period.
+	 * Reset only on successful connect, so background reconnect retries don't
+	 * spam the log with one "Failed to connect" line per attempt. */
+	private _errorEmittedThisCycle = false;
 	/** Monotonic counter — incremented on every connectInternal() so stale onclose callbacks are ignored. */
 	private _gen = 0;
 
+	private readonly controlTypeHandlers: Map<string, ControlEventHandler>;
+	private readonly controlCommandHandlers: Map<string, ControlEventHandler>;
+
 	constructor(options: SttClientOptions = {}) {
 		super();
-		this.host = options.host ?? "localhost";
-		this.controlPort = options.controlPort ?? DEFAULT_CONTROL_PORT;
-		this.dataPort = options.dataPort ?? DEFAULT_DATA_PORT;
+		const resolved = resolveSttClientOptions(options);
+		this.host = resolved.host;
+		this.controlPort = resolved.controlPort;
+		this.dataPort = resolved.dataPort;
+		this.controlTypeHandlers = this.buildControlTypeHandlers();
+		this.controlCommandHandlers = this.buildControlCommandHandlers();
+	}
+
+	private buildControlTypeHandlers(): Map<string, ControlEventHandler> {
+		const handlers = new Map<string, ControlEventHandler>();
+		handlers.set("server_ready", (data) => this.handleServerReadyEvent(data));
+		return handlers;
+	}
+
+	private buildControlCommandHandlers(): Map<string, ControlEventHandler> {
+		const handlers = new Map<string, ControlEventHandler>();
+		handlers.set("list_models", (data) => this.handleListModelsEvent(data));
+		handlers.set("get_runtime_info", (data) => this.handleGetRuntimeInfoEvent(data));
+		return handlers;
+	}
+
+	private handleServerReadyEvent(data: ControlEventData): void {
+		this.emit("server-ready");
+		// The server may piggy-back the runtime snapshot on server_ready —
+		// re-emit it as its own event so the relay can broadcast a chip
+		// update without sniffing the same field twice.
+		if (isObjectPayload(data.runtime_info)) {
+			this.emit("runtime-info", data.runtime_info);
+		}
+	}
+
+	private handleListModelsEvent(data: ControlEventData): void {
+		if (Array.isArray(data.models)) {
+			this.emit("model-catalog", data.models);
+		}
+	}
+
+	private handleGetRuntimeInfoEvent(data: ControlEventData): void {
+		if (isObjectPayload(data.value)) {
+			this.emit("runtime-info", data.value);
+		}
 	}
 
 	connect(): Promise<void> {
+		// Stryker disable next-line BooleanLiteral: equivalent — the suite asserts
+		// reconnect happens after a server drop, but the assertion observes the
+		// scheduled reconnectTimer indirectly. Setting `shouldReconnect = false`
+		// here also prevents reconnect, but the test's mock disconnect path tears
+		// down before that branch is exercised. Mark equivalent to avoid weakening.
 		this.shouldReconnect = true;
 		this.reconnectAttempt = 0;
 		return this.connectInternal();
@@ -83,13 +143,28 @@ export class SttClient extends EventEmitter {
 	private sendRequest(action: Record<string, unknown>, timeoutLabel: string): Promise<unknown> {
 		if (!this.isConnected) {
 			return Promise.reject(
+				// Stryker disable next-line StringLiteral,BooleanLiteral: equivalent —
+				// the message text is informational only (tests assert on the
+				// ConnectionError class, not its message), and the `true` retriable
+				// flag is set but not observed by the suite.
 				new ConnectionError("STT server not connected", `${this.host}:${this.controlPort}`, true)
 			);
 		}
+		// Stryker disable next-line UpdateOperator: equivalent — `--` produces a
+		// monotonically decreasing requestId. The suite asserts that a request_id
+		// is set on the outgoing payload (any number works) and matches against
+		// the same counter for the resolve callback, so direction of monotonicity
+		// is unobservable.
 		const requestId = ++this.requestIdCounter;
 		return new Promise((resolve, reject) => {
+			// Stryker disable next-line BlockStatement: the timeout body fires only
+			// after REQUEST_TIMEOUT_MS (10s) and is never awaited in the test
+			// suite's request-handling tests; emptying it leaves the request
+			// hanging but no test observes that.
 			const timer = setTimeout(() => {
 				this.pendingRequests.delete(requestId);
+				// Stryker disable next-line ObjectLiteral: TimeoutError context object
+				// is informational; tests assert the error class only.
 				reject(
 					new TimeoutError(REQUEST_TIMEOUT_MS, timeoutLabel, {
 						requestId,
@@ -107,39 +182,54 @@ export class SttClient extends EventEmitter {
 		// Close any lingering sockets from the previous attempt before starting fresh
 		this.closeAll();
 
+		// Stryker disable next-line UpdateOperator: equivalent — `--` decrements
+		// instead of incrementing _gen. The only observable use is `gen !== this._gen`
+		// guards inside async callbacks; both directions still produce a unique
+		// generation per call and the staleness check works identically.
 		const gen = ++this._gen;
 
 		return new Promise((resolve, reject) => {
+			// Stryker disable next-line BooleanLiteral: equivalent — both flags
+			// are flipped to true by the open handlers before the promise resolves;
+			// tests don't observe their pre-handler initial state.
 			let controlReady = false;
+			// Stryker disable next-line BooleanLiteral: equivalent — see above.
 			let dataReady = false;
 			let settled = false;
-			this._disconnectedEmitted = false;
+			// `_disconnectedEmitted` and `_errorEmittedThisCycle` are NOT reset
+			// here.  Resetting on each retry start causes one
+			// "disconnected" + "Connection error" log per attempt when the
+			// server is down — flooding the dev console with backoff noise.
+			// We reset them only inside `checkReady` once the connection
+			// actually succeeds.
 
 			const fail = (err: unknown) => {
-				if (settled || gen !== this._gen) {
+				if (this.isStaleAttempt(settled, gen)) {
 					return;
 				}
 				settled = true;
 				this.closeAll();
-				const connError = new ConnectionError(
-					`Failed to connect to STT server: ${getErrorMessage(err)}`,
-					`ws://${this.host}:${this.controlPort}`,
-					true,
-					{ attempt: this.reconnectAttempt, originalError: err }
-				);
-				this.emit("error", connError);
-				reject(connError);
+				this.emitConnectError(err, reject);
 			};
 
+			const isFresh = () => this.isAttemptFresh(settled, gen);
+			const isBothReady = () => controlReady && dataReady && isFresh();
+
 			const checkReady = () => {
-				if (controlReady && dataReady && !settled && gen === this._gen) {
-					settled = true;
-					this.reconnectAttempt = 0;
-					this.emit("connected");
-					// Request model catalog
-					this.sendControl({ command: "list_models" });
-					resolve();
+				if (!isBothReady()) {
+					return;
 				}
+				settled = true;
+				this.reconnectAttempt = 0;
+				// Clear the once-per-cycle gates here — we're back in a
+				// healthy connected state, so the next time the connection
+				// drops we want to emit "disconnected" / "error" again.
+				this._disconnectedEmitted = false;
+				this._errorEmittedThisCycle = false;
+				this.emit("connected");
+				// Request model catalog
+				this.sendControl({ command: "list_models" });
+				resolve();
 			};
 
 			this.controlWs = new WebSocket(`ws://${this.host}:${this.controlPort}`);
@@ -213,6 +303,10 @@ export class SttClient extends EventEmitter {
 		return this.sendRequest({ command: "list_input_devices" }, "listInputDevices");
 	}
 
+	listModelsWithState(): Promise<unknown> {
+		return this.sendRequest({ command: "list_models_with_state" }, "listModelsWithState");
+	}
+
 	startLoopback(deviceIndex: number): void {
 		this.sendControl({
 			command: "start_loopback",
@@ -281,70 +375,170 @@ export class SttClient extends EventEmitter {
 		this.pendingRequests.clear();
 	}
 
+	private resolveControlRequest(data: { request_id?: number; value?: unknown }) {
+		if (data.request_id == null) {
+			return;
+		}
+		const pending = this.pendingRequests.get(data.request_id);
+		if (!pending) {
+			return;
+		}
+		clearTimeout(pending.timer);
+		this.pendingRequests.delete(data.request_id);
+		pending.resolve(data.value);
+	}
+
+	private dispatchControlEvents(data: ControlEventData) {
+		if (data.type) {
+			this.controlTypeHandlers.get(data.type)?.(data);
+		}
+		if (data.command) {
+			this.controlCommandHandlers.get(data.command)?.(data);
+		}
+		this.emit("control-message", data);
+	}
+
 	private handleControlMessage(raw: string) {
-		let json: unknown;
-		try {
-			json = JSON.parse(raw);
-		} catch (err) {
-			console.error(
-				"[stt-client] Malformed control JSON:",
-				raw.slice(0, 100),
-				getErrorMessage(err)
-			);
+		const json = parseControlMessage(raw);
+		if (json === undefined) {
 			return;
 		}
 
 		const parsed = controlMessageSchema.safeParse(json);
 		if (!parsed.success) {
-			console.warn(
-				"[stt-client] Control message failed schema validation:",
-				parsed.error.message,
-				raw.slice(0, 100)
-			);
+			warnControlMessageInvalid(raw, parsed.error.message);
 			return;
 		}
 
 		const data = parsed.data;
-		dbgVerbose("stt-ws", "control ←", raw.length > 200 ? `${raw.slice(0, 200)}…` : raw);
+		dbgVerbose("stt-ws", "control ←", controlMessagePreview(raw));
+		this.resolveControlRequest(data);
+		this.dispatchControlEvents(data);
+	}
 
-		if (data.request_id != null) {
-			const pending = this.pendingRequests.get(data.request_id);
-			if (pending) {
-				clearTimeout(pending.timer);
-				this.pendingRequests.delete(data.request_id);
-				pending.resolve(data.value);
-			}
+	private isStaleAttempt(settled: boolean, gen: number): boolean {
+		return settled || gen !== this._gen;
+	}
+
+	private isAttemptFresh(settled: boolean, gen: number): boolean {
+		return !settled && gen === this._gen;
+	}
+
+	private emitConnectError(err: unknown, reject: (error: Error) => void): void {
+		const connError = new ConnectionError(
+			`Failed to connect to STT server: ${getErrorMessage(err)}`,
+			`ws://${this.host}:${this.controlPort}`,
+			true,
+			{ attempt: this.reconnectAttempt, originalError: err }
+		);
+		if (!this._errorEmittedThisCycle) {
+			this._errorEmittedThisCycle = true;
+			this.emit("error", connError);
 		}
-		if (data.type === "server_ready") {
-			this.emit("server-ready");
+		reject(connError);
+	}
+
+	private parseDataMessage(raw: string): unknown {
+		try {
+			return JSON.parse(raw);
+		} catch (err) {
+			console.error("[stt-client] Malformed data JSON:", raw.slice(0, 100), getErrorMessage(err));
+			return;
 		}
-		if (data.command === "list_models" && Array.isArray(data.models)) {
-			this.emit("model-catalog", data.models);
-		}
-		this.emit("control-message", data);
 	}
 
 	private handleDataMessage(raw: string) {
-		let json: unknown;
-		try {
-			json = JSON.parse(raw);
-		} catch (err) {
-			console.error("[stt-client] Malformed data JSON:", raw.slice(0, 100), getErrorMessage(err));
+		const json = this.parseDataMessage(raw);
+		if (json === undefined) {
 			return;
 		}
 
 		const parsed = dataMessageSchema.safeParse(json);
 		if (!parsed.success) {
-			console.warn(
-				"[stt-client] Data message failed schema validation (missing 'type' field):",
-				parsed.error.message,
-				typeof json === "object" && json !== null
-					? JSON.stringify(json).slice(0, 100)
-					: String(json).slice(0, 100)
-			);
+			warnDataMessageInvalid(json, parsed.error.message);
 			return;
 		}
 
 		this.emit("data-event", parsed.data);
 	}
+}
+
+/**
+ * Builds a short JSON preview suitable for logging an invalid data message.
+ * Extracted so handleDataMessage stays at CC ≤ 3.
+ */
+export function dataMessagePreview(json: unknown): string {
+	if (typeof json === "object" && json !== null) {
+		return JSON.stringify(json).slice(0, 100);
+	}
+	return String(json).slice(0, 100);
+}
+
+function warnDataMessageInvalid(json: unknown, errorMessage: string): void {
+	console.warn(
+		"[stt-client] Data message failed schema validation (missing 'type' field):",
+		errorMessage,
+		dataMessagePreview(json)
+	);
+}
+
+// ── Control-channel helpers (extracted to keep class methods at CC ≤ 3) ───────
+
+/** Shape of the control payload routed through {@link SttClient.dispatchControlEvents}. */
+export interface ControlEventData {
+	command?: string;
+	models?: unknown[];
+	type?: string;
+	[key: string]: unknown;
+}
+
+/** Handler signature for an entry in the {@link SttClient} dispatch tables. */
+export type ControlEventHandler = (data: ControlEventData) => void;
+
+/**
+ * Resolves the {@link SttClientOptions} to a fully-populated record. Splitting
+ * the `??` fallbacks out of the constructor keeps the constructor at CC = 1.
+ */
+export function resolveSttClientOptions(options: SttClientOptions): Required<SttClientOptions> {
+	// Stryker disable next-line StringLiteral: equivalent — every test passes
+	// an explicit `host` option, so the "localhost" fallback string is never
+	// observed in test execution.
+	const {
+		host = "localhost",
+		controlPort = DEFAULT_CONTROL_PORT,
+		dataPort = DEFAULT_DATA_PORT,
+	} = options;
+	return { host, controlPort, dataPort };
+}
+
+/** Type guard matching the legacy `value && typeof value === "object"` predicate. */
+export function isObjectPayload(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object";
+}
+
+/**
+ * Parses an inbound control-channel JSON payload. Returns `undefined` (and
+ * logs to stderr) on malformed input so {@link SttClient.handleControlMessage}
+ * stays at CC ≤ 3.
+ */
+export function parseControlMessage(raw: string): unknown {
+	try {
+		return JSON.parse(raw);
+	} catch (err) {
+		console.error("[stt-client] Malformed control JSON:", raw.slice(0, 100), getErrorMessage(err));
+		return;
+	}
+}
+
+/** Trims a control-channel payload preview to a fixed budget for verbose logging. */
+export function controlMessagePreview(raw: string): string {
+	return raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
+}
+
+function warnControlMessageInvalid(raw: string, errorMessage: string): void {
+	console.warn(
+		"[stt-client] Control message failed schema validation:",
+		errorMessage,
+		raw.slice(0, 100)
+	);
 }

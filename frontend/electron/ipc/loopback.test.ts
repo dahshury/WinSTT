@@ -118,4 +118,49 @@ describe("setupLoopbackHandlers", () => {
 		fire("loopback:stop");
 		expect(client.calls.includes("stop")).toBe(false);
 	});
+
+	test("list-devices returns empty array (not arbitrary content) when disconnected", async () => {
+		handlers.clear();
+		listeners.clear();
+		setupLoopbackHandlers(makeClient(false) as unknown as SttClient);
+		const handler = handlers.get("loopback:list-devices");
+		const result = (await handler!(undefined)) as unknown[];
+		expect(Array.isArray(result)).toBe(true);
+		expect(result.length).toBe(0);
+	});
+
+	test("list-devices returns empty array (not arbitrary content) when listLoopbackDevices throws", async () => {
+		handlers.clear();
+		listeners.clear();
+		const client = makeClient(true);
+		client.listLoopbackDevices = async () => {
+			throw new Error("boom");
+		};
+		setupLoopbackHandlers(client as unknown as SttClient);
+		const handler = handlers.get("loopback:list-devices");
+		const result = (await handler!(undefined)) as unknown[];
+		expect(Array.isArray(result)).toBe(true);
+		expect(result.length).toBe(0);
+		// Confirm the catch block actually executed (otherwise BlockStatement -> {} wouldn't matter)
+		expect(client.calls).not.toContain("start");
+	});
+
+	test("loopback:start does NOT throw when payload is undefined (optional chaining)", () => {
+		handlers.clear();
+		listeners.clear();
+		const client = makeClient(true);
+		setupLoopbackHandlers(client as unknown as SttClient);
+		// payload is undefined; payload?.deviceIndex must short-circuit, not crash
+		expect(() => fire("loopback:start", undefined)).not.toThrow();
+		expect(client.calls.includes("start")).toBe(false);
+	});
+
+	test("loopback:start accepts deviceIndex of 0 (boundary; not <0)", () => {
+		handlers.clear();
+		listeners.clear();
+		const client = makeClient(true);
+		setupLoopbackHandlers(client as unknown as SttClient);
+		fire("loopback:start", { deviceIndex: 0 });
+		expect(client.calls).toContain("start");
+	});
 });

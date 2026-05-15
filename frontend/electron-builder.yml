@@ -24,6 +24,14 @@ extraResources:
     to: stt-server
     filter:
       - "**/*"
+  # Native paste helper. Built by `bun run native:build` (which compiles
+  # electron/native/src/winstt-paste.c). The Electron main process resolves
+  # process.resourcesPath/native/bin/winstt-paste.exe when packaged.
+  - from: electron/native/bin/
+    to: native/bin
+    filter:
+      - "winstt-paste.exe"
+      - "winstt-context.exe"
 win:
   target:
     - nsis

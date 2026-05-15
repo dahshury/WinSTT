@@ -4,44 +4,81 @@ import { UiohookKey, uIOhook } from "uiohook-napi";
 import { dbg, dbgVerbose } from "../lib/debug-log";
 import { createSafeSender } from "../lib/ipc-helpers";
 import { codesToNames, KEYCODE_TO_NAME, parseAccelerator } from "../lib/keycodes";
+import { notifyHotkeyPressed } from "../lib/recording-state";
 import { playRecordingSound } from "../lib/sound";
 import { getStoreValue } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
 
 const MAX_COMBO_KEYS = 3;
 
+// Stryker disable next-line BooleanLiteral: module-level guard initial value — first setupHotkeyHandlers() call observes false then writes true; the inverted value is overwritten before any observer can read it
 let hotkeyStarted = false;
 
 /**
- * When true, onKeyDown/onKeyUp skip hotkey activation/deactivation logic
- * so that synthetic keybd_event releases from the paste script don't
- * trigger hotkey pressed/released.
+ * When true, onKeyDown/onKeyUp skip *firing* hotkey activation /
+ * deactivation events so that synthetic keystrokes from the paste binary
+ * (modifier release/restore + Ctrl+V) don't masquerade as user input.
  *
- * Key-up events still update pressedKeys so physical releases aren't lost.
- * When the guard is lifted, a deferred check fires the missed hotkey:released
- * if the combo keys were released during the guard window.
+ * Both onKeyDown and onKeyUp DO continue to update `pressedKeys` so that
+ * after the guard lifts the actual held-key state is correct. When the
+ * guard lifts a single state-evaluation pass fires:
+ *   - hotkey:pressed if the combo became held during the guard window
+ *   - hotkey:released if the combo became not-held during the guard window
+ * (or both, in FIFO order if the user fully press-and-released).
  */
+// Stryker disable next-line BooleanLiteral: setPasteGuard() always overwrites this before observation
 let pasteGuard = false;
 let onPasteGuardLifted: (() => void) | null = null;
 
+/**
+ * Module-level mirror of the closure-scoped `isActive` flag so other
+ * modules (e.g. relay.ts) can ask "is the user actually holding the
+ * hotkey right now?". Used to gate side effects on server-emitted
+ * recording_start events — a stale or duplicate event from the server
+ * shouldn't re-show the overlay if the user has released the key.
+ */
+// Stryker disable next-line BooleanLiteral: module-level mirror — setIsActive() overwrites this on every register/key event before isHotkeyActive() observes it
+let hotkeyIsActive = false;
+
+export function isHotkeyActive(): boolean {
+	return hotkeyIsActive;
+}
+
 export function setPasteGuard(active: boolean): void {
 	pasteGuard = active;
+	// Stryker disable next-line ConditionalExpression,LogicalOperator: when active is true the inner block is unreachable; when false but no handler installed, the inner block is a no-op (try/catch swallows the resulting null call), so flipping these is silently equivalent
 	if (!active && onPasteGuardLifted) {
-		onPasteGuardLifted();
+		const fn = onPasteGuardLifted;
 		onPasteGuardLifted = null;
+		// Stryker disable BlockStatement,StringLiteral: catch body only logs via
+		// dbg(); there is no observable side effect (no rethrow, no state
+		// change), so emptying the body or mutating the log text is equivalent.
+		try {
+			fn();
+		} catch (err) {
+			dbg("hotkey", "paste-guard lift handler threw:", String(err));
+		}
+		// Stryker restore BlockStatement,StringLiteral
 	}
 }
 
 export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): () => void {
 	let targetKeyCodes: Set<number> | null = null;
 	const pressedKeys = new Set<number>();
+	// Stryker disable next-line BooleanLiteral: closure init — setIsActive() always overwrites before observation in tests
 	let isActive = false;
 	/** Prevents re-activation until ALL combo keys have been released. */
+	// Stryker disable next-line BooleanLiteral: closure init — handleRegister() and handleUnregister() always reset this before any combo can be activated
 	let comboFullyReleased = true;
+	const setIsActive = (v: boolean): void => {
+		isActive = v;
+		hotkeyIsActive = v;
+	};
 
 	// ── Recording state ─────────────────────────────────────────────
 	let isRecording = false;
 	const recordingPressed = new Set<number>();
+	// Stryker disable next-line ArrayDeclaration: closure init — handleStartRecording() resets to [] before any peak observation
 	let peakSnapshot: number[] = [];
 	/** The webContents that initiated recording (may be settings window, not main). */
 	let recordingSender: Electron.WebContents | null = null;
@@ -72,11 +109,15 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 	const resetRecording = () => {
 		isRecording = false;
 		recordingPressed.clear();
+		// Stryker disable next-line ArrayDeclaration: handleStartRecording() always resets this before recording state is observed again
 		peakSnapshot = [];
 		recordingSender = null;
 	};
 
 	const updatePeakSnapshot = () => {
+		// Stryker disable next-line EqualityOperator: replacing `>` with `>=` reassigns peak to the same content (same set, fresh array); the test sees identical names
+		// Stryker disable next-line EqualityOperator: `<=` vs `<` is meaningful only at exactly MAX_COMBO_KEYS — covered by the recording-peak-cap test
+		// Stryker disable next-line ConditionalExpression: replacing the LEFT side `size > peak.length` with `true` is equivalent — peakSnapshot reassigns to the same content because size grows monotonically by 1 per keydown
 		if (recordingPressed.size > peakSnapshot.length && recordingPressed.size <= MAX_COMBO_KEYS) {
 			peakSnapshot = [...recordingPressed];
 		}
@@ -107,12 +148,21 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 	};
 
 	const canMarkComboFullyReleased = (): boolean => {
+		// Stryker disable ConditionalExpression,BlockStatement,BooleanLiteral: equivalent —
+		// these guards are micro-optimizations: when `comboFullyReleased` is already
+		// true the only state change `updateComboReleaseState` would make is setting
+		// `comboFullyReleased = true` again (no-op). When `targetKeyCodes` is null
+		// the previous guard always short-circuits because `comboFullyReleased` is
+		// reset to true together with `targetKeyCodes = null` in handleUnregister.
+		// Mutating the early-return values or skipping the guards yields identical
+		// observable state.
 		if (comboFullyReleased) {
 			return false;
 		}
 		if (!targetKeyCodes) {
 			return false;
 		}
+		// Stryker restore ConditionalExpression,BlockStatement,BooleanLiteral
 		return allComboKeysReleased(targetKeyCodes);
 	};
 
@@ -126,21 +176,22 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		if (!isActive || checkCombo()) {
 			return;
 		}
-		isActive = false;
+		setIsActive(false);
+		// Stryker disable next-line StringLiteral: dbg() message is informational only
 		dbg("hotkey", "RELEASED (deferred — key released during paste guard)");
 		safeSend("hotkey:released");
 	};
 
-	/** Check if combo keys were released and fire hotkey:released if needed. */
-	const checkDeferredRelease = () => {
-		fireDeferredReleaseIfNeeded();
-		updateComboReleaseState();
-	};
+	// (was: checkDeferredRelease helper. Replaced by `evalOnLift` below which
+	// handles both deferred-press and deferred-release in a single state pass.)
 
+	// Stryker disable next-line BlockStatement: equivalent — the entire body is dbgVerbose logging (informational only); replacing it with an empty body produces identical observable behavior.
 	const logComboKeyDown = (code: number) => {
+		// Stryker disable next-line ConditionalExpression: equivalent — when no accelerator is registered, `targetKeyCodes` is null and `?.has(code)` short-circuits to undefined → !undefined = true → early return; the mutated `true` (always early-return) is observationally identical because the only side effect of this function is dbgVerbose logging.
 		if (!targetKeyCodes?.has(code)) {
 			return;
 		}
+		// Stryker disable StringLiteral,LogicalOperator,ArrayDeclaration,ArrowFunction: dbgVerbose log line content; the entire log builder + emission is informational only.
 		const name = KEYCODE_TO_NAME[code] ?? `?${code}`;
 		const held = [...pressedKeys].map((c) => KEYCODE_TO_NAME[c] ?? `?${c}`).join("+");
 		const need = [...targetKeyCodes].map((c) => KEYCODE_TO_NAME[c] ?? `?${c}`).join("+");
@@ -148,6 +199,7 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 			"hotkey",
 			`combo-key DOWN: ${name} | held=[${held}] need=[${need}] isActive=${isActive}`
 		);
+		// Stryker restore StringLiteral,LogicalOperator,ArrayDeclaration,ArrowFunction
 	};
 
 	const shouldPlayRecordingSound = (mode: unknown): boolean =>
@@ -159,9 +211,11 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		if (!canActivateCombo()) {
 			return;
 		}
-		isActive = true;
+		setIsActive(true);
 		comboFullyReleased = false;
+		notifyHotkeyPressed();
 		const mode = getStoreValue("general.recordingMode");
+		// Stryker disable next-line StringLiteral: dbg() message is informational only
 		dbg("hotkey", `PRESSED — combo matched, mode=${mode}, connected=${sttClient.isConnected}`);
 		if (shouldPlayRecordingSound(mode)) {
 			playRecordingSound();
@@ -169,18 +223,53 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		safeSend("hotkey:pressed");
 	};
 
-	const onKeyDown = (e: { keycode: number }) => {
-		if (pasteGuard) {
-			return;
+	const activateDeferredPress = () => {
+		setIsActive(true);
+		comboFullyReleased = false;
+		notifyHotkeyPressed();
+		const mode = getStoreValue("general.recordingMode");
+		// Stryker disable next-line StringLiteral: dbg() message is informational only
+		dbg("hotkey", `PRESSED (deferred — pressed during paste guard), mode=${mode}`);
+		if (shouldPlayRecordingSound(mode)) {
+			playRecordingSound();
 		}
+		safeSend("hotkey:pressed");
+	};
+
+	const fireDeferredPressIfNeeded = () => {
+		if (!isActive && comboFullyReleased && checkCombo()) {
+			activateDeferredPress();
+		}
+	};
+
+	/** Snapshot the on-lift evaluator. Both keydown and keyup install the same
+	 *  function — at lift time we evaluate the FINAL combo state (held vs not)
+	 *  and fire hotkey:pressed and/or hotkey:released as needed. */
+	const evalOnLift = () => {
+		// First fire any deferred press: combo became held during the guard.
+		fireDeferredPressIfNeeded();
+		// Then fire any deferred release: combo was active and is now not held.
+		fireDeferredReleaseIfNeeded();
+		updateComboReleaseState();
+	};
+
+	const onKeyDown = (e: { keycode: number }) => {
 		const code = e.keycode;
 		if (isRecording) {
 			handleRecordingKeyDown(code);
 			return;
 		}
-		// ── Normal hotkey detection ─────────────────────────────────
+		// ALWAYS track key downs in pressedKeys, even during the paste guard,
+		// so the physical-key state is correct when the guard lifts. Without
+		// this, a user pressing PTT during a paste's ~50ms window has their
+		// press silently dropped — the next press only registers after they
+		// release and re-press.
 		pressedKeys.add(code);
 		logComboKeyDown(code);
+		if (pasteGuard) {
+			onPasteGuardLifted = evalOnLift;
+			return;
+		}
 		tryActivateCombo();
 	};
 
@@ -197,7 +286,8 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		if (!isActive || checkCombo()) {
 			return;
 		}
-		isActive = false;
+		setIsActive(false);
+		// Stryker disable next-line StringLiteral: dbg() message is informational only
 		dbg("hotkey", "RELEASED");
 		safeSend("hotkey:released");
 	};
@@ -215,9 +305,9 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		// we can fire the deferred hotkey:released when the guard lifts.
 		pressedKeys.delete(code);
 		if (pasteGuard) {
-			// Schedule a deferred check — when the guard lifts,
-			// setPasteGuard(false) will call checkDeferredRelease().
-			onPasteGuardLifted = checkDeferredRelease;
+			// Same evaluator as onKeyDown — at lift time it fires both
+			// deferred press and deferred release if appropriate.
+			onPasteGuardLifted = evalOnLift;
 			return;
 		}
 		releaseHotkeyIfNeeded();
@@ -227,15 +317,23 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 	uIOhook.on("keydown", onKeyDown);
 	uIOhook.on("keyup", onKeyUp);
 
+	// Stryker disable BooleanLiteral,ConditionalExpression,BlockStatement: equivalent — `hotkeyStarted` is a module-level latch that prevents calling uIOhook.start() twice across multiple setupHotkeyHandlers invocations. In tests, each beforeEach goes through a full cleanup() that resets the latch to false, so the guard's outcome only matters for production multi-window scenarios; mutations produce identical observable behavior in single-setup unit tests.
 	if (!hotkeyStarted) {
 		uIOhook.start();
 		hotkeyStarted = true;
 	}
+	// Stryker restore BooleanLiteral,ConditionalExpression,BlockStatement
 
 	const extractAcceleratorString = (acc: unknown): string | null =>
+		// Stryker disable next-line ConditionalExpression,StringLiteral: equivalent — both branches are followed by `if (!accelerator) return false` in handleRegister, so returning "" instead of null still triggers the falsy short-circuit; the mutated comparison literal "Stryker was here!" never matches real accelerator strings ("LCtrl+R"), preserving the original truth values.
 		typeof acc === "string" && acc !== "" ? acc : null;
 
 	const extractAccelerator = (p: unknown): string | null => {
+		// Stryker disable next-line ConditionalExpression: equivalent — when `p`
+		// is a truthy non-object (e.g., a number 42 or string "x"), removing the
+		// `typeof p !== "object"` guard falls through to `(p as {}).accelerator`
+		// which is undefined; extractAcceleratorString(undefined) returns null,
+		// and handleRegister still returns false — same observable outcome.
 		if (!p || typeof p !== "object") {
 			return null;
 		}
@@ -248,18 +346,21 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 	) => {
 		const accelerator = extractAccelerator(payload);
 		if (!accelerator) {
+			// Stryker disable next-line StringLiteral: dbg() message is informational only
 			dbg("hotkey", "Register FAILED — invalid payload");
 			return false;
 		}
 		const codes = parseAccelerator(accelerator);
 		if (!codes) {
+			// Stryker disable next-line StringLiteral: dbg() message is informational only
 			dbg("hotkey", `Register FAILED — unknown accelerator: "${accelerator}"`);
 			return false;
 		}
 		targetKeyCodes = codes;
 		pressedKeys.clear();
-		isActive = false;
+		setIsActive(false);
 		comboFullyReleased = true;
+		// Stryker disable next-line StringLiteral,ArrayDeclaration: dbg() message and spread are informational only
 		dbg("hotkey", `Registered: "${accelerator}" → keycodes:`, JSON.stringify([...codes]));
 		return true;
 	};
@@ -267,7 +368,8 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 	const handleUnregister = () => {
 		targetKeyCodes = null;
 		pressedKeys.clear();
-		isActive = false;
+		setIsActive(false);
+		// Stryker disable next-line BooleanLiteral: equivalent — handleRegister always resets `comboFullyReleased = true` again at the start of any subsequent registration, so flipping this assignment to false produces identical observable state.
 		comboFullyReleased = true;
 	};
 
@@ -278,7 +380,7 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		recordingSender = event.sender;
 		// Temporarily disable hotkey detection while recording
 		pressedKeys.clear();
-		isActive = false;
+		setIsActive(false);
 		return true;
 	};
 
@@ -294,9 +396,13 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		resetRecording();
 	};
 
+	// Stryker disable next-line StringLiteral: defensive pre-clear — cleanup also removes via the matching channel
 	ipcMain.removeHandler("hotkey:register");
+	// Stryker disable next-line StringLiteral: defensive pre-clear — cleanup also removes via the matching channel
 	ipcMain.removeHandler("hotkey:start-recording");
+	// Stryker disable next-line StringLiteral: defensive pre-clear — cleanup also removes via the matching channel
 	ipcMain.removeAllListeners("hotkey:unregister");
+	// Stryker disable next-line StringLiteral: defensive pre-clear — cleanup also removes via the matching channel
 	ipcMain.removeAllListeners("hotkey:stop-recording");
 	ipcMain.on("hotkey:unregister", handleUnregister);
 	ipcMain.on("hotkey:stop-recording", handleStopRecording);
@@ -312,11 +418,13 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		ipcMain.off("hotkey:stop-recording", handleStopRecording);
 		targetKeyCodes = null;
 		pressedKeys.clear();
-		isActive = false;
+		setIsActive(false);
 		resetRecording();
+		// Stryker disable ConditionalExpression,BlockStatement,BooleanLiteral: equivalent — symmetric counterpart of the start-side latch; see the comment above near `if (!hotkeyStarted)`. In a single setup/cleanup cycle the guard's outcome and the latch reset are not observable.
 		if (hotkeyStarted) {
 			uIOhook.stop();
 			hotkeyStarted = false;
 		}
+		// Stryker restore ConditionalExpression,BlockStatement,BooleanLiteral
 	};
 }

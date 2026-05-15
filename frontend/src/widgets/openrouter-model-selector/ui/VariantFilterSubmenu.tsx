@@ -30,6 +30,21 @@ function getVariantInfo(variant: ModelVariant | "none"): { label: string } {
 	return MODEL_VARIANT_INFO[variant];
 }
 
+export function isVariantSelected(
+	selectedVariant: ModelVariant | "none" | null,
+	variant: ModelVariant | "none"
+): boolean {
+	return selectedVariant === variant;
+}
+
+/** Pure: returns the count for `variant` from the map, defaulting to 0. */
+export function getVariantCount(
+	variantCounts: Map<ModelVariant | "none", number>,
+	variant: ModelVariant | "none"
+): number {
+	return variantCounts.get(variant) ?? 0;
+}
+
 interface SelectedTickProps {
 	visible: boolean;
 }
@@ -83,7 +98,7 @@ export function VariantFilterSubmenu({
 }: VariantFilterSubmenuProps) {
 	const renderVariantItem = (variant: ModelVariant | "none") => (
 		<VariantMenuItem
-			count={variantCounts.get(variant) ?? 0}
+			count={getVariantCount(variantCounts, variant)}
 			isSelected={selectedVariant === variant}
 			key={variant}
 			onSelect={() => onVariantSelect(variant)}
@@ -118,4 +133,8 @@ export function VariantFilterSubmenu({
 export const __variant_filter_submenu_test_helpers__ = {
 	STANDARD_INFO,
 	getVariantInfo,
+	isVariantSelected,
+	getVariantCount,
+	SelectedTick,
+	VariantMenuItem,
 };

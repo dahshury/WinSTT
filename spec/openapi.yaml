@@ -23,6 +23,7 @@ components:
           no_audio_detected: "#/components/schemas/NoAudioDetectedEvent"
           loopback_started: "#/components/schemas/LoopbackStartedEvent"
           loopback_stopped: "#/components/schemas/LoopbackStoppedEvent"
+          device_switch_failed: "#/components/schemas/DeviceSwitchFailedEvent"
           vad_detect_start: "#/components/schemas/VadDetectStartEvent"
           vad_detect_stop: "#/components/schemas/VadDetectStopEvent"
           transcription_start: "#/components/schemas/TranscriptionStartEvent"
@@ -43,6 +44,7 @@ components:
         - $ref: "#/components/schemas/NoAudioDetectedEvent"
         - $ref: "#/components/schemas/LoopbackStartedEvent"
         - $ref: "#/components/schemas/LoopbackStoppedEvent"
+        - $ref: "#/components/schemas/DeviceSwitchFailedEvent"
         - $ref: "#/components/schemas/VadDetectStartEvent"
         - $ref: "#/components/schemas/VadDetectStopEvent"
         - $ref: "#/components/schemas/TranscriptionStartEvent"
@@ -101,6 +103,25 @@ components:
         type:
           type: string
           const: loopback_stopped
+
+    DeviceSwitchFailedEvent:
+      type: object
+      description: >
+        Emitted by the audio reader thread when a queued input-device switch
+        could not open the requested device. The server may fall back to the
+        system default; either way, the renderer should revert the user's
+        selection and surface the reason as a toast.
+      required: [type, requested_index, error_message]
+      properties:
+        type:
+          type: string
+          const: device_switch_failed
+        requested_index:
+          type: integer
+        error_message:
+          type: string
+        fallback_index:
+          type: [integer, "null"]
 
     RecordingStopEvent:
       type: object
@@ -348,6 +369,7 @@ components:
         - silence_endpoint_enabled
         - smart_endpoint_enabled
         - detection_speed
+        - input_device_index
 
     AllowedMethod:
       type: string
@@ -648,6 +670,10 @@ components:
         fileTranscriptionFormat:
           type: string
           enum: [txt, srt]
+        fileTranscriptionSaveLocation:
+          type: string
+          enum: [auto, ask]
+          description: Where to save transcribed files. `auto` saves alongside the source file; `ask` prompts with a save dialog each time.
         recordingMode:
           type: string
           enum: [ptt, toggle, listen]
@@ -660,12 +686,15 @@ components:
           type: string
           enum: [xs, sm, md, lg, xl]
           description: Overlay-popup visualizer height preset (xs–xl).
-        showLiveTranscription:
-          type: boolean
-          description: Show live transcription text under the floating recording pill (overlay window).
-        showInAppLiveTranscription:
-          type: boolean
-          description: Show live transcription text inside the main app window (subtitle overlay and transcription feed).
+        liveTranscriptionDisplay:
+          type: string
+          enum: [none, in-app, in-pill, both]
+          description: |
+            Where to render the live transcription preview while a realtime model is producing text.
+            `in-app` shows it in the main window's subtitle overlay and transcription feed only.
+            `in-pill` shows it under the floating recording pill overlay only.
+            `both` shows it in both surfaces.
+            `none` hides the live preview everywhere; final transcripts still appear normally.
         visualizerType:
           type: string
           enum: [bar, grid, radial, wave, aura]
@@ -676,6 +705,14 @@ components:
         visualizerColor:
           type: string
           pattern: "^#[0-9a-fA-F]{6}$"
+        contextAwareness:
+          type: boolean
+          description: |
+            When enabled, the Electron client reads text from the focused window
+            via Windows UI Automation immediately before each dictation and feeds
+            it to the LLM cleanup step so names and jargon get spelled correctly.
+            Off by default; requires an explicit opt-in dialog in the UI because
+            the feature reads content from any focused app.
 
     HotkeySettings:
       type: object
@@ -750,13 +787,83 @@ components:
             Optional fallback model. Same encoding as `openrouterModel`. When set,
             the LLM IPC retries with this model if the primary model errors or times
             out. Empty string disables fallback.
-        preset:
-          type: string
-          enum: [neutral, formal, friendly, technical, casual, concise]
-          default: neutral
+        presets:
+          type: array
+          default: [{ key: neutral }]
+          description: >-
+            Ordered list of text-transformation presets to apply. At most one
+            tone preset (neutral/formal/friendly/technical/casual) may appear.
+            `level` is only valid for `summarize` and `concise`.
+          items:
+            $ref: "#/components/schemas/LlmPresetEntry"
         timeout:
           type: integer
           default: 5000
+        transforms:
+          type: array
+          description: >-
+            User-configurable text transforms triggered by a hotkey on the
+            currently-selected text. Each transform carries its own system
+            prompt (independent from the dictation cleanup presets) and an
+            optional hotkey. Built-in entries are flagged so the UI can show
+            a Reset action instead of Delete.
+          items:
+            $ref: "#/components/schemas/Transform"
+
+    Transform:
+      type: object
+      required: [id, name, prompt]
+      properties:
+        id:
+          type: string
+          description: Stable identifier; built-ins use kebab-case slugs (e.g. "polish").
+        name:
+          type: string
+          description: Display name shown in the UI.
+        prompt:
+          type: string
+          description: >-
+            Full system prompt sent to the LLM. The user's selected text is
+            passed as the user-message turn; the model is instructed to return
+            only the transformed text.
+        hotkey:
+          type: string
+          description: >-
+            uiohook-style combo string (e.g. "LCtrl+LShift+P"). Empty means
+            the transform is reachable only via the Transforms UI / IPC.
+          default: ""
+        builtin:
+          type: boolean
+          description: True for transforms seeded by the app (Polish, Prompt Engineer).
+          default: false
+
+    LlmPresetKey:
+      type: string
+      enum:
+        - neutral
+        - formal
+        - friendly
+        - technical
+        - casual
+        - concise
+        - summarize
+        - reorder
+        - restructure
+        - rewordForClarity
+
+    LlmPresetLevel:
+      type: string
+      enum: [light, medium, high]
+      description: Intensity level for presets that support it (`summarize`, `concise`).
+
+    LlmPresetEntry:
+      type: object
+      required: [key]
+      properties:
+        key:
+          $ref: "#/components/schemas/LlmPresetKey"
+        level:
+          $ref: "#/components/schemas/LlmPresetLevel"
 
     OllamaModel:
       type: object
@@ -1064,6 +1171,12 @@ components:
           type: boolean
         maxInputChannels:
           type: integer
+        defaultSampleRate:
+          type: integer
+        hostApi:
+          type: integer
+        hostApiName:
+          type: string
 
     GpuInfo:
       type: object

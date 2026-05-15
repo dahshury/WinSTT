@@ -10,6 +10,10 @@ interface VisualizerState {
 	isRecording: boolean;
 	/** VAD has detected speech (between vad_start / vad_stop). */
 	isSpeaking: boolean;
+	/** Reset audio + pulse to 0 and mark recording active in a single store update. */
+	recordingStarted: () => void;
+	/** Clear recording + speaking flags in a single store update. */
+	recordingStopped: () => void;
 	/**
 	 * 0-1 pulse that fires on each full sentence then decays.
 	 * Gives a brief visual "pop" when a sentence lands.
@@ -28,6 +32,8 @@ export const useVisualizerStore = create<VisualizerState>()((set) => ({
 	audioLevel: 0,
 	sentencePulse: 0,
 
+	recordingStarted: () => set({ isRecording: true, audioLevel: 0, sentencePulse: 0 }),
+	recordingStopped: () => set({ isRecording: false, isSpeaking: false }),
 	setRecording: (v) => set({ isRecording: v }),
 	setSpeaking: (v) => set({ isSpeaking: v }),
 	setAudioLevel: (v) => set({ audioLevel: v }),

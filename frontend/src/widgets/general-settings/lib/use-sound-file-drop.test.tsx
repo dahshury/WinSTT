@@ -139,6 +139,75 @@ describe("validateDroppedSoundFile", () => {
 	});
 });
 
+describe("checkSoundFileDuration", () => {
+	const mockT = ((key: string, vals?: Record<string, unknown>) =>
+		vals ? `${key}:${JSON.stringify(vals)}` : key) as Parameters<
+		typeof helpers.checkSoundFileDuration
+	>[1];
+
+	test("returns null when audio duration is within limit", async () => {
+		// Create a short WAV-like file object whose AudioContext returns duration ≤ 3s
+		const mockFile = {
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as unknown as File;
+
+		// Patch AudioContext to return a short buffer
+		const OriginalAudioContext = globalThis.AudioContext;
+		class FakeCtx {
+			close = async () => undefined;
+			decodeAudioData = async () => ({ duration: 2.0 }) as AudioBuffer;
+		}
+		globalThis.AudioContext = FakeCtx as unknown as typeof AudioContext;
+		try {
+			const result = await helpers.checkSoundFileDuration(mockFile, mockT);
+			expect(result).toBeNull();
+		} finally {
+			globalThis.AudioContext = OriginalAudioContext;
+		}
+	});
+
+	test("returns i18n error key when audio duration exceeds the limit", async () => {
+		const mockFile = {
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as unknown as File;
+
+		const OriginalAudioContext = globalThis.AudioContext;
+		class FakeCtx {
+			close = async () => undefined;
+			decodeAudioData = async () => ({ duration: 5.0 }) as AudioBuffer;
+		}
+		globalThis.AudioContext = FakeCtx as unknown as typeof AudioContext;
+		try {
+			const result = await helpers.checkSoundFileDuration(mockFile, mockT);
+			expect(result).not.toBeNull();
+			expect(result).toContain("soundFileTooLong");
+		} finally {
+			globalThis.AudioContext = OriginalAudioContext;
+		}
+	});
+
+	test("returns i18n error key when AudioContext fails to decode", async () => {
+		const mockFile = {
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as unknown as File;
+
+		const OriginalAudioContext = globalThis.AudioContext;
+		class FakeCtx {
+			close = async () => undefined;
+			decodeAudioData = async (): Promise<AudioBuffer> => {
+				throw new Error("Decode error");
+			};
+		}
+		globalThis.AudioContext = FakeCtx as unknown as typeof AudioContext;
+		try {
+			const result = await helpers.checkSoundFileDuration(mockFile, mockT);
+			expect(result).toBe("soundFileUnreadable");
+		} finally {
+			globalThis.AudioContext = OriginalAudioContext;
+		}
+	});
+});
+
 describe("MAX_DURATION_SECONDS / ACCEPTED_EXTENSIONS constants", () => {
 	test("MAX_DURATION_SECONDS is the documented 3-second limit", () => {
 		expect(helpers.MAX_DURATION_SECONDS).toBe(3);

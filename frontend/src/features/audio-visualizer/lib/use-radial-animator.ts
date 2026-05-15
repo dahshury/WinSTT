@@ -37,32 +37,45 @@ function generateListeningSequence(columns: number): number[][] {
 	]);
 }
 
+const LISTEN_STATES_RADIAL = new Set<AgentState>(["thinking", "listening"]);
+const CONNECT_STATES_RADIAL = new Set<AgentState>(["connecting", "initializing"]);
+
 function buildSequence(state: AgentState, barCount: number): number[][] {
-	if (state === "thinking" || state === "listening") {
-		return generateListeningSequence(barCount);
-	}
-	if (state === "connecting" || state === "initializing") {
-		return generateConnectingSequence(barCount);
-	}
 	if (state === "speaking") {
 		return [new Array(barCount).fill(0).map((_, idx) => idx)];
+	}
+	if (LISTEN_STATES_RADIAL.has(state)) {
+		return generateListeningSequence(barCount);
+	}
+	if (CONNECT_STATES_RADIAL.has(state)) {
+		return generateConnectingSequence(barCount);
 	}
 	return [[]];
 }
 
 export function useRadialAnimator(state: AgentState, barCount: number, interval: number): number[] {
+	// buildSequence returns a fresh array each call; compare on the primitive
+	// inputs (state, barCount) instead of the reference so we don't loop in
+	// environments without React Compiler (e.g. the bun test transpiler).
+	const sequence = buildSequence(state, barCount);
 	const [index, setIndex] = useState(0);
-	const [sequence, setSequence] = useState<number[][]>(() => buildSequence(state, barCount));
-
-	useEffect(() => {
-		setSequence(buildSequence(state, barCount));
+	const [prevInputs, setPrevInputs] = useState({ state, barCount });
+	if (prevInputs.state !== state || prevInputs.barCount !== barCount) {
+		setPrevInputs({ state, barCount });
 		setIndex(0);
-	}, [state, barCount]);
+	}
 
 	const animationFrameId = useRef<number | null>(null);
 	const startTimeRef = useRef(performance.now());
-	// biome-ignore lint/correctness/useExhaustiveDependencies: rAF loop intentionally depends on interval/barCount/state/sequence.length
 	useEffect(() => {
+		// Sequence length ≤ 1 means cycling the index changes nothing — that
+		// covers "disconnected" (empty) and "speaking" (all dots highlit).
+		// "thinking" uses an infinite interval (handled by CSS animate-spin
+		// instead). Skip rAF entirely so idle visualizers don't burn 60 fps
+		// of CPU per open BrowserWindow.
+		if (sequence.length <= 1 || !Number.isFinite(interval)) {
+			return;
+		}
 		startTimeRef.current = performance.now();
 
 		const animate = (time: DOMHighResTimeStamp) => {
@@ -79,7 +92,7 @@ export function useRadialAnimator(state: AgentState, barCount: number, interval:
 				cancelAnimationFrame(animationFrameId.current);
 			}
 		};
-	}, [interval, barCount, state, sequence.length]);
+	}, [interval, sequence]);
 
 	return sequence[index % sequence.length] ?? [];
 }

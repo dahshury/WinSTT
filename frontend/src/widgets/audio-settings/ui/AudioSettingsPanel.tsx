@@ -31,11 +31,11 @@ export function AudioSettingsPanel() {
 		audio?.inputDeviceIndex == null ? "default" : String(audio.inputDeviceIndex);
 
 	return (
-		<div className="flex flex-col gap-5">
+		<div className="flex flex-col gap-2">
 			{/* ── Input Device (hidden in Listen mode — loopback device is used instead) */}
 			{recordingMode !== "listen" && (
 				<SettingSection icon={Mic01Icon} title={t("inputDevice")}>
-					<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+					<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 						<FormControl
 							caption={t("deviceCaption")}
 							label={t("device")}
@@ -62,7 +62,7 @@ export function AudioSettingsPanel() {
 				title={t("vad")}
 				toggled={audio?.sileroDeactivityDetection ?? true}
 			>
-				<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
+				<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 					<FormControl
 						caption={t("sileroSensitivityCaption")}
 						label={t("sileroSensitivity")}

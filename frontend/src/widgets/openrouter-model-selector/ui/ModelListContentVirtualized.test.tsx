@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { Combobox } from "@base-ui/react/combobox";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
-import { render } from "@testing-library/react";
+import { BookOpen02Icon } from "@hugeicons/core-free-icons";
+import { render, renderHook } from "@testing-library/react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import {
 	__model_list_content_virtualized_test_helpers__ as helpers,
 	ModelListContentVirtualized,
+	useProvidersOpenedFlag,
 	type VirtualizedItem,
 } from "./ModelListContentVirtualized";
 
@@ -659,6 +661,37 @@ describe("getEmptyStateLabel / getEmptyStateBody", () => {
 	});
 });
 
+describe("useProvidersOpenedFlag", () => {
+	test("starts false when isOpen is false", () => {
+		const { result } = renderHook(() => useProvidersOpenedFlag(false));
+		expect(result.current).toBe(false);
+	});
+
+	test("starts true when isOpen is true", () => {
+		const { result } = renderHook(() => useProvidersOpenedFlag(true));
+		expect(result.current).toBe(true);
+	});
+
+	test("latches true once opened (stays true when closed again)", () => {
+		let isOpen = true;
+		const { result, rerender } = renderHook(() => useProvidersOpenedFlag(isOpen));
+		expect(result.current).toBe(true);
+		isOpen = false;
+		rerender();
+		// Once it was true, it stays true (the latch pattern)
+		expect(result.current).toBe(true);
+	});
+
+	test("transitions from false to true when isOpen becomes true", () => {
+		let isOpen = false;
+		const { result, rerender } = renderHook(() => useProvidersOpenedFlag(isOpen));
+		expect(result.current).toBe(false);
+		isOpen = true;
+		rerender();
+		expect(result.current).toBe(true);
+	});
+});
+
 describe("getRowKey", () => {
 	test("model item -> model-<id>", () => {
 		const item: VirtualizedItem = {
@@ -681,5 +714,514 @@ describe("getRowKey", () => {
 			index: 1,
 		};
 		expect(helpers.getRowKey(item)).toBe("providers-openai/k2");
+	});
+});
+
+describe("resolveActiveMaker", () => {
+	const items: VirtualizedItem[] = [
+		{
+			type: "model",
+			model: makeModel({ maker: "openai" }),
+			groupIndex: 0,
+			index: 0,
+			isExpanded: false,
+			hasProviders: false,
+		},
+		{
+			type: "model",
+			model: makeModel({ maker: "anthropic" }),
+			groupIndex: 1,
+			index: 1,
+			isExpanded: false,
+			hasProviders: false,
+		},
+	];
+
+	test("returns maker at given index", () => {
+		expect(helpers.resolveActiveMaker(items, 0)).toBe("openai");
+		expect(helpers.resolveActiveMaker(items, 1)).toBe("anthropic");
+	});
+
+	test("returns null when index out of bounds", () => {
+		expect(helpers.resolveActiveMaker(items, 99)).toBeNull();
+	});
+
+	test("returns null when items is empty", () => {
+		expect(helpers.resolveActiveMaker([], 0)).toBeNull();
+	});
+});
+
+describe("shouldNotifyMaker", () => {
+	test("returns true when makers differ", () => {
+		expect(helpers.shouldNotifyMaker("openai", "anthropic")).toBe(true);
+	});
+
+	test("returns false when makers are the same", () => {
+		expect(helpers.shouldNotifyMaker("openai", "openai")).toBe(false);
+	});
+
+	test("returns true when transitioning from null to string", () => {
+		expect(helpers.shouldNotifyMaker("openai", null)).toBe(true);
+	});
+
+	test("returns false when both null", () => {
+		expect(helpers.shouldNotifyMaker(null, null)).toBe(false);
+	});
+});
+
+describe("isNewScrollNonce", () => {
+	test("returns true when lastNonce is null", () => {
+		expect(helpers.isNewScrollNonce(null, 1)).toBe(true);
+	});
+
+	test("returns true when nonce differs from lastNonce", () => {
+		expect(helpers.isNewScrollNonce(1, 2)).toBe(true);
+	});
+
+	test("returns false when nonce equals lastNonce", () => {
+		expect(helpers.isNewScrollNonce(5, 5)).toBe(false);
+	});
+});
+
+describe("applyVirtualScrollMakerUpdate", () => {
+	const makeVirtualItem = (maker: string, idx: number): VirtualizedItem => ({
+		type: "model",
+		model: makeModel({ maker, id: `${maker}/m${idx}` }),
+		groupIndex: idx,
+		index: idx,
+		isExpanded: false,
+		hasProviders: false,
+	});
+
+	const makeHandle = (offsets: number[], sizes: number[]) => ({
+		getItemOffset: (i: number) => offsets[i] ?? 0,
+		getItemSize: (i: number) => sizes[i] ?? 50,
+	});
+
+	test("returns lastNotifiedMaker unchanged when handle is null", () => {
+		const items = [makeVirtualItem("openai", 0)];
+		const result = helpers.applyVirtualScrollMakerUpdate(null, items, 0, "openai", undefined);
+		expect(result).toBe("openai");
+	});
+
+	test("returns lastNotifiedMaker unchanged when virtualItems is empty", () => {
+		const handle = makeHandle([], []);
+		const result = helpers.applyVirtualScrollMakerUpdate(handle, [], 0, null, undefined);
+		expect(result).toBeNull();
+	});
+
+	test("calls onActiveMakerChange and returns new maker when it changes", () => {
+		const items = [makeVirtualItem("anthropic", 0), makeVirtualItem("openai", 1)];
+		const handle = makeHandle([0, 100], [100, 100]);
+		let notified: string | null = "not-called";
+		const result = helpers.applyVirtualScrollMakerUpdate(handle, items, 0, "openai", (m) => {
+			notified = m;
+		});
+		expect(result).toBe("anthropic");
+		expect(notified).toBe("anthropic");
+	});
+
+	test("does not call onActiveMakerChange when maker did not change", () => {
+		const items = [makeVirtualItem("openai", 0)];
+		const handle = makeHandle([0], [100]);
+		let called = false;
+		const result = helpers.applyVirtualScrollMakerUpdate(handle, items, 0, "openai", () => {
+			called = true;
+		});
+		expect(result).toBe("openai");
+		expect(called).toBe(false);
+	});
+});
+
+describe("applyScrollToMakerRequest", () => {
+	const makeVirtualItem = (maker: string, id: string, idx: number): VirtualizedItem => ({
+		type: "model",
+		model: makeModel({ maker, id }),
+		groupIndex: idx,
+		index: idx,
+		isExpanded: false,
+		hasProviders: false,
+	});
+
+	test("returns lastNonce unchanged when request is null", () => {
+		expect(helpers.applyScrollToMakerRequest(null, 5, [], undefined)).toBe(5);
+	});
+
+	test("returns lastNonce unchanged when nonce is already processed", () => {
+		const request = { maker: "openai", nonce: 3 };
+		expect(helpers.applyScrollToMakerRequest(request, 3, [], undefined)).toBe(3);
+	});
+
+	test("calls scrollToIndex with correct index and returns new nonce", () => {
+		const items = [makeVirtualItem("openai", "openai/gpt-4o", 0)];
+		const request = { maker: "openai", modelId: "openai/gpt-4o", nonce: 2 };
+		const scrolledIndices: number[] = [];
+		const result = helpers.applyScrollToMakerRequest(request, null, items, (idx, _opts) => {
+			scrolledIndices.push(idx);
+		});
+		expect(result).toBe(2);
+		expect(scrolledIndices[0]).toBe(0);
+	});
+
+	test("does not scroll when targetIndex < 0", () => {
+		const items = [makeVirtualItem("anthropic", "anthropic/c", 0)];
+		const request = { maker: "nobody", nonce: 1 };
+		let scrollCalled = false;
+		const result = helpers.applyScrollToMakerRequest(request, null, items, () => {
+			scrollCalled = true;
+		});
+		expect(result).toBe(1);
+		expect(scrollCalled).toBe(false);
+	});
+});
+
+/* ── Component render tests ─────────────────────────────────────────── */
+
+describe("VariantBadge", () => {
+	const { VariantBadge } = helpers;
+
+	test("returns null when no variant", () => {
+		const { container } = render(<VariantBadge variant={undefined} variantClasses={null} />);
+		expect(container.firstChild).toBeNull();
+	});
+
+	test("returns null when variantClasses is null despite variant present", () => {
+		const { container } = render(<VariantBadge variant="free" variantClasses={null} />);
+		expect(container.firstChild).toBeNull();
+	});
+
+	test("renders badge with variant label when both variant and classes provided", () => {
+		const model = makeModel({ variant: "free" });
+		const variantClasses = helpers.computeVariantClasses(model);
+		const { container } = render(<VariantBadge variant="free" variantClasses={variantClasses} />);
+		expect(container.firstChild).not.toBeNull();
+		expect(container.textContent).toContain("Free");
+	});
+});
+
+describe("ModelVariantStrip", () => {
+	const { ModelVariantStrip } = helpers;
+
+	test("returns null when no variant", () => {
+		const { container } = render(<ModelVariantStrip variant={undefined} variantClasses={null} />);
+		expect(container.firstChild).toBeNull();
+	});
+
+	test("returns null when variantClasses is null", () => {
+		const { container } = render(<ModelVariantStrip variant="nitro" variantClasses={null} />);
+		expect(container.firstChild).toBeNull();
+	});
+
+	test("renders accent strip when variant and classes both present", () => {
+		const model = makeModel({ variant: "nitro" });
+		const variantClasses = helpers.computeVariantClasses(model);
+		const { container } = render(
+			<ModelVariantStrip variant="nitro" variantClasses={variantClasses} />
+		);
+		expect(container.firstChild).not.toBeNull();
+	});
+});
+
+describe("MakerIcon", () => {
+	const { MakerIcon } = helpers;
+
+	test("returns null when maker is undefined", () => {
+		const { container } = render(<MakerIcon maker={undefined} />);
+		expect(container.firstChild).toBeNull();
+	});
+
+	test("renders icon element when maker is known", () => {
+		const { container } = render(<MakerIcon maker="openai" />);
+		// resolveMakerIconSrc returns a string for openai, so should render
+		expect(container.firstChild).not.toBeNull();
+	});
+});
+
+describe("ContextChip", () => {
+	const { ContextChip } = helpers;
+
+	test("returns null when contextLength is null", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ContextChip contextLength={null} />
+			</TooltipProvider.Provider>
+		);
+		expect(container.querySelector("[class]")).toBeNull();
+	});
+
+	test("renders chip when contextLength is positive", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ContextChip contextLength={128_000} />
+			</TooltipProvider.Provider>
+		);
+		expect(container.textContent?.length).toBeGreaterThan(0);
+	});
+});
+
+describe("PricingChip", () => {
+	const { PricingChip } = helpers;
+
+	test("returns null when pricingInfo is null", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<PricingChip pricingInfo={null} />
+			</TooltipProvider.Provider>
+		);
+		expect(container.querySelector("[class]")).toBeNull();
+	});
+
+	test("renders chip when pricingInfo is provided", () => {
+		const _pricingInfo = helpers.getPricingClassName(
+			{ tier: "free", label: "Free", className: "x" },
+			true
+		);
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<PricingChip pricingInfo={{ tier: "free", label: "Free", className: "x" }} />
+			</TooltipProvider.Provider>
+		);
+		expect(container.textContent).toContain("Free");
+	});
+});
+
+describe("ProviderStatChip", () => {
+	const { ProviderStatChip } = helpers;
+
+	test("returns null when value is null", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ProviderStatChip
+					icon={BookOpen02Icon}
+					tooltipBody="body"
+					tooltipTitle="title"
+					value={null}
+				/>
+			</TooltipProvider.Provider>
+		);
+		expect(container.querySelector("[class]")).toBeNull();
+	});
+
+	test("renders when value is positive", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ProviderStatChip
+					icon={BookOpen02Icon}
+					tooltipBody="body"
+					tooltipTitle="title"
+					value={4096}
+				/>
+			</TooltipProvider.Provider>
+		);
+		expect(container.textContent?.length).toBeGreaterThan(0);
+	});
+});
+
+describe("ProviderStatsRow", () => {
+	const { ProviderStatsRow } = helpers;
+
+	test("returns null when both contextLength and maxOut are null", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ProviderStatsRow contextLength={null} maxOut={null} />
+			</TooltipProvider.Provider>
+		);
+		expect(container.querySelector("[class]")).toBeNull();
+	});
+
+	test("renders when contextLength is provided", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ProviderStatsRow contextLength={128_000} maxOut={null} />
+			</TooltipProvider.Provider>
+		);
+		expect(container.textContent?.length).toBeGreaterThan(0);
+	});
+});
+
+describe("FeaturedEndpointChip", () => {
+	const { FeaturedEndpointChip } = helpers;
+
+	test("returns null when endpoint is null", () => {
+		const { container } = render(<FeaturedEndpointChip endpoint={null} />);
+		expect(container.firstChild).toBeNull();
+	});
+
+	test("renders when endpoint is provided", () => {
+		const { container } = render(<FeaturedEndpointChip endpoint={makeEndpoint()} />);
+		expect(container.firstChild).not.toBeNull();
+	});
+});
+
+describe("ModelDescription", () => {
+	const { ModelDescription } = helpers;
+
+	test("returns null when description is undefined", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ModelDescription description={undefined} />
+			</TooltipProvider.Provider>
+		);
+		expect(container.querySelector("p")).toBeNull();
+	});
+
+	test("renders description text when present", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ModelDescription description="Some model description" />
+			</TooltipProvider.Provider>
+		);
+		expect(container.textContent).toContain("Some model description");
+	});
+});
+
+describe("ModelHeaderTitleRow", () => {
+	const { ModelHeaderTitleRow } = helpers;
+
+	test("renders model name", () => {
+		const m = makeModel({ model_name: "GPT-4o" });
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ModelHeaderTitleRow model={m} variantClasses={null} />
+			</TooltipProvider.Provider>
+		);
+		expect(container.textContent).toContain("GPT-4o");
+	});
+
+	test("renders variant badge when variant and classes provided", () => {
+		const m = makeModel({ variant: "free", model_name: "GPT-4o" });
+		const variantClasses = helpers.computeVariantClasses(m);
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ModelHeaderTitleRow model={m} variantClasses={variantClasses} />
+			</TooltipProvider.Provider>
+		);
+		expect(container.textContent).toContain("Free");
+	});
+});
+
+describe("InlineModelMeta", () => {
+	const { InlineModelMeta } = helpers;
+
+	test("returns null when no context, pricing, or endpoint", () => {
+		const m = makeModel({ context_length: null as unknown as never, endpoints: [] });
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<InlineModelMeta
+					hasEndpoints={false}
+					hasProviders={false}
+					model={m}
+					pricingInfo={null}
+					uniqueEndpoints={[]}
+				/>
+			</TooltipProvider.Provider>
+		);
+		expect(container.firstChild).toBeNull();
+	});
+
+	test("renders when context_length is present", () => {
+		const m = makeModel({ context_length: 128_000 });
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<InlineModelMeta
+					hasEndpoints={true}
+					hasProviders={false}
+					model={m}
+					pricingInfo={null}
+					uniqueEndpoints={[makeEndpoint()]}
+				/>
+			</TooltipProvider.Provider>
+		);
+		expect(container.querySelector("[data-slot='inline-model-meta']")).not.toBeNull();
+	});
+});
+
+describe("ModelHeaderProvidersButton", () => {
+	const { ModelHeaderProvidersButton } = helpers;
+
+	test("returns null when hasProviders is false", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ModelHeaderProvidersButton
+					hasProviders={false}
+					isExpanded={false}
+					modelId="openai/x"
+					onToggleExpanded={() => undefined}
+					providerCount={0}
+				/>
+			</TooltipProvider.Provider>
+		);
+		expect(container.firstChild).toBeNull();
+	});
+
+	test("renders expand button when hasProviders is true", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<ModelHeaderProvidersButton
+					hasProviders={true}
+					isExpanded={false}
+					modelId="openai/x"
+					onToggleExpanded={() => undefined}
+					providerCount={3}
+				/>
+			</TooltipProvider.Provider>
+		);
+		expect(container.firstChild).not.toBeNull();
+		expect(container.textContent).toContain("3");
+	});
+});
+
+describe("VirtualizedRow", () => {
+	const { VirtualizedRow } = helpers;
+
+	test("renders model row when item type is model", () => {
+		const m = makeModel({ id: "openai/vr1" });
+		const item: VirtualizedItem = {
+			type: "model",
+			model: m,
+			groupIndex: 0,
+			index: 0,
+			isExpanded: false,
+			hasProviders: false,
+		};
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<Combobox.Root items={[m.id]}>
+					<VirtualizedRow
+						item={item}
+						onSelectModel={() => undefined}
+						onToggleModelExpanded={() => undefined}
+						parsedModelId={undefined}
+						parsedProviderSlug={undefined}
+					/>
+				</Combobox.Root>
+			</TooltipProvider.Provider>
+		);
+		expect(container.firstChild).not.toBeNull();
+	});
+
+	test("renders providers row when item type is providers", () => {
+		const m = makeModel({ id: "openai/vr2" });
+		const item: VirtualizedItem = {
+			type: "providers",
+			model: m,
+			endpoints: [makeEndpoint({ provider_name: "A" })],
+			isOpen: false,
+			index: 1,
+		};
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<Combobox.Root items={[m.id]}>
+					<VirtualizedRow
+						item={item}
+						onSelectModel={() => undefined}
+						onToggleModelExpanded={() => undefined}
+						parsedModelId={undefined}
+						parsedProviderSlug={undefined}
+					/>
+				</Combobox.Root>
+			</TooltipProvider.Provider>
+		);
+		expect(container.firstChild).not.toBeNull();
 	});
 });

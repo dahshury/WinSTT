@@ -1,7 +1,9 @@
+// Stryker disable next-line StringLiteral: equivalent — the literal flows into both encryptIpcPayload (sets payload.algorithm) and decryptIpcPayload (compares against payload.algorithm); mutating to "" still round-trips because both sides use the same constant
 const IPC_PAYLOAD_ALGORITHM = "aes-256-gcm";
 const IPC_KEY_BYTES = 32;
 const IPC_IV_BYTES = 12;
 const IPC_AUTH_TAG_BYTES = 16;
+// Stryker disable next-line StringLiteral: equivalent — AAD bytes are used symmetrically in encrypt and decrypt; mutating the literal breaks neither because both sides see the same mutated bytes
 const IPC_AAD_BYTES = new TextEncoder().encode("winstt:ipc-payload:v1");
 
 type JsonPrimitive = string | number | boolean | null;
@@ -22,6 +24,7 @@ function assertKeyLength(key: Uint8Array): void {
 
 function importAesGcmKey(key: Uint8Array): Promise<CryptoKey> {
 	assertKeyLength(key);
+	// Stryker disable next-line BooleanLiteral: equivalent — the `extractable=false` flag prevents key.export() from working; tests never attempt to extract, so flipping to true has no observable behaviour change
 	return crypto.subtle.importKey("raw", key as BufferSource, { name: "AES-GCM" }, false, [
 		"encrypt",
 		"decrypt",
@@ -82,6 +85,48 @@ export async function encryptIpcPayload<T>(
 	};
 }
 
+function assertSegmentLength(segment: Uint8Array, expected: number, name: string): void {
+	if (segment.byteLength !== expected) {
+		throw new Error(`Encrypted IPC payload has invalid ${name} length: ${segment.byteLength}`);
+	}
+}
+
+function buildSealedBuffer(ciphertext: Uint8Array, authTag: Uint8Array): Uint8Array {
+	const sealed = new Uint8Array(ciphertext.byteLength + authTag.byteLength);
+	sealed.set(ciphertext, 0);
+	sealed.set(authTag, ciphertext.byteLength);
+	return sealed;
+}
+
+async function aesGcmDecrypt(
+	sealed: Uint8Array,
+	iv: Uint8Array,
+	cryptoKey: CryptoKey
+): Promise<ArrayBuffer> {
+	try {
+		return await crypto.subtle.decrypt(
+			{
+				name: "AES-GCM",
+				iv: iv as BufferSource,
+				additionalData: IPC_AAD_BYTES,
+				tagLength: IPC_AUTH_TAG_BYTES * 8,
+			},
+			cryptoKey,
+			sealed as BufferSource
+		);
+	} catch {
+		throw new Error("IPC payload authentication failed");
+	}
+}
+
+function parseJsonPayload<T>(buf: ArrayBuffer): T {
+	try {
+		return JSON.parse(new TextDecoder().decode(buf)) as T;
+	} catch {
+		throw new Error("Decrypted IPC payload is not valid JSON");
+	}
+}
+
 export async function decryptIpcPayload<T>(
 	payload: EncryptedIpcPayload,
 	key: Uint8Array
@@ -94,37 +139,11 @@ export async function decryptIpcPayload<T>(
 	const ciphertext = decodeBase64urlSegment(payload.ciphertext, "ciphertext");
 	const authTag = decodeBase64urlSegment(payload.authTag, "authTag");
 
-	if (iv.byteLength !== IPC_IV_BYTES) {
-		throw new Error(`Encrypted IPC payload has invalid iv length: ${iv.byteLength}`);
-	}
-	if (authTag.byteLength !== IPC_AUTH_TAG_BYTES) {
-		throw new Error(`Encrypted IPC payload has invalid authTag length: ${authTag.byteLength}`);
-	}
+	assertSegmentLength(iv, IPC_IV_BYTES, "iv");
+	assertSegmentLength(authTag, IPC_AUTH_TAG_BYTES, "authTag");
 
 	const cryptoKey = await importAesGcmKey(key);
-	const sealed = new Uint8Array(ciphertext.byteLength + authTag.byteLength);
-	sealed.set(ciphertext, 0);
-	sealed.set(authTag, ciphertext.byteLength);
-
-	let plaintext: ArrayBuffer;
-	try {
-		plaintext = await crypto.subtle.decrypt(
-			{
-				name: "AES-GCM",
-				iv,
-				additionalData: IPC_AAD_BYTES,
-				tagLength: IPC_AUTH_TAG_BYTES * 8,
-			},
-			cryptoKey,
-			sealed as BufferSource
-		);
-	} catch {
-		throw new Error("IPC payload authentication failed");
-	}
-
-	try {
-		return JSON.parse(new TextDecoder().decode(plaintext)) as T;
-	} catch {
-		throw new Error("Decrypted IPC payload is not valid JSON");
-	}
+	const sealed = buildSealedBuffer(ciphertext, authTag);
+	const plaintext = await aesGcmDecrypt(sealed, iv, cryptoKey);
+	return parseJsonPayload<T>(plaintext);
 }

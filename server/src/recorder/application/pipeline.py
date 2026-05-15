@@ -115,6 +115,13 @@ class RecordingPipeline(Worker):
             return
         if backdate_seconds > 0:
             self._buffer.backdate(backdate_seconds)
+        logger.warning(
+            "[pipeline] request_stop: %.2fs of audio, %d frames, silence_endpoint=%s, backdate=%.2f",
+            elapsed,
+            self._buffer.frame_count,
+            self._silence_endpoint_enabled,
+            backdate_seconds,
+        )
         self._sm.transition(RecorderState.TRANSCRIBING)
         self._stop_recording_on_voice_deactivity = False
         self._speech_end_silence_start = 0.0
@@ -229,6 +236,11 @@ class RecordingPipeline(Worker):
 
             silence_duration = self._clock.get_current_time() - self._speech_end_silence_start
             if silence_duration >= self._post_speech_silence_duration:
+                logger.warning(
+                    "[pipeline] VAD silence-end firing: silence=%.2fs >= threshold=%.2fs",
+                    silence_duration,
+                    self._post_speech_silence_duration,
+                )
                 self._event_bus.publish(VADStopped(timestamp=self._clock.get_current_time()))
                 self.request_stop()
         else:

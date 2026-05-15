@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import { cancelDownload as ipcCancelDownload } from "@/shared/api/ipc-client";
 
+export interface DownloadProgressPayload {
+	downloadedBytes?: number;
+	etaSeconds?: number;
+	progress: number;
+	speedBps?: number;
+	totalBytes?: number;
+}
+
 interface DownloadState {
 	cancelDownload: () => void;
 	cancelled: boolean;
@@ -10,16 +18,22 @@ interface DownloadState {
 	modelName: string | null;
 	progress: number | null; // 0–100, null = indeterminate
 	setDownloadComplete: (cancelled?: boolean) => void;
-	setDownloadProgress: (payload: {
-		progress: number;
-		downloadedBytes?: number;
-		totalBytes?: number;
-		speedBps?: number;
-		etaSeconds?: number;
-	}) => void;
+	setDownloadProgress: (payload: DownloadProgressPayload) => void;
 	setDownloadStart: (model: string) => void;
 	speedBps: number;
 	totalBytes: number;
+}
+
+const PROGRESS_PAYLOAD_DEFAULTS = {
+	downloadedBytes: 0,
+	totalBytes: 0,
+	speedBps: 0,
+	etaSeconds: 0,
+} satisfies Partial<DownloadProgressPayload>;
+
+export function normalizeProgressPayload(payload: DownloadProgressPayload) {
+	const merged = { ...PROGRESS_PAYLOAD_DEFAULTS, ...payload };
+	return { ...merged, progress: Math.round(payload.progress * 100) };
 }
 
 export const useDownloadStore = create<DownloadState>()((set) => ({
@@ -42,14 +56,7 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 			etaSeconds: 0,
 			cancelled: false,
 		}),
-	setDownloadProgress: (payload) =>
-		set({
-			progress: Math.round(payload.progress * 100),
-			downloadedBytes: payload.downloadedBytes ?? 0,
-			totalBytes: payload.totalBytes ?? 0,
-			speedBps: payload.speedBps ?? 0,
-			etaSeconds: payload.etaSeconds ?? 0,
-		}),
+	setDownloadProgress: (payload) => set(normalizeProgressPayload(payload)),
 	setDownloadComplete: (cancelled) => {
 		if (cancelled) {
 			set({ cancelled: true });

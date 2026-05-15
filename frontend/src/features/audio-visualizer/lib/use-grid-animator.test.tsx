@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { renderHook } from "@testing-library/react";
-import { useGridAnimator } from "./use-grid-animator";
+import { clampRadius, gridInputsChanged, useGridAnimator } from "./use-grid-animator";
 
 describe("useGridAnimator", () => {
 	test("'disconnected' returns the grid center", () => {
@@ -35,5 +35,50 @@ describe("useGridAnimator", () => {
 		// With radius 1 and center 3, perimeter is around (2..4, 2..4)
 		expect(result.current.x).toBeGreaterThanOrEqual(2);
 		expect(result.current.x).toBeLessThanOrEqual(4);
+	});
+});
+
+describe("clampRadius", () => {
+	test("returns floor(max(rows,columns)/2) when radius is undefined", () => {
+		expect(clampRadius(undefined, 5, 5)).toBe(2);
+		expect(clampRadius(undefined, 5, 7)).toBe(3);
+	});
+
+	test("returns given radius when it is within bounds", () => {
+		expect(clampRadius(2, 5, 5)).toBe(2);
+	});
+
+	test("clamps radius to max when it exceeds bounds", () => {
+		// max = floor(max(5,5)/2) = 2; providing radius=10 → 2
+		expect(clampRadius(10, 5, 5)).toBe(2);
+	});
+
+	test("non-square grid uses the larger dimension", () => {
+		// max = floor(max(3,9)/2) = 4
+		expect(clampRadius(undefined, 3, 9)).toBe(4);
+	});
+});
+
+describe("gridInputsChanged", () => {
+	const base = { state: "disconnected" as const, rows: 5, columns: 5, radius: undefined };
+
+	test("returns false when all inputs are identical", () => {
+		expect(gridInputsChanged(base, { ...base })).toBe(false);
+	});
+
+	test("returns true when state changes", () => {
+		expect(gridInputsChanged(base, { ...base, state: "speaking" })).toBe(true);
+	});
+
+	test("returns true when rows changes", () => {
+		expect(gridInputsChanged(base, { ...base, rows: 7 })).toBe(true);
+	});
+
+	test("returns true when columns changes", () => {
+		expect(gridInputsChanged(base, { ...base, columns: 3 })).toBe(true);
+	});
+
+	test("returns true when radius changes", () => {
+		expect(gridInputsChanged(base, { ...base, radius: 2 })).toBe(true);
 	});
 });

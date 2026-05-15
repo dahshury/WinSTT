@@ -69,18 +69,26 @@ interface MaybeAuthorSubmenuProps {
 	selectedMakers: string[];
 }
 
+export function shouldRenderAuthorSubmenu(
+	allProviders: string[],
+	onMakersChange: ((makers: string[]) => void) | undefined
+): boolean {
+	return allProviders.length > 0 && !!onMakersChange;
+}
+
+export function shouldRenderEndpointSubmenu(endpointProviders: [string, number][]): boolean {
+	return endpointProviders.length > 0;
+}
+
 function MaybeAuthorSubmenu(props: MaybeAuthorSubmenuProps) {
-	if (props.allProviders.length === 0) {
-		return null;
-	}
-	if (!props.onMakersChange) {
+	if (!shouldRenderAuthorSubmenu(props.allProviders, props.onMakersChange)) {
 		return null;
 	}
 	return (
 		<AuthorFilterSubmenu
 			allProviders={props.allProviders}
 			favoriteProviders={props.favoriteProviders}
-			onMakersChange={props.onMakersChange}
+			onMakersChange={props.onMakersChange!}
 			onToggleFavorite={props.onToggleFavorite}
 			providerCounts={props.providerCounts}
 			selectedMakers={props.selectedMakers}
@@ -95,7 +103,7 @@ interface MaybeEndpointSubmenuProps {
 }
 
 function MaybeEndpointSubmenu(props: MaybeEndpointSubmenuProps) {
-	if (props.endpointProviders.length === 0) {
+	if (!shouldRenderEndpointSubmenu(props.endpointProviders)) {
 		return null;
 	}
 	return (
@@ -200,4 +208,8 @@ export const __model_filters_menu_test_helpers__ = {
 	computeActiveFilterCount,
 	getActiveFiltersAttr,
 	getOpenStateAttr,
+	shouldRenderAuthorSubmenu,
+	shouldRenderEndpointSubmenu,
+	MaybeAuthorSubmenu,
+	MaybeEndpointSubmenu,
 };

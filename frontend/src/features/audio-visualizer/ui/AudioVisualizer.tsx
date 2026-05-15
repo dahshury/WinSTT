@@ -1,7 +1,9 @@
 "use client";
 
+import type React from "react";
 import { memo, useRef } from "react";
 import { useSettingsStore } from "@/entities/setting";
+import { RECORDING_MODE_COLOR_HEX, type RecordingMode } from "@/shared/config/recording-mode-color";
 import type { VisualizerSize, VisualizerType } from "../lib/audio-visualizer";
 import { useFitSize } from "../lib/use-fit-size";
 import { AudioVisualizerAura } from "./AudioVisualizerAura";
@@ -31,10 +33,13 @@ export const AudioVisualizer = memo(function AudioVisualizer({
 		(s) => s.settings.general?.visualizerType ?? "bar"
 	);
 	const barCount = useSettingsStore((s) => s.settings.general?.visualizerBarCount);
-	const rawColor = useSettingsStore((s) => s.settings.general?.visualizerColor);
-	const visualizerColor: `#${string}` | undefined = rawColor?.startsWith("#")
-		? (rawColor as `#${string}`)
-		: undefined;
+	const recordingMode = useSettingsStore(
+		(s) => (s.settings.general?.recordingMode ?? "ptt") as RecordingMode
+	);
+	// Recording mode is the single visual identity for the active mode — it
+	// overrides the user-picked visualizerColor on the main page so the bars
+	// match the tray icon and settings switcher.
+	const visualizerColor = RECORDING_MODE_COLOR_HEX[recordingMode] as `#${string}`;
 
 	if (size === "auto") {
 		return (
@@ -90,17 +95,24 @@ interface VisualizerVariantProps {
 	type: VisualizerType;
 }
 
+interface CommonVisualizerProps {
+	className?: string;
+	color?: `#${string}`;
+	size: VisualizerSize;
+}
+type VisualizerComponent = React.ComponentType<CommonVisualizerProps>;
+
+const NON_BAR_VARIANTS: Partial<Record<VisualizerType, VisualizerComponent>> = {
+	grid: AudioVisualizerGrid as VisualizerComponent,
+	radial: AudioVisualizerRadial as VisualizerComponent,
+	wave: AudioVisualizerWave as VisualizerComponent,
+	aura: AudioVisualizerAura as VisualizerComponent,
+};
+
 function VisualizerVariant({ type, barCount, ...common }: VisualizerVariantProps) {
-	switch (type) {
-		case "grid":
-			return <AudioVisualizerGrid {...common} />;
-		case "radial":
-			return <AudioVisualizerRadial {...common} />;
-		case "wave":
-			return <AudioVisualizerWave {...common} />;
-		case "aura":
-			return <AudioVisualizerAura {...common} />;
-		default:
-			return <AudioVisualizerBar {...common} barCount={barCount} />;
+	const NonBarComponent = NON_BAR_VARIANTS[type];
+	if (NonBarComponent) {
+		return <NonBarComponent {...common} />;
 	}
+	return <AudioVisualizerBar {...common} barCount={barCount} />;
 }

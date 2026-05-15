@@ -4,14 +4,16 @@ import { ScrollArea } from "@base-ui/react/scroll-area";
 import { useTranslations } from "next-intl";
 import { useConnectionStore } from "@/entities/connection";
 import { useSettingsStore } from "@/entities/setting";
-import { TranscriptionLine } from "@/entities/transcription";
-import { useTranscriptionStore } from "@/features/live-transcription";
+import { TranscriptionLine, useTranscriptionStore } from "@/entities/transcription";
 import { useAutoScroll } from "../lib/use-auto-scroll";
 
 export function TranscriptionFeed() {
 	const items = useTranscriptionStore((s) => s.items);
 	const currentRealtime = useTranscriptionStore((s) => s.currentRealtime);
-	const showInApp = useSettingsStore((s) => s.settings.general?.showInAppLiveTranscription ?? true);
+	const liveDisplay = useSettingsStore(
+		(s) => s.settings.general?.liveTranscriptionDisplay ?? "both"
+	);
+	const showInApp = liveDisplay === "in-app" || liveDisplay === "both";
 	const liveText = showInApp ? currentRealtime : "";
 	const connectionStatus = useConnectionStore((s) => s.connectionStatus);
 	const scrollRef = useAutoScroll<HTMLDivElement>([items.length, liveText]);

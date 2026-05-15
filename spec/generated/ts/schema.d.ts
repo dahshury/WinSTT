@@ -7,7 +7,7 @@ export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        DataEvent: components["schemas"]["RealtimeTextEvent"] | components["schemas"]["FullSentenceEvent"] | components["schemas"]["RecordingStartEvent"] | components["schemas"]["RecordingStopEvent"] | components["schemas"]["NoAudioDetectedEvent"] | components["schemas"]["LoopbackStartedEvent"] | components["schemas"]["LoopbackStoppedEvent"] | components["schemas"]["VadDetectStartEvent"] | components["schemas"]["VadDetectStopEvent"] | components["schemas"]["TranscriptionStartEvent"] | components["schemas"]["WakewordDetectedEvent"] | components["schemas"]["WakewordDetectionStartEvent"] | components["schemas"]["WakewordDetectionEndEvent"] | components["schemas"]["TurnDetectionStartEvent"] | components["schemas"]["TurnDetectionStopEvent"] | components["schemas"]["ModelDownloadStartEvent"] | components["schemas"]["ModelDownloadProgressEvent"] | components["schemas"]["ModelDownloadCompleteEvent"] | components["schemas"]["AudioLevelEvent"];
+        DataEvent: components["schemas"]["RealtimeTextEvent"] | components["schemas"]["FullSentenceEvent"] | components["schemas"]["RecordingStartEvent"] | components["schemas"]["RecordingStopEvent"] | components["schemas"]["NoAudioDetectedEvent"] | components["schemas"]["LoopbackStartedEvent"] | components["schemas"]["LoopbackStoppedEvent"] | components["schemas"]["DeviceSwitchFailedEvent"] | components["schemas"]["VadDetectStartEvent"] | components["schemas"]["VadDetectStopEvent"] | components["schemas"]["TranscriptionStartEvent"] | components["schemas"]["WakewordDetectedEvent"] | components["schemas"]["WakewordDetectionStartEvent"] | components["schemas"]["WakewordDetectionEndEvent"] | components["schemas"]["TurnDetectionStartEvent"] | components["schemas"]["TurnDetectionStopEvent"] | components["schemas"]["ModelDownloadStartEvent"] | components["schemas"]["ModelDownloadProgressEvent"] | components["schemas"]["ModelDownloadCompleteEvent"] | components["schemas"]["AudioLevelEvent"];
         RealtimeTextEvent: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -45,6 +45,17 @@ export interface components {
              * @enum {string}
              */
             type: "loopback_stopped";
+        };
+        /** @description Emitted by the audio reader thread when a queued input-device switch could not open the requested device. The server may fall back to the system default; either way, the renderer should revert the user's selection and surface the reason as a toast. */
+        DeviceSwitchFailedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "device_switch_failed";
+            requested_index: number;
+            error_message: string;
+            fallback_index?: number | null;
         };
         RecordingStopEvent: {
             /**
@@ -203,7 +214,7 @@ export interface components {
             message: string;
         };
         /** @enum {string} */
-        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "silence_endpoint_enabled" | "smart_endpoint_enabled" | "detection_speed";
+        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "silence_endpoint_enabled" | "smart_endpoint_enabled" | "detection_speed" | "input_device_index";
         /** @enum {string} */
         AllowedMethod: "set_microphone" | "abort" | "stop" | "clear_audio_queue" | "wakeup" | "shutdown" | "text";
         /** @enum {string} */
@@ -324,6 +335,11 @@ export interface components {
             recordingSoundPath?: string;
             /** @enum {string} */
             fileTranscriptionFormat?: "txt" | "srt";
+            /**
+             * @description Where to save transcribed files. `auto` saves alongside the source file; `ask` prompts with a save dialog each time.
+             * @enum {string}
+             */
+            fileTranscriptionSaveLocation?: "auto" | "ask";
             /** @enum {string} */
             recordingMode?: "ptt" | "toggle" | "listen";
             loopbackDeviceIndex?: number | null;
@@ -333,14 +349,27 @@ export interface components {
              * @enum {string}
              */
             visualizerSize?: "xs" | "sm" | "md" | "lg" | "xl";
-            /** @description Show live transcription text under the floating recording pill (overlay window). */
-            showLiveTranscription?: boolean;
-            /** @description Show live transcription text inside the main app window (subtitle overlay and transcription feed). */
-            showInAppLiveTranscription?: boolean;
+            /**
+             * @description Where to render the live transcription preview while a realtime model is producing text.
+             *     `in-app` shows it in the main window's subtitle overlay and transcription feed only.
+             *     `in-pill` shows it under the floating recording pill overlay only.
+             *     `both` shows it in both surfaces.
+             *     `none` hides the live preview everywhere; final transcripts still appear normally.
+             * @enum {string}
+             */
+            liveTranscriptionDisplay?: "none" | "in-app" | "in-pill" | "both";
             /** @enum {string} */
             visualizerType?: "bar" | "grid" | "radial" | "wave" | "aura";
             visualizerBarCount?: number;
             visualizerColor?: string;
+            /**
+             * @description When enabled, the Electron client reads text from the focused window
+             *     via Windows UI Automation immediately before each dictation and feeds
+             *     it to the LLM cleanup step so names and jargon get spelled correctly.
+             *     Off by default; requires an explicit opt-in dialog in the UI because
+             *     the feature reads content from any focused app.
+             */
+            contextAwareness?: boolean;
         };
         HotkeySettings: {
             /** @description Electron accelerator string */
@@ -395,12 +424,47 @@ export interface components {
              */
             openrouterFallbackModel: string;
             /**
-             * @default neutral
-             * @enum {string}
+             * @description Ordered list of text-transformation presets to apply. At most one tone preset (neutral/formal/friendly/technical/casual) may appear. `level` is only valid for `summarize` and `concise`.
+             * @default [
+             *       {
+             *         "key": "neutral"
+             *       }
+             *     ]
              */
-            preset: "neutral" | "formal" | "friendly" | "technical" | "casual" | "concise";
+            presets: components["schemas"]["LlmPresetEntry"][];
             /** @default 5000 */
             timeout: number;
+            /** @description User-configurable text transforms triggered by a hotkey on the currently-selected text. Each transform carries its own system prompt (independent from the dictation cleanup presets) and an optional hotkey. Built-in entries are flagged so the UI can show a Reset action instead of Delete. */
+            transforms?: components["schemas"]["Transform"][];
+        };
+        Transform: {
+            /** @description Stable identifier; built-ins use kebab-case slugs (e.g. "polish"). */
+            id: string;
+            /** @description Display name shown in the UI. */
+            name: string;
+            /** @description Full system prompt sent to the LLM. The user's selected text is passed as the user-message turn; the model is instructed to return only the transformed text. */
+            prompt: string;
+            /**
+             * @description uiohook-style combo string (e.g. "LCtrl+LShift+P"). Empty means the transform is reachable only via the Transforms UI / IPC.
+             * @default
+             */
+            hotkey: string;
+            /**
+             * @description True for transforms seeded by the app (Polish, Prompt Engineer).
+             * @default false
+             */
+            builtin: boolean;
+        };
+        /** @enum {string} */
+        LlmPresetKey: "neutral" | "formal" | "friendly" | "technical" | "casual" | "concise" | "summarize" | "reorder" | "restructure" | "rewordForClarity";
+        /**
+         * @description Intensity level for presets that support it (`summarize`, `concise`).
+         * @enum {string}
+         */
+        LlmPresetLevel: "light" | "medium" | "high";
+        LlmPresetEntry: {
+            key: components["schemas"]["LlmPresetKey"];
+            level?: components["schemas"]["LlmPresetLevel"];
         };
         OllamaModel: {
             name: string;
@@ -564,6 +628,9 @@ export interface components {
             name: string;
             isDefault: boolean;
             maxInputChannels?: number;
+            defaultSampleRate?: number;
+            hostApi?: number;
+            hostApiName?: string;
         };
         GpuInfo: {
             name: string;

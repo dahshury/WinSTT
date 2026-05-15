@@ -9,6 +9,35 @@ import type { Coordinate } from "../lib/use-grid-animator";
 import { useGridAnimator } from "../lib/use-grid-animator";
 import { useMultibandVolume } from "../lib/use-multiband-volume";
 
+export function isSpeakingCellHighlighted(
+	index: number,
+	columnCount: number,
+	rowCount: number,
+	volumeBands: number[]
+): boolean {
+	const y = Math.floor(index / columnCount);
+	const rowMidPoint = Math.floor(rowCount / 2);
+	const volumeChunks = 1 / (rowMidPoint + 1);
+	const distanceToMid = Math.abs(rowMidPoint - y);
+	const threshold = distanceToMid * volumeChunks;
+	return (volumeBands[index % columnCount] ?? 0) >= threshold;
+}
+
+export function isCoordinateHighlighted(
+	index: number,
+	columnCount: number,
+	highlightedCoordinate: Coordinate
+): boolean {
+	return (
+		highlightedCoordinate.x === index % columnCount &&
+		highlightedCoordinate.y === Math.floor(index / columnCount)
+	);
+}
+
+export function resolveTransitionDuration(interval: number, isHighlighted: boolean): number {
+	return interval / (isHighlighted ? 1000 : 100);
+}
+
 const gridCellVariants = cva(
 	[
 		"h-1 w-1 place-self-center rounded-full bg-current/10 transition-all ease-out",
@@ -63,13 +92,7 @@ const GridCell = memo(function GridCell({
 	size,
 }: GridCellProps) {
 	if (state === "speaking") {
-		const y = Math.floor(index / columnCount);
-		const rowMidPoint = Math.floor(rowCount / 2);
-		const volumeChunks = 1 / (rowMidPoint + 1);
-		const distanceToMid = Math.abs(rowMidPoint - y);
-		const threshold = distanceToMid * volumeChunks;
-		const isHighlighted = (volumeBands[index % columnCount] ?? 0) >= threshold;
-
+		const isHighlighted = isSpeakingCellHighlighted(index, columnCount, rowCount, volumeBands);
 		return (
 			<div
 				className={gridCellVariants({ size })}
@@ -79,10 +102,8 @@ const GridCell = memo(function GridCell({
 		);
 	}
 
-	const isHighlighted =
-		highlightedCoordinate.x === index % columnCount &&
-		highlightedCoordinate.y === Math.floor(index / columnCount);
-	const transitionDurationInSeconds = interval / (isHighlighted ? 1000 : 100);
+	const isHighlighted = isCoordinateHighlighted(index, columnCount, highlightedCoordinate);
+	const transitionDurationInSeconds = resolveTransitionDuration(interval, isHighlighted);
 
 	return (
 		<div

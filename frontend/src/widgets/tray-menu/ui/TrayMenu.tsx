@@ -4,7 +4,7 @@ import { Separator } from "@base-ui/react/separator";
 import { ArrowDown01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
 import { useInputDevices } from "@/entities/audio-device";
 import { IPC } from "@/shared/api/ipc-channels";
 import {
@@ -22,11 +22,55 @@ import { Switcher } from "@/shared/ui/switcher";
 
 type RecordingMode = "ptt" | "toggle" | "listen";
 
+interface TrayMenuState {
+	inputDeviceIndex: number | null;
+	isConnected: boolean;
+	isDeviceListOpen: boolean;
+	recordingMode: RecordingMode;
+}
+
+type TrayMenuAction =
+	| {
+			type: "load-settings";
+			recordingMode: RecordingMode;
+			inputDeviceIndex: number | null;
+	  }
+	| { type: "set-connected"; value: boolean }
+	| { type: "set-recording-mode"; value: RecordingMode }
+	| { type: "select-input-device"; value: number | null }
+	| { type: "toggle-device-list" };
+
+function trayMenuReducer(state: TrayMenuState, action: TrayMenuAction): TrayMenuState {
+	switch (action.type) {
+		case "load-settings":
+			return {
+				...state,
+				recordingMode: action.recordingMode,
+				inputDeviceIndex: action.inputDeviceIndex,
+			};
+		case "set-connected":
+			return { ...state, isConnected: action.value };
+		case "set-recording-mode":
+			return { ...state, recordingMode: action.value };
+		case "select-input-device":
+			return { ...state, inputDeviceIndex: action.value, isDeviceListOpen: false };
+		case "toggle-device-list":
+			return { ...state, isDeviceListOpen: !state.isDeviceListOpen };
+		default:
+			return state;
+	}
+}
+
+const INITIAL_TRAY_MENU_STATE: TrayMenuState = {
+	recordingMode: "ptt",
+	inputDeviceIndex: null,
+	isDeviceListOpen: false,
+	isConnected: false,
+};
+
 export function TrayMenu() {
-	const [recordingMode, setRecordingMode] = useState<RecordingMode>("ptt");
-	const [inputDeviceIndex, setInputDeviceIndex] = useState<number | null>(null);
-	const [isDeviceListOpen, setIsDeviceListOpen] = useState(false);
-	const [isConnected, setIsConnected] = useState(false);
+	const [state, dispatch] = useReducer(trayMenuReducer, INITIAL_TRAY_MENU_STATE);
+	const { recordingMode, inputDeviceIndex, isDeviceListOpen, isConnected } = state;
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const t = useTranslations("tray");
 	const tAudio = useTranslations("audio");
@@ -34,14 +78,16 @@ export function TrayMenu() {
 
 	useEffect(() => {
 		settingsLoad().then((settings) => {
-			setRecordingMode(settings.general.recordingMode);
-			setInputDeviceIndex(settings.audio?.inputDeviceIndex ?? null);
+			dispatch({
+				type: "load-settings",
+				recordingMode: settings.general.recordingMode,
+				inputDeviceIndex: settings.audio?.inputDeviceIndex ?? null,
+			});
 		});
 
-		// Get initial connection state + listen for changes
-		sttIsConnected().then((connected) => setIsConnected(connected));
+		sttIsConnected().then((connected) => dispatch({ type: "set-connected", value: connected }));
 		const unsubscribe = onConnectionChange((connected) => {
-			setIsConnected(connected);
+			dispatch({ type: "set-connected", value: connected });
 		});
 
 		return unsubscribe;
@@ -75,7 +121,7 @@ export function TrayMenu() {
 	};
 
 	const handleModeChange = async (mode: RecordingMode) => {
-		setRecordingMode(mode);
+		dispatch({ type: "set-recording-mode", value: mode });
 		const settings = await settingsLoad();
 		await settingsSave({
 			...settings,
@@ -85,8 +131,7 @@ export function TrayMenu() {
 
 	const handleDeviceChange = async (id: string) => {
 		const next = id === "default" ? null : Number.parseInt(id, 10);
-		setInputDeviceIndex(next);
-		setIsDeviceListOpen(false);
+		dispatch({ type: "select-input-device", value: next });
 		const settings = await settingsLoad();
 		await settingsSave({
 			...settings,
@@ -171,7 +216,7 @@ export function TrayMenu() {
 					"w-full justify-between gap-3 rounded px-3 py-1.5 text-left transition-colors",
 					"hover:bg-surface-hover hover:text-foreground active:bg-surface-active"
 				)}
-				onClick={() => setIsDeviceListOpen((v) => !v)}
+				onClick={() => dispatch({ type: "toggle-device-list" })}
 			>
 				<span className="flex min-w-0 items-center gap-2">
 					<HugeiconsIcon

@@ -122,6 +122,7 @@ function resolveClickHandler(
 	item: Extract<NormalizedAppMenuItem, { type: "normal" }>,
 	actionHandlers: Readonly<Record<string, AppMenuActionHandler>>
 ): AppMenuActionHandler | undefined {
+	// Stryker disable next-line ConditionalExpression: equivalent — when actionId is undefined, `actionHandlers[undefined]` evaluates to undefined (same observable result as the false branch).
 	return typeof item.actionId === "string" ? actionHandlers[item.actionId] : undefined;
 }
 
@@ -141,6 +142,7 @@ function pickBuiltOptional(
 	actionHandlers: Readonly<Record<string, AppMenuActionHandler>>
 ): Partial<Extract<AppMenuBuiltItem, { type: "normal" }>> {
 	const out: Partial<Extract<AppMenuBuiltItem, { type: "normal" }>> = {};
+	// Stryker disable next-line ConditionalExpression: equivalent — when item.checked is undefined, the ternary yields undefined and assignDefined() then skips the assignment (same observable result as forced-true).
 	assignDefined(out, "checked", typeof item.checked === "boolean" ? item.checked : undefined);
 	assignDefined(out, "accelerator", item.accelerator);
 	assignDefined(out, "submenu", buildSubmenuMaybe(item, actionHandlers));

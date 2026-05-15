@@ -161,14 +161,42 @@ interface ChipChromeOptions {
 	shouldShowLabel: boolean;
 }
 
+/** Encodes 3 boolean flags into a ternary key for O(1) lookup. */
+function chipSizeKey(showLabel: boolean, flat: boolean, isSmall: boolean): number {
+	// biome-ignore lint/suspicious/noBitwiseOperators: intentional bit packing for stable O(1) lookup key
+	return (showLabel ? 4 : 0) | (flat ? 2 : 0) | (isSmall ? 1 : 0);
+}
+
+const CHIP_SIZE_CLASS_MAP: Record<number, string> = {
+	// showLabel=true, flat=*, isSmall=true
+	[chipSizeKey(true, false, true)]: "px-1 py-0.5",
+	[chipSizeKey(true, true, true)]: "px-1 py-0.5",
+	// showLabel=true, flat=*, isSmall=false
+	[chipSizeKey(true, false, false)]: "px-1.5 py-0.5",
+	[chipSizeKey(true, true, false)]: "px-1.5 py-0.5",
+	// showLabel=false, flat=true, isSmall=true
+	[chipSizeKey(false, true, true)]: "h-4 w-4",
+	// showLabel=false, flat=true, isSmall=false
+	[chipSizeKey(false, true, false)]: "h-5 w-5",
+	// showLabel=false, flat=false, isSmall=true
+	[chipSizeKey(false, false, true)]: "h-4 w-4 p-0.5",
+	// showLabel=false, flat=false, isSmall=false
+	[chipSizeKey(false, false, false)]: "h-5 w-5 p-0.5",
+};
+
 function getChipSizeClass({ flat, isSmall, shouldShowLabel }: ChipChromeOptions): string {
-	if (shouldShowLabel) {
-		return isSmall ? "px-1 py-0.5" : "px-1.5 py-0.5";
-	}
-	if (flat) {
-		return isSmall ? "h-4 w-4" : "h-5 w-5";
-	}
-	return isSmall ? "h-4 w-4 p-0.5" : "h-5 w-5 p-0.5";
+	return CHIP_SIZE_CLASS_MAP[chipSizeKey(shouldShowLabel, flat, isSmall)] ?? "h-4 w-4";
+}
+
+function getChipIcon(config: FeatureIconConfig, isSmall: boolean): React.ReactNode {
+	return isSmall ? config.iconSm : config.icon;
+}
+
+function getChipLabelClass(isSmall: boolean): string {
+	return cn(
+		"font-semibold uppercase tracking-wider",
+		isSmall ? "text-[10px] sm:text-[8px]" : "text-[10px] sm:text-[9px]"
+	);
 }
 
 function ChipBody({
@@ -180,22 +208,54 @@ function ChipBody({
 	isSmall: boolean;
 	shouldShowLabel: boolean;
 }) {
-	if (shouldShowLabel) {
-		return (
-			<>
-				{isSmall ? config.iconSm : config.icon}
-				<span
-					className={cn(
-						"font-semibold uppercase tracking-wider",
-						isSmall ? "text-[10px] sm:text-[8px]" : "text-[10px] sm:text-[9px]"
-					)}
-				>
-					{config.shortLabel}
-				</span>
-			</>
-		);
+	return (
+		<>
+			{getChipIcon(config, isSmall)}
+			{shouldShowLabel && <span className={getChipLabelClass(isSmall)}>{config.shortLabel}</span>}
+		</>
+	);
+}
+
+function buildQuantizationFeature(quantLabel: string): { key: string; config: FeatureIconConfig } {
+	return {
+		key: "quantization",
+		config: {
+			icon: <HugeiconsIcon className="size-3" icon={ZapIcon} />,
+			iconSm: <HugeiconsIcon className="size-2.5" icon={ZapIcon} />,
+			label: quantLabel,
+			shortLabel: quantLabel,
+			description: `Quantization: ${quantLabel}. This provider serves the model with ${quantLabel} quantization, which reduces model size and improves inference speed while maintaining acceptable quality.`,
+			bgClass: "bg-amber-500/10 dark:bg-amber-500/15",
+			textClass: "text-amber-600 dark:text-amber-400",
+			borderClass: "border-amber-500/20",
+		},
+	};
+}
+
+function resolveParamFeature(
+	param: string,
+	supportedParamsSet: Set<string>
+): FeatureIconConfig | null {
+	if (!supportedParamsSet.has(param)) {
+		return null;
 	}
-	return <>{isSmall ? config.iconSm : config.icon}</>;
+	return FEATURE_ICONS[param] ?? null;
+}
+
+function appendSupportedParams(
+	features: Array<{ key: string; config: FeatureIconConfig }>,
+	supportedParamsSet: Set<string>,
+	maxIcons: number
+): void {
+	for (const param of FEATURE_PRIORITY) {
+		if (features.length >= maxIcons) {
+			break;
+		}
+		const config = resolveParamFeature(param, supportedParamsSet);
+		if (config) {
+			features.push({ key: param, config });
+		}
+	}
 }
 
 function buildFeatures(
@@ -207,30 +267,10 @@ function buildFeatures(
 	const features: Array<{ key: string; config: FeatureIconConfig }> = [];
 
 	if (quantLabel) {
-		features.push({
-			key: "quantization",
-			config: {
-				icon: <HugeiconsIcon className="size-3" icon={ZapIcon} />,
-				iconSm: <HugeiconsIcon className="size-2.5" icon={ZapIcon} />,
-				label: quantLabel,
-				shortLabel: quantLabel,
-				description: `Quantization: ${quantLabel}. This provider serves the model with ${quantLabel} quantization, which reduces model size and improves inference speed while maintaining acceptable quality.`,
-				bgClass: "bg-amber-500/10 dark:bg-amber-500/15",
-				textClass: "text-amber-600 dark:text-amber-400",
-				borderClass: "border-amber-500/20",
-			},
-		});
+		features.push(buildQuantizationFeature(quantLabel));
 	}
 
-	for (const param of FEATURE_PRIORITY) {
-		const featureConfig = FEATURE_ICONS[param];
-		if (supportedParamsSet.has(param) && featureConfig) {
-			features.push({ key: param, config: featureConfig });
-		}
-		if (features.length >= maxIcons) {
-			break;
-		}
-	}
+	appendSupportedParams(features, supportedParamsSet, maxIcons);
 	return features;
 }
 
@@ -293,3 +333,15 @@ function EndpointFeatureIconsImpl({
 }
 
 export const EndpointFeatureIcons = memo(EndpointFeatureIconsImpl);
+
+export const __endpoint_feature_icons_test_helpers__ = {
+	getChipSizeClass,
+	getChipIcon,
+	getChipLabelClass,
+	buildFeatures,
+	buildQuantizationFeature,
+	appendSupportedParams,
+	resolveParamFeature,
+	getQuantizationLabel,
+	chipSizeKey,
+};

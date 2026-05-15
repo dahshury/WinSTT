@@ -37,6 +37,25 @@ function resolveSelection(value: string | null): string | null | "noop" {
 	return "noop";
 }
 
+export function isTickVisible(selectedProvider: string | null, matchValue: string | null): boolean {
+	return selectedProvider === matchValue;
+}
+
+/** Returns the current combobox value: the provider slug or the "all" sentinel. */
+export function resolveComboboxValue(selectedEndpointProvider: string | null): string {
+	return selectedEndpointProvider || ALL_PROVIDERS_VALUE;
+}
+
+export function applyProviderChange(
+	value: string | null,
+	onEndpointProviderSelect: (provider: string | null) => void
+): void {
+	const resolved = resolveSelection(value);
+	if (resolved !== "noop") {
+		onEndpointProviderSelect(resolved);
+	}
+}
+
 interface SelectedTickProps {
 	visible: boolean;
 }
@@ -113,10 +132,7 @@ export function EndpointProviderFilterSubmenu({
 	const counts = new Map(filtered);
 
 	const handleChange = (value: string | null) => {
-		const resolved = resolveSelection(value);
-		if (resolved !== "noop") {
-			onEndpointProviderSelect(resolved);
-		}
+		applyProviderChange(value, onEndpointProviderSelect);
 	};
 
 	const itemCtx: ItemContext = { counts, selectedEndpointProvider };
@@ -135,7 +151,7 @@ export function EndpointProviderFilterSubmenu({
 					onInputValueChange={setSearch}
 					onValueChange={(value: string | null) => handleChange(value)}
 					open
-					value={selectedEndpointProvider || ALL_PROVIDERS_VALUE}
+					value={resolveComboboxValue(selectedEndpointProvider)}
 				>
 					<div className="flex h-full flex-col">
 						<div className="p-2">
@@ -164,4 +180,8 @@ export const __endpoint_provider_filter_submenu_test_helpers__ = {
 	filterEndpointProviders,
 	resolveSelection,
 	renderProviderRow,
+	isTickVisible,
+	applyProviderChange,
+	resolveComboboxValue,
+	SelectedTick,
 };

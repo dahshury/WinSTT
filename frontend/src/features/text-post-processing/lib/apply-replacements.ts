@@ -12,6 +12,13 @@ function getEntryRegex(entry: DictionaryEntry): RegExp {
 	const pattern = entry.wholeWord ? `\\b${escaped}\\b` : escaped;
 	const cacheKey = `${flags}:${pattern}`;
 	const cached = regexCache.get(cacheKey);
+	// Cache hit short-circuit is a perf optimization. Dropping it (always
+	// recompile) yields a behavior-equivalent regex because String.prototype
+	// .replace resets .lastIndex on each call, so no observable difference
+	// at the call boundary — both ConditionalExpression and BlockStatement
+	// mutants are equivalent here.
+	// Stryker disable next-line ConditionalExpression
+	// Stryker disable next-line BlockStatement
 	if (cached) {
 		return cached;
 	}

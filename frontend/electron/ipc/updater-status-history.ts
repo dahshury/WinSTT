@@ -44,6 +44,7 @@ export function createUpdaterStatusHistory(
 			};
 			entries.push(value);
 
+			// Stryker disable next-line ConditionalExpression,EqualityOperator: equivalent — both `if (true)` and `>=` only deviate when entries.length <= maxEntries, but in those cases `entries.length - maxEntries` is non-positive and `splice(0, n<=0)` is a no-op
 			if (entries.length > maxEntries) {
 				entries.splice(0, entries.length - maxEntries);
 			}

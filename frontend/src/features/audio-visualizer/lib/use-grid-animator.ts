@@ -6,6 +6,30 @@ export interface Coordinate {
 	y: number;
 }
 
+function appendTopEdge(seq: Coordinate[], topLeft: Coordinate, bottomRight: Coordinate): void {
+	for (let x = topLeft.x; x <= bottomRight.x; x++) {
+		seq.push({ x, y: topLeft.y });
+	}
+}
+
+function appendRightEdge(seq: Coordinate[], topLeft: Coordinate, bottomRight: Coordinate): void {
+	for (let y = topLeft.y + 1; y <= bottomRight.y; y++) {
+		seq.push({ x: bottomRight.x, y });
+	}
+}
+
+function appendBottomEdge(seq: Coordinate[], topLeft: Coordinate, bottomRight: Coordinate): void {
+	for (let x = bottomRight.x - 1; x >= topLeft.x; x--) {
+		seq.push({ x, y: bottomRight.y });
+	}
+}
+
+function appendLeftEdge(seq: Coordinate[], topLeft: Coordinate, bottomRight: Coordinate): void {
+	for (let y = bottomRight.y - 1; y > topLeft.y; y--) {
+		seq.push({ x: topLeft.x, y });
+	}
+}
+
 function generateConnectingSequence(rows: number, columns: number, radius: number): Coordinate[] {
 	const seq: Coordinate[] = [];
 	const centerY = Math.floor(rows / 2);
@@ -17,20 +41,10 @@ function generateConnectingSequence(rows: number, columns: number, radius: numbe
 		x: columns - 1 - topLeft.x,
 		y: Math.min(rows - 1, centerY + radius),
 	};
-
-	for (let x = topLeft.x; x <= bottomRight.x; x++) {
-		seq.push({ x, y: topLeft.y });
-	}
-	for (let y = topLeft.y + 1; y <= bottomRight.y; y++) {
-		seq.push({ x: bottomRight.x, y });
-	}
-	for (let x = bottomRight.x - 1; x >= topLeft.x; x--) {
-		seq.push({ x, y: bottomRight.y });
-	}
-	for (let y = bottomRight.y - 1; y > topLeft.y; y--) {
-		seq.push({ x: topLeft.x, y });
-	}
-
+	appendTopEdge(seq, topLeft, bottomRight);
+	appendRightEdge(seq, topLeft, bottomRight);
+	appendBottomEdge(seq, topLeft, bottomRight);
+	appendLeftEdge(seq, topLeft, bottomRight);
 	return seq;
 }
 
@@ -52,26 +66,45 @@ function generateThinkingSequence(rows: number, columns: number): Coordinate[] {
 	return seq;
 }
 
+const GRID_CONNECT_STATES = new Set<AgentState>(["connecting", "initializing"]);
+
+export function clampRadius(radius: number | undefined, rows: number, columns: number): number {
+	const maxR = Math.floor(Math.max(rows, columns) / 2);
+	return radius ? Math.min(radius, maxR) : maxR;
+}
+
 function buildGridSequence(
 	state: AgentState,
 	rows: number,
 	columns: number,
 	radius: number | undefined
 ): Coordinate[] {
-	const clampedRadius = radius
-		? Math.min(radius, Math.floor(Math.max(rows, columns) / 2))
-		: Math.floor(Math.max(rows, columns) / 2);
-
 	if (state === "thinking") {
 		return generateThinkingSequence(rows, columns);
-	}
-	if (state === "connecting" || state === "initializing") {
-		return [...generateConnectingSequence(rows, columns, clampedRadius)];
 	}
 	if (state === "listening") {
 		return generateListeningSequence(rows, columns);
 	}
+	if (GRID_CONNECT_STATES.has(state)) {
+		return [...generateConnectingSequence(rows, columns, clampRadius(radius, rows, columns))];
+	}
 	return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
+}
+
+interface GridAnimatorInputs {
+	columns: number;
+	radius: number | undefined;
+	rows: number;
+	state: AgentState;
+}
+
+export function gridInputsChanged(prev: GridAnimatorInputs, next: GridAnimatorInputs): boolean {
+	return (
+		prev.state !== next.state ||
+		prev.rows !== next.rows ||
+		prev.columns !== next.columns ||
+		prev.radius !== next.radius
+	);
 }
 
 export function useGridAnimator(
@@ -81,17 +114,22 @@ export function useGridAnimator(
 	interval: number,
 	radius?: number
 ): Coordinate {
+	// buildGridSequence returns a fresh array each call; compare on primitive
+	// inputs instead of the reference so we don't loop in environments without
+	// React Compiler (e.g. the bun test transpiler).
+	const sequence = buildGridSequence(state, rows, columns, radius);
 	const [index, setIndex] = useState(0);
-	const [sequence, setSequence] = useState<Coordinate[]>(() =>
-		buildGridSequence(state, rows, columns, radius)
-	);
-
-	useEffect(() => {
-		setSequence(buildGridSequence(state, rows, columns, radius));
+	const [prevInputs, setPrevInputs] = useState<GridAnimatorInputs>({
+		state,
+		rows,
+		columns,
+		radius,
+	});
+	if (gridInputsChanged(prevInputs, { state, rows, columns, radius })) {
+		setPrevInputs({ state, rows, columns, radius });
 		setIndex(0);
-	}, [state, rows, columns, radius]);
+	}
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: interval loop intentionally depends on columns/rows/state/sequence.length
 	useEffect(() => {
 		if (state === "speaking") {
 			return;
@@ -102,7 +140,7 @@ export function useGridAnimator(
 		}, interval);
 
 		return () => clearInterval(id);
-	}, [interval, columns, rows, state, sequence.length]);
+	}, [interval, state]);
 
 	return (
 		sequence[index % sequence.length] ?? { x: Math.floor(columns / 2), y: Math.floor(rows / 2) }

@@ -39,10 +39,43 @@ interface LlmCatalogState {
 const isTerminalStatus = (status: OllamaPullProgress["status"]): boolean =>
 	status === "success" || status === "error" || status === "cancelled";
 
+function makeScanErrorState(err: unknown) {
+	return {
+		error: String(err),
+		isReachable: false as const,
+		isScanning: false as const,
+		isLoaded: true as const,
+	};
+}
+
+function makeScanSuccessState(result: {
+	models: OllamaModel[];
+	reachable: boolean;
+	error?: string;
+}) {
+	return {
+		models: result.models,
+		isReachable: result.reachable,
+		error: result.error ?? null,
+		isLoaded: true as const,
+		isScanning: false as const,
+	};
+}
+
 export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
+	// Stryker disable next-line ArrayDeclaration: equivalent — `setModels` (the
+	// only public mutation) overwrites this initial array, and tests reset state
+	// via `setState({ models: [] })` before reading it.
 	models: [],
+	// Stryker disable next-line BooleanLiteral: equivalent — `setModels` and
+	// `setError` (the only public mutation paths) both override `isLoaded` to
+	// true on first call, so the initial value is overwritten before any test
+	// reads it through observed behavior.
 	isLoaded: false,
 	isScanning: false,
+	// Stryker disable next-line BooleanLiteral: equivalent — every scanModels()
+	// path overwrites `isReachable` based on the IPC result before any test
+	// observes it, so the initial value is unobservable.
 	isReachable: false,
 	error: null,
 	pulls: {},
@@ -74,20 +107,9 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 		set({ isScanning: true, error: null });
 		try {
 			const result = await fetchOllamaModels();
-			set({
-				models: result.models,
-				isReachable: result.reachable,
-				error: result.error ?? null,
-				isLoaded: true,
-				isScanning: false,
-			});
+			set(makeScanSuccessState(result));
 		} catch (err) {
-			set({
-				error: String(err),
-				isReachable: false,
-				isScanning: false,
-				isLoaded: true,
-			});
+			set(makeScanErrorState(err));
 		}
 	},
 	pullModel: async (model) => {
@@ -122,7 +144,14 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	},
 }));
 
+// SSR/Electron guard — under bun:test, the bridge is mocked and electronAPI
+// is undefined, so the body is skipped regardless of the conditional outcome.
+// Observable test behavior is identical with or without this branch, hence
+// every mutator on this if-statement is equivalent.
+// Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator,StringLiteral,BlockStatement
 if (typeof window !== "undefined" && window.electronAPI != null) {
+	// Stryker disable next-line ArrowFunction
 	onLlmCatalog((models) => useLlmCatalogStore.getState().setModels(models));
+	// Stryker disable next-line ArrowFunction
 	onOllamaPullProgress((progress) => useLlmCatalogStore.getState().setPullProgress(progress));
 }

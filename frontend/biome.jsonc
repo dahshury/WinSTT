@@ -45,7 +45,9 @@
       "!!spec/generated",
       "!!reports",
       "!!coverage",
-      "!!playwright-report"
+      "!!playwright-report",
+      "!!stt-server-dist-cpu",
+      "!!stt-server-dist-gpu"
     ]
   },
   // Third-party adapted code — too many lint violations to fix without diverging from upstream

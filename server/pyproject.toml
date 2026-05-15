@@ -16,6 +16,7 @@ dependencies = [
     "openwakeword>=0.4.0",
     "numpy",
     "soundfile>=0.13.1",
+    "psutil>=5.9",
     "rich>=13.0",
     "keyboard>=0.13.5",
     "pyautogui>=0.9.54",
@@ -28,10 +29,23 @@ dependencies = [
 [project.optional-dependencies]
 # CPU-only ORT — recommended for SaaS / horizontal scaling. Smallest install.
 cpu = ["onnxruntime>=1.18.1"]
-# GPU build — onnxruntime-gpu. Users provide system CUDA (Docker base image
-# ``nvidia/cuda:12.x-runtime`` is the canonical path). No torch needed; the
-# previous ``import torch`` DLL-loader hack is gone with the torch drop.
-gpu = ["onnxruntime-gpu>=1.18.1"]
+# GPU build — onnxruntime-gpu + NVIDIA's pip-distributed CUDA libs so a
+# torch-free install still has cuDNN 9 / cuBLAS 12 on disk. Without these
+# wheels you'd get ``cublasLt64_12.dll missing`` from ORT at session
+# create time (the symptoms the torch import used to hide). The runtime
+# ``_inject_cuda_dlls`` hook in ``src/recorder/infrastructure/device.py``
+# adds the wheel directories to Python's DLL search path before ORT loads.
+gpu = [
+    "onnxruntime-gpu>=1.18.1",
+    "nvidia-cublas-cu12>=12.4",
+    "nvidia-cudnn-cu12>=9.0",
+    "nvidia-cuda-runtime-cu12>=12.4",
+    "nvidia-cuda-nvrtc-cu12>=12.4",
+    "nvidia-cufft-cu12>=11.0",
+    "nvidia-curand-cu12>=10.3",
+    "nvidia-cusparse-cu12>=12.0",
+    "nvidia-cusolver-cu12>=11.0",
+]
 # Optional sentence-finished classifier (DistilBERT via transformers).
 # Fail-soft: the adapter falls back to ``is_available() == False`` if these
 # aren't installed.
@@ -44,6 +58,12 @@ dev = [
     "mypy>=1.8",
     "ruff>=0.3",
     "pre-commit>=3.0",
+    # PyInstaller is the packager for the standalone ``stt-server.exe``
+    # that the Electron app bundles via ``extraResources``. ``pyinstaller-hooks-contrib``
+    # ships the upstream hook for ``huggingface_hub``, ``numpy`` etc. — saves us
+    # from writing them by hand. CI installs this group via ``uv sync --group dev``.
+    "pyinstaller>=6.5",
+    "pyinstaller-hooks-contrib>=2024.7",
 ]
 
 [tool.uv]
@@ -94,7 +114,7 @@ warn_no_return = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","soundfile.*","websocket.*","websockets.*","colorama.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnxruntime.*","torch.*","transformers.*"]
+module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","soundfile.*","websocket.*","websockets.*","colorama.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnxruntime.*","torch.*","transformers.*","psutil.*","nvidia.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -70,28 +70,24 @@ export function registerContextMenuIpcHandler(
 	};
 }
 
+function parseCoordinate(value: unknown, axis: "x" | "y"): number | undefined {
+	if (value === undefined) {
+		return;
+	}
+	if (!isFiniteNumber(value)) {
+		throw new Error(`Context menu request ${axis} must be a finite number.`);
+	}
+	return value;
+}
+
 function parseContextMenuRequest(payload: unknown): ContextMenuIpcRequest {
 	if (!(isRecord(payload) && Array.isArray(payload.template))) {
 		throw new Error("Context menu request must contain a template array.");
 	}
-
-	const rawX = payload.x;
-	const rawY = payload.y;
-
-	if (rawX !== undefined && !isFiniteNumber(rawX)) {
-		throw new Error("Context menu request x must be a finite number.");
-	}
-	if (rawY !== undefined && !isFiniteNumber(rawY)) {
-		throw new Error("Context menu request y must be a finite number.");
-	}
-
-	const x = isFiniteNumber(rawX) ? rawX : undefined;
-	const y = isFiniteNumber(rawY) ? rawY : undefined;
-
 	return {
 		template: payload.template as ContextMenuTemplateItem[],
-		x,
-		y,
+		x: parseCoordinate(payload.x, "x"),
+		y: parseCoordinate(payload.y, "y"),
 	};
 }
 

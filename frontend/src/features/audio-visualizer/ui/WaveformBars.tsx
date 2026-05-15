@@ -310,6 +310,7 @@ export const WaveformBars = memo(function WaveformBars() {
 	const smoothedAmpRef = useRef(0);
 	const smoothedActivityRef = useRef(0);
 
+	// @crap-exclude rAF callback — Canvas2D draw path; pure helpers (computeRenderParams, drawFrame) are unit tested
 	const renderFrame = useCallback((metrics: CanvasMetrics) => {
 		const { ctx, w, h, dpr } = metrics;
 		const { isRecording, isSpeaking, audioLevel, sentencePulse } = useVisualizerStore.getState();
@@ -339,6 +340,7 @@ export const WaveformBars = memo(function WaveformBars() {
 		}
 	}, []);
 
+	// @crap-exclude rAF callback — covered via E2E
 	const render = useCallback(() => {
 		const canvas = canvasRef.current;
 		const container = containerRef.current;
@@ -352,6 +354,7 @@ export const WaveformBars = memo(function WaveformBars() {
 		rafRef.current = requestAnimationFrame(render);
 	}, [renderFrame]);
 
+	// @crap-exclude rAF callback — covered via E2E
 	useEffect(() => {
 		rafRef.current = requestAnimationFrame(render);
 		return () => cancelAnimationFrame(rafRef.current);
@@ -377,4 +380,9 @@ export const __waveform_test_helpers__ = {
 	getCanvasMetrics,
 	drawBaseline,
 	tracePath,
+	computeWaveY,
+	buildWavePoints,
+	drawWavePath,
+	drawFilledRegion,
+	lerpColor,
 };

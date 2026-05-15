@@ -384,3 +384,33 @@ class TestAudioToTextRecorderFacade:
         t.join()
         facade.shutdown()
         assert result == "Hello world."
+
+    def test_input_device_index_setter_pre_service(self) -> None:
+        """Setter before service is built just records the index in config."""
+        recorder = AudioToTextRecorder(use_microphone=False, spinner=False)
+        assert recorder.input_device_index is None
+        recorder.input_device_index = 3
+        assert recorder.input_device_index == 3
+        assert recorder._config.audio.input_device_index == 3
+
+    def test_input_device_index_setter_no_op_when_unchanged(self) -> None:
+        recorder = AudioToTextRecorder(
+            use_microphone=False,
+            input_device_index=5,
+            spinner=False,
+        )
+        # Same value — setter should early-exit without touching the service.
+        recorder.input_device_index = 5
+        assert recorder.input_device_index == 5
+
+    def test_input_device_index_setter_delegates_to_service(self) -> None:
+        facade = _make_facade_with_fakes()
+        # Service is built — setter calls service.set_input_device, which
+        # is a non-blocking attribute write on PyAudioSource.  For
+        # FakeAudioSource it's a direct list append.
+        audio_source = facade._service._audio_source  # type: ignore[union-attr]
+        assert isinstance(audio_source, FakeAudioSource)
+        facade.input_device_index = 9
+        assert audio_source.switched_to == [9]
+        assert facade.input_device_index == 9
+        facade.shutdown()

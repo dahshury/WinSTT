@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+// IMPORTANT: capture the *initial* store state via getInitialState() BEFORE
+// any test runs setState(). The store is created at import time (top of this
+// file) so the initial-state snapshot reflects the literals in the source.
 import { useConnectionStore } from "./connection-store";
+
+const INITIAL_STATE = useConnectionStore.getInitialState();
 
 beforeEach(() => {
 	useConnectionStore.setState({
@@ -15,6 +20,15 @@ describe("useConnectionStore", () => {
 		expect(state.connectionStatus).toBe("disconnected");
 		expect(state.serverStatus).toBe("idle");
 		expect(state.gpuInfo).toBeNull();
+	});
+
+	test("store factory's initial state has the documented literals (mutation guard)", () => {
+		// Mutating the literals in the source ("disconnected" → "" or "idle" → "")
+		// is invisible if every test sets state in beforeEach. This assertion
+		// reads the snapshot captured at module-load time, before any setState.
+		expect(INITIAL_STATE.connectionStatus).toBe("disconnected");
+		expect(INITIAL_STATE.serverStatus).toBe("idle");
+		expect(INITIAL_STATE.gpuInfo).toBeNull();
 	});
 
 	test("setConnectionStatus updates the connectionStatus field only", () => {

@@ -17,6 +17,22 @@ mock.module("@/shared/api/ipc-client", () => ({
 
 const { useOpenRouterCatalogStore } = await import("./openrouter-catalog-store");
 
+describe("useOpenRouterCatalogStore initial state", () => {
+	// Use getInitialState() to inspect the literal defaults from the store
+	// factory, immune to other tests' mutations.
+	test("models defaults to an empty array (not a placeholder)", () => {
+		expect(useOpenRouterCatalogStore.getInitialState().models).toEqual([]);
+	});
+
+	test("isLoaded defaults to false", () => {
+		expect(useOpenRouterCatalogStore.getInitialState().isLoaded).toBe(false);
+	});
+
+	test("isReachable defaults to false", () => {
+		expect(useOpenRouterCatalogStore.getInitialState().isReachable).toBe(false);
+	});
+});
+
 describe("useOpenRouterCatalogStore.scanModels", () => {
 	test("collapses overlapping calls into a single fetch", async () => {
 		fetchSpy.mockClear();

@@ -11,10 +11,12 @@ import { defineConfig, devices } from "@playwright/test";
  * static file server. `bun run build` is a prerequisite — it produces
  * `out/standalone/server.js` which `webServer` boots on port 4001.
  *
- * TODO(electron-launch-mode): A second Playwright project using
- * `playwright-core`'s `_electron.launch()` would drive the actual Electron
- * app (covering tray/IPC behaviours unreachable by renderer-only tests).
- * Not delivered in this initial pass.
+ * The `electron` project uses `playwright-core`'s `_electron.launch()` to
+ * drive the actual Electron app — needed to verify behaviours that only
+ * manifest against a real DWM compositor (e.g. transparent-window
+ * show/hide ordering, overlay pill stuck-visible regressions).
+ *
+ * The renderer-only `chromium` project covers the rest.
  */
 export default defineConfig({
 	testDir: "./e2e",
@@ -37,16 +39,30 @@ export default defineConfig({
 		{
 			name: "chromium",
 			use: { ...devices["Desktop Chrome"] },
+			testIgnore: /electron\.e2e\.ts$/,
+		},
+		{
+			name: "electron",
+			// `_electron.launch()` doesn't use a browser context, so the
+			// chromium device profile and the screenshot/trace settings
+			// from `use:` above are mostly inert. The electron suite still
+			// inherits `timeout` and `retries` from the top-level config.
+			testMatch: /.*\.electron\.e2e\.ts$/,
 		},
 	],
-	webServer: {
-		command: "node out/standalone/server.js",
-		url: "http://127.0.0.1:4001",
-		env: {
-			PORT: "4001",
-			HOSTNAME: "127.0.0.1",
-		},
-		timeout: 120_000,
-		reuseExistingServer: !process.env.CI,
-	},
+	// Skip the renderer-only Next.js standalone server when running only the
+	// electron project — those tests drive `_electron.launch()` directly and
+	// don't talk to the renderer over HTTP.
+	webServer: process.env.PW_SKIP_WEBSERVER
+		? undefined
+		: {
+				command: "node out/standalone/server.js",
+				url: "http://127.0.0.1:4001",
+				env: {
+					PORT: "4001",
+					HOSTNAME: "127.0.0.1",
+				},
+				timeout: 120_000,
+				reuseExistingServer: !process.env.CI,
+			},
 });

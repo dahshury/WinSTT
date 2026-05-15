@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "next dev",
+    "dev": "bun run electron:dev",
+    "dev:next": "next dev",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsgo --noEmit",
@@ -19,6 +20,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:install": "bunx playwright install chromium",
+    "test:e2e:electron": "bun run electron:compile && PW_SKIP_WEBSERVER=1 playwright test --project=electron",
     "generate": "openapi-typescript ../spec/openapi.yaml -o ../spec/generated/ts/schema.d.ts",
     "knip": "knip",
     "icon:generate": "bun run scripts/generate-placeholder-icon.ts",
@@ -28,17 +30,22 @@
     "check:i18n": "bun run scripts/verify-i18n.ts",
     "check:i18n:strict": "bun run scripts/verify-i18n.ts --strict",
     "next:prepare-standalone": "node scripts/prepare-next-standalone.mjs",
+    "native:build": "node scripts/native/build-winstt-paste.cjs && node scripts/native/build-winstt-context.cjs",
     "electron:compile:main": "tsup electron/main.ts --format esm --outDir dist-electron --external electron --external uiohook-napi --external pngjs --sourcemap",
     "electron:compile:preload": "tsup electron/preload.ts --format cjs --outDir dist-electron --external electron --sourcemap",
     "electron:compile": "rm -rf dist-electron && concurrently -n main,preload -c green,yellow \"bun run electron:compile:main\" \"bun run electron:compile:preload\"",
-    "electron:watch:main": "tsup electron/main.ts --format esm --outDir dist-electron --external electron --external uiohook-napi --external pngjs --sourcemap --watch",
-    "electron:watch:preload": "tsup electron/preload.ts --format cjs --outDir dist-electron --external electron --sourcemap --watch",
-    "electron:start": "wait-on http://localhost:3000 file:dist-electron/main.js file:dist-electron/preload.cjs && electronmon .",
+    "electron:watch:main": "tsup electron/main.ts --format esm --outDir dist-electron --external electron --external uiohook-napi --external pngjs --sourcemap --watch electron --watch src",
+    "electron:watch:preload": "tsup electron/preload.ts --format cjs --outDir dist-electron --external electron --sourcemap --watch electron --watch src",
+    "electron:start": "wait-on tcp:3000 file:dist-electron/main.js file:dist-electron/preload.cjs && bun run scripts/dev-electron.ts",
     "electron:rebuild": "electron-rebuild -o uiohook-napi",
     "electron:rebuild:force": "electron-rebuild -f -o uiohook-napi",
-    "electron:dev": "rm -rf dist-electron && concurrently -k -n next,main,preload,app -c blue,green,yellow,magenta \"bun dev\" \"bun run electron:watch:main\" \"bun run electron:watch:preload\" \"bun run electron:start\"",
-    "electron:build": "bun run build && bun run next:prepare-standalone && bun run electron:compile && bun run electron:rebuild:force && electron-builder",
-    "electron:build:publish": "bun run build && bun run next:prepare-standalone && bun run electron:compile && bun run electron:rebuild:force && electron-builder --publish always",
+    "electron:dev": "rm -rf dist-electron && bun run native:build && concurrently -k --success first -n next,main,preload,app -c blue,green,yellow,magenta \"bun run dev:next\" \"bun run electron:watch:main\" \"bun run electron:watch:preload\" \"bun run electron:start\"",
+    "electron:build": "bun run build && bun run next:prepare-standalone && bun run electron:compile && bun run native:build && bun run electron:rebuild:force && electron-builder",
+    "electron:build:publish": "bun run build && bun run next:prepare-standalone && bun run electron:compile && bun run native:build && bun run electron:rebuild:force && electron-builder --publish always",
+    "electron:build:cpu": "bun run build && bun run next:prepare-standalone && bun run electron:compile && bun run native:build && bun run electron:rebuild:force && electron-builder --config electron-builder.cpu.yml",
+    "electron:build:gpu": "bun run build && bun run next:prepare-standalone && bun run electron:compile && bun run native:build && bun run electron:rebuild:force && electron-builder --config electron-builder.gpu.yml",
+    "electron:build:publish:cpu": "bun run build && bun run next:prepare-standalone && bun run electron:compile && bun run native:build && bun run electron:rebuild:force && electron-builder --config electron-builder.cpu.yml --publish always",
+    "electron:build:publish:gpu": "bun run build && bun run next:prepare-standalone && bun run electron:compile && bun run native:build && bun run electron:rebuild:force && electron-builder --config electron-builder.gpu.yml --publish always",
     "postinstall": "bun run electron:rebuild:force"
   },
   "dependencies": {
@@ -86,7 +93,6 @@
     "electron": "^42.0.0",
     "electron-builder": "^26.0.12",
     "electron-store": "^11.0.2",
-    "electronmon": "^2.0.4",
     "knip": "^6.12.1",
     "openapi-typescript": "^7.13.0",
     "react-doctor": "^0.1.2",
@@ -99,11 +105,5 @@
   "trustedDependencies": [
     "electron",
     "uiohook-napi"
-  ],
-  "electronmon": {
-    "patterns": [
-      "!**/*",
-      "dist-electron/**/*.{js,cjs}"
-    ]
-  }
+  ]
 }

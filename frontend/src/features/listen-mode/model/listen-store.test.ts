@@ -13,6 +13,17 @@ describe("useListenStore", () => {
 		expect(state.devices).toEqual([]);
 	});
 
+	test("createStore literal defaults are pinned (immune to other tests' setState)", () => {
+		// Targets BooleanLiteral, StringLiteral, and ArrayDeclaration mutations
+		// on the create() initial-state object: isListening=false, deviceName="",
+		// devices=[]. Without getInitialState() these would be observed only
+		// via the live state which other tests freely mutate.
+		const initial = useListenStore.getInitialState();
+		expect(initial.isListening).toBe(false);
+		expect(initial.deviceName).toBe("");
+		expect(initial.devices).toEqual([]);
+	});
+
 	test("setListening(true, deviceName) sets both", () => {
 		useListenStore.getState().setListening(true, "Speakers");
 		const state = useListenStore.getState();

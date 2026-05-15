@@ -54,6 +54,41 @@ function buildLoopbackOptions(typed: LoopbackDevice[]): {
 	return { options, defaultIndex };
 }
 
+interface ApplyDevicesParams {
+	currentDeviceIndex: number | null;
+	getIsCancelled: () => boolean;
+	setDefaultIndex: (idx: number | null) => void;
+	setOptions: (opts: SelectOption[]) => void;
+	update: (patch: { loopbackDeviceIndex: number | null }) => void;
+}
+
+function maybeAutoSelect(params: ApplyDevicesParams, defIdx: number | null): void {
+	if (params.currentDeviceIndex == null && defIdx != null) {
+		params.update({ loopbackDeviceIndex: defIdx });
+	}
+}
+
+/**
+ * Returns a handler function that processes a raw device list response and
+ * updates component state. Extracted for unit testability.
+ */
+export function applyDevicesResult(params: ApplyDevicesParams) {
+	return (devices: unknown) => {
+		if (params.getIsCancelled()) {
+			return;
+		}
+		if (!Array.isArray(devices)) {
+			console.warn("[useLoopbackDevices] Invalid devices response:", devices);
+			return;
+		}
+		const typed = parseDevices(devices);
+		const { options: opts, defaultIndex: defIdx } = buildLoopbackOptions(typed);
+		params.setDefaultIndex(defIdx);
+		params.setOptions(opts);
+		maybeAutoSelect(params, defIdx);
+	};
+}
+
 export function useLoopbackDevices(): UseLoopbackDevicesReturn {
 	const general = useSettingsStore((s) => s.settings.general);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
@@ -69,22 +104,13 @@ export function useLoopbackDevices(): UseLoopbackDevicesReturn {
 
 		let isCancelled = false;
 
-		const handleDevices = (devices: unknown) => {
-			if (isCancelled) {
-				return;
-			}
-			if (!Array.isArray(devices)) {
-				console.warn("[useLoopbackDevices] Invalid devices response:", devices);
-				return;
-			}
-			const typed = parseDevices(devices);
-			const { options: opts, defaultIndex: defIdx } = buildLoopbackOptions(typed);
-			setDefaultIndex(defIdx);
-			setOptions(opts);
-			if (general?.loopbackDeviceIndex == null && defIdx != null) {
-				update({ loopbackDeviceIndex: defIdx });
-			}
-		};
+		const handleDevices = applyDevicesResult({
+			getIsCancelled: () => isCancelled,
+			currentDeviceIndex: general?.loopbackDeviceIndex ?? null,
+			setDefaultIndex,
+			setOptions,
+			update,
+		});
 
 		loopbackListDevices()
 			.then(handleDevices)

@@ -104,12 +104,27 @@ def text_detected(text: str, state: ServerState, loop: asyncio.AbstractEventLoop
             first_text = texts[0]
             last_text = texts[-1]
 
-            similarity = SequenceMatcher(None, first_text, last_text).ratio()
+            # Compare the trailing portion only. Whole-text similarity is
+            # misleading on long transcripts: as the realtime buffer grows,
+            # the (already-stabilized) prefix dominates the ratio and pushes
+            # similarity above the threshold even while the user is still
+            # speaking new words at the end. Detecting "stuck" transcription
+            # is really about the tail repeating, not the whole text.
+            tail_len = max(state.hard_break_even_on_background_noise_min_chars, 30)
+            first_tail = first_text[-tail_len:]
+            last_tail = last_text[-tail_len:]
+            similarity = SequenceMatcher(None, first_tail, last_tail).ratio()
 
             if (
                 similarity > state.hard_break_even_on_background_noise_min_similarity
                 and len(first_text) > state.hard_break_even_on_background_noise_min_chars
             ):
+                print(
+                    f"{bcolors.WARNING}[noise-break] FIRING — first_tail={first_tail!r} "
+                    f"last_tail={last_tail!r} similarity={similarity:.4f} "
+                    f"first_text_len={len(first_text)}{bcolors.ENDC}",
+                    flush=True,
+                )
                 state.recorder.stop()
                 state.recorder.clear_audio_queue()
                 state.prev_text = ""

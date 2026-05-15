@@ -20,7 +20,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { VList, type VListHandle } from "virtua";
+import { type ScrollToIndexOpts, VList, type VListHandle } from "virtua";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -640,7 +640,7 @@ function ProvidersGridGate({
 	return <ProvidersGrid {...rest} />;
 }
 
-function useProvidersOpenedFlag(isOpen: boolean): boolean {
+export function useProvidersOpenedFlag(isOpen: boolean): boolean {
 	const [hasOpened, setHasOpened] = useState(isOpen);
 	if (isOpen && !hasOpened) {
 		setHasOpened(true);
@@ -1162,6 +1162,69 @@ function getRowKey(item: VirtualizedItem): string {
 	return `${prefix}-${item.model.id}`;
 }
 
+/** Pure: resolves the active maker at a given virtual index. */
+function resolveActiveMaker(items: VirtualizedItem[], idx: number): string | null {
+	return items[idx]?.model.maker ?? null;
+}
+
+/** Pure: determines whether the maker change notification should fire. */
+function shouldNotifyMaker(nextMaker: string | null, lastMaker: string | null): boolean {
+	return nextMaker !== lastMaker;
+}
+
+/** Pure: determines whether a scroll nonce should be processed. */
+function isNewScrollNonce(lastNonce: number | null, nonce: number): boolean {
+	return lastNonce !== nonce;
+}
+
+/**
+ * Pure: applies a virtual-scroll offset to the active-maker tracking state.
+ * Returns the next maker string, or null when the list is empty / no change
+ * needed. The caller owns the refs and side-effects; this function is pure so
+ * it can be unit-tested without a DOM.
+ */
+export function applyVirtualScrollMakerUpdate(
+	handle: { getItemOffset: (i: number) => number; getItemSize: (i: number) => number } | null,
+	virtualItems: VirtualizedItem[],
+	offset: number,
+	lastNotifiedMaker: string | null,
+	onActiveMakerChange: ((maker: string | null) => void) | undefined
+): string | null {
+	if (!handle || virtualItems.length === 0) {
+		return lastNotifiedMaker;
+	}
+	const activeIdx = findActiveVirtualIndex(handle, virtualItems.length, offset);
+	const nextMaker = resolveActiveMaker(virtualItems, activeIdx);
+	if (shouldNotifyMaker(nextMaker, lastNotifiedMaker)) {
+		onActiveMakerChange?.(nextMaker);
+		return nextMaker;
+	}
+	return lastNotifiedMaker;
+}
+
+/**
+ * Pure: applies a scroll-to-maker request, performing the scroll when the
+ * nonce is new. Returns true when the scroll was performed, false otherwise.
+ */
+export function applyScrollToMakerRequest(
+	scrollToMakerRequest: ScrollRequest | null | undefined,
+	lastNonce: number | null,
+	virtualItems: VirtualizedItem[],
+	scrollToIndex: ((index: number, opts?: ScrollToIndexOpts) => void) | undefined
+): number | null {
+	if (!scrollToMakerRequest) {
+		return lastNonce;
+	}
+	if (!isNewScrollNonce(lastNonce, scrollToMakerRequest.nonce)) {
+		return lastNonce;
+	}
+	const targetIndex = findScrollTargetIndex(virtualItems, scrollToMakerRequest);
+	if (targetIndex >= 0) {
+		scrollToIndex?.(targetIndex, { align: "start" } satisfies ScrollToIndexOpts);
+	}
+	return scrollToMakerRequest.nonce;
+}
+
 export const ModelListContentVirtualized = memo(function ModelListContentVirtualized({
 	groupedModels,
 	expandedModels,
@@ -1185,35 +1248,25 @@ export const ModelListContentVirtualized = memo(function ModelListContentVirtual
 	const lastNotifiedMakerRef = useRef<string | null>(null);
 	const handleVirtualScroll = useCallback(
 		(offset: number) => {
-			const handle = virtualizerHandleRef.current;
-			if (!handle || virtualItems.length === 0) {
-				return;
-			}
-			const activeIdx = findActiveVirtualIndex(handle, virtualItems.length, offset);
-			const item = virtualItems[activeIdx];
-			const nextMaker = item?.model.maker ?? null;
-			if (nextMaker !== lastNotifiedMakerRef.current) {
-				lastNotifiedMakerRef.current = nextMaker;
-				onActiveMakerChangeRef.current?.(nextMaker);
-			}
+			lastNotifiedMakerRef.current = applyVirtualScrollMakerUpdate(
+				virtualizerHandleRef.current,
+				virtualItems,
+				offset,
+				lastNotifiedMakerRef.current,
+				onActiveMakerChangeRef.current
+			);
 		},
 		[virtualItems]
 	);
 
 	const lastNonceRef = useRef<number | null>(null);
 	useEffect(() => {
-		if (!scrollToMakerRequest) {
-			return;
-		}
-		if (lastNonceRef.current === scrollToMakerRequest.nonce) {
-			return;
-		}
-		lastNonceRef.current = scrollToMakerRequest.nonce;
-		const targetIndex = findScrollTargetIndex(virtualItems, scrollToMakerRequest);
-		if (targetIndex < 0) {
-			return;
-		}
-		virtualizerHandleRef.current?.scrollToIndex(targetIndex, { align: "start" });
+		lastNonceRef.current = applyScrollToMakerRequest(
+			scrollToMakerRequest,
+			lastNonceRef.current,
+			virtualItems,
+			virtualizerHandleRef.current?.scrollToIndex
+		);
 	}, [scrollToMakerRequest, virtualItems]);
 
 	if (groupedModels.length === 0) {
@@ -1325,4 +1378,23 @@ export const __model_list_content_virtualized_test_helpers__ = {
 	getEmptyStateLabel,
 	getEmptyStateBody,
 	getRowKey,
+	resolveActiveMaker,
+	shouldNotifyMaker,
+	isNewScrollNonce,
+	applyVirtualScrollMakerUpdate,
+	applyScrollToMakerRequest,
+	// Component exports for isolated rendering tests
+	VariantBadge,
+	ModelVariantStrip,
+	VirtualizedRow,
+	ProviderStatChip,
+	ProviderStatsRow,
+	MakerIcon,
+	ContextChip,
+	PricingChip,
+	FeaturedEndpointChip,
+	InlineModelMeta,
+	ModelDescription,
+	ModelHeaderTitleRow,
+	ModelHeaderProvidersButton,
 };

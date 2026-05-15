@@ -162,6 +162,19 @@ export interface AudioVisualizerAuraProps {
 	themeMode?: "dark" | "light";
 }
 
+/** WinSTT is always dark-themed; resolves to "dark" unless overridden via prop. */
+export function resolveAuraTheme(themeMode: "dark" | "light" | undefined): "dark" | "light" {
+	// themeMode prop takes priority; otherwise always dark.
+	return themeMode ?? "dark";
+}
+
+export function themeModeToUniform(theme: "dark" | "light"): number {
+	return theme === "light" ? 1.0 : 0.0;
+}
+
+const DEFAULT_FALLBACK_COLOR: [number, number, number] = [0, 0.7, 1];
+const DEVICE_PIXEL_RATIO = globalThis.devicePixelRatio ?? 1;
+
 export function AudioVisualizerAura({
 	size = "lg",
 	color = DEFAULT_COLOR,
@@ -171,13 +184,10 @@ export function AudioVisualizerAura({
 	...props
 }: AudioVisualizerAuraProps & ComponentProps<"div">) {
 	const state = useAgentState();
-	const rgbColor = useMemo(() => hexToRgb(color), [color]);
+	const rgbColor = useMemo(() => hexToRgb(color) ?? DEFAULT_FALLBACK_COLOR, [color]);
 
-	const resolvedTheme =
-		themeMode ??
-		(typeof window !== "undefined" && document.documentElement.classList.contains("dark")
-			? "dark"
-			: "dark"); // WinSTT is always dark
+	const resolvedTheme = resolveAuraTheme(themeMode);
+	const modeUniform = themeModeToUniform(resolvedTheme);
 
 	// Mutable uniforms ref — animators write here directly, ReactShaderToy reads on each frame
 	const uniformsRef = useRef<Uniforms>({
@@ -193,14 +203,14 @@ export function AudioVisualizerAura({
 		uColorShift: { type: "1f", value: colorShift },
 		uVariance: { type: "1f", value: 0.1 },
 		uSmoothing: { type: "1f", value: 1.0 },
-		uMode: { type: "1f", value: resolvedTheme === "light" ? 1.0 : 0.0 },
-		uColor: { type: "3fv", value: rgbColor ?? [0, 0.7, 1] },
+		uMode: { type: "1f", value: modeUniform },
+		uColor: { type: "3fv", value: rgbColor },
 	});
 
 	// Keep non-animated uniforms in sync with props
 	uniformsRef.current.uColorShift = { type: "1f", value: colorShift };
-	uniformsRef.current.uMode = { type: "1f", value: resolvedTheme === "light" ? 1.0 : 0.0 };
-	uniformsRef.current.uColor = { type: "3fv", value: rgbColor ?? [0, 0.7, 1] };
+	uniformsRef.current.uMode = { type: "1f", value: modeUniform };
+	uniformsRef.current.uColor = { type: "3fv", value: rgbColor };
 
 	// Hook up motion-value-driven animations that write to uniformsRef (zero re-renders)
 	useAuraAnimator(state, uniformsRef);
@@ -208,7 +218,7 @@ export function AudioVisualizerAura({
 	return (
 		<div className={cn(auraVariants({ size }), className)} data-lk-state={state} {...props}>
 			<ReactShaderToy
-				devicePixelRatio={globalThis.devicePixelRatio ?? 1}
+				devicePixelRatio={DEVICE_PIXEL_RATIO}
 				fs={auraShaderSource}
 				onError={(error) => console.error("Shader error:", error)}
 				onWarning={(warning) => console.warn("Shader warning:", warning)}

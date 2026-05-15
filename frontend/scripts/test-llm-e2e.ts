@@ -13,7 +13,14 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateObject } from "ai";
 import { z } from "zod";
-import { PRESET_PROMPTS } from "../src/entities/llm-catalog/lib/preset-prompts";
+import {
+	ALL_PRESET_KEYS,
+	getPresetPrompt,
+	PRESET_LEVELS,
+	PRESETS_WITH_LEVELS,
+	type PresetKey,
+	type PresetLevel,
+} from "../src/entities/llm-catalog/lib/preset-prompts";
 import {
 	createModelSelection,
 	parseModelSelection,
@@ -64,7 +71,7 @@ const transformedTextSchema = z.object({
 	text: z.string().describe("The transformed text, with no commentary or explanations."),
 });
 
-async function transform(text: string, preset: keyof typeof PRESET_PROMPTS, modelId: string) {
+async function transform(text: string, preset: PresetKey, modelId: string, level?: PresetLevel) {
 	const openrouter = createOpenRouter({
 		apiKey,
 		headers: {
@@ -76,7 +83,7 @@ async function transform(text: string, preset: keyof typeof PRESET_PROMPTS, mode
 	const userPrompt = `Transform the following text according to the style guide above. Return ONLY the transformed text. No commentary, no explanations, no JSON keys other than \`text\`.\n\nText to transform:\n${text}`;
 	const result = await generateObject({
 		model,
-		system: PRESET_PROMPTS[preset],
+		system: getPresetPrompt(preset, level),
 		prompt: userPrompt,
 		schemaName: "TransformedText",
 		schemaDescription: "The transformed text only.",
@@ -111,18 +118,33 @@ const targets = process.argv[2]
 	? [process.argv[2]]
 	: ["openai/gpt-4o-mini", "anthropic/claude-sonnet-4", "google/gemini-2.0-flash-001"];
 
-const presets = Object.keys(PRESET_PROMPTS) as Array<keyof typeof PRESET_PROMPTS>;
+interface PresetCase {
+	key: PresetKey;
+	label: string;
+	level?: PresetLevel;
+}
+
+const leveledKeys = new Set<PresetKey>(PRESETS_WITH_LEVELS as readonly PresetKey[]);
+const presetCases: PresetCase[] = ALL_PRESET_KEYS.flatMap((key): PresetCase[] => {
+	if (leveledKeys.has(key)) {
+		return PRESET_LEVELS.map((level) => ({ key, level, label: `${key}:${level}` }));
+	}
+	return [{ key, label: key }];
+});
+
 let failures = 0;
 for (const target of targets) {
 	console.log(`\n--- ${target} ---`);
-	for (const preset of presets) {
+	for (const c of presetCases) {
 		try {
-			const out = await transform(sample, preset, target);
+			const out = await transform(sample, c.key, target, c.level);
 			const ok = typeof out === "string" && out.length > 0 && !out.includes("```");
-			console.log(`[${preset}] ${ok ? "✓" : "✗"} ${out.slice(0, 80)}${out.length > 80 ? "…" : ""}`);
+			console.log(
+				`[${c.label}] ${ok ? "✓" : "✗"} ${out.slice(0, 80)}${out.length > 80 ? "…" : ""}`
+			);
 			if (!ok) failures += 1;
 		} catch (err) {
-			console.error(`[${preset}] ✗ ${(err as Error).message}`);
+			console.error(`[${c.label}] ✗ ${(err as Error).message}`);
 			failures += 1;
 		}
 	}

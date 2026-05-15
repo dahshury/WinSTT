@@ -34,23 +34,20 @@ type RecorderAction =
 
 const INITIAL_STATE: RecorderState = { key: null, liveKeys: [], recording: false };
 
+type ActionHandler<A extends RecorderAction> = (state: RecorderState, action: A) => RecorderState;
+
+const ACTION_HANDLERS: {
+	[K in RecorderAction["type"]]: ActionHandler<Extract<RecorderAction, { type: K }>>;
+} = {
+	start: () => ({ key: null, liveKeys: [], recording: true }),
+	stop: (state) => ({ ...state, recording: false }),
+	live: (state, action) => ({ ...state, liveKeys: action.keys }),
+	done: (state, action) => ({ key: action.combo ?? state.key, liveKeys: [], recording: false }),
+};
+
 function recorderReducer(state: RecorderState, action: RecorderAction): RecorderState {
-	switch (action.type) {
-		case "start":
-			return { key: null, liveKeys: [], recording: true };
-		case "stop":
-			return { ...state, recording: false };
-		case "live":
-			return { ...state, liveKeys: action.keys };
-		case "done":
-			return {
-				key: action.combo ?? state.key,
-				liveKeys: [],
-				recording: false,
-			};
-		default:
-			return state;
-	}
+	const handler = ACTION_HANDLERS[action.type] as ActionHandler<RecorderAction>;
+	return handler(state, action);
 }
 
 export function useKeyRecorder({

@@ -5,23 +5,36 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 const STORAGE_KEY = "winstt:openrouter-favorite-providers";
 const DEFAULT_FAVORITES = ["openai", "google", "anthropic"];
 
-function getInitialFavorites(): string[] {
+function parseStoredFavorites(stored: string | null): string[] | null {
+	if (!stored) {
+		return null;
+	}
+	const parsed: unknown = JSON.parse(stored);
+	if (Array.isArray(parsed) && parsed.length > 0) {
+		return parsed as string[];
+	}
+	return null;
+}
+
+function readStoredFavorites(): string[] | null {
 	if (typeof window === "undefined") {
-		return DEFAULT_FAVORITES;
+		return null;
 	}
 	try {
-		const stored = window.localStorage.getItem(STORAGE_KEY);
-		if (stored) {
-			const parsed: unknown = JSON.parse(stored);
-			if (Array.isArray(parsed) && parsed.length > 0) {
-				return parsed as string[];
-			}
-		}
+		return parseStoredFavorites(window.localStorage.getItem(STORAGE_KEY));
 	} catch {
-		// fall through to default
+		return null;
 	}
-	return DEFAULT_FAVORITES;
 }
+
+function getInitialFavorites(): string[] {
+	return readStoredFavorites() ?? DEFAULT_FAVORITES;
+}
+
+export const __use_favorite_providers_test_helpers__ = {
+	parseStoredFavorites,
+	readStoredFavorites,
+};
 
 export function useFavoriteProviders() {
 	const [favorites, setFavorites] = useState<string[]>(getInitialFavorites);
