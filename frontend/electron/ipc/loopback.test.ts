@@ -163,4 +163,16 @@ describe("setupLoopbackHandlers", () => {
 		fire("loopback:start", { deviceIndex: 0 });
 		expect(client.calls).toContain("start");
 	});
+
+	test("loopback:start ignored when deviceIndex is a non-number value", () => {
+		handlers.clear();
+		listeners.clear();
+		const client = makeClient(true);
+		setupLoopbackHandlers(client as unknown as SttClient);
+		// Strings / null / NaN must not pass the typeof === "number" guard.
+		fire("loopback:start", { deviceIndex: "0" as unknown as number });
+		fire("loopback:start", { deviceIndex: null as unknown as number });
+		fire("loopback:start", { deviceIndex: Number.NaN });
+		expect(client.calls.includes("start")).toBe(false);
+	});
 });

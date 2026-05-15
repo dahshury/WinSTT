@@ -172,7 +172,7 @@ export const transformSchema = z.object({
 // Built-in transforms seeded on first run. Kept terse and instructive — the
 // model is told to return ONLY the transformed text so the paste-replace flow
 // doesn't accidentally inject commentary.
-export const BUILTIN_TRANSFORMS: readonly z.input<typeof transformSchema>[] = [
+export const BUILTIN_TRANSFORMS: readonly z.output<typeof transformSchema>[] = [
 	{
 		id: "polish",
 		name: "Polish",
@@ -201,15 +201,11 @@ export const llmSettingsSchema = z.object({
 	openrouterFallbackModel: z.string().default(""),
 	presets: presetsSchema,
 	timeout: z.number().int().min(1000).max(30_000).default(5000),
-	transforms: z.array(transformSchema).default(() =>
-		BUILTIN_TRANSFORMS.map((t) => ({
-			id: t.id,
-			name: t.name,
-			prompt: t.prompt ?? "",
-			hotkey: t.hotkey ?? "",
-			builtin: t.builtin ?? false,
-		}))
-	),
+	// Pass BUILTIN_TRANSFORMS straight through — transformSchema's own
+	// .default("")/.default(false) fill in any optional fields, so we don't
+	// need a wrapper that nullish-coalesces each property (the wrapper used
+	// to bump CC to 4 via three `??` operators).
+	transforms: z.array(transformSchema).default([...BUILTIN_TRANSFORMS]),
 });
 
 export const appSettingsSchema = z.object({

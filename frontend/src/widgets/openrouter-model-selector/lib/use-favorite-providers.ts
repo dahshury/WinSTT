@@ -5,15 +5,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 const STORAGE_KEY = "winstt:openrouter-favorite-providers";
 const DEFAULT_FAVORITES = ["openai", "google", "anthropic"];
 
+function isNonEmptyArray(value: unknown): value is unknown[] {
+	return Array.isArray(value) && value.length > 0;
+}
+
 function parseStoredFavorites(stored: string | null): string[] | null {
 	if (!stored) {
 		return null;
 	}
 	const parsed: unknown = JSON.parse(stored);
-	if (Array.isArray(parsed) && parsed.length > 0) {
-		return parsed as string[];
-	}
-	return null;
+	return isNonEmptyArray(parsed) ? (parsed as string[]) : null;
 }
 
 function readStoredFavorites(): string[] | null {
@@ -32,6 +33,7 @@ function getInitialFavorites(): string[] {
 }
 
 export const __use_favorite_providers_test_helpers__ = {
+	isNonEmptyArray,
 	parseStoredFavorites,
 	readStoredFavorites,
 };

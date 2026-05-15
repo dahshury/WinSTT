@@ -108,77 +108,140 @@ let cachedBinary: string | null | undefined;
 function getBinary(): string | null {
 	if (cachedBinary === undefined) {
 		cachedBinary = resolveBinary();
-		if (cachedBinary) {
-			dbg("paste", `using ${cachedBinary}`);
-		} else {
-			dbg(
-				"paste",
-				"winstt-paste.exe not found — build it via `node scripts/native/build-winstt-paste.cjs`"
-			);
-		}
+		logBinaryResolution(cachedBinary);
 	}
 	return cachedBinary;
 }
 // Stryker restore StringLiteral,BlockStatement,ConditionalExpression
 
-function runBinary(binPath: string): Promise<{ ok: boolean; reason?: string }> {
-	return new Promise((resolve) => {
-		let done = false;
-		let killTimer: ReturnType<typeof setTimeout> | null = null;
-		let child: ChildProcess | null = null;
+function logBinaryResolution(resolved: string | null): void {
+	if (resolved) {
+		dbg("paste", `using ${resolved}`);
+		return;
+	}
+	dbg(
+		"paste",
+		"winstt-paste.exe not found — build it via `node scripts/native/build-winstt-paste.cjs`"
+	);
+}
 
-		const finish = (ok: boolean, reason?: string) => {
-			if (done) {
-				return;
-			}
-			done = true;
-			if (killTimer) {
-				clearTimeout(killTimer);
-				killTimer = null;
-			}
-			resolve({ ok, reason });
-		};
+/**
+ * Mutable closure state for a single paste binary invocation.
+ * Extracted so the inner helpers (finish, timeout, close handlers) can be
+ * unit-tested in isolation without re-entering the spawn flow.
+ */
+interface BinaryRun {
+	child: ChildProcess | null;
+	done: boolean;
+	killTimer: ReturnType<typeof setTimeout> | null;
+	resolve: (value: { ok: boolean; reason?: string }) => void;
+	stderrBuf: string;
+}
 
-		killTimer = setTimeout(() => {
-			try {
-				child?.kill("SIGKILL");
-			} catch {
-				// best-effort
-			}
-			finish(false, `timed out after ${PASTE_TIMEOUT_MS}ms`);
-		}, PASTE_TIMEOUT_MS);
+/** Idempotent settle of a BinaryRun: clears the timer and resolves once. */
+export function finishBinaryRun(run: BinaryRun, ok: boolean, reason: string | undefined): void {
+	if (run.done) {
+		return;
+	}
+	run.done = true;
+	if (run.killTimer) {
+		clearTimeout(run.killTimer);
+		run.killTimer = null;
+	}
+	run.resolve({ ok, reason });
+}
 
-		try {
-			child = spawn(binPath, [], {
-				stdio: ["ignore", "pipe", "pipe"],
-				windowsHide: true,
-			});
-		} catch (err) {
-			finish(false, `spawn failed: ${(err as Error).message}`);
-			return;
-		}
+/** Best-effort kill on timeout. Wrapped so SIGKILL throws don't escape. */
+export function killBinaryOnTimeout(run: BinaryRun): void {
+	try {
+		run.child?.kill("SIGKILL");
+	} catch {
+		// best-effort
+	}
+	finishBinaryRun(run, false, `timed out after ${PASTE_TIMEOUT_MS}ms`);
+}
 
-		let stderrBuf = "";
-		child.stderr?.on("data", (chunk: Buffer) => {
-			stderrBuf += chunk.toString();
+/** Translate the child's exit code into a finish reason. */
+export function closeBinaryRun(run: BinaryRun, code: number | null): void {
+	if (code === 0) {
+		finishBinaryRun(run, true, undefined);
+		return;
+	}
+	const detail = run.stderrBuf ? `: ${run.stderrBuf.trim()}` : "";
+	finishBinaryRun(run, false, `exit ${code}${detail}`);
+}
+
+/**
+ * Spawn the binary into the existing run. On failure, finish the run with a
+ * descriptive reason and return false so the caller can stop wiring handlers.
+ * Returns true on a successful spawn (caller should attach child handlers).
+ */
+export function spawnInto(run: BinaryRun, binPath: string): boolean {
+	try {
+		run.child = spawn(binPath, [], {
+			stdio: ["ignore", "pipe", "pipe"],
+			windowsHide: true,
 		});
+		return true;
+	} catch (err) {
+		finishBinaryRun(run, false, `spawn failed: ${(err as Error).message}`);
+		return false;
+	}
+}
 
-		child.on("error", (err) => {
-			finish(false, `process error: ${err.message}`);
-		});
-
-		child.on("close", (code) => {
-			if (code === 0) {
-				finish(true);
-			} else {
-				finish(false, `exit ${code}${stderrBuf ? `: ${stderrBuf.trim()}` : ""}`);
-			}
-		});
+/**
+ * Attach the standard child handlers (stderr accumulator, error → finish,
+ * close → result) to a successfully-spawned BinaryRun.
+ */
+export function attachChildHandlers(run: BinaryRun): void {
+	const child = run.child;
+	if (!child) {
+		return;
+	}
+	child.stderr?.on("data", (chunk: Buffer) => {
+		run.stderrBuf += chunk.toString();
 	});
+	child.on("error", (err) => {
+		finishBinaryRun(run, false, `process error: ${err.message}`);
+	});
+	child.on("close", (code) => closeBinaryRun(run, code));
+}
+
+/** Construct an empty BinaryRun bound to the given resolve callback. */
+export function makeBinaryRun(
+	resolve: (value: { ok: boolean; reason?: string }) => void
+): BinaryRun {
+	return {
+		child: null,
+		done: false,
+		killTimer: null,
+		resolve,
+		stderrBuf: "",
+	};
+}
+
+/**
+ * Body of the runBinary Promise — extracted so it can be unit-tested directly
+ * (the bun coverage reporter has trouble merging hits inside Promise IIFEs).
+ */
+export function startBinaryRun(
+	resolve: (value: { ok: boolean; reason?: string }) => void,
+	binPath: string
+): BinaryRun {
+	const run = makeBinaryRun(resolve);
+	run.killTimer = setTimeout(() => killBinaryOnTimeout(run), PASTE_TIMEOUT_MS);
+	if (spawnInto(run, binPath)) {
+		attachChildHandlers(run);
+	}
+	return run;
+}
+
+function runBinary(binPath: string): Promise<{ ok: boolean; reason?: string }> {
+	return new Promise((resolve) => startBinaryRun(resolve, binPath));
 }
 
 /** Write text to clipboard, returning false if it fails. */
-function writeClipboard(text: string): boolean {
+export function writeClipboard(text: string): boolean {
 	try {
 		clipboard.writeText(text);
 		return true;
@@ -189,34 +252,67 @@ function writeClipboard(text: string): boolean {
 }
 
 /** Enforce the minimum inter-paste gap. Returns once the gap has elapsed. */
-async function enforcePaceGap(): Promise<void> {
-	const sinceLast = Date.now() - lastSpawnFinishedAt;
-	if (sinceLast < PASTE_MIN_GAP_MS) {
-		const wait = PASTE_MIN_GAP_MS - sinceLast;
+export async function enforcePaceGap(): Promise<void> {
+	const wait = computePaceWait(Date.now(), lastSpawnFinishedAt);
+	if (wait > 0) {
 		dbg("paste", `pacing: waiting ${wait}ms before next paste (input-queue safety)`);
 		await new Promise<void>((r) => setTimeout(r, wait));
 	}
 }
 
-function isSlowPaste(waitedMs: number, elapsed: number): boolean {
+/** Returns the ms to wait before the next paste, or 0 if no wait needed. */
+export function computePaceWait(now: number, lastFinishedAt: number): number {
+	const sinceLast = now - lastFinishedAt;
+	const wait = PASTE_MIN_GAP_MS - sinceLast;
+	return wait > 0 ? wait : 0;
+}
+
+export function isSlowPaste(waitedMs: number, elapsed: number): boolean {
 	return waitedMs > 250 || elapsed > 300;
 }
 
 /** Log paste outcome and update the cooldown if the binary failed. */
-function handleBinaryResult(
+export function handleBinaryResult(
 	result: { ok: boolean; reason?: string },
 	elapsed: number,
 	waitedMs: number
 ): void {
-	if (!result.ok) {
-		dbg("paste", `failed after ${elapsed}ms: ${result.reason ?? "unknown"}`);
-		cooldownUntil = Date.now() + PASTE_COOLDOWN_MS;
-		dbg("paste", `entering cooldown for ${PASTE_COOLDOWN_MS}ms`);
+	if (result.ok) {
+		logIfSlow(waitedMs, elapsed);
 		return;
 	}
+	tripCooldown(result.reason, elapsed);
+}
+
+function tripCooldown(reason: string | undefined, elapsed: number): void {
+	dbg("paste", `failed after ${elapsed}ms: ${reason ?? "unknown"}`);
+	cooldownUntil = Date.now() + PASTE_COOLDOWN_MS;
+	dbg("paste", `entering cooldown for ${PASTE_COOLDOWN_MS}ms`);
+}
+
+function logIfSlow(waitedMs: number, elapsed: number): void {
 	if (isSlowPaste(waitedMs, elapsed)) {
 		dbg("paste", `ok in ${elapsed}ms (queued for ${waitedMs}ms, depth=${queueDepth})`);
 	}
+}
+
+/**
+ * Resolve the binary path + cooldown state into a "what should we do now"
+ * decision. Returning the path means "spawn the binary"; returning null
+ * means "the clipboard write was enough — skip the spawn".
+ */
+export function decideSpawnTarget(now: number): string | null {
+	const binPath = getBinary();
+	if (!binPath) {
+		// No binary — text is on the clipboard but we can't auto-paste.
+		return null;
+	}
+	if (now < cooldownUntil) {
+		const remaining = cooldownUntil - now;
+		dbg("paste", `in cooldown (${remaining}ms left) — text on clipboard, use Ctrl+V`);
+		return null;
+	}
+	return binPath;
 }
 
 async function runPasteOnce(text: string, enqueuedAt: number): Promise<void> {
@@ -224,22 +320,15 @@ async function runPasteOnce(text: string, enqueuedAt: number): Promise<void> {
 	if (!writeClipboard(text)) {
 		return;
 	}
-
-	const binPath = getBinary();
+	const binPath = decideSpawnTarget(Date.now());
 	if (!binPath) {
-		// No binary — text is on the clipboard but we can't auto-paste.
 		return;
 	}
-
-	const now = Date.now();
-	if (now < cooldownUntil) {
-		const remaining = cooldownUntil - now;
-		dbg("paste", `in cooldown (${remaining}ms left) — text on clipboard, use Ctrl+V`);
-		return;
-	}
-
 	await enforcePaceGap();
+	await spawnPasteWithGuard(binPath, waitedMs);
+}
 
+async function spawnPasteWithGuard(binPath: string, waitedMs: number): Promise<void> {
 	setPasteGuard(true);
 	const t0 = Date.now();
 	try {
@@ -257,14 +346,18 @@ async function runPasteOnce(text: string, enqueuedAt: number): Promise<void> {
 	}
 }
 
-export function pasteText(text: string): void {
+/** Returns true when the caller should skip queuing the paste entirely. */
+export function shouldSkipPaste(text: string): boolean {
 	if (!text) {
-		return;
+		return true;
 	}
-	if (process.platform !== "win32") {
-		return;
-	}
+	return process.platform !== "win32";
+}
 
+export function pasteText(text: string): void {
+	if (shouldSkipPaste(text)) {
+		return;
+	}
 	const enqueuedAt = Date.now();
 	queueDepth += 1;
 	const next = (pasteInFlight ?? Promise.resolve())
@@ -289,4 +382,31 @@ export function __resetPasteForTesting__(): void {
 	// contamination when a prior test file caused getBinary() to cache null (because
 	// the node:fs mock was not yet active when pasteText was first invoked).
 	cachedBinary = undefined;
+}
+
+/** Test hook: directly set cooldownUntil to exercise the cooldown branch. */
+export function __setCooldownUntilForTesting__(epochMs: number): void {
+	cooldownUntil = epochMs;
+}
+
+/** Test hook: read the current cooldownUntil (epoch ms; 0 = no cooldown). */
+export function __getCooldownUntilForTesting__(): number {
+	return cooldownUntil;
+}
+
+/** Test hook: read the last-spawn timestamp (epoch ms; 0 = never). */
+export function __getLastSpawnFinishedAtForTesting__(): number {
+	return lastSpawnFinishedAt;
+}
+
+/** Test hook: directly set lastSpawnFinishedAt to test pace-gap branches. */
+export function __setLastSpawnFinishedAtForTesting__(epochMs: number): void {
+	lastSpawnFinishedAt = epochMs;
+}
+
+/** Test hook: build a BinaryRun stub so the finish/kill/close helpers can be exercised. */
+export function __makeBinaryRunForTesting__(
+	resolve: (value: { ok: boolean; reason?: string }) => void
+): BinaryRun {
+	return makeBinaryRun(resolve);
 }

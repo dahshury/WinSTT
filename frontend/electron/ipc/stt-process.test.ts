@@ -1509,3 +1509,125 @@ describe("NotFoundError context literals", () => {
 		expect((caught as Error).message).toContain("STT_SERVER_DIR not found");
 	});
 });
+
+// ─── Refactor helper branch coverage ──────────────────────────────────
+//
+// The CRAP-driven refactor split four CC=4 functions into smaller helpers
+// (pushBooleanStoreTrueFlag, applySileroDeactivityFlag, formatAutoSpawnError,
+// dispatchPlatformKill). Each helper is reachable via the existing public
+// API, but we add focused tests to lock in every branch of every helper —
+// otherwise an uncovered branch would push the helper's CRAP back above 4.
+
+describe("pushBooleanStoreTrueFlag branch coverage", () => {
+	test("a true boolean simple flag pushes the flag with no value (positive branch)", () => {
+		// Reaches pushBooleanStoreTrueFlag via applyStoreTrueFlag.
+		sharedStoreMock.store.set("quality.useMainModelForRealtime", true);
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnLog[0]?.args ?? [];
+			expect(args).toContain("--use_main_model_for_realtime");
+		} finally {
+			sharedStoreMock.store.set("quality.useMainModelForRealtime", false);
+		}
+	});
+
+	test("a false boolean simple flag drops the flag entirely (negative branch)", () => {
+		// Locks in `if (value)` → falsey path inside pushBooleanStoreTrueFlag:
+		// the function still RETURNS (it's not the empty-string guard above)
+		// so reaching this branch matters for the helper's coverage.
+		sharedStoreMock.store.set("quality.useMainModelForRealtime", false);
+		sttProcess.tryAutoSpawnServer();
+		const args = spawnLog[0]?.args ?? [];
+		expect(args).not.toContain("--use_main_model_for_realtime");
+	});
+});
+
+describe("applySileroDeactivityFlag branch coverage", () => {
+	test("true → flag appended (positive branch)", () => {
+		sharedStoreMock.store.set("audio.sileroDeactivityDetection", true);
+		sttProcess.tryAutoSpawnServer();
+		const args = spawnLog[0]?.args ?? [];
+		expect(args).toContain("--silero_deactivity_detection");
+	});
+
+	test("false → flag omitted (negative branch)", () => {
+		sharedStoreMock.store.set("audio.sileroDeactivityDetection", false);
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnLog[0]?.args ?? [];
+			expect(args).not.toContain("--silero_deactivity_detection");
+		} finally {
+			sharedStoreMock.store.set("audio.sileroDeactivityDetection", true);
+		}
+	});
+});
+
+describe("formatAutoSpawnError branch coverage", () => {
+	test("Error instance: dbg payload carries err.message (instanceof branch)", () => {
+		// resolveServerDir throws NotFoundError (an Error subclass) in dev mode
+		// with no STT_SERVER_DIR set — formatAutoSpawnError must surface its
+		// `.message` rather than the default Object stringification.
+		delete process.env.STT_SERVER_DIR;
+		setIsPackaged(false);
+		dbgCalls.length = 0;
+		sttProcess.tryAutoSpawnServer();
+		const skipped = dbgCalls.find(
+			(c) => c.tag === "stt-spawn" && c.args.some((a) => String(a).includes("Auto-spawn SKIPPED"))
+		);
+		expect(skipped).toBeDefined();
+		// The trailing argument is the formatted error string. With the Error
+		// branch active, it must be the NotFoundError message — NOT "[object Object]".
+		const payload = skipped!.args.find(
+			(a) => typeof a === "string" && a.includes("STT_SERVER_DIR")
+		);
+		expect(payload).toBeDefined();
+		expect(payload).not.toContain("[object Object]");
+	});
+
+	test("non-Error throw: dbg payload uses String(err) fallback (else branch)", () => {
+		// Force spawn to throw a string. The factory throws (caught by SUT),
+		// then formatAutoSpawnError takes the String(err) path.
+		spawnQueue.push(() => {
+			throw "raw-string-error" as unknown as Error;
+		});
+		dbgCalls.length = 0;
+		sttProcess.tryAutoSpawnServer();
+		const skipped = dbgCalls.find(
+			(c) => c.tag === "stt-spawn" && c.args.some((a) => String(a).includes("Auto-spawn SKIPPED"))
+		);
+		expect(skipped).toBeDefined();
+		// The else branch produces String("raw-string-error") = "raw-string-error".
+		const payload = skipped!.args.find(
+			(a) => typeof a === "string" && a.includes("raw-string-error")
+		);
+		expect(payload).toBeDefined();
+	});
+});
+
+describe("dispatchPlatformKill branch coverage", () => {
+	test("win32 branch: taskkill is spawned with the pid string", () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnQueue.push(() => makeFakeChild("uv", 24_680));
+		sttProcess.tryAutoSpawnServer();
+		spawnLog.length = 0;
+		sttProcess.killSttProcess();
+		const killer = spawnLog.find((c) => c.command === "taskkill");
+		expect(killer).toBeDefined();
+		expect(killer?.args).toContain("24680");
+	});
+
+	test("non-win32 branch: proc.kill('SIGTERM') is invoked (no taskkill spawn)", () => {
+		if (process.platform === "win32") {
+			return;
+		}
+		const child = makeFakeChild("uv", 13_579);
+		spawnQueue.push(() => child);
+		sttProcess.tryAutoSpawnServer();
+		spawnLog.length = 0;
+		sttProcess.killSttProcess();
+		expect(spawnLog.length).toBe(0);
+		expect(child.killCalls).toEqual(["SIGTERM"]);
+	});
+});

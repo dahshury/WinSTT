@@ -111,37 +111,36 @@ function applyShow(x: number, y: number): void {
 	safeCall(() => win.showInactive());
 }
 
+// Stryker disable next-line ConditionalExpression,BlockStatement,EqualityOperator: belt-and-
+// suspenders — `showOverlay()` already calls `stopReconciler()` before flipping
+// `desired = "shown"`, and the tick interval (200ms) doesn't align exactly with
+// the 2000ms cutoff, so > vs >= and the `desired` self-check are observably
+// equivalent in tests. The `desired` check keeps the code defensive against
+// future callers.
+function shouldStopReconciler(): boolean {
+	return desired !== "hidden" || Date.now() - reconcilerStartedAt > RECONCILE_MAX_DURATION_MS;
+}
+
+function reconcileTick(): void {
+	if (shouldStopReconciler()) {
+		stopReconciler();
+		return;
+	}
+	// If something (Windows, a focus event, a stale paint) re-showed
+	// the window, re-apply hide. Idempotent — if already hidden it's
+	// just a few cheap calls.
+	// Stryker disable next-line OptionalChaining: defensive — by the time
+	// the reconciler ticks, overlayWindow has been assigned by setOverlayWindow;
+	// removing the optional chain doesn't crash any reachable test path.
+	if (overlayWindow?.isVisible()) {
+		applyHide();
+	}
+}
+
 function startHideReconciler(): void {
 	stopReconciler();
 	reconcilerStartedAt = Date.now();
-	reconcilerTimer = setInterval(() => {
-		// Stryker disable next-line ConditionalExpression,BlockStatement: belt-and-
-		// suspenders — `showOverlay()` already calls `stopReconciler()` before
-		// flipping `desired = "shown"`, so by the next tick the reconciler is
-		// gone before this self-check would matter. Keeps the code defensive
-		// against future callers but is observably equivalent in tests.
-		if (desired !== "hidden") {
-			stopReconciler();
-			return;
-		}
-		// Stryker disable next-line EqualityOperator: > vs >= boundary; both
-		// produce equivalent test outcomes because the reconciler tick interval
-		// (200ms) doesn't align exactly with the 2000ms cutoff, so >= and >
-		// agree on every observable tick.
-		if (Date.now() - reconcilerStartedAt > RECONCILE_MAX_DURATION_MS) {
-			stopReconciler();
-			return;
-		}
-		// If something (Windows, a focus event, a stale paint) re-showed
-		// the window, re-apply hide. Idempotent — if already hidden it's
-		// just a few cheap calls.
-		// Stryker disable next-line OptionalChaining: defensive — by the time
-		// the reconciler ticks, overlayWindow has been assigned by setOverlayWindow;
-		// removing the optional chain doesn't crash any reachable test path.
-		if (overlayWindow?.isVisible()) {
-			applyHide();
-		}
-	}, RECONCILE_INTERVAL_MS);
+	reconcilerTimer = setInterval(reconcileTick, RECONCILE_INTERVAL_MS);
 }
 
 /**
@@ -151,18 +150,18 @@ export function setOverlayWindow(win: BrowserWindow): void {
 	overlayWindow = win;
 }
 
+function isOverlaySuppressedBySettings(): boolean {
+	const enabled = getStoreValue("general.showRecordingOverlay");
+	const recordingMode = getStoreValue("general.recordingMode");
+	return !enabled || recordingMode === "listen";
+}
+
 /**
  * Show the overlay window with position and settings checks.
  * Fires synchronously — no debounce, no animation delay.
  */
 export function showOverlay(): void {
-	if (!overlayWindow) {
-		return;
-	}
-
-	const enabled = getStoreValue("general.showRecordingOverlay");
-	const recordingMode = getStoreValue("general.recordingMode");
-	if (!enabled || recordingMode === "listen") {
+	if (!overlayWindow || isOverlaySuppressedBySettings()) {
 		return;
 	}
 

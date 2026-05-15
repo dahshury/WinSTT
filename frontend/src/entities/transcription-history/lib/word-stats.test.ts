@@ -6,6 +6,8 @@ import {
 	formatDuration,
 	formatWpm,
 	intensityLevel,
+	isEmptyIntensity,
+	lookupIntensity,
 	startOfLocalDay,
 	sumWordsByDay,
 	toDayKey,
@@ -124,6 +126,43 @@ describe("buildHeatmap", () => {
 		expect(yesterday?.wordCount).toBe(3);
 		// A random middle bucket must be zero (zero-fill guarantee).
 		expect(buckets[100]?.wordCount).toBe(0);
+	});
+});
+
+describe("isEmptyIntensity", () => {
+	test("treats zero word count as empty regardless of max", () => {
+		expect(isEmptyIntensity(0, 100)).toBe(true);
+		expect(isEmptyIntensity(0, 0)).toBe(true);
+	});
+
+	test("treats zero max as empty even when word count is positive", () => {
+		// Avoids division by zero in the caller.
+		expect(isEmptyIntensity(50, 0)).toBe(true);
+	});
+
+	test("is false when both word count and max are positive", () => {
+		expect(isEmptyIntensity(1, 1)).toBe(false);
+		expect(isEmptyIntensity(50, 100)).toBe(false);
+	});
+});
+
+describe("lookupIntensity", () => {
+	test("maps ratios below each quartile cutoff to 1, 2, 3", () => {
+		expect(lookupIntensity(0.1)).toBe(1);
+		expect(lookupIntensity(0.3)).toBe(2);
+		expect(lookupIntensity(0.6)).toBe(3);
+	});
+
+	test("ratios at or above 0.75 saturate to 4 (top of ramp)", () => {
+		expect(lookupIntensity(0.75)).toBe(4);
+		expect(lookupIntensity(1)).toBe(4);
+		expect(lookupIntensity(2)).toBe(4);
+	});
+
+	test("boundary: cutoff values themselves do not match the lower bucket (< comparison)", () => {
+		// ratio === 0.25 should NOT return 1; the next row owns it.
+		expect(lookupIntensity(0.25)).toBe(2);
+		expect(lookupIntensity(0.5)).toBe(3);
 	});
 });
 

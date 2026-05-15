@@ -580,6 +580,51 @@ describe("file-transcribe pure helpers", () => {
 	});
 });
 
+describe("resolveCompleteOutputPath helper", () => {
+	const fields = {
+		requestId: "r1",
+		filePath: "C:\\song.wav",
+		fileName: "song.wav",
+		text: "x",
+		fmt: "txt",
+	};
+
+	test("returns entry.outputPath when defined (kills `?? buildOutputPath` mutant)", () => {
+		// When the pending entry carries an explicit outputPath (user picked
+		// one via the save dialog), it MUST be returned verbatim — the
+		// `?? buildOutputPath(...)` fallback must NOT run.
+		const out = helpers.resolveCompleteOutputPath(
+			{ filePath: "C:\\song.wav", outputPath: "C:\\chosen.txt" },
+			fields
+		);
+		expect(out).toBe("C:\\chosen.txt");
+	});
+
+	test("falls back to buildOutputPath when entry.outputPath is undefined", () => {
+		// Entry exists but has no outputPath (auto save-location path).
+		// The fallback MUST compute `<filePath>.<fmt>`.
+		const out = helpers.resolveCompleteOutputPath({ filePath: "C:\\song.wav" }, fields);
+		expect(out).toBe("C:\\song.wav.txt");
+	});
+
+	test("falls back to buildOutputPath when entry itself is undefined (defensive)", () => {
+		// Production code only invokes this AFTER isPathMatch returned true
+		// (entry guaranteed defined), but the optional-chained `entry?.outputPath`
+		// is defensively wired so the helper still produces a deterministic
+		// path when entry is undefined (used by future direct callers / tests).
+		const out = helpers.resolveCompleteOutputPath(undefined, fields);
+		expect(out).toBe("C:\\song.wav.txt");
+	});
+
+	test("respects the fmt field when building the fallback path", () => {
+		const out = helpers.resolveCompleteOutputPath(
+			{ filePath: "C:\\song.wav" },
+			{ ...fields, fmt: "srt" }
+		);
+		expect(out).toBe("C:\\song.wav.srt");
+	});
+});
+
 describe("resolveOutputPath helper", () => {
 	test("returns undefined (falsy) when saveLocation is not 'ask'", async () => {
 		const result = await helpers.resolveOutputPath("C:\\file.wav", "txt", "auto");

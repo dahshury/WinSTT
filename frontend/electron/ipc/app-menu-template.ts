@@ -104,14 +104,7 @@ function normalizeItems(rawTemplate: unknown): NormalizedAppMenuItem[] {
 	if (!Array.isArray(rawTemplate)) {
 		return [];
 	}
-	const out: NormalizedAppMenuItem[] = [];
-	for (const item of rawTemplate) {
-		const normalized = normalizeOne(item);
-		if (normalized !== null) {
-			out.push(normalized);
-		}
-	}
-	return out;
+	return rawTemplate.map(normalizeOne).filter(isNotNull);
 }
 
 export function normalizeAppMenuTemplate(rawTemplate: unknown): NormalizedAppMenuItem[] {

@@ -99,7 +99,7 @@ export function buildHeatmap(
 type IntensityLevel = 0 | 1 | 2 | 3 | 4;
 
 // Sorted ascending by ratio cutoff. The first row whose cutoff exceeds the
-// ratio wins. Using a table + loop drops CC vs. a hand-unrolled if-chain.
+// ratio wins. Using a table + Array.find drops CC vs. a hand-unrolled if-chain.
 const INTENSITY_THRESHOLDS: ReadonlyArray<readonly [number, IntensityLevel]> = [
 	[0.25, 1],
 	[0.5, 2],
@@ -107,21 +107,33 @@ const INTENSITY_THRESHOLDS: ReadonlyArray<readonly [number, IntensityLevel]> = [
 ];
 
 /**
+ * True when there's no signal to map onto the ramp. Split out so the public
+ * `intensityLevel` stays trivially branchy (CC ≤ 4).
+ */
+export function isEmptyIntensity(wordCount: number, max: number): boolean {
+	return wordCount === 0 || max === 0;
+}
+
+/**
+ * Picks the first table row whose cutoff exceeds `ratio`, falling back to 4
+ * (the top of the ramp) when nothing matches. Pulled out so the lookup loop
+ * doesn't inflate `intensityLevel`'s complexity.
+ */
+export function lookupIntensity(ratio: number): IntensityLevel {
+	const hit = INTENSITY_THRESHOLDS.find(([cutoff]) => ratio < cutoff);
+	return hit ? hit[1] : 4;
+}
+
+/**
  * 5-step intensity ramp (0 = no activity, 4 = the most active day in the
  * window). Anchored to the window's actual max so a low-volume week doesn't
  * look identical to a high-volume one — the scale auto-adjusts.
  */
 export function intensityLevel(wordCount: number, max: number): IntensityLevel {
-	if (wordCount === 0 || max === 0) {
+	if (isEmptyIntensity(wordCount, max)) {
 		return 0;
 	}
-	const ratio = wordCount / max;
-	for (const [cutoff, level] of INTENSITY_THRESHOLDS) {
-		if (ratio < cutoff) {
-			return level;
-		}
-	}
-	return 4;
+	return lookupIntensity(wordCount / max);
 }
 
 export function formatDuration(ms: number): string {

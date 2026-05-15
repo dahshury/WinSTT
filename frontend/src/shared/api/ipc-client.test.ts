@@ -548,6 +548,24 @@ describe("typed event subscriptions", () => {
 		expect(onError).toHaveBeenCalledWith({ requestId: "r", fileName: "a", error: "e" });
 	});
 
+	test("onModelCacheChanged forwards modelId when payload.modelId is a string", () => {
+		const api = installMockApi();
+		const cb = mock(() => undefined);
+		ipc.onModelCacheChanged(cb);
+		fire(api, IPC.STT_MODEL_CACHE_CHANGED, { modelId: "tiny" });
+		expect(cb).toHaveBeenCalledWith("tiny");
+	});
+
+	test("onModelCacheChanged ignores payload when modelId is missing or non-string", () => {
+		const api = installMockApi();
+		const cb = mock(() => undefined);
+		ipc.onModelCacheChanged(cb);
+		fire(api, IPC.STT_MODEL_CACHE_CHANGED, {});
+		fire(api, IPC.STT_MODEL_CACHE_CHANGED, { modelId: 42 });
+		fire(api, IPC.STT_MODEL_CACHE_CHANGED, { modelId: null });
+		expect(cb).not.toHaveBeenCalled();
+	});
+
 	test("onUpdaterStatus and onWindowTelemetry pass payload through", () => {
 		const api = installMockApi();
 		const updater = mock(() => undefined);

@@ -37,20 +37,38 @@ function generateListeningSequence(columns: number): number[][] {
 	]);
 }
 
-const LISTEN_STATES_RADIAL = new Set<AgentState>(["thinking", "listening"]);
-const CONNECT_STATES_RADIAL = new Set<AgentState>(["connecting", "initializing"]);
+function generateSpeakingSequence(columns: number): number[][] {
+	return [Array.from({ length: columns }, (_, idx) => idx)];
+}
+
+function generateEmptySequence(): number[][] {
+	return [[]];
+}
+
+// Dispatch table replaces an if/else chain so buildSequence stays at CC=1.
+const SEQUENCE_BUILDERS: Record<AgentState, (columns: number) => number[][]> = {
+	speaking: generateSpeakingSequence,
+	listening: generateListeningSequence,
+	thinking: generateListeningSequence,
+	connecting: generateConnectingSequence,
+	initializing: generateConnectingSequence,
+	disconnected: generateEmptySequence,
+};
 
 function buildSequence(state: AgentState, barCount: number): number[][] {
-	if (state === "speaking") {
-		return [new Array(barCount).fill(0).map((_, idx) => idx)];
-	}
-	if (LISTEN_STATES_RADIAL.has(state)) {
-		return generateListeningSequence(barCount);
-	}
-	if (CONNECT_STATES_RADIAL.has(state)) {
-		return generateConnectingSequence(barCount);
-	}
-	return [[]];
+	return SEQUENCE_BUILDERS[state](barCount);
+}
+
+function pickFrame(sequence: number[][], index: number): number[] {
+	return sequence[index % sequence.length] ?? [];
+}
+
+function inputsChanged(
+	prev: { state: AgentState; barCount: number },
+	state: AgentState,
+	barCount: number
+): boolean {
+	return prev.state !== state || prev.barCount !== barCount;
 }
 
 export function useRadialAnimator(state: AgentState, barCount: number, interval: number): number[] {
@@ -60,7 +78,7 @@ export function useRadialAnimator(state: AgentState, barCount: number, interval:
 	const sequence = buildSequence(state, barCount);
 	const [index, setIndex] = useState(0);
 	const [prevInputs, setPrevInputs] = useState({ state, barCount });
-	if (prevInputs.state !== state || prevInputs.barCount !== barCount) {
+	if (inputsChanged(prevInputs, state, barCount)) {
 		setPrevInputs({ state, barCount });
 		setIndex(0);
 	}
@@ -94,5 +112,5 @@ export function useRadialAnimator(state: AgentState, barCount: number, interval:
 		};
 	}, [interval, sequence]);
 
-	return sequence[index % sequence.length] ?? [];
+	return pickFrame(sequence, index);
 }

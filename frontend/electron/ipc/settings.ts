@@ -67,15 +67,21 @@ function readNestedValue(settings: Record<string, unknown>, section: string, key
 	return (sectionVal as Record<string, unknown>)[key];
 }
 
+function parseDotPath(dotPath: string): [string, string] | null {
+	const [section, key] = dotPath.split(".");
+	return section && key ? [section, key] : null;
+}
+
 function checkOneStartupKey(
 	dotPath: string,
 	oldSettings: Record<string, unknown>,
 	newSettings: Record<string, unknown>
 ): boolean {
-	const [section, key] = dotPath.split(".");
-	if (!(section && key)) {
+	const parts = parseDotPath(dotPath);
+	if (!parts) {
 		return false;
 	}
+	const [section, key] = parts;
 	const oldVal = readNestedValue(oldSettings, section, key);
 	const newVal = readNestedValue(newSettings, section, key);
 	if (oldVal === newVal) {
@@ -99,10 +105,17 @@ function findChangedStartupKey(
 	return null;
 }
 
-function isRestartActionable(): boolean {
+function hasServerToRestart(): boolean {
 	const managed = isSttProcessRunning();
 	const connected = sttClientRef?.isConnected ?? false;
-	return (managed || connected) && !isShuttingDown;
+	return managed || connected;
+}
+
+function isRestartActionable(): boolean {
+	if (isShuttingDown) {
+		return false;
+	}
+	return hasServerToRestart();
 }
 
 function performRestart(): void {

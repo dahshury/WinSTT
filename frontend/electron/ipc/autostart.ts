@@ -4,6 +4,13 @@ function supportsLoginItems(): boolean {
 	return process.platform === "win32" || process.platform === "darwin";
 }
 
+function extractEnabled(payload: unknown): boolean | null {
+	if (payload && typeof (payload as { enabled: unknown }).enabled === "boolean") {
+		return (payload as { enabled: boolean }).enabled;
+	}
+	return null;
+}
+
 export function setupAutostartHandlers(): void {
 	ipcMain.handle("autostart:get", () => {
 		if (!supportsLoginItems()) {
@@ -12,13 +19,14 @@ export function setupAutostartHandlers(): void {
 		return app.getLoginItemSettings().openAtLogin;
 	});
 
-	ipcMain.on("autostart:set", (_event, payload: { enabled: boolean }) => {
+	ipcMain.on("autostart:set", (_event, payload: unknown) => {
 		if (!supportsLoginItems()) {
 			return;
 		}
-		if (!payload || typeof payload.enabled !== "boolean") {
+		const enabled = extractEnabled(payload);
+		if (enabled === null) {
 			return;
 		}
-		app.setLoginItemSettings({ openAtLogin: payload.enabled });
+		app.setLoginItemSettings({ openAtLogin: enabled });
 	});
 }

@@ -18,7 +18,9 @@ interface ContextMenuSharedItem {
 export type ContextMenuTemplateItem = { type: "separator" } | ContextMenuSharedItem;
 
 const TEXT_FIELDS = ["label", "sublabel", "role", "accelerator"] as const;
+const STATE_FIELDS = ["enabled", "visible", "checked"] as const;
 type TextField = (typeof TEXT_FIELDS)[number];
+type StateField = (typeof STATE_FIELDS)[number];
 
 function applyOptionalTextFields(
 	menuItem: MenuItemConstructorOptions,
@@ -35,14 +37,35 @@ function applyOptionalStateFields(
 	menuItem: MenuItemConstructorOptions,
 	item: ContextMenuSharedItem
 ): void {
-	if (item.enabled !== undefined) {
-		menuItem.enabled = item.enabled;
+	for (const field of STATE_FIELDS) {
+		if (item[field] !== undefined) {
+			(menuItem as Record<StateField, unknown>)[field] = item[field];
+		}
 	}
-	if (item.visible !== undefined) {
-		menuItem.visible = item.visible;
+}
+
+function resolveItemType(item: ContextMenuSharedItem): ContextMenuItemType {
+	return item.type ?? "normal";
+}
+
+function attachSubmenu(
+	menuItem: MenuItemConstructorOptions,
+	item: ContextMenuSharedItem,
+	onSelected: (id: string) => void
+): void {
+	if (item.submenu !== undefined) {
+		menuItem.submenu = convertContextMenuTemplate(item.submenu, onSelected);
 	}
-	if (item.checked !== undefined) {
-		menuItem.checked = item.checked;
+}
+
+function attachClickHandler(
+	menuItem: MenuItemConstructorOptions,
+	item: ContextMenuSharedItem,
+	onSelected: (id: string) => void
+): void {
+	const { id } = item;
+	if (id) {
+		menuItem.click = () => onSelected(id);
 	}
 }
 
@@ -50,16 +73,11 @@ function buildNonSeparatorItem(
 	item: ContextMenuSharedItem,
 	onSelected: (id: string) => void
 ): MenuItemConstructorOptions {
-	const menuItem: MenuItemConstructorOptions = { type: item.type ?? "normal" };
+	const menuItem: MenuItemConstructorOptions = { type: resolveItemType(item) };
 	applyOptionalTextFields(menuItem, item);
 	applyOptionalStateFields(menuItem, item);
-	if (item.submenu !== undefined) {
-		menuItem.submenu = convertContextMenuTemplate(item.submenu, onSelected);
-	}
-	const { id } = item;
-	if (id) {
-		menuItem.click = () => onSelected(id);
-	}
+	attachSubmenu(menuItem, item, onSelected);
+	attachClickHandler(menuItem, item, onSelected);
 	return menuItem;
 }
 

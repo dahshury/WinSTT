@@ -398,4 +398,42 @@ describe("overlay handlers", () => {
 		await new Promise<void>((r) => setTimeout(r, 500));
 		expect(win.calls.filter((c) => c === "hide").length).toBe(hidesAfterFirstPass);
 	});
+
+	test("showOverlay is gated by both `enabled` AND `recordingMode` (covers the `||` short-circuit branches in isOverlaySuppressedBySettings)", () => {
+		const win = makeWindow();
+		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		// Branch A: enabled=false → left of `||` is true, right not evaluated.
+		(storeData.general as Record<string, unknown>).showRecordingOverlay = false;
+		(storeData.general as Record<string, unknown>).recordingMode = "ptt";
+		showOverlay();
+		expect(win.calls).toEqual([]);
+		// Branch B: enabled=true, recordingMode=listen → left false, right true.
+		(storeData.general as Record<string, unknown>).showRecordingOverlay = true;
+		(storeData.general as Record<string, unknown>).recordingMode = "listen";
+		showOverlay();
+		expect(win.calls).toEqual([]);
+		// Branch C: enabled=true, recordingMode=ptt → both false → show fires.
+		(storeData.general as Record<string, unknown>).recordingMode = "ptt";
+		showOverlay();
+		expect(win.calls).toContain("show");
+	});
+
+	test("reconciler tick re-hides sneak-visible window while still in the hidden + time-budget window (kills both `||` branches of shouldStopReconciler)", async () => {
+		const win = makeWindow();
+		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		hideOverlay();
+		// Wait past the static re-applies (50, 150, 400ms) so any later hide
+		// can only come from the reconciler. Window is not visible at this point.
+		await new Promise<void>((r) => setTimeout(r, 500));
+		const hidesAfterReconcilerWindow = win.calls.filter((c) => c === "hide").length;
+		// Make the window sneakily visible WITHIN the reconciler's 2s window.
+		win.visible = true;
+		// Wait for one more reconciler tick (200ms) — desired still "hidden"
+		// and time-budget still in window → shouldStopReconciler is false →
+		// reconciler proceeds to applyHide.
+		await new Promise<void>((r) => setTimeout(r, 250));
+		const hidesAfter = win.calls.filter((c) => c === "hide").length;
+		// Reconciler caught the sneak-visible and re-hid → +1 hide.
+		expect(hidesAfter).toBe(hidesAfterReconcilerWindow + 1);
+	});
 });

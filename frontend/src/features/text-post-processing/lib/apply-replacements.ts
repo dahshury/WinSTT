@@ -6,22 +6,27 @@ type SnippetEntry = components["schemas"]["SnippetEntry"];
 const REGEX_ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
 const regexCache = new Map<string, RegExp>();
 
-function getEntryRegex(entry: DictionaryEntry): RegExp {
+function buildEntrySpec(entry: DictionaryEntry): { flags: string; pattern: string } {
 	const flags = entry.caseSensitive ? "g" : "gi";
 	const escaped = entry.find.replace(REGEX_ESCAPE_RE, "\\$&");
 	const pattern = entry.wholeWord ? `\\b${escaped}\\b` : escaped;
+	return { flags, pattern };
+}
+
+function getEntryRegex(entry: DictionaryEntry): RegExp {
+	const { flags, pattern } = buildEntrySpec(entry);
 	const cacheKey = `${flags}:${pattern}`;
-	const cached = regexCache.get(cacheKey);
 	// Cache hit short-circuit is a perf optimization. Dropping it (always
 	// recompile) yields a behavior-equivalent regex because String.prototype
 	// .replace resets .lastIndex on each call, so no observable difference
-	// at the call boundary — both ConditionalExpression and BlockStatement
+	// at the call boundary — both LogicalExpression and AssignmentOperator
 	// mutants are equivalent here.
-	// Stryker disable next-line ConditionalExpression
-	// Stryker disable next-line BlockStatement
-	if (cached) {
-		return cached;
-	}
+	// Stryker disable next-line LogicalExpression
+	// Stryker disable next-line AssignmentOperator
+	return regexCache.get(cacheKey) ?? compileAndCache(cacheKey, pattern, flags);
+}
+
+function compileAndCache(cacheKey: string, pattern: string, flags: string): RegExp {
 	const compiled = new RegExp(pattern, flags);
 	regexCache.set(cacheKey, compiled);
 	return compiled;

@@ -66,12 +66,37 @@ function generateThinkingSequence(rows: number, columns: number): Coordinate[] {
 	return seq;
 }
 
-const GRID_CONNECT_STATES = new Set<AgentState>(["connecting", "initializing"]);
-
 export function clampRadius(radius: number | undefined, rows: number, columns: number): number {
 	const maxR = Math.floor(Math.max(rows, columns) / 2);
 	return radius ? Math.min(radius, maxR) : maxR;
 }
+
+type GridSequenceFactory = (
+	rows: number,
+	columns: number,
+	radius: number | undefined
+) => Coordinate[];
+
+function generateCenterSequence(rows: number, columns: number): Coordinate[] {
+	return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
+}
+
+function generateConnectingSequenceForState(
+	rows: number,
+	columns: number,
+	radius: number | undefined
+): Coordinate[] {
+	return [...generateConnectingSequence(rows, columns, clampRadius(radius, rows, columns))];
+}
+
+const GRID_SEQUENCE_FACTORIES: Record<AgentState, GridSequenceFactory> = {
+	connecting: generateConnectingSequenceForState,
+	disconnected: generateCenterSequence,
+	initializing: generateConnectingSequenceForState,
+	listening: (rows, columns) => generateListeningSequence(rows, columns),
+	speaking: generateCenterSequence,
+	thinking: (rows, columns) => generateThinkingSequence(rows, columns),
+};
 
 function buildGridSequence(
 	state: AgentState,
@@ -79,16 +104,8 @@ function buildGridSequence(
 	columns: number,
 	radius: number | undefined
 ): Coordinate[] {
-	if (state === "thinking") {
-		return generateThinkingSequence(rows, columns);
-	}
-	if (state === "listening") {
-		return generateListeningSequence(rows, columns);
-	}
-	if (GRID_CONNECT_STATES.has(state)) {
-		return [...generateConnectingSequence(rows, columns, clampRadius(radius, rows, columns))];
-	}
-	return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
+	const factory = GRID_SEQUENCE_FACTORIES[state] ?? generateCenterSequence;
+	return factory(rows, columns, radius);
 }
 
 interface GridAnimatorInputs {
@@ -98,13 +115,15 @@ interface GridAnimatorInputs {
 	state: AgentState;
 }
 
+const GRID_INPUT_KEYS: ReadonlyArray<keyof GridAnimatorInputs> = [
+	"state",
+	"rows",
+	"columns",
+	"radius",
+];
+
 export function gridInputsChanged(prev: GridAnimatorInputs, next: GridAnimatorInputs): boolean {
-	return (
-		prev.state !== next.state ||
-		prev.rows !== next.rows ||
-		prev.columns !== next.columns ||
-		prev.radius !== next.radius
-	);
+	return GRID_INPUT_KEYS.some((key) => prev[key] !== next[key]);
 }
 
 export function useGridAnimator(

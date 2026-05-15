@@ -150,8 +150,27 @@ export function useAuraAnimator(state: AgentState, uniformsRef: React.RefObject<
 	}, [state, uniformsRef, animateScale, animateAmplitude, animateFrequency, animateBrightness]);
 
 	useEffect(() => {
-		if (state === "speaking" && audioLevel > 0 && !scaleMotionValue.isAnimating()) {
+		const shouldApply = shouldApplyAudioLevelScale(
+			state,
+			audioLevel,
+			scaleMotionValue.isAnimating()
+		);
+		if (shouldApply) {
 			animateScale(0.2 + 0.2 * audioLevel, { duration: 0 });
 		}
 	}, [state, audioLevel, scaleMotionValue, animateScale]);
+}
+
+/**
+ * Pure predicate for the audio-level branch of `useAuraAnimator`. Extracted
+ * so the call-site useEffect stays at CC=2 (single `if`) and the branching
+ * logic — `speaking` AND non-zero level AND not already animating — can be
+ * exhaustively unit-tested without renderHook.
+ */
+export function shouldApplyAudioLevelScale(
+	state: AgentState,
+	audioLevel: number,
+	isAnimating: boolean
+): boolean {
+	return state === "speaking" && audioLevel > 0 && !isAnimating;
 }

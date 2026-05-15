@@ -329,4 +329,45 @@ describe("settings:save listener", () => {
 		await new Promise((r) => setTimeout(r, 600));
 		expect(sttProcessState.restartCalled).toBe(1);
 	});
+
+	test("startup-only change with only sttClient.isConnected logs manual restart hint", async () => {
+		// Exercises hasServerToRestart() via the "connected but not managed" branch:
+		// performRestart() goes down the external-server log path instead of restartSttProcess().
+		const logs: string[] = [];
+		const originalLog = console.log;
+		console.log = (msg: unknown) => {
+			logs.push(String(msg));
+		};
+		try {
+			setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
+				typeof setupSettingsHandlers
+			>[0]);
+			sttProcessState.running = false;
+			storeData.audio = { webrtcSensitivity: 0 };
+			const win = createWindow(1, sentEvents);
+			fireEvent("settings:save", win.webContents, {
+				settings: { audio: { webrtcSensitivity: 1 } },
+			});
+			await new Promise((r) => setTimeout(r, 600));
+			expect(sttProcessState.restartCalled).toBe(0);
+			expect(logs.some((l) => l.includes("server is not managed by Electron"))).toBe(true);
+		} finally {
+			console.log = originalLog;
+		}
+	});
+
+	test("startup-only change with sttClient.isConnected=false and no managed server does not restart", async () => {
+		// Locks down the false-arm of hasServerToRestart() when sttClient is provided but disconnected.
+		setupSettingsHandlers({ isConnected: false } as unknown as Parameters<
+			typeof setupSettingsHandlers
+		>[0]);
+		sttProcessState.running = false;
+		storeData.audio = { webrtcSensitivity: 0 };
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: { audio: { webrtcSensitivity: 1 } },
+		});
+		await new Promise((r) => setTimeout(r, 600));
+		expect(sttProcessState.restartCalled).toBe(0);
+	});
 });

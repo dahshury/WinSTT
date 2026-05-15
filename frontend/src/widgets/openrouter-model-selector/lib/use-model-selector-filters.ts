@@ -2,22 +2,30 @@
 
 import type * as React from "react";
 import { useDeferredValue, useMemo } from "react";
-import type { OpenRouterModel } from "@/shared/api/models";
+import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import { getUniqueEndpoints } from "./model-selector-display-utils";
 import { filterModels, groupModelsByMaker } from "./model-selector-logic";
 import type { ModelVariant } from "./model-variant-utils";
 import type { FilterableParameter } from "./openrouter-provider-utils";
 import { useFavoriteProviders } from "./use-favorite-providers";
 
+/** Pure: appends `<modelId>@<provider>` for each endpoint into `items`. */
+function pushEndpointItems(
+	items: string[],
+	modelId: string,
+	endpoints: OpenRouterEndpoint[]
+): void {
+	for (const endpoint of endpoints) {
+		items.push(`${modelId}@${endpoint.provider_name}`);
+	}
+}
+
 /** Pure: appends provider-specific item strings for a model with multiple endpoints. */
 export function appendModelEndpointItems(items: string[], model: OpenRouterModel): void {
 	if (!(model.endpoints && model.endpoints.length > 1)) {
 		return;
 	}
-	const uniqueEndpoints = getUniqueEndpoints(model.endpoints);
-	for (const endpoint of uniqueEndpoints) {
-		items.push(`${model.id}@${endpoint.provider_name}`);
-	}
+	pushEndpointItems(items, model.id, getUniqueEndpoints(model.endpoints));
 }
 
 /** Pure: builds Combobox item value strings from grouped models. */
@@ -47,6 +55,22 @@ interface UseModelSelectorFiltersProps {
 	setSelectedVariant: (variant: ModelVariant | "none" | null) => void;
 }
 
+/** Pure: returns true when any list-typed filter has a selection. */
+function hasListSelection(
+	selectedMakers: string[],
+	selectedParameters: FilterableParameter[]
+): boolean {
+	return selectedMakers.length > 0 || selectedParameters.length > 0;
+}
+
+/** Pure: returns true when any single-valued filter is set. */
+function hasSingleValueSelection(
+	selectedVariant: ModelVariant | "none" | null,
+	selectedEndpointProvider: string | null
+): boolean {
+	return selectedVariant !== null || selectedEndpointProvider !== null;
+}
+
 /** Pure: returns true when any selection-type filter is active. */
 export function hasSelectionFilter(
 	selectedMakers: string[],
@@ -55,10 +79,8 @@ export function hasSelectionFilter(
 	selectedParameters: FilterableParameter[]
 ): boolean {
 	return (
-		selectedMakers.length > 0 ||
-		selectedVariant !== null ||
-		selectedEndpointProvider !== null ||
-		selectedParameters.length > 0
+		hasListSelection(selectedMakers, selectedParameters) ||
+		hasSingleValueSelection(selectedVariant, selectedEndpointProvider)
 	);
 }
 

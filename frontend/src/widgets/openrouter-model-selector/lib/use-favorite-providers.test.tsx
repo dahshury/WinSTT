@@ -15,6 +15,24 @@ afterEach(() => {
 	window.localStorage.removeItem(STORAGE_KEY);
 });
 
+describe("isNonEmptyArray", () => {
+	test("returns true for a non-empty array", () => {
+		expect(helpers.isNonEmptyArray(["a"])).toBe(true);
+	});
+
+	test("returns false for an empty array", () => {
+		expect(helpers.isNonEmptyArray([])).toBe(false);
+	});
+
+	test("returns false for non-array values", () => {
+		expect(helpers.isNonEmptyArray(null)).toBe(false);
+		expect(helpers.isNonEmptyArray(undefined)).toBe(false);
+		expect(helpers.isNonEmptyArray("string")).toBe(false);
+		expect(helpers.isNonEmptyArray(42)).toBe(false);
+		expect(helpers.isNonEmptyArray({ length: 1 })).toBe(false);
+	});
+});
+
 describe("parseStoredFavorites", () => {
 	test("returns null for null input", () => {
 		expect(helpers.parseStoredFavorites(null)).toBeNull();
@@ -69,6 +87,16 @@ describe("readStoredFavorites", () => {
 	test("returns null when stored array is empty", () => {
 		window.localStorage.setItem(STORAGE_KEY, "[]");
 		expect(helpers.readStoredFavorites()).toBeNull();
+	});
+
+	test("returns null when window is undefined (SSR guard)", () => {
+		const savedWindow = (globalThis as { window?: Window }).window;
+		try {
+			(globalThis as { window?: Window }).window = undefined;
+			expect(helpers.readStoredFavorites()).toBeNull();
+		} finally {
+			(globalThis as { window?: Window }).window = savedWindow;
+		}
 	});
 });
 
@@ -139,5 +167,18 @@ describe("useFavoriteProviders", () => {
 	test("isLoaded is true (synchronous initialization)", () => {
 		const { result } = renderHook(() => useFavoriteProviders());
 		expect(result.current.isLoaded).toBe(true);
+	});
+
+	test("persistence effect swallows localStorage.setItem errors", () => {
+		const { result } = renderHook(() => useFavoriteProviders());
+		const original = window.localStorage.setItem;
+		window.localStorage.setItem = () => {
+			throw new Error("quota exceeded");
+		};
+		try {
+			expect(() => act(() => result.current.addFavorite("zai"))).not.toThrow();
+		} finally {
+			window.localStorage.setItem = original;
+		}
 	});
 });

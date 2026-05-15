@@ -60,14 +60,18 @@ function isEmptyStoreValue(value: unknown): boolean {
 	return value == null || value === "";
 }
 
+function pushBooleanStoreTrueFlag(args: string[], value: boolean, cliFlag: string): void {
+	if (value) {
+		args.push(cliFlag);
+	}
+}
+
 function applyStoreTrueFlag(args: string[], value: unknown, cliFlag: string): void {
 	if (isEmptyStoreValue(value)) {
 		return;
 	}
 	if (typeof value === "boolean") {
-		if (value) {
-			args.push(cliFlag);
-		}
+		pushBooleanStoreTrueFlag(args, value, cliFlag);
 		return;
 	}
 	args.push(cliFlag, String(value));
@@ -81,6 +85,12 @@ function applyBooleanOptionalFlag(args: string[], value: unknown, cliFlag: strin
 	}
 }
 
+function applySileroDeactivityFlag(args: string[]): void {
+	if (getStoreValue("audio.sileroDeactivityDetection")) {
+		args.push("--silero_deactivity_detection");
+	}
+}
+
 /** Read all relevant settings from electron-store and convert to CLI args */
 function buildServerArgs(baseArgs: string[]): string[] {
 	const args = [...baseArgs];
@@ -90,9 +100,7 @@ function buildServerArgs(baseArgs: string[]): string[] {
 	for (const [storePath, cliFlag] of BOOLEAN_OPTIONAL_CLI) {
 		applyBooleanOptionalFlag(args, getStoreRaw(storePath), cliFlag);
 	}
-	if (getStoreValue("audio.sileroDeactivityDetection")) {
-		args.push("--silero_deactivity_detection");
-	}
+	applySileroDeactivityFlag(args);
 	return args;
 }
 
@@ -266,6 +274,10 @@ export function isSttProcessRunning(): boolean {
 	return sttProcess != null;
 }
 
+function formatAutoSpawnError(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
 /** Try to auto-spawn the STT server at startup. Gracefully handles errors (e.g. missing STT_SERVER_DIR). */
 export function tryAutoSpawnServer(): void {
 	if (sttProcess) {
@@ -278,7 +290,24 @@ export function tryAutoSpawnServer(): void {
 		// after the early-return guard. Use a helper to re-read the module variable.
 		dbg("stt-spawn", "Auto-spawn succeeded, pid=", getSttProcessPid());
 	} catch (err) {
-		dbg("stt-spawn", "Auto-spawn SKIPPED:", err instanceof Error ? err.message : String(err));
+		dbg("stt-spawn", "Auto-spawn SKIPPED:", formatAutoSpawnError(err));
+	}
+}
+
+function dispatchPlatformKill(proc: ChildProcess, pid: number): void {
+	// Stryker disable next-line ConditionalExpression: equivalent mutant — `process.platform` cannot be toggled at runtime within a single bun-test process, so we cover only one branch per test run.
+	if (process.platform === "win32") {
+		// Kill the entire process tree without blocking the main process.
+		const killer = spawn("taskkill", ["/T", "/F", "/PID", String(pid)], {
+			stdio: "ignore",
+			windowsHide: true,
+		});
+		killer.on("error", (error) => {
+			dbg("stt-process", `Failed to kill process tree ${pid}:`, getErrorMessage(error));
+		});
+		// Stryker disable next-line BlockStatement,StringLiteral: equivalent mutants on non-win32 — under win32 test runs the else block is dead code; under linux/mac runs the win32 block is dead code. Branch reachability is determined by the OS the suite runs on, not by any test toggle.
+	} else {
+		proc.kill("SIGTERM");
 	}
 }
 
@@ -294,20 +323,7 @@ export function killSttProcess(): void {
 	status = "idle";
 
 	try {
-		// Stryker disable next-line ConditionalExpression: equivalent mutant — `process.platform` cannot be toggled at runtime within a single bun-test process, so we cover only one branch per test run.
-		if (process.platform === "win32") {
-			// Kill the entire process tree without blocking the main process.
-			const killer = spawn("taskkill", ["/T", "/F", "/PID", String(pid)], {
-				stdio: "ignore",
-				windowsHide: true,
-			});
-			killer.on("error", (error) => {
-				dbg("stt-process", `Failed to kill process tree ${pid}:`, getErrorMessage(error));
-			});
-			// Stryker disable next-line BlockStatement,StringLiteral: equivalent mutants on non-win32 — under win32 test runs the else block is dead code; under linux/mac runs the win32 block is dead code. Branch reachability is determined by the OS the suite runs on, not by any test toggle.
-		} else {
-			proc.kill("SIGTERM");
-		}
+		dispatchPlatformKill(proc, pid);
 		dbg("stt-process", `Killed process ${pid} successfully`);
 	} catch (err) {
 		// Process may have already exited

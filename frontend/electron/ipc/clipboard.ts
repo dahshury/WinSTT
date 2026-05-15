@@ -84,30 +84,36 @@ export function normalizeClipboardPayload(payload: unknown): ClipboardPayload {
 	return builder(payload);
 }
 
+type ClipboardExecutors = {
+	[Op in ClipboardOperation]: (
+		clipboard: ClipboardAdapter,
+		payload: Extract<ClipboardPayload, { operation: Op }>
+	) => Extract<ClipboardHandlerResult, { operation: Op }>;
+};
+
+const CLIPBOARD_EXECUTORS: ClipboardExecutors = {
+	readText: (clipboard) => ({ operation: "readText", text: clipboard.readText() }),
+	writeText: (clipboard, payload) => {
+		clipboard.writeText(payload.text);
+		return { operation: "writeText" };
+	},
+	clear: (clipboard) => {
+		clipboard.clear();
+		return { operation: "clear" };
+	},
+};
+
 export function createClipboardHandler(
 	clipboard: ClipboardAdapter
 ): (_event: IpcMainInvokeEvent, payload: unknown) => ClipboardHandlerResult {
 	return (_event: IpcMainInvokeEvent, payload: unknown): ClipboardHandlerResult => {
 		const normalizedPayload = normalizeClipboardPayload(payload);
-
-		switch (normalizedPayload.operation) {
-			case "readText":
-				return {
-					operation: "readText",
-					text: clipboard.readText(),
-				};
-			case "writeText":
-				clipboard.writeText(normalizedPayload.text);
-				return { operation: "writeText" };
-			case "clear":
-				clipboard.clear();
-				return { operation: "clear" };
-			// Stryker disable next-line ConditionalExpression,BlockStatement: exhaustive default is unreachable — normalizeClipboardPayload already validates the operation
-			default: {
-				const _exhaustive: never = normalizedPayload;
-				// Stryker disable next-line StringLiteral: ValidationError message is informational only and the branch is unreachable
-				throw new ValidationError(`Unhandled clipboard payload: ${String(_exhaustive)}`);
-			}
-		}
+		// Indexed dispatch keeps cyclomatic complexity at 1 (no case clauses).
+		// The discriminated-union types ensure each executor receives its own payload variant.
+		const execute = CLIPBOARD_EXECUTORS[normalizedPayload.operation] as (
+			c: ClipboardAdapter,
+			p: ClipboardPayload
+		) => ClipboardHandlerResult;
+		return execute(clipboard, normalizedPayload);
 	};
 }

@@ -4,6 +4,9 @@ import type { AgentState } from "./audio-visualizer";
 /** audioLevel above this counts as "speaking" even without a VAD signal (PTT mode). */
 const SPEAKING_LEVEL_THRESHOLD = 0.02;
 
+/** audioLevel above this still registers as audible (used for fade-out and silence-gate). */
+const AUDIBLE_LEVEL_THRESHOLD = 0.01;
+
 /** True when recording is active and the user appears to be producing audio. */
 export function isActivelySpeaking(
 	isRecording: boolean,
@@ -14,8 +17,21 @@ export function isActivelySpeaking(
 }
 
 /**
+ * State to return when the user is NOT actively speaking. Either "listening"
+ * while recording, "speaking" while the audio is still fading out after
+ * recording stops, or "disconnected" when fully silent.
+ */
+function quietState(isRecording: boolean, audioLevel: number): AgentState {
+	if (isRecording) {
+		return "listening";
+	}
+	// Fading out after recording stops
+	return audioLevel > AUDIBLE_LEVEL_THRESHOLD ? "speaking" : "disconnected";
+}
+
+/**
  * Derives the recording-active state (called only when at least some audio is
- * present). Extracted to keep `useAgentState` CC ≤ 4.
+ * present). Extracted to keep `useAgentState` CC low.
  *
  * VAD's `vad_detect_start` only fires in modes that go through the LISTENING
  * state (e.g. listen mode). Push-to-talk jumps straight to RECORDING and
@@ -29,14 +45,7 @@ export function deriveActiveState(
 	if (isActivelySpeaking(isRecording, isSpeaking, audioLevel)) {
 		return "speaking";
 	}
-	if (isRecording) {
-		return "listening";
-	}
-	// Fading out after recording stops
-	if (audioLevel > 0.01) {
-		return "speaking";
-	}
-	return "disconnected";
+	return quietState(isRecording, audioLevel);
 }
 
 /**
@@ -47,7 +56,7 @@ export function useAgentState(): AgentState {
 	const isSpeaking = useVisualizerStore((s) => s.isSpeaking);
 	const audioLevel = useVisualizerStore((s) => s.audioLevel);
 
-	if (!isRecording && audioLevel < 0.01) {
+	if (!isRecording && audioLevel < AUDIBLE_LEVEL_THRESHOLD) {
 		return "disconnected";
 	}
 	return deriveActiveState(isRecording, isSpeaking, audioLevel);

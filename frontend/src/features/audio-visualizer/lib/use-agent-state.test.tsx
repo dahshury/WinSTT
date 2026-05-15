@@ -90,4 +90,12 @@ describe("deriveActiveState", () => {
 	test("boundary: audioLevel exactly 0.01 is not above 0.01 → disconnected", () => {
 		expect(deriveActiveState(false, false, 0.01)).toBe("disconnected");
 	});
+
+	test("boundary: audioLevel just above 0.01 (and not recording) → speaking (fade-out)", () => {
+		expect(deriveActiveState(false, false, 0.011)).toBe("speaking");
+	});
+
+	test("recording with isSpeaking but quiet (sub-threshold) still 'speaking' via VAD signal", () => {
+		expect(deriveActiveState(true, true, 0)).toBe("speaking");
+	});
 });

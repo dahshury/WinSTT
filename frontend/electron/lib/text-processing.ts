@@ -21,6 +21,14 @@ let cachedSnippets: Array<{ trigger: string; expansion: string }> = [];
 let _store: typeof StoreType;
 let disposeWatchers: (() => void) | null = null;
 
+function buildDictPattern(escaped: string, wholeWord?: boolean): string {
+	return wholeWord ? `\\b${escaped}\\b` : escaped;
+}
+
+function dictRegexFlags(caseSensitive?: boolean): string {
+	return caseSensitive ? "g" : "gi";
+}
+
 function compileDictEntry(entry: {
 	find: string;
 	replace: string;
@@ -31,8 +39,8 @@ function compileDictEntry(entry: {
 		return null;
 	}
 	const escaped = entry.find.replace(REGEX_ESCAPE_RE, "\\$&");
-	const pattern = entry.wholeWord ? `\\b${escaped}\\b` : escaped;
-	const flags = entry.caseSensitive ? "g" : "gi";
+	const pattern = buildDictPattern(escaped, entry.wholeWord);
+	const flags = dictRegexFlags(entry.caseSensitive);
 	// react-doctor-disable-next-line js-hoist-regexp
 	return { regex: new RegExp(pattern, flags), replace: entry.replace };
 }
@@ -95,10 +103,15 @@ export function cleanupPostProcessing(): void {
 	cachedSnippets = [];
 }
 
+/** Returns true when `text` is non-empty and lacks a trailing `.`, `!`, or `?`. */
+function needsTerminalPeriod(text: string): boolean {
+	return text.length > 0 && !SENTENCE_END_RE.test(text.trimEnd());
+}
+
 /** Ensure text ends with a period if the setting is enabled and punctuation is missing. */
 function maybePunctuate(text: string): string {
 	const addPeriod = getStoreValue("quality.ensureSentenceEndsWithPeriod");
-	if (addPeriod && text.length > 0 && !SENTENCE_END_RE.test(text.trimEnd())) {
+	if (addPeriod && needsTerminalPeriod(text)) {
 		return `${text.trimEnd()}.`;
 	}
 	return text;

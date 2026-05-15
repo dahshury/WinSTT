@@ -291,6 +291,7 @@ function revertIcons(): void {
 export const __recording_indicator_test_helpers__ = {
 	tryGenerateLevelIcons,
 	generateLevelIcons,
+	generateAllModeIcons,
 	logInitialized,
 	updateRollingPeak,
 	shouldThrottle,

@@ -549,6 +549,29 @@ describe("stt-commands pure helpers", () => {
 		});
 	});
 
+	test("buildReloadModelPayload returns null when kind is null", () => {
+		expect(helpers.buildReloadModelPayload(null, "tiny")).toBeNull();
+	});
+
+	test("buildReloadModelPayload returns null when name is null", () => {
+		expect(helpers.buildReloadModelPayload("main", null)).toBeNull();
+	});
+
+	test("buildReloadModelPayload returns null when both inputs are null", () => {
+		expect(helpers.buildReloadModelPayload(null, null)).toBeNull();
+	});
+
+	test("buildReloadModelPayload returns the normalized payload when both are present", () => {
+		expect(helpers.buildReloadModelPayload("main", "tiny")).toEqual({
+			kind: "main",
+			name: "tiny",
+		});
+		expect(helpers.buildReloadModelPayload("realtime", "base")).toEqual({
+			kind: "realtime",
+			name: "base",
+		});
+	});
+
 	test("handleReloadModel forwards main → reload_main_model with model name", () => {
 		const online = makeClient(true);
 		helpers.handleReloadModel(online as unknown as SttClient, { kind: "main", name: "tiny" });

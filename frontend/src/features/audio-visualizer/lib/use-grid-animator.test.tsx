@@ -36,6 +36,39 @@ describe("useGridAnimator", () => {
 		expect(result.current.x).toBeGreaterThanOrEqual(2);
 		expect(result.current.x).toBeLessThanOrEqual(4);
 	});
+
+	test("'initializing' uses the same connecting perimeter dispatcher", () => {
+		const { result } = renderHook(() => useGridAnimator("initializing", 5, 5, 200, 2));
+		// Same dispatcher path as 'connecting'; first frame is a real coordinate.
+		expect(result.current.x).toBeGreaterThanOrEqual(0);
+		expect(result.current.y).toBeGreaterThanOrEqual(0);
+	});
+
+	test("resets the index when inputs change between renders", () => {
+		const { result, rerender } = renderHook(
+			({ state, rows, columns, interval, radius }) =>
+				useGridAnimator(state, rows, columns, interval, radius),
+			{
+				initialProps: {
+					state: "thinking" as const,
+					rows: 3,
+					columns: 5,
+					interval: 200,
+					radius: undefined as number | undefined,
+				},
+			}
+		);
+		expect(result.current).toEqual({ x: 0, y: 1 });
+		// Mutate the input shape — the hook should detect the change and reset.
+		rerender({
+			state: "thinking" as const,
+			rows: 5,
+			columns: 5,
+			interval: 200,
+			radius: undefined,
+		});
+		expect(result.current).toEqual({ x: 0, y: 2 });
+	});
 });
 
 describe("clampRadius", () => {

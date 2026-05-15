@@ -148,4 +148,53 @@ describe("convertContextMenuTemplate", () => {
 		// Verify the property is truly absent (not present-with-undefined).
 		expect(Object.hasOwn(item, "visible")).toBe(false);
 	});
+
+	test("submenu attachment is omitted when submenu is not provided", () => {
+		const converted = convertContextMenuTemplate([{ id: "x", label: "L" }], () => undefined);
+		const item = converted[0] as Record<string, unknown>;
+		expect(Object.hasOwn(item, "submenu")).toBe(false);
+	});
+
+	test("submenu attachment recurses with the same onSelected handler", () => {
+		const selectedIds: string[] = [];
+		const converted = convertContextMenuTemplate(
+			[
+				{
+					label: "Outer",
+					submenu: [
+						{
+							label: "Inner",
+							submenu: [{ id: "deep", label: "Deep" }],
+						},
+					],
+				},
+			],
+			(id) => {
+				selectedIds.push(id);
+			}
+		);
+		const outer = converted[0]?.submenu as
+			| Array<{ submenu?: Array<{ click?: () => void }> }>
+			| undefined;
+		outer?.[0]?.submenu?.[0]?.click?.();
+		expect(selectedIds).toEqual(["deep"]);
+	});
+
+	test("click handler is omitted when id is an empty string (falsy guard)", () => {
+		const converted = convertContextMenuTemplate([{ id: "", label: "L" }], () => {
+			throw new Error("should not be called");
+		});
+		const item = converted[0] as Record<string, unknown>;
+		expect(Object.hasOwn(item, "click")).toBe(false);
+	});
+
+	test("item.type defaults to 'normal' when omitted and is preserved when explicitly set", () => {
+		const converted = convertContextMenuTemplate(
+			[{ id: "a" }, { id: "b", type: "checkbox" }, { id: "c", type: "radio" }],
+			() => undefined
+		);
+		expect((converted[0] as { type: string }).type).toBe("normal");
+		expect((converted[1] as { type: string }).type).toBe("checkbox");
+		expect((converted[2] as { type: string }).type).toBe("radio");
+	});
 });

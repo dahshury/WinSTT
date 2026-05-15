@@ -1,6 +1,10 @@
 import { ipcMain } from "electron";
 import type { SttClient } from "../ws/stt-client";
 
+function isValidDeviceIndex(value: unknown): value is number {
+	return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
 export function setupLoopbackHandlers(sttClient: SttClient): void {
 	ipcMain.handle("loopback:list-devices", async () => {
 		if (!sttClient.isConnected) {
@@ -14,13 +18,10 @@ export function setupLoopbackHandlers(sttClient: SttClient): void {
 	});
 
 	ipcMain.on("loopback:start", (_event, payload: { deviceIndex: number }) => {
-		if (!sttClient.isConnected) {
-			return;
+		const idx = payload?.deviceIndex;
+		if (sttClient.isConnected && isValidDeviceIndex(idx)) {
+			sttClient.startLoopback(idx);
 		}
-		if (!Number.isInteger(payload?.deviceIndex) || payload.deviceIndex < 0) {
-			return;
-		}
-		sttClient.startLoopback(payload.deviceIndex);
 	});
 
 	ipcMain.on("loopback:stop", () => {

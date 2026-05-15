@@ -76,6 +76,23 @@ describe("getPricingTier", () => {
 				.tier
 		).toBe("free");
 	});
+
+	test("partially undefined pricing folds undefined through the non-finite fallback", () => {
+		// Only `completion` is set; `prompt` is undefined and must collapse to 0.
+		// Exercises the post-refactor String(undefined) → NaN → 0 path.
+		expect(getPricingTier({ completion: 0.000_001 } as unknown as OpenRouterPricing).tier).toBe(
+			"low"
+		);
+		// Symmetric: only `prompt` is set, `completion` undefined.
+		expect(getPricingTier({ prompt: 0.000_001 } as unknown as OpenRouterPricing).tier).toBe("low");
+	});
+
+	test("partially undefined pricing in formatPricing yields non-Free per-1M string", () => {
+		const out = formatPricing({ completion: 0.000_002 } as unknown as OpenRouterPricing);
+		expect(out).toContain("$0.00");
+		expect(out).toContain("$2.00");
+		expect(out).toContain("per 1M");
+	});
 });
 
 describe("formatPricing", () => {

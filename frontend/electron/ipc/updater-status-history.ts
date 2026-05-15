@@ -27,6 +27,20 @@ export interface UpdaterStatusHistory {
 	record(entry: UpdaterStatusEntryInput): UpdaterStatusEntry;
 }
 
+/**
+ * Build an {@link UpdaterStatusEntry} from an input + timestamp. Lifted to
+ * module scope so the conditional spreads (which each add a branch to the
+ * cyclomatic counter) don't inflate the `record` method's CRAP score.
+ */
+function buildEntry(entry: UpdaterStatusEntryInput, timestamp: number): UpdaterStatusEntry {
+	return {
+		status: entry.status,
+		timestamp,
+		...(entry.version ? { version: entry.version } : {}),
+		...(entry.message ? { message: entry.message } : {}),
+	};
+}
+
 export function createUpdaterStatusHistory(
 	options: UpdaterStatusHistoryOptions
 ): UpdaterStatusHistory {
@@ -36,12 +50,7 @@ export function createUpdaterStatusHistory(
 
 	return {
 		record(entry) {
-			const value: UpdaterStatusEntry = {
-				status: entry.status,
-				timestamp: now(),
-				...(entry.version ? { version: entry.version } : {}),
-				...(entry.message ? { message: entry.message } : {}),
-			};
+			const value = buildEntry(entry, now());
 			entries.push(value);
 
 			// Stryker disable next-line ConditionalExpression,EqualityOperator: equivalent — both `if (true)` and `>=` only deviate when entries.length <= maxEntries, but in those cases `entries.length - maxEntries` is non-positive and `splice(0, n<=0)` is a no-op

@@ -10,6 +10,7 @@ const {
 	codesToNames,
 	KEYCODE_TO_NAME,
 	MODIFIER_ORDER,
+	modifierOrderOf,
 	NAME_TO_KEYCODE,
 	parseAccelerator,
 	sortKeycodes,
@@ -78,6 +79,29 @@ describe("MODIFIER_ORDER and sortKeycodes", () => {
 	test("non-modifier keys are sorted by numeric code", () => {
 		const sorted = sortKeycodes([55, 30, 40]); // Z, A, K
 		expect(sorted).toEqual([30, 40, 55]);
+	});
+
+	test("modifierOrderOf returns the slot for a known modifier", () => {
+		// LCtrl (1) sits in slot 0.
+		expect(modifierOrderOf(1)).toBe(0);
+		// RMeta (8) sits in slot 7 (last modifier).
+		expect(modifierOrderOf(8)).toBe(7);
+	});
+
+	test("modifierOrderOf returns 100 for a non-modifier keycode", () => {
+		// 30 is the letter 'A' — not in MODIFIER_ORDER, so the `?? 100`
+		// fallback fires. Asserting the exact sentinel kills mutants that
+		// would swap the literal (e.g. `?? 0`, `?? 99`, `?? 101`).
+		expect(modifierOrderOf(30)).toBe(100);
+		expect(modifierOrderOf(9999)).toBe(100);
+	});
+
+	test("sortKeycodes is stable when two non-modifiers share the order rank", () => {
+		// 30 (A) and 40 (K) both default to 100, so the comparator's
+		// `if (oa !== ob)` branch is skipped and `a - b` decides the order.
+		// Exercises the second `return` in compareKeycodes (and kills
+		// equality-flip mutants on `oa !== ob`).
+		expect(sortKeycodes([40, 30])).toEqual([30, 40]);
 	});
 });
 

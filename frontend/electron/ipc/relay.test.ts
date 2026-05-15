@@ -63,6 +63,14 @@ mock.module("../lib/store", () => ({
 			storeKeyAccesses.push(k);
 			return storeValues[k];
 		},
+		// historyStore.persist() inside setupRelay calls store.set() — without
+		// a no-op set the persist throws and capture() bails out before
+		// emitting HISTORY_ADDED, which breaks the setupRelay history-flow
+		// integration test. Capturing into storeValues also lets tests
+		// inspect what was persisted.
+		set: (k: string, v: unknown) => {
+			storeValues[k] = v;
+		},
 		onDidChange: () => () => undefined,
 	},
 }));
@@ -2002,5 +2010,206 @@ describe("logServerRealtimeError / logServerRealtimeConfig informational-only mu
 	test("logServerRealtimeConfig executes without throwing", () => {
 		resetState();
 		expect(() => helpers.logServerRealtimeConfig()).not.toThrow();
+	});
+});
+
+describe("logDataEventArrival (extracted from processDataEvent to lower CC)", () => {
+	test("does not throw for audio_level (log gate is OFF)", () => {
+		// audio_level events are SO frequent (one per ~20ms of audio) that the
+		// verbose log would drown out every other line — the function must
+		// short-circuit cleanly for that exact type without throwing.
+		expect(() => helpers.logDataEventArrival("audio_level")).not.toThrow();
+	});
+
+	test("does not throw for non-audio_level types (log gate is ON)", () => {
+		// Every other type takes the dbgVerbose path. Just exercising both
+		// branches keeps the helper at 100% line coverage.
+		expect(() => helpers.logDataEventArrival("fullSentence")).not.toThrow();
+		expect(() => helpers.logDataEventArrival("recording_start")).not.toThrow();
+		expect(() => helpers.logDataEventArrival("unknown_type")).not.toThrow();
+		expect(() => helpers.logDataEventArrival("")).not.toThrow();
+	});
+});
+
+describe("sendToWindowSafely (extracted from broadcastToAll to lower CC)", () => {
+	test("skips destroyed windows (no send call)", () => {
+		const sent: string[] = [];
+		const bw = {
+			isDestroyed: () => true,
+			webContents: {
+				send: (ch: string) => sent.push(ch),
+			},
+		} as unknown as Parameters<typeof helpers.sendToWindowSafely>[0];
+		helpers.sendToWindowSafely(bw, "test:channel", ["arg"]);
+		expect(sent.length).toBe(0);
+	});
+
+	test("forwards channel + args to non-destroyed window", () => {
+		const calls: Array<{ channel: string; args: unknown[] }> = [];
+		const bw = {
+			isDestroyed: () => false,
+			webContents: {
+				send: (channel: string, ...args: unknown[]) => calls.push({ channel, args }),
+			},
+		} as unknown as Parameters<typeof helpers.sendToWindowSafely>[0];
+		helpers.sendToWindowSafely(bw, "test:channel", ["a", { x: 1 }]);
+		expect(calls.length).toBe(1);
+		expect(calls[0]?.channel).toBe("test:channel");
+		expect(calls[0]?.args).toEqual(["a", { x: 1 }]);
+	});
+
+	test("swallows webContents.send errors so a hung renderer can't abort the loop", () => {
+		// This is the WHOLE reason broadcastToAll wraps each send in a try.
+		// If we didn't swallow, one stuck renderer would skip every later
+		// window AND the post-broadcast cleanup (hideOverlay, etc).
+		const bw = {
+			isDestroyed: () => false,
+			webContents: {
+				send: () => {
+					throw new Error("renderer stuck");
+				},
+			},
+		} as unknown as Parameters<typeof helpers.sendToWindowSafely>[0];
+		expect(() => helpers.sendToWindowSafely(bw, "test:channel", [])).not.toThrow();
+	});
+});
+
+describe("RECORDING_STATE_EVENT_TYPES (lookup set replaces inline OR in routeEventToQueue)", () => {
+	test("contains recording_start and recording_stop", () => {
+		expect(helpers.RECORDING_STATE_EVENT_TYPES.has("recording_start")).toBe(true);
+		expect(helpers.RECORDING_STATE_EVENT_TYPES.has("recording_stop")).toBe(true);
+	});
+
+	test("does NOT contain other event types", () => {
+		expect(helpers.RECORDING_STATE_EVENT_TYPES.has("fullSentence")).toBe(false);
+		expect(helpers.RECORDING_STATE_EVENT_TYPES.has("audio_level")).toBe(false);
+		expect(helpers.RECORDING_STATE_EVENT_TYPES.has("")).toBe(false);
+	});
+});
+
+describe("computeRecordingDurationMs (extracted from setupRelay>capture)", () => {
+	test("returns 0 when recording_start was never seen (start=0)", () => {
+		// Defensive path: if capture() arrives without a preceding
+		// notifyStarted, we can't compute a duration → emit 0 rather than
+		// some garbage based on `now`.
+		expect(helpers.computeRecordingDurationMs(0, 0, 1000)).toBe(0);
+		expect(helpers.computeRecordingDurationMs(0, 500, 1000)).toBe(0);
+	});
+
+	test("uses `now` as the stop boundary when stop=0 (capture before recording_stop)", () => {
+		// fullSentence handlers can race ahead of recording_stop in some flows.
+		// The arrow falls back to Date.now() so the entry still carries a
+		// realistic duration.
+		expect(helpers.computeRecordingDurationMs(100, 0, 600)).toBe(500);
+	});
+
+	test("uses the recorded stop timestamp when both start and stop are set", () => {
+		expect(helpers.computeRecordingDurationMs(100, 700, 999)).toBe(600);
+	});
+
+	test("clamps negative durations to 0 (defends against clock skew / out-of-order events)", () => {
+		// stop < start can happen if the system clock drifts or if events
+		// arrive out of order on reconnect. Math.max guarantees we never emit
+		// a negative speaking-duration into the history store.
+		expect(helpers.computeRecordingDurationMs(700, 100, 999)).toBe(0);
+	});
+});
+
+describe("broadcastHistoryEntry (extracted from setupRelay>capture)", () => {
+	test("does nothing when entry is null (record() returned no new entry)", () => {
+		// historyStore.record() can return null when the dedupe path drops a
+		// duplicate. We must NOT broadcast a phantom HISTORY_ADDED in that
+		// case — the renderer would render an empty row.
+		resetState();
+		mockWindows.length = 0;
+		const w = makeMockWindow(false);
+		mockWindows.push(w);
+		helpers.broadcastHistoryEntry(null);
+		expect(w.sent.length).toBe(0);
+	});
+
+	test("broadcasts HISTORY_ADDED with the entry payload to all renderers", () => {
+		resetState();
+		mockWindows.length = 0;
+		const w = makeMockWindow(false);
+		mockWindows.push(w);
+		const entry = {
+			id: "abc",
+			text: "hello",
+			createdAt: 1,
+			durationMs: 100,
+			wpm: 60,
+		} as unknown as Parameters<typeof helpers.broadcastHistoryEntry>[0];
+		helpers.broadcastHistoryEntry(entry);
+		expect(w.sent.length).toBe(1);
+		expect(w.sent[0]?.args[0]).toBe(entry);
+	});
+});
+
+describe("setupRelay history capture flow exercises computeRecordingDurationMs + broadcastHistoryEntry", () => {
+	function makeMockClient() {
+		const handlers = new Map<string, ((...args: unknown[]) => void)[]>();
+		return {
+			on(event: string, cb: (...args: unknown[]) => void) {
+				const list = handlers.get(event) ?? [];
+				list.push(cb);
+				handlers.set(event, list);
+			},
+			off(event: string, cb: (...args: unknown[]) => void) {
+				handlers.set(
+					event,
+					(handlers.get(event) ?? []).filter((x) => x !== cb)
+				);
+			},
+			emit(event: string, ...args: unknown[]) {
+				for (const cb of handlers.get(event) ?? []) {
+					cb(...args);
+				}
+			},
+			sendControl: () => undefined,
+			getParameter: () => Promise.resolve(true),
+			handlers,
+		};
+	}
+	function makeMockWin() {
+		const sent: Array<{ channel: string; args: unknown[] }> = [];
+		return {
+			sent,
+			isDestroyed: () => false,
+			webContents: {
+				isDestroyed: () => false,
+				send: (channel: string, ...args: unknown[]) => sent.push({ channel, args }),
+			},
+		};
+	}
+
+	test("a fullSentence after recording_start records an entry and broadcasts HISTORY_ADDED", async () => {
+		// Exercises the full historyCapture.capture() arrow inside setupRelay:
+		// notifyStarted() seeds lastRecordingStartMs, then capture() computes
+		// a duration via the extracted helper and broadcasts the new entry.
+		resetState();
+		storeValues["general.recordingMode"] = "ptt";
+		storeValues["llm.enabled"] = false;
+		const recordingState = await import("../lib/recording-state");
+		recordingState.__resetRecordingStateForTesting__();
+		recordingState.notifyHotkeyPressed();
+		const client = makeMockClient();
+		const win = makeMockWin();
+		mockWindows.length = 0;
+		mockWindows.push(win as unknown as (typeof mockWindows)[0]);
+		const cleanup = relayModule.setupRelay(
+			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
+			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
+		);
+		// Simulate a hotkey press → recording_start → fullSentence flow.
+		client.emit("data-event", { type: "recording_start" });
+		// Give the recordingStateQueue a tick to drain the start handler so
+		// notifyStarted has run before the fullSentence capture fires.
+		await new Promise<void>((r) => setTimeout(r, 5));
+		client.emit("data-event", { type: "fullSentence", text: "hello world" });
+		await new Promise<void>((r) => setTimeout(r, 20));
+		cleanup();
+		const sawHistory = win.sent.some((s) => s.channel === "history:added");
+		expect(sawHistory).toBe(true);
 	});
 });

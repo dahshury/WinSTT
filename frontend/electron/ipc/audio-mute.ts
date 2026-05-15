@@ -43,15 +43,10 @@ function clampScalar(value: number): number {
 	if (Number.isNaN(value)) {
 		return 0;
 	}
-	// Stryker disable next-line EqualityOperator: equivalent mutant — `<` vs `<=` differ only at value=0; in both cases the function returns 0 (the strict-less version falls through to `value > 1` which is false, then returns `value` which is 0). Observable behavior is identical.
-	if (value < 0) {
-		return 0;
-	}
-	// Stryker disable next-line EqualityOperator: equivalent mutant — `>` vs `>=` differ only at value=1; in both cases the function returns 1 (the strict-greater version falls through to `return value` which is 1). Observable behavior is identical.
-	if (value > 1) {
-		return 1;
-	}
-	return value;
+	// Math.min/Math.max collapse the two range guards into branchless ops:
+	// for `value < 0`, Math.max(0, value) returns 0; for `value > 1`,
+	// Math.min(1, …) returns 1. Avoids the per-branch CC cost of two ifs.
+	return Math.min(1, Math.max(0, value));
 }
 
 function parseVolume(value: string | null): number | null {
@@ -82,6 +77,24 @@ async function readCurrentVolume(): Promise<number | null> {
 	return current;
 }
 
+/**
+ * Read the current volume and drop it to DUCK_LEVEL. Returns the previous
+ * volume on success, or null if either the read or the set failed. Extracted
+ * from applyDuck so the outer function only has to deal with one guard.
+ */
+async function performDuck(): Promise<number | null> {
+	const current = await readCurrentVolume();
+	if (current === null) {
+		return null;
+	}
+	const setResult = await runPsCommand(`[Audio]::SetVolume(${DUCK_LEVEL})`, { timeoutMs: 3000 });
+	if (!setResult.ok) {
+		dbg("audio-mute", "duck: SetVolume failed");
+		return null;
+	}
+	return current;
+}
+
 async function applyDuck(): Promise<void> {
 	// Defensive double-check: scheduleApply may chain a duck after a restore
 	// after a duck if the caller flips desiredMuted twice in rapid succession.
@@ -90,18 +103,18 @@ async function applyDuck(): Promise<void> {
 	if (isDucked) {
 		return;
 	}
-	const current = await readCurrentVolume();
-	if (current === null) {
+	const saved = await performDuck();
+	if (saved === null) {
 		return;
 	}
-	const setResult = await runPsCommand(`[Audio]::SetVolume(${DUCK_LEVEL})`, { timeoutMs: 3000 });
-	if (!setResult.ok) {
-		dbg("audio-mute", "duck: SetVolume failed");
-		return;
-	}
-	savedVolume = current;
+	savedVolume = saved;
 	isDucked = true;
-	dbg("audio-mute", `ducked (saved=${current.toFixed(3)} → ${DUCK_LEVEL})`);
+	dbg("audio-mute", `ducked (saved=${saved.toFixed(3)} → ${DUCK_LEVEL})`);
+}
+
+/** Compute the restore target. Extracted to keep the `??` branch out of applyRestore. */
+function computeRestoreTarget(): number {
+	return savedVolume ?? 0.5;
 }
 
 async function applyRestore(): Promise<void> {
@@ -113,13 +126,12 @@ async function applyRestore(): Promise<void> {
 	if (!isDucked) {
 		return;
 	}
-	const target = savedVolume ?? 0.5;
+	const target = computeRestoreTarget();
 	const setResult = await runPsCommand(`[Audio]::SetVolume(${target})`, { timeoutMs: 3000 });
-	if (setResult.ok) {
-		dbg("audio-mute", `restored (→ ${target.toFixed(3)})`);
-	} else {
-		dbg("audio-mute", "restore: SetVolume failed");
-	}
+	dbg(
+		"audio-mute",
+		setResult.ok ? `restored (→ ${target.toFixed(3)})` : "restore: SetVolume failed"
+	);
 	// Even if SetVolume failed, clear our state so we don't loop forever.
 	isDucked = false;
 	savedVolume = null;
@@ -177,15 +189,27 @@ export function unmuteSystemAudio(): void {
 	scheduleApply(false);
 }
 
+/**
+ * Narrow the IPC payload to the expected shape. Uses optional chaining so the
+ * `null`/`undefined` cases short-circuit without adding cyclomatic branches.
+ */
+function isValidMutePayload(p: unknown): p is { muted: boolean } {
+	return typeof (p as { muted?: unknown } | null | undefined)?.muted === "boolean";
+}
+
+function dispatchMute(muted: boolean): void {
+	if (muted) {
+		muteSystemAudio();
+	} else {
+		unmuteSystemAudio();
+	}
+}
+
 export function setupAudioMuteHandlers(): void {
-	ipcMain.on("audio:set-mute", (_event, payload: { muted: boolean }) => {
-		if (!payload || typeof payload.muted !== "boolean") {
+	ipcMain.on("audio:set-mute", (_event, payload) => {
+		if (!isValidMutePayload(payload)) {
 			return;
 		}
-		if (payload.muted) {
-			muteSystemAudio();
-		} else {
-			unmuteSystemAudio();
-		}
+		dispatchMute(payload.muted);
 	});
 }

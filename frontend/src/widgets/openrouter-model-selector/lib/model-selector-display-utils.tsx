@@ -69,13 +69,12 @@ export function formatContextLength(contextLength: number): string {
 }
 
 function parsePricingValue(raw: string | number | undefined): number {
-	if (raw === undefined) {
-		return 0;
-	}
 	if (typeof raw === "number") {
 		return raw;
 	}
-	const parsed = Number.parseFloat(raw);
+	// `String(undefined)` → "undefined" → NaN → falls through to the 0 fallback,
+	// so the undefined case is folded into the non-finite branch (keeps CC = 3).
+	const parsed = Number.parseFloat(String(raw));
 	return Number.isFinite(parsed) ? parsed : 0;
 }
 

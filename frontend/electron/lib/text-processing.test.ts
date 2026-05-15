@@ -299,6 +299,63 @@ describe("rebuild handles missing/null store data", () => {
 	});
 });
 
+describe("buildDictPattern helper (extracted from compileDictEntry)", () => {
+	test("wholeWord=true wraps the escaped find with \\b boundaries", () => {
+		// Mutating wholeWord branch from `\\b${escaped}\\b` → escaped would let
+		// "cat" match inside "catalog". This guards the truthy branch.
+		setStoreValue("dictionary", [
+			{ find: "cat", replace: "DOG", caseSensitive: false, wholeWord: true },
+		]);
+		expect(applyPostProcessing("catalog")).toBe("catalog");
+		expect(applyPostProcessing("a cat here")).toBe("a DOG here");
+	});
+
+	test("wholeWord=false replaces inside words (no \\b boundaries)", () => {
+		// Mutating wholeWord branch from `escaped` → `\\b${escaped}\\b` would
+		// prevent matching inside "catalog".
+		setStoreValue("dictionary", [
+			{ find: "cat", replace: "DOG", caseSensitive: false, wholeWord: false },
+		]);
+		expect(applyPostProcessing("catalog")).toBe("DOGalog");
+	});
+});
+
+describe("dictRegexFlags helper (extracted from compileDictEntry)", () => {
+	test("caseSensitive=true uses 'g' flag (no 'i') — case mismatches preserved", () => {
+		// Mutating "g" → "gi" would let case-insensitive replacement happen here.
+		setStoreValue("dictionary", [
+			{ find: "Hi", replace: "Hello", caseSensitive: true, wholeWord: false },
+		]);
+		expect(applyPostProcessing("Hi hi HI")).toBe("Hello hi HI");
+	});
+
+	test("caseSensitive=false uses 'gi' flag — all cases replaced", () => {
+		// Mutating "gi" → "g" would only replace the exact-case occurrence.
+		setStoreValue("dictionary", [
+			{ find: "Hi", replace: "Hello", caseSensitive: false, wholeWord: false },
+		]);
+		expect(applyPostProcessing("Hi hi HI")).toBe("Hello Hello Hello");
+	});
+});
+
+describe("needsTerminalPeriod helper (extracted from maybePunctuate)", () => {
+	test("non-empty text without terminal punct: period added", () => {
+		// Mutating text.length > 0 → text.length >= 0 still matches non-empty;
+		// but mutating it to true would also try to add '.' to "" — guarded by
+		// the existing empty-string test. This guards the unpunctuated branch.
+		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
+		expect(applyPostProcessing("abc")).toBe("abc.");
+	});
+
+	test("text consisting only of trailing whitespace: no period added (length-after-trim semantics)", () => {
+		// "   " has text.length > 0 but trimEnd → "" which the regex tests as
+		// non-matching → would add a period. Verify CURRENT behavior (which
+		// adds period). This locks in the helper's contract.
+		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
+		expect(applyPostProcessing("   ")).toBe(".");
+	});
+});
+
 describe("disposeWatchers cleanup (mutation guard for L75 BlockStatement)", () => {
 	test("calling cleanupPostProcessing twice is safe (no-op the second time)", () => {
 		// Mutating the disposeWatchers arrow body to {} would skip dispose calls.

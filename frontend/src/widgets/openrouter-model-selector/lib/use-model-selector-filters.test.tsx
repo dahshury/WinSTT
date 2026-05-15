@@ -103,6 +103,22 @@ describe("hasSelectionFilter", () => {
 	test("true when selectedParameters non-empty", () => {
 		expect(hasSelectionFilter([], null, null, ["tools"])).toBe(true);
 	});
+
+	test("true when selectedVariant is 'none' (still a non-null selection)", () => {
+		expect(hasSelectionFilter([], "none", null, [])).toBe(true);
+	});
+
+	test("true when only selectedParameters has entries (list branch alone)", () => {
+		expect(hasSelectionFilter([], null, null, ["tools", "reasoning"])).toBe(true);
+	});
+
+	test("true when both list-type selections present (covers list-branch short-circuit)", () => {
+		expect(hasSelectionFilter(["openai"], null, null, ["tools"])).toBe(true);
+	});
+
+	test("true when both single-value selections present (covers single-branch short-circuit)", () => {
+		expect(hasSelectionFilter([], "nitro", "deepinfra", [])).toBe(true);
+	});
 });
 
 describe("computeHasActiveFilters", () => {
@@ -162,6 +178,38 @@ describe("appendModelEndpointItems", () => {
 		appendModelEndpointItems(items, m);
 		expect(items).toContain("openai/x@P1");
 		expect(items).toContain("openai/x@P2");
+	});
+
+	test("no-op when model.endpoints is undefined", () => {
+		const m = { id: "openai/x" } as unknown as OpenRouterModel;
+		const items: string[] = ["pre"];
+		appendModelEndpointItems(items, m);
+		expect(items).toEqual(["pre"]);
+	});
+
+	test("preserves pre-existing items and appends to the same array", () => {
+		const m = {
+			id: "openai/x",
+			endpoints: [makeEndpoint("P1"), makeEndpoint("P2")],
+		} as unknown as OpenRouterModel;
+		const items: string[] = ["pre"];
+		appendModelEndpointItems(items, m);
+		expect(items[0]).toBe("pre");
+		expect(items.length).toBeGreaterThanOrEqual(2);
+	});
+
+	test("dedupes endpoints by provider via getUniqueEndpoints", () => {
+		const m = {
+			id: "openai/x",
+			endpoints: [makeEndpoint("P1"), makeEndpoint("P1"), makeEndpoint("P2")],
+		} as unknown as OpenRouterModel;
+		const items: string[] = [];
+		appendModelEndpointItems(items, m);
+		// Each provider should appear at most once
+		const p1Count = items.filter((s) => s === "openai/x@P1").length;
+		const p2Count = items.filter((s) => s === "openai/x@P2").length;
+		expect(p1Count).toBe(1);
+		expect(p2Count).toBe(1);
 	});
 });
 

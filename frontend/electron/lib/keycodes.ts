@@ -161,6 +161,12 @@ export function lookupKeycode(part: string): number | undefined {
 /**
  * Parse a compound accelerator like "LCtrl+LAlt+A" into a set of keycodes.
  * Returns null if any part is unrecognized.
+ *
+ * Note: when the loop completes, `codes` is guaranteed non-empty — empty input
+ * ("") splits into a single empty part whose `lookupKeycode` returns undefined,
+ * triggering the early `return null`. So the previous `codes.size > 0 ? … : null`
+ * tail was equivalent to plain `return codes;`. Dropping it removes a redundant
+ * branch (CRAP budget) and a Stryker equivalent-mutant carve-out.
  */
 export function parseAccelerator(accelerator: string): Set<number> | null {
 	const parts = accelerator.split("+").map((s) => s.trim());
@@ -172,13 +178,7 @@ export function parseAccelerator(accelerator: string): Set<number> | null {
 		}
 		codes.add(code);
 	}
-	// Stryker disable next-line ConditionalExpression,EqualityOperator: equivalent —
-	// the `code == null` early-return above means `codes` only reaches this
-	// point when at least one code was added. Empty input ("") splits into a
-	// single empty part whose lookup returns null, so the loop returns early.
-	// `codes.size` is therefore always ≥ 1 here, making `> 0`, `>= 0`, and the
-	// `true` mutant all produce the same result.
-	return codes.size > 0 ? codes : null;
+	return codes;
 }
 
 // ── Modifier sort order (for consistent combo display) ──────────────
@@ -194,22 +194,33 @@ export const MODIFIER_ORDER: Record<number, number> = {
 	[UiohookKey.MetaRight]: 7,
 };
 
+/**
+ * Sort-order rank for a keycode: modifier slot (0–7) when in `MODIFIER_ORDER`,
+ * else 100 so non-modifiers sort after every modifier.
+ * Extracted out of the comparator so it keeps CC=2 (cf. CRAP budget < 4).
+ */
+export function modifierOrderOf(code: number): number {
+	return MODIFIER_ORDER[code] ?? 100;
+}
+
+// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent —
+// MODIFIER_ORDER is monotonic in keycode (Ctrl=1 → ord 0, CtrlRight=2 → ord 1,
+// …, MetaRight=8 → ord 7) and every non-modifier maps to ord 100 with code ≥ 30.
+// So modifier-vs-modifier `oa - ob` equals `a - b`, and modifier-vs-non-modifier
+// `oa - ob` agrees in sign with `a - b`. Removing the `if (oa !== ob)` short-circuit
+// (or its body) collapses to `return a - b;` which produces the same ordering
+// for every reachable input.
+function compareKeycodes(a: number, b: number): number {
+	const oa = modifierOrderOf(a);
+	const ob = modifierOrderOf(b);
+	if (oa !== ob) {
+		return oa - ob;
+	}
+	return a - b;
+}
+
 export function sortKeycodes(codes: readonly number[]): number[] {
-	return codes.toSorted((a, b) => {
-		const oa = MODIFIER_ORDER[a] ?? 100;
-		const ob = MODIFIER_ORDER[b] ?? 100;
-		// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent —
-		// MODIFIER_ORDER is monotonic in keycode (Ctrl=1 → ord 0, CtrlRight=2 → ord 1,
-		// …, MetaRight=8 → ord 7) and every non-modifier maps to ord 100 with code ≥ 30.
-		// So modifier-vs-modifier `oa - ob` equals `a - b`, and modifier-vs-non-modifier
-		// `oa - ob` agrees in sign with `a - b`. Removing the `if (oa !== ob)` short-circuit
-		// (or its body) collapses to `return a - b;` which produces the same ordering
-		// for every reachable input.
-		if (oa !== ob) {
-			return oa - ob;
-		}
-		return a - b;
-	});
+	return codes.toSorted(compareKeycodes);
 }
 
 export function codesToNames(codes: readonly number[]): string[] {

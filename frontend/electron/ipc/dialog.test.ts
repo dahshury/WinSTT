@@ -55,11 +55,12 @@ describe("setupDialogHandlers", () => {
 		expect(await handlers.get("dialog:open-file")!(undefined, null)).toBe("x.wav");
 	});
 
-	// ── Boundary-killers for the L23 conditional/logical mutators ────────
-	// `if (result.canceled || result.filePaths.length === 0)`. We need both
-	// halves of the OR to demonstrate value: a canceled+nonempty result and
-	// a not-canceled+empty result must both return null, while a not-canceled
-	// + nonempty result must return a real path.
+	// ── Boundary-killers for the canceled branch and the `?? null` fallback ─
+	// `if (result.canceled) return null;` then `return result.filePaths[0] ?? null;`.
+	// We need three distinct shapes to demonstrate value:
+	//   1. canceled=true (regardless of filePaths) → null (locks the if branch)
+	//   2. canceled=false + filePaths=[] → null   (locks the `?? null` left side)
+	//   3. canceled=false + filePaths=[x] → x     (locks the happy path)
 	test("canceled=true with non-empty filePaths still returns null (canceled wins)", async () => {
 		dialogResult = { canceled: true, filePaths: ["C:\\should-be-ignored.wav"] };
 		expect(await handlers.get("dialog:open-file")!(undefined, {})).toBeNull();
@@ -68,6 +69,15 @@ describe("setupDialogHandlers", () => {
 	test("canceled=false with non-empty filePaths returns the first path", async () => {
 		dialogResult = { canceled: false, filePaths: ["primary.wav", "ignored.wav"] };
 		expect(await handlers.get("dialog:open-file")!(undefined, {})).toBe("primary.wav");
+	});
+
+	// Specifically pins the `result.filePaths[0] ?? null` nullish-coalescing
+	// fallback: when the dialog returns `canceled=false` but an empty array
+	// (Electron does this on some platforms), the handler must coerce the
+	// `undefined` at index 0 to `null` before crossing the IPC boundary.
+	test("canceled=false with empty filePaths returns null via the ?? null fallback", async () => {
+		dialogResult = { canceled: false, filePaths: [] };
+		expect(await handlers.get("dialog:open-file")!(undefined, {})).toBeNull();
 	});
 
 	// ── Mutator-killers for the L22 properties array / object literal ────

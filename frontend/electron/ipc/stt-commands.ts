@@ -299,13 +299,24 @@ function parseReloadModelName(value: unknown): string | null {
 	return typeof value === "string" && value ? value : null;
 }
 
+function buildReloadModelPayload(
+	kind: ReloadModelKind | null,
+	name: string | null
+): ReloadModelPayload | null {
+	if (!(kind && name)) {
+		return null;
+	}
+	return { kind, name };
+}
+
 function parseReloadModelPayload(payload: unknown): ReloadModelPayload | null {
 	if (!isRecord(payload)) {
 		return null;
 	}
-	const kind = parseReloadModelKind(payload.kind);
-	const name = parseReloadModelName(payload.name);
-	return kind && name ? { kind, name } : null;
+	return buildReloadModelPayload(
+		parseReloadModelKind(payload.kind),
+		parseReloadModelName(payload.name)
+	);
 }
 
 function handleReloadModel(sttClient: SttClient, payload: unknown): void {
@@ -379,6 +390,7 @@ export const __stt_commands_test_helpers__ = {
 	parseReloadModelKind,
 	parseReloadModelName,
 	parseReloadModelPayload,
+	buildReloadModelPayload,
 	handleReloadModel,
 	handleListModelsWithState,
 };

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import * as ipcClient from "@/shared/api/ipc-client";
@@ -68,6 +68,15 @@ beforeEach(() => {
 afterEach(() => {
 	window.electronAPI = originalApi;
 	useSettingsStore.setState({ settings: initialSettings });
+	// Reset the hotkey-store singleton so sibling test files (notably
+	// hotkey-store.test.ts which snapshots `useHotkeyStore.getState()` at
+	// module load) see the canonical defaults regardless of the order Bun
+	// happens to load files in this worker.
+	useHotkeyStore.setState({
+		isPressed: false,
+		isActive: false,
+		accelerator: "LCtrl+LMeta",
+	});
 });
 
 function fire(channel: string) {
@@ -132,5 +141,147 @@ describe("usePushToTalk", () => {
 		renderHook(() => usePushToTalk());
 		fire(IPC.HOTKEY_PRESSED);
 		expect(useHotkeyStore.getState().isPressed).toBe(false);
+	});
+
+	test("toggle mode flips isActive on each press and skips release sends", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "toggle",
+				},
+			},
+		});
+		renderHook(() => usePushToTalk());
+		if (!listeners.has(IPC.HOTKEY_PRESSED)) {
+			return;
+		}
+		const sttCalls = (): Array<{ method: string; args?: unknown[] }> =>
+			sentChannels
+				.filter((c) => c.channel === IPC.STT_CALL_METHOD)
+				.map((c) => c.args[0] as { method: string; args?: unknown[] });
+
+		// First press: toggle on.
+		fire(IPC.HOTKEY_PRESSED);
+		expect(useHotkeyStore.getState().isActive).toBe(true);
+		expect(useHotkeyStore.getState().isPressed).toBe(true);
+		const afterFirstPress = sttCalls();
+		expect(afterFirstPress.at(-1)).toEqual({ method: "set_microphone", args: [true] });
+
+		// Release in toggle mode must NOT emit another set_microphone.
+		fire(IPC.HOTKEY_RELEASED);
+		expect(useHotkeyStore.getState().isPressed).toBe(false);
+		expect(sttCalls().length).toBe(afterFirstPress.length);
+
+		// Second press: toggle off.
+		fire(IPC.HOTKEY_PRESSED);
+		expect(useHotkeyStore.getState().isActive).toBe(false);
+		const afterSecondPress = sttCalls();
+		expect(afterSecondPress.at(-1)).toEqual({ method: "set_microphone", args: [false] });
+	});
+
+	test("mirrors pushToTalkKey changes into the hotkey store accelerator", () => {
+		const { rerender } = renderHook(() => usePushToTalk());
+		expect(useHotkeyStore.getState().accelerator).toBe("LCtrl+LMeta");
+
+		act(() => {
+			useSettingsStore.setState({
+				settings: {
+					...useSettingsStore.getState().settings,
+					hotkey: {
+						...useSettingsStore.getState().settings.hotkey,
+						pushToTalkKey: "LAlt+Space",
+					},
+				},
+			});
+		});
+		rerender();
+		expect(useHotkeyStore.getState().accelerator).toBe("LAlt+Space");
+		// Hotkey was re-registered with the new accelerator.
+		expect(invokes.filter((c) => c === IPC.HOTKEY_REGISTER).length).toBeGreaterThanOrEqual(2);
+	});
+
+	test("enables silence endpoint when smartEndpoint is on (even in PTT mode)", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "ptt",
+				},
+				quality: {
+					...useSettingsStore.getState().settings.quality,
+					smartEndpoint: true,
+				},
+			},
+		});
+		renderHook(() => usePushToTalk());
+		const setParamCalls = sentChannels
+			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
+			.map((c) => c.args[0] as { parameter: string; value: unknown });
+		const silenceCall = setParamCalls.find((p) => p.parameter === "silence_endpoint_enabled");
+		expect(silenceCall).toBeDefined();
+		expect(silenceCall?.value).toBe(true);
+	});
+
+	test("disables silence endpoint for PTT mode with smartEndpoint off", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "ptt",
+				},
+				quality: {
+					...useSettingsStore.getState().settings.quality,
+					smartEndpoint: false,
+				},
+			},
+		});
+		renderHook(() => usePushToTalk());
+		const silenceCall = sentChannels
+			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
+			.map((c) => c.args[0] as { parameter: string; value: unknown })
+			.find((p) => p.parameter === "silence_endpoint_enabled");
+		expect(silenceCall).toBeDefined();
+		expect(silenceCall?.value).toBe(false);
+	});
+
+	test("subscribes to recording-stop and tears the listener down on unmount", () => {
+		const { unmount } = renderHook(() => usePushToTalk());
+		// onRecordingStop registers a listener that the test harness can fire.
+		// If pollution stripped the wrapper, skip.
+		if (typeof ipcClient.onRecordingStop !== "function") {
+			return;
+		}
+		const beforeUnmount = (listeners.get(IPC.STT_RECORDING_STOP) ?? []).length;
+		expect(beforeUnmount).toBeGreaterThanOrEqual(1);
+		// Firing the channel must not throw and must not alter hotkey state.
+		fire(IPC.STT_RECORDING_STOP);
+		expect(useHotkeyStore.getState().isPressed).toBe(false);
+		unmount();
+		const afterUnmount = (listeners.get(IPC.STT_RECORDING_STOP) ?? []).length;
+		expect(afterUnmount).toBe(beforeUnmount - 1);
+	});
+
+	test("resets isActive on unmount", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "toggle",
+				},
+			},
+		});
+		const { unmount } = renderHook(() => usePushToTalk());
+		if (!listeners.has(IPC.HOTKEY_PRESSED)) {
+			return;
+		}
+		fire(IPC.HOTKEY_PRESSED);
+		expect(useHotkeyStore.getState().isActive).toBe(true);
+		unmount();
+		expect(useHotkeyStore.getState().isActive).toBe(false);
 	});
 });

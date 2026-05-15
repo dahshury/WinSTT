@@ -26,10 +26,7 @@ interface UseLoopbackDevicesReturn {
 	options: SelectOption[];
 }
 
-function parseDevices(devices: unknown): LoopbackDevice[] {
-	if (!Array.isArray(devices)) {
-		return [];
-	}
+function parseDevices(devices: readonly unknown[]): LoopbackDevice[] {
 	const typed: LoopbackDevice[] = [];
 	for (const d of devices) {
 		const parsed = loopbackDeviceSchema.safeParse(d);
@@ -89,6 +86,33 @@ export function applyDevicesResult(params: ApplyDevicesParams) {
 	};
 }
 
+/**
+ * Builds the catch callback for the loopback devices fetch. Skips logging
+ * when the effect was already torn down. Extracted for unit testability.
+ */
+export function handleFetchError(getIsCancelled: () => boolean) {
+	return (err: unknown) => {
+		if (getIsCancelled()) {
+			return;
+		}
+		console.error("[useLoopbackDevices] Failed to fetch loopback devices:", err);
+	};
+}
+
+/**
+ * Resolves the select's current id from the stored loopback index and the
+ * detected system default. Extracted for unit testability.
+ */
+export function resolveCurrentId(
+	loopbackDeviceIndex: number | null | undefined,
+	defaultIndex: number | null
+): string {
+	if (loopbackDeviceIndex == null || loopbackDeviceIndex === defaultIndex) {
+		return "default";
+	}
+	return String(loopbackDeviceIndex);
+}
+
 export function useLoopbackDevices(): UseLoopbackDevicesReturn {
 	const general = useSettingsStore((s) => s.settings.general);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
@@ -114,22 +138,14 @@ export function useLoopbackDevices(): UseLoopbackDevicesReturn {
 
 		loopbackListDevices()
 			.then(handleDevices)
-			.catch((err: unknown) => {
-				if (isCancelled) {
-					return;
-				}
-				console.error("[useLoopbackDevices] Failed to fetch loopback devices:", err);
-			});
+			.catch(handleFetchError(() => isCancelled));
 
 		return () => {
 			isCancelled = true;
 		};
 	}, [recordingMode, general?.loopbackDeviceIndex, update]);
 
-	const currentId =
-		general?.loopbackDeviceIndex == null || general.loopbackDeviceIndex === defaultIndex
-			? "default"
-			: String(general.loopbackDeviceIndex);
+	const currentId = resolveCurrentId(general?.loopbackDeviceIndex, defaultIndex);
 
 	const handleChange = (v: string) => {
 		update({

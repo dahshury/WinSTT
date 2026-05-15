@@ -76,6 +76,24 @@ describe("createUpdaterStatusHistory", () => {
 		expect(stored[0]?.status).toBe("checking");
 	});
 
+	test("includes both message and version fields when both are provided", () => {
+		// Exercises the buildEntry helper through both conditional spreads in a
+		// single call, locking down the case where both optional fields are
+		// present together (and not just one or the other).
+		const history = createUpdaterStatusHistory({ maxEntries: 3, now: () => 42 });
+		const recorded = history.record({
+			status: "error",
+			message: "update failed",
+			version: "9.9.9",
+		});
+		expect(recorded).toEqual({
+			status: "error",
+			timestamp: 42,
+			version: "9.9.9",
+			message: "update failed",
+		});
+	});
+
 	test("preserves all entries when count is exactly equal to maxEntries (boundary)", () => {
 		// Kills the EqualityOperator mutation `>` -> `>=`. With exactly
 		// maxEntries records, `entries.length > maxEntries` is false (no

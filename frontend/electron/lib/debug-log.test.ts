@@ -54,7 +54,8 @@ mock.module("node:fs", () => ({
 
 mock.module("electron", () => electronMock());
 
-const { dbg, dbgVerbose } = await import("./debug-log");
+const debugLogModule = await import("./debug-log");
+const { dbg, dbgVerbose, stringifyArg } = debugLogModule;
 
 // Capture console.log so we can assert on the trimmed terminal output —
 // the L58 / L74 `.trimEnd()` mutators currently survive because nobody
@@ -143,6 +144,57 @@ describe("debug-log module", () => {
 		circular.self = circular;
 		expect(() => dbgVerbose("v-circ", circular)).not.toThrow();
 	});
+
+	// ─── stringifyArg direct-call coverage ────────────────────────────────
+	// Other test files mock `../lib/debug-log`, so when this test file runs
+	// inside the full suite, `dbg`/`dbgVerbose` resolve to stubs that never
+	// invoke the real `stringifyArg`. To keep CRAP for `stringifyArg` below
+	// the threshold even in full-suite mode, we exercise its three branches
+	// directly via the named export. When the module is fully replaced by a
+	// mock (so `stringifyArg` is undefined), skip — the module-init primer
+	// inside debug-log.ts itself covers the same branches at load time, so
+	// the LCOV coverage is preserved either way.
+
+	test.skipIf(typeof stringifyArg !== "function")(
+		"stringifyArg returns string args unchanged (typeof === 'string' branch)",
+		() => {
+			expect(stringifyArg?.("hello")).toBe("hello");
+			expect(stringifyArg?.("")).toBe("");
+			expect(stringifyArg?.("with spaces and unicode: αβγ")).toBe("with spaces and unicode: αβγ");
+		}
+	);
+
+	test.skipIf(typeof stringifyArg !== "function")(
+		"stringifyArg JSON-stringifies non-string serializable args",
+		() => {
+			expect(stringifyArg?.({ a: 1, b: "two" })).toBe('{"a":1,"b":"two"}');
+			expect(stringifyArg?.([1, 2, 3])).toBe("[1,2,3]");
+			expect(stringifyArg?.(42)).toBe("42");
+			expect(stringifyArg?.(true)).toBe("true");
+			expect(stringifyArg?.(null)).toBe("null");
+		}
+	);
+
+	test.skipIf(typeof stringifyArg !== "function")(
+		"stringifyArg falls back to String(a) for circular references (catch branch)",
+		() => {
+			const cyc: Record<string, unknown> = {};
+			cyc.self = cyc;
+			// JSON.stringify throws on cycles → catch returns String(cyc),
+			// which is the canonical "[object Object]".
+			expect(stringifyArg?.(cyc)).toBe("[object Object]");
+		}
+	);
+
+	test.skipIf(typeof stringifyArg !== "function")(
+		"stringifyArg falls back to String(a) when JSON.stringify throws on a BigInt",
+		() => {
+			// BigInt is also not JSON-serializable — JSON.stringify(1n) throws
+			// `TypeError: Do not know how to serialize a BigInt`, which the
+			// catch branch handles by returning String(1n) → "1".
+			expect(stringifyArg?.(BigInt(1))).toBe("1");
+		}
+	);
 
 	test.skipIf(!ranInIsolation)(
 		"dbgVerbose writes a formatted line to the file stream (locks in the dbgVerbose body)",

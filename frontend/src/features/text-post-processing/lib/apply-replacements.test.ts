@@ -78,6 +78,30 @@ describe("applyDictionary", () => {
 		const out3 = applyDictionary("foo foo", [dict({ find: "foo", replace: "BAR" })]);
 		expect(out3).toBe("BAR BAR");
 	});
+
+	test("first compile (cache miss) and subsequent reuse (cache hit) both produce correct output (covers both branches of `?? compileAndCache`)", () => {
+		// Use a unique find string so the cache key is fresh on this run, which
+		// guarantees the LHS of `?? compileAndCache` evaluates to undefined and
+		// the RHS executes (cache-miss path). The follow-up call with the same
+		// shape hits the cache (LHS returns the stored RegExp, RHS skipped).
+		const unique = `zZqQ_${Math.random().toString(36).slice(2)}`;
+		const entry = dict({ find: unique, replace: "MATCHED" });
+		// First call — exercises compileAndCache (cache miss).
+		const missOut = applyDictionary(`pre ${unique} mid ${unique} end`, [entry]);
+		expect(missOut).toBe("pre MATCHED mid MATCHED end");
+		// Second call — exercises the cache hit branch.
+		const hitOut = applyDictionary(`again ${unique}`, [entry]);
+		expect(hitOut).toBe("again MATCHED");
+	});
+
+	test("whole-word + case-sensitive combo compiles a distinct regex (covers both ternaries' truthy branches together)", () => {
+		const out = applyDictionary("Cat cat Category", [
+			dict({ find: "cat", replace: "DOG", caseSensitive: true, wholeWord: true }),
+		]);
+		// Only the lowercase, whole-word "cat" matches: "Cat" fails case check,
+		// "Category" fails whole-word check.
+		expect(out).toBe("Cat DOG Category");
+	});
 });
 
 describe("applySnippets", () => {

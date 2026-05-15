@@ -4,6 +4,7 @@ import {
 	addSnippetEntrySchema,
 	appSettingsSchema,
 	audioSettingsSchema,
+	BUILTIN_TRANSFORMS,
 	dictionaryEntrySchema,
 	generalSettingsSchema,
 	hotkeySettingsSchema,
@@ -11,6 +12,7 @@ import {
 	modelSettingsSchema,
 	qualitySettingsSchema,
 	snippetEntrySchema,
+	transformSchema,
 } from "./settings-schema";
 
 describe("modelSettingsSchema defaults", () => {
@@ -623,6 +625,70 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 
 	test("timeout defaults to 5000", () => {
 		expect(llmSettingsSchema.parse({}).timeout).toBe(5000);
+	});
+
+	test("transforms default seeds from BUILTIN_TRANSFORMS, preserving order and values", () => {
+		// Locks the L204 `.default([...BUILTIN_TRANSFORMS])` shape. The default
+		// flows through `z.array(transformSchema)`, so each transform's own
+		// `.default("")` / `.default(false)` fills in any optional fields.
+		// We assert the full output equals the seeded built-ins after parsing —
+		// any mutation that drops the spread or swaps the source array would
+		// either change the count, the order, or the canonical field values.
+		const out = llmSettingsSchema.parse({}).transforms;
+		expect(out).toHaveLength(BUILTIN_TRANSFORMS.length);
+		expect(out).toEqual(BUILTIN_TRANSFORMS.map((t) => transformSchema.parse(t)));
+		// Re-assert the canonical built-in ids so the test fails closed if
+		// someone reorders or renames an entry in BUILTIN_TRANSFORMS without
+		// updating the rest of the codebase.
+		expect(out.map((t) => t.id)).toEqual(["polish", "prompt-engineer"]);
+		// Every default-seeded transform must report builtin: true so the UI
+		// can hide the delete affordance.
+		for (const t of out) {
+			expect(t.builtin).toBe(true);
+			expect(t.hotkey).toBe("");
+			expect(typeof t.prompt).toBe("string");
+			expect(t.prompt.length).toBeGreaterThan(0);
+		}
+	});
+
+	test("transforms default is a fresh array each parse — mutating one parse leaves the next intact", () => {
+		// Locks the L204 `[...BUILTIN_TRANSFORMS]` spread. Without it, every
+		// parse would share the same array reference and consumers that mutate
+		// (e.g. push a user-added transform) would leak across `parse({})`
+		// calls, corrupting the default for the next reader.
+		const a = llmSettingsSchema.parse({}).transforms;
+		a.push({
+			id: "leak",
+			name: "leak",
+			prompt: "",
+			hotkey: "",
+			builtin: false,
+		});
+		const b = llmSettingsSchema.parse({}).transforms;
+		expect(b).toHaveLength(BUILTIN_TRANSFORMS.length);
+		expect(b.find((t) => t.id === "leak")).toBeUndefined();
+	});
+
+	test("explicit transforms input is honoured (no double-defaulting)", () => {
+		// Locks the L204 contract: passing transforms explicitly bypasses the
+		// default but still flows through transformSchema (so each entry's
+		// optional fields get their per-field defaults).
+		const out = llmSettingsSchema.parse({
+			transforms: [{ id: "custom", name: "Custom" }],
+		}).transforms;
+		expect(out).toEqual([{ id: "custom", name: "Custom", prompt: "", hotkey: "", builtin: false }]);
+	});
+
+	test("BUILTIN_TRANSFORMS entries each parse cleanly through transformSchema", () => {
+		// Lock-down for the L175 BUILTIN_TRANSFORMS shape: if anyone shortens
+		// `id`/`name` to "" or drops the `prompt` body, transformSchema
+		// (.min(1) on id/name) will reject it here.
+		for (const t of BUILTIN_TRANSFORMS) {
+			const parsed = transformSchema.parse(t);
+			expect(parsed.id).toBe(t.id);
+			expect(parsed.name).toBe(t.name);
+			expect(parsed.builtin).toBe(true);
+		}
 	});
 });
 

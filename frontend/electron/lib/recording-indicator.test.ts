@@ -512,6 +512,41 @@ describe("updateRollingPeak rise/decay (mutation guards)", () => {
 	});
 });
 
+describe("generateAllModeIcons", () => {
+	test("invokes tryGenerateLevelIcons for each mode and logs total", () => {
+		// Drives lines 78-89 in recording-indicator.ts (the previously
+		// uncovered `generateAllModeIcons` body — CRAP 5.0 with CC=2).
+		// Passing a valid PNG base ensures `tryGenerateLevelIcons` returns a
+		// non-empty icon array per mode, so we cover both the loop body and
+		// the `logInitialized` call.
+		const base = makeMinimalPngBase();
+		const out = helpers.generateAllModeIcons(base);
+		// All three RecordingMode keys are present.
+		expect(Object.keys(out).sort()).toEqual(["listen", "ptt", "toggle"]);
+		// Each mode returned LEVELS+1=11 icons (loop body executed end-to-end).
+		expect(out.ptt?.length).toBe(11);
+		expect(out.toggle?.length).toBe(11);
+		expect(out.listen?.length).toBe(11);
+	});
+
+	test("returns empty arrays per mode when icon generation fails", () => {
+		// Drives the catch-path in tryGenerateLevelIcons inside the loop —
+		// confirms that even when PNG decoding throws (empty buffer), the
+		// function still populates every mode key with an empty array and
+		// calls logInitialized with total=0.
+		const brokenBase = {
+			isEmpty: () => false,
+			getSize: () => ({ width: 16, height: 16 }),
+			toPNG: () => Buffer.alloc(0),
+		} as unknown as Parameters<typeof helpers.generateAllModeIcons>[0];
+		const out = helpers.generateAllModeIcons(brokenBase);
+		expect(Object.keys(out).sort()).toEqual(["listen", "ptt", "toggle"]);
+		expect(out.ptt).toEqual([]);
+		expect(out.toggle).toEqual([]);
+		expect(out.listen).toEqual([]);
+	});
+});
+
 describe("blendRow x-bound (L162 mutation guard)", () => {
 	test("blends every pixel in the row, not the sentinel beyond it", () => {
 		// L162 mutation x <= width would over-blend (one extra pixel beyond

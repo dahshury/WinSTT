@@ -212,6 +212,18 @@ async function writeAndNotifyComplete(
 	});
 }
 
+function resolveCompleteOutputPath(
+	entry: PendingRequest | undefined,
+	fields: CompleteEventFields
+): string {
+	// Stryker disable next-line OptionalChaining: equivalent — callers only
+	// invoke this after `isPathMatch(fields.filePath, entry?.filePath)` returned
+	// true, which is only possible when `entry?.filePath` is a non-empty string
+	// (isPathMatch returns false for `expected === undefined`), hence `entry`
+	// is guaranteed defined and `entry?.outputPath` ≡ `entry.outputPath`.
+	return entry?.outputPath ?? buildOutputPath(fields.filePath, fields.fmt);
+}
+
 async function handleCompleteEvent(
 	event: Record<string, unknown>,
 	pendingRequests: Map<string, PendingRequest>,
@@ -250,12 +262,7 @@ async function handleCompleteEvent(
 		pendingRequests.delete(fields.requestId);
 		return;
 	}
-	// Stryker disable next-line OptionalChaining: equivalent — at this point
-	// `isPathMatch(fields.filePath, entry?.filePath)` returned true, which is
-	// only possible when `entry?.filePath` is a non-empty string (isPathMatch
-	// returns false for `expected === undefined`), hence `entry` is guaranteed
-	// defined and `entry?.outputPath` ≡ `entry.outputPath`.
-	const outputPath = entry?.outputPath ?? buildOutputPath(fields.filePath, fields.fmt);
+	const outputPath = resolveCompleteOutputPath(entry, fields);
 	await writeAndNotifyComplete(outputPath, fields, pendingRequests, safeSend);
 }
 
@@ -389,6 +396,7 @@ export const __file_transcribe_test_helpers__ = {
 	sanitizeFormat,
 	promptSaveLocation,
 	resolveOutputPath,
+	resolveCompleteOutputPath,
 	assertValidFilePath,
 	assertSupportedExtension,
 	assertFileAccessible,

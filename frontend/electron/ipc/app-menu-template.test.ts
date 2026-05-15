@@ -38,6 +38,27 @@ describe("normalizeAppMenuTemplate", () => {
 	});
 });
 
+describe("normalizeAppMenuTemplate filter pipeline", () => {
+	test("filters null items returned by normalizeOne from the mapped array", () => {
+		// Mixes non-record (null/string/number), empty-label items (returns null),
+		// separators, and valid normal items to exercise both branches of the
+		// .filter(isNotNull) predicate added when normalizeItems was simplified.
+		const result = normalizeAppMenuTemplate([
+			null,
+			"not-a-record",
+			42,
+			{ label: "" },
+			{ label: "   " },
+			{ type: "separator" },
+			{ label: "Keep" },
+		]);
+		expect(result).toEqual<NormalizedAppMenuItem[]>([
+			{ type: "separator" },
+			{ type: "normal", label: "Keep", enabled: true },
+		]);
+	});
+});
+
 describe("buildAppMenuTemplate", () => {
 	test("maps action ids to click handlers and keeps nested structure", () => {
 		const openCalls: string[] = [];

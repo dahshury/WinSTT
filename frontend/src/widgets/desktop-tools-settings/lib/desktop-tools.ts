@@ -53,15 +53,11 @@ function tryParseJson(source: string): { ok: true; value: unknown } | { ok: fals
 	}
 }
 
-export function parseAppMenuTemplateJson(source: string): MenuJsonParseResult {
-	const parsed = tryParseJson(source);
-	if (!parsed.ok) {
-		return parsed;
-	}
-	if (!Array.isArray(parsed.value)) {
+function validateMenuTemplate(value: unknown): MenuJsonParseResult {
+	if (!Array.isArray(value)) {
 		return { ok: false, error: "JSON root must be an array of menu items" };
 	}
-	const result = menuTemplateSchema.safeParse(parsed.value);
+	const result = menuTemplateSchema.safeParse(value);
 	if (!result.success) {
 		return {
 			ok: false,
@@ -69,6 +65,14 @@ export function parseAppMenuTemplateJson(source: string): MenuJsonParseResult {
 		};
 	}
 	return { ok: true, template: result.data };
+}
+
+export function parseAppMenuTemplateJson(source: string): MenuJsonParseResult {
+	const parsed = tryParseJson(source);
+	if (!parsed.ok) {
+		return parsed;
+	}
+	return validateMenuTemplate(parsed.value);
 }
 
 export function appendBounded<T>(values: readonly T[], next: T, maxSize: number): T[] {

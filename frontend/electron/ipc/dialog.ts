@@ -23,10 +23,14 @@ function normalizeOpenFileOptions(options: unknown): {
 async function handleOpenFile(options: unknown): Promise<string | null> {
 	const { title, filters } = normalizeOpenFileOptions(options);
 	const result = await dialog.showOpenDialog({ title, filters, properties: ["openFile"] });
-	// Stryker disable next-line ConditionalExpression: equivalent mutant — replacing `result.filePaths.length === 0` with `false` leaves the fall-through path returning `result.filePaths[0] ?? null`, and when filePaths is empty `undefined ?? null` is also `null`, so the observable return value is identical for the inputs that reach this branch.
-	if (result.canceled || result.filePaths.length === 0) {
+	if (result.canceled) {
 		return null;
 	}
+	// `filePaths[0]` is `string | undefined` under `noUncheckedIndexedAccess`;
+	// coalesce so an empty `filePaths` (Electron returns `[]` when no file was
+	// chosen even though `canceled === false` — observed on some Linux WMs and
+	// when `dialog.showOpenDialog` is invoked without a parent window) collapses
+	// to `null` instead of leaking `undefined` across the IPC boundary.
 	return result.filePaths[0] ?? null;
 }
 

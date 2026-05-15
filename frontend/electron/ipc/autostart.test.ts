@@ -130,6 +130,24 @@ describe("setupAutostartHandlers", () => {
 		expect(appState.setCalls.length).toBe(0);
 	});
 
+	test("autostart:set with undefined payload is dropped", () => {
+		setPlatform("win32");
+		const cbs = listeners.get("autostart:set") ?? [];
+		for (const cb of cbs) {
+			cb({}, undefined);
+		}
+		expect(appState.setCalls.length).toBe(0);
+	});
+
+	test("autostart:set with payload missing the enabled field is dropped", () => {
+		setPlatform("win32");
+		const cbs = listeners.get("autostart:set") ?? [];
+		for (const cb of cbs) {
+			cb({}, {});
+		}
+		expect(appState.setCalls.length).toBe(0);
+	});
+
 	test("autostart:set with enabled=false sets openAtLogin to false", () => {
 		setPlatform("darwin");
 		appState.loginItemSettings = { openAtLogin: true };

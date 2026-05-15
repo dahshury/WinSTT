@@ -1,17 +1,28 @@
 import fs from "node:fs";
 import path from "node:path";
-import { type BrowserWindow as BrowserWindowType, nativeImage, Tray } from "electron";
+import {
+	type BrowserWindow as BrowserWindowType,
+	type NativeImage,
+	nativeImage,
+	Tray,
+} from "electron";
 import { showTrayMenuAt } from "./tray-menu-window";
 
+function resolveIconFilename(): string {
+	return process.platform === "win32" ? "icon.ico" : "icon.png";
+}
+
+function loadTrayIcon(): NativeImage {
+	const iconPath = path.join(import.meta.dirname, "..", "build", resolveIconFilename());
+	if (!fs.existsSync(iconPath)) {
+		return nativeImage.createEmpty();
+	}
+	const icon = nativeImage.createFromPath(iconPath);
+	return icon.isEmpty() ? nativeImage.createEmpty() : icon;
+}
+
 export function setupTray(win: BrowserWindowType): Tray {
-	const preferredIconPath =
-		process.platform === "win32"
-			? path.join(import.meta.dirname, "..", "build", "icon.ico")
-			: path.join(import.meta.dirname, "..", "build", "icon.png");
-	const icon = fs.existsSync(preferredIconPath)
-		? nativeImage.createFromPath(preferredIconPath)
-		: nativeImage.createEmpty();
-	const tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+	const tray = new Tray(loadTrayIcon());
 
 	tray.setToolTip("WinSTT - Speech to Text");
 

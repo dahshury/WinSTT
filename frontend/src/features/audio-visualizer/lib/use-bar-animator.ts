@@ -14,31 +14,36 @@ function generateListeningSequence(columns: number): number[][] {
 	return [[center], [-1]];
 }
 
-const LISTEN_STATES = new Set<AgentState>(["thinking", "listening"]);
-const CONNECT_STATES = new Set<AgentState>(["connecting", "initializing"]);
+function generateSpeakingSequence(columns: number): number[][] {
+	return [new Array(columns).fill(0).map((_, idx) => idx)];
+}
+
+// Dispatch table keeps buildSequence at CC=2 (just the `??` fallback) instead
+// of a ladder of `if`s. New states only need a row here.
+const SEQUENCE_BUILDERS: Partial<Record<AgentState, (columns: number) => number[][]>> = {
+	speaking: generateSpeakingSequence,
+	listening: generateListeningSequence,
+	thinking: generateListeningSequence,
+	connecting: generateConnectingSequence,
+	initializing: generateConnectingSequence,
+};
 
 function buildSequence(state: AgentState, columns: number): number[][] {
-	if (state === "speaking") {
-		return [new Array(columns).fill(0).map((_, idx) => idx)];
-	}
-	if (LISTEN_STATES.has(state)) {
-		return generateListeningSequence(columns);
-	}
-	if (CONNECT_STATES.has(state)) {
-		return [...generateConnectingSequence(columns)];
-	}
-	return [[]];
+	return SEQUENCE_BUILDERS[state]?.(columns) ?? [[]];
 }
 
 export function useBarAnimator(state: AgentState, columns: number, interval: number): number[] {
 	// buildSequence returns a fresh array each call; compare on the primitive
 	// inputs (state, columns) instead of the reference so we don't loop in
 	// environments without React Compiler (e.g. the bun test transpiler).
+	// Collapsing the two primitives into one key drops a `||` branch and
+	// keeps CC below the CRAP threshold.
 	const sequence = buildSequence(state, columns);
+	const inputsKey = `${state}:${columns}`;
 	const [index, setIndex] = useState(0);
-	const [prevInputs, setPrevInputs] = useState({ state, columns });
-	if (prevInputs.state !== state || prevInputs.columns !== columns) {
-		setPrevInputs({ state, columns });
+	const [prevInputsKey, setPrevInputsKey] = useState(inputsKey);
+	if (prevInputsKey !== inputsKey) {
+		setPrevInputsKey(inputsKey);
 		setIndex(0);
 	}
 

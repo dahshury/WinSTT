@@ -321,6 +321,14 @@ function enqueueIfRouted(
 	return true;
 }
 
+function logDataEventArrival(type: string): void {
+	// Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: gate around dbgVerbose only — observable behavior unchanged
+	if (type !== "audio_level") {
+		// Stryker disable next-line StringLiteral: dbgVerbose() message is informational only
+		dbgVerbose("relay", `data-event: ${type}`);
+	}
+}
+
 export function processDataEvent(
 	event: Record<string, unknown>,
 	queues: DataEventQueues,
@@ -333,11 +341,7 @@ export function processDataEvent(
 		dbg("relay", "Data event WITHOUT type:", JSON.stringify(event));
 		return Promise.resolve();
 	}
-	// Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: gate around dbgVerbose only — observable behavior unchanged
-	if (type !== "audio_level") {
-		// Stryker disable next-line StringLiteral: dbgVerbose() message is informational only
-		dbgVerbose("relay", `data-event: ${type}`);
-	}
+	logDataEventArrival(type);
 	if (enqueueIfRouted(type, event, queues, ctx)) {
 		return Promise.resolve();
 	}
@@ -392,20 +396,24 @@ async function dispatchDataEvent(
 	handleSimpleRelayEvent(type, event, pickSenderForSimpleEvent(type, ctx));
 }
 
+function sendToWindowSafely(bw: BrowserWindow, channel: string, args: readonly unknown[]): void {
+	if (bw.isDestroyed()) {
+		return;
+	}
+	try {
+		bw.webContents.send(channel, ...args);
+	} catch (err) {
+		// A single hung/unresponsive renderer must not abort the broadcast —
+		// callers (e.g. handleRecordingStop) rely on subsequent statements
+		// like hideOverlay() running.
+		// Stryker disable next-line BlockStatement,StringLiteral: dbg() catch is a defensive log with no observable side effect
+		dbg("relay", `broadcast to window failed (${channel}):`, String(err));
+	}
+}
+
 function broadcastToAll(channel: string, ...args: unknown[]): void {
 	for (const bw of BrowserWindow.getAllWindows()) {
-		if (bw.isDestroyed()) {
-			continue;
-		}
-		try {
-			bw.webContents.send(channel, ...args);
-		} catch (err) {
-			// A single hung/unresponsive renderer must not abort the broadcast —
-			// callers (e.g. handleRecordingStop) rely on subsequent statements
-			// like hideOverlay() running.
-			// Stryker disable next-line BlockStatement,StringLiteral: dbg() catch is a defensive log with no observable side effect
-			dbg("relay", `broadcast to window failed (${channel}):`, String(err));
-		}
+		sendToWindowSafely(bw, channel, args);
 	}
 }
 
@@ -448,6 +456,8 @@ function logServerRealtimeConfig(): void {
 	);
 }
 
+const RECORDING_STATE_EVENT_TYPES = new Set(["recording_start", "recording_stop"]);
+
 /**
  * Determine which serial queue should handle a given data event type.
  * Returns "fullSentence", "recordingState", or "direct" (immediate dispatch).
@@ -456,10 +466,39 @@ function routeEventToQueue(type: string): "fullSentence" | "recordingState" | "d
 	if (type === "fullSentence") {
 		return "fullSentence";
 	}
-	if (type === "recording_start" || type === "recording_stop") {
+	if (RECORDING_STATE_EVENT_TYPES.has(type)) {
 		return "recordingState";
 	}
 	return "direct";
+}
+
+/**
+ * Derive the speaking-duration (ms) for a transcription history entry from the
+ * recording_start / recording_stop timestamps. Falls back to "now" for the stop
+ * boundary when stop hasn't been recorded yet (e.g. capture() arrives before
+ * the recording_stop event), and to zero duration when start is missing.
+ */
+function computeRecordingDurationMs(
+	lastRecordingStartMs: number,
+	lastRecordingStopMs: number,
+	now: number
+): number {
+	const stop = lastRecordingStopMs === 0 ? now : lastRecordingStopMs;
+	if (lastRecordingStartMs === 0) {
+		return 0;
+	}
+	return Math.max(0, stop - lastRecordingStartMs);
+}
+
+/**
+ * Broadcast a history entry to every renderer iff one was actually recorded.
+ * Extracted from setupRelay>capture so the if-branch lives outside the arrow
+ * (lowers the arrow's cyclomatic complexity).
+ */
+function broadcastHistoryEntry(entry: TranscriptionHistoryEntry | null): void {
+	if (entry) {
+		broadcastToAll(IPC.HISTORY_ADDED, entry);
+	}
 }
 
 export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
@@ -515,12 +554,13 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 			lastRecordingStopMs = Date.now();
 		},
 		capture: (text) => {
-			const stop = lastRecordingStopMs || Date.now();
-			const duration = lastRecordingStartMs > 0 ? Math.max(0, stop - lastRecordingStartMs) : 0;
+			const duration = computeRecordingDurationMs(
+				lastRecordingStartMs,
+				lastRecordingStopMs,
+				Date.now()
+			);
 			const entry = historyStore.record(text, duration);
-			if (entry) {
-				broadcastToAll(IPC.HISTORY_ADDED, entry);
-			}
+			broadcastHistoryEntry(entry);
 			lastRecordingStartMs = 0;
 			lastRecordingStopMs = 0;
 			return entry;
@@ -663,31 +703,36 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 }
 
 export const __relay_test_helpers__ = {
-	createContextCapture,
-	extractEventText,
-	hasLlmModel,
-	isLlmConfigured,
-	tryLlmProcess,
-	maybeRunLlm,
-	notifyEmptyResult,
-	pasteIfDictating,
-	shouldMuteForDictation,
-	pickSenderForSimpleEvent,
+	broadcastHistoryEntry,
 	broadcastToAll,
-	logServerRealtimeWarning,
-	logServerRealtimeError,
-	logServerRealtimeConfig,
+	computeRecordingDurationMs,
+	createContextCapture,
+	DATA_EVENT_HANDLERS,
 	dispatchDataEvent,
-	processDataEvent,
-	handleSimpleRelayEvent,
+	extractEventText,
+	handleAudioLevel,
 	handleFullSentence,
+	handleModelDownloadProgress,
+	handleRealtimeEvent,
 	handleRecordingStart,
 	handleRecordingStop,
-	handleRealtimeEvent,
-	handleAudioLevel,
-	handleModelDownloadProgress,
-	routeEventToQueue,
-	SIMPLE_RELAY_HANDLERS,
-	DATA_EVENT_HANDLERS,
+	handleSimpleRelayEvent,
+	hasLlmModel,
+	isLlmConfigured,
+	logDataEventArrival,
+	logServerRealtimeConfig,
+	logServerRealtimeError,
+	logServerRealtimeWarning,
+	maybeRunLlm,
+	notifyEmptyResult,
 	OVERLAY_RELEVANT_SIMPLE_TYPES,
+	pasteIfDictating,
+	pickSenderForSimpleEvent,
+	processDataEvent,
+	RECORDING_STATE_EVENT_TYPES,
+	routeEventToQueue,
+	sendToWindowSafely,
+	shouldMuteForDictation,
+	SIMPLE_RELAY_HANDLERS,
+	tryLlmProcess,
 };
