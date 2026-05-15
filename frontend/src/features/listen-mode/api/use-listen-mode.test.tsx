@@ -4,7 +4,12 @@ import { useConnectionStore } from "@/entities/connection";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import { useListenStore } from "../model/listen-store";
-import { applyLoopbackTransition, useListenMode, validateDevices } from "./use-listen-mode";
+import {
+	applyLoopbackTransition,
+	handleLoopbackListError,
+	useListenMode,
+	validateDevices,
+} from "./use-listen-mode";
 
 const originalApi = window.electronAPI;
 const initialSettings = useSettingsStore.getState().settings;
@@ -101,6 +106,40 @@ describe("applyLoopbackTransition", () => {
 		window.electronAPI = makeApi();
 		applyLoopbackTransition("ptt", true, null, "disconnected");
 		expect(sentChannels).not.toContain(IPC.LOOPBACK_STOP);
+	});
+});
+
+describe("handleLoopbackListError", () => {
+	const originalError = console.error;
+	let calls: unknown[][] = [];
+
+	beforeEach(() => {
+		calls = [];
+		console.error = (...args: unknown[]) => {
+			calls.push(args);
+		};
+	});
+
+	afterEach(() => {
+		console.error = originalError;
+	});
+
+	test("logs the error when the effect was not cancelled", () => {
+		const err = new Error("boom");
+		handleLoopbackListError(err, false);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.[1]).toBe(err);
+	});
+
+	test("logs non-Error rejection values", () => {
+		handleLoopbackListError("string-rejection", false);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.[1]).toBe("string-rejection");
+	});
+
+	test("does not log when the effect was cancelled", () => {
+		handleLoopbackListError(new Error("ignored"), true);
+		expect(calls).toHaveLength(0);
 	});
 });
 

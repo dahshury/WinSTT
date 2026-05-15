@@ -72,6 +72,17 @@ export function applyLoopbackTransition(
 	}
 }
 
+/**
+ * Logs a loopback device-list fetch failure unless the effect was cancelled.
+ * Extracted for testability — keeps the `.catch()` closure trivial.
+ */
+export function handleLoopbackListError(err: unknown, isCancelled: boolean): void {
+	if (isCancelled) {
+		return;
+	}
+	console.error("[useListenMode] Failed to fetch loopback devices:", err);
+}
+
 export function useListenMode(): void {
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const loopbackDeviceIndex = useSettingsStore(
@@ -115,12 +126,7 @@ export function useListenMode(): void {
 					console.warn("[useListenMode] Invalid devices response:", devices);
 				}
 			})
-			.catch((err: unknown) => {
-				if (isCancelled) {
-					return;
-				}
-				console.error("[useListenMode] Failed to fetch loopback devices:", err);
-			});
+			.catch((err: unknown) => handleLoopbackListError(err, isCancelled));
 
 		return () => {
 			isCancelled = true;

@@ -42,21 +42,35 @@ function loadRawTransforms(): RawTransform[] {
 }
 
 /**
+ * Parse a (non-empty) hotkey string into a key set, logging when the
+ * accelerator can't be parsed. Returns `null` on failure. Pulled out of
+ * `tryRegisterTransform` so the latter stays at CC ≤ 3.
+ */
+function parseHotkeyOrLog(hotkey: string, transformId: string): Set<number> | null {
+	const combo = parseAccelerator(hotkey);
+	if (combo) {
+		return combo;
+	}
+	dbg("transform-hotkeys", `ignored unparseable hotkey "${hotkey}" for ${transformId}`);
+	return null;
+}
+
+/**
  * Resolve a single raw transform entry to a registered combo, or `null` when
  * the hotkey is blank or unparseable. Extracted from `rebuildCombos` to keep
  * that function's cyclomatic complexity inside the CRAP-≤-4 budget.
  */
+function normalizeHotkey(raw: string | undefined): string {
+	return (raw ?? "").trim();
+}
+
 function tryRegisterTransform(entry: RawTransform): RegisteredCombo | null {
-	const hotkey = (entry.hotkey ?? "").trim();
+	const hotkey = normalizeHotkey(entry.hotkey);
 	if (!hotkey) {
 		return null;
 	}
-	const combo = parseAccelerator(hotkey);
-	if (!combo) {
-		dbg("transform-hotkeys", `ignored unparseable hotkey "${hotkey}" for ${entry.id}`);
-		return null;
-	}
-	return { transformId: entry.id, combo };
+	const combo = parseHotkeyOrLog(hotkey, entry.id);
+	return combo ? { transformId: entry.id, combo } : null;
 }
 
 function rebuildCombos(): void {
@@ -81,14 +95,18 @@ function isComboHeld(combo: Set<number>): boolean {
 	return true;
 }
 
+/**
+ * True when `entry` is freshly held: combo fully pressed and not already fired
+ * within this hold. Pulled out of `maybeFireCombos` so the orchestrator's
+ * cyclomatic complexity stays at CC ≤ 3.
+ */
+function isComboReadyToFire(entry: RegisteredCombo): boolean {
+	return !firedThisHold.has(entry.transformId) && isComboHeld(entry.combo);
+}
+
 function maybeFireCombos(): void {
-	for (const { transformId, combo } of combos) {
-		if (firedThisHold.has(transformId)) {
-			continue;
-		}
-		if (!isComboHeld(combo)) {
-			continue;
-		}
+	for (const entry of combos.filter(isComboReadyToFire)) {
+		const { transformId } = entry;
 		firedThisHold.add(transformId);
 		applyTransform(transformId).catch((err: unknown) => {
 			dbg(
@@ -104,17 +122,21 @@ function handleKeyDown(event: { keycode: number }): void {
 	maybeFireCombos();
 }
 
+/**
+ * True when this combo previously fired but is no longer fully held — i.e.
+ * the fired-flag is stale and must be cleared so re-press can re-fire.
+ * Pulled out of `handleKeyUp` so the orchestrator stays at CC ≤ 3.
+ */
+function isFiredFlagStale(entry: RegisteredCombo): boolean {
+	return firedThisHold.has(entry.transformId) && !isComboHeld(entry.combo);
+}
+
 function handleKeyUp(event: { keycode: number }): void {
 	pressed.delete(event.keycode);
 	// Clear any fired-flag whose combo is no longer fully held — once the
 	// user releases part of the combo, allow re-fire on next full press.
-	for (const { transformId, combo } of combos) {
-		if (!firedThisHold.has(transformId)) {
-			continue;
-		}
-		if (!isComboHeld(combo)) {
-			firedThisHold.delete(transformId);
-		}
+	for (const entry of combos.filter(isFiredFlagStale)) {
+		firedThisHold.delete(entry.transformId);
 	}
 }
 
