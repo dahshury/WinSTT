@@ -2,16 +2,16 @@
 name = "winstt-server"
 version = "0.1.0"
 requires-python = ">=3.11"
+# Core dependencies — no torch, no torchaudio, no faster_whisper. The
+# transcription stack is onnx-asr-only after Track B step 1. Pick a GPU
+# story via the ``cpu`` or ``gpu`` extra below.
 dependencies = [
     "kink>=0.6.5,<0.7",
     "pydantic>=2.0",
     "PyAudio>=0.2.14",
     "PyAudioWPatch>=0.2.12",
-    "faster-whisper>=1.1.1",
     "pvporcupine>=1.9.5",
     "webrtcvad-wheels>=2.0.14",
-    "torch",
-    "torchaudio",
     "scipy>=1.15.2",
     "openwakeword>=0.4.0",
     "numpy",
@@ -23,11 +23,19 @@ dependencies = [
     "colorama>=0.4.6",
     "websockets>=16.0",
     "onnx-asr[hub]",
-    # transformers v5 ships breaking renames in tokenizer/model APIs; pin to v4
-    # until DistilBertForSequenceClassification/DistilBertTokenizerFast usage in
-    # `distilbert_classifier.py` is verified against v5.
-    "transformers>=4.30,<5",
 ]
+
+[project.optional-dependencies]
+# CPU-only ORT — recommended for SaaS / horizontal scaling. Smallest install.
+cpu = ["onnxruntime>=1.18.1"]
+# GPU build — onnxruntime-gpu. Users provide system CUDA (Docker base image
+# ``nvidia/cuda:12.x-runtime`` is the canonical path). No torch needed; the
+# previous ``import torch`` DLL-loader hack is gone with the torch drop.
+gpu = ["onnxruntime-gpu>=1.18.1"]
+# Optional sentence-finished classifier (DistilBERT via transformers).
+# Fail-soft: the adapter falls back to ``is_available() == False`` if these
+# aren't installed.
+sentence-classifier = ["torch>=2.0", "transformers>=4.30,<5"]
 
 [dependency-groups]
 dev = [
@@ -38,21 +46,18 @@ dev = [
     "pre-commit>=3.0",
 ]
 
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
-
 [tool.uv]
 link-mode = "copy"
+# CPU and GPU ORT wheels are mutually exclusive — picking both would cause
+# DLL conflicts. uv enforces the constraint at resolution time.
+conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu128" }]
-torchaudio = [{ index = "pytorch-cu128" }]
 onnx-asr = { path = "../examples/onnx-asr", editable = true }
 
 [project.scripts]
 stt-server = "src.stt_server.server:main"
+dev = "src.stt_server.server:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -89,7 +94,7 @@ warn_no_return = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","faster_whisper.*","torch.*","torchaudio.*","scipy.*","soundfile.*","websocket.*","websockets.*","colorama.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnxruntime.*","transformers.*"]
+module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","soundfile.*","websocket.*","websockets.*","colorama.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnxruntime.*","torch.*","transformers.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

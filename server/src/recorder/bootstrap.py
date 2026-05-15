@@ -16,6 +16,7 @@ from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import (
     AudioChunkRecorded,
     AudioLevelComputed,
+    DeviceSwitchFailed,
     DownloadProgress,
     NoAudioDetected,
     RealtimeTranscriptionStabilized,
@@ -92,6 +93,7 @@ CALLBACK_EVENT_MAP: dict[str, type] = {
     "on_realtime_transcription_update": RealtimeTranscriptionUpdate,
     "on_realtime_transcription_stabilized": RealtimeTranscriptionStabilized,
     "on_audio_level": AudioLevelComputed,
+    "on_device_switch_failed": DeviceSwitchFailed,
 }
 
 
@@ -129,6 +131,20 @@ def wire_callback_with_audio(event_bus: EventBus, event_type: type, callback: Si
     event_bus.subscribe(event_type, _handler)
 
 
+def wire_callback_with_device_switch(
+    event_bus: EventBus,
+    event_type: type,
+    callback: Callable[[int, str, int | None], None],
+) -> None:
+    """Wire the on_device_switch_failed callback (3 args: requested, error, fallback)."""
+
+    def _handler(event: object) -> None:
+        e = cast(DeviceSwitchFailed, event)
+        callback(e.requested_index, e.error_message, e.fallback_index)
+
+    event_bus.subscribe(event_type, _handler)
+
+
 def wire_all_callbacks(event_bus: EventBus, callbacks: CallbackMap) -> None:
     """Bridge every legacy callback in ``callbacks`` to its matching domain event."""
     for cb_name, cb_func in callbacks.items():
@@ -143,6 +159,12 @@ def wire_all_callbacks(event_bus: EventBus, callbacks: CallbackMap) -> None:
             wire_callback_with_audio(event_bus, event_type, cast(SimpleCallback, cb_func))
         elif event_type is AudioLevelComputed:
             wire_callback_with_level(event_bus, event_type, cast(LevelCallback, cb_func))
+        elif event_type is DeviceSwitchFailed:
+            wire_callback_with_device_switch(
+                event_bus,
+                event_type,
+                cast(Callable[[int, str, int | None], None], cb_func),
+            )
         else:
             wire_callback(event_bus, event_type, cast(SimpleCallback, cb_func))
 
@@ -153,48 +175,26 @@ def build_transcriber(
     *,
     download_callbacks: DownloadCallbacks | None = None,
 ) -> ITranscriber:
-    """Build the appropriate transcriber based on model registry backend."""
-    from src.recorder.domain.model_registry import ModelCatalog, TranscriberBackend
+    """Build the transcriber. After the torch-drop refactor (Track B step 1),
+    only the onnx-asr backend is supported — the catalog's backend marker is
+    consulted for the resolved onnx model name but the construction path is
+    uniform.
+    """
+    from src.recorder.domain.model_registry import ModelCatalog
 
     progress_handler = download_callbacks.make_progress_handler() if download_callbacks else None
 
     catalog = ModelCatalog()
-    backend = config.transcription.backend
-    if backend == TranscriberBackend.ONNX_ASR.value:
-        resolved_backend = TranscriberBackend.ONNX_ASR
-    elif backend:
-        resolved_backend = TranscriberBackend.FASTER_WHISPER
-    else:
-        resolved_backend = catalog.get_backend(model_name)
+    info = catalog.get(model_name)
+    onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
+    quantization = config.transcription.onnx_quantization or None
 
-    if resolved_backend == TranscriberBackend.ONNX_ASR:
-        from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
+    from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
-        info = catalog.get(model_name)
-        onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
-        quantization = config.transcription.onnx_quantization or None
-        return OnnxAsrTranscriber(
-            model_name=onnx_name,
-            quantization=quantization,
-            on_download_progress=progress_handler,
-        )
-
-    from src.recorder.infrastructure.whisper_transcriber import WhisperTranscriber
-
-    return WhisperTranscriber(
-        model_path=model_name,
-        device=config.transcription.device,
-        compute_type=config.transcription.compute_type,
-        gpu_device_index=config.transcription.gpu_device_index,
-        download_root=config.transcription.download_root,
-        beam_size=config.transcription.beam_size,
-        initial_prompt=config.transcription.initial_prompt,
-        suppress_tokens=config.transcription.suppress_tokens,
-        batch_size=config.transcription.batch_size,
-        vad_filter=config.transcription.faster_whisper_vad_filter,
-        normalize_audio=config.transcription.normalize_audio,
+    return OnnxAsrTranscriber(
+        model_name=onnx_name,
+        quantization=quantization,
         on_download_progress=progress_handler,
-        cancel_check=download_callbacks.cancel_check if download_callbacks else None,
     )
 
 
@@ -203,42 +203,23 @@ def build_realtime_transcriber(
     *,
     download_callbacks: DownloadCallbacks | None = None,
 ) -> ITranscriber:
-    """Build the realtime transcriber based on model registry backend."""
-    from src.recorder.domain.model_registry import ModelCatalog, TranscriberBackend
+    """Build the realtime transcriber. Onnx-asr-only after Track B step 1."""
+    from src.recorder.domain.model_registry import ModelCatalog
 
     progress_handler = download_callbacks.make_progress_handler() if download_callbacks else None
 
     model_name = config.realtime.realtime_model_type
     catalog = ModelCatalog()
-    resolved_backend = catalog.get_backend(model_name)
+    info = catalog.get(model_name)
+    onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
+    quantization = config.transcription.onnx_quantization or None
 
-    if resolved_backend == TranscriberBackend.ONNX_ASR:
-        from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
+    from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
-        info = catalog.get(model_name)
-        onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
-        quantization = config.transcription.onnx_quantization or None
-        return OnnxAsrTranscriber(
-            model_name=onnx_name,
-            quantization=quantization,
-            on_download_progress=progress_handler,
-        )
-
-    from src.recorder.infrastructure.realtime_transcriber import RealtimeTranscriber
-
-    return RealtimeTranscriber(
-        model_path=model_name,
-        device=config.transcription.device,
-        compute_type=config.transcription.compute_type,
-        gpu_device_index=config.transcription.gpu_device_index,
-        download_root=config.transcription.download_root,
-        beam_size=config.realtime.beam_size_realtime,
-        initial_prompt=config.realtime.initial_prompt_realtime,
-        suppress_tokens=config.transcription.suppress_tokens,
-        batch_size=config.realtime.realtime_batch_size,
-        vad_filter=config.transcription.faster_whisper_vad_filter,
+    return OnnxAsrTranscriber(
+        model_name=onnx_name,
+        quantization=quantization,
         on_download_progress=progress_handler,
-        cancel_check=download_callbacks.cancel_check if download_callbacks else None,
     )
 
 
@@ -261,10 +242,29 @@ def bootstrap_di(
         from src.building_blocks.types import BufferSize, SampleRate
         from src.recorder.infrastructure.pyaudio_source import PyAudioSource
 
+        # Bridge the audio reader thread's switch-failed hook into the event
+        # bus so the WS server (and through it, the renderer) can react —
+        # surface the failure as a toast and revert the user's selection
+        # instead of leaving them with a silently-fallen-back stream.
+        def _on_device_switch_failed(
+            requested_index: int,
+            error_message: str,
+            fallback_index: int | None,
+        ) -> None:
+            event_bus.publish(
+                DeviceSwitchFailed(
+                    timestamp=clock.get_current_time(),
+                    requested_index=requested_index,
+                    error_message=error_message,
+                    fallback_index=fallback_index,
+                )
+            )
+
         audio_source = PyAudioSource(
             input_device_index=config.audio.input_device_index,
             target_sample_rate=SampleRate(config.audio.sample_rate),
             buffer_size=BufferSize(config.audio.buffer_size),
+            on_device_switch_failed=_on_device_switch_failed,
         )
     else:
         from src.building_blocks.types import BufferSize, SampleRate

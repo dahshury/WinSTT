@@ -15,8 +15,9 @@ WHISPER_IDS = [
     "small.en",
     "medium",
     "medium.en",
-    "large-v1",
-    "large-v2",
+    # large-v1 / large-v2 were dropped from the catalog when the Whisper
+    # entries were rerouted through onnx-asr — onnx-community only ships
+    # onnx exports of large-v3 / large-v3-turbo.
     "large-v3",
     "large-v3-turbo",
 ]
@@ -32,7 +33,10 @@ class TestModelCatalog:
         for model_id in WHISPER_IDS:
             info = catalog.get(model_id)
             assert info is not None, f"Missing whisper model: {model_id}"
-            assert info.backend == TranscriberBackend.FASTER_WHISPER
+            # Whisper entries route through onnx-asr after Track B step 1.
+            assert info.backend == TranscriberBackend.ONNX_ASR
+            assert info.onnx_model_name is not None
+            assert info.onnx_model_name.startswith("onnx-community/whisper-")
 
     def test_onnx_asr_models_present(self, catalog: ModelCatalog) -> None:
         onnx_ids = [
@@ -60,12 +64,16 @@ class TestModelCatalog:
             assert info.backend == TranscriberBackend.ONNX_ASR
 
     def test_get_backend_returns_correct_backend(self, catalog: ModelCatalog) -> None:
-        assert catalog.get_backend("tiny") == TranscriberBackend.FASTER_WHISPER
+        # Every catalog entry now routes through onnx-asr post Track B step 1.
+        assert catalog.get_backend("tiny") == TranscriberBackend.ONNX_ASR
         assert catalog.get_backend("nemo-parakeet-ctc-0.6b") == TranscriberBackend.ONNX_ASR
         assert catalog.get_backend("gigaam-v2-ctc") == TranscriberBackend.ONNX_ASR
 
-    def test_get_backend_defaults_to_faster_whisper_for_unknown(self, catalog: ModelCatalog) -> None:
-        assert catalog.get_backend("some-unknown-model") == TranscriberBackend.FASTER_WHISPER
+    def test_get_backend_defaults_to_onnx_asr_for_unknown(self, catalog: ModelCatalog) -> None:
+        """Unknown IDs fall through to onnx-asr — the resolver will then either
+        treat the ID as a full HF repo path or raise ``ModelNotSupportedError``.
+        """
+        assert catalog.get_backend("some-unknown-model") == TranscriberBackend.ONNX_ASR
 
     def test_to_dicts_returns_json_serializable(self, catalog: ModelCatalog) -> None:
         dicts = catalog.to_dicts()

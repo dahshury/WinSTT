@@ -5,8 +5,16 @@ from enum import Enum
 
 
 class TranscriberBackend(Enum):
-    FASTER_WHISPER = "faster_whisper"
+    """ASR backend identifier.
+
+    Post-Track-B-step-1 the server only supports ``ONNX_ASR``. The legacy
+    ``FASTER_WHISPER`` value is retained as an alias (it routes to the same
+    onnx-asr adapter) so persisted user configs from older builds don't
+    fail to deserialize.
+    """
+
     ONNX_ASR = "onnx_asr"
+    FASTER_WHISPER = "faster_whisper"  # alias — routed to ONNX_ASR by bootstrap
 
 
 @dataclass(frozen=True)
@@ -24,17 +32,24 @@ class ModelInfo:
 
 
 def _whisper_models() -> list[ModelInfo]:
-    multilingual = [
+    """Catalog entries for the OpenAI Whisper family, routed through onnx-asr.
+
+    User-facing IDs are unchanged from the legacy faster_whisper-era catalog
+    (so persisted settings keep deserializing) but each one now carries
+    ``onnx_model_name`` pointing at the matching ``onnx-community`` HF repo —
+    that's what onnx-asr's resolver actually loads.
+    """
+    # Only sizes shipped by onnx-community are included. large-v1 / v2 are
+    # absent because there's no upstream ONNX export for them.
+    multilingual: list[tuple[str, str, str]] = [
         ("tiny", "Whisper Tiny", "39M"),
         ("base", "Whisper Base", "74M"),
         ("small", "Whisper Small", "244M"),
         ("medium", "Whisper Medium", "769M"),
-        ("large-v1", "Whisper Large v1", "1.5B"),
-        ("large-v2", "Whisper Large v2", "1.5B"),
         ("large-v3", "Whisper Large v3", "1.5B"),
         ("large-v3-turbo", "Whisper Large v3 Turbo", "809M"),
     ]
-    english_only = [
+    english_only: list[tuple[str, str, str]] = [
         ("tiny.en", "Whisper Tiny (EN)", "39M"),
         ("base.en", "Whisper Base (EN)", "74M"),
         ("small.en", "Whisper Small (EN)", "244M"),
@@ -46,12 +61,13 @@ def _whisper_models() -> list[ModelInfo]:
             ModelInfo(
                 id=model_id,
                 display_name=name,
-                backend=TranscriberBackend.FASTER_WHISPER,
+                backend=TranscriberBackend.ONNX_ASR,
                 family="whisper",
                 languages=[],
                 supports_language_detection=True,
                 size_label=size,
                 supports_realtime=True,
+                onnx_model_name=f"onnx-community/whisper-{model_id}",
                 description=f"OpenAI Whisper {model_id} ({size} params)",
             )
         )
@@ -60,12 +76,13 @@ def _whisper_models() -> list[ModelInfo]:
             ModelInfo(
                 id=model_id,
                 display_name=name,
-                backend=TranscriberBackend.FASTER_WHISPER,
+                backend=TranscriberBackend.ONNX_ASR,
                 family="whisper",
                 languages=["en"],
                 supports_language_detection=False,
                 size_label=size,
                 supports_realtime=True,
+                onnx_model_name=f"onnx-community/whisper-{model_id}",
                 description=f"OpenAI Whisper {model_id} ({size} params, English only)",
             )
         )
@@ -230,7 +247,7 @@ class ModelCatalog:
     def get_backend(self, model_id: str) -> TranscriberBackend:
         info = self._models.get(model_id)
         if info is None:
-            return TranscriberBackend.FASTER_WHISPER
+            return TranscriberBackend.ONNX_ASR
         return info.backend
 
     def list_all(self) -> list[ModelInfo]:
