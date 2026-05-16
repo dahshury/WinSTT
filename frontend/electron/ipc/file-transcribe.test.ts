@@ -58,18 +58,25 @@ mock.module("node:fs", () => ({
 
 import { storeMock } from "@test/mocks/store";
 
-// Per-test override map for getStoreValue. Without an override, returns "txt"
-// for backward compat with existing tests.
+// Per-test override map for getStoreValue. Without an override, fall through
+// to the COMPLETE shared store mock (whose `general.fileTranscriptionFormat`
+// default is already "txt", preserving existing behavior). A blanket
+// `return "txt"` here would poison sibling test files that share bun's
+// process-global `../lib/store` cache (e.g. transforms.test.ts reading
+// `llm.transforms` would get the string "txt" instead of the array it set).
 const storeValueOverrides = new Map<string, unknown>();
-mock.module("../lib/store", () => ({
-	...storeMock(),
-	getStoreValue: (key: string) => {
-		if (storeValueOverrides.has(key)) {
-			return storeValueOverrides.get(key);
-		}
-		return "txt";
-	},
-}));
+mock.module("../lib/store", () => {
+	const base = storeMock();
+	return {
+		...base,
+		getStoreValue: (key: string) => {
+			if (storeValueOverrides.has(key)) {
+				return storeValueOverrides.get(key);
+			}
+			return base.getStoreValue(key);
+		},
+	};
+});
 
 const {
 	transcribeFile,

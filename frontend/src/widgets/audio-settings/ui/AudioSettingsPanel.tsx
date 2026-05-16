@@ -1,20 +1,22 @@
 "use client";
 
-import { Mic01Icon, VoiceIdIcon } from "@hugeicons/core-free-icons";
+import { KeyboardIcon, Mic01Icon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { useMemo } from "react";
 import { useInputDevices } from "@/entities/audio-device";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
+import { HotkeyRecorder } from "@/features/record-hotkey";
 import { FormControl } from "@/shared/ui/form-control";
-import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Select, type SelectOption } from "@/shared/ui/select";
-import { Slider } from "@/shared/ui/slider";
 
 export function AudioSettingsPanel() {
 	const audio = useSettingsStore((s) => s.settings.audio);
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const update = useSettingsStore((s) => s.updateAudioSettings);
+	const hotkey = useSettingsStore((s) => s.settings.hotkey);
+	const updateHotkey = useSettingsStore((s) => s.updateHotkeySettings);
 	const t = useTranslations("audio");
+	const th = useTranslations("hotkey");
 	const { devices, defaultDevice } = useInputDevices();
 	const deviceOptions = useMemo<SelectOption[]>(() => {
 		const defaultLabel = defaultDevice
@@ -55,74 +57,17 @@ export function AudioSettingsPanel() {
 				</SettingSection>
 			)}
 
-			{/* ── Voice Activity Detection ─────────────────────── */}
-			<SettingSection
-				icon={VoiceIdIcon}
-				onToggle={(v) => update({ sileroDeactivityDetection: v })}
-				title={t("vad")}
-				toggled={audio?.sileroDeactivityDetection ?? true}
-			>
-				<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+			{/* ── Hotkey ─────────────────────────────────────────── */}
+			<SettingSection icon={KeyboardIcon} title={th("configuration")}>
+				<div className="py-2">
 					<FormControl
-						caption={t("sileroSensitivityCaption")}
-						label={t("sileroSensitivity")}
-						tooltip={t("sileroSensitivityTooltip")}
+						caption={th("pushToTalkKeyCaption")}
+						label={th("pushToTalkKey")}
+						tooltip={th("pushToTalkKeyTooltip")}
 					>
-						<div className="flex items-center gap-2">
-							<Slider
-								max={1}
-								min={0}
-								onChange={(v) => update({ sileroSensitivity: v })}
-								step={0.05}
-								value={audio?.sileroSensitivity ?? 0.4}
-							/>
-							<span className="w-10 text-right font-mono text-foreground-muted text-xs">
-								{(audio?.sileroSensitivity ?? 0.4).toFixed(2)}
-							</span>
-						</div>
-					</FormControl>
-					<FormControl
-						caption={t("webrtcSensitivityCaption")}
-						label={t("webrtcSensitivity")}
-						tooltip={t("webrtcSensitivityTooltip")}
-					>
-						<div className="flex items-center gap-2">
-							<Slider
-								max={3}
-								min={0}
-								onChange={(v) => update({ webrtcSensitivity: v })}
-								step={1}
-								value={audio?.webrtcSensitivity ?? 3}
-							/>
-							<span className="w-10 text-right font-mono text-foreground-muted text-xs">
-								{audio?.webrtcSensitivity ?? 3}
-							</span>
-						</div>
-					</FormControl>
-					{(recordingMode === "toggle" || recordingMode === "listen") && (
-						<FormControl
-							caption={t("postSpeechSilenceCaption")}
-							label={t("postSpeechSilence")}
-							tooltip={t("postSpeechSilenceTooltip")}
-						>
-							<NumberStepper
-								min={0.1}
-								onChange={(v) => update({ postSpeechSilenceDuration: v })}
-								step={0.1}
-								value={audio?.postSpeechSilenceDuration ?? 0.7}
-							/>
-						</FormControl>
-					)}
-					<FormControl
-						caption={t("minRecordingLengthCaption")}
-						label={t("minRecordingLength")}
-						tooltip={t("minRecordingLengthTooltip")}
-					>
-						<NumberStepper
-							min={0.1}
-							onChange={(v) => update({ minLengthOfRecording: v })}
-							step={0.1}
-							value={audio?.minLengthOfRecording ?? 1.1}
+						<HotkeyRecorder
+							currentKey={hotkey?.pushToTalkKey ?? "LCtrl+LMeta"}
+							onKeyRecorded={(key) => updateHotkey({ pushToTalkKey: key })}
 						/>
 					</FormControl>
 				</div>

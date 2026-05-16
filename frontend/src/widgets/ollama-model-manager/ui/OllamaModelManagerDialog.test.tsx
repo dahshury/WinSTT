@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { ipcClientMock } from "@test/mocks/ipc-client";
 import { act, fireEvent, render } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 
@@ -11,21 +12,34 @@ const cancelPullMock = mock(async (_name: string) => ({ cancelled: true }));
 const deleteModelMock = mock(async (_name: string) => ({ success: true }));
 const noop = () => undefined;
 
+// Spread the COMPLETE, behavior-faithful ipc-client fake, then override only
+// the exports this suite controls. bun:test's `mock.module` is process-global
+// and never torn down, so a partial shim leaks an incomplete module into
+// every later test file. `ipcClientMock()` exposes every real export and
+// routes each through `window.electronAPI` exactly as the real module, so the
+// leak is harmless regardless of file order.
 mock.module("@/shared/api/ipc-client", () => ({
+	...ipcClientMock(),
 	fetchOllamaModels: async () => ({ models: [], reachable: true }),
 	onLlmCatalog: () => noop,
 	onOllamaPullProgress: () => noop,
 	pullOllamaModel: pullModelMock,
 	cancelOllamaModelPull: cancelPullMock,
 	deleteOllamaModel: deleteModelMock,
-	fetchOpenRouterModels: async () => ({ models: [], reachable: false }),
-	fetchModelCatalog: async () => [],
-	onModelCatalog: () => noop,
 }));
 
 const dlg = await import("./OllamaModelManagerDialog");
 const OllamaModelManagerDialog = dlg.OllamaModelManagerDialog;
 const helpers = dlg.__ollama_model_manager_test_helpers__;
+
+// The installed-models list comes from the global llm-catalog Zustand store.
+// Sibling suites populate it and bun:test never isolates module state, so a
+// leaked non-empty list makes the "no models installed" empty-state test fail
+// purely on file order. Reset to empty before every test in this file.
+const { useLlmCatalogStore } = await import("@/entities/llm-catalog/model/llm-catalog-store");
+beforeEach(() => {
+	useLlmCatalogStore.setState({ models: [] });
+});
 
 // ---------------------------------------------------------------------------
 // Stub translate fn for helper tests (no i18n context needed).

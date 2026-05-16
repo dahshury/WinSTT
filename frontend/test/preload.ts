@@ -3,6 +3,53 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 GlobalRegistrator.register();
 
+// happy-dom does not implement the Web Animations API. Base UI's ScrollArea
+// viewport schedules a deferred `viewport.getAnimations({ subtree: true })`
+// via a 0ms timer; that timer frequently fires AFTER the test that mounted
+// the ScrollArea has finished, so the `TypeError: getAnimations is not a
+// function` surfaces inside whatever unrelated test happens to be running —
+// turning one ScrollArea render into a flaky failure somewhere else entirely.
+// Polyfilling it to return no animations makes the deferred callback a
+// harmless no-op regardless of which test it lands in.
+const noAnimations = function getAnimations(): Animation[] {
+	return [];
+};
+for (const proto of [
+	typeof Element === "undefined" ? undefined : Element.prototype,
+	typeof Document === "undefined" ? undefined : Document.prototype,
+]) {
+	if (proto && typeof (proto as { getAnimations?: unknown }).getAnimations !== "function") {
+		Object.defineProperty(proto, "getAnimations", {
+			configurable: true,
+			writable: true,
+			value: noAnimations,
+		});
+	}
+}
+
+// React commits deletion effects asynchronously. When a suite mounts a tree
+// and the file ends (or the global afterEach brute-clears <body>) before
+// React flushes those effects, the deferred `removeChild` runs during a LATER
+// test against a node whose parent is already gone. happy-dom throws a hard
+// `DOMException: The node to be removed is not a child of this node`, which
+// bun:test reports as an "unhandled error between tests" and pins on whatever
+// innocent test is running then (the flaky OverlayPage failure). Browsers
+// would throw too, but React never hits this in a real DOM because it owns
+// the container. Make removeChild lenient ONLY for the not-a-child case so a
+// leaked async unmount degrades to a no-op instead of poisoning the next test.
+if (typeof Node !== "undefined") {
+	const proto = Node.prototype as unknown as {
+		removeChild: <T extends Node>(child: T) => T;
+	};
+	const realRemoveChild = proto.removeChild;
+	proto.removeChild = function leniently<T extends Node>(this: Node, child: T): T {
+		if (child == null || (child as unknown as { parentNode?: Node | null }).parentNode !== this) {
+			return child;
+		}
+		return realRemoveChild.call(this, child) as T;
+	};
+}
+
 // @testing-library/react does not auto-cleanup under bun:test, and importing
 // `cleanup` from @testing-library/react in this preload tears down the
 // happy-dom global document between tests. Strip mounted React roots manually

@@ -325,8 +325,26 @@ describe("generalSettingsSchema defaults (lock-down)", () => {
 		expect(generalSettingsSchema.parse({}).startMinimized).toBe(false);
 	});
 
-	test("muteSystemAudioWhileDictating defaults to false", () => {
-		expect(generalSettingsSchema.parse({}).muteSystemAudioWhileDictating).toBe(false);
+	test("systemAudioReductionWhileDictating defaults to 0 (off)", () => {
+		expect(generalSettingsSchema.parse({}).systemAudioReductionWhileDictating).toBe(0);
+	});
+
+	test("systemAudioReductionWhileDictating accepts an in-range percent", () => {
+		expect(
+			generalSettingsSchema.parse({ systemAudioReductionWhileDictating: 80 })
+				.systemAudioReductionWhileDictating
+		).toBe(80);
+	});
+
+	test("systemAudioReductionWhileDictating falls back to 0 on out-of-range / bad input", () => {
+		expect(
+			generalSettingsSchema.parse({ systemAudioReductionWhileDictating: 999 })
+				.systemAudioReductionWhileDictating
+		).toBe(0);
+		expect(
+			generalSettingsSchema.parse({ systemAudioReductionWhileDictating: "nope" })
+				.systemAudioReductionWhileDictating
+		).toBe(0);
 	});
 
 	test("recordingSound defaults to true", () => {

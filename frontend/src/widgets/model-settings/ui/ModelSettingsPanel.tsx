@@ -4,34 +4,27 @@ import { AiChat02Icon, AiMagicIcon, AiSettingIcon, CpuIcon } from "@hugeicons/co
 import { useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConnectionStore } from "@/entities/connection";
-import {
-	buildModelOpts,
-	buildRealtimeOpts,
-	useCatalogStore,
-	useModelStateStore,
-} from "@/entities/model-catalog";
+import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { onModelSwapFailed, sttReloadModel } from "@/shared/api/ipc-client";
-import { COMPUTE_TYPES, LANGUAGES, WHISPER_MODELS } from "@/shared/config/defaults";
+import { LANGUAGES, type OnnxQuantization } from "@/shared/config/defaults";
+import { formatBytes } from "@/shared/lib/format-bytes";
 import { FormControl } from "@/shared/ui/form-control";
 import { Modal } from "@/shared/ui/modal";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
-import { Select } from "@/shared/ui/select";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
+import {
+	isRealtimeViable,
+	resolveQuantCache,
+	SttModelSelector,
+} from "@/widgets/stt-model-selector";
 
-function formatBytes(bytes: number): string {
-	if (bytes <= 0) {
-		return "unknown";
-	}
-	const gb = bytes / (1024 * 1024 * 1024);
-	if (gb >= 1) {
-		return `${gb.toFixed(1)} GB`;
-	}
-	const mb = bytes / (1024 * 1024);
-	return `${mb.toFixed(0)} MB`;
+/** Byte size with this widget's legacy `<= 0 → "unknown"` sentinel. */
+function sizeLabel(bytes: number | null | undefined): string {
+	return formatBytes(bytes) ?? "unknown";
 }
 
 export interface ModelSettingsPanelProps {
@@ -47,18 +40,24 @@ type UpdateModelFn = SettingsStoreState["updateModelSettings"];
 type UpdateQualityFn = SettingsStoreState["updateQualitySettings"];
 
 type DeviceValue = "auto" | "cpu";
+type CatalogModels = ReturnType<typeof useCatalogStore.getState>["models"];
+type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
+type SystemInfo = ReturnType<typeof useModelStateStore.getState>["systemInfo"];
 
 interface MainModelSectionProps {
-	computeOpts: SelectOption[];
+	catalogLoaded: boolean;
+	catalogModels: CatalogModels;
+	currentQuantization: OnnxQuantization;
 	deviceOpts: SwitcherOption<DeviceValue>[];
 	deviceValue: DeviceValue;
 	gpuAvailable: boolean;
-	handleModelChange: (v: string) => void;
+	handleModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	isWhisperBackend: boolean;
 	langOpts: SelectOption[];
-	modelOpts: SelectOption[];
 	selectedModel: string;
 	settings: ModelSettings | undefined;
+	statesById: StatesById;
+	systemInfo: SystemInfo;
 	t: TFn;
 	update: UpdateModelFn;
 }
@@ -67,26 +66,35 @@ function MainModelSection({
 	t,
 	settings,
 	update,
-	modelOpts,
-	langOpts,
-	computeOpts,
+	catalogModels,
+	catalogLoaded,
+	statesById,
+	systemInfo,
+	currentQuantization,
 	deviceOpts,
 	deviceValue,
 	gpuAvailable,
 	isWhisperBackend,
+	langOpts,
 	selectedModel,
 	handleModelChange,
 }: MainModelSectionProps): ReactNode {
 	return (
 		<SettingSection icon={AiChat02Icon} title={t("mainModel")}>
 			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
-				<FormControl caption={t("modelCaption")} label={t("model")} tooltip={t("modelTooltip")}>
-					<SearchableSelect
-						onChange={handleModelChange}
-						options={modelOpts}
-						value={selectedModel}
-					/>
-				</FormControl>
+				<div className="col-span-2">
+					<FormControl caption={t("modelCaption")} label={t("model")} tooltip={t("modelTooltip")}>
+						<SttModelSelector
+							currentQuantization={currentQuantization}
+							isLoading={!catalogLoaded}
+							models={catalogModels}
+							onChange={handleModelChange}
+							statesById={statesById}
+							systemInfo={systemInfo}
+							value={selectedModel}
+						/>
+					</FormControl>
+				</div>
 				<FormControl caption={t("languageCaption")} label={t("language")}>
 					<SearchableSelect
 						onChange={(v) => update({ language: v })}
@@ -94,19 +102,6 @@ function MainModelSection({
 						value={settings?.language ?? "en"}
 					/>
 				</FormControl>
-				{isWhisperBackend && (
-					<FormControl
-						caption={t("computeTypeCaption")}
-						label={t("computeType")}
-						tooltip={t("computeTypeTooltip")}
-					>
-						<Select
-							onChange={(v) => update({ computeType: v as (typeof COMPUTE_TYPES)[number] })}
-							options={computeOpts}
-							value={settings?.computeType ?? "default"}
-						/>
-					</FormControl>
-				)}
 				<FormControl
 					caption={gpuAvailable ? t("deviceCaptionGpu") : t("deviceCaptionNoGpu")}
 					label={t("device")}
@@ -138,13 +133,17 @@ function MainModelSection({
 }
 
 interface RealtimeModelSectionProps {
-	handleRealtimeModelChange: (v: string) => void;
+	catalogLoaded: boolean;
+	catalogModels: CatalogModels;
+	currentQuantization: OnnxQuantization;
+	handleRealtimeModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	isWhisperBackend: boolean;
 	onToggle: (v: boolean) => void;
 	quality: QualitySettings | undefined;
 	realtimeEnabled: boolean;
-	realtimeOpts: SelectOption[];
 	settings: ModelSettings | undefined;
+	statesById: StatesById;
+	systemInfo: SystemInfo;
 	t: TFn;
 	update: UpdateModelFn;
 	updateQuality: UpdateQualityFn;
@@ -156,7 +155,11 @@ function RealtimeModelSection({
 	update,
 	quality,
 	updateQuality,
-	realtimeOpts,
+	catalogModels,
+	catalogLoaded,
+	statesById,
+	systemInfo,
+	currentQuantization,
 	realtimeEnabled,
 	onToggle,
 	isWhisperBackend,
@@ -198,18 +201,26 @@ function RealtimeModelSection({
 						value={quality?.realtimeProcessingPause ?? 0.02}
 					/>
 				</FormControl>
-				<FormControl
-					caption={t("realtimeModelCaption")}
-					disabled={useMainModel}
-					label={t("realtimeModel")}
-					tooltip={t("realtimeModelTooltip")}
-				>
-					<SearchableSelect
-						onChange={handleRealtimeModelChange}
-						options={realtimeOpts}
-						value={settings?.realtimeModel ?? "tiny"}
-					/>
-				</FormControl>
+				<div className="col-span-2">
+					<FormControl
+						caption={t("realtimeModelCaption")}
+						disabled={useMainModel}
+						label={t("realtimeModel")}
+						tooltip={t("realtimeModelTooltip")}
+					>
+						<SttModelSelector
+							currentQuantization={currentQuantization}
+							disabled={useMainModel}
+							isLoading={!catalogLoaded}
+							models={catalogModels}
+							onChange={handleRealtimeModelChange}
+							prefilter={isRealtimeViable}
+							statesById={statesById}
+							systemInfo={systemInfo}
+							value={settings?.realtimeModel ?? "tiny"}
+						/>
+					</FormControl>
+				</div>
 				{isWhisperBackend && (
 					<FormControl
 						caption={t("realtimeBeamSizeCaption")}
@@ -231,27 +242,6 @@ function RealtimeModelSection({
 	);
 }
 
-function toOpts(items: readonly string[]): SelectOption[] {
-	return items.map((v) => ({ id: v, label: v }));
-}
-
-const FALLBACK_MODEL_OPTS = toOpts(WHISPER_MODELS);
-
-function buildComputeOpts(t: TFn): SelectOption[] {
-	const labels: Record<string, string> = {
-		default: t("computeDefaultLabel"),
-		auto: t("computeAutoLabel"),
-		int8: "int8",
-		int8_float16: "int8_float16",
-		int8_float32: "int8_float32",
-		int8_bfloat16: "int8_bfloat16",
-		int16: "int16",
-		float16: "float16",
-		float32: "float32",
-		bfloat16: "bfloat16",
-	};
-	return COMPUTE_TYPES.map((v) => ({ id: v, label: labels[v] ?? v }));
-}
 const ALL_LANG_OPTS = LANGUAGES.map((l) => ({ id: l.code, label: l.name }));
 function buildDeviceOpts(t: TFn, gpuAvailable: boolean): SwitcherOption<DeviceValue>[] {
 	const cpu: SwitcherOption<DeviceValue> = {
@@ -275,7 +265,6 @@ export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
 	const gpuAvailable = gpuInfo?.available ?? true;
 	const t = useTranslations("model");
 	const deviceOpts = useMemo(() => buildDeviceOpts(t, gpuAvailable), [t, gpuAvailable]);
-	const computeOpts = useMemo(() => buildComputeOpts(t), [t]);
 	const deviceValue: DeviceValue = gpuAvailable ? (settings?.device ?? "auto") : "cpu";
 
 	const catalogModels = useCatalogStore((s) => s.models);
@@ -293,25 +282,10 @@ export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
 		refreshModelState();
 	}, [refreshModelState]);
 
-	const modelOpts = useMemo(
-		() =>
-			catalogLoaded && catalogModels.length > 0
-				? buildModelOpts(catalogModels, { statesById, systemInfo })
-				: FALLBACK_MODEL_OPTS,
-		[catalogLoaded, catalogModels, statesById, systemInfo]
-	);
-
-	const realtimeOpts = useMemo(
-		() =>
-			catalogLoaded && catalogModels.length > 0
-				? buildRealtimeOpts(catalogModels, { statesById, systemInfo })
-				: FALLBACK_MODEL_OPTS,
-		[catalogLoaded, catalogModels, statesById, systemInfo]
-	);
-
 	const selectedModel = settings?.model ?? "large-v2";
 	const selectedInfo = getModel(selectedModel);
 	const isWhisperBackend = !selectedInfo || selectedInfo.backend === "faster_whisper";
+	const currentQuantization = (settings?.onnxQuantization ?? "") as OnnxQuantization;
 
 	const langOpts = useMemo(() => {
 		const supported = selectedInfo?.languages;
@@ -335,68 +309,118 @@ export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
 		kind: "main" | "realtime";
 		modelId: string;
 		previousModelId: string;
+		quantization?: OnnxQuantization;
 	}
 	const [pendingDownload, setPendingDownload] = useState<PendingDownload | null>(null);
 
 	const issueSwap = useCallback(
-		(kind: "main" | "realtime", value: string, previous: string) => {
+		(
+			kind: "main" | "realtime",
+			value: string,
+			previous: string,
+			quantization?: OnnxQuantization
+		) => {
+			const quantizationChanging =
+				quantization !== undefined && quantization !== currentQuantization;
 			if (kind === "main") {
 				const info = getModel(value);
 				prevMainModelRef.current = previous;
-				if (info) {
-					update({ model: value, backend: info.backend });
-				} else {
-					update({ model: value });
+				const patch: Parameters<UpdateModelFn>[0] = info
+					? { model: value, backend: info.backend }
+					: { model: value };
+				if (quantizationChanging) {
+					patch.onnxQuantization = quantization;
 				}
+				update(patch);
 			} else {
 				prevRealtimeModelRef.current = previous;
-				update({ realtimeModel: value });
+				const patch: Parameters<UpdateModelFn>[0] = { realtimeModel: value };
+				if (quantizationChanging) {
+					patch.onnxQuantization = quantization;
+				}
+				update(patch);
 			}
-			sttReloadModel(kind, value);
+			// model.onnxQuantization is a STARTUP_ONLY key — touching it triggers a
+			// full server restart that boots with the new quantization (and the new
+			// model field). Skip the hot-swap call to avoid racing the restart.
+			if (!quantizationChanging) {
+				sttReloadModel(kind, value);
+			}
 		},
-		[update, getModel]
+		[update, getModel, currentQuantization]
 	);
 
 	const handleModelChange = useCallback(
-		(v: string) => {
+		(v: string, quantization?: OnnxQuantization) => {
 			const currentModel = settings?.model ?? selectedModel;
+			const quantizationChanging =
+				quantization !== undefined && quantization !== currentQuantization;
 			if (v === currentModel) {
+				// Pure quantization swap on the already-loaded model. Push the new
+				// value; the STARTUP_ONLY restart handles the rest.
+				if (quantizationChanging) {
+					update({ onnxQuantization: quantization });
+				}
 				return;
 			}
-			// If the model isn't already on disk, prompt before kicking off
-			// the multi-GB download. Cached / partial / unknown-cache models
-			// get the immediate swap path.
+			// If the *target precision* isn't already on disk, prompt before
+			// kicking off the download — a model can be cached at int8 but not
+			// at fp16, so check the quantization the swap will actually load.
 			const state = statesById[v];
-			if (state && state.cache.state !== "cached") {
-				setPendingDownload({ kind: "main", modelId: v, previousModelId: currentModel });
+			const targetQuant = quantization ?? currentQuantization;
+			const targetCache = resolveQuantCache(state, targetQuant);
+			if (state && targetCache?.state !== "cached") {
+				setPendingDownload({
+					kind: "main",
+					modelId: v,
+					previousModelId: currentModel,
+					quantization,
+				});
 				return;
 			}
-			issueSwap("main", v, currentModel);
+			issueSwap("main", v, currentModel, quantization);
 		},
-		[issueSwap, statesById, settings?.model, selectedModel]
+		[issueSwap, statesById, settings?.model, selectedModel, currentQuantization, update]
 	);
 
 	const handleRealtimeModelChange = useCallback(
-		(v: string) => {
+		(v: string, quantization?: OnnxQuantization) => {
 			const current = settings?.realtimeModel ?? "";
+			const quantizationChanging =
+				quantization !== undefined && quantization !== currentQuantization;
 			if (v === current) {
+				if (quantizationChanging) {
+					update({ onnxQuantization: quantization });
+				}
 				return;
 			}
 			const state = statesById[v];
-			if (state && state.cache.state !== "cached") {
-				setPendingDownload({ kind: "realtime", modelId: v, previousModelId: current });
+			const targetQuant = quantization ?? currentQuantization;
+			const targetCache = resolveQuantCache(state, targetQuant);
+			if (state && targetCache?.state !== "cached") {
+				setPendingDownload({
+					kind: "realtime",
+					modelId: v,
+					previousModelId: current,
+					quantization,
+				});
 				return;
 			}
-			issueSwap("realtime", v, current);
+			issueSwap("realtime", v, current, quantization);
 		},
-		[issueSwap, statesById, settings?.realtimeModel]
+		[issueSwap, statesById, settings?.realtimeModel, currentQuantization, update]
 	);
 
 	const confirmPendingDownload = useCallback(() => {
 		if (!pendingDownload) {
 			return;
 		}
-		issueSwap(pendingDownload.kind, pendingDownload.modelId, pendingDownload.previousModelId);
+		issueSwap(
+			pendingDownload.kind,
+			pendingDownload.modelId,
+			pendingDownload.previousModelId,
+			pendingDownload.quantization
+		);
 		setPendingDownload(null);
 	}, [issueSwap, pendingDownload]);
 
@@ -432,27 +456,34 @@ export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
 	return (
 		<div className="flex flex-col gap-2">
 			<MainModelSection
-				computeOpts={computeOpts}
+				catalogLoaded={catalogLoaded}
+				catalogModels={catalogModels}
+				currentQuantization={currentQuantization}
 				deviceOpts={deviceOpts}
 				deviceValue={deviceValue}
 				gpuAvailable={gpuAvailable}
 				handleModelChange={handleModelChange}
 				isWhisperBackend={isWhisperBackend}
 				langOpts={langOpts}
-				modelOpts={modelOpts}
 				selectedModel={selectedModel}
 				settings={settings}
+				statesById={statesById}
+				systemInfo={systemInfo}
 				t={t}
 				update={update}
 			/>
 			<RealtimeModelSection
+				catalogLoaded={catalogLoaded}
+				catalogModels={catalogModels}
+				currentQuantization={currentQuantization}
 				handleRealtimeModelChange={handleRealtimeModelChange}
 				isWhisperBackend={isWhisperBackend}
 				onToggle={handleRealtimeToggle}
 				quality={quality}
 				realtimeEnabled={realtimeEnabled}
-				realtimeOpts={realtimeOpts}
 				settings={settings}
+				statesById={statesById}
+				systemInfo={systemInfo}
 				t={t}
 				update={update}
 				updateQuality={updateQuality}
@@ -478,7 +509,12 @@ interface DownloadConfirmationDialogProps {
 		: never;
 	onCancel: () => void;
 	onConfirm: () => void;
-	pending: { kind: "main" | "realtime"; modelId: string; previousModelId: string } | null;
+	pending: {
+		kind: "main" | "realtime";
+		modelId: string;
+		previousModelId: string;
+		quantization?: OnnxQuantization;
+	} | null;
 	statesById: Record<string, ReturnType<typeof useModelStateStore.getState>["statesById"][string]>;
 	systemInfo: ReturnType<typeof useModelStateStore.getState>["systemInfo"];
 }
@@ -494,11 +530,14 @@ function DownloadConfirmationDialog({
 	const isOpen = pending !== null;
 	const state = pending ? statesById[pending.modelId] : undefined;
 	const info = pending ? getModel(pending.modelId) : undefined;
-	const totalBytes = state?.cache.total_bytes ?? 0;
-	const downloaded = state?.cache.downloaded_bytes ?? 0;
+	const targetQuant = pending?.quantization ?? "";
+	const targetCache = resolveQuantCache(state, targetQuant);
+	const quantLabel = targetQuant === "" ? "default precision" : targetQuant;
+	const totalBytes = targetCache?.total_bytes ?? 0;
+	const downloaded = targetCache?.downloaded_bytes ?? 0;
 	const remainingLabel =
 		totalBytes > downloaded
-			? `Need to download: ${formatBytes(totalBytes - downloaded)}`
+			? `Need to download: ${sizeLabel(totalBytes - downloaded)}`
 			: "Size: unknown until headers fetched";
 
 	// Hardware fitness — surface the same heuristic the picker uses, plus
@@ -510,10 +549,10 @@ function DownloadConfirmationDialog({
 		state.estimated_bytes > 0 &&
 		(hasGpu ? !state.comfortable_on_gpu : !state.comfortable_on_cpu);
 	const estimatedLabel =
-		state && state.estimated_bytes > 0 ? formatBytes(state.estimated_bytes) : "unknown";
+		state && state.estimated_bytes > 0 ? sizeLabel(state.estimated_bytes) : "unknown";
 	const availableLabel = hasGpu
-		? `GPU VRAM: ${formatBytes(systemInfo?.gpus[0]?.total_vram_bytes ?? 0)}`
-		: `RAM: ${formatBytes(systemInfo?.total_ram_bytes ?? 0)}`;
+		? `GPU VRAM: ${sizeLabel(systemInfo?.gpus[0]?.total_vram_bytes ?? 0)}`
+		: `RAM: ${sizeLabel(systemInfo?.total_ram_bytes ?? 0)}`;
 
 	return (
 		<Modal isOpen={isOpen} onClose={onCancel}>
@@ -523,13 +562,14 @@ function DownloadConfirmationDialog({
 					<span className="font-medium text-foreground">
 						{info?.displayName ?? pending?.modelId}
 					</span>
-					{info?.sizeLabel ? ` (${info.sizeLabel})` : ""} isn't downloaded yet.
+					{info?.sizeLabel ? ` (${info.sizeLabel})` : ""} isn't downloaded yet at{" "}
+					<span className="font-medium text-foreground">{quantLabel}</span>.
 				</p>
 				<div className="flex flex-col gap-1 rounded-md border border-border bg-surface-tertiary p-3 text-foreground-secondary text-xs">
 					<div>
 						<span className="text-foreground">Status:</span>{" "}
-						{state?.cache.state === "partial"
-							? `Partial download (${Math.round((state.cache.progress ?? 0) * 100)}%)`
+						{targetCache?.state === "partial"
+							? `Partial download (${Math.round((targetCache.progress ?? 0) * 100)}%)`
 							: "Not downloaded"}
 					</div>
 					<div>

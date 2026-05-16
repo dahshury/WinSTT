@@ -59,7 +59,7 @@ const STORE_DEFAULTS: Record<string, unknown> = {
 		autoStart: false,
 		minimizeToTray: true,
 		startMinimized: false,
-		muteSystemAudioWhileDictating: false,
+		systemAudioReductionWhileDictating: 0,
 		recordingSound: true,
 		recordingSoundPath: "",
 		fileTranscriptionFormat: "txt",
@@ -85,6 +85,8 @@ const STORE_DEFAULTS: Record<string, unknown> = {
 	},
 	llm: {
 		enabled: false,
+		dictationEnabled: true,
+		transformsEnabled: false,
 		provider: "ollama",
 		model: "",
 		presets: [{ key: "neutral" }],

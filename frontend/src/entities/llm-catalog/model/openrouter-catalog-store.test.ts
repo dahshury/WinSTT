@@ -1,18 +1,20 @@
 import { describe, expect, mock, test } from "bun:test";
+import { ipcClientMock } from "@test/mocks/ipc-client";
 
 const fetchSpy = mock(async () => ({
 	models: [{ id: "model-x", name: "Model X" }],
 	reachable: true,
 }));
 
-// Provide a complete-enough shim so other tests' imports of the same module
-// (mock-cached globally by bun:test) do not error on missing exports.
+// Spread the COMPLETE, behavior-faithful ipc-client fake, then override only
+// the export this suite controls. bun:test's `mock.module` is process-global
+// and never torn down, so a partial shim leaks an incomplete module into
+// every later test file. `ipcClientMock()` exposes every real export and
+// routes each through `window.electronAPI` exactly as the real module, so the
+// leak is harmless regardless of file order.
 mock.module("@/shared/api/ipc-client", () => ({
+	...ipcClientMock(),
 	fetchOpenRouterModels: fetchSpy,
-	fetchOllamaModels: async () => ({ models: [], reachable: false }),
-	fetchModelCatalog: async () => [],
-	onModelCatalog: () => () => undefined,
-	onLlmCatalog: () => () => undefined,
 }));
 
 const { useOpenRouterCatalogStore } = await import("./openrouter-catalog-store");

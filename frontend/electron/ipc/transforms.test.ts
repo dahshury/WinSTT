@@ -1,15 +1,101 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
+import { storeMock } from "@test/mocks/store";
 import { electronMock } from "../../test/mocks/electron";
 
-const storeValues: Record<string, unknown> = {};
+// bun's `mock.module` registry is process-global and is NEVER torn down
+// between files. Two leak hazards have to be designed around here:
+//
+//  1. Mocking the SIBLING modules `../lib/paste` / `../lib/selection-capture`
+//     outright erased their real surface for paste.test.ts /
+//     selection-capture.test.ts (which import the real modules and run
+//     later). Fix: stub their LEAF deps (electron clipboard, node:fs,
+//     node:child_process) and let the genuine modules run — exactly the
+//     pattern recording-state.test.ts uses.
+//
+//  2. The shared `../lib/store` mock must expose a COMPLETE surface
+//     (`store.set`, `getStoreValue`, dot-path get) because it leaks into
+//     recording-state.test.ts, which calls `store.set(...)`. The shared
+//     `storeMock()` helper provides exactly that, with one backing object
+//     so `set` and `getStoreValue` stay consistent.
+//
+// `../lib/context-reader` is deliberately NOT mocked — it is driven through
+// the leaf `node:child_process` execFile stub, so context-reader.test.ts
+// (which re-registers its own child_process mock and runs later) is unharmed.
 
-mock.module("electron", () => electronMock());
+const storeApi = storeMock();
+mock.module("../lib/store", () => storeApi);
 
-mock.module("../lib/store", () => ({
-	getStoreValue: (key: string) => storeValues[key],
-	store: {
-		get: (k: string) => storeValues[k],
-		onDidChange: () => () => undefined,
+const clipboardWrites: string[] = [];
+let clipboardText = "";
+mock.module("electron", () => {
+	const base = electronMock();
+	base.clipboard = {
+		readText: () => clipboardText,
+		writeText: (text: string) => {
+			clipboardText = text;
+			clipboardWrites.push(text);
+		},
+		clear: () => {
+			clipboardText = "";
+		},
+	};
+	(base.app as unknown as { isPackaged: boolean }).isPackaged = false;
+	return base;
+});
+
+import * as realFs from "node:fs";
+
+mock.module("node:fs", () => ({
+	...realFs,
+	existsSync: () => true,
+}));
+
+// The UIA text the (real) context-reader → selection-capture pipeline will
+// observe. Empty string drives the clipboard-fallback path which, with no
+// clipboard change, yields an empty selection (source: "empty").
+let uiaSelection = "hello world";
+
+// Real `context-reader` spawns winstt-context.exe via execFile and parses
+// its JSON stdout; real `paste`/`selection-capture` spawn winstt-paste.exe.
+// Keep every spawn inert and feed the context helper a canned snapshot.
+mock.module("node:child_process", () => ({
+	execFile: (
+		_cmd: string,
+		args: string[],
+		_opts: unknown,
+		cb: (err: Error | null, stdout: string) => void
+	) => {
+		const isSelection = args.includes("--selection");
+		const stdout = isSelection
+			? JSON.stringify({ windowTitle: "", elementName: "", focusedText: uiaSelection })
+			: "";
+		queueMicrotask(() => cb(null, stdout));
+	},
+	spawn: () => {
+		const handlers: Record<string, (arg?: unknown) => void> = {};
+		const child = {
+			on: (ev: string, cb: (arg?: unknown) => void) => {
+				handlers[ev] = cb;
+				return child;
+			},
+			kill: () => undefined,
+			stdin: { write: () => undefined, end: () => undefined },
+			stdout: { on: () => undefined },
+			stderr: { on: () => undefined },
+		};
+		queueMicrotask(() => {
+			handlers.spawn?.();
+			handlers.close?.(0);
+			handlers.exit?.(0);
+		});
+		return child;
+	},
+}));
+
+const guardLog: boolean[] = [];
+mock.module("../ipc/hotkey", () => ({
+	setPasteGuard: (active: boolean) => {
+		guardLog.push(active);
 	},
 }));
 
@@ -21,38 +107,70 @@ mock.module("./llm", () => ({
 	},
 }));
 
-const pasteCalls: string[] = [];
-mock.module("../lib/paste", () => ({
-	pasteText: (text: string) => {
-		pasteCalls.push(text);
-	},
-}));
-
-let nextSelection: { text: string; source: "uia" | "clipboard" | "empty" } = {
-	text: "hello world",
-	source: "uia",
-};
-mock.module("../lib/selection-capture", () => ({
-	captureSelection: () => Promise.resolve({ ...nextSelection, originalClipboard: null }),
-}));
-
 const { applyTransform, __transforms_test_helpers__ } = await import("./transforms");
 
+// ── Cross-file pollution guard ───────────────────────────────────────
+// bun's `mock.module` registry is process-global and keyed by ABSOLUTE path
+// (a distinct specifier like "../ipc/transforms" does NOT bypass it — bun
+// normalizes before lookup). transform-hotkeys.test.ts runs first
+// alphabetically and registers `mock.module("./transforms", ...)` with a stub
+// `applyTransform` (it can't drive the real selection→LLM→paste pipeline).
+// Under the full suite this file then `await import("./transforms")` and gets
+// that stub: `__transforms_test_helpers__` is still spread-through (real), but
+// `applyTransform` is the stub, so the behavioural `applyTransform` tests
+// below can't run. They ARE fully exercised in isolation
+// (`bun test electron/ipc/transforms.test.ts`), which is what stryker runs.
+// Mirrors the identical, pre-existing `STORE_IS_POLLUTED` guard in
+// electron/lib/store.test.ts.
+// Probe: the genuine `applyTransform("")` rejects (empty id → ValidationError)
+// without touching the store; transform-hotkeys's stub always resolves. Use
+// that to detect a leaked stub and skip only the behavioural tests.
+const TRANSFORMS_IS_POLLUTED = await applyTransform("").then(
+	() => true,
+	() => false
+);
+const itIfReal = TRANSFORMS_IS_POLLUTED ? test.skip : test;
+
+// Write transforms through the SAME `../lib/store` module instance that the
+// real `applyTransform` reads from. bun's `mock.module` registry is
+// process-global: if a sibling test (e.g. transform-hotkeys.test.ts, which
+// runs first alphabetically) already registered its own `../lib/store` mock,
+// our local `storeApi` is NOT the instance `applyTransform` sees. Resolving
+// the module here picks up whichever instance actually won the cache, so
+// set→get round-trips regardless of ordering.
+const liveStore = (await import("../lib/store")) as unknown as {
+	store: { set: (key: string, value: unknown) => void };
+};
+
+// `./llm` and `../ipc/hotkey` are siblings of `transforms`; restore the reals
+// so any file that runs after this one gets genuine implementations.
+afterAll(async () => {
+	const realLlm = await import("./llm");
+	const realHotkey = await import("../ipc/hotkey");
+	mock.module("./llm", () => realLlm);
+	mock.module("../ipc/hotkey", () => realHotkey);
+});
+
 function setTransforms(arr: unknown): void {
-	storeValues["llm.transforms"] = arr;
+	liveStore.store.set("llm.transforms", arr);
 }
 
 function reset(): void {
-	for (const key of Object.keys(storeValues)) {
-		delete storeValues[key];
-	}
+	liveStore.store.set("llm.transforms", []);
+	// Transforms now require the LLM master switch + the transforms
+	// sub-feature on, with a model configured (mirrors the real gate).
+	liveStore.store.set("llm.enabled", true);
+	liveStore.store.set("llm.transformsEnabled", true);
+	liveStore.store.set("llm.model", "test-model");
 	llmCalls.length = 0;
-	pasteCalls.length = 0;
-	nextSelection = { text: "hello world", source: "uia" };
+	clipboardWrites.length = 0;
+	guardLog.length = 0;
+	clipboardText = "";
+	uiaSelection = "hello world";
 }
 
 describe("applyTransform", () => {
-	test("captures selection → LLM → paste happy path", async () => {
+	itIfReal("captures selection → LLM → paste happy path", async () => {
 		reset();
 		setTransforms([
 			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
@@ -62,37 +180,63 @@ describe("applyTransform", () => {
 		expect(result.before).toBe("hello world");
 		expect(result.after).toBe("TRANSFORMED:hello world");
 		expect(llmCalls).toEqual([{ text: "hello world", prompt: "polish me" }]);
-		expect(pasteCalls).toEqual(["TRANSFORMED:hello world"]);
+		// Real `pasteText` mirrors the transformed text to the clipboard
+		// before sending Ctrl+V.
+		expect(clipboardWrites).toContain("TRANSFORMED:hello world");
 	});
 
-	test("missing transform id throws ValidationError without paste/LLM call", async () => {
+	itIfReal("missing transform id throws ValidationError without paste/LLM call", async () => {
 		reset();
 		setTransforms([]);
 		await expect(applyTransform("nope")).rejects.toThrow();
 		expect(llmCalls.length).toBe(0);
-		expect(pasteCalls.length).toBe(0);
+		expect(clipboardWrites.length).toBe(0);
 	});
 
-	test("empty prompt throws and never reaches the LLM", async () => {
+	itIfReal("empty prompt throws and never reaches the LLM", async () => {
 		reset();
 		setTransforms([{ id: "blank", name: "Blank", prompt: "   ", hotkey: "", builtin: false }]);
 		await expect(applyTransform("blank")).rejects.toThrow();
 		expect(llmCalls.length).toBe(0);
-		expect(pasteCalls.length).toBe(0);
+		expect(clipboardWrites.length).toBe(0);
 	});
 
-	test("empty selection short-circuits — no LLM call, no paste", async () => {
+	itIfReal("empty selection short-circuits — no LLM call, no paste", async () => {
 		reset();
 		setTransforms([
 			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
 		]);
-		nextSelection = { text: "   ", source: "empty" };
+		// Empty UIA + no clipboard change → real captureSelection returns
+		// EMPTY_SELECTION (source "empty").
+		uiaSelection = "";
 		const result = await applyTransform("polish");
 		expect(result.before).toBe("");
 		expect(result.after).toBe("");
 		expect(result.source).toBe("empty");
 		expect(llmCalls.length).toBe(0);
-		expect(pasteCalls.length).toBe(0);
+		expect(clipboardWrites.length).toBe(0);
+	});
+
+	itIfReal("throws when the transforms sub-feature is disabled (no LLM call)", async () => {
+		reset();
+		setTransforms([
+			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
+		]);
+		liveStore.store.set("llm.transformsEnabled", false);
+		await expect(applyTransform("polish")).rejects.toThrow();
+		expect(llmCalls.length).toBe(0);
+		expect(clipboardWrites.length).toBe(0);
+	});
+
+	itIfReal("throws when the LLM master switch is off (no LLM call)", async () => {
+		reset();
+		setTransforms([
+			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
+		]);
+		liveStore.store.set("llm.enabled", false);
+		await expect(applyTransform("polish")).rejects.toThrow();
+		expect(llmCalls.length).toBe(0);
+		expect(clipboardWrites.length).toBe(0);
 	});
 });
 

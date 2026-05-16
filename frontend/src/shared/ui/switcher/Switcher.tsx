@@ -12,6 +12,8 @@ export interface SwitcherOption<T extends string = string> {
 	 * color in the unpressed state and the option's background fills with it
 	 * when pressed. */
 	color?: string;
+	/** When true the option is dimmed and cannot be selected */
+	disabled?: boolean;
 	/** Optional leading icon shown before the label */
 	icon?: IconSvgElement;
 	label: string;
@@ -60,8 +62,10 @@ export function Switcher<T extends string = string>({
 							colored
 								? "not-data-[pressed]:bg-surface-tertiary not-data-[pressed]:text-[var(--switcher-color)] not-data-[pressed]:hover:brightness-110"
 								: "not-data-[pressed]:bg-surface-tertiary not-data-[pressed]:text-foreground-dim not-data-[pressed]:hover:text-foreground",
+							opt.disabled && "cursor-not-allowed opacity-40 hover:brightness-100",
 							fullWidth && "flex-1 justify-center"
 						)}
+						disabled={opt.disabled}
 						key={opt.value}
 						style={style}
 						value={opt.value}
@@ -69,7 +73,7 @@ export function Switcher<T extends string = string>({
 						{opt.icon && (
 							<HugeiconsIcon aria-hidden="true" className="shrink-0" icon={opt.icon} size={13} />
 						)}
-						<span>{opt.label}</span>
+						<span className="whitespace-nowrap">{opt.label}</span>
 					</Toggle>
 				);
 			})}

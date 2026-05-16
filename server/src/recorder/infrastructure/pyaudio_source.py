@@ -333,15 +333,40 @@ class PyAudioSource(IAudioSource):
 
     @override
     def resume(self) -> None:
-        """Resume hardware capture. Idempotent on already-capturing sources."""
+        """Resume hardware capture. Idempotent on already-capturing sources.
+
+        Closes the (paused) stream and opens a fresh one on the same
+        device every time. We used to try ``start_stream()`` on the
+        existing stream as a fast path, but some Windows audio backends
+        (notably WASAPI shared mode on certain drivers) invalidate the
+        PortAudio stream object when ``stop_stream()`` is called — the
+        next ``start_stream()`` raises ``paUnanticipatedHostError`` (-9999)
+        or ``paStreamIsStopped`` (-9988). The fast path was therefore
+        dead on those configurations: every press took the recovery
+        path anyway, just with a warning line attached.
+
+        Always-recreate costs ~10-50 ms per resume on Windows (one
+        ``pa.open`` against a known device + format), which is
+        imperceptible for press-to-talk: the user's reaction time
+        between key press and starting to speak is an order of
+        magnitude larger, and the pre-roll buffer covers the small
+        sliver in front of the first phoneme.
+        """
         if self._capturing:
             return
-        if self._stream is None:
+        pa = self._audio_interface
+        if pa is None:
             return
+        if self._stream is not None:
+            try:
+                self._stream.close()
+            except Exception as e:
+                logger.debug("close() during resume raised: %s", e)
+            self._stream = None
         try:
-            self._stream.start_stream()
-        except Exception as e:
-            logger.warning("start_stream() raised on resume(): %s", e)
+            self._open_stream(pa, self._input_device_index)
+        except DeviceError as e:
+            logger.error("Failed to (re)open audio stream on resume: %s", e)
             return
         self._capturing = True
 
@@ -386,27 +411,52 @@ class PyAudioSource(IAudioSource):
         return self._buffer_size
 
     def _get_best_sample_rate(self, device_index: int) -> int:
-        standard_rates = [8000, 16000, 22050, 44100, 48000]
-        if self._target_sample_rate in standard_rates:
+        """Pick a sample rate the device actually supports for paInt16 input.
+
+        Order: target rate (16 kHz) → device's reported ``defaultSampleRate``
+        → standard fallbacks. Each candidate is probed via
+        ``is_format_supported`` so we never hand PyAudio a rate it can't
+        open — that was the source of the ``[Errno -9997] Invalid sample
+        rate`` failures users hit on USB devices that report a default of
+        44100 but only actually support 48 kHz (or vice versa).
+        """
+        pa: Any = self._audio_interface
+        try:
+            info: Any = pa.get_device_info_by_index(device_index)
+        except Exception:
+            return 44100
+        device_default = int(info.get("defaultSampleRate", 0)) or 0
+
+        candidates: list[int] = []
+        for rate in (self._target_sample_rate, device_default, 48000, 44100, 22050, 16000, 8000):
+            if rate and rate not in candidates:
+                candidates.append(rate)
+
+        # Probe with channels=1 because ``pa.open()`` below opens mono.
+        # Probing at the device's max-channel value (e.g. 2 for stereo
+        # mics) can return False for rates the device DOES support in
+        # mono — which then triggered the bogus 44100 fallback.
+        for rate in candidates:
             try:
-                pa: Any = self._audio_interface
-                info: Any = pa.get_device_info_by_index(device_index)
-                max_channels: Any = info.get("maxInputChannels", 1)
                 if pa.is_format_supported(
-                    self._target_sample_rate,
+                    rate,
                     input_device=device_index,
-                    input_channels=max_channels,
+                    input_channels=1,
                     input_format=pyaudio.paInt16,
                 ):
-                    return self._target_sample_rate
+                    return rate
             except Exception as e:
                 logger.debug(
-                    "Sample rate %dHz not supported on device %d, falling back to 44100Hz: %s",
-                    self._target_sample_rate,
+                    "is_format_supported(%dHz, device=%d) raised: %s",
+                    rate,
                     device_index,
                     e,
                 )
-        return 44100
+                continue
+        # Nothing in the candidate set probed clean — last-resort device
+        # default so the caller's ``pa.open()`` produces a descriptive
+        # ``DeviceError`` instead of a misleading 44100 fallback.
+        return device_default or 44100
 
     @staticmethod
     def _resample(raw: bytes, from_rate: int, to_rate: int) -> bytes:

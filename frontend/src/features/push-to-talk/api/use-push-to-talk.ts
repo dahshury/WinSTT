@@ -13,6 +13,41 @@ import {
 } from "@/shared/api/ipc-client";
 import { useHotkeyStore } from "../model/hotkey-store";
 
+type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword";
+
+/** Modes driven entirely by the server (loopback / wake word) — the hotkey
+ * must not touch `set_microphone`. */
+const SERVER_DRIVEN_MODES = new Set<RecordingMode>(["listen", "wakeword"]);
+
+/** Pure decision for a hotkey press. `null` → ignore the press entirely.
+ * `persistActive` is true only for toggle mode, where the running active
+ * state must be flipped and mirrored into the store; ptt leaves it alone
+ * (the server bundles `wakeup()` with `set_microphone(true)`). */
+function decidePressAction(
+	mode: RecordingMode,
+	currentActive: boolean
+): { micOn: boolean; persistActive: boolean } | null {
+	if (SERVER_DRIVEN_MODES.has(mode)) {
+		return null;
+	}
+	if (mode === "ptt") {
+		return { micOn: true, persistActive: false };
+	}
+	return { micOn: !currentActive, persistActive: true };
+}
+
+/** Pure decision for a hotkey release. `false` → no microphone send (the
+ * server owns toggle/listen/wakeword teardown); only ptt releases the mic. */
+function shouldReleaseMicOnUp(mode: RecordingMode): boolean {
+	return mode === "ptt";
+}
+
+/** Internal — exported solely for colocated unit tests (not in the slice
+ * public API). */
+export const __test_decidePressAction = decidePressAction;
+/** Internal — exported solely for colocated unit tests. */
+export const __test_shouldReleaseMicOnUp = shouldReleaseMicOnUp;
+
 export function usePushToTalk(): void {
 	const setPressed = useHotkeyStore((s) => s.setPressed);
 	const setActive = useHotkeyStore((s) => s.setActive);
@@ -56,40 +91,36 @@ export function usePushToTalk(): void {
 	}, [recordingMode, smartEndpoint]);
 
 	// Press handler — refs let us avoid re-subscribing when mode changes.
-	useEffect(() => {
-		return onHotkeyPressed(() => {
-			const mode = recordingModeRef.current;
-
-			if (mode === "listen") {
-				return;
-			}
-			setPressed(true);
-
-			// The server WS handler bundles `wakeup()` with `set_microphone(true)`,
-			// so one frame per press is enough.
-			if (mode === "ptt") {
-				sttCallMethod("set_microphone", [true]);
-				return;
-			}
-			const nowActive = !isActiveRef.current;
-			isActiveRef.current = nowActive;
-			setActive(nowActive);
-			sttCallMethod("set_microphone", [nowActive]);
-		});
-	}, [setPressed, setActive]);
+	useEffect(
+		() =>
+			onHotkeyPressed(() => {
+				const decision = decidePressAction(
+					recordingModeRef.current as RecordingMode,
+					isActiveRef.current
+				);
+				if (decision === null) {
+					return;
+				}
+				setPressed(true);
+				if (decision.persistActive) {
+					isActiveRef.current = decision.micOn;
+					setActive(decision.micOn);
+				}
+				sttCallMethod("set_microphone", [decision.micOn]);
+			}),
+		[setPressed, setActive]
+	);
 
 	// Release handler.
 	useEffect(
 		() =>
 			onHotkeyReleased(() => {
-				const mode = recordingModeRef.current;
-
-				if (mode === "listen") {
+				const mode = recordingModeRef.current as RecordingMode;
+				if (SERVER_DRIVEN_MODES.has(mode)) {
 					return;
 				}
 				setPressed(false);
-
-				if (mode === "ptt") {
+				if (shouldReleaseMicOnUp(mode)) {
 					sttCallMethod("set_microphone", [false]);
 				}
 			}),

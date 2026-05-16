@@ -502,7 +502,7 @@ export function OpenRouterModelSelector({
 				<Combobox.Portal>
 					<Combobox.Positioner align="start" sideOffset={4}>
 						<Combobox.Popup
-							className="z-[200] flex h-[min(620px,var(--available-height))] w-[max(560px,var(--anchor-width))] max-w-[calc(100vw-32px)] origin-(--transform-origin) flex-col overflow-hidden rounded-md border border-border bg-surface-elevated p-0 shadow-md"
+							className="select-popup z-[200] flex h-[min(620px,var(--available-height))] w-[max(560px,var(--anchor-width))] max-w-[calc(100vw-32px)] origin-(--transform-origin) flex-col overflow-hidden rounded-md border border-border bg-surface-elevated p-0 shadow-md transition-[transform,opacity] duration-150 ease-out data-[ending-style]:ease-in"
 							ref={handlePopupRef}
 						>
 							<ModelSelectorPopupBody

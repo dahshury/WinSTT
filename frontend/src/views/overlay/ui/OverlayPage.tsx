@@ -82,6 +82,12 @@ export function OverlayPage() {
 
 	const text = realtime.trim() || ephemeral?.text || "";
 	const showText = showLiveTranscription && text.length > 0;
+	// Pill stays hidden during silent recording — only appears once there's
+	// transcription content to display or the LLM is post-processing. Matches
+	// the original two-pill layout (015c26c) where the text rectangle was
+	// gated on `showLiveTranscription && text` while the visualizer floated
+	// separately; the combined-pill rewrite (1576678) lost that gating.
+	const showPill = showText || isThinking;
 
 	const heightPx = PRESET_HEIGHT_PX[sizePreset];
 	// CSS `zoom` (Chromium-supported, including Electron) scales both visual and
@@ -92,21 +98,23 @@ export function OverlayPage() {
 		<div className="flex h-screen w-screen items-end justify-center overflow-hidden pb-2">
 			{/* Single rounded rectangle wraps visualizer + text. `inline-flex` makes it
 			    auto-size to its content; the rectangle grows downward as text wraps. */}
-			<div className="relative inline-flex max-w-[460px] flex-col items-center gap-1 overflow-hidden rounded-2xl bg-black/60 px-2.5 py-1 backdrop-blur-md">
-				<div className="flex items-center justify-center" style={{ zoom }}>
-					<AudioVisualizer size="icon" />
+			{showPill && (
+				<div className="relative inline-flex max-w-[460px] flex-col items-center gap-1 overflow-hidden rounded-2xl bg-black/60 px-2.5 py-1 backdrop-blur-md">
+					<div className="flex items-center justify-center" style={{ zoom }}>
+						<AudioVisualizer size="icon" />
+					</div>
+					{showText && (
+						<div className="line-clamp-5 break-words text-center text-sm text-white leading-tight">
+							{text}
+						</div>
+					)}
+					{isThinking && (
+						<div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/55 backdrop-blur-sm">
+							<ThinkingIndicator />
+						</div>
+					)}
 				</div>
-				{showText && (
-					<div className="line-clamp-5 break-words text-center text-sm text-white leading-tight">
-						{text}
-					</div>
-				)}
-				{isThinking && (
-					<div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/55 backdrop-blur-sm">
-						<ThinkingIndicator />
-					</div>
-				)}
-			</div>
+			)}
 		</div>
 	);
 }

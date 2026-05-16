@@ -177,6 +177,20 @@ class TestAudioToTextRecorderFacade:
         facade = _make_facade_with_fakes()
         facade.clear_audio_queue()
 
+    def test_delegates_runtime_info(self) -> None:
+        facade = _make_facade_with_fakes()
+        info = facade.runtime_info()
+        assert isinstance(info, dict)
+        assert "device" in info
+        facade.shutdown()
+
+    def test_delegates_request_model_swap(self) -> None:
+        facade = _make_facade_with_fakes()
+        # Realtime is disabled in the fakes config, so this is a safe no-op
+        # (emits ModelSwapFailed, spawns no thread) that exercises delegation.
+        facade.request_model_swap("realtime", "some-model")
+        facade.shutdown()
+
     def test_delegates_transcribe(self) -> None:
         facade = _make_facade_with_fakes()
         result = facade.transcribe()

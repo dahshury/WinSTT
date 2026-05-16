@@ -38,7 +38,6 @@ describe("electron/main.ts (source-level smoke test)", () => {
 		expect(source).toContain("setupSettingsHandlers");
 		expect(source).toContain("setupSttProcessHandlers");
 		expect(source).toContain("setupAutostartHandlers");
-		expect(source).toContain("setupAudioMuteHandlers");
 		expect(source).toContain("setupSttCommandHandlers");
 		expect(source).toContain("setupLoopbackHandlers");
 		expect(source).toContain("setupDialogHandlers");

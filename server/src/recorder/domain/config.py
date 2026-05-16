@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import platform
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
@@ -106,46 +106,68 @@ class RecorderConfig(StrictMutableModel):
     ui: UIConfig = Field(default_factory=UIConfig)
     endpoint: EndpointConfig = Field(default_factory=EndpointConfig)
 
+    # Sub-config classes in priority order: a kwarg is routed to the first
+    # class that declares a matching field (preserves the original
+    # if/elif precedence in from_kwargs).
+    _SUBCONFIGS: ClassVar[tuple[type[StrictMutableModel], ...]] = (
+        AudioConfig,
+        VADConfig,
+        TranscriptionConfig,
+        RealtimeConfig,
+        WakeWordConfig,
+        UIConfig,
+        EndpointConfig,
+    )
+
+    @staticmethod
+    def _field_owner_index(
+        subconfigs: tuple[type[StrictMutableModel], ...],
+    ) -> dict[str, int]:
+        """Map each field name to the index of its first owning sub-config.
+
+        Iterating in reverse so that an earlier sub-config wins when a
+        field name is shared, preserving the original if/elif precedence.
+        """
+        owner: dict[str, int] = {}
+        for index in reversed(range(len(subconfigs))):
+            owner.update(dict.fromkeys(subconfigs[index].model_fields, index))
+        return owner
+
+    @staticmethod
+    def _empty_buckets(count: int) -> list[dict[str, Any]]:
+        """Allocate ``count`` independent empty kwarg buckets."""
+        return [{} for _ in range(count)]
+
+    @classmethod
+    def _route_kwargs(
+        cls,
+        kwargs: dict[str, Any],
+        subconfigs: tuple[type[StrictMutableModel], ...],
+    ) -> list[dict[str, Any]]:
+        """Bucket each kwarg into the first sub-config that declares it.
+
+        Unknown kwargs (no matching field) are dropped, matching the
+        original behaviour.
+        """
+        owner = cls._field_owner_index(subconfigs)
+        buckets = cls._empty_buckets(len(subconfigs))
+        for key, value in kwargs.items():
+            index = owner.get(key)
+            if index is not None:
+                buckets[index][key] = value
+        return buckets
+
     @classmethod
     def from_kwargs(cls, **kwargs: Any) -> RecorderConfig:  # noqa: ANN401
-        audio_fields = set(AudioConfig.model_fields.keys())
-        vad_fields = set(VADConfig.model_fields.keys())
-        transcription_fields = set(TranscriptionConfig.model_fields.keys())
-        realtime_fields = set(RealtimeConfig.model_fields.keys())
-        wake_word_fields = set(WakeWordConfig.model_fields.keys())
-        ui_fields = set(UIConfig.model_fields.keys())
-        endpoint_fields = set(EndpointConfig.model_fields.keys())
-
-        audio_kwargs: dict[str, Any] = {}
-        vad_kwargs: dict[str, Any] = {}
-        transcription_kwargs: dict[str, Any] = {}
-        realtime_kwargs: dict[str, Any] = {}
-        wake_word_kwargs: dict[str, Any] = {}
-        ui_kwargs: dict[str, Any] = {}
-        endpoint_kwargs: dict[str, Any] = {}
-
-        for key, value in kwargs.items():
-            if key in audio_fields:
-                audio_kwargs[key] = value
-            elif key in vad_fields:
-                vad_kwargs[key] = value
-            elif key in transcription_fields:
-                transcription_kwargs[key] = value
-            elif key in realtime_fields:
-                realtime_kwargs[key] = value
-            elif key in wake_word_fields:
-                wake_word_kwargs[key] = value
-            elif key in ui_fields:
-                ui_kwargs[key] = value
-            elif key in endpoint_fields:
-                endpoint_kwargs[key] = value
-
+        audio_kw, vad_kw, transcription_kw, realtime_kw, wake_word_kw, ui_kw, endpoint_kw = cls._route_kwargs(
+            kwargs, cls._SUBCONFIGS
+        )
         return cls(
-            audio=AudioConfig(**audio_kwargs),
-            vad=VADConfig(**vad_kwargs),
-            transcription=TranscriptionConfig(**transcription_kwargs),
-            realtime=RealtimeConfig(**realtime_kwargs),
-            wake_word=WakeWordConfig(**wake_word_kwargs),
-            ui=UIConfig(**ui_kwargs),
-            endpoint=EndpointConfig(**endpoint_kwargs),
+            audio=AudioConfig(**audio_kw),
+            vad=VADConfig(**vad_kw),
+            transcription=TranscriptionConfig(**transcription_kw),
+            realtime=RealtimeConfig(**realtime_kw),
+            wake_word=WakeWordConfig(**wake_word_kw),
+            ui=UIConfig(**ui_kw),
+            endpoint=EndpointConfig(**endpoint_kw),
         )

@@ -28,6 +28,14 @@ if TYPE_CHECKING:
     from src.building_blocks.types import ChunkCallback
 from src.recorder.application.recorder_service import RecorderService
 from src.recorder.domain.config import RecorderConfig
+
+# Belt-and-suspenders: ensure ``device.py``'s module-level
+# ``_inject_cuda_dlls()`` runs before any onnxruntime import anywhere in
+# the process. ``SileroVAD`` also imports it for the same reason, but the
+# facade is the public entry point — pulling it in here makes the
+# guarantee independent of which infrastructure adapter happens to be
+# constructed first.
+from src.recorder.infrastructure import device as _device  # noqa: F401
 from src.recorder.infrastructure.file_source import FileAudioSource
 
 logger = logging.getLogger(__name__)
@@ -334,10 +342,23 @@ class AudioToTextRecorder:
                 sensitivity=self._config.vad.webrtc_sensitivity,
                 sample_rate=self._config.audio.sample_rate,
             )
+            # Pin Silero VAD to CPU regardless of the transcriber's device.
+            # The Silero v5 ONNX graph has at least one node with no CUDA
+            # kernel (the stateful LSTM tail), which makes ORT insert a
+            # host↔device Memcpy and log:
+            #   "1 Memcpy nodes are added to the graph spox_graph for
+            #    CUDAExecutionProvider. It might have negative impact on
+            #    performance (including unable to run CUDA graph)."
+            # For a ~2 MB model running once per 32 ms hop, the PCIe round
+            # trip costs more than the entire forward pass would on CPU,
+            # so honoring ``device=cuda`` for VAD is a perf regression as
+            # well as the source of the warning. The reference RealtimeSTT
+            # monolith likewise runs Silero on CPU.
             silero = SileroVAD(
                 sensitivity=self._config.vad.silero_sensitivity,
                 use_onnx=self._config.vad.silero_use_onnx,
                 sample_rate=self._config.audio.sample_rate,
+                providers=["CPUExecutionProvider"],
             )
             vad = CompositeVAD(webrtc=webrtc, silero=silero)
             self._silero_vad = silero

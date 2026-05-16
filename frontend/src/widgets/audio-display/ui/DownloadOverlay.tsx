@@ -5,20 +5,10 @@ import { useTranslations } from "next-intl";
 import { memo, useCallback } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useDownloadStore } from "@/features/model-download";
+import { formatBytes } from "@/shared/lib/format-bytes";
 import { Button } from "@/shared/ui/button";
 
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) {
-		return `${bytes} B`;
-	}
-	if (bytes < 1024 * 1024) {
-		return `${(bytes / 1024).toFixed(1)} KB`;
-	}
-	if (bytes < 1024 * 1024 * 1024) {
-		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-	}
-	return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
+const SIZE_FORMAT = { minUnit: "B", mbDecimals: 1, gbDecimals: 2, kbDecimals: 1 } as const;
 
 function formatSpeed(bps: number): string {
 	if (bps < 1024) {
@@ -87,7 +77,11 @@ export const DownloadOverlay = memo(function DownloadOverlay() {
 	}
 
 	const statsLine = joinStats([
-		totalBytes > 0 ? `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}` : "",
+		totalBytes > 0
+			? `${formatBytes(downloadedBytes, SIZE_FORMAT) ?? "0 B"} / ${
+					formatBytes(totalBytes, SIZE_FORMAT) ?? "0 B"
+				}`
+			: "",
 		speedBps > 0 ? formatSpeed(speedBps) : "",
 		etaSeconds > 0 ? t("eta", { time: formatEta(etaSeconds) }) : "",
 	]);

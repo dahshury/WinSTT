@@ -1,17 +1,18 @@
 "use client";
 
-import { EyeIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { SettingSection, useSettingsStore } from "@/entities/setting";
+import { useSettingsStore } from "@/entities/setting";
 import { FormControl } from "@/shared/ui/form-control";
 import { OptInDialog } from "@/shared/ui/opt-in-dialog";
 import { Toggle } from "@/shared/ui/toggle";
 
 /**
- * Context-awareness toggle + opt-in dialog. Lives in the LLM tab because
- * the captured window text only matters when the LLM cleanup / Transforms
- * pipeline is on — context-awareness alone with no LLM provider is a no-op.
+ * Context-awareness control. Rendered inside the "Dictation post-processing"
+ * subsection because the captured window text is only ever fed into the
+ * dictation LLM cleanup path (relay.ts → processText); the Transforms path
+ * never passes context. Content-only — the surrounding SettingSubsection
+ * owns the title/toggle/box.
  *
  * Toggle-on path: show the warning dialog → confirm persists the flag;
  * cancel reverts. Toggle-off path: persist immediately (no consent needed
@@ -33,16 +34,14 @@ export function ContextAwarenessSection() {
 	};
 
 	return (
-		<SettingSection icon={EyeIcon} title={t("contextAwarenessSection")}>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-3 py-2">
-				<FormControl
-					caption={t("contextAwarenessCaption")}
-					label={t("contextAwareness")}
-					tooltip={t("contextAwarenessTooltip")}
-				>
-					<Toggle checked={enabled} onCheckedChange={handleToggle} />
-				</FormControl>
-			</div>
+		<>
+			<FormControl
+				caption={t("contextAwarenessCaption")}
+				label={t("contextAwareness")}
+				tooltip={t("contextAwarenessTooltip")}
+			>
+				<Toggle checked={enabled} onCheckedChange={handleToggle} />
+			</FormControl>
 			<OptInDialog
 				body={t("contextAwarenessDialogBody")}
 				cancelLabel={t("contextAwarenessDialogCancel")}
@@ -53,6 +52,6 @@ export function ContextAwarenessSection() {
 				open={dialogOpen}
 				title={t("contextAwarenessDialogTitle")}
 			/>
-		</SettingSection>
+		</>
 	);
 }

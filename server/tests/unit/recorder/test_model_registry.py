@@ -146,6 +146,22 @@ class TestModelCatalog:
             assert "supports_realtime" in d
             assert "onnx_model_name" in d
             assert "description" in d
+            assert "available_quantizations" in d
+
+    def test_whisper_ships_full_quantization_matrix(self, catalog: ModelCatalog) -> None:
+        info = catalog.get("large-v3")
+        assert info is not None
+        assert info.available_quantizations == ["", "int8", "fp16", "uint8", "q4", "q4f16", "bnb4"]
+
+    def test_nemo_ships_default_and_int8(self, catalog: ModelCatalog) -> None:
+        info = catalog.get("nemo-parakeet-tdt-0.6b-v3")
+        assert info is not None
+        assert info.available_quantizations == ["", "int8"]
+
+    def test_gigaam_ships_default_quantization_only(self, catalog: ModelCatalog) -> None:
+        info = catalog.get("gigaam-v3-ctc")
+        assert info is not None
+        assert info.available_quantizations == [""]
 
     def test_transcriber_backend_values(self) -> None:
         assert TranscriberBackend.FASTER_WHISPER.value == "faster_whisper"
@@ -177,3 +193,48 @@ class TestModelCatalog:
         assert catalog.is_language_compatible("gigaam-v3-ctc", "en") is False
         assert catalog.is_language_compatible("t-tech/t-one", "ru") is True
         assert catalog.is_language_compatible("t-tech/t-one", "en") is False
+
+    def test_accepts_any_language_language_detection(self) -> None:
+        info = ModelInfo(
+            id="x",
+            display_name="X",
+            backend=TranscriberBackend.ONNX_ASR,
+            family="x",
+            languages=["en"],
+            supports_language_detection=True,
+        )
+        assert ModelCatalog._accepts_any_language(info) is True
+
+    def test_accepts_any_language_empty_whitelist(self) -> None:
+        info = ModelInfo(
+            id="x",
+            display_name="X",
+            backend=TranscriberBackend.ONNX_ASR,
+            family="x",
+            languages=[],
+            supports_language_detection=False,
+        )
+        assert ModelCatalog._accepts_any_language(info) is True
+
+    def test_accepts_any_language_constrained_whitelist(self) -> None:
+        info = ModelInfo(
+            id="x",
+            display_name="X",
+            backend=TranscriberBackend.ONNX_ASR,
+            family="x",
+            languages=["ru"],
+            supports_language_detection=False,
+        )
+        assert ModelCatalog._accepts_any_language(info) is False
+
+    def test_is_universal_empty_language(self, catalog: ModelCatalog) -> None:
+        assert catalog._is_universal("gigaam-v3-ctc", "") is True
+
+    def test_is_universal_unknown_model(self, catalog: ModelCatalog) -> None:
+        assert catalog._is_universal("unknown/model-xyz", "en") is True
+
+    def test_is_universal_multilingual_known_model(self, catalog: ModelCatalog) -> None:
+        assert catalog._is_universal("large-v3", "es") is True
+
+    def test_is_universal_constrained_known_model(self, catalog: ModelCatalog) -> None:
+        assert catalog._is_universal("gigaam-v3-ctc", "en") is False

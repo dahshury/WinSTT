@@ -61,10 +61,18 @@ mock.module("../lib/sound", () => ({
 	cleanupSound: () => undefined,
 }));
 
-mock.module("../lib/store", () => ({
-	...storeMock(),
-	getStoreValue: () => storeValue,
-}));
+// Only `general.recordingMode` is driven by this file; every other key
+// delegates to the COMPLETE shared store mock so a process-global
+// `../lib/store` cache leak into sibling tests stays semantically harmless
+// (returning `storeValue` for ALL keys would poison e.g. transforms.test.ts).
+mock.module("../lib/store", () => {
+	const base = storeMock();
+	return {
+		...base,
+		getStoreValue: (key: string) =>
+			key === "general.recordingMode" ? storeValue : base.getStoreValue(key),
+	};
+});
 
 // Use the real keycodes module — mocking it here would leak via process-global
 // mock.module and break sibling keycodes.test.ts. The uiohook mock supplies

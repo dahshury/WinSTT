@@ -72,20 +72,34 @@ link-mode = "copy"
 # CPU and GPU ORT wheels are mutually exclusive — picking both would cause
 # DLL conflicts. uv enforces the constraint at resolution time.
 conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]
-# openwakeword hard-pins ``onnxruntime`` (CPU). If left alone, ``uv sync
-# --extra gpu`` pulls BOTH ``onnxruntime`` and ``onnxruntime-gpu`` into the
-# same venv — they share the ``onnxruntime/`` package directory, so the CPU
-# install overwrites the GPU ``.pyd`` files and CUDA stops working. The
-# override below makes uv treat openwakeword's ``onnxruntime`` requirement
-# as unsatisfiable on real platforms; ``onnxruntime-gpu`` provides the same
-# import name at runtime, so openwakeword still works.
+
+# Resolver-level metadata patch for openwakeword: upstream's wheel hard-pins
+# ``onnxruntime`` (the CPU package). If left alone, ``uv sync --extra gpu``
+# pulls BOTH ``onnxruntime`` and ``onnxruntime-gpu`` into the same venv —
+# they share the ``onnxruntime/`` package directory, so the CPU install
+# overwrites the GPU ``.pyd`` files and CUDA silently stops working.
 #
-# Side effect: the ``cpu`` extra below — which legitimately wants
-# ``onnxruntime`` — must request ``onnxruntime-gpu`` or be installed without
-# the override active. For now we keep ``onnxruntime>=1.18.1`` in the cpu
-# extra; the override applies there too, so cpu builds need to drop this
-# block (or we'll wire a marker-aware override later).
-override-dependencies = ["onnxruntime; sys_platform == 'never'"]
+# uv's ``dependency-metadata`` table lets us override what uv THINKS the
+# package requires, scoped to this one package (unlike a global
+# ``override-dependencies``, which would also kneecap the ``cpu`` extra
+# below). The installed openwakeword files are unchanged — at runtime,
+# ``onnxruntime-gpu`` provides the ``onnxruntime`` import that openwakeword
+# expects, and the ``cpu`` extra continues to pull in ``onnxruntime``
+# explicitly when selected.
+#
+# Mirrors upstream's ``Requires-Dist`` set verbatim with the single
+# ``onnxruntime <2,>=1.10.0`` line removed. Bump ``version`` and re-check
+# the list whenever openwakeword is upgraded.
+[[tool.uv.dependency-metadata]]
+name = "openwakeword"
+version = "0.6.0"
+requires-dist = [
+    "tqdm <5.0,>=4.0",
+    "scipy <2,>=1.3",
+    "scikit-learn <2,>=1",
+    "requests <3,>=2.0",
+    "tflite-runtime <3,>=2.8.0 ; platform_system == 'Linux'",
+]
 
 [tool.uv.sources]
 onnx-asr = { path = "../examples/onnx-asr", editable = true }

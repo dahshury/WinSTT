@@ -5,30 +5,34 @@ const storeChangeHandlers = new Map<string, Array<(value: unknown) => void>>();
 
 import { storeMock } from "@test/mocks/store";
 
-mock.module("../lib/store", () => ({
-	...storeMock(),
-	store: {
-		onDidChange: (key: string, cb: (value: unknown) => void) => {
-			const list = storeChangeHandlers.get(key) ?? [];
-			list.push(cb);
-			storeChangeHandlers.set(key, list);
-			return () => {
-				storeChangeHandlers.set(
-					key,
-					(storeChangeHandlers.get(key) ?? []).filter((x) => x !== cb)
-				);
-			};
+mock.module("../lib/store", () => {
+	const base = storeMock();
+	return {
+		...base,
+		store: {
+			...base.store,
+			onDidChange: (key: string, cb: (value: unknown) => void) => {
+				const list = storeChangeHandlers.get(key) ?? [];
+				list.push(cb);
+				storeChangeHandlers.set(key, list);
+				return () => {
+					storeChangeHandlers.set(
+						key,
+						(storeChangeHandlers.get(key) ?? []).filter((x) => x !== cb)
+					);
+				};
+			},
 		},
-	},
-	getStoreValue: (key: string) => {
-		const [section, sub] = key.split(".");
-		const top = section ? storeData[section] : undefined;
-		if (top != null && typeof top === "object" && sub) {
-			return (top as Record<string, unknown>)[sub];
-		}
-		return top;
-	},
-}));
+		getStoreValue: (key: string) => {
+			const [section, sub] = key.split(".");
+			const top = section ? storeData[section] : undefined;
+			if (top != null && typeof top === "object" && sub) {
+				return (top as Record<string, unknown>)[sub];
+			}
+			return top;
+		},
+	};
+});
 
 import { electronMock } from "@test/mocks/electron";
 

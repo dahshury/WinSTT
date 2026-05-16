@@ -85,36 +85,53 @@ class RecordingPipeline(Worker):
         self._start_recording_on_voice_activity = True
         self._event_bus.publish(VADDetectStarted(timestamp=self._clock.get_current_time()))
 
-    def request_start(self) -> None:
-        if self._sm.state == RecorderState.INACTIVE:
+    def _enter_recording_state(self) -> None:
+        if self._sm.state in (RecorderState.INACTIVE, RecorderState.WAKEWORD):
             self._sm.transition(RecorderState.LISTENING)
         if self._sm.state == RecorderState.LISTENING:
             self._sm.transition(RecorderState.RECORDING)
-        elif self._sm.state == RecorderState.WAKEWORD:
-            self._sm.transition(RecorderState.LISTENING)
-            self._sm.transition(RecorderState.RECORDING)
+
+    def request_start(self) -> None:
+        self._enter_recording_state()
         self._recording_start_time = self._clock.get_current_time()
         self._buffer.start_recording()
         self._stop_recording_on_voice_deactivity = True
         self._speech_detected_in_recording = False
         self._event_bus.publish(RecordingStarted(timestamp=self._clock.get_current_time()))
 
-    def request_stop(self, backdate_seconds: float = 0.0) -> None:
+    def _emit_no_audio(self) -> None:
+        self._event_bus.publish(NoAudioDetected(timestamp=self._clock.get_current_time()))
+
+    def _emit_no_audio_if_ptt(self) -> None:
+        if not self._silence_endpoint_enabled:
+            self._emit_no_audio()
+
+    def _is_stop_blocked(self) -> bool:
         if not self._sm.is_recording:
-            if not self._silence_endpoint_enabled:
-                self._event_bus.publish(NoAudioDetected(timestamp=self._clock.get_current_time()))
-            return
+            self._emit_no_audio_if_ptt()
+            return True
         elapsed = self._clock.get_current_time() - self._recording_start_time
         if elapsed < self._config.vad.min_length_of_recording:
-            if not self._silence_endpoint_enabled:
-                self._event_bus.publish(NoAudioDetected(timestamp=self._clock.get_current_time()))
+            self._emit_no_audio_if_ptt()
+            return True
+        return False
+
+    def _is_ptt_stop_without_speech(self) -> bool:
+        return not self._silence_endpoint_enabled and not self._speech_detected_in_recording
+
+    def request_stop(self, backdate_seconds: float = 0.0) -> None:
+        if self._is_stop_blocked():
             return
-        if not self._silence_endpoint_enabled and not self._speech_detected_in_recording:
-            self._event_bus.publish(NoAudioDetected(timestamp=self._clock.get_current_time()))
+        if self._is_ptt_stop_without_speech():
+            self._emit_no_audio()
             self.request_abort()
             return
+        self._finalize_stop(backdate_seconds)
+
+    def _finalize_stop(self, backdate_seconds: float) -> None:
         if backdate_seconds > 0:
             self._buffer.backdate(backdate_seconds)
+        elapsed = self._clock.get_current_time() - self._recording_start_time
         logger.warning(
             "[pipeline] request_stop: %.2fs of audio, %d frames, silence_endpoint=%s, backdate=%.2f",
             elapsed,
@@ -172,6 +189,25 @@ class RecordingPipeline(Worker):
     def wake_word_activation_delay(self, value: float) -> None:
         self._wake_word_activation_delay = value
 
+    def _dispatch_chunk(self, chunk: AudioChunk) -> None:
+        if self._sm.is_recording:
+            self._process_recording(chunk)
+        else:
+            self._process_not_recording(chunk)
+
+    def _handle_chunk(self, chunk: AudioChunk) -> None:
+        try:
+            self._event_bus.publish(AudioChunkRecorded(timestamp=self._clock.get_current_time(), chunk=chunk))
+            samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
+            rms = float(np.sqrt(np.mean(samples * samples)))
+            level = min(1.0, rms / 10000.0)
+            self._event_bus.publish(AudioLevelComputed(timestamp=self._clock.get_current_time(), level=level))
+            self._buffer.add_to_last_words(chunk)
+            self._dispatch_chunk(chunk)
+        except Exception:
+            logger.exception("Pipeline error processing audio chunk (length: %d bytes)", len(chunk))
+            # Continue processing - one bad chunk shouldn't crash the pipeline
+
     @override
     def _run(self) -> None:
         while not self.should_stop:
@@ -179,74 +215,78 @@ class RecordingPipeline(Worker):
                 chunk = self._audio_queue.get(timeout=0.01)
             except queue.Empty:
                 continue
+            self._handle_chunk(chunk)
 
-            try:
-                self._event_bus.publish(AudioChunkRecorded(timestamp=self._clock.get_current_time(), chunk=chunk))
-                samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
-                rms = float(np.sqrt(np.mean(samples * samples)))
-                level = min(1.0, rms / 10000.0)
-                self._event_bus.publish(AudioLevelComputed(timestamp=self._clock.get_current_time(), level=level))
-                self._buffer.add_to_last_words(chunk)
-
-                if self._sm.is_recording:
-                    self._process_recording(chunk)
-                else:
-                    self._process_not_recording(chunk)
-            except Exception:
-                logger.exception("Pipeline error processing audio chunk (length: %d bytes)", len(chunk))
-                # Continue processing - one bad chunk shouldn't crash the pipeline
-
-    def _process_not_recording(self, chunk: AudioChunk) -> None:
+    def _maybe_detect_wake_word(self, chunk: AudioChunk) -> None:
         if self._use_wake_words and not self._wakeword_detected:
             self._process_wake_word(chunk)
 
-        if self._start_recording_on_voice_activity or self._wakeword_detected:
-            vad_result = self._vad.detect(chunk)
-            if vad_result.is_speech:
-                self._event_bus.publish(VADStarted(timestamp=self._clock.get_current_time()))
-                self.request_start()
-                self._speech_detected_in_recording = True
-                self._start_recording_on_voice_activity = False
-                return
+    def _vad_onset_armed(self) -> bool:
+        return self._start_recording_on_voice_activity or self._wakeword_detected
 
+    def _try_start_on_voice_activity(self, chunk: AudioChunk) -> bool:
+        if not self._vad_onset_armed():
+            return False
+        if not self._vad.detect(chunk).is_speech:
+            return False
+        self._event_bus.publish(VADStarted(timestamp=self._clock.get_current_time()))
+        self.request_start()
+        self._speech_detected_in_recording = True
+        self._start_recording_on_voice_activity = False
+        return True
+
+    def _process_not_recording(self, chunk: AudioChunk) -> None:
+        self._maybe_detect_wake_word(chunk)
+        if self._try_start_on_voice_activity(chunk):
+            return
         self._buffer.add_to_pre_roll(chunk)
+
+    def _begin_silence_turn(self) -> None:
+        if self._speech_end_silence_start == 0.0:
+            self._speech_end_silence_start = self._clock.get_current_time()
+            self._event_bus.publish(TurnDetectionStarted(timestamp=self._clock.get_current_time()))
+
+    def _maybe_fire_silence_end(self) -> None:
+        silence_duration = self._clock.get_current_time() - self._speech_end_silence_start
+        if silence_duration >= self._post_speech_silence_duration:
+            logger.warning(
+                "[pipeline] VAD silence-end firing: silence=%.2fs >= threshold=%.2fs",
+                silence_duration,
+                self._post_speech_silence_duration,
+            )
+            self._event_bus.publish(VADStopped(timestamp=self._clock.get_current_time()))
+            self.request_stop()
+
+    def _handle_silence(self) -> None:
+        elapsed = self._clock.get_current_time() - self._recording_start_time
+        if elapsed < self._config.vad.min_length_of_recording:
+            return
+        self._begin_silence_turn()
+        self._maybe_fire_silence_end()
+
+    def _handle_speech_resumed(self) -> None:
+        if self._speech_end_silence_start != 0.0:
+            self._speech_end_silence_start = 0.0
+            self._event_bus.publish(TurnDetectionStopped(timestamp=self._clock.get_current_time()))
+
+    def _track_turn_endpoint(self, is_speech: bool) -> None:
+        if not is_speech:
+            self._handle_silence()
+        else:
+            self._handle_speech_resumed()
+
+    def _evaluate_recording_vad(self, chunk: AudioChunk) -> None:
+        is_speech = self._vad.detect(chunk).is_speech
+        if is_speech:
+            self._speech_detected_in_recording = True
+        if not self._silence_endpoint_enabled:
+            return
+        self._track_turn_endpoint(is_speech)
 
     def _process_recording(self, chunk: AudioChunk) -> None:
         self._buffer.add_frame(chunk)
-
-        if not self._stop_recording_on_voice_deactivity:
-            return
-
-        vad_result = self._vad.detect(chunk)
-
-        if vad_result.is_speech:
-            self._speech_detected_in_recording = True
-
-        if not self._silence_endpoint_enabled:
-            return
-
-        if not vad_result.is_speech:
-            elapsed = self._clock.get_current_time() - self._recording_start_time
-            if elapsed < self._config.vad.min_length_of_recording:
-                return
-
-            if self._speech_end_silence_start == 0.0:
-                self._speech_end_silence_start = self._clock.get_current_time()
-                self._event_bus.publish(TurnDetectionStarted(timestamp=self._clock.get_current_time()))
-
-            silence_duration = self._clock.get_current_time() - self._speech_end_silence_start
-            if silence_duration >= self._post_speech_silence_duration:
-                logger.warning(
-                    "[pipeline] VAD silence-end firing: silence=%.2fs >= threshold=%.2fs",
-                    silence_duration,
-                    self._post_speech_silence_duration,
-                )
-                self._event_bus.publish(VADStopped(timestamp=self._clock.get_current_time()))
-                self.request_stop()
-        else:
-            if self._speech_end_silence_start != 0.0:
-                self._speech_end_silence_start = 0.0
-                self._event_bus.publish(TurnDetectionStopped(timestamp=self._clock.get_current_time()))
+        if self._stop_recording_on_voice_deactivity:
+            self._evaluate_recording_vad(chunk)
 
     def _process_wake_word(self, chunk: AudioChunk) -> None:
         if self._wake_word_detector is None:

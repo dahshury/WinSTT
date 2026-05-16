@@ -18,7 +18,7 @@ General settings control how WinSTT integrates with the Windows operating system
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `recordingMode` | enum | `"ptt"` | `"ptt"` for push-to-talk (hold hotkey), `"toggle"` for toggle mode (press to start/stop) |
-| `muteSystemAudioWhileDictating` | boolean | `false` | Mute system speakers while recording to prevent feedback |
+| `systemAudioReductionWhileDictating` | integer | `0` | Percent reduction applied to system speaker volume while dictating (multiples of 20). `0` = off, `100` = full mute; intermediate values duck to `(100 - value)%` of the previous volume. Restored on stop; ignored in Listen mode |
 | `recordingSound` | boolean | `true` | Play an audio cue when the hotkey is pressed or released |
 | `recordingSoundPath` | string | `""` | Path to a custom sound file (.wav or .mp3, max 3 seconds). Empty uses the built-in sound |
 

@@ -2,9 +2,11 @@
 
 Post Track B step 1: powered by onnx-asr directly (no faster_whisper). Media
 files are decoded to 16 kHz mono float32 PCM via ``ffmpeg`` and fed into the
-already-loaded onnx-asr model — for SRT exports we use the model's
-``with_timestamps()`` adapter to surface per-segment ``(start, end, text)``
-tuples.
+already-loaded :class:`OnnxAsrTranscriber` — the *same* WhisperX-style
+VAD-segmented pipeline used for live recordings. ``txt`` joins the segment
+texts; ``srt`` keeps the per-speech-run ``(start, end, text)`` tuples (cues
+land on natural silence boundaries from Silero VAD, not Whisper's internal
+``<|t|>`` tokens).
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from src.building_blocks.terminal import TerminalColors as bcolors
+from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 from src.stt_server.state import ServerState
 
 if TYPE_CHECKING:
@@ -143,9 +146,22 @@ def handle_transcribe_file(
             loop,
         )
 
-        # Pull the underlying onnx-asr model from the OnnxAsrTranscriber adapter.
+        # Route through the same OnnxAsrTranscriber the live recorder uses —
+        # one WhisperX-style VAD-segmented codepath for both mic and files.
         transcriber = state.recorder._service._transcriber  # type: ignore[union-attr]
-        model: Any = transcriber._model  # type: ignore[union-attr]
+        if not isinstance(transcriber, OnnxAsrTranscriber):
+            _send_file_event(
+                {
+                    "type": "file_transcription_error",
+                    "request_id": request_id,
+                    "file_path": file_path,
+                    "file_name": file_name,
+                    "error": "Active transcriber does not support file transcription",
+                },
+                state,
+                loop,
+            )
+            return
 
         audio = _decode_media_to_pcm(file_path, sample_rate=_TARGET_SAMPLE_RATE)
 
@@ -162,26 +178,15 @@ def handle_transcribe_file(
             loop,
         )
 
-        language = state.recorder.language or None
+        language = state.recorder.language or ""
 
         if fmt == "srt":
-            # with_timestamps() returns an adapter whose recognize() emits
-            # TimestampedResult.segments — a list of (start, end, text) tuples
-            # produced by Whisper's <|t|> timestamp tokens.
-            result = model.with_timestamps().recognize(
-                audio,
-                sample_rate=_TARGET_SAMPLE_RATE,
-                language=language,
-                return_timestamps=True,
-            )
-            segments = result.segments or []
-            text = _format_srt(segments) if segments else (result.text or "")
+            # VAD-segmented (start, end, text) — one subtitle cue per speech
+            # run, cut on Silero-detected silence.
+            segments = transcriber.transcribe_segments(audio, language=language)
+            text = _format_srt(segments) if segments else ""
         else:
-            text = model.recognize(
-                audio,
-                sample_rate=_TARGET_SAMPLE_RATE,
-                language=language,
-            )
+            text = transcriber.transcribe(audio, language=language).text
 
         _send_file_event(
             {

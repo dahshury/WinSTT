@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { PNG } from "pngjs";
 import { electronMock } from "../../test/mocks/electron";
+import { storeMock } from "../../test/mocks/store";
 
 /** Original green tint preserved as a test fixture so the pre-existing blend
  * math assertions (R=80, G=120, B=30 for input red) keep their meaning. */
@@ -38,12 +39,13 @@ mock.module("./debug-log", () => ({
 }));
 
 // recording-indicator reads `general.recordingMode` from the shared electron-
-// store wrapper on each onRecordingStart. Stub it so the test suite doesn't
-// need a real Store on disk.
-mock.module("./store", () => ({
-	getStoreValue: (_key: string) => "ptt",
-	store: {},
-}));
+// store wrapper on each onRecordingStart. Use the complete shared store mock
+// unchanged: its `general.recordingMode` default is already "ptt" (what these
+// tests expect), and crucially its getStoreValue/store.set pair are backed by
+// the SAME data object. A hardcoded `getStoreValue: () => "ptt"` here would
+// poison sibling test files (e.g. recording-state.test.ts) that share bun's
+// process-global `./store` module cache and rely on set→get round-tripping.
+mock.module("./store", () => storeMock());
 
 const {
 	initRecordingIndicator,
@@ -521,12 +523,13 @@ describe("generateAllModeIcons", () => {
 		// the `logInitialized` call.
 		const base = makeMinimalPngBase();
 		const out = helpers.generateAllModeIcons(base);
-		// All three RecordingMode keys are present.
-		expect(Object.keys(out).sort()).toEqual(["listen", "ptt", "toggle"]);
+		// All four RecordingMode keys are present.
+		expect(Object.keys(out).sort()).toEqual(["listen", "ptt", "toggle", "wakeword"]);
 		// Each mode returned LEVELS+1=11 icons (loop body executed end-to-end).
 		expect(out.ptt?.length).toBe(11);
 		expect(out.toggle?.length).toBe(11);
 		expect(out.listen?.length).toBe(11);
+		expect(out.wakeword?.length).toBe(11);
 	});
 
 	test("returns empty arrays per mode when icon generation fails", () => {
@@ -540,10 +543,11 @@ describe("generateAllModeIcons", () => {
 			toPNG: () => Buffer.alloc(0),
 		} as unknown as Parameters<typeof helpers.generateAllModeIcons>[0];
 		const out = helpers.generateAllModeIcons(brokenBase);
-		expect(Object.keys(out).sort()).toEqual(["listen", "ptt", "toggle"]);
+		expect(Object.keys(out).sort()).toEqual(["listen", "ptt", "toggle", "wakeword"]);
 		expect(out.ptt).toEqual([]);
 		expect(out.toggle).toEqual([]);
 		expect(out.listen).toEqual([]);
+		expect(out.wakeword).toEqual([]);
 	});
 });
 

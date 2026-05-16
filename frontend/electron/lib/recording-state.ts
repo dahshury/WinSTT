@@ -25,18 +25,33 @@ let recordingActive = false;
  * Pure predicate: does a hotkey press in this mode (with the given
  * in-flight recording state) authorise the NEXT `recording_start`?
  *
- *   - "ptt"    → yes (always; held-down press signals intent unconditionally)
- *   - "toggle" → only when no recording is currently in flight; the
- *                second press of a toggle cycle is the "stop press" and
- *                MUST NOT refresh intent (a stray duplicate start
- *                arriving later would otherwise sneak through)
- *   - "listen" → no (hotkey is not involved in listen mode)
+ *   - "ptt"      → yes (always; held-down press signals intent unconditionally)
+ *   - "toggle"   → only when no recording is currently in flight; the
+ *                  second press of a toggle cycle is the "stop press" and
+ *                  MUST NOT refresh intent (a stray duplicate start
+ *                  arriving later would otherwise sneak through)
+ *   - "listen"   → no (hotkey is not involved in listen mode)
+ *   - "wakeword" → no (the wake-word detector on the server initiates
+ *                  the session; the hotkey is not involved)
  *
  * Extracted from `notifyHotkeyPressed` to keep its cyclomatic complexity
  * low (single boolean check instead of two nested `if`s + `&&`).
  */
 function shouldSignalIntent(mode: string, recording: boolean): boolean {
 	return mode === "ptt" || (mode === "toggle" && !recording);
+}
+
+/**
+ * Pure predicate: in this mode, does the SERVER own the session lifecycle
+ * (loopback / wake-word detector) rather than the hotkey? When true, every
+ * `recording_start` is authorised unconditionally.
+ *
+ * Extracted from `consumeRecordingStart` so that function's branch count
+ * stays low (one predicate call instead of an inline `||` chain plus the
+ * intent check).
+ */
+function isServerDrivenMode(mode: string): boolean {
+	return mode === "listen" || mode === "wakeword";
 }
 
 /**
@@ -63,16 +78,17 @@ export function notifyHotkeyPressed(): void {
  */
 export function consumeRecordingStart(): boolean {
 	const mode = getStoreValue("general.recordingMode");
-	if (mode === "listen") {
-		recordingActive = true;
-		return true;
+	// Server-driven modes (listen/wakeword) authorise unconditionally;
+	// hotkey modes (ptt/toggle) authorise only on a signalled intent
+	// (single-shot — consuming clears it). Both authorised paths set
+	// `recordingActive`; the unauthorised path leaves it untouched.
+	const authorised = isServerDrivenMode(mode) || signaledIntent;
+	if (!authorised) {
+		return false;
 	}
-	if (signaledIntent) {
-		signaledIntent = false;
-		recordingActive = true;
-		return true;
-	}
-	return false;
+	signaledIntent = false;
+	recordingActive = true;
+	return true;
 }
 
 /**

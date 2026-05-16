@@ -202,42 +202,9 @@ def wire_all_callbacks(event_bus: EventBus, callbacks: CallbackMap) -> None:
         elif event_type in {ModelSwapStarted, ModelSwapCompleted}:
             wire_callback_with_model_swap(event_bus, event_type, cast(Callable[[str, str], None], cb_func))
         elif event_type is ModelSwapFailed:
-            wire_callback_with_model_swap_failed(
-                event_bus, event_type, cast(Callable[[str, str, str], None], cb_func)
-            )
+            wire_callback_with_model_swap_failed(event_bus, event_type, cast(Callable[[str, str, str], None], cb_func))
         else:
             wire_callback(event_bus, event_type, cast(SimpleCallback, cb_func))
-
-
-def _providers_for_device(device: str) -> list[str] | None:
-    """Translate a user-facing ``device`` string into a pinned ORT provider list.
-
-    ``"cuda"`` requests are honoured only when a GPU-class provider is
-    actually registered with onnxruntime — otherwise we fall back to CPU
-    instead of silently letting onnx-asr pick whatever ORT has available.
-    ``None`` means "let onnx-asr decide" (we use that for unknown values).
-
-    The GPU priority list is derived from ``onnxruntime.get_available_providers()``
-    filtered against the shared ``GPU_PROVIDERS`` set, so new ORT execution
-    providers (DirectML / TensorRT / ROCm / future EPs) are honoured
-    automatically without editing this function.
-    """
-    from src.recorder.infrastructure.device import GPU_PROVIDERS, resolve_device
-
-    resolved = resolve_device(device)
-    if resolved == "cpu":
-        return ["CPUExecutionProvider"]
-    if resolved != "cuda":
-        return None
-    try:
-        import onnxruntime as rt
-    except ImportError:
-        return ["CPUExecutionProvider"]
-    available = rt.get_available_providers()
-    gpu_providers = [p for p in available if p in GPU_PROVIDERS]
-    if not gpu_providers:
-        return ["CPUExecutionProvider"]
-    return [*gpu_providers, "CPUExecutionProvider"]
 
 
 def build_transcriber(
@@ -259,7 +226,9 @@ def build_transcriber(
     info = catalog.get(model_name)
     onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
     quantization = config.transcription.onnx_quantization or None
-    providers = _providers_for_device(config.transcription.device)
+    from src.recorder.infrastructure.device import providers_for_device
+
+    providers = providers_for_device(config.transcription.device)
 
     from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
@@ -286,15 +255,23 @@ def build_realtime_transcriber(
     info = catalog.get(model_name)
     onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
     quantization = config.transcription.onnx_quantization or None
-    providers = _providers_for_device(config.transcription.device)
+    from src.recorder.infrastructure.device import providers_for_device
+
+    providers = providers_for_device(config.transcription.device)
 
     from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
+    # Realtime feeds bounded-short windows (<= REALTIME_COMMIT_AFTER_SECONDS,
+    # ~20 s — always under Whisper's 30 s mel limit). VAD segmentation there
+    # is pure per-tick overhead and would trim trailing in-progress speech
+    # out of the growing live preview, so skip it (also avoids loading a
+    # second Silero model for the realtime instance).
     return OnnxAsrTranscriber(
         model_name=onnx_name,
         quantization=quantization,
         providers=providers,
         on_download_progress=progress_handler,
+        segment_with_vad=False,
     )
 
 

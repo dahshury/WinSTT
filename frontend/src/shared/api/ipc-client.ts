@@ -157,7 +157,6 @@ export const hotkeyStopRecording = () => send(IPC.HOTKEY_STOP_RECORDING);
 // System
 export const autostartSet = (enabled: boolean) => send(IPC.AUTOSTART_SET, { enabled });
 export const autostartGet = () => invokeOrDefault<boolean>(IPC.AUTOSTART_GET, false);
-export const audioSetMute = (muted: boolean) => send(IPC.AUDIO_SET_MUTE, { muted });
 export const audioGetDevices = () => invokeOrDefault<AudioDevice[]>(IPC.AUDIO_GET_DEVICES, []);
 export const gpuGetInfo = () => invokeOrDefault<GpuInfo | null>(IPC.GPU_GET_INFO, null);
 export const getSystemLocale = () => invokeOrDefault<string>(IPC.APP_GET_SYSTEM_LOCALE, "");
@@ -306,7 +305,16 @@ export interface ModelCacheInfo {
 }
 
 export interface ModelStateEntry {
+	/** Precisions the upstream repo actually ships. */
+	available_quantizations: string[];
+	/** Overall state — any weight variant present. */
 	cache: ModelCacheInfo;
+	/**
+	 * Per-precision cache, keyed by quantization suffix (`""` = default
+	 * export). Empty for legacy aliases without an HF repo — fall back to
+	 * the flat `cache` field there.
+	 */
+	cache_by_quantization: Record<string, ModelCacheInfo>;
 	comfortable_on_cpu: boolean;
 	comfortable_on_gpu: boolean;
 	estimated_bytes: number;

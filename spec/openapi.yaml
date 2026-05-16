@@ -469,6 +469,10 @@ components:
           nullable: true
         description:
           type: string
+        availableQuantizations:
+          type: array
+          items:
+            type: string
 
     LoopbackDevice:
       type: object
@@ -661,8 +665,17 @@ components:
           type: boolean
         startMinimized:
           type: boolean
-        muteSystemAudioWhileDictating:
-          type: boolean
+        systemAudioReductionWhileDictating:
+          type: integer
+          minimum: 0
+          maximum: 100
+          multipleOf: 20
+          description: |
+            How much to reduce system playback volume while dictating, as a
+            percent reduction. `0` disables the feature (volume untouched);
+            `100` fully mutes (volume → 0); intermediate values duck the
+            volume to `(100 - value)%` of its previous level. Restored on
+            recording stop. Ignored in `listen` mode.
         recordingSound:
           type: boolean
         recordingSoundPath:
@@ -676,10 +689,23 @@ components:
           description: Where to save transcribed files. `auto` saves alongside the source file; `ask` prompts with a save dialog each time.
         recordingMode:
           type: string
-          enum: [ptt, toggle, listen]
+          enum: [ptt, toggle, listen, wakeword]
+          description: |
+            How a recording session is started.
+            `ptt` / `toggle` use the hotkey; `listen` passively captures from a
+            loopback device; `wakeword` starts a session when the configured
+            wake word is heard. After a wake-word trigger the recording ends
+            via VAD-based silence detection (same as toggle), then the
+            detector resumes waiting for the next utterance.
         loopbackDeviceIndex:
           type: integer
           nullable: true
+        wakeWord:
+          type: string
+          description: |
+            Wake word used when `recordingMode` is `wakeword`. Must be one of
+            Porcupine's free built-in keywords (e.g. `alexa`, `computer`,
+            `jarvis`, `hey google`). Ignored in other recording modes.
         showRecordingOverlay:
           type: boolean
         visualizerSize:
@@ -760,6 +786,24 @@ components:
         enabled:
           type: boolean
           default: false
+          description: >-
+            Master switch: the LLM provider/model is configured and reachable.
+            Gates the shared provider config and both sub-features below — when
+            false, neither dictation post-processing nor text transformation
+            runs regardless of their own flags.
+        dictationEnabled:
+          type: boolean
+          default: true
+          description: >-
+            Sub-feature: apply the cleanup `presets` (tone + modifiers) to
+            dictated speech text. Only takes effect when `enabled` is true.
+        transformsEnabled:
+          type: boolean
+          default: false
+          description: >-
+            Sub-feature: allow `transforms` (custom prompts on the currently
+            selected text, via hotkey or the Transforms UI). Only takes effect
+            when `enabled` is true.
         provider:
           $ref: "#/components/schemas/LlmProvider"
         endpoint:

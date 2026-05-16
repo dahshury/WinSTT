@@ -1,29 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
 import { electronMock } from "@test/mocks/electron";
 
-const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
-const listeners = new Map<string, Array<(event: unknown, ...args: unknown[]) => void>>();
-
-mock.module("electron", () => ({
-	...electronMock(),
-	ipcMain: {
-		handle: (channel: string, listener: (event: unknown, ...args: unknown[]) => unknown) => {
-			handlers.set(channel, listener);
-		},
-		on: (channel: string, listener: (event: unknown, ...args: unknown[]) => void) => {
-			const list = listeners.get(channel) ?? [];
-			list.push(listener);
-			listeners.set(channel, list);
-		},
-		removeHandler: (channel: string) => handlers.delete(channel),
-		off: () => undefined,
-		removeAllListeners: () => undefined,
-		_handlers: handlers,
-		_listeners: listeners,
-		invokeHandler: async () => undefined,
-		emitListener: () => undefined,
-	},
-}));
+// audio-mute.ts pulls in ../lib/debug-log, which does
+// `import { app } from "electron"` at module load. Without a shim the real
+// electron entrypoint is resolved and throws "Export named 'app' not found".
+mock.module("electron", () => electronMock());
 
 // Drive the persistent PS host's behavior from tests. Each call to runPsCommand
 // resolves with the next stub response (or default). Captures the command and
@@ -66,7 +47,6 @@ mock.module("../lib/ps-host", () => ({
 
 const audioMute = await import("./audio-mute");
 const {
-	setupAudioMuteHandlers,
 	muteSystemAudio,
 	unmuteSystemAudio,
 	flushMutePending,
@@ -114,44 +94,9 @@ function recentLogContains(needle: string): boolean {
 
 describe("audio-mute module", () => {
 	test("exports its public API", () => {
-		expect(typeof setupAudioMuteHandlers).toBe("function");
 		expect(typeof muteSystemAudio).toBe("function");
 		expect(typeof unmuteSystemAudio).toBe("function");
 		expect(typeof flushMutePending).toBe("function");
-	});
-
-	test("setupAudioMuteHandlers registers the audio:set-mute listener", () => {
-		setupAudioMuteHandlers();
-		expect(listeners.has("audio:set-mute")).toBe(true);
-	});
-
-	test("audio:set-mute with invalid payload is silently dropped", async () => {
-		resetStubs();
-		setPlatform("win32");
-		setupAudioMuteHandlers();
-		const callbacks = listeners.get("audio:set-mute") ?? [];
-		try {
-			expect(() => {
-				for (const cb of callbacks) {
-					cb(undefined, null);
-				}
-			}).not.toThrow();
-			expect(() => {
-				for (const cb of callbacks) {
-					cb(undefined, { muted: "not-a-boolean" });
-				}
-			}).not.toThrow();
-			// Pin down the EqualityOperator and LogicalOperator mutants on
-			// the validation guard. With `typeof payload.muted !==
-			// "boolean"` mutated to `false`, payload `{ muted:
-			// "not-a-boolean" }` (truthy `.muted`) would slip through and
-			// call muteSystemAudio() → schedule a duck → enqueue
-			// GetVolume. Verify NO commands have been issued.
-			await flushMutePending();
-			expect(psStub.commands.length).toBe(0);
-		} finally {
-			resetPlatform();
-		}
 	});
 
 	test("muteSystemAudio is a no-op on non-win32 (early return path)", async () => {
@@ -195,6 +140,24 @@ describe("audio-mute module", () => {
 			expect(psStub.commandOpts[0]).toEqual({ expectValue: true, timeoutMs: 3000 });
 			// SetVolume MUST be called with `{timeoutMs: 3000}` (no expectValue).
 			expect(psStub.commandOpts[1]).toEqual({ timeoutMs: 3000 });
+		} finally {
+			resetPlatform();
+		}
+	});
+
+	test("muteSystemAudio(80) ducks to 20% of the saved volume (partial reduction)", async () => {
+		resetStubs();
+		setPlatform("win32");
+		psStub.getVolumeValue = "0.5";
+		try {
+			consoleLogLines.length = 0;
+			expect(muteSystemAudio(80)).toBe(true);
+			await flushMutePending();
+			expect(psStub.commands[0]).toContain("GetVolume");
+			// 0.5 × (100 − 80) / 100 = 0.1 — NOT a full mute.
+			expect(psStub.commands[1]).toContain("SetVolume(0.1");
+			expect(psStub.commands[1]).not.toContain("SetVolume(0)");
+			expect(consoleLogLines.some((l) => l.includes("ducked") && l.includes("0.100"))).toBe(true);
 		} finally {
 			resetPlatform();
 		}
@@ -268,55 +231,6 @@ describe("audio-mute module", () => {
 			await flushMutePending();
 			// State after failed duck should be: not ducked → unmute is a no-op
 			expect(psStub.commands.length).toBe(0);
-		} finally {
-			resetPlatform();
-		}
-	});
-
-	test("audio:set-mute with valid payload routes through the queue", async () => {
-		resetStubs();
-		setPlatform("win32");
-		setupAudioMuteHandlers();
-		const callbacks = listeners.get("audio:set-mute") ?? [];
-		try {
-			for (const cb of callbacks) {
-				cb(undefined, { muted: true });
-			}
-			await flushMutePending();
-			// At least the GetVolume read should have been issued.
-			expect(psStub.commands.some((c) => c.includes("GetVolume"))).toBe(true);
-		} finally {
-			resetPlatform();
-		}
-	});
-
-	test("audio:set-mute muted=false routes to unmute branch (locks in L160 if/else condition)", async () => {
-		// First duck successfully so isDucked=true. Then send muted=false
-		// via the IPC handler. With the L160 mutant `if (true)`, the
-		// handler would call muteSystemAudio (a no-op when isDucked=true)
-		// instead of unmuteSystemAudio (which calls SetVolume(0.5)).
-		resetStubs();
-		setPlatform("win32");
-		setupAudioMuteHandlers();
-		const callbacks = listeners.get("audio:set-mute") ?? [];
-		try {
-			// Prime: duck first so isDucked=true.
-			for (const cb of callbacks) {
-				cb(undefined, { muted: true });
-			}
-			await flushMutePending();
-			psStub.commands = [];
-			// Now send muted=false. Should route to unmuteSystemAudio →
-			// scheduleApply(applyRestore) → SetVolume(savedVolume).
-			for (const cb of callbacks) {
-				cb(undefined, { muted: false });
-			}
-			await flushMutePending();
-			// SetVolume should have been called with the saved value (0.5).
-			// With the L160 mutant, muteSystemAudio is called instead and
-			// since isDucked=true, it short-circuits → no commands.
-			expect(psStub.commands.length).toBe(1);
-			expect(psStub.commands[0]).toContain("SetVolume");
 		} finally {
 			resetPlatform();
 		}
@@ -567,6 +481,33 @@ describe("clampScalar (via __audio_mute_test_helpers__)", () => {
 		expect(audioMuteHelpers.clampScalar(0)).toBe(0);
 		expect(audioMuteHelpers.clampScalar(0.5)).toBe(0.5);
 		expect(audioMuteHelpers.clampScalar(1)).toBe(1);
+	});
+});
+
+describe("reductionTarget (via __audio_mute_test_helpers__)", () => {
+	test("100% reduction is a full mute (→ 0)", () => {
+		expect(audioMuteHelpers.reductionTarget(0.8, 100)).toBe(0);
+		expect(audioMuteHelpers.reductionTarget(1, 100)).toBe(0);
+	});
+
+	test("0% reduction leaves the volume unchanged", () => {
+		expect(audioMuteHelpers.reductionTarget(0.8, 0)).toBeCloseTo(0.8, 10);
+		expect(audioMuteHelpers.reductionTarget(0.42, 0)).toBeCloseTo(0.42, 10);
+	});
+
+	test("intermediate reductions scale the previous volume", () => {
+		// pct → keep (100 − pct)% of the previous level.
+		expect(audioMuteHelpers.reductionTarget(0.5, 80)).toBeCloseTo(0.1, 10);
+		expect(audioMuteHelpers.reductionTarget(0.5, 60)).toBeCloseTo(0.2, 10);
+		expect(audioMuteHelpers.reductionTarget(0.5, 40)).toBeCloseTo(0.3, 10);
+		expect(audioMuteHelpers.reductionTarget(1, 20)).toBeCloseTo(0.8, 10);
+	});
+
+	test("result is clamped into [0, 1]", () => {
+		// Defensive: a negative pct would over-amplify; clamp keeps it ≤ 1.
+		expect(audioMuteHelpers.reductionTarget(1, -100)).toBe(1);
+		// A pct > 100 would go negative; clamp keeps it ≥ 0.
+		expect(audioMuteHelpers.reductionTarget(0.5, 200)).toBe(0);
 	});
 });
 

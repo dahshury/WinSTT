@@ -1,31 +1,64 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { ipcClientMock } from "@test/mocks/ipc-client";
+import { IPC } from "@/shared/api/ipc-channels";
 
-const fetchModelCatalogMock = mock(async () => [] as unknown[]);
-const onModelCatalogMock = mock((_cb: (raw: unknown[]) => void) => () => undefined);
+// ---------------------------------------------------------------------------
+// Why this test routes through `window.electronAPI` instead of overriding
+// exports via `mock.module`:
+//
+// bun:test evaluates EVERY `mock.module()` during the module-load phase and,
+// for a given module path, the LAST-registered factory wins PROCESS-GLOBALLY
+// for all files (there is no per-file teardown). So if this file overrode
+// `fetchModelCatalog`/`onModelCatalog` with local spies, those spies would
+// leak into (or be clobbered by) every other test that imports ipc-client,
+// producing order-dependent cross-file failures (StatusBar's catalog goes
+// empty, etc.).
+//
+// Instead we install the COMPLETE, behavior-faithful `ipcClientMock()` — the
+// SAME clean fake every other partial-mock file installs, so whichever wins
+// globally is identical and harmless — and drive this suite's data through a
+// per-file `window.electronAPI` stub that is restored in afterEach. The real
+// catalog-store routes `fetchModelCatalog` → invoke(STT_GET_MODEL_CATALOG)
+// and `onModelCatalog` → on(STT_MODEL_CATALOG), so the faithful fake honours
+// our stub exactly as the real module would.
+// ---------------------------------------------------------------------------
 
-// Provide a complete-enough shim so other tests' imports of the same module
-// (mock-cached globally by bun:test) do not error on missing exports.
-mock.module("@/shared/api/ipc-client", () => ({
-	fetchModelCatalog: fetchModelCatalogMock,
-	onModelCatalog: onModelCatalogMock,
-	fetchOllamaModels: async () => ({ models: [], reachable: false }),
-	fetchOpenRouterModels: async () => ({ models: [], reachable: false }),
-	onLlmCatalog: () => () => undefined,
-	// Phase 3-5 model-swap + cache state additions — referenced by
-	// model-state-store.ts and ModelSettingsPanel.tsx. Bun's mock.module
-	// installs a process-global cache, so any subsequent test importing
-	// those modules needs these exports to resolve. Keep this in sync
-	// with the real ipc-client surface or you'll get cryptic
-	// "Export named X not found" failures from cross-file test ordering.
-	fetchModelsWithState: async () => null,
-	onModelCacheChanged: () => () => undefined,
-	onModelSwapStarted: () => () => undefined,
-	onModelSwapCompleted: () => () => undefined,
-	onModelSwapFailed: () => () => undefined,
-	onRuntimeInfo: () => () => undefined,
-	fetchRuntimeInfo: async () => null,
-	sttReloadModel: () => undefined,
-}));
+mock.module("@/shared/api/ipc-client", () => ipcClientMock());
+
+const originalElectronApi = window.electronAPI;
+
+let catalogPayload: unknown[] = [];
+let catalogListener: ((raw: unknown[]) => void) | null = null;
+const fetchInvokes: string[] = [];
+const onSubscriptions: string[] = [];
+
+function installElectronStub(): void {
+	catalogPayload = [];
+	catalogListener = null;
+	fetchInvokes.length = 0;
+	onSubscriptions.length = 0;
+	window.electronAPI = {
+		getPathForFile: () => "",
+		send: () => undefined,
+		invoke: async (channel: string) => {
+			if (channel === IPC.STT_GET_MODEL_CATALOG) {
+				fetchInvokes.push(channel);
+				return catalogPayload;
+			}
+			return;
+		},
+		secureInvoke: async () => undefined,
+		on: (channel: string, cb: (...args: unknown[]) => void) => {
+			if (channel === IPC.STT_MODEL_CATALOG) {
+				onSubscriptions.push(channel);
+				catalogListener = (raw: unknown[]) => cb({ models: raw });
+			}
+			return () => {
+				catalogListener = null;
+			};
+		},
+	};
+}
 
 const { useCatalogStore, initCatalogStore } = await import("./catalog-store");
 
@@ -48,6 +81,15 @@ const invalidRaw = {
 	id: "broken",
 	displayName: "no snake case",
 };
+
+beforeEach(() => {
+	installElectronStub();
+	useCatalogStore.setState({ models: [], isLoaded: false });
+});
+
+afterEach(() => {
+	window.electronAPI = originalElectronApi;
+});
 
 describe("useCatalogStore.setModels", () => {
 	test("validates raw input via zod and maps snake_case to camelCase", () => {
@@ -97,17 +139,15 @@ describe("useCatalogStore selectors", () => {
 
 describe("initCatalogStore", () => {
 	test("calls fetchModelCatalog and onModelCatalog to subscribe", async () => {
-		const prevFetchCount = fetchModelCatalogMock.mock.calls.length;
-		const prevOnCount = onModelCatalogMock.mock.calls.length;
 		initCatalogStore();
 		// Give the async fetchModelCatalog a chance to settle
 		await new Promise((r) => setTimeout(r, 0));
-		expect(fetchModelCatalogMock.mock.calls.length).toBeGreaterThan(prevFetchCount);
-		expect(onModelCatalogMock.mock.calls.length).toBeGreaterThan(prevOnCount);
+		expect(fetchInvokes.length).toBeGreaterThan(0);
+		expect(onSubscriptions.length).toBeGreaterThan(0);
 	});
 
 	test("populates store when fetchModelCatalog resolves with non-empty array", async () => {
-		fetchModelCatalogMock.mockImplementationOnce(async () => [validRaw]);
+		catalogPayload = [validRaw];
 		useCatalogStore.setState({ models: [], isLoaded: false });
 		initCatalogStore();
 		await new Promise((r) => setTimeout(r, 0));
@@ -115,7 +155,7 @@ describe("initCatalogStore", () => {
 	});
 
 	test("does not call setModels when fetchModelCatalog resolves with empty array", async () => {
-		fetchModelCatalogMock.mockImplementationOnce(async () => []);
+		catalogPayload = [];
 		useCatalogStore.setState({ models: [], isLoaded: false });
 		initCatalogStore();
 		await new Promise((r) => setTimeout(r, 0));
@@ -168,27 +208,18 @@ describe("store initial state (mutation guards)", () => {
 });
 
 describe("catalog-store self-init block (window.electronAPI != null)", () => {
-	test("fetchModelCatalog is called and setModels is invoked when result is non-empty array", async () => {
-		// The module-level init already ran with empty array (window.electronAPI is set in test env).
-		// We verify the mocks were called at module load time.
-		// onModelCatalog should have been called to subscribe to live updates.
-		expect(onModelCatalogMock).toHaveBeenCalled();
-		// fetchModelCatalog should have been called once at startup.
-		expect(fetchModelCatalogMock).toHaveBeenCalled();
+	test("fetchModelCatalog is invoked and onModelCatalog subscribes on init", async () => {
+		initCatalogStore();
+		await new Promise((r) => setTimeout(r, 0));
+		expect(onSubscriptions.length).toBeGreaterThan(0);
+		expect(fetchInvokes.length).toBeGreaterThan(0);
 	});
 
-	test("live catalog update via onModelCatalog callback updates the store", () => {
-		// Retrieve the callback registered with onModelCatalog
-		const calls = onModelCatalogMock.mock.calls;
-		const firstCall = calls.length > 0 ? calls[0] : undefined;
-		const registeredCallback = firstCall
-			? (firstCall[0] as ((raw: unknown[]) => void) | undefined)
-			: undefined;
-		if (!registeredCallback) {
-			// Module init did not run (window.electronAPI was null) — skip
-			return;
-		}
-		registeredCallback([validRaw]);
+	test("live catalog update via onModelCatalog callback updates the store", async () => {
+		initCatalogStore();
+		await new Promise((r) => setTimeout(r, 0));
+		expect(catalogListener).not.toBeNull();
+		catalogListener?.([validRaw]);
 		const state = useCatalogStore.getState();
 		expect(state.models.some((m) => m.id === "tiny")).toBe(true);
 	});

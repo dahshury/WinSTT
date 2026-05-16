@@ -1,5 +1,6 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import { electronMock } from "../../test/mocks/electron";
+import { storeMock } from "../../test/mocks/store";
 
 mock.module("electron", () => electronMock());
 
@@ -35,26 +36,53 @@ mock.module("uiohook-napi", () => ({
 
 const storeValues: Record<string, unknown> = {};
 const storeChangeListeners: Array<() => void> = [];
-mock.module("../lib/store", () => ({
-	getStoreValue: (key: string) => storeValues[key],
-	store: {
-		get: (k: string) => storeValues[k],
-		onDidChange: (_key: string, cb: () => void) => {
-			storeChangeListeners.push(cb);
-			return () => {
-				const idx = storeChangeListeners.indexOf(cb);
-				if (idx !== -1) {
-					storeChangeListeners.splice(idx, 1);
-				}
-			};
+mock.module("../lib/store", () => {
+	const base = storeMock();
+	// Keep getStoreValue / store.get / store.set internally consistent and
+	// backed by the SAME `storeValues` object. bun's `mock.module` registry is
+	// process-global, so this mock can leak into sibling tests (e.g.
+	// transforms.test.ts, which writes `llm.transforms` via store.set then
+	// reads it via the real applyTransform's getStoreValue). A split backing
+	// (set→base, get→storeValues) would silently drop those writes.
+	const readKey = (key: string): unknown =>
+		key in storeValues ? storeValues[key] : base.getStoreValue(key);
+	return {
+		...base,
+		getStoreValue: readKey,
+		store: {
+			...base.store,
+			get: readKey,
+			set: (key: string, value: unknown) => {
+				storeValues[key] = value;
+			},
+			onDidChange: (_key: string, cb: () => void) => {
+				storeChangeListeners.push(cb);
+				return () => {
+					const idx = storeChangeListeners.indexOf(cb);
+					if (idx !== -1) {
+						storeChangeListeners.splice(idx, 1);
+					}
+				};
+			},
 		},
-	},
-}));
+	};
+});
 
 const applyCalls: string[] = [];
 let applyTransformShouldReject = false;
 let applyTransformRejectWithString = false;
+
+// Pull the REAL `./transforms` surface in via a distinct specifier (resolves
+// to the same absolute file but is NOT keyed to the `./transforms` mock we
+// install next). bun's `mock.module` registry is process-global, so a partial
+// `{ applyTransform }` mock here would leak into transforms.test.ts (which
+// `await import("./transforms")` and needs `__transforms_test_helpers__` /
+// `setupTransforms`). Spreading the real module keeps the leak harmless —
+// only `applyTransform` is overridden with this file's controllable stub.
+const realTransforms = await import("../ipc/transforms");
+
 mock.module("./transforms", () => ({
+	...realTransforms,
 	applyTransform: (id: string) => {
 		applyCalls.push(id);
 		if (applyTransformRejectWithString) {
@@ -72,6 +100,17 @@ mock.module("./transforms", () => ({
 const { __transform_hotkeys_test_helpers__: helpers, setupTransformHotkeys } = await import(
 	"./transform-hotkeys"
 );
+
+// `./transforms` is a SIBLING module. We mock it above only to stub
+// `applyTransform`, but bun's `mock.module` registry is process-global and
+// persists into transforms.test.ts (which runs next alphabetically and tests
+// the GENUINE module via `await import`). Re-register the real module after
+// this file finishes so the sibling's `await import("../ipc/transforms")`
+// resolves to the authentic surface (same pattern transforms.test.ts uses to
+// restore `./llm` and `../ipc/hotkey`).
+afterAll(() => {
+	mock.module("./transforms", () => realTransforms);
+});
 
 function reset(): void {
 	for (const key of Object.keys(storeValues)) {

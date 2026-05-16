@@ -4,6 +4,7 @@ import queue as queue_module
 import struct
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -12,8 +13,8 @@ from src.building_blocks.clock import Clock
 from src.building_blocks.event_bus import EventBus
 from src.recorder.application.recorder_service import RecorderService
 from src.recorder.domain.config import RecorderConfig
-from src.recorder.domain.events import NoAudioDetected
-from src.recorder.domain.ports.transcriber import TranscriptionResult
+from src.recorder.domain.events import DownloadProgress, NoAudioDetected
+from src.recorder.domain.ports.transcriber import ITranscriber, TranscriptionResult
 from src.recorder.domain.state_machine import RecorderState
 from tests.fakes.fake_audio_source import FakeAudioSource
 from tests.fakes.fake_transcriber import FakeTranscriber
@@ -969,3 +970,561 @@ class TestRecorderService:
         service.shutdown()
         assert result == "Full pass."  # preprocessed FakeTranscriber output
         assert transcriber.call_count == before + 1
+
+    # ---- Model swap (request_model_swap / _swap_worker) ----
+
+    def _wait_for(self, predicate: Callable[[], bool], timeout: float = 5.0) -> None:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if predicate():
+                return
+            time.sleep(0.005)
+        raise AssertionError("condition not met within timeout")
+
+    def test_set_swap_progress_sink_installs_callback(self) -> None:
+        service, _, _, _ = self._make_service()
+        sink = object()
+        service.set_swap_progress_sink(sink)
+        assert service._swap_progress_sink is sink
+        service.set_swap_progress_sink(None)
+        assert service._swap_progress_sink is None
+        service.shutdown()
+
+    def test_request_model_swap_unknown_kind_raises(self) -> None:
+        service, _, _, _ = self._make_service()
+        try:
+            service.request_model_swap("bogus", "some/model")
+            raise AssertionError("expected ValueError")
+        except ValueError as e:
+            assert "bogus" in str(e)
+        service.shutdown()
+
+    def test_request_model_swap_realtime_disabled_emits_failed(self) -> None:
+        from src.recorder.domain.events import ModelSwapFailed
+
+        service, _, event_bus, _ = self._make_service()
+        failures: list[ModelSwapFailed] = []
+        event_bus.subscribe(ModelSwapFailed, failures.append)
+        service.request_model_swap("realtime", "some/model")
+        assert len(failures) == 1
+        assert failures[0].kind == "realtime"
+        assert "disabled" in failures[0].reason
+        service.shutdown()
+
+    def _swap_service(
+        self,
+    ) -> tuple[RecorderService, FakeTranscriber, EventBus, list[Any]]:
+        """Service whose ``_load_transcriber`` is stubbed to return a fake."""
+        service, transcriber, event_bus, _ = self._make_service()
+        loaded: list[Any] = []
+
+        def fake_load(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+            new = FakeTranscriber(
+                result=TranscriptionResult(
+                    text=f"loaded {name}",
+                    language="en",
+                    language_probability=0.99,
+                    duration_seconds=1.0,
+                )
+            )
+            loaded.append(new)
+            # Drive the progress callback once so the cancel checkpoint runs.
+            on_progress(
+                DownloadProgress(
+                    model=name,
+                    progress=0.5,
+                    downloaded_bytes=5,
+                    total_bytes=10,
+                    speed_bps=1.0,
+                    eta_seconds=1.0,
+                )
+            )
+            return new
+
+        service._load_transcriber = fake_load  # type: ignore[method-assign]
+        return service, transcriber, event_bus, loaded
+
+    def test_model_swap_main_success(self) -> None:
+        from src.recorder.domain.events import (
+            ModelSwapCompleted,
+            ModelSwapStarted,
+        )
+
+        service, old_transcriber, event_bus, loaded = self._swap_service()
+        started: list[ModelSwapStarted] = []
+        completed: list[ModelSwapCompleted] = []
+        event_bus.subscribe(ModelSwapStarted, started.append)
+        event_bus.subscribe(ModelSwapCompleted, completed.append)
+
+        service.request_model_swap("main", "onnx-community/whisper-base")
+        self._wait_for(lambda: len(completed) == 1)
+
+        assert started[0].kind == "main"
+        assert completed[0].name == "onnx-community/whisper-base"
+        # Pointer was swapped + old model shut down.
+        assert service._transcriber is loaded[0]
+        assert old_transcriber.shutdown_called
+        assert service._config.transcription.model == "onnx-community/whisper-base"
+        service.shutdown()
+
+    def test_model_swap_realtime_success(self) -> None:
+        from src.recorder.domain.events import ModelSwapCompleted
+
+        rt = FakeTranscriber()
+        service, _, event_bus, loaded = self._swap_service()
+        service._realtime_transcriber = rt
+        service._config.realtime.enable_realtime_transcription = True
+        completed: list[ModelSwapCompleted] = []
+        event_bus.subscribe(ModelSwapCompleted, completed.append)
+
+        service.request_model_swap("realtime", "onnx-community/whisper-tiny")
+        self._wait_for(lambda: len(completed) == 1)
+
+        assert service._realtime_transcriber is loaded[0]
+        assert rt.shutdown_called
+        assert service._config.realtime.realtime_model_type == "onnx-community/whisper-tiny"
+        service.shutdown()
+
+    def test_model_swap_load_failure_emits_failed(self) -> None:
+        from src.recorder.domain.events import ModelSwapFailed
+
+        service, old, event_bus, _ = self._make_service()
+        failures: list[ModelSwapFailed] = []
+        event_bus.subscribe(ModelSwapFailed, failures.append)
+
+        def boom(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+            raise RuntimeError("disk full")
+
+        service._load_transcriber = boom  # type: ignore[method-assign]
+        service.request_model_swap("main", "x/y")
+        self._wait_for(lambda: len(failures) == 1)
+        assert "RuntimeError: disk full" in failures[0].reason
+        # Current transcriber untouched.
+        assert service._transcriber is old
+        service.shutdown()
+
+    def test_model_swap_cancelled_mid_download(self) -> None:
+        from src.recorder.domain.errors import DownloadCancelledError
+        from src.recorder.domain.events import ModelSwapFailed
+
+        service, old, event_bus, _ = self._make_service()
+        failures: list[ModelSwapFailed] = []
+        event_bus.subscribe(ModelSwapFailed, failures.append)
+
+        def cancelled(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+            raise DownloadCancelledError(name)
+
+        service._load_transcriber = cancelled  # type: ignore[method-assign]
+        service.request_model_swap("main", "x/y")
+        self._wait_for(lambda: len(failures) == 1)
+        assert failures[0].reason == "cancelled"
+        assert service._transcriber is old
+        service.shutdown()
+
+    def test_model_swap_superseded_when_cancel_set_after_load(self) -> None:
+        from src.recorder.domain.events import ModelSwapFailed
+
+        service, old, event_bus, _ = self._make_service()
+        failures: list[ModelSwapFailed] = []
+        event_bus.subscribe(ModelSwapFailed, failures.append)
+        new_fake = FakeTranscriber()
+
+        def load_then_supersede(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+            # Simulate a newer swap arriving: set this kind's cancel event
+            # after the model is built but before the commit.
+            service._swap_cancel_events["main"].set()
+            return new_fake
+
+        service._load_transcriber = load_then_supersede  # type: ignore[method-assign]
+        service.request_model_swap("main", "x/y")
+        self._wait_for(lambda: len(failures) == 1)
+        assert failures[0].reason == "superseded"
+        assert service._transcriber is old
+        assert new_fake.shutdown_called  # half-built model dropped
+        service.shutdown()
+
+    def test_request_model_swap_cancels_prior_inflight(self) -> None:
+        service, _, _, _ = self._make_service()
+        prior = threading.Event()
+        service._swap_cancel_events["main"] = prior
+        # Stub the worker so the thread does nothing observable.
+        service._swap_worker = lambda *a, **k: None  # type: ignore[method-assign]
+        service.request_model_swap("main", "x/y")
+        assert prior.is_set()  # the prior swap's cancel event was set
+        # A fresh cancel event replaced it.
+        assert service._swap_cancel_events["main"] is not prior
+        service.shutdown()
+
+    # ---- _SwapProgress callback unit tests ----
+
+    def test_swap_progress_raises_on_cancel(self) -> None:
+        from src.recorder.application.recorder_service import _SwapProgress
+        from src.recorder.domain.errors import DownloadCancelledError
+        from src.recorder.domain.events import DownloadProgress
+
+        service, _, _, _ = self._make_service()
+        cancel = threading.Event()
+        cancel.set()
+        cb = _SwapProgress(service, "m", cancel)
+        info = DownloadProgress(
+            model="m", progress=0.1, downloaded_bytes=1, total_bytes=10, speed_bps=1.0, eta_seconds=9.0
+        )
+        try:
+            cb(info)
+            raise AssertionError("expected DownloadCancelledError")
+        except DownloadCancelledError:
+            pass
+        service.shutdown()
+
+    def test_swap_progress_forwards_to_sink(self) -> None:
+        from src.recorder.application.recorder_service import _SwapProgress
+        from src.recorder.domain.events import DownloadProgress
+
+        service, _, _, _ = self._make_service()
+        received: list[DownloadProgress] = []
+        service.set_swap_progress_sink(received.append)
+        cb = _SwapProgress(service, "m", threading.Event())
+        info = DownloadProgress(
+            model="m", progress=0.2, downloaded_bytes=2, total_bytes=10, speed_bps=1.0, eta_seconds=8.0
+        )
+        cb(info)
+        assert received == [info]
+        service.shutdown()
+
+    def test_swap_progress_no_sink_is_noop(self) -> None:
+        from src.recorder.application.recorder_service import _SwapProgress
+        from src.recorder.domain.events import DownloadProgress
+
+        service, _, _, _ = self._make_service()
+        assert service._swap_progress_sink is None
+        cb = _SwapProgress(service, "m", threading.Event())
+        cb(
+            DownloadProgress(
+                model="m", progress=0.3, downloaded_bytes=3, total_bytes=10, speed_bps=1.0, eta_seconds=7.0
+            )
+        )  # should not raise
+        service.shutdown()
+
+    def test_swap_progress_swallows_sink_exception(self) -> None:
+        from src.recorder.application.recorder_service import _SwapProgress
+        from src.recorder.domain.events import DownloadProgress
+
+        service, _, _, _ = self._make_service()
+
+        def bad_sink(info: DownloadProgress) -> None:
+            raise RuntimeError("sink boom")
+
+        service.set_swap_progress_sink(bad_sink)
+        cb = _SwapProgress(service, "m", threading.Event())
+        cb(
+            DownloadProgress(
+                model="m", progress=0.4, downloaded_bytes=4, total_bytes=10, speed_bps=1.0, eta_seconds=6.0
+            )
+        )  # exception is logged + swallowed
+        service.shutdown()
+
+    # ---- runtime_info ----
+
+    def test_runtime_info_defaults_without_onnx_attrs(self) -> None:
+        service, _, _, _ = self._make_service()
+        info = service.runtime_info()
+        assert info["device"] == service._config.transcription.device
+        assert info["providers"] == []  # FakeTranscriber has no active_providers
+        assert info["is_gpu"] is False
+        assert info["model"] == service._config.transcription.model
+        assert info["realtime_model"] is None
+        service.shutdown()
+
+    def test_runtime_info_reports_onnx_providers_and_gpu(self) -> None:
+        service, transcriber, _, _ = self._make_service()
+        transcriber.active_providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]  # type: ignore[attr-defined]
+        transcriber.is_gpu = True  # type: ignore[attr-defined]
+        info = service.runtime_info()
+        assert info["providers"] == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        assert info["is_gpu"] is True
+        service.shutdown()
+
+    def test_runtime_info_includes_realtime_model_when_present(self) -> None:
+        rt = FakeTranscriber()
+        service, _, _, _ = self._make_service(realtime_transcriber=rt)
+        service._config.realtime.realtime_model_type = "onnx-community/whisper-tiny"
+        info = service.runtime_info()
+        assert info["realtime_model"] == "onnx-community/whisper-tiny"
+        service.shutdown()
+
+    # ---- extracted helper unit tests ----
+
+    def test_resolve_onnx_name_prefers_onnx_model_name(self) -> None:
+        from src.recorder.domain.model_registry import ModelCatalog
+
+        service, _, _, _ = self._make_service()
+        catalog = ModelCatalog()
+        info = next(m for m in catalog.list_all() if m.onnx_model_name)
+        assert service._resolve_onnx_name(info, "fallback") == info.onnx_model_name
+        assert service._resolve_onnx_name(None, "fallback") == "fallback"
+        service.shutdown()
+
+    def test_audio_stats_empty_and_nonempty(self) -> None:
+        service, _, _, _ = self._make_service()
+        assert service._audio_stats(np.array([], dtype=np.float32)) == (0.0, 0.0, 0.0)
+        peak, rms, nz = service._audio_stats(np.array([0.0, 0.5, -0.5], dtype=np.float32))
+        assert peak == 0.5
+        assert rms > 0.0
+        assert nz > 0.0
+        service.shutdown()
+
+    def test_assemble_realtime_text_combinations(self) -> None:
+        service, _, _, _ = self._make_service()
+        service._realtime_committed_text = ""
+        assert service._assemble_realtime_text("fresh") == "fresh"
+        service._realtime_committed_text = "old"
+        assert service._assemble_realtime_text("") == "old"
+        assert service._assemble_realtime_text("new") == "old new"
+        service.shutdown()
+
+    def test_text_reuses_realtime_output_when_eligible(self) -> None:
+        """text() returns the realtime worker's cached text without a full pass.
+
+        Realtime is disabled here so no realtime thread races us; the
+        eligibility check is stubbed to mimic the
+        ``use_main_model_for_realtime`` toggle being on with cached output.
+        The main transcriber must NOT be called for the final pass.
+        """
+        service, transcriber, _, _ = self._make_service()
+
+        def fake_reuse() -> str:
+            return "reused realtime text"
+
+        service._reuse_realtime_text_if_eligible = fake_reuse  # type: ignore[method-assign]
+        chunk = struct.pack("<512h", *([100] * 512))
+        chunks = [chunk for _ in range(22)]
+
+        def feed_audio() -> None:
+            time.sleep(0.05)
+            for c in chunks:
+                service.feed_audio(c)
+                time.sleep(0.01)
+
+        t = threading.Thread(target=feed_audio)
+        t.start()
+        before = transcriber.call_count
+        result = service.text()
+        t.join()
+        service.shutdown()
+        assert result == "reused realtime text"
+        # No dedicated full-buffer transcription was performed.
+        assert transcriber.call_count == before
+
+    def test_set_microphone_skips_hardware_toggle_in_wake_word_mode(self) -> None:
+        """With a wake-word detector, capture stays on (no pause/resume)."""
+        service, _, _, audio_source = self._make_service(
+            wake_word_detector=FakeWakeWordDetector(),
+        )
+        pauses: list[bool] = []
+        original_pause = audio_source.pause
+
+        def tracking_pause() -> None:
+            pauses.append(True)
+            original_pause()
+
+        audio_source.pause = tracking_pause  # type: ignore[method-assign]
+        service.set_microphone(False)
+        # Hardware capture toggle is skipped entirely in wake-word mode.
+        assert pauses == []
+        service.shutdown()
+
+    def test_handle_microphone_off_noop_when_transcribing(self) -> None:
+        """No NoAudioDetected and no request_stop when state is TRANSCRIBING."""
+        from src.recorder.domain.events import NoAudioDetected as _NoAudio
+
+        service, _, event_bus, _ = self._make_service()
+        events: list[_NoAudio] = []
+        event_bus.subscribe(_NoAudio, events.append)
+        service._state_machine.transition(RecorderState.LISTENING)
+        service._state_machine.transition(RecorderState.RECORDING)
+        service._state_machine.transition(RecorderState.TRANSCRIBING)
+        service._handle_microphone_off()
+        assert events == []
+        service.shutdown()
+
+    def test_toggle_hardware_capture_swallows_exception(self) -> None:
+        """A raising audio source on pause/resume is logged, not propagated."""
+        service, _, _, audio_source = self._make_service()
+
+        def boom() -> None:
+            raise RuntimeError("device busy")
+
+        audio_source.pause = boom  # type: ignore[method-assign]
+        # Must not raise.
+        service._toggle_hardware_capture(microphone_on=False)
+        service.shutdown()
+
+    def test_safe_step_swallows_exception(self) -> None:
+        def boom() -> None:
+            raise RuntimeError("cleanup failed")
+
+        # Static helper: must swallow + log without raising.
+        RecorderService._safe_step("doing thing", boom)
+
+    def test_join_alive_warns_when_thread_lingers(self) -> None:
+        stop = threading.Event()
+
+        def run() -> None:
+            stop.wait(timeout=5.0)
+
+        thread = threading.Thread(target=run, name="lingering")
+        thread.start()
+        try:
+            # Thread is still alive after the short join timeout.
+            RecorderService._join_alive(thread, "lingering")
+            assert thread.is_alive()
+        finally:
+            stop.set()
+            thread.join()
+
+    def test_shutdown_old_transcriber_swallows_exception(self) -> None:
+        old = FakeTranscriber()
+        new = FakeTranscriber()
+
+        def boom() -> None:
+            raise RuntimeError("ort cleanup blew up")
+
+        old.shutdown = boom  # type: ignore[method-assign]
+        # Old differs from new → shutdown is attempted, exception swallowed.
+        RecorderService._shutdown_old_transcriber("main", old, new)
+
+    def test_shutdown_old_transcriber_noop_when_same_instance(self) -> None:
+        same = FakeTranscriber()
+        RecorderService._shutdown_old_transcriber("main", same, same)
+        assert not same.shutdown_called
+
+    def test_handle_audio_read_error_stops_after_max_errors(self) -> None:
+        service, _, _, _ = self._make_service()
+        service._is_running = True
+        max_errors = service._MAX_CONSECUTIVE_AUDIO_ERRORS
+        result = service._handle_audio_read_error(OSError("boom"), max_errors - 1)
+        assert result == max_errors
+        assert service._is_running is False
+        service.shutdown()
+
+    def test_commit_chunk_appends_committed_text(self) -> None:
+        rt = FakeTranscriber(
+            result=TranscriptionResult(
+                text="committed words",
+                language="en",
+                language_probability=0.99,
+                duration_seconds=0.5,
+            )
+        )
+        service, _, _, _ = self._make_service(realtime_transcriber=rt)
+        chunk = struct.pack("<512h", *([100] * 512))
+        for _ in range(10):
+            service._audio_buffer.add_frame(chunk)
+        service._realtime_committed_text = ""
+        service._commit_chunk(0, 5)
+        # _preprocess_output capitalizes + adds a trailing period.
+        assert "Committed words" in service._realtime_committed_text
+        # Second commit appends with a separating space.
+        service._commit_chunk(5, 5)
+        assert service._realtime_committed_text.count("Committed words") == 2
+        service.shutdown()
+
+    def test_commit_chunk_skips_empty_audio_slice(self) -> None:
+        rt = FakeTranscriber()
+        service, _, _, _ = self._make_service(realtime_transcriber=rt)
+        service._realtime_committed_text = ""
+        # Empty buffer → zero-length slice → early return, no transcription.
+        service._commit_chunk(0, 5)
+        assert service._realtime_committed_text == ""
+        assert rt.call_count == 0
+        service.shutdown()
+
+    def test_realtime_commit_if_needed_advances_watermark(self) -> None:
+        rt = FakeTranscriber(
+            result=TranscriptionResult(
+                text="chunk text",
+                language="en",
+                language_probability=0.99,
+                duration_seconds=0.5,
+            )
+        )
+        from src.recorder.application.recorder_service import (
+            REALTIME_COMMIT_AFTER_SECONDS,
+        )
+
+        service, _, _, _ = self._make_service(realtime_transcriber=rt)
+        chunk = struct.pack("<512h", *([100] * 512))
+        fps = service._audio_buffer.frames_per_second()
+        commit_chunk_frames = max(1, int(REALTIME_COMMIT_AFTER_SECONDS * fps))
+        # Enough fresh frames to exceed the commit threshold.
+        for _ in range(commit_chunk_frames + 5):
+            service._audio_buffer.add_frame(chunk)
+        service._realtime_committed_frames = 0
+        new_watermark = service._realtime_commit_if_needed()
+        assert new_watermark == commit_chunk_frames
+        service.shutdown()
+
+    def test_realtime_commit_if_needed_noop_below_threshold(self) -> None:
+        service, _, _, _ = self._make_service()
+        chunk = struct.pack("<512h", *([100] * 512))
+        service._audio_buffer.add_frame(chunk)
+        service._realtime_committed_frames = 0
+        assert service._realtime_commit_if_needed() == 0
+        service.shutdown()
+
+    def test_commit_chunk_skips_append_when_text_blank(self) -> None:
+        """Whitespace-only transcription preprocesses to '' → no append."""
+        rt = FakeTranscriber(
+            result=TranscriptionResult(
+                text="   ",
+                language="en",
+                language_probability=0.99,
+                duration_seconds=0.5,
+            )
+        )
+        service, _, _, _ = self._make_service(realtime_transcriber=rt)
+        chunk = struct.pack("<512h", *([100] * 512))
+        for _ in range(10):
+            service._audio_buffer.add_frame(chunk)
+        service._realtime_committed_text = "prior"
+        service._commit_chunk(0, 5)
+        # Blank preprocessed text must not mutate the accumulator.
+        assert service._realtime_committed_text == "prior"
+        assert rt.call_count == 1
+        service.shutdown()
+
+    def test_load_transcriber_constructs_onnx_adapter(self) -> None:
+        """_load_transcriber wires ModelCatalog + device providers + adapter.
+
+        The real ONNX adapter is patched so no model is fetched; this only
+        verifies the application-layer late-import + construction lines.
+        """
+        from unittest.mock import patch
+
+        service, _, _, _ = self._make_service()
+        captured: dict[str, Any] = {}
+
+        class _FakeAdapter(FakeTranscriber):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__()
+                captured.update(kwargs)
+
+        def fake_progress(_p: DownloadProgress) -> None:
+            return None
+
+        with (
+            patch(
+                "src.recorder.infrastructure.onnxasr_transcriber.OnnxAsrTranscriber",
+                _FakeAdapter,
+            ),
+            patch(
+                "src.recorder.infrastructure.device.providers_for_device",
+                return_value=["CPUExecutionProvider"],
+            ),
+        ):
+            result = service._load_transcriber("onnx-community/whisper-base", fake_progress)
+
+        assert isinstance(result, _FakeAdapter)
+        assert captured["providers"] == ["CPUExecutionProvider"]
+        assert captured["on_download_progress"] is fake_progress
+        service.shutdown()

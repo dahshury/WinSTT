@@ -28,6 +28,23 @@ export const COMPUTE_TYPES = [
 	"bfloat16",
 ] as const satisfies readonly components["schemas"]["ComputeType"][];
 
+// onnx-asr quantization tier — the suffix it adds to the model filename
+// when resolving HF assets (e.g. ``encoder_model_int8.onnx``). Different
+// models ship different variants; "" means "default file" (typically fp32)
+// and is the safest pick. ``onnx_quantization`` is a free-form string on
+// the server, so we keep this list to a conservative cross-model subset
+// rather than enumerating every variant any one repo might publish.
+export const ONNX_QUANTIZATIONS = [
+	"", // default / fp32 — always present
+	"int8",
+	"fp16",
+	"uint8",
+	"q4",
+	"q4f16",
+	"bnb4",
+] as const;
+export type OnnxQuantization = (typeof ONNX_QUANTIZATIONS)[number];
+
 export const LANGUAGES: readonly { code: string; name: string }[] = [
 	{ code: "", name: "Auto-detect" },
 	{ code: "af", name: "Afrikaans" },

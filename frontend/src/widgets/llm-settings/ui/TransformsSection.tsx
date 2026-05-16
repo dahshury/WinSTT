@@ -12,7 +12,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { components } from "@spec/schema";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { SettingSection, useSettingsStore } from "@/entities/setting";
+import { useSettingsStore } from "@/entities/setting";
 import { previewTransform } from "@/shared/api/ipc-client";
 import { BUILTIN_TRANSFORMS } from "@/shared/config/settings-schema";
 import { Button } from "@/shared/ui/button";
@@ -237,9 +237,10 @@ function TransformPlayground({ initialPrompt }: PlaygroundProps) {
 }
 
 /**
- * Top-level Transforms management UI. Lives in the LLM tab as a sibling
- * SettingSection. Renders the editable list of transforms, a "+" button
- * to add custom ones, and the playground.
+ * Transforms management UI. Rendered inside the "Text transformation"
+ * subsection of the LLM panel — content-only; the surrounding
+ * SettingSubsection owns the title/toggle/box/caption. Renders the editable
+ * list of transforms, a "+" button to add custom ones, and the playground.
  */
 export function TransformsSection() {
 	const llm = useSettingsStore((s) => s.settings.llm);
@@ -285,31 +286,28 @@ export function TransformsSection() {
 		transforms.find((tx) => tx.id === expandedId)?.prompt ?? transforms[0]?.prompt ?? "";
 
 	return (
-		<SettingSection icon={AiBrain02Icon} title={t("transformsTitle")}>
-			<div className="flex flex-col gap-2 py-2">
-				<p className="text-foreground-muted text-sm">{t("transformsCaption")}</p>
-				<div className="flex flex-col gap-2">
-					{transforms.map((tx) => (
-						<TransformRow
-							expanded={expandedId === tx.id}
-							key={tx.id}
-							onChange={(patch) => patchTransform(tx.id, patch)}
-							onDelete={() => handleDelete(tx.id)}
-							onReset={() => handleReset(tx.id)}
-							onToggle={() => setExpandedId(expandedId === tx.id ? null : tx.id)}
-							transform={tx}
-						/>
-					))}
-				</div>
-				<Button
-					className="mt-2 flex items-center gap-1 self-start rounded-md border border-border border-dashed bg-transparent px-3 py-2 text-foreground-muted text-sm transition-colors hover:border-accent hover:text-accent"
-					onClick={handleAdd}
-				>
-					<HugeiconsIcon icon={PlusSignIcon} size={14} />
-					{t("transformAdd")}
-				</Button>
-				<TransformPlayground initialPrompt={playgroundSeed} />
+		<div className="flex flex-col gap-2 py-1">
+			<div className="flex flex-col gap-2">
+				{transforms.map((tx) => (
+					<TransformRow
+						expanded={expandedId === tx.id}
+						key={tx.id}
+						onChange={(patch) => patchTransform(tx.id, patch)}
+						onDelete={() => handleDelete(tx.id)}
+						onReset={() => handleReset(tx.id)}
+						onToggle={() => setExpandedId(expandedId === tx.id ? null : tx.id)}
+						transform={tx}
+					/>
+				))}
 			</div>
-		</SettingSection>
+			<Button
+				className="mt-2 flex items-center gap-1 self-start rounded-md border border-border border-dashed bg-transparent px-3 py-2 text-foreground-muted text-sm transition-colors hover:border-accent hover:text-accent"
+				onClick={handleAdd}
+			>
+				<HugeiconsIcon icon={PlusSignIcon} size={14} />
+				{t("transformAdd")}
+			</Button>
+			<TransformPlayground initialPrompt={playgroundSeed} />
+		</div>
 	);
 }

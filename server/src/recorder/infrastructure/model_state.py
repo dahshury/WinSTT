@@ -25,7 +25,11 @@ from __future__ import annotations
 from typing import Any
 
 from src.recorder.domain.model_registry import ModelInfo
-from src.recorder.infrastructure.model_cache import ModelCacheState, probe_cache_state
+from src.recorder.infrastructure.model_cache import (
+    ModelCacheState,
+    probe_cache_state,
+    probe_cache_state_by_quantization,
+)
 from src.recorder.infrastructure.system_info import SystemInfo, get_system_info
 
 #: int8 quantization uses ~1 byte/param + activations. Round up a bit so
@@ -78,6 +82,10 @@ def model_state_dict(model: ModelInfo, sys_info: SystemInfo | None = None) -> di
     Returned dict shape (consumed by the renderer's model picker):
       - ``id``: catalog id
       - ``cache``: ``{"state", "downloaded_bytes", "total_bytes", "progress"}``
+        — overall (any variant present)
+      - ``cache_by_quantization``: ``{quant: cache_dict}`` per precision;
+        ``{}`` for legacy aliases without an HF repo
+      - ``available_quantizations``: precisions the upstream repo ships
       - ``estimated_bytes``: resident-bytes estimate at int8
       - ``comfortable_on_gpu`` / ``comfortable_on_cpu``: bool
     """
@@ -85,16 +93,35 @@ def model_state_dict(model: ModelInfo, sys_info: SystemInfo | None = None) -> di
     cache_state = _cache_state_for(model)
     return {
         "id": model.id,
-        "cache": {
-            "state": cache_state.state,
-            "downloaded_bytes": cache_state.downloaded_bytes,
-            "total_bytes": cache_state.total_bytes,
-            "progress": cache_state.progress,
-        },
+        "cache": _cache_dict(cache_state),
+        "cache_by_quantization": _cache_by_quantization_for(model),
+        "available_quantizations": model.available_quantizations,
         "estimated_bytes": estimate_runtime_bytes(model),
         "comfortable_on_gpu": is_comfortable_on_gpu(model, si),
         "comfortable_on_cpu": is_comfortable_on_cpu(model, si),
     }
+
+
+def _cache_dict(state: ModelCacheState) -> dict[str, Any]:
+    return {
+        "state": state.state,
+        "downloaded_bytes": state.downloaded_bytes,
+        "total_bytes": state.total_bytes,
+        "progress": state.progress,
+    }
+
+
+def _cache_by_quantization_for(model: ModelInfo) -> dict[str, dict[str, Any]]:
+    """Per-precision cache map, keyed by quantization suffix (``""`` = default).
+
+    Empty for catalog entries with no HF repo (legacy aliases) — the UI
+    falls back to the flat ``cache`` field there.
+    """
+    hf_repo = model.onnx_model_name
+    if not hf_repo or "/" not in hf_repo:
+        return {}
+    per_quant = probe_cache_state_by_quantization(hf_repo, model.available_quantizations)
+    return {quant: _cache_dict(state) for quant, state in per_quant.items()}
 
 
 def _cache_state_for(model: ModelInfo) -> ModelCacheState:

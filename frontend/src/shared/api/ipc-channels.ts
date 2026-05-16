@@ -51,7 +51,6 @@ export const IPC = {
 	// System commands (renderer → main)
 	AUTOSTART_SET: "autostart:set",
 	AUTOSTART_GET: "autostart:get",
-	AUDIO_SET_MUTE: "audio:set-mute",
 	AUDIO_GET_DEVICES: "audio:get-devices",
 	GPU_GET_INFO: "gpu:get-info",
 	APP_GET_SYSTEM_LOCALE: "app:get-system-locale",
@@ -226,7 +225,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	// System
 	[IPC.AUTOSTART_SET]: ["send"],
 	[IPC.AUTOSTART_GET]: ["invoke"],
-	[IPC.AUDIO_SET_MUTE]: ["send"],
 	[IPC.AUDIO_GET_DEVICES]: ["invoke"],
 	[IPC.GPU_GET_INFO]: ["invoke"],
 	[IPC.APP_GET_SYSTEM_LOCALE]: ["invoke"],

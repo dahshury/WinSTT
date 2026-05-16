@@ -80,7 +80,7 @@ describe("store module", () => {
 		const s = (key: string) => (store.get as (k: string) => unknown)(key);
 		expect(s("general.autoStart")).toBe(false);
 		expect(s("general.startMinimized")).toBe(false);
-		expect(s("general.muteSystemAudioWhileDictating")).toBe(false);
+		expect(s("general.systemAudioReductionWhileDictating")).toBe(0);
 		expect(s("general.recordingSound")).toBe(true);
 		expect(s("general.recordingSoundPath")).toBe("");
 		expect(s("general.fileTranscriptionFormat")).toBe("txt");
@@ -196,12 +196,12 @@ describe("store module", () => {
 });
 
 describe("store migration block (module-load side effects)", () => {
-	itIfClean("migration sets _schemaVersion to the SCHEMA_VERSION (6) at load time", () => {
+	itIfClean("migration sets _schemaVersion to the SCHEMA_VERSION (8) at load time", () => {
 		// The migration block runs once when ./store is imported. With a fresh
 		// MockStore (empty `_schemaVersion`), `getStoreValue` returns undefined,
-		// `?? 1` makes currentVersion=1, `1 < 6` triggers migration which
-		// writes _schemaVersion=6.
-		expect((store.get as (k: string) => unknown)("_schemaVersion")).toBe(6);
+		// `?? 1` makes currentVersion=1, `1 < 8` triggers migration which
+		// writes _schemaVersion=8.
+		expect((store.get as (k: string) => unknown)("_schemaVersion")).toBe(8);
 	});
 
 	itIfClean("migration v4 path resets audio.inputDeviceIndex to null", () => {
@@ -275,7 +275,7 @@ describe("applyStoreMigration (pure)", () => {
 
 	itIfMigrationLoaded("does nothing when current >= SCHEMA_VERSION (boundary equal)", () => {
 		const writes: Write[] = [];
-		applyStoreMigration(6, fakeRead({}), fakeWrite(writes), () => undefined);
+		applyStoreMigration(8, fakeRead({}), fakeWrite(writes), () => undefined);
 		expect(writes).toEqual([]);
 	});
 
@@ -304,7 +304,8 @@ describe("applyStoreMigration (pure)", () => {
 		expect(map.get("audio.inputDeviceIndex")).toBeNull();
 		expect(map.get("llm.presets")).toEqual([{ key: "neutral" }]);
 		expect(map.get("general.liveTranscriptionDisplay")).toBe("both");
-		expect(map.get("_schemaVersion")).toBe(6);
+		expect(map.get("general.systemAudioReductionWhileDictating")).toBe(0);
+		expect(map.get("_schemaVersion")).toBe(8);
 	});
 
 	itIfMigrationLoaded(
@@ -435,14 +436,14 @@ describe("applyStoreMigration (pure)", () => {
 		);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.from).toBe(2);
-		expect(calls[0]?.to).toBe(6);
+		expect(calls[0]?.to).toBe(8);
 		expect(calls[0]?.msg).toMatch(/_schemaVersion/);
 	});
 
 	itIfMigrationLoaded("does not log when no migration runs", () => {
 		const writes: Write[] = [];
 		const { log, calls } = fakeLog();
-		applyStoreMigration(6, fakeRead({}), fakeWrite(writes), log);
+		applyStoreMigration(8, fakeRead({}), fakeWrite(writes), log);
 		expect(calls).toEqual([]);
 	});
 
@@ -460,7 +461,7 @@ describe("applyStoreMigration (pure)", () => {
 		);
 		const last = writes.at(-1);
 		expect(last?.key).toBe("_schemaVersion");
-		expect(last?.value).toBe(6);
+		expect(last?.value).toBe(8);
 	});
 
 	itIfMigrationLoaded(
@@ -485,6 +486,117 @@ describe("applyStoreMigration (pure)", () => {
 			);
 			const live = writes.find((w) => w.key === "general.liveTranscriptionDisplay");
 			expect(live?.value).toBe("both");
+		}
+	);
+
+	itIfMigrationLoaded(
+		"v7 migration maps legacy mute toggle ON (true) → full reduction (100)",
+		() => {
+			const writes: Write[] = [];
+			// Seed the legacy boolean directly on the underlying store — the v7
+			// step reads it via `store.get`, not the `fakeRead` harness.
+			store.set("general.muteSystemAudioWhileDictating", true);
+			applyStoreMigration(
+				6,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+				}),
+				fakeWrite(writes),
+				() => undefined
+			);
+			const reduction = writes.find((w) => w.key === "general.systemAudioReductionWhileDictating");
+			expect(reduction?.value).toBe(100);
+			// Legacy key is removed so it can't shadow the new one.
+			expect((store.get as (k: string) => unknown)("general.muteSystemAudioWhileDictating")).toBe(
+				undefined
+			);
+		}
+	);
+
+	itIfMigrationLoaded("v7 migration maps legacy mute toggle OFF/absent → no reduction (0)", () => {
+		const writes: Write[] = [];
+		store.set("general.muteSystemAudioWhileDictating", false);
+		applyStoreMigration(
+			6,
+			fakeRead({
+				"quality.enableRealtimeTranscription": true,
+				"quality.useMainModelForRealtime": false,
+				"audio.sileroSensitivity": 0.4,
+			}),
+			fakeWrite(writes),
+			() => undefined
+		);
+		const reduction = writes.find((w) => w.key === "general.systemAudioReductionWhileDictating");
+		expect(reduction?.value).toBe(0);
+	});
+
+	itIfMigrationLoaded(
+		"v8 migration turns BOTH sub-flags on when the LLM master was enabled",
+		() => {
+			const writes: Write[] = [];
+			applyStoreMigration(
+				7,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+					"llm.enabled": true,
+					"llm.transforms": [],
+				}),
+				fakeWrite(writes),
+				() => undefined
+			);
+			const map = new Map(writes.map((w) => [w.key, w.value]));
+			expect(map.get("llm.dictationEnabled")).toBe(true);
+			expect(map.get("llm.transformsEnabled")).toBe(true);
+		}
+	);
+
+	itIfMigrationLoaded(
+		"v8 migration turns sub-flags on when a transform has a hotkey, even with LLM off",
+		() => {
+			const writes: Write[] = [];
+			applyStoreMigration(
+				7,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+					"llm.enabled": false,
+					"llm.transforms": [
+						{ id: "x", name: "X", prompt: "p", hotkey: "LCtrl+P", builtin: false },
+					],
+				}),
+				fakeWrite(writes),
+				() => undefined
+			);
+			const map = new Map(writes.map((w) => [w.key, w.value]));
+			expect(map.get("llm.dictationEnabled")).toBe(true);
+			expect(map.get("llm.transformsEnabled")).toBe(true);
+		}
+	);
+
+	itIfMigrationLoaded(
+		"v8 migration leaves sub-flags untouched when LLM was off and no transform hotkeys",
+		() => {
+			const writes: Write[] = [];
+			applyStoreMigration(
+				7,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+					"llm.enabled": false,
+					"llm.transforms": [{ id: "x", name: "X", prompt: "p", hotkey: "", builtin: true }],
+				}),
+				fakeWrite(writes),
+				() => undefined
+			);
+			const keys = writes.map((w) => w.key);
+			expect(keys).not.toContain("llm.dictationEnabled");
+			expect(keys).not.toContain("llm.transformsEnabled");
 		}
 	);
 });

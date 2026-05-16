@@ -197,9 +197,7 @@ def on_model_swap_failed(
     currently reports via ``runtime_info``.
     """
     print(f"{bcolors.WARNING}[model-swap] failed: kind={kind} name={name} reason={reason}{bcolors.ENDC}")
-    message = json.dumps(
-        {"type": "model_swap_failed", "kind": kind, "name": name, "reason": reason}
-    )
+    message = json.dumps({"type": "model_swap_failed", "kind": kind, "name": name, "reason": reason})
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
 
 

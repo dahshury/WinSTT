@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { ipcClientMock } from "@test/mocks/ipc-client";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 
 // Per-test overrides so different cases can flip what fetchModelsWithState
@@ -18,8 +19,14 @@ const ipcOverrides: {
 
 const fetchSpy = mock(async () => ipcOverrides.payload);
 
+// Spread the COMPLETE, behavior-faithful ipc-client fake, then override only
+// the exports this suite controls. bun:test's `mock.module` is process-global
+// and never torn down, so a partial shim leaks an incomplete module into
+// every later test file. `ipcClientMock()` exposes every real export and
+// routes each through `window.electronAPI` exactly as the real module, so the
+// leak is harmless regardless of file order.
 mock.module("@/shared/api/ipc-client", () => ({
-	// Surface required by model-state-store.ts itself:
+	...ipcClientMock(),
 	fetchModelsWithState: fetchSpy,
 	onModelCacheChanged: (cb: (id: string) => void) => {
 		ipcOverrides.cacheCb = cb;
@@ -33,18 +40,6 @@ mock.module("@/shared/api/ipc-client", () => ({
 			ipcOverrides.swapCb = null;
 		};
 	},
-	// Padding surface so that other modules pulled in transitively by the
-	// store (or by cross-test mock-cache pollution) keep resolving.
-	fetchModelCatalog: async () => [],
-	onModelCatalog: () => () => undefined,
-	fetchOllamaModels: async () => ({ models: [], reachable: false }),
-	fetchOpenRouterModels: async () => ({ models: [], reachable: false }),
-	onLlmCatalog: () => () => undefined,
-	onModelSwapStarted: () => () => undefined,
-	onModelSwapFailed: () => () => undefined,
-	onRuntimeInfo: () => () => undefined,
-	fetchRuntimeInfo: async () => null,
-	sttReloadModel: () => undefined,
 }));
 
 const { useModelStateStore, initModelStateStore } = await import("./model-state-store");
@@ -58,6 +53,8 @@ function makeEntry(id: string): ModelStateEntry {
 	return {
 		id,
 		cache: { downloaded_bytes: 0, progress: 0, state: "not_cached", total_bytes: 100 },
+		cache_by_quantization: {},
+		available_quantizations: [""],
 		comfortable_on_cpu: true,
 		comfortable_on_gpu: true,
 		estimated_bytes: 100,

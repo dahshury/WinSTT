@@ -11,7 +11,11 @@ conflicts = [[
 ]]
 
 [manifest]
-overrides = [{ name = "onnxruntime", marker = "sys_platform == 'never'" }]
+
+[[manifest.dependency-metadata]]
+name = "openwakeword"
+version = "0.6.0"
+requires-dist = ["tqdm>=4.0,<5.0", "scipy>=1.3,<2", "scikit-learn>=1,<2", "requests>=2.0,<3", "tflite-runtime>=2.8.0,<3 ; sys_platform == 'linux'"]
 
 [[package]]
 name = "altgraph"
@@ -1375,7 +1379,6 @@ name = "openwakeword"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "onnxruntime", marker = "sys_platform == 'never' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "requests" },
     { name = "scikit-learn" },
     { name = "scipy" },
@@ -5482,7 +5485,7 @@ dependencies = [
 
 [package.optional-dependencies]
 cpu = [
-    { name = "onnxruntime", marker = "sys_platform == 'never'" },
+    { name = "onnxruntime" },
 ]
 gpu = [
     { name = "nvidia-cublas-cu12" },

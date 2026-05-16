@@ -76,7 +76,7 @@ function logInitialized(base: NativeImage, totalIcons: number): void {
 }
 
 function generateAllModeIcons(base: NativeImage): Partial<Record<RecordingMode, NativeImage[]>> {
-	const modes: RecordingMode[] = ["ptt", "toggle", "listen"];
+	const modes: RecordingMode[] = ["ptt", "toggle", "listen", "wakeword"];
 	const out: Partial<Record<RecordingMode, NativeImage[]>> = {};
 	let total = 0;
 	for (const mode of modes) {

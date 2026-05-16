@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as realFs from "node:fs";
 import { type ElectronMockHandle, electronMock } from "../../test/mocks/electron";
 import { electronStoreMock } from "../../test/mocks/electron-store";
+import { storeMock } from "../../test/mocks/store";
 
 // `electron` and `node:fs` mocks are kept loose to coexist with other test
 // files that mock the same modules — `mock.module(...)` is process-global so
@@ -25,14 +26,19 @@ mock.module("node:fs", () => ({
 
 // Configurable store mock — tests set storeValues to drive getStoreValue().
 const storeValues: Record<string, unknown> = {};
-mock.module("./store", () => ({
-	getStoreValue: (key: string) => storeValues[key],
-	store: {
-		get: (key: string) => storeValues[key],
-		set: () => undefined,
-		onDidChange: () => () => undefined,
-	},
-}));
+mock.module("./store", () => {
+	const base = storeMock();
+	return {
+		...base,
+		getStoreValue: (key: string) => storeValues[key],
+		store: {
+			...base.store,
+			get: (key: string) => storeValues[key],
+			set: () => undefined,
+			onDidChange: () => () => undefined,
+		},
+	};
+});
 
 const { initSound, playRecordingSound, cleanupSound } = await import("./sound");
 

@@ -23,6 +23,7 @@ const fixture: ModelInfo[] = [
 		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
+		availableQuantizations: [""],
 	},
 	{
 		id: "large",
@@ -35,6 +36,7 @@ const fixture: ModelInfo[] = [
 		supportsRealtime: false,
 		onnxModelName: null,
 		description: "",
+		availableQuantizations: [""],
 	},
 	{
 		id: "nemo-en",
@@ -47,6 +49,7 @@ const fixture: ModelInfo[] = [
 		supportsRealtime: true,
 		onnxModelName: "model.onnx",
 		description: "",
+		availableQuantizations: ["", "int8"],
 	},
 ];
 
@@ -56,6 +59,8 @@ function makeEntry(overrides: Partial<ModelStateEntry> = {}): ModelStateEntry {
 		estimated_bytes: 1_000_000,
 		comfortable_on_cpu: true,
 		comfortable_on_gpu: true,
+		available_quantizations: [""],
+		cache_by_quantization: {},
 		cache: {
 			state: "not_cached",
 			downloaded_bytes: 0,

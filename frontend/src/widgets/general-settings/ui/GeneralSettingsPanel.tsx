@@ -7,7 +7,6 @@ import {
 	DashboardCircleIcon,
 	EarIcon,
 	FileMusicIcon,
-	GlobeIcon,
 	GridIcon,
 	Mic01Icon,
 	MusicNote01Icon,
@@ -16,6 +15,7 @@ import {
 	RefreshIcon,
 	ToggleOnIcon,
 	TouchInteraction01Icon,
+	VoiceIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
@@ -80,7 +80,7 @@ function buildVisualizerTypeOptions(t: GeneralT): SelectOption[] {
 }
 
 function buildRecordingModeOptions(t: GeneralT): readonly {
-	value: "ptt" | "toggle" | "listen";
+	value: "ptt" | "toggle" | "listen" | "wakeword";
 	label: string;
 	icon: IconSvgElement;
 	color: string;
@@ -104,39 +104,43 @@ function buildRecordingModeOptions(t: GeneralT): readonly {
 			icon: EarIcon,
 			color: RECORDING_MODE_COLOR_HEX.listen,
 		},
+		{
+			value: "wakeword",
+			label: t("wakeWord"),
+			icon: VoiceIcon,
+			color: RECORDING_MODE_COLOR_HEX.wakeword,
+		},
 	] as const;
+}
+
+// Porcupine's free built-in keywords — the only words usable without a
+// picovoice access key. The wake-word picker is constrained to this list
+// because anything else fails at server boot.
+const PORCUPINE_FREE_KEYWORDS = [
+	"alexa",
+	"americano",
+	"blueberry",
+	"bumblebee",
+	"computer",
+	"grapefruit",
+	"grasshopper",
+	"hey google",
+	"hey siri",
+	"jarvis",
+	"ok google",
+	"picovoice",
+	"porcupine",
+	"terminator",
+] as const;
+
+function buildWakeWordOptions(): SelectOption[] {
+	return PORCUPINE_FREE_KEYWORDS.map((word) => ({ id: word, label: word }));
 }
 
 function pickLocale(value: string, setLocale: (locale: Locale) => void): void {
 	if (isLocale(value)) {
 		setLocale(value);
 	}
-}
-
-interface LanguageSectionProps {
-	locale: Locale;
-	setLocale: (locale: Locale) => void;
-	t: GeneralT;
-}
-
-function LanguageSection({ locale, setLocale, t }: LanguageSectionProps): ReactNode {
-	return (
-		<SettingSection icon={GlobeIcon} title={t("language")}>
-			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
-				<FormControl
-					caption={t("languageCaption")}
-					label={t("language")}
-					tooltip={t("languageTooltip")}
-				>
-					<Select
-						onChange={(v) => pickLocale(v, setLocale)}
-						options={LANGUAGE_OPTIONS}
-						value={locale}
-					/>
-				</FormControl>
-			</div>
-		</SettingSection>
-	);
 }
 
 interface LoopbackControlProps {
@@ -167,11 +171,88 @@ function muteCaption(isListenMode: boolean, t: GeneralT): string {
 	return isListenMode ? t("muteSystemAudioCaptionDisabled") : t("muteSystemAudioCaption");
 }
 
-function muteChecked(isListenMode: boolean, settings: GeneralSettings | undefined): boolean {
+// Slider stops, left → right, monotonically increasing reduction:
+// 20% → 40% → 60% → 80% → Mute (100%). On/off is a separate toggle, so the
+// slider only ever holds a "how aggressive" value. Stored value is the
+// percent reduction; the slider works in index space.
+const REDUCTION_STEPS = [20, 40, 60, 80, 100] as const;
+
+// Value applied when the toggle is switched on. Full mute preserves the
+// behaviour of the legacy boolean toggle and sits at the slider's top stop.
+const DEFAULT_REDUCTION = 100;
+
+function reductionToIndex(pct: number): number {
+	const idx = REDUCTION_STEPS.indexOf(pct as (typeof REDUCTION_STEPS)[number]);
+	return idx === -1 ? REDUCTION_STEPS.length - 1 : idx;
+}
+
+function indexToReduction(index: number): number {
+	return REDUCTION_STEPS[index] ?? DEFAULT_REDUCTION;
+}
+
+function reductionStepLabel(pct: number, t: GeneralT): string {
+	return pct >= 100 ? t("systemAudioReductionMute") : `${pct}%`;
+}
+
+function muteLevel(isListenMode: boolean, settings: GeneralSettings | undefined): number {
 	if (isListenMode) {
-		return false;
+		return 0;
 	}
-	return settings?.muteSystemAudioWhileDictating ?? false;
+	return settings?.systemAudioReductionWhileDictating ?? 0;
+}
+
+function muteEnabled(isListenMode: boolean, settings: GeneralSettings | undefined): boolean {
+	return muteLevel(isListenMode, settings) > 0;
+}
+
+interface MuteSystemAudioControlProps {
+	general: GeneralSettings | undefined;
+	isListenMode: boolean;
+	t: GeneralT;
+	update: UpdateFn;
+}
+
+function MuteSystemAudioControl({
+	general,
+	isListenMode,
+	t,
+	update,
+}: MuteSystemAudioControlProps): ReactNode {
+	const level = muteLevel(isListenMode, general);
+	const enabled = muteEnabled(isListenMode, general);
+	return (
+		<FormControl
+			caption={muteCaption(isListenMode, t)}
+			disabled={isListenMode}
+			label={t("muteSystemAudio")}
+			labelAddon={
+				<Toggle
+					checked={enabled}
+					disabled={isListenMode}
+					onCheckedChange={(v) =>
+						update({ systemAudioReductionWhileDictating: v ? DEFAULT_REDUCTION : 0 })
+					}
+				/>
+			}
+			tooltip={t("muteSystemAudioTooltip")}
+		>
+			{enabled ? (
+				<div className="flex items-center gap-2">
+					<Slider
+						aria-label={t("muteSystemAudio")}
+						max={REDUCTION_STEPS.length - 1}
+						min={0}
+						onChange={(v) => update({ systemAudioReductionWhileDictating: indexToReduction(v) })}
+						step={1}
+						value={reductionToIndex(level)}
+					/>
+					<span className="w-12 text-right font-mono text-foreground-muted text-xs">
+						{reductionStepLabel(level, t)}
+					</span>
+				</div>
+			) : undefined}
+		</FormControl>
+	);
 }
 
 interface RecordingSectionProps {
@@ -180,9 +261,33 @@ interface RecordingSectionProps {
 	handleLoopbackChange: (value: string) => void;
 	isListenMode: boolean;
 	loopbackOpts: SelectOption[];
-	recordingMode: "ptt" | "toggle" | "listen";
+	recordingMode: "ptt" | "toggle" | "listen" | "wakeword";
 	t: GeneralT;
 	update: UpdateFn;
+}
+
+interface WakeWordControlProps {
+	t: GeneralT;
+	update: UpdateFn;
+	value: string;
+}
+
+function WakeWordControl({ t, value, update }: WakeWordControlProps): ReactNode {
+	const options = buildWakeWordOptions();
+	return (
+		<FormControl
+			caption={t("wakeWordCaption")}
+			label={t("wakeWord")}
+			tooltip={t("wakeWordTooltip")}
+		>
+			<Select
+				aria-label={t("wakeWord")}
+				onChange={(v) => update({ wakeWord: v })}
+				options={options}
+				value={value}
+			/>
+		</FormControl>
+	);
 }
 
 function RecordingSection({
@@ -201,10 +306,12 @@ function RecordingSection({
 			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
 				<FormControl
 					caption={t("recordingModeCaption")}
+					className="col-span-2"
 					label={t("recordingMode")}
 					tooltip={t("recordingModeTooltip")}
 				>
 					<Switcher
+						fullWidth
 						onChange={(v) => update({ recordingMode: v })}
 						options={recordingModeOptions}
 						value={recordingMode}
@@ -218,18 +325,14 @@ function RecordingSection({
 						t={t}
 					/>
 				) : null}
-				<FormControl
-					caption={muteCaption(isListenMode, t)}
-					disabled={isListenMode}
-					label={t("muteSystemAudio")}
-					labelAddon={
-						<Toggle
-							checked={muteChecked(isListenMode, general)}
-							disabled={isListenMode}
-							onCheckedChange={(v) => update({ muteSystemAudioWhileDictating: v })}
-						/>
-					}
-					tooltip={t("muteSystemAudioTooltip")}
+				{recordingMode === "wakeword" ? (
+					<WakeWordControl t={t} update={update} value={general?.wakeWord ?? ""} />
+				) : null}
+				<MuteSystemAudioControl
+					general={general}
+					isListenMode={isListenMode}
+					t={t}
+					update={update}
 				/>
 			</div>
 		</SettingSection>
@@ -502,7 +605,14 @@ export function GeneralSettingsPanel() {
 
 	return (
 		<div className="flex flex-col gap-2">
-			<LanguageSection locale={locale} setLocale={setLocale} t={t} />
+			<DisplaySection
+				isListenMode={isListenMode}
+				locale={locale}
+				setLocale={setLocale}
+				t={t}
+				update={update}
+				visualizerTypeOptions={visualizerTypeOptions}
+			/>
 			<RecordingSection
 				currentLoopbackId={currentLoopbackId}
 				general={general}
@@ -512,12 +622,6 @@ export function GeneralSettingsPanel() {
 				recordingMode={recordingMode}
 				t={t}
 				update={update}
-			/>
-			<DisplaySection
-				isListenMode={isListenMode}
-				t={t}
-				update={update}
-				visualizerTypeOptions={visualizerTypeOptions}
 			/>
 			<SoundSection
 				dragOver={dragOver}
@@ -539,9 +643,33 @@ export function GeneralSettingsPanel() {
 
 interface DisplaySectionProps {
 	isListenMode: boolean;
+	locale: Locale;
+	setLocale: (locale: Locale) => void;
 	t: GeneralT;
 	update: UpdateFn;
 	visualizerTypeOptions: SelectOption[];
+}
+
+interface LanguageControlProps {
+	locale: Locale;
+	setLocale: (locale: Locale) => void;
+	t: GeneralT;
+}
+
+function LanguageControl({ locale, setLocale, t }: LanguageControlProps): ReactNode {
+	return (
+		<FormControl
+			caption={t("languageCaption")}
+			label={t("language")}
+			tooltip={t("languageTooltip")}
+		>
+			<Select
+				onChange={(v) => pickLocale(v, setLocale)}
+				options={LANGUAGE_OPTIONS}
+				value={locale}
+			/>
+		</FormControl>
+	);
 }
 
 interface DisplayFlags {
@@ -558,10 +686,10 @@ function computeDisplayFlags(
 	const showOverlay = general?.showRecordingOverlay ?? true;
 	const overlayEnabled = !isListenMode && showOverlay;
 	const subDisabled = !overlayEnabled;
-	// The combined live-transcription picker is disabled only when realtime
-	// transcription itself is off — otherwise every choice (in-app/in-pill/
-	// both/none) is meaningful. The pill choice still renders even when the
-	// overlay is hidden so the value survives toggling the overlay back on.
+	// The combined live-transcription picker as a whole is disabled only when
+	// realtime transcription itself is off. Individual overlay-dependent
+	// choices (in-overlay/both) are disabled separately when the recording
+	// overlay is hidden — see liveOverlayDisabled / buildLiveTranscriptionDisplayOptions.
 	const liveDisplayDisabled = !realtimeEnabled;
 	return { overlayEnabled, subDisabled, liveDisplayDisabled };
 }
@@ -570,6 +698,42 @@ type LiveTranscriptionDisplayValue = "none" | "in-app" | "in-pill" | "both";
 
 function isLiveTranscriptionDisplayValue(value: string): value is LiveTranscriptionDisplayValue {
 	return value === "none" || value === "in-app" || value === "in-pill" || value === "both";
+}
+
+// The "in-overlay" and "both" choices render the live preview under the
+// floating recording overlay, so they only make sense when that overlay is
+// enabled. When it isn't, those options are disabled and any previously
+// selected one collapses to "in-app".
+function liveOverlayDisabled(general: GeneralSettings | undefined): boolean {
+	return !(general?.showRecordingOverlay ?? true);
+}
+
+function needsOverlay(value: LiveTranscriptionDisplayValue): boolean {
+	return value === "in-pill" || value === "both";
+}
+
+function effectiveLiveDisplay(
+	value: LiveTranscriptionDisplayValue,
+	overlayDisabled: boolean
+): LiveTranscriptionDisplayValue {
+	return overlayDisabled && needsOverlay(value) ? "in-app" : value;
+}
+
+// Patch applied when the recording-overlay toggle flips. Turning the overlay
+// off also collapses an overlay-dependent live-display choice down to
+// "in-app" in the same update so the picker can't keep an impossible value.
+function overlayTogglePatch(
+	enabled: boolean,
+	general: GeneralSettings | undefined
+): Partial<GeneralSettings> {
+	if (enabled) {
+		return { showRecordingOverlay: true };
+	}
+	const current: LiveTranscriptionDisplayValue = general?.liveTranscriptionDisplay ?? "both";
+	if (needsOverlay(current)) {
+		return { showRecordingOverlay: false, liveTranscriptionDisplay: "in-app" };
+	}
+	return { showRecordingOverlay: false };
 }
 
 function checkedOrFalseIfDisabled(disabled: boolean, value: boolean): boolean {
@@ -602,7 +766,7 @@ function OverlayControl({
 				<Toggle
 					checked={checkedOrFalseIfDisabled(isListenMode, showOverlay)}
 					disabled={isListenMode}
-					onCheckedChange={(v) => update({ showRecordingOverlay: v })}
+					onCheckedChange={(v) => update(overlayTogglePatch(v, general))}
 				/>
 			}
 			tooltip={t("showRecordingOverlayTooltip")}
@@ -618,16 +782,20 @@ function OverlayControl({
 	);
 }
 
-function buildLiveTranscriptionDisplayOptions(t: GeneralT): readonly {
+function buildLiveTranscriptionDisplayOptions(
+	t: GeneralT,
+	overlayDisabled: boolean
+): readonly {
 	value: LiveTranscriptionDisplayValue;
 	label: string;
+	disabled?: boolean;
 }[] {
 	return [
 		{ value: "none", label: t("liveTranscriptionDisplayNone") },
 		{ value: "in-app", label: t("liveTranscriptionDisplayInApp") },
-		{ value: "in-pill", label: t("liveTranscriptionDisplayInPill") },
-		{ value: "both", label: t("liveTranscriptionDisplayBoth") },
-	] as const;
+		{ value: "in-pill", label: t("liveTranscriptionDisplayInPill"), disabled: overlayDisabled },
+		{ value: "both", label: t("liveTranscriptionDisplayBoth"), disabled: overlayDisabled },
+	];
 }
 
 interface LiveTranscriptionDisplayControlProps {
@@ -643,8 +811,10 @@ function LiveTranscriptionDisplayControl({
 	general,
 	update,
 }: LiveTranscriptionDisplayControlProps): ReactNode {
-	const value: LiveTranscriptionDisplayValue = general?.liveTranscriptionDisplay ?? "both";
-	const options = buildLiveTranscriptionDisplayOptions(t);
+	const overlayDisabled = liveOverlayDisabled(general);
+	const stored: LiveTranscriptionDisplayValue = general?.liveTranscriptionDisplay ?? "both";
+	const value = effectiveLiveDisplay(stored, overlayDisabled);
+	const options = buildLiveTranscriptionDisplayOptions(t, overlayDisabled);
 	return (
 		<FormControl
 			caption={t("liveTranscriptionDisplayCaption")}
@@ -655,7 +825,7 @@ function LiveTranscriptionDisplayControl({
 			<div className={liveDisplayDisabled ? "pointer-events-none opacity-40" : ""}>
 				<Switcher
 					onChange={(v) => {
-						if (isLiveTranscriptionDisplayValue(v)) {
+						if (isLiveTranscriptionDisplayValue(v) && !(overlayDisabled && needsOverlay(v))) {
 							update({ liveTranscriptionDisplay: v });
 						}
 					}}
@@ -687,17 +857,30 @@ function VisualizerTypeControl({
 	visualizerTypeOptions,
 }: VisualizerTypeControlProps): ReactNode {
 	const value = general?.visualizerType ?? "bar";
+	const color = general?.visualizerColor ?? "#58a6ff";
 	return (
 		<FormControl
 			caption={t("visualizerTypeCaption")}
 			label={t("visualizerType")}
 			tooltip={t("visualizerTypeTooltip")}
 		>
-			<Select
-				onChange={(v) => pickVisualizerType(v, update)}
-				options={visualizerTypeOptions}
-				value={value}
-			/>
+			<div className="flex items-center gap-2">
+				<div className="flex-1">
+					<Select
+						onChange={(v) => pickVisualizerType(v, update)}
+						options={visualizerTypeOptions}
+						value={value}
+					/>
+				</div>
+				<TextField
+					aria-label={t("visualizerColor")}
+					className="h-8 w-12 shrink-0 cursor-pointer p-0"
+					onChange={(e) => update({ visualizerColor: e.target.value })}
+					title={t("visualizerColorTooltip")}
+					type="color"
+					value={color}
+				/>
+			</div>
 		</FormControl>
 	);
 }
@@ -734,36 +917,19 @@ function VisualizerBarCountControl({
 	);
 }
 
-interface VisualizerColorControlProps {
-	general: GeneralSettings | undefined;
-	t: GeneralT;
-	update: UpdateFn;
-}
-
-function VisualizerColorControl({ t, general, update }: VisualizerColorControlProps): ReactNode {
-	const value = general?.visualizerColor ?? "#58a6ff";
-	return (
-		<FormControl
-			caption={t("visualizerColorCaption")}
-			label={t("visualizerColor")}
-			tooltip={t("visualizerColorTooltip")}
-		>
-			<TextField
-				className="h-8 w-12 cursor-pointer p-0"
-				onChange={(e) => update({ visualizerColor: e.target.value })}
-				type="color"
-				value={value}
-			/>
-		</FormControl>
-	);
-}
-
 function isBarVisualizer(general: GeneralSettings | undefined): boolean {
 	const type = general?.visualizerType ?? "bar";
 	return type === "bar";
 }
 
-function DisplaySection({ isListenMode, t, update, visualizerTypeOptions }: DisplaySectionProps) {
+function DisplaySection({
+	isListenMode,
+	locale,
+	setLocale,
+	t,
+	update,
+	visualizerTypeOptions,
+}: DisplaySectionProps) {
 	const general = useSettingsStore((s) => s.settings.general);
 	const realtimeEnabled = useSettingsStore(
 		(s) => s.settings.quality?.enableRealtimeTranscription ?? true
@@ -773,6 +939,7 @@ function DisplaySection({ isListenMode, t, update, visualizerTypeOptions }: Disp
 	return (
 		<SettingSection icon={DashboardCircleIcon} title={t("display")}>
 			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+				<LanguageControl locale={locale} setLocale={setLocale} t={t} />
 				<OverlayControl
 					general={general}
 					isListenMode={isListenMode}
@@ -795,7 +962,6 @@ function DisplaySection({ isListenMode, t, update, visualizerTypeOptions }: Disp
 				{isBarVisualizer(general) ? (
 					<VisualizerBarCountControl general={general} t={t} update={update} />
 				) : null}
-				<VisualizerColorControl general={general} t={t} update={update} />
 			</div>
 		</SettingSection>
 	);
@@ -806,9 +972,19 @@ export const __general_settings_panel_test_helpers__ = {
 	buildRecordingModeOptions,
 	pickLocale,
 	muteCaption,
-	muteChecked,
+	muteLevel,
+	muteEnabled,
+	reductionToIndex,
+	indexToReduction,
+	reductionStepLabel,
 	soundToggleChecked,
 	computeDisplayFlags,
+	liveOverlayDisabled,
+	needsOverlay,
+	effectiveLiveDisplay,
+	overlayTogglePatch,
+	buildLiveTranscriptionDisplayOptions,
+	isLiveTranscriptionDisplayValue,
 	checkedOrFalseIfDisabled,
 	pickVisualizerType,
 	isBarVisualizer,

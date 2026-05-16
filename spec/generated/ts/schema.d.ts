@@ -240,6 +240,7 @@ export interface components {
             supportsRealtime: boolean;
             onnxModelName?: string | null;
             description?: string;
+            availableQuantizations?: string[];
         };
         LoopbackDevice: {
             index: number;
@@ -330,7 +331,14 @@ export interface components {
             autoStart?: boolean;
             minimizeToTray?: boolean;
             startMinimized?: boolean;
-            muteSystemAudioWhileDictating?: boolean;
+            /**
+             * @description How much to reduce system playback volume while dictating, as a
+             *     percent reduction. `0` disables the feature (volume untouched);
+             *     `100` fully mutes (volume → 0); intermediate values duck the
+             *     volume to `(100 - value)%` of its previous level. Restored on
+             *     recording stop. Ignored in `listen` mode.
+             */
+            systemAudioReductionWhileDictating?: number;
             recordingSound?: boolean;
             recordingSoundPath?: string;
             /** @enum {string} */
@@ -340,9 +348,23 @@ export interface components {
              * @enum {string}
              */
             fileTranscriptionSaveLocation?: "auto" | "ask";
-            /** @enum {string} */
-            recordingMode?: "ptt" | "toggle" | "listen";
+            /**
+             * @description How a recording session is started.
+             *     `ptt` / `toggle` use the hotkey; `listen` passively captures from a
+             *     loopback device; `wakeword` starts a session when the configured
+             *     wake word is heard. After a wake-word trigger the recording ends
+             *     via VAD-based silence detection (same as toggle), then the
+             *     detector resumes waiting for the next utterance.
+             * @enum {string}
+             */
+            recordingMode?: "ptt" | "toggle" | "listen" | "wakeword";
             loopbackDeviceIndex?: number | null;
+            /**
+             * @description Wake word used when `recordingMode` is `wakeword`. Must be one of
+             *     Porcupine's free built-in keywords (e.g. `alexa`, `computer`,
+             *     `jarvis`, `hey google`). Ignored in other recording modes.
+             */
+            wakeWord?: string;
             showRecordingOverlay?: boolean;
             /**
              * @description Overlay-popup visualizer height preset (xs–xl).
@@ -395,8 +417,21 @@ export interface components {
          */
         LlmProvider: "ollama" | "openrouter";
         LlmSettings: {
-            /** @default false */
+            /**
+             * @description Master switch: the LLM provider/model is configured and reachable. Gates the shared provider config and both sub-features below — when false, neither dictation post-processing nor text transformation runs regardless of their own flags.
+             * @default false
+             */
             enabled: boolean;
+            /**
+             * @description Sub-feature: apply the cleanup `presets` (tone + modifiers) to dictated speech text. Only takes effect when `enabled` is true.
+             * @default true
+             */
+            dictationEnabled: boolean;
+            /**
+             * @description Sub-feature: allow `transforms` (custom prompts on the currently selected text, via hotkey or the Transforms UI). Only takes effect when `enabled` is true.
+             * @default false
+             */
+            transformsEnabled: boolean;
             provider?: components["schemas"]["LlmProvider"];
             /**
              * @description Ollama endpoint (only used when provider is "ollama").

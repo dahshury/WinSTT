@@ -91,6 +91,27 @@ function applySileroDeactivityFlag(args: string[]): void {
 	}
 }
 
+/**
+ * Wire wake-word args when recordingMode is "wakeword". We use pvporcupine
+ * with the user-selected free-tier keyword — mirrors the RealtimeSTT
+ * monolith's wake-word configuration so the server's existing pipeline
+ * picks the trigger up without further changes. In any other mode the
+ * recorder runs with no wake-word backend, so the pipeline behaves as
+ * before (PTT/toggle/listen).
+ */
+function applyWakeWordFlags(args: string[]): void {
+	const mode = getStoreValue("general.recordingMode");
+	if (mode !== "wakeword") {
+		return;
+	}
+	const word = getStoreValue("general.wakeWord");
+	if (!word) {
+		return;
+	}
+	args.push("--wakeword_backend", "pvporcupine");
+	args.push("--wake_words", word);
+}
+
 /** Read all relevant settings from electron-store and convert to CLI args */
 function buildServerArgs(baseArgs: string[]): string[] {
 	const args = [...baseArgs];
@@ -101,6 +122,7 @@ function buildServerArgs(baseArgs: string[]): string[] {
 		applyBooleanOptionalFlag(args, getStoreRaw(storePath), cliFlag);
 	}
 	applySileroDeactivityFlag(args);
+	applyWakeWordFlags(args);
 	return args;
 }
 

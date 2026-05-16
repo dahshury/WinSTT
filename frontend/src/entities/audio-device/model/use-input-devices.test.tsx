@@ -1,6 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, type RenderHookResult, renderHook, waitFor } from "@testing-library/react";
 import { useInputDevices } from "./use-input-devices";
+
+// Track every rendered hook so afterEach can UNMOUNT it. The hook installs a
+// `navigator.mediaDevices` listener and a 200 ms devicechange debounce
+// `setTimeout`; leaving instances mounted leaks a pending refresh()/timer that
+// resolves during a LATER test file (bun shares one happy-dom + event loop
+// across files), polluting victims like useDeviceSwitchFeedback.
+const mountedHooks: RenderHookResult<unknown, unknown>[] = [];
+
+function renderTrackedHook() {
+	const handle = renderHook(() => useInputDevices());
+	mountedHooks.push(handle as unknown as RenderHookResult<unknown, unknown>);
+	return handle;
+}
 
 interface FakeMediaDevices {
 	addEventListener: (type: string, handler: EventListener) => void;
@@ -47,6 +60,13 @@ interface FakeApi {
 	send: () => void;
 }
 
+// Capture the canonical `window.electronAPI` installed by the test preload so
+// afterEach can RESTORE it. Setting it to `undefined` here leaked into every
+// subsequent test file (bun:test shares one happy-dom window across files,
+// with no per-file teardown), breaking victims that route the REAL ipc-client
+// through `window.electronAPI` (detectElectron, StatusBar, OverlayPage, …).
+const originalElectronApi = window.electronAPI;
+
 let invokeQueue: unknown[] = [];
 let invokeCalls: string[] = [];
 
@@ -75,8 +95,21 @@ beforeEach(() => {
 	installFakeElectron();
 });
 
-afterEach(() => {
-	(window as { electronAPI?: unknown }).electronAPI = undefined;
+afterEach(async () => {
+	// Unmount every hook rendered this test so its effect cleanup runs
+	// (clears the 200 ms devicechange debounce timer + removes the
+	// mediaDevices listener) BEFORE we tear down the fake environment. This
+	// prevents a pending refresh()/timer from firing during a later test
+	// file and polluting victims (e.g. useDeviceSwitchFeedback).
+	for (const handle of mountedHooks.splice(0)) {
+		act(() => handle.unmount());
+	}
+	// Let any in-flight refresh() promise + the (now-cancelled) debounce
+	// settle before restoring globals, so nothing resolves post-restore.
+	await act(async () => {
+		await new Promise((r) => setTimeout(r, 0));
+	});
+	window.electronAPI = originalElectronApi;
 	try {
 		Object.defineProperty(navigator, "mediaDevices", {
 			configurable: true,
@@ -95,7 +128,7 @@ describe("useInputDevices", () => {
 			{ index: 0, name: "Built-in Mic", isDefault: true },
 			{ index: 1, name: "USB Mic", isDefault: false },
 		]);
-		const { result } = renderHook(() => useInputDevices());
+		const { result } = renderTrackedHook();
 		await waitFor(() => expect(result.current.devices.length).toBe(2));
 		expect(result.current.defaultDevice?.name).toBe("Built-in Mic");
 	});
@@ -103,7 +136,7 @@ describe("useInputDevices", () => {
 	test("re-fetches when navigator.mediaDevices fires a devicechange event", async () => {
 		const { mediaDevices } = installFakeMediaDevices();
 		queueDevices([{ index: 0, name: "Built-in Mic", isDefault: true }]);
-		const { result } = renderHook(() => useInputDevices());
+		const { result } = renderTrackedHook();
 		await waitFor(() => expect(result.current.devices.length).toBe(1));
 
 		queueDevices([
@@ -135,7 +168,7 @@ describe("useInputDevices", () => {
 		// should collapse them to one enumeration.
 		const { mediaDevices } = installFakeMediaDevices();
 		queueDevices([{ index: 0, name: "Built-in Mic", isDefault: true }]);
-		const { result } = renderHook(() => useInputDevices());
+		const { result } = renderTrackedHook();
 		await waitFor(() => expect(result.current.devices.length).toBe(1));
 
 		const callsBeforeBurst = invokeCalls.filter((c) => c === "audio:get-devices").length;

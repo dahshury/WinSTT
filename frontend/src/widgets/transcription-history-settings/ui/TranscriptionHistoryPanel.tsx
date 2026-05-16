@@ -14,8 +14,6 @@ import { ActivityHeatmap } from "./ActivityHeatmap";
 import { HistorySummary } from "./HistorySummary";
 import { HistoryTable } from "./HistoryTable";
 
-const TABLE_VISIBLE_LIMIT = 200;
-
 export function TranscriptionHistoryPanel() {
 	const t = useTranslations("history");
 	useTranscriptionHistorySync();
@@ -45,7 +43,7 @@ export function TranscriptionHistoryPanel() {
 
 			<SettingSection icon={ListViewIcon} title={t("tableTitle")}>
 				<div className="py-2">
-					<HistoryTable entries={entries} visibleLimit={TABLE_VISIBLE_LIMIT} />
+					<HistoryTable entries={entries} />
 				</div>
 			</SettingSection>
 

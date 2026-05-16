@@ -22,6 +22,7 @@ if echo "$STAGED" | grep -qE '^frontend/'; then
     bunx ultracite check
     bun run check:fsd
     bun run check:react-doctor
+    bun run scripts/crap.ts --skip-coverage --strict --threshold 4
   )
 fi
 
@@ -32,5 +33,6 @@ if echo "$STAGED" | grep -qE '^server/'; then
     cd server
     uv run ruff check .
     uv run mypy src/ --strict
+    uv run python scripts/crap.py --skip-coverage --strict --threshold 4
   )
 fi

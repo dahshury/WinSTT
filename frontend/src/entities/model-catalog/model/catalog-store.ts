@@ -5,6 +5,7 @@ import { create } from "zustand";
 import { fetchModelCatalog, onModelCatalog } from "@/shared/api/ipc-client";
 
 export interface ModelInfo {
+	availableQuantizations: string[];
 	backend: "faster_whisper" | "onnx_asr";
 	description: string;
 	displayName: string;
@@ -29,6 +30,7 @@ const rawModelInfoSchema = z.object({
 	supports_realtime: z.boolean(),
 	onnx_model_name: z.string().nullable(),
 	description: z.string(),
+	available_quantizations: z.array(z.string()).default([""]),
 });
 
 type RawModelInfo = z.infer<typeof rawModelInfoSchema>;
@@ -45,6 +47,7 @@ function mapModel(raw: RawModelInfo): ModelInfo {
 		supportsRealtime: raw.supports_realtime,
 		onnxModelName: raw.onnx_model_name,
 		description: raw.description,
+		availableQuantizations: raw.available_quantizations,
 	};
 }
 

@@ -72,6 +72,7 @@ def is_pre_ready_command(name: str | None) -> bool:
     spec = _COMMAND_REGISTRY.get(name)
     return spec is not None and spec.pre_ready
 
+
 # Define allowed methods and parameters for security
 ALLOWED_METHODS: list[str] = [
     "set_microphone",
@@ -466,9 +467,7 @@ async def _handle_reload_model(ws: ServerConnection, state: ServerState, data: d
         await ws.send(json.dumps({"status": "error", "message": f"{type(e).__name__}: {e}"}))
         return
     _log_call(f"request_model_swap({kind}", model + ")")
-    await ws.send(
-        json.dumps({"status": "success", "message": f"model swap requested: kind={kind} name={model}"})
-    )
+    await ws.send(json.dumps({"status": "success", "message": f"model swap requested: kind={kind} name={model}"}))
 
 
 @register_command("get_runtime_info")
@@ -542,6 +541,17 @@ def _enumerate_input_devices() -> list[dict[str, Any]]:
     pyaudiowpatch replaces WDM-KS entries with loopback entries. PyAudioSource
     opens via ``pyaudio``, so the enumeration we hand the UI must come from the
     same package or the user's pick will address a different device.
+
+    Windows duplicates: PortAudio enumerates each physical input once per Host
+    API (MME, DirectSound, WASAPI, WDM-KS), so the same mic appears 3-4 times
+    in the raw list. We restrict the listing to **WASAPI** on Windows — the
+    modern stack since Vista, what Windows Sound Settings shows, what every
+    mainstream app (Discord/Teams/Zoom/OBS) uses, and the only one that gets
+    Windows-applied AEC/AGC. Legacy duplicates (MME/DirectSound) and the
+    lower-level WDM-KS path (raw driver pin names like "WO Mic Wave", plus
+    stale entries for disconnected Bluetooth headsets) are filtered out. On
+    non-Windows platforms PortAudio doesn't suffer this per-API duplication,
+    so we keep every host API.
     """
     import pyaudio
 
@@ -553,11 +563,15 @@ def _enumerate_input_devices() -> list[dict[str, Any]]:
             default_index = -1
 
         host_api_names: dict[int, str] = {}
+        windows_apis_present = False
         try:
             for h in range(audio.get_host_api_count()):
                 try:
                     info: dict[str, Any] = audio.get_host_api_info_by_index(h)
-                    host_api_names[int(info["index"])] = str(info.get("name", ""))
+                    api_name = str(info.get("name", ""))
+                    host_api_names[int(info["index"])] = api_name
+                    if api_name.startswith("Windows ") or api_name == "MME":
+                        windows_apis_present = True
                 except Exception:
                     continue
         except Exception:
@@ -572,6 +586,16 @@ def _enumerate_input_devices() -> list[dict[str, Any]]:
             max_input = int(dev.get("maxInputChannels", 0))
             if max_input <= 0:
                 continue
+
+            host_api_index = int(dev.get("hostApi", -1))
+            api_name = host_api_names.get(host_api_index, "")
+            # On Windows, only enumerate from WASAPI. Other host APIs duplicate
+            # the same hardware (MME/DirectSound) or expose stale/low-level
+            # entries (WDM-KS).
+            if windows_apis_present and api_name != "Windows WASAPI":
+                continue
+
+            name = str(dev.get("name", f"Device {i}"))
 
             # Pre-flight: probe at the rate the recorder will actually open
             # at (16 kHz mono int16). If that's unsupported, also try the
@@ -589,18 +613,29 @@ def _enumerate_input_devices() -> list[dict[str, Any]]:
                 )
                 continue
 
-            host_api_index = int(dev.get("hostApi", -1))
             devices.append(
                 {
                     "index": int(dev["index"]),
-                    "name": str(dev.get("name", f"Device {i}")),
+                    "name": name,
                     "isDefault": int(dev["index"]) == default_index,
                     "defaultSampleRate": int(dev.get("defaultSampleRate", 0)),
                     "hostApi": host_api_index,
-                    "hostApiName": host_api_names.get(host_api_index, ""),
+                    "hostApiName": api_name,
                     "maxInputChannels": max_input,
                 }
             )
+        # PortAudio's default-input-device pointer is usually an MME index on
+        # Windows, so the WASAPI variant of the system default never matches
+        # by raw index. Re-flag the WASAPI device that shares a name with the
+        # default so the UI still highlights it.
+        if windows_apis_present and not any(d["isDefault"] for d in devices) and default_index >= 0:
+            with contextlib.suppress(Exception):
+                default_name = str(audio.get_device_info_by_index(default_index).get("name", "")).strip().lower()
+                if default_name:
+                    for d in devices:
+                        if str(d["name"]).strip().lower() == default_name:
+                            d["isDefault"] = True
+                            break
         return devices
     finally:
         audio.terminate()

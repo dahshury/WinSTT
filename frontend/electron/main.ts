@@ -17,7 +17,7 @@ import {
 import { IPC } from "../src/shared/api/ipc-channels";
 import { registerAppMenuIpcHandlers } from "./ipc/app-menu-ipc";
 import type { AppMenuBuiltItem } from "./ipc/app-menu-template";
-import { flushMutePending, setupAudioMuteHandlers, unmuteSystemAudio } from "./ipc/audio-mute";
+import { flushMutePending, unmuteSystemAudio } from "./ipc/audio-mute";
 import { setupAutostartHandlers } from "./ipc/autostart";
 import { createClipboardHandler } from "./ipc/clipboard";
 import {
@@ -585,7 +585,6 @@ function setupGlobalIpcHandlers() {
 	setupSettingsHandlers(sttClient);
 	setupSttProcessHandlers();
 	setupAutostartHandlers();
-	setupAudioMuteHandlers();
 	setupSttCommandHandlers(sttClient);
 	setupLoopbackHandlers(sttClient);
 	cleanupWindowControls = setupWindowControlHandlers();

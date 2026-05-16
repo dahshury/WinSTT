@@ -39,12 +39,20 @@ class AudioBuffer:
         self._frames.clear()
         self._pre_roll.clear()
 
-    def get_audio_array(self) -> AudioArray:
-        if not self._frames:
-            return np.array([], dtype=np.float32)
-        raw = b"".join(self._frames)
+    @staticmethod
+    def _empty_array() -> AudioArray:
+        return np.array([], dtype=np.float32)
+
+    @staticmethod
+    def _frames_to_float32(frames: list[AudioChunk]) -> AudioArray:
+        raw = b"".join(frames)
         audio_int16 = np.frombuffer(raw, dtype=np.int16)
         return (audio_int16.astype(np.float32) / INT16_MAX_ABS_VALUE).astype(np.float32)
+
+    def get_audio_array(self) -> AudioArray:
+        if not self._frames:
+            return self._empty_array()
+        return self._frames_to_float32(self._frames)
 
     def get_recent_audio_array(self, max_seconds: float) -> AudioArray:
         """Return the most recent ``max_seconds`` of audio as a float32 array.
@@ -57,13 +65,15 @@ class AudioBuffer:
         noise-repetition recorder stop in stt_server/text_processing.py.
         """
         if not self._frames or max_seconds <= 0:
-            return np.array([], dtype=np.float32)
-        frames_per_second = self._sample_rate / self._buffer_size
-        max_frames = max(1, int(max_seconds * frames_per_second))
-        recent_frames = self._frames[-max_frames:] if len(self._frames) > max_frames else self._frames
-        raw = b"".join(recent_frames)
-        audio_int16 = np.frombuffer(raw, dtype=np.int16)
-        return (audio_int16.astype(np.float32) / INT16_MAX_ABS_VALUE).astype(np.float32)
+            return self._empty_array()
+        max_frames = max(1, int(max_seconds * self.frames_per_second()))
+        return self._frames_to_float32(self._tail_frames(max_frames))
+
+    def _tail_frames(self, max_frames: int) -> list[AudioChunk]:
+        """Last ``max_frames`` frames, or all of them when fewer exist."""
+        if len(self._frames) > max_frames:
+            return self._frames[-max_frames:]
+        return self._frames
 
     def get_audio_array_slice(self, start_frame: int, end_frame: int | None = None) -> AudioArray:
         """Return audio between two frame indices as a float32 array.
@@ -75,28 +85,40 @@ class AudioBuffer:
         crash.
         """
         frames = self._frames
-        total = len(frames)
-        if start_frame >= total or start_frame < 0:
-            return np.array([], dtype=np.float32)
-        end = total if end_frame is None else min(end_frame, total)
+        bounds = self._resolve_slice_bounds(len(frames), start_frame, end_frame)
+        if bounds is None:
+            return self._empty_array()
+        start, end = bounds
+        return self._frames_to_float32(frames[start:end])
+
+    @staticmethod
+    def _clamp_end(total: int, end_frame: int | None) -> int:
+        if end_frame is None:
+            return total
+        return min(end_frame, total)
+
+    @classmethod
+    def _resolve_slice_bounds(cls, total: int, start_frame: int, end_frame: int | None) -> tuple[int, int] | None:
+        start_in_range = 0 <= start_frame < total
+        if not start_in_range:
+            return None
+        end = cls._clamp_end(total, end_frame)
         if start_frame >= end:
-            return np.array([], dtype=np.float32)
-        raw = b"".join(frames[start_frame:end])
-        audio_int16 = np.frombuffer(raw, dtype=np.int16)
-        return (audio_int16.astype(np.float32) / INT16_MAX_ABS_VALUE).astype(np.float32)
+            return None
+        return start_frame, end
 
     def frames_per_second(self) -> float:
         return self._sample_rate / self._buffer_size
 
+    def _is_noop_backdate(self, seconds: float) -> bool:
+        return seconds <= 0 or not self._frames
+
     def backdate(self, seconds: float) -> None:
-        if seconds <= 0 or not self._frames:
+        if self._is_noop_backdate(seconds):
             return
-        frames_per_second = self._sample_rate / self._buffer_size
-        frames_to_remove = int(seconds * frames_per_second)
-        if frames_to_remove >= len(self._frames):
-            self._frames.clear()
-        else:
-            self._frames = self._frames[: len(self._frames) - frames_to_remove]
+        frames_to_remove = int(seconds * self.frames_per_second())
+        keep = len(self._frames) - frames_to_remove
+        self._frames = self._frames[:keep] if keep > 0 else []
 
     @property
     def frame_count(self) -> int:

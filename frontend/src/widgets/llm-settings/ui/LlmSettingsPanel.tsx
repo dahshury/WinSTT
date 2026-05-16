@@ -28,7 +28,7 @@ import {
 	useLlmCatalogStore,
 	useOpenRouterCatalogStore,
 } from "@/entities/llm-catalog";
-import { SettingSection, useSettingsStore } from "@/entities/setting";
+import { SettingSection, SettingSubsection, useSettingsStore } from "@/entities/setting";
 import { detectOllama, fetchOllamaModels, startOllama } from "@/shared/api/ipc-client";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { Button } from "@/shared/ui/button";
@@ -69,6 +69,7 @@ type UpdateLlmFn = (patch: LlmPatch) => void;
 type LlmProvider = LlmSettings["provider"];
 
 interface LlmDraftSnapshot {
+	dictationEnabled: boolean;
 	enabled: boolean;
 	endpoint: string;
 	model: string;
@@ -77,10 +78,13 @@ interface LlmDraftSnapshot {
 	openrouterModel: string;
 	presets: readonly PresetEntry[];
 	provider: LlmProvider;
+	transformsEnabled: boolean;
 }
 
 const DEFAULT_LLM: LlmDraftSnapshot = {
 	enabled: false,
+	dictationEnabled: true,
+	transformsEnabled: false,
 	provider: "ollama",
 	endpoint: "http://localhost:11434",
 	model: "",
@@ -584,6 +588,8 @@ export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps 
 	const snapshot = readLlmSnapshot(llm);
 	const {
 		enabled,
+		dictationEnabled,
+		transformsEnabled,
 		provider,
 		endpoint,
 		model,
@@ -775,41 +781,62 @@ export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps 
 							update={update}
 						/>
 					)}
-
-					<div className="col-span-2">
-						<FormControl caption={t("toneCaption")} label={t("tone")} tooltip={t("toneTooltip")}>
-							<Switcher
-								onChange={(v) =>
-									update({ presets: setTone(presets, v as (typeof TONE_GROUP)[number]) })
-								}
-								options={toneOpts}
-								value={activeTone}
-							/>
-						</FormControl>
-					</div>
-
-					<div className="col-span-2">
-						<FormControl
-							caption={t("modifiersCaption")}
-							label={t("modifiers")}
-							tooltip={t("modifiersTooltip")}
-						>
-							<IndependentPresetList
-								levelOpts={levelOpts}
-								onLevelChange={(key, lvl) =>
-									update({ presets: setIndependentLevel(presets, key, lvl) })
-								}
-								onToggle={(key, on) => update({ presets: toggleIndependent(presets, key, on) })}
-								presets={presets}
-								t={t}
-							/>
-						</FormControl>
-					</div>
 				</div>
-			</SettingSection>
 
-			<ContextAwarenessSection />
-			<TransformsSection />
+				<SettingSubsection
+					caption={t("subDictationCaption")}
+					icon={PencilIcon}
+					onToggle={(v) => update({ dictationEnabled: v })}
+					title={t("subDictationTitle")}
+					toggled={dictationEnabled}
+				>
+					<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+						<div className="col-span-2">
+							<FormControl caption={t("toneCaption")} label={t("tone")} tooltip={t("toneTooltip")}>
+								<Switcher
+									onChange={(v) =>
+										update({ presets: setTone(presets, v as (typeof TONE_GROUP)[number]) })
+									}
+									options={toneOpts}
+									value={activeTone}
+								/>
+							</FormControl>
+						</div>
+
+						<div className="col-span-2">
+							<FormControl
+								caption={t("modifiersCaption")}
+								label={t("modifiers")}
+								tooltip={t("modifiersTooltip")}
+							>
+								<IndependentPresetList
+									levelOpts={levelOpts}
+									onLevelChange={(key, lvl) =>
+										update({ presets: setIndependentLevel(presets, key, lvl) })
+									}
+									onToggle={(key, on) => update({ presets: toggleIndependent(presets, key, on) })}
+									presets={presets}
+									t={t}
+								/>
+							</FormControl>
+						</div>
+
+						<div className="col-span-2">
+							<ContextAwarenessSection />
+						</div>
+					</div>
+				</SettingSubsection>
+
+				<SettingSubsection
+					caption={t("transformsCaption")}
+					icon={MagicWand01Icon}
+					onToggle={(v) => update({ transformsEnabled: v })}
+					title={t("subTransformTitle")}
+					toggled={transformsEnabled}
+				>
+					<TransformsSection />
+				</SettingSubsection>
+			</SettingSection>
 
 			<OllamaDialog
 				isOpen={showOllamaDialog}

@@ -6,6 +6,7 @@ import queue
 import re
 import threading
 import time
+from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
@@ -16,7 +17,10 @@ from src.building_blocks.event_bus import EventBus
 from src.building_blocks.types import AudioChunk, BufferSize, SampleRate
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.building_blocks.types import TextCallback
+    from src.recorder.domain.model_registry import ModelInfo
 from src.recorder.application.pipeline import RecordingPipeline
 from src.recorder.domain.audio_buffer import AudioBuffer
 from src.recorder.domain.config import RecorderConfig
@@ -57,6 +61,44 @@ logger = logging.getLogger(__name__)
 # recording. Mirrors RealtimeSTT's text_storage / safetext idea but uses a
 # bounded input window so latency stays flat for 30+ minute recordings.
 REALTIME_COMMIT_AFTER_SECONDS = 20.0
+
+
+@dataclass
+class _RealtimeLoopState:
+    """Per-loop mutable state for the realtime worker (was loop-local vars)."""
+
+    last_transcription: float
+    recording_seen_at: float | None = None
+
+
+class _SwapProgress:
+    """Download-progress callback that doubles as a cancellation checkpoint.
+
+    onnx-asr fires this synchronously from within ``load_model``; raising
+    ``DownloadCancelledError`` here aborts the HuggingFace download mid-fetch
+    (partial bytes stay on disk and ``huggingface_hub`` resumes them next
+    time). Replaces the former ``progress_with_cancel`` closure so it is
+    independently unit-testable.
+    """
+
+    def __init__(self, service: RecorderService, name: str, cancel_event: threading.Event) -> None:
+        self._service = service
+        self._name = name
+        self._cancel_event = cancel_event
+
+    def __call__(self, info: DownloadProgress) -> None:
+        if self._cancel_event.is_set():
+            raise DownloadCancelledError(self._name)
+        self._forward(info)
+
+    def _forward(self, info: DownloadProgress) -> None:
+        sink = self._service._swap_progress_sink
+        if sink is None:
+            return
+        try:
+            sink(info)
+        except Exception:
+            logger.exception("swap progress sink raised")
 
 
 class RecorderService:
@@ -159,44 +201,69 @@ class RecorderService:
                 len(text),
             )
         else:
-            # Audio statistics — proves whether the buffer holds real speech
-            # samples or zeros/silence at the moment we hand it to the model.
-            # If peak ≈ 0 the mic stream has been overwritten with silence
-            # somewhere; if peak is healthy (> 0.05) and we still get an
-            # empty transcription, the VAD inside BatchedInferencePipeline is
-            # discarding the audio.
-            audio_peak = float(np.max(np.abs(audio))) if audio.size > 0 else 0.0
-            audio_rms = float(np.sqrt(np.mean(audio * audio))) if audio.size > 0 else 0.0
-            nonzero_frac = float(np.count_nonzero(audio)) / audio.size if audio.size > 0 else 0.0
-            logger.warning(
-                "[main-transcribe] starting on %d frames (%.2fs of audio) — "
-                "samples=%d peak=%.4f rms=%.4f nonzero_frac=%.4f",
-                frame_count,
-                audio_seconds,
-                audio.size,
-                audio_peak,
-                audio_rms,
-                nonzero_frac,
-            )
-            transcribe_start = time.time()
-            with self._transcriber_lock:
-                result = self._transcriber.transcribe(audio, self._config.transcription.language)
-            text = self._preprocess_output(result.text)
-            logger.warning(
-                "[main-transcribe] done in %.2fs — text length=%d chars",
-                time.time() - transcribe_start,
-                len(text),
-            )
+            text = self._run_full_transcription(audio, frame_count, audio_seconds)
 
         self._event_bus.publish(TranscriptionCompleted(timestamp=self._clock.get_current_time(), text=text))
 
+        self._finalize_transcription_state()
+        self._dispatch_transcription_callback(on_transcription_finished, text)
+        return text
+
+    @staticmethod
+    def _audio_stats(audio: np.ndarray[Any, Any]) -> tuple[float, float, float]:
+        """Peak / RMS / nonzero-fraction of an audio buffer (0.0 when empty)."""
+        if audio.size == 0:
+            return 0.0, 0.0, 0.0
+        peak = float(np.max(np.abs(audio)))
+        rms = float(np.sqrt(np.mean(audio * audio)))
+        nonzero_frac = float(np.count_nonzero(audio)) / audio.size
+        return peak, rms, nonzero_frac
+
+    def _run_full_transcription(
+        self,
+        audio: np.ndarray[Any, Any],
+        frame_count: int,
+        audio_seconds: float,
+    ) -> str:
+        # Audio statistics — proves whether the buffer holds real speech
+        # samples or zeros/silence at the moment we hand it to the model.
+        # If peak ≈ 0 the mic stream has been overwritten with silence
+        # somewhere; if peak is healthy (> 0.05) and we still get an
+        # empty transcription, the VAD inside BatchedInferencePipeline is
+        # discarding the audio.
+        audio_peak, audio_rms, nonzero_frac = self._audio_stats(audio)
+        logger.warning(
+            "[main-transcribe] starting on %d frames (%.2fs of audio) — "
+            "samples=%d peak=%.4f rms=%.4f nonzero_frac=%.4f",
+            frame_count,
+            audio_seconds,
+            audio.size,
+            audio_peak,
+            audio_rms,
+            nonzero_frac,
+        )
+        transcribe_start = time.time()
+        with self._transcriber_lock:
+            result = self._transcriber.transcribe(audio, self._config.transcription.language)
+        text = self._preprocess_output(result.text)
+        logger.warning(
+            "[main-transcribe] done in %.2fs — text length=%d chars",
+            time.time() - transcribe_start,
+            len(text),
+        )
+        return text
+
+    def _finalize_transcription_state(self) -> None:
         if self._state_machine.state == RecorderState.TRANSCRIBING:
             self._state_machine.transition(RecorderState.INACTIVE)
 
+    @staticmethod
+    def _dispatch_transcription_callback(
+        on_transcription_finished: TextCallback | None,
+        text: str,
+    ) -> None:
         if on_transcription_finished is not None:
             threading.Thread(target=on_transcription_finished, args=(text,), daemon=True).start()
-
-        return text
 
     def _reuse_realtime_text_if_eligible(self) -> str | None:
         """Return realtime worker's last text when it can stand in for a full pass.
@@ -207,18 +274,23 @@ class RecorderService:
         non-empty text from the most recent realtime tick. Otherwise the
         caller must run the full transcription itself.
         """
-        if not self._config.realtime.enable_realtime_transcription:
-            return None
-        if not self._config.realtime.use_main_model_for_realtime:
-            return None
-        if self._realtime_transcriber is not self._transcriber:
+        if not self._realtime_reuse_enabled():
             return None
         cached = self._last_realtime_text
         # Clear immediately so a later text() call after a short recording with
         # no realtime output falls back to the real transcribe path instead of
         # reusing yesterday's preview.
         self._last_realtime_text = ""
-        return cached or None
+        return cached if cached else None
+
+    def _realtime_reuse_enabled(self) -> bool:
+        """True iff the realtime worker ran the same model end-to-end."""
+        rt = self._config.realtime
+        return (
+            rt.enable_realtime_transcription
+            and rt.use_main_model_for_realtime
+            and self._realtime_transcriber is self._transcriber
+        )
 
     def start(self) -> RecorderService:
         self._pipeline.request_start()
@@ -243,16 +315,7 @@ class RecorderService:
         original_sample_rate: int = 16000,
     ) -> None:
         if isinstance(chunk, np.ndarray):
-            arr: np.ndarray[Any, Any] = chunk
-            if arr.ndim == 2:
-                arr = np.mean(arr, axis=1)
-            if original_sample_rate != self._config.audio.sample_rate:
-                from scipy.signal import resample
-
-                num_samples = int(len(arr) * self._config.audio.sample_rate / original_sample_rate)
-                arr = resample(arr, num_samples)
-            arr = arr.astype(np.int16)
-            chunk = bytes(arr.tobytes())
+            chunk = self._ndarray_to_pcm_bytes(chunk, original_sample_rate)
 
         # Buffer small chunks before feeding the pipeline (Silero VAD
         # needs exactly buffer_size samples = buffer_size*2 bytes).
@@ -263,6 +326,21 @@ class RecorderService:
             to_process = bytes(self._feed_buffer[:buf_size])
             self._feed_buffer = self._feed_buffer[buf_size:]
             self._pipeline.feed_audio(to_process)
+
+    def _ndarray_to_pcm_bytes(
+        self,
+        arr: np.ndarray[Any, Any],
+        original_sample_rate: int,
+    ) -> bytes:
+        if arr.ndim == 2:
+            arr = np.mean(arr, axis=1)
+        if original_sample_rate != self._config.audio.sample_rate:
+            from scipy.signal import resample
+
+            num_samples = int(len(arr) * self._config.audio.sample_rate / original_sample_rate)
+            arr = resample(arr, num_samples)
+        arr = arr.astype(np.int16)
+        return bytes(arr.tobytes())
 
     def set_microphone(self, microphone_on: bool = True) -> None:
         """Toggle microphone capture on/off.
@@ -285,22 +363,25 @@ class RecorderService:
         # Wake-word backends require always-on capture so the detector
         # can listen for the trigger word; for everything else we toggle
         # the hardware stream so the OS mic indicator follows user intent.
-        wake_word_active = self._wake_word_detector is not None
-        if not wake_word_active:
-            try:
-                if microphone_on:
-                    self._audio_source.resume()
-                else:
-                    self._audio_source.pause()
-            except Exception:
-                logger.exception("audio_source.%s raised", "resume" if microphone_on else "pause")
+        if self._wake_word_detector is None:
+            self._toggle_hardware_capture(microphone_on)
         if not microphone_on:
-            if self._state_machine.is_recording:
-                logger.warning("[set_microphone] off → request_stop (PTT release / toggle off)")
-                self._pipeline.request_stop()
-            elif self._state_machine.state in (RecorderState.LISTENING, RecorderState.INACTIVE):
-                # User released without producing any speech — surface that.
-                self._event_bus.publish(NoAudioDetected(timestamp=self._clock.get_current_time()))
+            self._handle_microphone_off()
+
+    def _toggle_hardware_capture(self, microphone_on: bool) -> None:
+        action = self._audio_source.resume if microphone_on else self._audio_source.pause
+        try:
+            action()
+        except Exception:
+            logger.exception("audio_source capture toggle raised (microphone_on=%s)", microphone_on)
+
+    def _handle_microphone_off(self) -> None:
+        if self._state_machine.is_recording:
+            logger.warning("[set_microphone] off → request_stop (PTT release / toggle off)")
+            self._pipeline.request_stop()
+        elif self._state_machine.state in (RecorderState.LISTENING, RecorderState.INACTIVE):
+            # User released without producing any speech — surface that.
+            self._event_bus.publish(NoAudioDetected(timestamp=self._clock.get_current_time()))
 
     def clear_feed_buffer(self) -> None:
         """Discard any partial audio data buffered by ``feed_audio``."""
@@ -337,64 +418,48 @@ class RecorderService:
         are released even if individual steps fail.
         """
         self._is_running = False
+        # Stop pipeline first to halt audio processing.
+        self._safe_step("stopping pipeline", lambda: self._pipeline.stop(timeout=2.0))
+        self._safe_step("cleaning up audio source", self._audio_source.cleanup)
+        self._join_worker_threads()
+        self._shutdown_transcribers()
+        self._shutdown_wake_word_detector()
+        self._safe_step("aborting state machine", self._state_machine.abort)
 
-        # Stop pipeline first to halt audio processing
+    @staticmethod
+    def _safe_step(what: str, action: Callable[[], object]) -> None:
+        """Run a cleanup step, swallowing + logging any exception."""
         try:
-            self._pipeline.stop(timeout=2.0)
+            action()
         except Exception as e:
-            logger.debug("Error stopping pipeline: %s", e)
+            logger.debug("Error %s: %s", what, e)
 
-        # Clean up audio source
-        try:
-            self._audio_source.cleanup()
-        except Exception as e:
-            logger.debug("Error cleaning up audio source: %s", e)
+    def _join_worker_threads(self) -> None:
+        self._audio_reader_thread = self._join_thread(self._audio_reader_thread, "Audio reader thread")
+        self._realtime_thread = self._join_thread(self._realtime_thread, "Realtime worker thread")
 
-        # Join worker threads with timeout
-        if self._audio_reader_thread is not None:
-            try:
-                self._audio_reader_thread.join(timeout=2.0)
-                if self._audio_reader_thread.is_alive():
-                    logger.warning("Audio reader thread did not terminate within timeout")
-            except Exception as e:
-                logger.debug("Error joining audio reader thread: %s", e)
-            finally:
-                self._audio_reader_thread = None
+    @classmethod
+    def _join_thread(cls, thread: threading.Thread | None, label: str) -> None:
+        if thread is None:
+            return None
+        cls._safe_step(f"joining {label}", lambda: cls._join_alive(thread, label))
+        return None
 
-        if self._realtime_thread is not None:
-            try:
-                self._realtime_thread.join(timeout=2.0)
-                if self._realtime_thread.is_alive():
-                    logger.warning("Realtime worker thread did not terminate within timeout")
-            except Exception as e:
-                logger.debug("Error joining realtime thread: %s", e)
-            finally:
-                self._realtime_thread = None
+    @staticmethod
+    def _join_alive(thread: threading.Thread, label: str) -> None:
+        thread.join(timeout=2.0)
+        if thread.is_alive():
+            logger.warning("%s did not terminate within timeout", label)
 
-        # Shutdown transcribers
-        try:
-            self._transcriber.shutdown()
-        except Exception as e:
-            logger.debug("Error shutting down transcriber: %s", e)
+    def _shutdown_transcribers(self) -> None:
+        self._safe_step("shutting down transcriber", self._transcriber.shutdown)
+        rt = self._realtime_transcriber
+        if rt is not None and rt is not self._transcriber:
+            self._safe_step("shutting down realtime transcriber", rt.shutdown)
 
-        if self._realtime_transcriber and self._realtime_transcriber is not self._transcriber:
-            try:
-                self._realtime_transcriber.shutdown()
-            except Exception as e:
-                logger.debug("Error shutting down realtime transcriber: %s", e)
-
-        # Clean up wake word detector
-        if self._wake_word_detector:
-            try:
-                self._wake_word_detector.cleanup()
-            except Exception as e:
-                logger.debug("Error cleaning up wake word detector: %s", e)
-
-        # Abort state machine
-        try:
-            self._state_machine.abort()
-        except Exception as e:
-            logger.debug("Error aborting state machine: %s", e)
+    def _shutdown_wake_word_detector(self) -> None:
+        if self._wake_word_detector is not None:
+            self._safe_step("cleaning up wake word detector", self._wake_word_detector.cleanup)
 
     def warmup(self) -> None:
         """Run a dummy inference to eagerly compile CUDA kernels.
@@ -431,19 +496,41 @@ class RecorderService:
         """
         idle_deadline = time.time() + 60.0
         while True:
-            try:
-                item = self._pipeline.transcription_queue.get(timeout=0.1)
-                return item is not None  # False if abort sentinel (None), True otherwise
-            except queue.Empty:
-                if self._state_machine.is_recording or self._state_machine.state == RecorderState.TRANSCRIBING:
-                    # Active recording — extend deadline indefinitely so we
-                    # never clear the user's in-flight audio.
-                    idle_deadline = time.time() + 60.0
-                    continue
-                if time.time() >= idle_deadline:
-                    logger.debug("Timed out waiting for audio (no recording started within 60s)")
-                    return False
-                continue
+            ready, idle_deadline = self._wait_audio_tick(idle_deadline)
+            if ready is not None:
+                return ready
+
+    def _wait_audio_tick(self, idle_deadline: float) -> tuple[bool | None, float]:
+        """One poll cycle. Returns ``(result, new_deadline)``.
+
+        ``result`` is True/False once decided, else None to keep polling.
+        """
+        ready = self._poll_transcription_queue()
+        if ready is not None:
+            return ready, idle_deadline
+        return self._wait_audio_idle(idle_deadline)
+
+    def _wait_audio_idle(self, idle_deadline: float) -> tuple[bool | None, float]:
+        """Decide what to do when the queue poll came back empty."""
+        if self._recording_in_progress():
+            # Active recording — extend deadline indefinitely so we
+            # never clear the user's in-flight audio.
+            return None, time.time() + 60.0
+        if time.time() >= idle_deadline:
+            logger.debug("Timed out waiting for audio (no recording started within 60s)")
+            return False, idle_deadline
+        return None, idle_deadline
+
+    def _poll_transcription_queue(self) -> bool | None:
+        """One 0.1s poll: True/False if an item arrived, None if the queue is empty."""
+        try:
+            item = self._pipeline.transcription_queue.get(timeout=0.1)
+        except queue.Empty:
+            return None
+        return item is not None  # False if abort sentinel (None), True otherwise
+
+    def _recording_in_progress(self) -> bool:
+        return self._state_machine.is_recording or self._state_machine.state == RecorderState.TRANSCRIBING
 
     def wakeup(self) -> None:
         self._pipeline.request_listen()
@@ -503,27 +590,14 @@ class RecorderService:
         Returns immediately. Watch the event bus for
         ``ModelSwapStarted`` / ``ModelSwapCompleted`` / ``ModelSwapFailed``.
         """
-        if kind not in {"main", "realtime"}:
-            msg = f"Unknown model swap kind: {kind!r}"
-            raise ValueError(msg)
-        if kind == "realtime" and not self._config.realtime.enable_realtime_transcription:
-            self._event_bus.publish(
-                ModelSwapFailed(
-                    timestamp=self._clock.get_current_time(),
-                    kind=kind,
-                    name=name,
-                    reason="realtime transcription is disabled",
-                )
-            )
+        if not self._validate_swap_request(kind, name):
             return
 
         # Cancel any in-flight swap for the same kind. The prior thread
         # observes the set event on its next progress callback (or before
         # commit if it was about to swap) and exits without touching the
         # current transcriber.
-        prior_cancel = self._swap_cancel_events.get(kind)
-        if prior_cancel is not None:
-            prior_cancel.set()
+        self._cancel_inflight_swap(kind)
 
         cancel_event = threading.Event()
         self._swap_cancel_events[kind] = cancel_event
@@ -537,68 +611,47 @@ class RecorderService:
         self._swap_threads[kind] = worker
         worker.start()
 
-    def _swap_worker(self, kind: str, name: str, cancel_event: threading.Event) -> None:
-        """Background worker that builds + swaps a transcriber. Emits lifecycle events."""
+    def _validate_swap_request(self, kind: str, name: str) -> bool:
+        """Reject unknown kinds (raises) / disabled realtime (emits + returns False)."""
+        if kind not in {"main", "realtime"}:
+            msg = f"Unknown model swap kind: {kind!r}"
+            raise ValueError(msg)
+        if self._realtime_swap_disabled(kind):
+            self._event_bus.publish(
+                ModelSwapFailed(
+                    timestamp=self._clock.get_current_time(),
+                    kind=kind,
+                    name=name,
+                    reason="realtime transcription is disabled",
+                )
+            )
+            return False
+        return True
+
+    def _realtime_swap_disabled(self, kind: str) -> bool:
+        return kind == "realtime" and not self._config.realtime.enable_realtime_transcription
+
+    def _cancel_inflight_swap(self, kind: str) -> None:
+        prior_cancel = self._swap_cancel_events.get(kind)
+        if prior_cancel is not None:
+            prior_cancel.set()
+
+    def _publish_swap_failed(self, kind: str, name: str, reason: str) -> None:
         self._event_bus.publish(
-            ModelSwapStarted(timestamp=self._clock.get_current_time(), kind=kind, name=name)
+            ModelSwapFailed(
+                timestamp=self._clock.get_current_time(),
+                kind=kind,
+                name=name,
+                reason=reason,
+            )
         )
 
-        # Wrap the existing DownloadProgress sink so the progress callback
-        # also serves as a cancel checkpoint. onnx-asr fires the callback
-        # synchronously from within ``load_model``; raising here aborts the
-        # HuggingFace download mid-fetch (partial bytes stay on disk and
-        # huggingface_hub will resume them next time).
-        def progress_with_cancel(info: DownloadProgress) -> None:
-            if cancel_event.is_set():
-                raise DownloadCancelledError(name)
-            if self._swap_progress_sink is not None:
-                try:
-                    self._swap_progress_sink(info)
-                except Exception:
-                    logger.exception("swap progress sink raised")
-
-        try:
-            # Late import to keep the application layer free of infrastructure imports
-            # at module load time. The hexagonal rulebook keeps bootstrap as the only
-            # composition root; swaps are a tactical exception scoped to this method.
-            from src.recorder.bootstrap import _providers_for_device
-            from src.recorder.domain.model_registry import ModelCatalog
-            from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
-
-            catalog = ModelCatalog()
-            info = catalog.get(name)
-            onnx_name = info.onnx_model_name if info and info.onnx_model_name else name
-            providers = _providers_for_device(self._config.transcription.device)
-
-            new_transcriber = OnnxAsrTranscriber(
-                model_name=onnx_name,
-                quantization=self._config.transcription.onnx_quantization or None,
-                providers=providers,
-                on_download_progress=progress_with_cancel,
-            )
-        except DownloadCancelledError:
-            logger.info("Model swap %s → %s cancelled mid-download", kind, name)
-            self._event_bus.publish(
-                ModelSwapFailed(
-                    timestamp=self._clock.get_current_time(),
-                    kind=kind,
-                    name=name,
-                    reason="cancelled",
-                )
-            )
+    def _swap_worker(self, kind: str, name: str, cancel_event: threading.Event) -> None:
+        """Background worker that builds + swaps a transcriber. Emits lifecycle events."""
+        self._event_bus.publish(ModelSwapStarted(timestamp=self._clock.get_current_time(), kind=kind, name=name))
+        new_transcriber = self._build_new_transcriber(kind, name, cancel_event)
+        if new_transcriber is None:
             return
-        except Exception as e:
-            logger.exception("Model swap %s → %s failed during load", kind, name)
-            self._event_bus.publish(
-                ModelSwapFailed(
-                    timestamp=self._clock.get_current_time(),
-                    kind=kind,
-                    name=name,
-                    reason=f"{type(e).__name__}: {e}",
-                )
-            )
-            return
-
         # New transcriber is loaded — do the atomic pointer swap. The
         # transcribe path acquires ``_transcriber_lock`` for every call,
         # so this is safe even during an active recording cycle.
@@ -606,37 +659,88 @@ class RecorderService:
             # A newer swap was requested mid-load; drop this one rather
             # than racing the newer swap's worker.
             new_transcriber.shutdown()
-            self._event_bus.publish(
-                ModelSwapFailed(
-                    timestamp=self._clock.get_current_time(),
-                    kind=kind,
-                    name=name,
-                    reason="superseded",
-                )
-            )
+            self._publish_swap_failed(kind, name, "superseded")
             return
+        old = self._commit_swap(kind, name, new_transcriber)
+        self._shutdown_old_transcriber(kind, old, new_transcriber)
+        self._event_bus.publish(ModelSwapCompleted(timestamp=self._clock.get_current_time(), kind=kind, name=name))
 
+    def _build_new_transcriber(
+        self,
+        kind: str,
+        name: str,
+        cancel_event: threading.Event,
+    ) -> ITranscriber | None:
+        """Load the new transcriber. Emits ``ModelSwapFailed`` + returns None on error."""
+        try:
+            return self._load_transcriber(name, _SwapProgress(self, name, cancel_event))
+        except DownloadCancelledError:
+            logger.info("Model swap %s → %s cancelled mid-download", kind, name)
+            self._publish_swap_failed(kind, name, "cancelled")
+            return None
+        except Exception as e:
+            logger.exception("Model swap %s → %s failed during load", kind, name)
+            self._publish_swap_failed(kind, name, f"{type(e).__name__}: {e}")
+            return None
+
+    def _load_transcriber(
+        self,
+        name: str,
+        on_progress: Callable[[DownloadProgress], None],
+    ) -> ITranscriber:
+        # Late import to keep the application layer free of infrastructure imports
+        # at module load time. The hexagonal rulebook keeps bootstrap as the only
+        # composition root; swaps are a tactical exception scoped to this method.
+        from src.recorder.domain.model_registry import ModelCatalog
+        from src.recorder.infrastructure.device import providers_for_device
+        from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
+
+        info = ModelCatalog().get(name)
+        return OnnxAsrTranscriber(
+            model_name=self._resolve_onnx_name(info, name),
+            quantization=self._config.transcription.onnx_quantization or None,
+            providers=providers_for_device(self._config.transcription.device),
+            on_download_progress=on_progress,
+        )
+
+    @staticmethod
+    def _resolve_onnx_name(info: ModelInfo | None, name: str) -> str:
+        if info is not None and info.onnx_model_name:
+            return info.onnx_model_name
+        return name
+
+    def _commit_swap(self, kind: str, name: str, new_transcriber: ITranscriber) -> ITranscriber | None:
+        """Atomically install ``new_transcriber`` under the lock; return the old one."""
         old: ITranscriber | None
         with self._transcriber_lock:
             if kind == "main":
                 old = self._transcriber
                 self._transcriber = new_transcriber
                 self._config.transcription.model = name
-            else:
-                old = self._realtime_transcriber
-                self._realtime_transcriber = new_transcriber
-                self._config.realtime.realtime_model_type = name
+                return old
+            old = self._realtime_transcriber
+            self._realtime_transcriber = new_transcriber
+            self._config.realtime.realtime_model_type = name
+            return old
+
+    @classmethod
+    def _shutdown_old_transcriber(
+        cls,
+        kind: str,
+        old: ITranscriber | None,
+        new_transcriber: ITranscriber,
+    ) -> None:
         # Shutdown the old model AFTER releasing the lock so transcribe()
         # callers aren't blocked on the ORT cleanup walk.
-        if old is not None and old is not new_transcriber:
+        if cls._old_transcriber_replaced(old, new_transcriber):
             try:
-                old.shutdown()
+                old.shutdown()  # type: ignore[union-attr]  # guarded above
             except Exception:
                 logger.exception("Old %s transcriber shutdown raised", kind)
 
-        self._event_bus.publish(
-            ModelSwapCompleted(timestamp=self._clock.get_current_time(), kind=kind, name=name)
-        )
+    @staticmethod
+    def _old_transcriber_replaced(old: ITranscriber | None, new_transcriber: ITranscriber) -> bool:
+        return old is not None and old is not new_transcriber
 
     @property
     def state(self) -> RecorderState:
@@ -702,42 +806,59 @@ class RecorderService:
         """
         info: dict[str, Any] = {
             "device": self._config.transcription.device,
-            "providers": [],
-            "is_gpu": False,
+            "providers": self._active_providers(),
+            "is_gpu": self._transcriber_is_gpu(),
             "model": self._config.transcription.model,
-            "realtime_model": None,
+            "realtime_model": self._realtime_model_name(),
         }
-        # ``active_providers`` / ``is_gpu`` only exist on OnnxAsrTranscriber.
-        active_providers = getattr(self._transcriber, "active_providers", None)
-        if active_providers is not None:
-            info["providers"] = list(active_providers)
-        is_gpu = getattr(self._transcriber, "is_gpu", None)
-        if is_gpu is not None:
-            info["is_gpu"] = bool(is_gpu)
-        if self._realtime_transcriber is not None:
-            info["realtime_model"] = self._config.realtime.realtime_model_type
         return info
+
+    def _active_providers(self) -> list[str]:
+        # ``active_providers`` only exists on OnnxAsrTranscriber.
+        active_providers = getattr(self._transcriber, "active_providers", None)
+        if active_providers is None:
+            return []
+        return list(active_providers)
+
+    def _transcriber_is_gpu(self) -> bool:
+        # ``is_gpu`` only exists on OnnxAsrTranscriber.
+        is_gpu = getattr(self._transcriber, "is_gpu", None)
+        if is_gpu is None:
+            return False
+        return bool(is_gpu)
+
+    def _realtime_model_name(self) -> str | None:
+        if self._realtime_transcriber is None:
+            return None
+        return self._config.realtime.realtime_model_type
 
     def _start_pipeline(self) -> None:
         if self._config.audio.use_microphone:
             self._audio_source.setup()
         self._pipeline.start()
         self._is_running = True
-        if self._config.audio.use_microphone:
-            self._audio_reader_thread = threading.Thread(target=self._audio_reader_loop, daemon=True)
-            self._audio_reader_thread.start()
+        self._start_audio_reader_thread()
+        self._start_realtime_thread()
+
+    def _start_audio_reader_thread(self) -> None:
+        if not self._config.audio.use_microphone:
+            return
+        self._audio_reader_thread = threading.Thread(target=self._audio_reader_loop, daemon=True)
+        self._audio_reader_thread.start()
+
+    def _start_realtime_thread(self) -> None:
         rt_enabled = self._config.realtime.enable_realtime_transcription
         rt_has_transcriber = self._realtime_transcriber is not None
-        if rt_enabled and rt_has_transcriber:
-            self._realtime_thread = threading.Thread(target=self._realtime_worker, daemon=True)
-            self._realtime_thread.start()
-            logger.warning("Realtime worker STARTED (model=%s)", self._config.realtime.realtime_model_type)
-        else:
+        if not (rt_enabled and rt_has_transcriber):
             logger.warning(
                 "Realtime worker NOT started (enabled=%s, has_transcriber=%s)",
                 rt_enabled,
                 rt_has_transcriber,
             )
+            return
+        self._realtime_thread = threading.Thread(target=self._realtime_worker, daemon=True)
+        self._realtime_thread.start()
+        logger.warning("Realtime worker STARTED (model=%s)", self._config.realtime.realtime_model_type)
 
     def _realtime_worker(self) -> None:
         """Periodically transcribe accumulated audio for live display.
@@ -754,111 +875,140 @@ class RecorderService:
         active.
         """
         assert self._realtime_transcriber is not None
-        rt_config = self._config.realtime
-        last_transcription = time.time()
-        recording_seen_at: float | None = None
-
+        state = _RealtimeLoopState(last_transcription=time.time())
         while self._is_running:
-            if not self._state_machine.is_recording:
-                recording_seen_at = None
-                # Reset accumulator when recording ends so the next
-                # session starts with an empty preview. _last_realtime_text
-                # is deliberately NOT cleared here — text() consumes it as
-                # the final transcription when use_main_model_for_realtime
-                # is on; the next recording's first tick clears it instead.
-                self._realtime_committed_text = ""
-                self._realtime_committed_frames = 0
-                time.sleep(0.01)
-                continue
+            self._realtime_step(state)
 
-            if recording_seen_at is None:
-                recording_seen_at = time.time()
-                # Fresh recording — clear any stale accumulator state.
-                self._realtime_committed_text = ""
-                self._realtime_committed_frames = 0
-                self._last_realtime_text = ""
+    def _reset_realtime_accumulator(self, *, clear_last: bool) -> None:
+        """Empty the committed-text accumulator + watermark.
 
-            # Respect init delay before first realtime transcription
-            if time.time() - recording_seen_at < rt_config.init_realtime_after_seconds:
-                time.sleep(0.001)
-                continue
+        ``clear_last`` also wipes ``_last_realtime_text`` — done at the start
+        of a fresh recording, but NOT when a recording ends (``text()``
+        consumes it as the final transcription when
+        ``use_main_model_for_realtime`` is on).
+        """
+        self._realtime_committed_text = ""
+        self._realtime_committed_frames = 0
+        if clear_last:
+            self._last_realtime_text = ""
 
-            # Wait for the processing pause interval
-            if time.time() - last_transcription < rt_config.realtime_processing_pause:
-                time.sleep(0.001)
-                continue
+    def _realtime_step(self, state: _RealtimeLoopState) -> None:
+        """One realtime-worker loop iteration (mirrors the old loop body)."""
+        if not self._state_machine.is_recording:
+            self._reset_realtime_accumulator(clear_last=False)
+            state.recording_seen_at = None
+            time.sleep(0.01)
+            return
+        self._realtime_mark_recording_start(state)
+        if not self._realtime_ready(state):
+            return
+        state.last_transcription = time.time()
+        self._realtime_process_once()
 
-            last_transcription = time.time()
+    def _realtime_mark_recording_start(self, state: _RealtimeLoopState) -> None:
+        if state.recording_seen_at is not None:
+            return
+        state.recording_seen_at = time.time()
+        # Fresh recording — clear any stale accumulator state.
+        self._reset_realtime_accumulator(clear_last=True)
 
-            frames_per_second = self._audio_buffer.frames_per_second()
-            commit_chunk_frames = max(1, int(REALTIME_COMMIT_AFTER_SECONDS * frames_per_second))
-            committed_frames = self._realtime_committed_frames
-            total_frames = self._audio_buffer.frame_count
-            fresh_frames = total_frames - committed_frames
-            if fresh_frames <= 0:
-                continue
+    def _realtime_ready(self, state: _RealtimeLoopState) -> bool:
+        """Gate on init delay + processing pause; sleeps + returns False if not yet."""
+        rt_config = self._config.realtime
+        # ``_realtime_mark_recording_start`` runs first every iteration, so the
+        # timestamp is always set by the time we gate on it.
+        assert state.recording_seen_at is not None
+        recording_seen_at = state.recording_seen_at
+        if time.time() - recording_seen_at < rt_config.init_realtime_after_seconds:
+            time.sleep(0.001)
+            return False
+        if time.time() - state.last_transcription < rt_config.realtime_processing_pause:
+            time.sleep(0.001)
+            return False
+        return True
 
-            try:
-                # If the unstable region has grown past the commit threshold,
-                # transcribe-and-commit the older portion once so future calls
-                # only deal with a bounded fresh window.
-                if fresh_frames > commit_chunk_frames:
-                    commit_audio = self._audio_buffer.get_audio_array_slice(
-                        committed_frames, committed_frames + commit_chunk_frames
-                    )
-                    if len(commit_audio) > 0:
-                        with self._transcriber_lock:
-                            commit_result = self._realtime_transcriber.transcribe(
-                                commit_audio,
-                                self._config.transcription.language,
-                            )
-                        commit_text = self._preprocess_output(commit_result.text)
-                        if commit_text:
-                            if self._realtime_committed_text:
-                                self._realtime_committed_text = self._realtime_committed_text + " " + commit_text
-                            else:
-                                self._realtime_committed_text = commit_text
-                    # Always advance the watermark, even on empty/whitespace
-                    # output, so we don't re-process the same audio region.
-                    self._realtime_committed_frames = committed_frames + commit_chunk_frames
-                    committed_frames = self._realtime_committed_frames
+    def _realtime_process_once(self) -> None:
+        committed_frames = self._realtime_committed_frames
+        if self._audio_buffer.frame_count - committed_frames <= 0:
+            return
+        try:
+            new_committed = self._realtime_commit_if_needed()
+            self._realtime_publish_fresh(new_committed)
+        except Exception as e:
+            logger.error(
+                "Realtime transcription error (committed_frames=%d, total_frames=%d): %s",
+                self._realtime_committed_frames,
+                self._audio_buffer.frame_count,
+                e,
+                exc_info=True,
+            )
+            # Continue processing - realtime transcription is non-critical
 
-                # Transcribe the fresh window past the watermark for the
-                # ongoing live preview.
-                audio_array = self._audio_buffer.get_audio_array_slice(committed_frames, None)
-                if len(audio_array) == 0:  # pragma: no cover
-                    continue
+    def _realtime_commit_if_needed(self) -> int:
+        """Commit the older portion once the fresh window exceeds the threshold.
 
-                with self._transcriber_lock:
-                    result = self._realtime_transcriber.transcribe(
-                        audio_array,
-                        self._config.transcription.language,
-                    )
-                fresh_text = self._preprocess_output(result.text)
+        Returns the (possibly advanced) committed-frame watermark.
+        """
+        frames_per_second = self._audio_buffer.frames_per_second()
+        commit_chunk_frames = max(1, int(REALTIME_COMMIT_AFTER_SECONDS * frames_per_second))
+        committed_frames = self._realtime_committed_frames
+        fresh_frames = self._audio_buffer.frame_count - committed_frames
+        if fresh_frames <= commit_chunk_frames:
+            return committed_frames
+        self._commit_chunk(committed_frames, commit_chunk_frames)
+        # Always advance the watermark, even on empty/whitespace output, so we
+        # don't re-process the same audio region.
+        self._realtime_committed_frames = committed_frames + commit_chunk_frames
+        return self._realtime_committed_frames
 
-                if self._realtime_committed_text and fresh_text:
-                    text = self._realtime_committed_text + " " + fresh_text
-                elif self._realtime_committed_text:
-                    text = self._realtime_committed_text
-                else:
-                    text = fresh_text
+    def _commit_chunk(self, committed_frames: int, commit_chunk_frames: int) -> None:
+        assert self._realtime_transcriber is not None
+        commit_audio = self._audio_buffer.get_audio_array_slice(
+            committed_frames, committed_frames + commit_chunk_frames
+        )
+        if len(commit_audio) == 0:
+            return
+        with self._transcriber_lock:
+            commit_result = self._realtime_transcriber.transcribe(
+                commit_audio,
+                self._config.transcription.language,
+            )
+        commit_text = self._preprocess_output(commit_result.text)
+        if commit_text:
+            self._append_committed_text(commit_text)
 
-                if self._state_machine.is_recording:  # pragma: no branch
-                    # Preserve the latest realtime text so text() can adopt it
-                    # as the final result when use_main_model_for_realtime is on.
-                    self._last_realtime_text = text
-                    self._event_bus.publish(
-                        RealtimeTranscriptionUpdate(timestamp=self._clock.get_current_time(), text=text)
-                    )
-            except Exception as e:
-                logger.error(
-                    "Realtime transcription error (committed_frames=%d, total_frames=%d): %s",
-                    committed_frames,
-                    self._audio_buffer.frame_count,
-                    e,
-                    exc_info=True,
-                )
-                # Continue processing - realtime transcription is non-critical
+    def _append_committed_text(self, commit_text: str) -> None:
+        if self._realtime_committed_text:
+            self._realtime_committed_text = self._realtime_committed_text + " " + commit_text
+        else:
+            self._realtime_committed_text = commit_text
+
+    def _realtime_publish_fresh(self, committed_frames: int) -> None:
+        assert self._realtime_transcriber is not None
+        # Transcribe the fresh window past the watermark for the live preview.
+        audio_array = self._audio_buffer.get_audio_array_slice(committed_frames, None)
+        if len(audio_array) == 0:  # pragma: no cover
+            return
+        with self._transcriber_lock:
+            result = self._realtime_transcriber.transcribe(
+                audio_array,
+                self._config.transcription.language,
+            )
+        fresh_text = self._preprocess_output(result.text)
+        text = self._assemble_realtime_text(fresh_text)
+        if self._state_machine.is_recording:  # pragma: no branch
+            # Preserve the latest realtime text so text() can adopt it as the
+            # final result when use_main_model_for_realtime is on.
+            self._last_realtime_text = text
+            self._event_bus.publish(RealtimeTranscriptionUpdate(timestamp=self._clock.get_current_time(), text=text))
+
+    def _assemble_realtime_text(self, fresh_text: str) -> str:
+        committed = self._realtime_committed_text
+        if not committed:
+            return fresh_text
+        if not fresh_text:
+            return committed
+        return committed + " " + fresh_text
 
     def _audio_reader_loop(self) -> None:
         """Read chunks from the audio source and feed the pipeline.
@@ -869,50 +1019,74 @@ class RecorderService:
         silence transition (required for push-to-talk).
         """
         consecutive_errors = 0
-        max_consecutive_errors = 10
-
         while self._is_running:
-            try:
-                chunk = self._audio_source.read_chunk()
-                consecutive_errors = 0  # Reset on success
-            except Exception as e:
-                if not self._is_running:
-                    break
-
-                consecutive_errors += 1
-                logger.warning(
-                    "Audio reader error (attempt %d/%d): %s",
-                    consecutive_errors,
-                    max_consecutive_errors,
-                    e,
-                )
-
-                if consecutive_errors >= max_consecutive_errors:
-                    logger.error(
-                        "Audio reader: too many consecutive errors (%d), stopping",
-                        consecutive_errors,
-                    )
-                    self._is_running = False
-                    break
-
-                time.sleep(0.1)  # Back off before retry
+            chunk, consecutive_errors = self._read_audio_chunk(consecutive_errors)
+            if chunk is None:
+                # Error path already handled (back-off / stop). Re-checking
+                # ``_is_running`` in the while header replaces the old
+                # ``break`` — when the error handler sets it False the loop
+                # exits, otherwise we retry after the back-off sleep.
                 continue
+            self._feed_chunk_if_enabled(chunk)
 
-            if self._microphone_enabled and not self._external_audio_mode:
-                self._pipeline.feed_audio(chunk)
-            # else: drain. With set_microphone(False) the audio source is
-            # already paused — read_chunk returns silence on a sleep cadence
-            # and feeding it would just publish meaningless AudioLevelComputed
-            # events. PTT-release end-of-recording is handled by set_microphone
-            # calling request_stop() directly, not by VAD-on-injected-silence.
+    _MAX_CONSECUTIVE_AUDIO_ERRORS = 10
+
+    def _read_audio_chunk(self, consecutive_errors: int) -> tuple[AudioChunk | None, int]:
+        """Read one chunk. On error, handle back-off/stop and return ``(None, n)``."""
+        try:
+            chunk = self._audio_source.read_chunk()
+        except Exception as e:
+            return None, self._handle_audio_read_error(e, consecutive_errors)
+        return chunk, 0  # reset error count on success
+
+    def _handle_audio_read_error(self, error: Exception, consecutive_errors: int) -> int:
+        if not self._is_running:
+            return consecutive_errors
+        consecutive_errors += 1
+        logger.warning(
+            "Audio reader error (attempt %d/%d): %s",
+            consecutive_errors,
+            self._MAX_CONSECUTIVE_AUDIO_ERRORS,
+            error,
+        )
+        if consecutive_errors >= self._MAX_CONSECUTIVE_AUDIO_ERRORS:
+            logger.error(
+                "Audio reader: too many consecutive errors (%d), stopping",
+                consecutive_errors,
+            )
+            self._is_running = False
+            return consecutive_errors
+        time.sleep(0.1)  # Back off before retry
+        return consecutive_errors
+
+    def _feed_chunk_if_enabled(self, chunk: AudioChunk) -> None:
+        if self._microphone_enabled and not self._external_audio_mode:
+            self._pipeline.feed_audio(chunk)
+        # else: drain. With set_microphone(False) the audio source is
+        # already paused — read_chunk returns silence on a sleep cadence
+        # and feeding it would just publish meaningless AudioLevelComputed
+        # events. PTT-release end-of-recording is handled by set_microphone
+        # calling request_stop() directly, not by VAD-on-injected-silence.
 
     def _preprocess_output(self, text: str) -> str:
         text = re.sub(r"\s+", " ", text.strip())
+        text = self._apply_starting_uppercase(text)
+        return self._apply_trailing_period(text)
+
+    def _apply_starting_uppercase(self, text: str) -> str:
         if self._config.ui.ensure_sentence_starting_uppercase and text:
-            text = text[0].upper() + text[1:]
-        if self._config.ui.ensure_sentence_ends_with_period and text and text[-1].isalnum():
-            text += "."
+            return text[0].upper() + text[1:]
         return text
+
+    def _apply_trailing_period(self, text: str) -> str:
+        if self._needs_trailing_period(text):
+            return text + "."
+        return text
+
+    def _needs_trailing_period(self, text: str) -> bool:
+        if not self._config.ui.ensure_sentence_ends_with_period:
+            return False
+        return bool(text) and text[-1].isalnum()
 
     def __enter__(self) -> RecorderService:
         return self

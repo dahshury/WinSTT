@@ -38,14 +38,23 @@ const CLIPBOARD_POLL_INTERVAL_MS = 25;
 /** Hard ceiling on the paste-binary spawn used to emit Ctrl+C. */
 const COPY_SPAWN_TIMEOUT_MS = 2000;
 
+/** Absolute path the paste binary would live at, ignoring whether it exists. */
+function pasteBinaryCandidate(): string {
+	if (app.isPackaged) {
+		return path.join(process.resourcesPath, "native", "bin", "winstt-paste.exe");
+	}
+	return path.join(import.meta.dirname, "..", "electron", "native", "bin", "winstt-paste.exe");
+}
+
 function resolvePasteBinary(): string | null {
 	if (process.platform !== "win32") {
 		return null;
 	}
-	const candidate = app.isPackaged
-		? path.join(process.resourcesPath, "native", "bin", "winstt-paste.exe")
-		: path.join(import.meta.dirname, "..", "electron", "native", "bin", "winstt-paste.exe");
-	return existsSync(candidate) ? candidate : null;
+	const candidate = pasteBinaryCandidate();
+	if (existsSync(candidate)) {
+		return candidate;
+	}
+	return null;
 }
 
 let cachedPasteBinary: string | null | undefined;
@@ -99,6 +108,11 @@ function sendCopyKeystroke(): Promise<void> {
 	});
 }
 
+/** True when `current` is a usable new clipboard value (changed + non-empty). */
+function isFreshClipboard(current: string, original: string): boolean {
+	return current !== original && current.length > 0;
+}
+
 /**
  * Poll the clipboard until it changes from `original` or the timeout
  * elapses. Returns the new value (or `original` if nothing happened).
@@ -107,7 +121,7 @@ async function waitForClipboardChange(original: string): Promise<string> {
 	const deadline = Date.now() + CLIPBOARD_POLL_TIMEOUT_MS;
 	while (Date.now() < deadline) {
 		const current = readClipboardSafe();
-		if (current !== original && current.length > 0) {
+		if (isFreshClipboard(current, original)) {
 			return current;
 		}
 		// react-doctor-disable-next-line async-await-in-loop
@@ -122,40 +136,70 @@ async function waitForClipboardChange(original: string): Promise<string> {
  * Ctrl+C and reading the new clipboard contents. Always resolves — never
  * throws. An empty selection resolves to {@link EMPTY_SELECTION}.
  */
-export async function captureSelection(): Promise<SelectionSnapshot> {
-	// Fast path: UIA TextPattern selection. Reliable in Word, Notepad,
-	// Edge / Firefox URL bar, modern .NET controls. Fails silently in
-	// Chromium-based renderers (Slack, Discord, VS Code) and most
-	// Electron apps unless accessibility is force-enabled.
+/**
+ * Fast path: UIA TextPattern selection. Reliable in Word, Notepad,
+ * Edge / Firefox URL bar, modern .NET controls. Fails silently in
+ * Chromium-based renderers (Slack, Discord, VS Code) and most
+ * Electron apps unless accessibility is force-enabled. Returns `null`
+ * when UIA yields no usable selection so the caller falls back.
+ */
+async function tryUiaSelection(): Promise<SelectionSnapshot | null> {
 	const uiaSnapshot = await readWindowSelection();
 	const uiaText = uiaSnapshot.focusedText.trim();
-	if (uiaText.length > 0) {
-		dbg("selection", `UIA selection: ${uiaText.length} chars`);
-		return { text: uiaText, source: "uia", originalClipboard: null };
+	if (uiaText.length === 0) {
+		return null;
 	}
+	dbg("selection", `UIA selection: ${uiaText.length} chars`);
+	return { text: uiaText, source: "uia", originalClipboard: null };
+}
 
-	// Fallback: clipboard-copy trick. Save current clipboard so the caller
-	// can restore it after a successful paste-replace.
+/** True when the clipboard never picked up a fresh selection. */
+function clipboardCaptureFailed(captured: string, original: string): boolean {
+	return !captured || captured === original;
+}
+
+/**
+ * Fallback: clipboard-copy trick. Saves the current clipboard so the
+ * caller can restore it after a successful paste-replace, simulates
+ * Ctrl+C, then waits for the clipboard to change.
+ */
+async function captureViaClipboard(): Promise<SelectionSnapshot> {
 	const originalClipboard = readClipboardSafe();
 	await sendCopyKeystroke();
 	const captured = await waitForClipboardChange(originalClipboard);
-	if (!captured || captured === originalClipboard) {
+	if (clipboardCaptureFailed(captured, originalClipboard)) {
 		dbg("selection", "clipboard fallback returned no new selection");
 		// Restore the clipboard since we polluted nothing useful.
-		if (originalClipboard) {
-			writeClipboardSafe(originalClipboard);
-		}
+		restoreClipboard(originalClipboard);
 		return EMPTY_SELECTION;
 	}
 	dbg("selection", `clipboard selection: ${captured.length} chars`);
-	return {
-		text: captured,
-		source: "clipboard",
-		originalClipboard,
-	};
+	return { text: captured, source: "clipboard", originalClipboard };
+}
+
+/** Write `original` back to the clipboard if it held something. */
+function restoreClipboard(original: string): void {
+	if (original) {
+		writeClipboardSafe(original);
+	}
+}
+
+export async function captureSelection(): Promise<SelectionSnapshot> {
+	const uia = await tryUiaSelection();
+	if (uia) {
+		return uia;
+	}
+	return captureViaClipboard();
 }
 
 /** Reset cached binary path. Test-only. */
 export function __resetSelectionCaptureForTesting__(): void {
 	cachedPasteBinary = undefined;
 }
+
+/** Pure helpers exposed for direct branch-coverage in tests only. */
+export const __test_isFreshClipboard = isFreshClipboard;
+export const __test_clipboardCaptureFailed = clipboardCaptureFailed;
+export const __test_resolvePasteBinary = resolvePasteBinary;
+export const __test_readClipboardSafe = readClipboardSafe;
+export const __test_pasteBinaryCandidate = pasteBinaryCandidate;

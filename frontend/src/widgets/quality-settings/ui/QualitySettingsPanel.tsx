@@ -8,6 +8,7 @@ import {
 	SubtitleIcon,
 	TextSquareIcon,
 	Txt01Icon,
+	VoiceIdIcon,
 } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -15,6 +16,7 @@ import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { FormControl } from "@/shared/ui/form-control";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { OptInDialog } from "@/shared/ui/opt-in-dialog";
+import { Slider } from "@/shared/ui/slider";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
 
@@ -28,8 +30,12 @@ export function QualitySettingsPanel() {
 	const update = useSettingsStore((s) => s.updateQualitySettings);
 	const general = useSettingsStore((s) => s.settings.general);
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
+	const audio = useSettingsStore((s) => s.settings.audio);
+	const updateAudio = useSettingsStore((s) => s.updateAudioSettings);
+	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const t = useTranslations("quality");
 	const tg = useTranslations("general");
+	const ta = useTranslations("audio");
 
 	const transcriptionFormat = general?.fileTranscriptionFormat ?? "txt";
 	const contextAwarenessEnabled = general?.contextAwareness ?? false;
@@ -48,6 +54,79 @@ export function QualitySettingsPanel() {
 
 	return (
 		<div className="flex flex-col gap-2">
+			{/* ── Voice Activity Detection ─────────────────────── */}
+			<SettingSection
+				icon={VoiceIdIcon}
+				onToggle={(v) => updateAudio({ sileroDeactivityDetection: v })}
+				title={ta("vad")}
+				toggled={audio?.sileroDeactivityDetection ?? true}
+			>
+				<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+					<FormControl
+						caption={ta("sileroSensitivityCaption")}
+						label={ta("sileroSensitivity")}
+						tooltip={ta("sileroSensitivityTooltip")}
+					>
+						<div className="flex items-center gap-2">
+							<Slider
+								max={1}
+								min={0}
+								onChange={(v) => updateAudio({ sileroSensitivity: v })}
+								step={0.05}
+								value={audio?.sileroSensitivity ?? 0.4}
+							/>
+							<span className="w-10 text-right font-mono text-foreground-muted text-xs">
+								{(audio?.sileroSensitivity ?? 0.4).toFixed(2)}
+							</span>
+						</div>
+					</FormControl>
+					<FormControl
+						caption={ta("webrtcSensitivityCaption")}
+						label={ta("webrtcSensitivity")}
+						tooltip={ta("webrtcSensitivityTooltip")}
+					>
+						<div className="flex items-center gap-2">
+							<Slider
+								max={3}
+								min={0}
+								onChange={(v) => updateAudio({ webrtcSensitivity: v })}
+								step={1}
+								value={audio?.webrtcSensitivity ?? 3}
+							/>
+							<span className="w-10 text-right font-mono text-foreground-muted text-xs">
+								{audio?.webrtcSensitivity ?? 3}
+							</span>
+						</div>
+					</FormControl>
+					{(recordingMode === "toggle" || recordingMode === "listen") && (
+						<FormControl
+							caption={ta("postSpeechSilenceCaption")}
+							label={ta("postSpeechSilence")}
+							tooltip={ta("postSpeechSilenceTooltip")}
+						>
+							<NumberStepper
+								min={0.1}
+								onChange={(v) => updateAudio({ postSpeechSilenceDuration: v })}
+								step={0.1}
+								value={audio?.postSpeechSilenceDuration ?? 0.7}
+							/>
+						</FormControl>
+					)}
+					<FormControl
+						caption={ta("minRecordingLengthCaption")}
+						label={ta("minRecordingLength")}
+						tooltip={ta("minRecordingLengthTooltip")}
+					>
+						<NumberStepper
+							min={0.1}
+							onChange={(v) => updateAudio({ minLengthOfRecording: v })}
+							step={0.1}
+							value={audio?.minLengthOfRecording ?? 1.1}
+						/>
+					</FormControl>
+				</div>
+			</SettingSection>
+
 			{/* ── Smart Endpoint (visible only when realtime is enabled in Model tab) */}
 			{(q?.enableRealtimeTranscription ?? true) && (
 				<SettingSection icon={SparklesIcon} title={t("smartEndpoint")}>

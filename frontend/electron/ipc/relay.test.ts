@@ -1,5 +1,6 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import { electronMock } from "@test/mocks/electron";
+import { storeMock } from "@test/mocks/store";
 
 // ── Shared mock windows for broadcastToAll tests ─────────────────────
 const mockWindows: Array<{
@@ -53,27 +54,32 @@ mock.module("electron", () => ({
 // Track every key requested via getStoreValue() and store.get() so tests
 // can verify which store paths a code path read.
 const storeKeyAccesses: string[] = [];
-mock.module("../lib/store", () => ({
-	getStoreValue: (key: string) => {
-		storeKeyAccesses.push(key);
-		return storeValues[key];
-	},
-	store: {
-		get: (k: string) => {
-			storeKeyAccesses.push(k);
-			return storeValues[k];
+mock.module("../lib/store", () => {
+	const base = storeMock();
+	return {
+		...base,
+		getStoreValue: (key: string) => {
+			storeKeyAccesses.push(key);
+			return storeValues[key];
 		},
-		// historyStore.persist() inside setupRelay calls store.set() — without
-		// a no-op set the persist throws and capture() bails out before
-		// emitting HISTORY_ADDED, which breaks the setupRelay history-flow
-		// integration test. Capturing into storeValues also lets tests
-		// inspect what was persisted.
-		set: (k: string, v: unknown) => {
-			storeValues[k] = v;
+		store: {
+			...base.store,
+			get: (k: string) => {
+				storeKeyAccesses.push(k);
+				return storeValues[k];
+			},
+			// historyStore.persist() inside setupRelay calls store.set() — without
+			// a no-op set the persist throws and capture() bails out before
+			// emitting HISTORY_ADDED, which breaks the setupRelay history-flow
+			// integration test. Capturing into storeValues also lets tests
+			// inspect what was persisted.
+			set: (k: string, v: unknown) => {
+				storeValues[k] = v;
+			},
+			onDidChange: () => () => undefined,
 		},
-		onDidChange: () => () => undefined,
-	},
-}));
+	};
+});
 
 // NOTE: We do NOT mock ../lib/debug-log, ../lib/text-processing, ../lib/serial-queue,
 // ../lib/paste, ../lib/recording-state, ../lib/recording-indicator,
@@ -94,6 +100,19 @@ mock.module("../lib/store", () => ({
 
 const relayModule = await import("./relay");
 const { __relay_test_helpers__: helpers, setupRelay: _setupRelay } = relayModule;
+
+// This file imports the REAL `../lib/recording-state` and mutates its
+// module-level state via notifyHotkeyPressed()/consumeRecordingStart().
+// Bun caches that module by absolute path across the whole process, so a
+// leftover `active=true`/`pendingIntent=true` poisons recording-state.test.ts,
+// whose `INITIAL_MODULE_STATE` snapshot is captured at module-eval (before any
+// beforeEach reset). Restore the shared singleton to its pristine state once
+// this file finishes so the sibling's module-init defaults assertions hold.
+afterAll(async () => {
+	const recordingState = await import("../lib/recording-state");
+	recordingState.notifyRecordingStop();
+	recordingState.__resetRecordingStateForTesting__();
+});
 // Use relayModule.setupRelay directly in tests to ensure proper typing
 
 function makeMockWindow(destroyed = false): {
@@ -262,8 +281,17 @@ describe("isLlmConfigured", () => {
 	test("returns true when llm.enabled is true and model is configured", () => {
 		resetState();
 		storeValues["llm.enabled"] = true;
+		storeValues["llm.dictationEnabled"] = true;
 		storeValues["llm.model"] = "mistral";
 		expect(helpers.isLlmConfigured()).toBe(true);
+	});
+
+	test("returns false when master is on + model set but dictation sub-feature is off", () => {
+		resetState();
+		storeValues["llm.enabled"] = true;
+		storeValues["llm.dictationEnabled"] = false;
+		storeValues["llm.model"] = "mistral";
+		expect(helpers.isLlmConfigured()).toBe(false);
 	});
 });
 
@@ -388,26 +416,33 @@ describe("handleRecordingStart context-awareness flow", () => {
 	});
 });
 
-describe("shouldMuteForDictation", () => {
-	test("returns false when muting is disabled", () => {
+describe("dictationDuckLevel", () => {
+	test("returns 0 when reduction is disabled (0)", () => {
 		resetState();
-		storeValues["general.muteSystemAudioWhileDictating"] = false;
+		storeValues["general.systemAudioReductionWhileDictating"] = 0;
 		storeValues["general.recordingMode"] = "ptt";
-		expect(helpers.shouldMuteForDictation()).toBe(false);
+		expect(helpers.dictationDuckLevel()).toBe(0);
 	});
 
-	test("returns false in listen mode even when muting is enabled", () => {
+	test("returns 0 in listen mode even when a reduction is configured", () => {
 		resetState();
-		storeValues["general.muteSystemAudioWhileDictating"] = true;
+		storeValues["general.systemAudioReductionWhileDictating"] = 100;
 		storeValues["general.recordingMode"] = "listen";
-		expect(helpers.shouldMuteForDictation()).toBe(false);
+		expect(helpers.dictationDuckLevel()).toBe(0);
 	});
 
-	test("returns true when muting enabled and mode is ptt", () => {
+	test("returns the configured percent when set and mode is ptt", () => {
 		resetState();
-		storeValues["general.muteSystemAudioWhileDictating"] = true;
+		storeValues["general.systemAudioReductionWhileDictating"] = 80;
 		storeValues["general.recordingMode"] = "ptt";
-		expect(helpers.shouldMuteForDictation()).toBe(true);
+		expect(helpers.dictationDuckLevel()).toBe(80);
+	});
+
+	test("returns 100 for a full-mute setting in ptt mode", () => {
+		resetState();
+		storeValues["general.systemAudioReductionWhileDictating"] = 100;
+		storeValues["general.recordingMode"] = "ptt";
+		expect(helpers.dictationDuckLevel()).toBe(100);
 	});
 });
 
@@ -830,7 +865,7 @@ describe("dispatchDataEvent", () => {
 	test("recording_start does not throw", async () => {
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["general.muteSystemAudioWhileDictating"] = false;
+		storeValues["general.systemAudioReductionWhileDictating"] = 0;
 		const { ctx } = makeCtx();
 		await expect(helpers.dispatchDataEvent("recording_start", {}, ctx)).resolves.toBeUndefined();
 	});
@@ -1067,7 +1102,7 @@ describe("handleRecordingStart return shape", () => {
 		// Targets the ObjectLiteral mutations on the return paths and the
 		// BooleanLiteral mutations on `muted`/`attempted`.
 		resetState();
-		storeValues["general.muteSystemAudioWhileDictating"] = false;
+		storeValues["general.systemAudioReductionWhileDictating"] = 0;
 		storeValues["general.recordingMode"] = "ptt";
 		const calls: Array<{ ch: string; args: unknown[] }> = [];
 		const safeSend = (ch: string, ...args: unknown[]) => calls.push({ ch, args });
@@ -1111,7 +1146,7 @@ describe("handleRecordingStart return shape", () => {
 		// no-mute path AND the BooleanLiteral on `attempted` for that branch.
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["general.muteSystemAudioWhileDictating"] = false;
+		storeValues["general.systemAudioReductionWhileDictating"] = 0;
 		const recordingState = await import("../lib/recording-state");
 		recordingState.__resetRecordingStateForTesting__();
 		recordingState.notifyHotkeyPressed();
@@ -1128,7 +1163,7 @@ describe("handleRecordingStart return shape", () => {
 		// AND the BooleanLiteral on `attempted` for that branch.
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["general.muteSystemAudioWhileDictating"] = true;
+		storeValues["general.systemAudioReductionWhileDictating"] = 100;
 		const recordingState = await import("../lib/recording-state");
 		recordingState.__resetRecordingStateForTesting__();
 		recordingState.notifyHotkeyPressed();
@@ -1199,11 +1234,11 @@ describe("processDataEvent gate around event.type", () => {
 
 describe("dispatchDataEvent recording_start mute state", () => {
 	test("recording_start with mute enabled sets muted state via setMuted", async () => {
-		// Targets the L107 conditional on shouldMuteForDictation and the
+		// Targets the conditional on dictationDuckLevel() and the
 		// assignment ctx.setMuted(result.muted) inside the handler.
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["general.muteSystemAudioWhileDictating"] = true;
+		storeValues["general.systemAudioReductionWhileDictating"] = 100;
 		let muted = false;
 		const ctx = {
 			broadcast: () => undefined,
@@ -1225,7 +1260,7 @@ describe("dispatchDataEvent recording_start mute state", () => {
 	test("recording_start with mute disabled does NOT call setMuted", async () => {
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["general.muteSystemAudioWhileDictating"] = false;
+		storeValues["general.systemAudioReductionWhileDictating"] = 0;
 		const setCalls: boolean[] = [];
 		const ctx = {
 			broadcast: () => undefined,
@@ -1257,7 +1292,7 @@ describe("dispatchDataEvent recording_start mute state", () => {
 		// L286 ConditionalExpression false (`if (result.attempted)`).
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["general.muteSystemAudioWhileDictating"] = true;
+		storeValues["general.systemAudioReductionWhileDictating"] = 100;
 		const recordingState = await import("../lib/recording-state");
 		recordingState.__resetRecordingStateForTesting__();
 		recordingState.notifyHotkeyPressed();
@@ -1449,6 +1484,7 @@ describe("isLlmConfigured reads from exact store keys (kills L32 string mutation
 		// branch is not selected and it falls back to checking llm.model.
 		resetState();
 		storeValues["llm.enabled"] = true;
+		storeValues["llm.dictationEnabled"] = true;
 		// Model under a stale key — only the openrouterApiKey is set under
 		// the openrouter branch
 		storeValues["llm.openrouterApiKey"] = "sk-real-key";
@@ -1504,6 +1540,7 @@ describe("maybeRunLlm short-circuits when LLM disabled (kills L49 conditional/bo
 		// (L49:6 → `false`) where the early-return is always taken.
 		resetState();
 		storeValues["llm.enabled"] = true;
+		storeValues["llm.dictationEnabled"] = true;
 		storeValues["llm.provider"] = "ollama";
 		storeValues["llm.model"] = "mistral";
 		storeValues["llm.presets"] = [{ key: "neutral" }];
@@ -1693,7 +1730,7 @@ describe("dispatchDataEvent recording_start handler shape (kills L284/L286 mutat
 		// the EXISTING tests for that path to fail when L284 is mutated.
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["general.muteSystemAudioWhileDictating"] = false;
+		storeValues["general.systemAudioReductionWhileDictating"] = 0;
 		const broadcastCalls: Array<{ ch: string; args: unknown[] }> = [];
 		const ctx = {
 			broadcast: (ch: string, ...args: unknown[]) => broadcastCalls.push({ ch, args }),
@@ -1969,7 +2006,7 @@ describe("setupRelay ctx getMuted/setMuted closures (kills L437/L438 mutations)"
 		// (without any mute config) does NOT throw on the muted state read.
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["general.muteSystemAudioWhileDictating"] = false;
+		storeValues["general.systemAudioReductionWhileDictating"] = 0;
 		const client = makeMockClient();
 		const win = makeMockWin();
 		const cleanup = relayModule.setupRelay(

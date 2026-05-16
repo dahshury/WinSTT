@@ -7,6 +7,8 @@ import { InfoTooltip } from "@/shared/ui/info-tooltip";
 export interface FormControlProps {
 	caption?: string;
 	children?: ReactNode;
+	/** Extra classes applied to the root, e.g. to control grid placement */
+	className?: string;
 	/** Visually dim the label, caption, and children */
 	disabled?: boolean;
 	error?: string;
@@ -20,16 +22,16 @@ export interface FormControlProps {
 export function FormControl({
 	label,
 	caption,
+	className,
 	error,
 	tooltip,
 	disabled,
 	labelAddon,
 	children,
 }: FormControlProps) {
+	const base = disabled ? "flex cursor-not-allowed flex-col opacity-40" : "flex flex-col";
 	return (
-		<Field.Root
-			className={disabled ? "flex cursor-not-allowed flex-col opacity-40" : "flex flex-col"}
-		>
+		<Field.Root className={className ? `${base} ${className}` : base}>
 			{label && (
 				<div className="flex items-center gap-1">
 					<Field.Label className="font-medium text-body text-foreground leading-4">

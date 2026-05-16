@@ -49,13 +49,22 @@ export const generalSettingsSchema = z.object({
 	autoStart: z.boolean().default(false),
 	minimizeToTray: z.boolean().default(true),
 	startMinimized: z.boolean().default(false),
-	muteSystemAudioWhileDictating: z.boolean().default(false),
+	// Percent reduction applied to system playback volume while dictating.
+	// 0 = off (volume untouched), 100 = full mute; intermediate values duck
+	// to (100 - value)% of the previous level. The UI constrains this to
+	// multiples of 20; `.catch(0)` covers older builds that persisted the
+	// legacy boolean (migrated in electron/lib/store.ts).
+	systemAudioReductionWhileDictating: z.number().int().min(0).max(100).default(0).catch(0),
 	recordingSound: z.boolean().default(true),
 	recordingSoundPath: z.string().default(""),
 	fileTranscriptionFormat: z.enum(["txt", "srt"]).default("txt"),
 	fileTranscriptionSaveLocation: z.enum(["auto", "ask"]).default("auto"),
-	recordingMode: z.enum(["ptt", "toggle", "listen"]).default("ptt"),
+	recordingMode: z.enum(["ptt", "toggle", "listen", "wakeword"]).default("ptt"),
 	loopbackDeviceIndex: z.number().int().nullable().default(null),
+	// Wake word used when recordingMode is "wakeword". Only Porcupine's
+	// free built-in keywords work without an access key, so the UI
+	// constrains the picker to that list. Empty when no word selected.
+	wakeWord: z.string().default(""),
 	showRecordingOverlay: z.boolean().default(true),
 	// `.catch` covers older builds that persisted an integer pixel value;
 	// without it an integer here fails the whole settings parse and the codec
@@ -192,7 +201,13 @@ export const BUILTIN_TRANSFORMS: readonly z.output<typeof transformSchema>[] = [
 ];
 
 export const llmSettingsSchema = z.object({
+	// Master switch — provider/model configured & reachable. Gates everything
+	// below; when false neither sub-feature runs regardless of its own flag.
 	enabled: z.boolean().default(false),
+	// Sub-feature: apply cleanup presets (tone + modifiers) to dictated text.
+	dictationEnabled: z.boolean().default(true),
+	// Sub-feature: custom-prompt transforms on the selected text (hotkey / UI).
+	transformsEnabled: z.boolean().default(false),
 	provider: z.enum(["ollama", "openrouter"]).default("ollama"),
 	endpoint: z.string().url().default("http://localhost:11434"),
 	model: z.string().default(""),

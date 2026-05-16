@@ -24,6 +24,16 @@ from typing_extensions import override
 from src.building_blocks.types import AudioChunk
 from src.recorder.domain.ports.vad import IVoiceActivityDetector, VADResult
 
+# Import ``device`` BEFORE ``onnx_asr``/``onnxruntime`` are touched anywhere
+# in this process. ``device.py`` runs ``_inject_cuda_dlls()`` at module load
+# so the bundled nvidia-cu12 wheel DLLs are on the Windows DLL search path
+# before ORT tries to load ``onnxruntime_providers_cuda.dll``. The facade
+# constructs ``SileroVAD`` before any transcriber, so without this import
+# the first ``onnx_asr`` import (inside this adapter's ``__init__``) drags
+# in ORT, which scans CUDA providers and logs "cublasLt64_12.dll missing"
+# every boot. Keep this import unconditional and at top level.
+from src.recorder.infrastructure import device as _device  # noqa: F401
+
 if TYPE_CHECKING:
     import onnxruntime as rt
 
@@ -46,6 +56,7 @@ class SileroVAD(IVoiceActivityDetector):
         sensitivity: float = 0.4,
         sample_rate: int = 16000,
         use_onnx: bool = True,
+        providers: list[str] | None = None,
     ) -> None:
         """Load the Silero ONNX model via ``onnx_asr.load_vad("silero")``.
 
@@ -54,6 +65,14 @@ class SileroVAD(IVoiceActivityDetector):
             sample_rate: 16000 or 8000.
             use_onnx: Ignored. Kept in the signature so the bootstrap call
                 site keeps compiling unchanged; this adapter is always ONNX.
+            providers: ORT execution provider list (e.g. from
+                :func:`device.providers_for_device`). When ``None``,
+                onnx-asr defaults to ``rt.get_available_providers()``,
+                which on a GPU build registers CUDA — ORT then tries to
+                create the CUDA EP, succeeding loudly or failing loudly
+                depending on the DLL chain. Pass the same pinned list the
+                transcriber uses so VAD load is silent on CPU-only boxes
+                and CUDA-clean on GPU boxes.
         """
         import onnx_asr
 
@@ -65,7 +84,10 @@ class SileroVAD(IVoiceActivityDetector):
         else:
             self._hop = _HOP_8K
             self._context = _CONTEXT_8K
-        vad = onnx_asr.load_vad("silero")
+        load_kwargs: dict[str, Any] = {}
+        if providers is not None:
+            load_kwargs["providers"] = providers
+        vad = onnx_asr.load_vad("silero", **load_kwargs)
         # ``vad._model`` is the underlying ORT InferenceSession from onnx-asr's
         # SileroVad implementation. We drive it directly here to keep per-frame
         # detection semantics (the public ``segment_batch`` API is batch-oriented).

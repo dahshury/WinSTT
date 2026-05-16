@@ -212,7 +212,7 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 	};
 
 	const shouldPlayRecordingSound = (mode: unknown): boolean =>
-		mode !== "listen" && sttClient.isConnected;
+		mode !== "listen" && mode !== "wakeword" && sttClient.isConnected;
 
 	const canActivateCombo = (): boolean => !isActive && comboFullyReleased && checkCombo();
 

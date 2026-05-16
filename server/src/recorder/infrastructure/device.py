@@ -34,10 +34,17 @@ logger = logging.getLogger(__name__)
 # new ORT EPs (e.g. QnnExecutionProvider) don't have to be added in three
 # files at once. The previous parallel set in ``onnxasr_transcriber.py``
 # silently lagged behind this one (was missing ROCMExecutionProvider).
+#
+# ``TensorrtExecutionProvider`` is deliberately excluded: onnxruntime-gpu
+# registers it whenever the build was compiled with TRT support, but we
+# never bundle the TensorRT runtime (``nvinfer_10.dll``). Including it
+# here makes ORT try TRT first on every session creation, log a noisy
+# "EP Error … nvinfer_10.dll missing" / "Falling back to CUDA" pair, and
+# only then continue with CUDA. Dropping it from the candidate set keeps
+# the provider list TRT-free so users never see that spam.
 GPU_PROVIDERS: frozenset[str] = frozenset(
     {
         "CUDAExecutionProvider",
-        "TensorrtExecutionProvider",
         "DmlExecutionProvider",
         "ROCMExecutionProvider",
     }
@@ -223,14 +230,51 @@ def resolve_device(requested: str) -> str:
     available = set(rt.get_available_providers())
     if not (available & GPU_PROVIDERS):
         logger.warning(
-            "CUDA requested but no GPU execution provider (CUDA / TensorRT / DirectML) is "
+            "CUDA requested but no GPU execution provider (CUDA / DirectML / ROCm) is "
             "registered with onnxruntime — falling back to CPU. For GPU support install the "
             "``server[gpu]`` extras."
         )
         return "cpu"
     # CUDA is the only of our GPU providers that needs DLL-chain probing
-    # (DirectML and TensorRT have different runtime requirements). Only
-    # block on the probe if CUDA is the candidate.
+    # (DirectML ships its DLL inside the onnxruntime-directml wheel; ROCm
+    # is Linux-only). Block on the probe only when CUDA is the candidate.
     if "CUDAExecutionProvider" in available and not _probe_cuda_session():
         return "cpu"
     return "cuda"
+
+
+def providers_for_device(device: str) -> list[str] | None:
+    """Translate a user-facing ``device`` string into a pinned ORT provider list.
+
+    ``"cuda"`` requests are honoured only when a GPU-class provider is
+    actually registered with onnxruntime (and, for CUDA, its DLL chain
+    loads cleanly per :func:`_probe_cuda_session`) — otherwise we fall
+    back to CPU instead of silently letting onnx-asr pick whatever ORT
+    has available. ``None`` means "let the caller's library decide" (we
+    use that for unknown values so callers can stay backwards-compatible).
+
+    The GPU priority list is derived from ``onnxruntime.get_available_providers()``
+    filtered against the shared :data:`GPU_PROVIDERS` set, so new ORT
+    execution providers (DirectML / ROCm / future EPs) are honoured
+    automatically without editing this function. ``TensorrtExecutionProvider``
+    is intentionally excluded via :data:`GPU_PROVIDERS` — see the comment
+    there for why.
+
+    Lives in ``device.py`` (not bootstrap) so non-bootstrap call sites
+    (e.g. :class:`SileroVAD`) can request the same list without violating
+    the application/infrastructure import contract.
+    """
+    resolved = resolve_device(device)
+    if resolved == "cpu":
+        return ["CPUExecutionProvider"]
+    if resolved != "cuda":
+        return None
+    try:
+        import onnxruntime as rt
+    except ImportError:
+        return ["CPUExecutionProvider"]
+    available = rt.get_available_providers()
+    gpu_providers = [p for p in available if p in GPU_PROVIDERS]
+    if not gpu_providers:
+        return ["CPUExecutionProvider"]
+    return [*gpu_providers, "CPUExecutionProvider"]

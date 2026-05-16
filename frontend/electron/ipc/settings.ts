@@ -40,6 +40,49 @@ const STARTUP_ONLY_KEYS = new Set([
 	"quality.realtimeBatchSize",
 ]);
 
+/**
+ * Wake-word-mode-specific restart predicate.
+ *
+ * The wake-word detector is built at server bootstrap from CLI args
+ * (`--wakeword_backend` / `--wake_words`). Anything that changes those
+ * args needs a full restart:
+ *   - switching INTO wakeword mode (no detector → need one)
+ *   - switching OUT OF wakeword mode (detector exists → tear it down)
+ *   - changing the wake word while in wakeword mode (rebuild with new keyword)
+ *
+ * Plain ptt↔toggle↔listen swaps do NOT touch any CLI flag and must NOT
+ * trigger a restart (would kill the loaded ASR model for no gain).
+ */
+/** Did the recordingMode cross the wakeword boundary (in or out)? */
+function modeCrossesWakeword(oldMode: unknown, newMode: unknown): boolean {
+	return (oldMode === "wakeword") !== (newMode === "wakeword");
+}
+
+/** Did the wake word change while staying in wakeword mode on both sides? */
+function wordChangedWhileInWakeword(
+	oldMode: unknown,
+	newMode: unknown,
+	oldWord: unknown,
+	newWord: unknown
+): boolean {
+	const staysInWakeword = oldMode === "wakeword" && newMode === "wakeword";
+	return staysInWakeword && oldWord !== newWord;
+}
+
+function wakeWordRestartNeeded(
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
+): boolean {
+	const oldMode = readNestedValue(oldSettings, "general", "recordingMode");
+	const newMode = readNestedValue(newSettings, "general", "recordingMode");
+	const oldWord = readNestedValue(oldSettings, "general", "wakeWord");
+	const newWord = readNestedValue(newSettings, "general", "wakeWord");
+	return (
+		modeCrossesWakeword(oldMode, newMode) ||
+		wordChangedWhileInWakeword(oldMode, newMode, oldWord, newWord)
+	);
+}
+
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let sttClientRef: SttClient | null = null;
 let isShuttingDown = false;
@@ -137,15 +180,28 @@ function performRestart(): void {
 	);
 }
 
+/**
+ * Should a settings change actually schedule a restart? True only when a
+ * restart-relevant setting changed AND the server is in a state where a
+ * restart can take effect. Extracted so `checkForRestartNeeded` carries a
+ * single guard branch instead of two sequential early-returns.
+ */
+function shouldScheduleRestart(
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
+): boolean {
+	const startupKeyChanged = findChangedStartupKey(oldSettings, newSettings) !== null;
+	const restartRelevantChange =
+		startupKeyChanged || wakeWordRestartNeeded(oldSettings, newSettings);
+	return restartRelevantChange && isRestartActionable();
+}
+
 /** Check if any startup-only settings changed between old and new, trigger restart if so. */
 function checkForRestartNeeded(
 	oldSettings: Record<string, unknown>,
 	newSettings: Record<string, unknown>
 ): void {
-	if (!findChangedStartupKey(oldSettings, newSettings)) {
-		return;
-	}
-	if (!isRestartActionable()) {
+	if (!shouldScheduleRestart(oldSettings, newSettings)) {
 		return;
 	}
 	// Debounce restart so rapid changes don't cause multiple restarts

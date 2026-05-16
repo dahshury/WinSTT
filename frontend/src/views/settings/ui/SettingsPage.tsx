@@ -6,7 +6,6 @@ import {
 	Cancel01Icon,
 	ChartHistogramIcon,
 	CpuChargeIcon,
-	KeyboardIcon,
 	LaptopIcon,
 	Mic01Icon,
 	Note01Icon,
@@ -25,7 +24,6 @@ import { AudioSettingsPanel } from "@/widgets/audio-settings";
 import { DesktopToolsSettingsPanel } from "@/widgets/desktop-tools-settings";
 import { DictionarySettingsPanel } from "@/widgets/dictionary-settings";
 import { GeneralSettingsPanel } from "@/widgets/general-settings";
-import { HotkeySettingsPanel } from "@/widgets/hotkey-settings";
 import { LlmSettingsPanel } from "@/widgets/llm-settings";
 import { ModelSettingsPanel } from "@/widgets/model-settings";
 import { OllamaModelManagerDialog } from "@/widgets/ollama-model-manager";
@@ -68,12 +66,6 @@ export function SettingsPage() {
 			label: t("tabProcessing"),
 			icon: CpuChargeIcon,
 			tooltip: t("tabProcessingTooltip"),
-		},
-		{
-			key: "hotkey",
-			label: t("tabHotkey"),
-			icon: KeyboardIcon,
-			tooltip: t("tabHotkeyTooltip"),
 		},
 		{
 			key: "dictionary",
@@ -144,9 +136,6 @@ export function SettingsPage() {
 						</Tabs.Panel>
 						<Tabs.Panel value="quality">
 							<QualitySettingsPanel />
-						</Tabs.Panel>
-						<Tabs.Panel value="hotkey">
-							<HotkeySettingsPanel />
 						</Tabs.Panel>
 						<Tabs.Panel value="dictionary">
 							<DictionarySettingsPanel />

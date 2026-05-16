@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
+import { ipcClientMock } from "@test/mocks/ipc-client";
 
 // Mock the IPC client before importing the store so the store sees our mocked fetcher.
 const fetchSpy = mock(async () => {
@@ -20,9 +21,14 @@ const ipcOverrides = {
 	cancelCalls: [] as string[],
 };
 
-// Provide a complete-enough shim so other tests' imports of the same module
-// (mock-cached globally by bun:test) do not error on missing exports.
+// Spread the COMPLETE, behavior-faithful ipc-client fake, then override only
+// the exports this suite controls. bun:test's `mock.module` is process-global
+// and never torn down, so a partial shim leaks an incomplete module into
+// every later test file. `ipcClientMock()` exposes every real export and
+// routes each through `window.electronAPI` exactly as the real module, so the
+// leak is harmless regardless of file order.
 mock.module("@/shared/api/ipc-client", () => ({
+	...ipcClientMock(),
 	fetchOllamaModels: fetchSpy,
 	onLlmCatalog: () => noop,
 	onOllamaPullProgress: () => noop,
@@ -40,12 +46,23 @@ mock.module("@/shared/api/ipc-client", () => ({
 		model,
 		error: ipcOverrides.deleteSuccess ? undefined : "delete failed",
 	}),
-	fetchOpenRouterModels: async () => ({ models: [], reachable: false }),
-	fetchModelCatalog: async () => [],
-	onModelCatalog: () => () => undefined,
 }));
 
 const { useLlmCatalogStore } = await import("./llm-catalog-store");
+
+// `useLlmCatalogStore` is a process-global Zustand singleton with no teardown
+// between bun:test files. This suite's `scanModels()` populates
+// `models: [{ name: "llama3" }]`; without restoration that leaks into later
+// files (e.g. OllamaModelManagerDialog's "empty-installed" assertion). Snapshot
+// the pristine state and restore it after every test + at file end.
+const LLM_CATALOG_INITIAL = useLlmCatalogStore.getInitialState();
+
+function resetLlmCatalogStore(): void {
+	useLlmCatalogStore.setState(LLM_CATALOG_INITIAL, true);
+}
+
+afterEach(resetLlmCatalogStore);
+afterAll(resetLlmCatalogStore);
 
 describe("useLlmCatalogStore.scanModels — concurrent-call gating", () => {
 	test("collapses overlapping calls into a single fetch", async () => {

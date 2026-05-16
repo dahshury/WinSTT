@@ -103,12 +103,6 @@ describe("send wrappers", () => {
 		expect(api.send).toHaveBeenCalledWith(IPC.AUTOSTART_SET, { enabled: true });
 	});
 
-	test("audioSetMute sends muted flag", () => {
-		const api = installMockApi();
-		ipc.audioSetMute(false);
-		expect(api.send).toHaveBeenCalledWith(IPC.AUDIO_SET_MUTE, { muted: false });
-	});
-
 	test("settingsSave sends settings", () => {
 		const api = installMockApi();
 		ipc.settingsSave({} as Parameters<typeof ipc.settingsSave>[0]);
@@ -744,14 +738,6 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 		const settings = { model: { model: "tiny" } } as Parameters<typeof ipc.settingsSave>[0];
 		ipc.settingsSave(settings);
 		expect(api.send).toHaveBeenCalledWith(IPC.SETTINGS_SAVE, { settings });
-	});
-
-	test("audioSetMute forwards muted flag (true and false)", () => {
-		const api = installMockApi();
-		ipc.audioSetMute(true);
-		ipc.audioSetMute(false);
-		expect(api.send).toHaveBeenCalledWith(IPC.AUDIO_SET_MUTE, { muted: true });
-		expect(api.send).toHaveBeenCalledWith(IPC.AUDIO_SET_MUTE, { muted: false });
 	});
 
 	test("autostartSet forwards enabled flag", () => {

@@ -1,4 +1,3 @@
-import { ipcMain } from "electron";
 import { dbg } from "../lib/debug-log";
 import { runPsCommand } from "../lib/ps-host";
 
@@ -10,16 +9,22 @@ import { runPsCommand } from "../lib/ps-host";
  *  - If the app crashes mid-dictation the user is left muted.
  *
  * We instead read the current master volume scalar (0.0–1.0), drop it to
- * `DUCK_LEVEL` while recording, and restore the saved value on stop. A
- * graceful shutdown also restores it; crashes can leave the system at
- * `DUCK_LEVEL`, but that's a recoverable degradation (audio still plays
- * faintly) instead of a hard mute.
+ * `previous × (100 - reductionPct) / 100` while recording, and restore the
+ * saved value on stop. A 100% reduction is a full mute (→ 0.0); smaller
+ * values merely duck. A graceful shutdown also restores it; crashes can
+ * leave the system ducked, but that's a recoverable degradation (audio
+ * still plays, faintly) instead of a hard mute.
  *
  * All commands flow through the long-running PS host (`lib/ps-host.ts`)
  * so the COM-interop class is JIT-compiled exactly once per app session.
  */
 
-const DUCK_LEVEL = 0.0;
+// The reduction the caller most recently requested, as a percent (0–100).
+// 100 = full mute (duck target 0.0); the public default keeps the historical
+// "mute" behaviour for callers that don't pass a level. Reset by
+// `__resetAudioMuteForTesting__`.
+// Stryker disable next-line BooleanLiteral: equivalent — every test resets this via __resetAudioMuteForTesting__ before asserting, so its initial literal is unobservable.
+let pendingReductionPct = 100;
 
 // Two-layer state:
 //   desiredMuted — what the caller most recently asked for (intent)
@@ -47,6 +52,15 @@ function clampScalar(value: number): number {
 	// for `value < 0`, Math.max(0, value) returns 0; for `value > 1`,
 	// Math.min(1, …) returns 1. Avoids the per-branch CC cost of two ifs.
 	return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * The ducked volume for a given previous volume and percent reduction.
+ * `pct=100` → 0.0 (full mute); `pct=80` → 20% of previous; `pct=0` → no
+ * change. Result is clamped to [0, 1].
+ */
+function reductionTarget(volume: number, pct: number): number {
+	return clampScalar((volume * (100 - pct)) / 100);
 }
 
 function parseVolume(value: string | null): number | null {
@@ -78,16 +92,18 @@ async function readCurrentVolume(): Promise<number | null> {
 }
 
 /**
- * Read the current volume and drop it to DUCK_LEVEL. Returns the previous
- * volume on success, or null if either the read or the set failed. Extracted
- * from applyDuck so the outer function only has to deal with one guard.
+ * Read the current volume and drop it to the reduction target for the
+ * pending percent. Returns the previous volume on success, or null if either
+ * the read or the set failed. Extracted from applyDuck so the outer function
+ * only has to deal with one guard.
  */
 async function performDuck(): Promise<number | null> {
 	const current = await readCurrentVolume();
 	if (current === null) {
 		return null;
 	}
-	const setResult = await runPsCommand(`[Audio]::SetVolume(${DUCK_LEVEL})`, { timeoutMs: 3000 });
+	const target = reductionTarget(current, pendingReductionPct);
+	const setResult = await runPsCommand(`[Audio]::SetVolume(${target})`, { timeoutMs: 3000 });
 	if (!setResult.ok) {
 		dbg("audio-mute", "duck: SetVolume failed");
 		return null;
@@ -109,7 +125,10 @@ async function applyDuck(): Promise<void> {
 	}
 	savedVolume = saved;
 	isDucked = true;
-	dbg("audio-mute", `ducked (saved=${saved.toFixed(3)} → ${DUCK_LEVEL})`);
+	dbg(
+		"audio-mute",
+		`ducked (saved=${saved.toFixed(3)} → ${reductionTarget(saved, pendingReductionPct).toFixed(3)})`
+	);
 }
 
 /** Compute the restore target. Extracted to keep the `??` branch out of applyRestore. */
@@ -140,7 +159,7 @@ async function applyRestore(): Promise<void> {
 function scheduleApply(targetMuted: boolean): void {
 	// Stryker disable next-line ConditionalExpression: equivalent mutant — `inFlight ?? Promise.resolve()` exists to chain the new task onto any in-flight task; in our test environment we always await flushMutePending between operations, so inFlight is null and `?? Promise.resolve()` produces the same starter promise either way.
 	const next = (inFlight ?? Promise.resolve()).then(() =>
-		// Stryker disable next-line BlockStatement: arrow-body block — the only way to make this empty would skip both applyDuck and applyRestore, which the audio:set-mute IPC test now covers (it asserts SetVolume IS called for muted=false), so any mutant emptying the body would fail. The remaining BlockStatement variant is the "always pass" else branch which is the same shape.
+		// Stryker disable next-line BlockStatement: arrow-body block — the only way to make this empty would skip both applyDuck and applyRestore, which the duck/unmute tests cover (they assert SetVolume IS called on both the duck and the restore), so any mutant emptying the body would fail. The remaining BlockStatement variant is the "always pass" else branch which is the same shape.
 		targetMuted ? applyDuck() : applyRestore()
 	);
 	inFlight = next.catch(() => undefined);
@@ -157,15 +176,22 @@ export function __resetAudioMuteForTesting__(): void {
 	isDucked = false;
 	savedVolume = null;
 	inFlight = null;
+	pendingReductionPct = 100;
 }
 
 export const __audio_mute_test_helpers__ = {
 	clampScalar,
 	parseVolume,
+	reductionTarget,
 };
 
-/** Duck the system volume. Returns true if a duck was actually scheduled. */
-export function muteSystemAudio(): boolean {
+/**
+ * Duck the system volume by `reductionPct` percent (default 100 = full mute).
+ * Returns true if a duck was actually scheduled. The pct is captured for the
+ * in-flight duck task; calling again while a duck is already intended is a
+ * no-op (the first level wins until the matching unmute).
+ */
+export function muteSystemAudio(reductionPct = 100): boolean {
 	if (process.platform !== "win32") {
 		return false;
 	}
@@ -173,6 +199,7 @@ export function muteSystemAudio(): boolean {
 		return false;
 	}
 	desiredMuted = true;
+	pendingReductionPct = reductionPct;
 	scheduleApply(true);
 	return true;
 }
@@ -187,29 +214,4 @@ export function unmuteSystemAudio(): void {
 	}
 	desiredMuted = false;
 	scheduleApply(false);
-}
-
-/**
- * Narrow the IPC payload to the expected shape. Uses optional chaining so the
- * `null`/`undefined` cases short-circuit without adding cyclomatic branches.
- */
-function isValidMutePayload(p: unknown): p is { muted: boolean } {
-	return typeof (p as { muted?: unknown } | null | undefined)?.muted === "boolean";
-}
-
-function dispatchMute(muted: boolean): void {
-	if (muted) {
-		muteSystemAudio();
-	} else {
-		unmuteSystemAudio();
-	}
-}
-
-export function setupAudioMuteHandlers(): void {
-	ipcMain.on("audio:set-mute", (_event, payload) => {
-		if (!isValidMutePayload(payload)) {
-			return;
-		}
-		dispatchMute(payload.muted);
-	});
 }

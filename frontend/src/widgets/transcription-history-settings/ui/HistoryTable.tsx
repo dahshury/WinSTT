@@ -1,6 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import { VList } from "virtua";
 import {
 	formatDuration,
 	formatWpm,
@@ -10,8 +11,11 @@ import {
 
 interface HistoryTableProps {
 	entries: TranscriptionHistoryEntry[];
-	visibleLimit: number;
 }
+
+const GRID_COLS = "grid-cols-[160px_68px_88px_68px_minmax(0,1fr)]";
+const ROW_HEIGHT_ESTIMATE = 40;
+const MAX_VISIBLE_ROWS = 12;
 
 function formatTimestamp(ms: number): string {
 	return new Date(ms).toLocaleString(undefined, {
@@ -23,73 +27,59 @@ function formatTimestamp(ms: number): string {
 	});
 }
 
-export function HistoryTable({ entries, visibleLimit }: HistoryTableProps) {
+interface HistoryRowProps {
+	entry: TranscriptionHistoryEntry;
+}
+
+function HistoryRow({ entry }: HistoryRowProps) {
+	return (
+		<div
+			className={`grid ${GRID_COLS} items-start border-border/40 border-t text-sm hover:bg-surface-secondary/60`}
+		>
+			<div className="px-3 py-2 font-mono text-foreground-secondary text-xs-tight tabular-nums">
+				{formatTimestamp(entry.timestamp)}
+			</div>
+			<div className="px-3 py-2 text-right tabular-nums">{entry.wordCount}</div>
+			<div className="px-3 py-2 text-right tabular-nums">{formatDuration(entry.durationMs)}</div>
+			<div className="px-3 py-2 text-right tabular-nums">
+				{formatWpm(wordsPerMinute(entry.wordCount, entry.durationMs))}
+			</div>
+			<div className="truncate px-3 py-2 text-foreground" title={entry.text}>
+				{entry.text}
+			</div>
+		</div>
+	);
+}
+
+export function HistoryTable({ entries }: HistoryTableProps) {
 	const t = useTranslations("history");
 	// Most recent first; entries are stored chronologically by the main process.
 	const sorted = [...entries].reverse();
-	const visible = sorted.slice(0, visibleLimit);
-	const hiddenCount = sorted.length - visible.length;
 
-	if (visible.length === 0) {
+	if (sorted.length === 0) {
 		return (
 			<div className="px-3 py-6 text-center text-foreground-muted text-sm">{t("tableEmpty")}</div>
 		);
 	}
 
+	const viewportHeight = Math.min(sorted.length, MAX_VISIBLE_ROWS) * ROW_HEIGHT_ESTIMATE;
+
 	return (
-		<div className="flex flex-col gap-1.5">
-			<div className="overflow-hidden rounded-md border border-border bg-surface-primary">
-				<table className="w-full table-fixed border-collapse text-sm">
-					<thead>
-						<tr className="border-border border-b bg-surface-secondary text-left text-foreground-muted text-xs-tight uppercase tracking-wider">
-							<th className="w-[160px] px-3 py-1.5 font-medium font-mono">{t("colTime")}</th>
-							<th className="w-[68px] px-3 py-1.5 text-right font-medium font-mono">
-								{t("colWords")}
-							</th>
-							<th className="w-[88px] px-3 py-1.5 text-right font-medium font-mono">
-								{t("colDuration")}
-							</th>
-							<th className="w-[68px] px-3 py-1.5 text-right font-medium font-mono">
-								{t("colWpm")}
-							</th>
-							<th className="px-3 py-1.5 font-medium font-mono">{t("colText")}</th>
-						</tr>
-					</thead>
-					<tbody>
-						{visible.map((entry) => (
-							<tr
-								className="border-border/40 border-t align-top hover:bg-surface-secondary/60"
-								key={entry.id}
-							>
-								<td className="px-3 py-2 font-mono text-foreground-secondary text-xs-tight tabular-nums">
-									{formatTimestamp(entry.timestamp)}
-								</td>
-								<td className="px-3 py-2 text-right tabular-nums">{entry.wordCount}</td>
-								<td className="px-3 py-2 text-right tabular-nums">
-									{formatDuration(entry.durationMs)}
-								</td>
-								<td className="px-3 py-2 text-right tabular-nums">
-									{formatWpm(wordsPerMinute(entry.wordCount, entry.durationMs))}
-								</td>
-								<td
-									className="overflow-hidden truncate px-3 py-2 text-foreground"
-									title={entry.text}
-								>
-									{entry.text}
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
+		<div className="flex flex-col overflow-hidden rounded-md border border-border bg-surface-primary">
+			<div
+				className={`grid ${GRID_COLS} border-border border-b bg-surface-secondary text-left text-foreground-muted text-xs-tight uppercase tracking-wider`}
+			>
+				<div className="px-3 py-1.5 font-medium font-mono">{t("colTime")}</div>
+				<div className="px-3 py-1.5 text-right font-medium font-mono">{t("colWords")}</div>
+				<div className="px-3 py-1.5 text-right font-medium font-mono">{t("colDuration")}</div>
+				<div className="px-3 py-1.5 text-right font-medium font-mono">{t("colWpm")}</div>
+				<div className="px-3 py-1.5 font-medium font-mono">{t("colText")}</div>
 			</div>
-			{hiddenCount > 0 && (
-				<div className="text-foreground-muted text-xs-tight">
-					{t("tableTruncated", {
-						visible: visible.length,
-						total: sorted.length,
-					})}
-				</div>
-			)}
+			<VList className="overscroll-contain" style={{ height: viewportHeight }}>
+				{sorted.map((entry) => (
+					<HistoryRow entry={entry} key={entry.id} />
+				))}
+			</VList>
 		</div>
 	);
 }

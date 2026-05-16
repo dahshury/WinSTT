@@ -728,6 +728,57 @@ describe("spawnServer argv builder", () => {
 	}
 });
 
+// ─── applyWakeWordFlags (via buildServerArgs) ─────────────────────────
+//
+// applyWakeWordFlags is private; exercise it through the spawn argv
+// builder. CC 3 with three branches:
+//   1. mode !== "wakeword"        → early return, no flags
+//   2. mode === "wakeword", !word → early return, no flags
+//   3. mode === "wakeword", word  → push --wakeword_backend + --wake_words
+// All three paths must be covered to keep CRAP < 4.
+
+describe("applyWakeWordFlags (via spawnServer argv builder)", () => {
+	test("non-wakeword mode: no --wakeword_backend / --wake_words flags", () => {
+		// Default recordingMode is "ptt" (storeMock default) — branch 1.
+		sttProcess.tryAutoSpawnServer();
+		const args = spawnLog[0]?.args ?? [];
+		expect(args).not.toContain("--wakeword_backend");
+		expect(args).not.toContain("--wake_words");
+	});
+
+	test("wakeword mode with EMPTY wake word: flags are omitted (branch 2)", () => {
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "");
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnLog[0]?.args ?? [];
+			expect(args).not.toContain("--wakeword_backend");
+			expect(args).not.toContain("--wake_words");
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+
+	test("wakeword mode with a wake word: pushes pvporcupine backend + the word (branch 3)", () => {
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "jarvis");
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnLog[0]?.args ?? [];
+			const backendIdx = args.indexOf("--wakeword_backend");
+			expect(backendIdx).toBeGreaterThanOrEqual(0);
+			expect(args[backendIdx + 1]).toBe("pvporcupine");
+			const wordIdx = args.indexOf("--wake_words");
+			expect(wordIdx).toBeGreaterThanOrEqual(0);
+			expect(args[wordIdx + 1]).toBe("jarvis");
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+});
+
 // ─── attachProcessHandlers — stdout / stderr / exit / error ───────────
 
 describe("process handler wiring", () => {

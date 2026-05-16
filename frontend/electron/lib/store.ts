@@ -5,7 +5,8 @@ import { z } from "zod";
 // These validate the raw `unknown` return of store.get("section.key").
 const storeValueSchemas = {
 	// general
-	"general.recordingMode": z.enum(["ptt", "toggle", "listen"]).catch("ptt"),
+	"general.recordingMode": z.enum(["ptt", "toggle", "listen", "wakeword"]).catch("ptt"),
+	"general.wakeWord": z.string().catch(""),
 	"general.minimizeToTray": z.boolean().catch(true),
 	"general.startMinimized": z.boolean().catch(false),
 	"general.recordingSound": z.boolean().catch(true),
@@ -15,7 +16,7 @@ const storeValueSchemas = {
 	"general.showRecordingOverlay": z.boolean().catch(true),
 	"general.visualizerSize": z.enum(["xs", "sm", "md", "lg", "xl"]).catch("xs"),
 	"general.liveTranscriptionDisplay": z.enum(["none", "in-app", "in-pill", "both"]).catch("both"),
-	"general.muteSystemAudioWhileDictating": z.boolean().catch(false),
+	"general.systemAudioReductionWhileDictating": z.number().int().min(0).max(100).catch(0),
 	"general.contextAwareness": z.boolean().catch(false),
 	// quality
 	"quality.enableRealtimeTranscription": z.boolean().catch(true),
@@ -26,6 +27,8 @@ const storeValueSchemas = {
 	"audio.sileroDeactivityDetection": z.boolean().catch(true),
 	// llm
 	"llm.enabled": z.boolean().catch(false),
+	"llm.dictationEnabled": z.boolean().catch(true),
+	"llm.transformsEnabled": z.boolean().catch(false),
 	"llm.provider": z.enum(["ollama", "openrouter"]).catch("ollama"),
 	"llm.model": z.string().catch(""),
 	"llm.presets": z
@@ -164,13 +167,14 @@ export const store = new Store({
 			autoStart: false,
 			minimizeToTray: true,
 			startMinimized: false,
-			muteSystemAudioWhileDictating: false,
+			systemAudioReductionWhileDictating: 0,
 			recordingSound: true,
 			recordingSoundPath: "",
 			fileTranscriptionFormat: "txt",
 			fileTranscriptionSaveLocation: "auto" as const,
 			recordingMode: "ptt",
 			loopbackDeviceIndex: null,
+			wakeWord: "",
 			showRecordingOverlay: true,
 			visualizerSize: "xs" as const,
 			liveTranscriptionDisplay: "both" as const,
@@ -186,6 +190,8 @@ export const store = new Store({
 		snippets: [],
 		llm: {
 			enabled: false,
+			dictationEnabled: true,
+			transformsEnabled: false,
 			provider: "ollama" as const,
 			endpoint: "http://localhost:11434",
 			model: "",
@@ -209,7 +215,7 @@ export const store = new Store({
 // ── One-time migration for stale persisted values ────────────────────
 // electron-store defaults only apply when a key is missing. If old defaults
 // were persisted via settings:save, they override new defaults silently.
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 8;
 
 type LiveTranscriptionDisplay = "none" | "in-app" | "in-pill" | "both";
 
@@ -240,6 +246,66 @@ const LEGACY_PRESET_TO_ENTRY: Record<string, { key: string; level?: "light" | "m
 		summarizeMedium: { key: "summarize", level: "medium" },
 		summarizeHigh: { key: "summarize", level: "high" },
 	};
+
+type StoreWrite = (key: string, value: unknown) => void;
+
+/** v5: llm.preset (single string) → llm.presets (array of {key, level?}). */
+function migrateLlmPresets(write: StoreWrite): void {
+	const legacy = store.get("llm.preset") as unknown;
+	const mapped =
+		typeof legacy === "string" && legacy in LEGACY_PRESET_TO_ENTRY
+			? [LEGACY_PRESET_TO_ENTRY[legacy]]
+			: [{ key: "neutral" }];
+	write("llm.presets", mapped);
+	store.delete("llm.preset" as never);
+}
+
+/**
+ * v6: merge the two boolean toggles (showLiveTranscription for the floating
+ * pill + showInAppLiveTranscription for the main window) into a single
+ * multi-choice. Preserve whatever combination the user had so the upgrade is
+ * visually invisible.
+ */
+function migrateLiveTranscriptionDisplay(write: StoreWrite): void {
+	const pill = store.get("general.showLiveTranscription") as unknown;
+	const inApp = store.get("general.showInAppLiveTranscription") as unknown;
+	write("general.liveTranscriptionDisplay", deriveLiveTranscriptionDisplay(pill, inApp));
+	store.delete("general.showLiveTranscription" as never);
+	store.delete("general.showInAppLiveTranscription" as never);
+}
+
+/**
+ * v7: general.muteSystemAudioWhileDictating (boolean) →
+ * general.systemAudioReductionWhileDictating (percent reduction). The legacy
+ * toggle ducked to silence, so `true` maps to a full mute (100) and
+ * `false`/missing to off (0). Preserves behavior.
+ */
+function migrateMuteToReduction(write: StoreWrite): void {
+	const legacyMute = store.get("general.muteSystemAudioWhileDictating") as unknown;
+	write("general.systemAudioReductionWhileDictating", legacyMute === true ? 100 : 0);
+	store.delete("general.muteSystemAudioWhileDictating" as never);
+}
+
+type StoreRead = <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreValueSchemas[K]>;
+
+/**
+ * v8: split the single `llm.enabled` toggle into a master switch plus two
+ * sub-feature flags (`llm.dictationEnabled`, `llm.transformsEnabled`).
+ * Previously, enabling the LLM ran dictation cleanup, and Transforms was
+ * ungated entirely (it fired whenever a hotkey was bound + a model set).
+ * Preserve both behaviors: anyone who had the LLM on, or who has a transform
+ * hotkey bound, gets both sub-flags turned on so the upgrade is invisible.
+ */
+function migrateLlmSubFlags(read: StoreRead, write: StoreWrite): void {
+	const hadLlmOn = read("llm.enabled") === true;
+	const transforms = read("llm.transforms");
+	const hasTransformHotkey =
+		Array.isArray(transforms) && transforms.some((t) => (t?.hotkey ?? "").trim() !== "");
+	if (hadLlmOn || hasTransformHotkey) {
+		write("llm.dictationEnabled", true);
+		write("llm.transformsEnabled", true);
+	}
+}
 
 /**
  * Pure migration step: given a current schema version and accessors, mutates
@@ -277,25 +343,16 @@ export function applyStoreMigration(
 			write("audio.inputDeviceIndex", null);
 		}
 		if (current < 5) {
-			// v5: llm.preset (single string) → llm.presets (array of {key, level?}).
-			const legacy = store.get("llm.preset") as unknown;
-			const mapped =
-				typeof legacy === "string" && legacy in LEGACY_PRESET_TO_ENTRY
-					? [LEGACY_PRESET_TO_ENTRY[legacy]]
-					: [{ key: "neutral" }];
-			write("llm.presets", mapped);
-			store.delete("llm.preset" as never);
+			migrateLlmPresets(write);
 		}
 		if (current < 6) {
-			// v6: merge the two boolean toggles (showLiveTranscription for the
-			// floating pill + showInAppLiveTranscription for the main window)
-			// into a single multi-choice. Preserve whatever combination the
-			// user had so the upgrade is visually invisible.
-			const pill = store.get("general.showLiveTranscription") as unknown;
-			const inApp = store.get("general.showInAppLiveTranscription") as unknown;
-			write("general.liveTranscriptionDisplay", deriveLiveTranscriptionDisplay(pill, inApp));
-			store.delete("general.showLiveTranscription" as never);
-			store.delete("general.showInAppLiveTranscription" as never);
+			migrateLiveTranscriptionDisplay(write);
+		}
+		if (current < 7) {
+			migrateMuteToReduction(write);
+		}
+		if (current < 8) {
+			migrateLlmSubFlags(read, write);
 		}
 		log("[store] Migration applied: _schemaVersion", current, SCHEMA_VERSION);
 		write("_schemaVersion", SCHEMA_VERSION);

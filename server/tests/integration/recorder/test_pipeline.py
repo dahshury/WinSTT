@@ -834,6 +834,47 @@ class TestRecordingPipeline:
         assert sm.state == RecorderState.RECORDING
         assert len(no_audio_events) == 1
 
+    def test_handle_chunk_swallows_processing_errors(self) -> None:
+        """Lines 207-208: _handle_chunk logs and swallows exceptions from a bad chunk.
+
+        An odd-length byte buffer makes np.frombuffer raise ValueError; the
+        pipeline must continue (one bad chunk shouldn't crash the worker).
+        """
+        clock = Clock.fixed_clock(1000.0)
+        pipeline, _event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(clock)
+
+        # 1 byte is not a multiple of int16 element size -> np.frombuffer raises.
+        bad_chunk = b"\x00"
+        pipeline._handle_chunk(bad_chunk)
+
+        # No exception propagated; state unchanged.
+        assert sm.state == RecorderState.INACTIVE
+
+    def test_dispatch_chunk_routes_to_recording_branch(self) -> None:
+        """_dispatch_chunk routes to _process_recording while RECORDING."""
+        clock = Clock.fixed_clock(1000.0)
+        pipeline, _event_bus, sm, buf, _vad = self._make_pipeline_with_clock(
+            clock,
+            speech_pattern=[True],
+        )
+        pipeline.request_start()
+        assert sm.state == RecorderState.RECORDING
+
+        before = buf.frame_count
+        pipeline._dispatch_chunk(_make_chunk())
+        # Recording branch adds a frame to the buffer.
+        assert buf.frame_count == before + 1
+
+    def test_dispatch_chunk_routes_to_not_recording_branch(self) -> None:
+        """_dispatch_chunk routes to _process_not_recording while not RECORDING."""
+        clock = Clock.fixed_clock(1000.0)
+        pipeline, _event_bus, sm, buf, _vad = self._make_pipeline_with_clock(clock)
+        sm.transition(RecorderState.LISTENING)
+
+        pipeline._dispatch_chunk(_make_chunk())
+        # Not-recording branch falls through to pre-roll.
+        assert buf.pre_roll_count == 1
+
     def test_request_stop_transcribes_when_speech_detected_in_ptt_mode(self) -> None:
         """In PTT mode, request_stop transcribes normally if speech was detected."""
         clock = Clock.fixed_clock(1000.0)

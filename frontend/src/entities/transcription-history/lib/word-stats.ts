@@ -1,6 +1,5 @@
 import type { TranscriptionHistoryEntry } from "../model/history-store";
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_MIN = 60 * 1000;
 const MIN_DURATION_FOR_WPM_MS = 500;
 
@@ -76,7 +75,11 @@ export function startOfLocalDay(now: number): Date {
 }
 
 function makeBucket(today: Date, daysAgo: number, totals: Map<string, number>): DayBucket {
-	const date = new Date(today.getTime() - daysAgo * MS_PER_DAY);
+	// Walk calendar days via setDate, not by subtracting 86_400_000 ms — fixed-ms
+	// stepping double-counts a date around fall-back (25h day) and skips one
+	// around spring-forward (23h day), producing duplicate React keys.
+	const date = new Date(today);
+	date.setDate(date.getDate() - daysAgo);
 	const key = toDayKey(date.getTime());
 	return { date, dayKey: key, wordCount: totals.get(key) ?? 0 };
 }

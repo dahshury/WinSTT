@@ -35,9 +35,15 @@ function hasLlmModel(provider: unknown): boolean {
 	return Boolean(getStoreValue("llm.model"));
 }
 
+// Dictation cleanup runs only when the master switch AND the dictation
+// sub-feature are both on (and a model is configured). The transforms
+// sub-feature has its own independent gate in transforms.ts.
 function isLlmConfigured(): boolean {
 	const enabled = getStoreValue("llm.enabled");
-	return enabled === true && hasLlmModel(getStoreValue("llm.provider"));
+	const dictationEnabled = getStoreValue("llm.dictationEnabled");
+	return (
+		enabled === true && dictationEnabled === true && hasLlmModel(getStoreValue("llm.provider"))
+	);
 }
 
 async function tryLlmProcess(text: string, context: string): Promise<string> {
@@ -121,9 +127,17 @@ async function handleFullSentence(
 	pasteIfDictating(mode, processed);
 }
 
-function shouldMuteForDictation(): boolean {
-	const enabled = getStoreValue("general.muteSystemAudioWhileDictating");
-	return enabled === true && getStoreValue("general.recordingMode") !== "listen";
+/**
+ * Percent reduction to apply to system audio for this dictation, or 0 when
+ * the feature is off / not applicable. Ducking is always disabled in listen
+ * mode (we'd be muting the very audio being transcribed).
+ */
+function dictationDuckLevel(): number {
+	const pct = getStoreValue("general.systemAudioReductionWhileDictating");
+	if (pct <= 0 || getStoreValue("general.recordingMode") === "listen") {
+		return 0;
+	}
+	return pct;
 }
 
 function handleRecordingStart(
@@ -151,8 +165,9 @@ function handleRecordingStart(
 	// and the consumer (fullSentence) awaits it. Off unless the user
 	// opted in via settings.
 	contextCapture?.capture();
-	if (shouldMuteForDictation()) {
-		return { muted: muteSystemAudio(), attempted: true };
+	const duckLevel = dictationDuckLevel();
+	if (duckLevel > 0) {
+		return { muted: muteSystemAudio(duckLevel), attempted: true };
 	}
 	return { muted: false, attempted: false };
 }
@@ -708,6 +723,7 @@ export const __relay_test_helpers__ = {
 	computeRecordingDurationMs,
 	createContextCapture,
 	DATA_EVENT_HANDLERS,
+	dictationDuckLevel,
 	dispatchDataEvent,
 	extractEventText,
 	handleAudioLevel,
@@ -732,7 +748,6 @@ export const __relay_test_helpers__ = {
 	RECORDING_STATE_EVENT_TYPES,
 	routeEventToQueue,
 	sendToWindowSafely,
-	shouldMuteForDictation,
 	SIMPLE_RELAY_HANDLERS,
 	tryLlmProcess,
 };

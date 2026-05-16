@@ -4,7 +4,11 @@ import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import * as ipcClient from "@/shared/api/ipc-client";
 import { useHotkeyStore } from "../model/hotkey-store";
-import { usePushToTalk } from "./use-push-to-talk";
+import {
+	__test_decidePressAction,
+	__test_shouldReleaseMicOnUp,
+	usePushToTalk,
+} from "./use-push-to-talk";
 
 // Detect cross-test pollution: a sibling test (llm-catalog-store, catalog-store,
 // download-store, OllamaModelManagerDialog, openrouter-catalog-store) installs a
@@ -263,6 +267,48 @@ describe("usePushToTalk", () => {
 		unmount();
 		const afterUnmount = (listeners.get(IPC.STT_RECORDING_STOP) ?? []).length;
 		expect(afterUnmount).toBe(beforeUnmount - 1);
+	});
+
+	describe("decidePressAction (pure)", () => {
+		test("ignores server-driven listen mode", () => {
+			expect(__test_decidePressAction("listen", false)).toBeNull();
+		});
+
+		test("ignores server-driven wakeword mode", () => {
+			expect(__test_decidePressAction("wakeword", true)).toBeNull();
+		});
+
+		test("ptt always turns mic on and does not persist active state", () => {
+			expect(__test_decidePressAction("ptt", false)).toEqual({
+				micOn: true,
+				persistActive: false,
+			});
+			// currentActive is irrelevant for ptt.
+			expect(__test_decidePressAction("ptt", true)).toEqual({
+				micOn: true,
+				persistActive: false,
+			});
+		});
+
+		test("toggle flips the running active state and persists it", () => {
+			expect(__test_decidePressAction("toggle", false)).toEqual({
+				micOn: true,
+				persistActive: true,
+			});
+			expect(__test_decidePressAction("toggle", true)).toEqual({
+				micOn: false,
+				persistActive: true,
+			});
+		});
+	});
+
+	describe("shouldReleaseMicOnUp (pure)", () => {
+		test("only ptt releases the mic on key-up", () => {
+			expect(__test_shouldReleaseMicOnUp("ptt")).toBe(true);
+			expect(__test_shouldReleaseMicOnUp("toggle")).toBe(false);
+			expect(__test_shouldReleaseMicOnUp("listen")).toBe(false);
+			expect(__test_shouldReleaseMicOnUp("wakeword")).toBe(false);
+		});
 	});
 
 	test("resets isActive on unmount", () => {

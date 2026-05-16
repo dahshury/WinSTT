@@ -36,6 +36,20 @@ class ModelInfo:
     #: bytes; default fp32 onnx is ``params * 4``. Zero means "unknown" —
     #: the catalog renders no warning for those.
     param_count: int = 0
+    #: ONNX quantization suffixes the upstream repo actually ships. The
+    #: empty string is the default (un-suffixed) export. The picker only
+    #: offers these — onnx-community Whisper repos carry the full matrix;
+    #: most other repos ship only the default graph. Empty list → the model
+    #: takes no quantization (faster-whisper-style), picker hides the row.
+    available_quantizations: list[str] = field(default_factory=lambda: [""])
+
+
+#: Full quantization matrix shipped by every ``onnx-community/whisper-*`` repo.
+_WHISPER_QUANTS: list[str] = ["", "int8", "fp16", "uint8", "q4", "q4f16", "bnb4"]
+#: onnx-asr-hosted NeMo exports ship the default graph + an int8 variant.
+_NEMO_QUANTS: list[str] = ["", "int8"]
+#: GigaAM / Vosk / T-One repos ship a single default ONNX graph only.
+_DEFAULT_ONLY: list[str] = [""]
 
 
 def _whisper_models() -> list[ModelInfo]:
@@ -78,6 +92,7 @@ def _whisper_models() -> list[ModelInfo]:
                 onnx_model_name=f"onnx-community/whisper-{model_id}",
                 description=f"OpenAI Whisper {model_id} ({size} params)",
                 param_count=params,
+                available_quantizations=list(_WHISPER_QUANTS),
             )
         )
     for model_id, name, size, params in english_only:
@@ -94,6 +109,7 @@ def _whisper_models() -> list[ModelInfo]:
                 onnx_model_name=f"onnx-community/whisper-{model_id}",
                 description=f"OpenAI Whisper {model_id} ({size} params, English only)",
                 param_count=params,
+                available_quantizations=list(_WHISPER_QUANTS),
             )
         )
     return models
@@ -151,6 +167,7 @@ def _nemo_models() -> list[ModelInfo]:
                 supports_realtime=True,
                 onnx_model_name=model_id,
                 description=desc,
+                available_quantizations=list(_NEMO_QUANTS),
             )
         )
     return models
@@ -263,6 +280,29 @@ class ModelCatalog:
     def list_all(self) -> list[ModelInfo]:
         return list(self._models.values())
 
+    @staticmethod
+    def _accepts_any_language(info: ModelInfo) -> bool:
+        """Whether ``info`` transcribes every language tag.
+
+        True for models that opt into language detection and for
+        multilingual models (empty ``languages`` whitelist).
+        """
+        return info.supports_language_detection or not info.languages
+
+    def _is_universal(self, model_id: str, language: str) -> bool:
+        """Whether the pairing is compatible regardless of the whitelist.
+
+        Covers the three always-pass cases: empty ``language``
+        (auto-detect), unknown ``model_id`` (catalog not exhaustive), and
+        models that accept any language.
+        """
+        if not language:
+            return True
+        info = self._models.get(model_id)
+        if info is None:
+            return True
+        return self._accepts_any_language(info)
+
     def is_language_compatible(self, model_id: str, language: str) -> bool:
         """Return whether ``model_id`` can transcribe ``language``.
 
@@ -273,13 +313,9 @@ class ModelCatalog:
         ``supports_language_detection`` accept any language tag. Otherwise
         the language must appear in the model's ``languages`` list.
         """
-        if not language:
+        if self._is_universal(model_id, language):
             return True
-        info = self._models.get(model_id)
-        if info is None:
-            return True
-        if info.supports_language_detection or not info.languages:
-            return True
+        info = self._models[model_id]
         return language in info.languages
 
     def to_dicts(self) -> list[dict[str, object]]:
@@ -298,6 +334,7 @@ class ModelCatalog:
                     "onnx_model_name": m.onnx_model_name,
                     "description": m.description,
                     "param_count": m.param_count,
+                    "available_quantizations": m.available_quantizations,
                 }
             )
         return result

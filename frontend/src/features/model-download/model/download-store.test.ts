@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { ipcClientMock } from "@test/mocks/ipc-client";
 
 const cancelSpy = mock(() => undefined);
 
+// Spread the COMPLETE, behavior-faithful ipc-client fake, then override only
+// the export this suite controls. bun:test's `mock.module` is process-global
+// and never torn down, so a partial shim leaks an incomplete module into
+// every later test file. `ipcClientMock()` exposes every real export and
+// routes each through `window.electronAPI` exactly as the real module, so the
+// leak is harmless regardless of file order.
 mock.module("@/shared/api/ipc-client", () => ({
+	...ipcClientMock(),
 	cancelDownload: cancelSpy,
 }));
 

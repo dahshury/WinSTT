@@ -17,18 +17,25 @@ mock.module("../lib/debug-log", () => ({ dbg: noop, dbgVerbose: noop }));
 
 import { storeMock } from "@test/mocks/store";
 
-mock.module("../lib/store", () => ({
-	...storeMock(),
-	getStoreValue: (key: string) => {
-		if (key === "llm.endpoint") {
-			return "http://localhost:65535";
-		}
-		if (key === "llm.timeout") {
-			return 5000;
-		}
-		return;
-	},
-}));
+// Only llm.endpoint/llm.timeout are driven here; all other keys delegate to
+// the COMPLETE shared store mock so a process-global `../lib/store` cache leak
+// into sibling tests stays semantically harmless (a blanket `return undefined`
+// would poison e.g. transforms.test.ts reading `llm.transforms`).
+mock.module("../lib/store", () => {
+	const base = storeMock();
+	return {
+		...base,
+		getStoreValue: (key: string) => {
+			if (key === "llm.endpoint") {
+				return "http://localhost:65535";
+			}
+			if (key === "llm.timeout") {
+				return 5000;
+			}
+			return base.getStoreValue(key);
+		},
+	};
+});
 
 const {
 	scanOllamaModels,

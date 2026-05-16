@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useConnectionStore } from "@/entities/connection";
+import { useCatalogStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useListenStore } from "@/features/listen-mode";
 import { useDownloadStore } from "@/features/model-download";
@@ -18,6 +19,10 @@ beforeEach(() => {
 	});
 	useListenStore.setState({ isListening: false, deviceName: "", devices: [] });
 	useDownloadStore.setState({ isDownloading: false, modelName: null });
+	// Sibling suites (catalog-store / model-state-store) populate this global
+	// Zustand store and never reset it. Force the empty initial state so the
+	// model menu deterministically falls back to WHISPER_MODELS here.
+	useCatalogStore.setState({ models: [], isLoaded: false });
 });
 
 afterEach(() => {

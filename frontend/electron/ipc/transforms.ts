@@ -56,6 +56,26 @@ function findTransform(transformId: string): StoredTransform | undefined {
 	return transforms.find((t) => t.id === transformId);
 }
 
+function hasLlmModel(): boolean {
+	if (getStoreValue("llm.provider") === "openrouter") {
+		return Boolean(getStoreValue("llm.openrouterApiKey"));
+	}
+	return Boolean(getStoreValue("llm.model"));
+}
+
+/**
+ * Transforms run only when the LLM master switch AND the transforms
+ * sub-feature are both on, with a model configured. Mirrors the dictation
+ * gate in relay.ts (`isLlmConfigured`) but keyed off `llm.transformsEnabled`.
+ */
+function isTransformsEnabled(): boolean {
+	return (
+		getStoreValue("llm.enabled") === true &&
+		getStoreValue("llm.transformsEnabled") === true &&
+		hasLlmModel()
+	);
+}
+
 function broadcastAll(channel: string, payload: unknown): void {
 	for (const win of BrowserWindow.getAllWindows()) {
 		if (!win.isDestroyed()) {
@@ -85,6 +105,11 @@ export interface ApplyResult {
  * error to the renderer for the toast.
  */
 export async function applyTransform(transformId: string): Promise<ApplyResult> {
+	if (!isTransformsEnabled()) {
+		const message = "LLM text transformation is disabled";
+		broadcastAll(IPC.TRANSFORMS_FAILED, { transformId, reason: message });
+		throw new ValidationError(message, "transformsEnabled");
+	}
 	const transform = findTransform(transformId);
 	if (!transform) {
 		const message = `Transform "${transformId}" not found`;

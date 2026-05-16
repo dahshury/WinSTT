@@ -16,11 +16,10 @@ import {
 	settingsSave,
 	sttIsConnected,
 } from "@/shared/api/ipc-client";
+import type { RecordingMode } from "@/shared/config/recording-mode-color";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Switcher } from "@/shared/ui/switcher";
-
-type RecordingMode = "ptt" | "toggle" | "listen";
 
 interface TrayMenuState {
 	inputDeviceIndex: number | null;
@@ -163,6 +162,7 @@ export function TrayMenu() {
 		{ value: "ptt", label: t("modePtt") },
 		{ value: "toggle", label: t("modeToggle") },
 		{ value: "listen", label: t("modeListen") },
+		{ value: "wakeword", label: t("modeWakeWord") },
 	];
 
 	const { deviceOptions, currentDeviceId, currentDeviceLabel } = useMemo(() => {

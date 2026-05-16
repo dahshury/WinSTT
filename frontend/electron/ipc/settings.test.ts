@@ -57,18 +57,22 @@ mock.module("electron", () => ({
 
 import { storeMock } from "@test/mocks/store";
 
-mock.module("../lib/store", () => ({
-	...storeMock(),
-	store: {
-		get store() {
-			return storeData;
+mock.module("../lib/store", () => {
+	const base = storeMock();
+	return {
+		...base,
+		store: {
+			...base.store,
+			get store() {
+				return storeData;
+			},
+			get: (key: string) => storeData[key],
+			set: (key: string, value: unknown) => {
+				storeData[key] = value;
+			},
 		},
-		get: (key: string) => storeData[key],
-		set: (key: string, value: unknown) => {
-			storeData[key] = value;
-		},
-	},
-}));
+	};
+});
 
 mock.module("./stt-process-deps", () => ({
 	isSttProcessRunning: () => sttProcessState.running,
