@@ -37,39 +37,51 @@ export interface FamilySummary {
 	variantCount: number;
 }
 
-function sizeRange(models: readonly ModelInfo[]): string {
-	const sizes = models
+interface Sized {
+	label: string;
+	params: number;
+}
+
+function parseSizes(models: readonly ModelInfo[]): Sized[] {
+	return models
 		.map((m) => ({ label: m.sizeLabel, params: parseSizeLabel(m.sizeLabel) }))
-		.filter((s): s is { label: string; params: number } => s.params !== null);
+		.filter((s): s is Sized => s.params !== null);
+}
+
+/** Smallest by param count; ties keep the first (matches the prior loop). */
+function minBy(sizes: readonly Sized[]): Sized {
+	return sizes.reduce((a, b) => (b.params < a.params ? b : a));
+}
+
+/** Largest by param count; ties keep the first (matches the prior loop). */
+function maxBy(sizes: readonly Sized[]): Sized {
+	return sizes.reduce((a, b) => (b.params > a.params ? b : a));
+}
+
+function sizeRange(models: readonly ModelInfo[]): string {
+	const sizes = parseSizes(models);
 	if (sizes.length === 0) {
 		return "";
 	}
-	let min = sizes[0];
-	let max = sizes[0];
-	for (const s of sizes) {
-		if (min && s.params < min.params) {
-			min = s;
-		}
-		if (max && s.params > max.params) {
-			max = s;
-		}
+	const minLabel = minBy(sizes).label;
+	const maxLabel = maxBy(sizes).label;
+	if (minLabel === maxLabel) {
+		return minLabel;
 	}
-	if (!(min && max) || min.label === max.label) {
-		return min?.label ?? "";
-	}
-	return `${min.label} – ${max.label}`;
+	return `${minLabel} – ${maxLabel}`;
+}
+
+/** A variant contributes explicit language tags only when it is neither multilingual nor English-only. */
+function hasExplicitLanguages(model: ModelInfo): boolean {
+	return !(isMultilingual(model) || isEnglishOnly(model));
 }
 
 function explicitLanguages(models: readonly ModelInfo[]): string[] {
-	const set = new Set<string>();
-	for (const m of models) {
-		if (!(isMultilingual(m) || isEnglishOnly(m))) {
-			for (const code of m.languages) {
-				set.add(code.toUpperCase());
-			}
-		}
-	}
-	return [...set].sort();
+	const codes = models
+		.filter(hasExplicitLanguages)
+		.flatMap((m) => m.languages)
+		.map((code) => code.toUpperCase());
+	return [...new Set(codes)].sort();
 }
 
 function buildLanguageNote(

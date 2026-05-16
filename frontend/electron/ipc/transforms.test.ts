@@ -103,33 +103,27 @@ const llmCalls: Array<{ prompt: string; text: string }> = [];
 mock.module("./llm", () => ({
 	processTextWithCustomPrompt: (text: string, prompt: string) => {
 		llmCalls.push({ text, prompt });
+		if (prompt === "__throw__") {
+			return Promise.reject(new Error("LLM exploded"));
+		}
 		return Promise.resolve(`TRANSFORMED:${text}`);
 	},
 }));
 
-const { applyTransform, __transforms_test_helpers__ } = await import("./transforms");
+const { __transforms_test_helpers__ } = await import("./transforms");
 
-// ── Cross-file pollution guard ───────────────────────────────────────
-// bun's `mock.module` registry is process-global and keyed by ABSOLUTE path
-// (a distinct specifier like "../ipc/transforms" does NOT bypass it — bun
-// normalizes before lookup). transform-hotkeys.test.ts runs first
-// alphabetically and registers `mock.module("./transforms", ...)` with a stub
-// `applyTransform` (it can't drive the real selection→LLM→paste pipeline).
-// Under the full suite this file then `await import("./transforms")` and gets
-// that stub: `__transforms_test_helpers__` is still spread-through (real), but
-// `applyTransform` is the stub, so the behavioural `applyTransform` tests
-// below can't run. They ARE fully exercised in isolation
-// (`bun test electron/ipc/transforms.test.ts`), which is what stryker runs.
-// Mirrors the identical, pre-existing `STORE_IS_POLLUTED` guard in
-// electron/lib/store.test.ts.
-// Probe: the genuine `applyTransform("")` rejects (empty id → ValidationError)
-// without touching the store; transform-hotkeys's stub always resolves. Use
-// that to detect a leaked stub and skip only the behavioural tests.
-const TRANSFORMS_IS_POLLUTED = await applyTransform("").then(
-	() => true,
-	() => false
-);
-const itIfReal = TRANSFORMS_IS_POLLUTED ? test.skip : test;
+// ── Cross-file pollution: drive the pipeline via the test helpers ────
+// bun's `mock.module` registry is process-global and keyed by ABSOLUTE path.
+// transform-hotkeys.test.ts runs first alphabetically and registers
+// `mock.module("./transforms", () => ({ ...realTransforms, applyTransform: stub }))`.
+// Under the full suite this file's `await import("./transforms")` therefore
+// yields a STUBBED `applyTransform` but a SPREAD-THROUGH (real)
+// `__transforms_test_helpers__`. The behavioural tests below exercise the real
+// pipeline through `helpers.runTransformPipeline` (the thin exported
+// `applyTransform` just delegates to it), so they run — and produce real
+// coverage — regardless of which test file ran first.
+const helpers = __transforms_test_helpers__;
+const runTransformPipeline = helpers.runTransformPipeline;
 
 // Write transforms through the SAME `../lib/store` module instance that the
 // real `applyTransform` reads from. bun's `mock.module` registry is
@@ -161,6 +155,8 @@ function reset(): void {
 	// sub-feature on, with a model configured (mirrors the real gate).
 	liveStore.store.set("llm.enabled", true);
 	liveStore.store.set("llm.transformsEnabled", true);
+	liveStore.store.set("llm.provider", "local");
+	liveStore.store.set("llm.openrouterApiKey", "");
 	liveStore.store.set("llm.model", "test-model");
 	llmCalls.length = 0;
 	clipboardWrites.length = 0;
@@ -169,13 +165,13 @@ function reset(): void {
 	uiaSelection = "hello world";
 }
 
-describe("applyTransform", () => {
-	itIfReal("captures selection → LLM → paste happy path", async () => {
+describe("runTransformPipeline (applyTransform)", () => {
+	test("captures selection → LLM → paste happy path", async () => {
 		reset();
 		setTransforms([
 			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
 		]);
-		const result = await applyTransform("polish");
+		const result = await runTransformPipeline("polish");
 		expect(result.transformId).toBe("polish");
 		expect(result.before).toBe("hello world");
 		expect(result.after).toBe("TRANSFORMED:hello world");
@@ -185,23 +181,23 @@ describe("applyTransform", () => {
 		expect(clipboardWrites).toContain("TRANSFORMED:hello world");
 	});
 
-	itIfReal("missing transform id throws ValidationError without paste/LLM call", async () => {
+	test("missing transform id throws ValidationError without paste/LLM call", async () => {
 		reset();
 		setTransforms([]);
-		await expect(applyTransform("nope")).rejects.toThrow();
+		await expect(runTransformPipeline("nope")).rejects.toThrow();
 		expect(llmCalls.length).toBe(0);
 		expect(clipboardWrites.length).toBe(0);
 	});
 
-	itIfReal("empty prompt throws and never reaches the LLM", async () => {
+	test("empty prompt throws and never reaches the LLM", async () => {
 		reset();
 		setTransforms([{ id: "blank", name: "Blank", prompt: "   ", hotkey: "", builtin: false }]);
-		await expect(applyTransform("blank")).rejects.toThrow();
+		await expect(runTransformPipeline("blank")).rejects.toThrow();
 		expect(llmCalls.length).toBe(0);
 		expect(clipboardWrites.length).toBe(0);
 	});
 
-	itIfReal("empty selection short-circuits — no LLM call, no paste", async () => {
+	test("empty selection short-circuits — no LLM call, no paste", async () => {
 		reset();
 		setTransforms([
 			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
@@ -209,7 +205,7 @@ describe("applyTransform", () => {
 		// Empty UIA + no clipboard change → real captureSelection returns
 		// EMPTY_SELECTION (source "empty").
 		uiaSelection = "";
-		const result = await applyTransform("polish");
+		const result = await runTransformPipeline("polish");
 		expect(result.before).toBe("");
 		expect(result.after).toBe("");
 		expect(result.source).toBe("empty");
@@ -217,26 +213,127 @@ describe("applyTransform", () => {
 		expect(clipboardWrites.length).toBe(0);
 	});
 
-	itIfReal("throws when the transforms sub-feature is disabled (no LLM call)", async () => {
+	test("throws when the transforms sub-feature is disabled (no LLM call)", async () => {
 		reset();
 		setTransforms([
 			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
 		]);
 		liveStore.store.set("llm.transformsEnabled", false);
-		await expect(applyTransform("polish")).rejects.toThrow();
+		await expect(runTransformPipeline("polish")).rejects.toThrow();
 		expect(llmCalls.length).toBe(0);
 		expect(clipboardWrites.length).toBe(0);
 	});
 
-	itIfReal("throws when the LLM master switch is off (no LLM call)", async () => {
+	test("throws when the LLM master switch is off (no LLM call)", async () => {
 		reset();
 		setTransforms([
 			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
 		]);
 		liveStore.store.set("llm.enabled", false);
-		await expect(applyTransform("polish")).rejects.toThrow();
+		await expect(runTransformPipeline("polish")).rejects.toThrow();
 		expect(llmCalls.length).toBe(0);
 		expect(clipboardWrites.length).toBe(0);
+	});
+});
+
+describe("transforms gate helpers", () => {
+	test("hasLlmModel: false with no model, true once configured", () => {
+		reset();
+		liveStore.store.set("llm.provider", "local");
+		liveStore.store.set("llm.model", "");
+		expect(helpers.hasLlmModel()).toBe(false);
+		liveStore.store.set("llm.model", "some-model");
+		expect(helpers.hasLlmModel()).toBe(true);
+	});
+
+	test("hasLlmModel: openrouter branch keys off the API key", () => {
+		reset();
+		liveStore.store.set("llm.provider", "openrouter");
+		liveStore.store.set("llm.openrouterApiKey", "");
+		expect(helpers.hasLlmModel()).toBe(false);
+		liveStore.store.set("llm.openrouterApiKey", "sk-xxx");
+		expect(helpers.hasLlmModel()).toBe(true);
+		liveStore.store.set("llm.provider", "local");
+	});
+
+	test("isTransformsEnabled: all three conditions must hold", () => {
+		reset();
+		expect(helpers.isTransformsEnabled()).toBe(true);
+		liveStore.store.set("llm.enabled", false);
+		expect(helpers.isTransformsEnabled()).toBe(false);
+		liveStore.store.set("llm.enabled", true);
+		liveStore.store.set("llm.transformsEnabled", false);
+		expect(helpers.isTransformsEnabled()).toBe(false);
+	});
+
+	test("requireEnabledTransform / requirePrompt enforce the gate", () => {
+		reset();
+		setTransforms([{ id: "p", name: "P", prompt: "go", hotkey: "", builtin: true }]);
+		const t = helpers.requireEnabledTransform("p");
+		expect(t.id).toBe("p");
+		expect(() => helpers.requireEnabledTransform("missing")).toThrow();
+		expect(() =>
+			helpers.requirePrompt({ id: "p", name: "P", prompt: "   ", hotkey: "", builtin: true })
+		).toThrow();
+		expect(() =>
+			helpers.requirePrompt({ id: "p", name: "P", prompt: "ok", hotkey: "", builtin: true })
+		).not.toThrow();
+	});
+
+	test("runLlm resolves on success", async () => {
+		reset();
+		await expect(helpers.runLlm("id", "text", "ok")).resolves.toBe("TRANSFORMED:text");
+	});
+
+	test("runLlm re-throws and broadcasts on LLM failure", async () => {
+		reset();
+		await expect(helpers.runLlm("id", "text", "__throw__")).rejects.toThrow("LLM exploded");
+	});
+});
+
+describe("string + record guards", () => {
+	test("isNonEmptyString", () => {
+		expect(helpers.isNonEmptyString("x")).toBe(true);
+		expect(helpers.isNonEmptyString("")).toBe(false);
+		expect(helpers.isNonEmptyString(5)).toBe(false);
+		expect(helpers.isNonEmptyString(null)).toBe(false);
+	});
+
+	test("asRecord returns the object or throws", () => {
+		expect(helpers.asRecord({ a: 1 }, "X")).toEqual({ a: 1 });
+		expect(() => helpers.asRecord(null, "X")).toThrow();
+		expect(() => helpers.asRecord([], "X")).toThrow();
+	});
+});
+
+describe("broadcastAll / sendToWindow", () => {
+	function fakeWin(opts: { destroyed?: boolean; throwOnSend?: boolean }) {
+		return {
+			isDestroyed: () => opts.destroyed === true,
+			webContents: {
+				send: () => {
+					if (opts.throwOnSend) {
+						throw new Error("send blew up");
+					}
+				},
+			},
+		} as unknown as Parameters<typeof helpers.sendToWindow>[0];
+	}
+
+	test("sendToWindow skips destroyed windows", () => {
+		expect(() => helpers.sendToWindow(fakeWin({ destroyed: true }), "c", {})).not.toThrow();
+	});
+
+	test("sendToWindow swallows send errors", () => {
+		expect(() => helpers.sendToWindow(fakeWin({ throwOnSend: true }), "c", {})).not.toThrow();
+	});
+
+	test("sendToWindow delivers to a live window", () => {
+		expect(() => helpers.sendToWindow(fakeWin({}), "c", { ok: 1 })).not.toThrow();
+	});
+
+	test("broadcastAll iterates all windows without throwing", () => {
+		expect(() => helpers.broadcastAll("chan", { hello: true })).not.toThrow();
 	});
 });
 
@@ -260,6 +357,12 @@ describe("assertApplyPayload", () => {
 });
 
 describe("assertPreviewPayload", () => {
+	test("rejects non-string text", () => {
+		expect(() =>
+			__transforms_test_helpers__.assertPreviewPayload({ text: 5, systemPrompt: "y" })
+		).toThrow();
+	});
+
 	test("rejects missing or empty systemPrompt", () => {
 		expect(() =>
 			__transforms_test_helpers__.assertPreviewPayload({ text: "x", systemPrompt: "" })

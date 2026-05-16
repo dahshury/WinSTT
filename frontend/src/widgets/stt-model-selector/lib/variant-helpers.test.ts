@@ -84,4 +84,22 @@ describe("summarizeFamily", () => {
 		const s = summarizeFamily([model({ id: "z", sizeLabel: "" })]);
 		expect(s.sizeRange).toBe("");
 	});
+
+	test("range is order-independent (smallest variant listed last)", () => {
+		const s = summarizeFamily([
+			model({ id: "large", sizeLabel: "1.5B", languages: [] }),
+			model({ id: "mid", sizeLabel: "769M", languages: [] }),
+			model({ id: "tiny", sizeLabel: "39M", languages: [] }),
+		]);
+		expect(s.sizeRange).toBe("39M – 1.5B");
+	});
+
+	test("explicit non-English languages are upper-cased, deduped, sorted", () => {
+		const s = summarizeFamily([
+			model({ id: "a", sizeLabel: "39M", languages: ["ru"] }),
+			model({ id: "b", sizeLabel: "39M", languages: ["de", "ru"] }),
+			model({ id: "c", sizeLabel: "39M", languages: [] }),
+		]);
+		expect(s.languageNote).toBe("Multilingual · DE · RU");
+	});
 });

@@ -28,25 +28,30 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function assertApplyPayload(payload: unknown): asserts payload is ApplyPayload {
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0;
+}
+
+function asRecord(payload: unknown, label: string): Record<string, unknown> {
 	if (!isPlainObject(payload)) {
-		throw new ValidationError("Transform apply payload must be an object", "payload");
+		throw new ValidationError(`${label} payload must be an object`, "payload");
 	}
-	if (typeof payload.transformId !== "string" || payload.transformId.length === 0) {
+	return payload;
+}
+
+function assertApplyPayload(payload: unknown): asserts payload is ApplyPayload {
+	const obj = asRecord(payload, "Transform apply");
+	if (!isNonEmptyString(obj.transformId)) {
 		throw new ValidationError("Transform apply payload.transformId is required", "transformId");
 	}
 }
 
 function assertPreviewPayload(payload: unknown): asserts payload is PreviewPayload {
-	if (!isPlainObject(payload)) {
-		throw new ValidationError("Transform preview payload must be an object", "payload");
-	}
-	const text = payload.text;
-	const systemPrompt = payload.systemPrompt;
-	if (typeof text !== "string") {
+	const obj = asRecord(payload, "Transform preview");
+	if (typeof obj.text !== "string") {
 		throw new ValidationError("Transform preview payload.text must be a string", "text");
 	}
-	if (typeof systemPrompt !== "string" || systemPrompt.length === 0) {
+	if (!isNonEmptyString(obj.systemPrompt)) {
 		throw new ValidationError("Transform preview payload.systemPrompt is required", "systemPrompt");
 	}
 }
@@ -76,15 +81,54 @@ function isTransformsEnabled(): boolean {
 	);
 }
 
+function sendToWindow(win: BrowserWindow, channel: string, payload: unknown): void {
+	if (win.isDestroyed()) {
+		return;
+	}
+	try {
+		win.webContents.send(channel, payload);
+	} catch (err) {
+		dbg("transforms", `broadcast failed: ${(err as Error).message}`);
+	}
+}
+
 function broadcastAll(channel: string, payload: unknown): void {
 	for (const win of BrowserWindow.getAllWindows()) {
-		if (!win.isDestroyed()) {
-			try {
-				win.webContents.send(channel, payload);
-			} catch (err) {
-				dbg("transforms", `broadcast failed: ${(err as Error).message}`);
-			}
-		}
+		sendToWindow(win, channel, payload);
+	}
+}
+
+/** Broadcast `transforms:failed` and throw a {@link ValidationError}. */
+function fail(transformId: string, message: string, field: string): never {
+	broadcastAll(IPC.TRANSFORMS_FAILED, { transformId, reason: message });
+	throw new ValidationError(message, field);
+}
+
+function requireEnabledTransform(transformId: string): StoredTransform {
+	if (!isTransformsEnabled()) {
+		fail(transformId, "LLM text transformation is disabled", "transformsEnabled");
+	}
+	const transform = findTransform(transformId);
+	if (!transform) {
+		fail(transformId, `Transform "${transformId}" not found`, "transformId");
+	}
+	return transform;
+}
+
+function requirePrompt(transform: StoredTransform): void {
+	if (!transform.prompt.trim()) {
+		fail(transform.id, `Transform "${transform.name}" has no prompt`, "prompt");
+	}
+}
+
+async function runLlm(transformId: string, text: string, prompt: string): Promise<string> {
+	try {
+		return await processTextWithCustomPrompt(text, prompt);
+	} catch (err) {
+		const reason = getErrorMessage(err);
+		dbg("transforms", `LLM call failed: ${reason}`);
+		broadcastAll(IPC.TRANSFORMS_FAILED, { transformId, reason });
+		throw err;
 	}
 }
 
@@ -104,23 +148,9 @@ export interface ApplyResult {
  * `transforms:failed` event and re-throws — the IPC layer surfaces the
  * error to the renderer for the toast.
  */
-export async function applyTransform(transformId: string): Promise<ApplyResult> {
-	if (!isTransformsEnabled()) {
-		const message = "LLM text transformation is disabled";
-		broadcastAll(IPC.TRANSFORMS_FAILED, { transformId, reason: message });
-		throw new ValidationError(message, "transformsEnabled");
-	}
-	const transform = findTransform(transformId);
-	if (!transform) {
-		const message = `Transform "${transformId}" not found`;
-		broadcastAll(IPC.TRANSFORMS_FAILED, { transformId, reason: message });
-		throw new ValidationError(message, "transformId");
-	}
-	if (!transform.prompt.trim()) {
-		const message = `Transform "${transform.name}" has no prompt`;
-		broadcastAll(IPC.TRANSFORMS_FAILED, { transformId, reason: message });
-		throw new ValidationError(message, "prompt");
-	}
+async function runTransformPipeline(transformId: string): Promise<ApplyResult> {
+	const transform = requireEnabledTransform(transformId);
+	requirePrompt(transform);
 
 	const selection = await captureSelection();
 	if (!selection.text.trim()) {
@@ -136,15 +166,7 @@ export async function applyTransform(transformId: string): Promise<ApplyResult> 
 		};
 	}
 
-	let transformed: string;
-	try {
-		transformed = await processTextWithCustomPrompt(selection.text, transform.prompt);
-	} catch (err) {
-		const reason = getErrorMessage(err);
-		dbg("transforms", `LLM call failed: ${reason}`);
-		broadcastAll(IPC.TRANSFORMS_FAILED, { transformId, reason });
-		throw err;
-	}
+	const transformed = await runLlm(transformId, selection.text, transform.prompt);
 
 	// Paste replaces the selection. pasteText() mirrors to clipboard, then
 	// the native helper sends SendInput Ctrl+V — which, because the
@@ -165,6 +187,10 @@ export async function applyTransform(transformId: string): Promise<ApplyResult> 
 		after: transformed,
 		source: selection.source,
 	};
+}
+
+export async function applyTransform(transformId: string): Promise<ApplyResult> {
+	return await runTransformPipeline(transformId);
 }
 
 export function setupTransforms(): () => void {
@@ -192,5 +218,15 @@ export function setupTransforms(): () => void {
 export const __transforms_test_helpers__ = {
 	assertApplyPayload,
 	assertPreviewPayload,
+	asRecord,
+	broadcastAll,
 	findTransform,
+	hasLlmModel,
+	isNonEmptyString,
+	isTransformsEnabled,
+	requireEnabledTransform,
+	requirePrompt,
+	runLlm,
+	runTransformPipeline,
+	sendToWindow,
 };
