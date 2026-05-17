@@ -2,7 +2,12 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
-import { useTranscriptionStore } from "@/entities/transcription";
+import {
+	colorForSpeaker,
+	type SpeakerSegment,
+	type TranscriptionItem,
+	useTranscriptionStore,
+} from "@/entities/transcription";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 
 const VISIBLE_COUNT = 3;
@@ -17,6 +22,8 @@ const GONE_AFTER_MS = 8000;
 const EPHEMERAL_FADE_AFTER_MS = 2000;
 const EPHEMERAL_GONE_AFTER_MS = 3000;
 
+const WHITESPACE_SPLIT = /\s+/;
+
 function fadeBetween(timestamp: number, now: number, fadeAfter: number, goneAfter: number): number {
 	const age = now - timestamp;
 	if (age < fadeAfter) {
@@ -30,6 +37,74 @@ function fadeBetween(timestamp: number, now: number, fadeAfter: number, goneAfte
 
 function timeFade(timestamp: number, now: number): number {
 	return fadeBetween(timestamp, now, FADE_AFTER_MS, GONE_AFTER_MS);
+}
+
+/** Split text into word-count chunks weighted by each segment's duration share. */
+function splitTextBySpeaker(
+	text: string,
+	segments: SpeakerSegment[]
+): { speaker: number; text: string }[] {
+	const trimmed = text.trim();
+	if (trimmed.length === 0 || segments.length === 0) {
+		return [{ speaker: -1, text }];
+	}
+	const totalSpeech = segments.reduce((acc, s) => acc + Math.max(0, s.end - s.start), 0);
+	if (totalSpeech <= 0) {
+		return [{ speaker: segments[0]?.speaker ?? -1, text }];
+	}
+	const words = trimmed.split(WHITESPACE_SPLIT);
+	if (words.length <= 1) {
+		return [{ speaker: segments[0]?.speaker ?? -1, text }];
+	}
+	const chunks: { speaker: number; text: string }[] = [];
+	let cursor = 0;
+	for (let i = 0; i < segments.length; i++) {
+		const seg = segments[i];
+		if (seg === undefined) {
+			continue;
+		}
+		const share = Math.max(0, seg.end - seg.start) / totalSpeech;
+		const wordCount =
+			i === segments.length - 1
+				? words.length - cursor
+				: Math.max(1, Math.round(share * words.length));
+		const end = Math.min(words.length, cursor + wordCount);
+		if (end > cursor) {
+			chunks.push({ speaker: seg.speaker, text: words.slice(cursor, end).join(" ") });
+			cursor = end;
+		}
+	}
+	if (cursor < words.length) {
+		const lastSpeaker = segments.at(-1)?.speaker ?? -1;
+		chunks.push({ speaker: lastSpeaker, text: words.slice(cursor).join(" ") });
+	}
+	return chunks;
+}
+
+function OverlayLineText({ item }: { item: TranscriptionItem }) {
+	const segments = item.speakerSegments;
+	const distinctSpeakers = segments ? new Set(segments.map((s) => s.speaker)).size : 0;
+	if (!segments || segments.length === 0) {
+		return <>{item.text}</>;
+	}
+	if (distinctSpeakers <= 1) {
+		const color = colorForSpeaker(segments[0]?.speaker ?? -1);
+		return <span style={{ color }}>{item.text}</span>;
+	}
+	const chunks = splitTextBySpeaker(item.text, segments);
+	return (
+		<>
+			{chunks.map((chunk, i) => (
+				<span
+					key={`${item.id}-${chunk.speaker}-${i}`}
+					style={{ color: colorForSpeaker(chunk.speaker) }}
+				>
+					{i > 0 ? " " : ""}
+					{chunk.text}
+				</span>
+			))}
+		</>
+	);
 }
 
 export const SubtitleOverlay = memo(function SubtitleOverlay() {
@@ -102,7 +177,7 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 								key={item.id}
 								style={{ opacity: tf, transition: "opacity 300ms ease-out" }}
 							>
-								{item.text}
+								<OverlayLineText item={item} />
 							</p>
 						);
 					})}

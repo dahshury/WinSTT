@@ -1,13 +1,35 @@
 /*
  * winstt-paste — Windows fast-paste binary for WinSTT.
  *
+ * Modes:
+ *   (default)    SendInput Ctrl+V (or Ctrl+Shift+V in terminals) — pastes
+ *                whatever is currently on the system clipboard.
+ *   --type       Read UTF-8 from stdin and inject each UTF-16 code unit via
+ *                SendInput KEYEVENTF_UNICODE. The clipboard is never touched.
+ *                This is the default path WinSTT uses to deliver transcripts
+ *                so the user's clipboard stays intact.
+ *   --copy       SendInput Ctrl+C (or Ctrl+Shift+C in terminals) — used by
+ *                the selection-capture trick when UIA can't read the focused
+ *                control.
+ *   --detect-only Print foreground window class / exe / terminal status.
+ *
  * Why a native binary instead of PowerShell + SendInput:
  *  - PowerShell cold-start is 2-8s under Defender scanning.
  *  - Each fresh `.ps1` written to %TEMP% is re-scanned by AV.
  *  - SendInput from `winstt-paste.exe` doesn't trip AV's
  *    "paste-from-script" heuristic the same way as PowerShell does.
  *
- * Why SendInput Ctrl+V (and not WM_PASTE):
+ * Why KEYEVENTF_UNICODE for the typing mode:
+ *  - Lets us deliver the transcript without writing to the clipboard. Each
+ *    UTF-16 code unit becomes one keydown+keyup with `wVk=0, wScan=unit,
+ *    dwFlags=KEYEVENTF_UNICODE`. Surrogate pairs are sent as two consecutive
+ *    units in the same SendInput call so Windows recombines them.
+ *  - Works in nearly every GUI app (browsers, Electron, chat apps, IDEs).
+ *  - Known limits: a few games and remote-desktop sessions ignore
+ *    KEYEVENTF_UNICODE; for those the parent process falls back to clipboard
+ *    + Ctrl+V (with restore).
+ *
+ * Why SendInput Ctrl+V (and not WM_PASTE) in the clipboard-paste mode:
  *  - Modern Electron / browser / chat apps (Cursor, VS Code, Slack,
  *    Discord, Chromium-based editors, web inputs) don't process
  *    WM_PASTE — they listen for keyboard events directly. WM_PASTE
@@ -22,14 +44,19 @@
  *  - or: gcc -O2 winstt-paste.c -o winstt-paste.exe -luser32
  *
  * Exit codes:
- *   0 — paste injected
+ *   0 — paste/type/copy injected
  *   1 — SendInput refused some/all events
  *   2 — no foreground window
+ *   3 — watchdog timeout (forced exit from watchdog thread)
+ *   4 — --type with empty or unreadable stdin
  */
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <io.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char* TERMINAL_CLASSES[] = {
@@ -181,6 +208,152 @@ static int send_copy_terminal(void) {
 }
 
 /*
+ * Type a single UTF-16 code unit via SendInput. Used for both the high and
+ * low halves of a surrogate pair (sent in the same SendInput batch so
+ * Windows reassembles them into one Unicode codepoint).
+ */
+static void set_unicode_key(INPUT* input, WORD code_unit, DWORD extra_flags) {
+    input->type = INPUT_KEYBOARD;
+    input->ki.wVk = 0;
+    input->ki.wScan = code_unit;
+    input->ki.dwFlags = KEYEVENTF_UNICODE | extra_flags;
+    input->ki.time = 0;
+    input->ki.dwExtraInfo = 0;
+}
+
+/* Batched typing: we send a small fixed number of code units per SendInput
+ * call. Anything larger risks SendInput dropping events under load, and the
+ * surrogate-pair contract (high+low must arrive in the same call) is
+ * preserved by always sending the pair together. */
+#define TYPE_BATCH_UNITS 64
+
+/*
+ * Inject a UTF-16 string as synthetic keystrokes. Returns 0 on success, 1 if
+ * SendInput refused any event. Each unit gets a paired keydown+keyup; high
+ * and low surrogates are written into the same SendInput batch.
+ */
+static int send_unicode_text(const WCHAR* text, size_t units) {
+    if (units == 0) return 0;
+
+    INPUT batch[TYPE_BATCH_UNITS * 2];
+    size_t i = 0;
+    while (i < units) {
+        size_t batch_units = 0;
+        UINT event_count = 0;
+        while (i < units && batch_units < TYPE_BATCH_UNITS) {
+            WCHAR unit = text[i];
+            BOOL is_high_surrogate = (unit >= 0xD800 && unit <= 0xDBFF);
+            BOOL has_low_partner = (is_high_surrogate
+                && i + 1 < units
+                && text[i + 1] >= 0xDC00
+                && text[i + 1] <= 0xDFFF);
+            /* If a high surrogate would split across batches, flush now so
+             * the pair goes together. */
+            if (has_low_partner && batch_units + 2 > TYPE_BATCH_UNITS) {
+                break;
+            }
+            ZeroMemory(&batch[event_count], sizeof(INPUT) * 2);
+            set_unicode_key(&batch[event_count], unit, 0);
+            set_unicode_key(&batch[event_count + 1], unit, KEYEVENTF_KEYUP);
+            event_count += 2;
+            i++;
+            batch_units++;
+            if (has_low_partner) {
+                WCHAR low = text[i];
+                ZeroMemory(&batch[event_count], sizeof(INPUT) * 2);
+                set_unicode_key(&batch[event_count], low, 0);
+                set_unicode_key(&batch[event_count + 1], low, KEYEVENTF_KEYUP);
+                event_count += 2;
+                i++;
+                batch_units++;
+            }
+        }
+        UINT sent = SendInput(event_count, batch, sizeof(INPUT));
+        if (sent != event_count) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Read the entire stdin stream into a malloc'd UTF-8 buffer (NUL-terminated).
+ * Caller frees with free(). Returns NULL on allocation failure or empty input.
+ */
+static char* read_stdin_utf8(size_t* out_len) {
+    /* Put stdin in binary mode so CRLF isn't translated; we want bytes
+     * exactly as the parent wrote them. */
+    _setmode(_fileno(stdin), _O_BINARY);
+
+    size_t cap = 1024;
+    size_t len = 0;
+    char* buf = (char*)malloc(cap);
+    if (!buf) return NULL;
+
+    while (1) {
+        if (len + 1024 > cap) {
+            size_t new_cap = cap * 2;
+            char* new_buf = (char*)realloc(buf, new_cap);
+            if (!new_buf) {
+                free(buf);
+                return NULL;
+            }
+            buf = new_buf;
+            cap = new_cap;
+        }
+        size_t to_read = cap - len - 1;
+        size_t n = fread(buf + len, 1, to_read, stdin);
+        len += n;
+        if (n < to_read) break; /* EOF or error */
+    }
+
+    if (len == 0) {
+        free(buf);
+        return NULL;
+    }
+    buf[len] = '\0';
+    if (out_len) *out_len = len;
+    return buf;
+}
+
+/*
+ * Type the UTF-8 text on stdin into the foreground window. Returns the same
+ * exit codes as the paste path. The caller is responsible for releasing /
+ * restoring modifier keys around this call (we don't do it here so the main
+ * function can keep the modifier handling identical to the paste path).
+ */
+static int do_type_from_stdin(void) {
+    size_t utf8_len = 0;
+    char* utf8 = read_stdin_utf8(&utf8_len);
+    if (!utf8) {
+        fprintf(stderr, "ERROR: --type received no input on stdin\n");
+        return 4;
+    }
+    int wide_len = MultiByteToWideChar(CP_UTF8, 0, utf8, (int)utf8_len, NULL, 0);
+    if (wide_len <= 0) {
+        fprintf(stderr, "ERROR: stdin is not valid UTF-8\n");
+        free(utf8);
+        return 4;
+    }
+    WCHAR* wide = (WCHAR*)malloc(sizeof(WCHAR) * (size_t)wide_len);
+    if (!wide) {
+        free(utf8);
+        fprintf(stderr, "ERROR: out of memory\n");
+        return 4;
+    }
+    int converted = MultiByteToWideChar(CP_UTF8, 0, utf8, (int)utf8_len, wide, wide_len);
+    free(utf8);
+    if (converted != wide_len) {
+        free(wide);
+        fprintf(stderr, "ERROR: UTF-8 conversion produced %d / %d units\n", converted, wide_len);
+        return 4;
+    }
+    int rc = send_unicode_text(wide, (size_t)wide_len);
+    free(wide);
+    return rc;
+}
+
+/*
  * Watchdog: if SendInput hangs because of an AV / accessibility
  * keyboard hook, we want THIS process to exit promptly so the
  * Electron parent's `child.on('close')` fires and the paste queue
@@ -203,9 +376,11 @@ static DWORD WINAPI watchdog(LPVOID arg) {
 int main(int argc, char* argv[]) {
     BOOL detect_only = FALSE;
     BOOL copy_mode = FALSE;
+    BOOL type_mode = FALSE;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--detect-only") == 0) detect_only = TRUE;
         else if (strcmp(argv[i], "--copy") == 0) copy_mode = TRUE;
+        else if (strcmp(argv[i], "--type") == 0) type_mode = TRUE;
     }
 
     HWND hwnd = GetForegroundWindow();
@@ -246,7 +421,9 @@ int main(int argc, char* argv[]) {
     int released_count = release_modifiers(released);
 
     int rc;
-    if (copy_mode) {
+    if (type_mode) {
+        rc = do_type_from_stdin();
+    } else if (copy_mode) {
         rc = terminal ? send_copy_terminal() : send_copy_normal();
     } else {
         rc = terminal ? send_paste_terminal() : send_paste_normal();
@@ -261,12 +438,19 @@ int main(int argc, char* argv[]) {
     }
 
     if (rc != 0) {
+        if (rc == 4) {
+            /* read_stdin_utf8 / MultiByteToWideChar already wrote a
+             * specific stderr message; preserve that exit code as-is. */
+            return 4;
+        }
         fprintf(stderr, "ERROR: SendInput failed (%lu)\n", GetLastError());
         return 1;
     }
 
     Sleep(20);
-    if (copy_mode) {
+    if (type_mode) {
+        printf("TYPE_OK %s\n", class_name);
+    } else if (copy_mode) {
         printf("COPY_OK %s %s\n", class_name, terminal ? "ctrl+shift+c" : "ctrl+c");
     } else {
         printf("PASTE_OK %s %s\n", class_name, terminal ? "ctrl+shift+v" : "ctrl+v");

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import Callable
 from types import TracebackType
 from typing import Any, ClassVar
 
@@ -12,17 +11,16 @@ from scipy.signal import resample_poly
 from typing_extensions import override
 
 from src.building_blocks.errors import DeviceError
-from src.building_blocks.types import AudioChunk, BufferSize, SampleRate
+from src.building_blocks.types import (
+    AudioChunk,
+    BufferSize,
+    DeviceBecameAvailableCallback,
+    DeviceSwitchFailedCallback,
+    SampleRate,
+)
 from src.recorder.domain.ports.audio_source import IAudioSource
 
 logger = logging.getLogger(__name__)
-
-# Callback fired by the audio reader thread when a device switch can't open
-# the requested device and falls back. Args: (requested_index, error_message,
-# fallback_index_or_None). Kept as a plain callable rather than an EventBus
-# event because PyAudioSource is in the infrastructure layer and the bus
-# lives in application; bootstrap wires it up.
-DeviceSwitchFailedCallback = Callable[[int, str, int | None], None]
 
 
 def _format_pa_error(e: BaseException) -> str:
@@ -47,6 +45,15 @@ except ImportError:
 _DEFAULT_SAMPLE_RATE = SampleRate(16000)
 _DEFAULT_BUFFER_SIZE = BufferSize(512)
 
+# Hotplug probe cadence. The audio reader thread runs ``read_chunk`` once
+# per buffer cycle (~32 ms at 16 kHz / 512-sample buffers). At 30 chunks
+# between probes we re-check the default input device about once per
+# second — fast enough that a freshly-plugged USB mic shows up before the
+# user notices, slow enough that ``pa.get_default_input_device_info``
+# (a cheap metadata call but still a couple ms) doesn't dominate the
+# reader loop when the system genuinely has no input hardware.
+_DEFAULT_DEVICE_PROBE_EVERY_N_CHUNKS = 30
+
 
 class PyAudioSource(IAudioSource):
     # Sentinel meaning "no device switch is currently queued".  Distinct
@@ -61,6 +68,8 @@ class PyAudioSource(IAudioSource):
         target_sample_rate: SampleRate = _DEFAULT_SAMPLE_RATE,
         buffer_size: BufferSize = _DEFAULT_BUFFER_SIZE,
         on_device_switch_failed: DeviceSwitchFailedCallback | None = None,
+        on_device_became_available: DeviceBecameAvailableCallback | None = None,
+        device_probe_every_n_chunks: int = _DEFAULT_DEVICE_PROBE_EVERY_N_CHUNKS,
     ) -> None:
         self._input_device_index = input_device_index
         self._target_sample_rate = target_sample_rate
@@ -74,7 +83,25 @@ class PyAudioSource(IAudioSource):
         # disappears. Initial value is False so a freshly-set-up source
         # doesn't capture until something explicitly asks it to.
         self._capturing = False
+        # "Capture intent" decoupled from "capturing now". Lets resume()
+        # called while waiting-for-device remember the user's wish so the
+        # auto-attached hotplug stream starts producing audio without a
+        # second resume() round trip after the device shows up.
+        self._capture_intent = False
         self._on_device_switch_failed = on_device_switch_failed
+        self._on_device_became_available = on_device_became_available
+        # True between "no default device at setup" / unplug and the next
+        # successful (re)attach. While true, ``read_chunk`` returns silence
+        # and periodically polls for a default device. False once a stream
+        # is open and producing audio. Public for tests / observability.
+        self._waiting_for_device = False
+        # Probe rate-limit counter. Incremented every ``read_chunk`` cycle
+        # while waiting; when it reaches ``_device_probe_every_n_chunks``
+        # we attempt one ``pa.get_default_input_device_info`` + open. The
+        # counter approach avoids depending on a wall clock — it stays
+        # deterministic in tests that drive read_chunk synchronously.
+        self._device_probe_every_n_chunks = device_probe_every_n_chunks
+        self._chunks_since_last_probe = 0
         # Bytes per int16 sample. Cached so read_chunk() can build silence
         # buffers without holding a PyAudio reference. Matches PyAudio's
         # canonical pa.get_sample_size(paInt16) idiom — int16 is always
@@ -120,16 +147,41 @@ class PyAudioSource(IAudioSource):
                 # re-pick their device in Settings — no restart needed thanks
                 # to the live ``switch_device`` path.
                 if requested_index is None:
-                    raise
-                logger.warning(
-                    "Configured input device %s unavailable (%s); falling back to system default",
-                    requested_index,
-                    primary_err,
-                )
-                self._input_device_index = None
-                self._device_sample_rate = None
-                self._open_stream(pa, None)
-                self._stop_stream_safely(self._stream)
+                    # No default device exists at boot either — the user
+                    # launched the app with nothing plugged in (or all
+                    # inputs disabled). Don't fail the whole recorder:
+                    # enter the hotplug "waiting" state and let read_chunk
+                    # poll for a device. The reader thread keeps draining
+                    # silence, the WebSocket server still comes up, and as
+                    # soon as the OS reports a default input we'll attach.
+                    logger.warning(
+                        "No default input device at startup (%s); entering hotplug-wait state",
+                        primary_err,
+                    )
+                    self._waiting_for_device = True
+                    self._stream = None
+                    self._device_sample_rate = None
+                else:
+                    logger.warning(
+                        "Configured input device %s unavailable (%s); falling back to system default",
+                        requested_index,
+                        primary_err,
+                    )
+                    self._input_device_index = None
+                    self._device_sample_rate = None
+                    try:
+                        self._open_stream(pa, None)
+                        self._stop_stream_safely(self._stream)
+                    except DeviceError as fallback_err:
+                        # Neither the configured device nor the default exists.
+                        # Same recovery path as the no-default case above.
+                        logger.warning(
+                            "Default input device also unavailable (%s); entering hotplug-wait state",
+                            fallback_err,
+                        )
+                        self._waiting_for_device = True
+                        self._stream = None
+                        self._device_sample_rate = None
 
             self._active = True
             self._capturing = False
@@ -185,6 +237,13 @@ class PyAudioSource(IAudioSource):
             self._pending_device_index = self._NO_PENDING
             self._apply_device_switch(pending)  # type: ignore[arg-type]
 
+        # Hotplug poll: if we entered setup with no device (or lost the
+        # device mid-run), periodically re-check the system default.
+        # Cheap metadata-only call, gated by a chunk counter so we don't
+        # hammer PortAudio on every iteration.
+        if self._waiting_for_device:
+            self._try_attach_default_device()
+
         # Paused: hardware is allocated but not capturing. Sleep for one
         # chunk's worth of time so the reader loop's cadence matches what
         # an active stream would produce, then hand back silence. Calling
@@ -205,10 +264,87 @@ class PyAudioSource(IAudioSource):
         # the next read picks up where we are now. Reference behaviour
         # (PyAudio record.py) keeps the default True; we deliberately
         # diverge for streaming.
-        raw: bytes = self._stream.read(self._buffer_size, exception_on_overflow=False)
+        try:
+            raw: bytes = self._stream.read(self._buffer_size, exception_on_overflow=False)
+        except OSError as e:
+            # The device went away under us (USB unplug, Bluetooth drop,
+            # driver reset). Don't take the whole audio thread down — drop
+            # the stream, flip back into waiting state so the hotplug
+            # poller can pick up whatever the user plugs in next, and
+            # return silence this cycle.
+            logger.warning("Audio stream read failed (%s); re-entering hotplug-wait state", _format_pa_error(e))
+            self._enter_waiting_state()
+            return b"\x00" * (self._buffer_size * self._sample_width)
         if self._device_sample_rate and self._device_sample_rate != self._target_sample_rate:
             raw = self._resample(raw, self._device_sample_rate, self._target_sample_rate)
         return raw
+
+    def _try_attach_default_device(self) -> None:
+        """Poll for a default input device; attach + notify when one appears.
+
+        Called from ``read_chunk`` while in waiting state. Rate-limited via
+        a chunk counter so a no-mic boot doesn't slam PortAudio with one
+        metadata probe per ~32 ms cycle. The probe itself
+        (``pa.get_default_input_device_info``) is a couple-of-ms metadata
+        call; the heavy work is the subsequent ``pa.open`` on a hit, which
+        is the cost we'd pay on attach anyway.
+        """
+        self._chunks_since_last_probe += 1
+        if self._chunks_since_last_probe < self._device_probe_every_n_chunks:
+            return
+        self._chunks_since_last_probe = 0
+
+        pa = self._audio_interface
+        if pa is None:
+            return
+        try:
+            info: Any = pa.get_default_input_device_info()
+            device_index = int(info["index"])
+        except OSError:
+            return
+        try:
+            self._open_stream(pa, device_index)
+        except DeviceError as e:
+            logger.debug("Hotplug probe found device %s but open failed: %s", device_index, e)
+            return
+        # Stream is open. Match the post-setup contract: paused unless the
+        # user already expressed capture intent (resume() while waiting).
+        if self._capture_intent:
+            self._capturing = True
+        else:
+            self._stop_stream_safely(self._stream)
+        self._waiting_for_device = False
+        attached_index = self._input_device_index
+        if attached_index is not None and self._on_device_became_available is not None:
+            try:
+                self._on_device_became_available(attached_index)
+            except Exception:
+                logger.exception("on_device_became_available callback raised")
+
+    def _enter_waiting_state(self) -> None:
+        """Tear down the current stream and flip the source into hotplug-wait.
+
+        Used on mid-run device loss (read failure) so the source can keep
+        running and pick up a replacement device on the next probe cycle.
+        Capture intent is preserved — if the user had the mic actively
+        capturing when it disappeared, the auto-attached replacement
+        starts capturing immediately rather than waiting for a second
+        resume() round trip.
+        """
+        if self._stream is not None:
+            with contextlib.suppress(Exception):
+                self._stream.stop_stream()
+            with contextlib.suppress(Exception):
+                self._stream.close()
+            self._stream = None
+        self._waiting_for_device = True
+        self._capturing = False
+        self._chunks_since_last_probe = 0
+        self._device_sample_rate = None
+        # Reset to None so the poller probes for the *current* default
+        # device. Holding on to the disappeared index would just make
+        # the next ``_open_stream`` fail on the same dead handle.
+        self._input_device_index = None
 
     def _apply_device_switch(self, device_index: int | None) -> None:
         """Close the current stream and open a new one on ``device_index``.
@@ -266,6 +402,19 @@ class PyAudioSource(IAudioSource):
         if not self._capturing and self._stream is not None:
             self._stop_stream_safely(self._stream)
 
+        # If we got here from the hotplug-wait path (user picked a device
+        # from the dropdown after plug-in), exit waiting state so the
+        # poller stops probing.
+        if self._stream is not None:
+            self._waiting_for_device = False
+            self._chunks_since_last_probe = 0
+            # If the user already expressed capture intent while waiting,
+            # honor it now that we have a stream.
+            if self._capture_intent and not self._capturing:
+                with contextlib.suppress(Exception):
+                    self._stream.start_stream()
+                self._capturing = True
+
     def _notify_switch_failed(
         self,
         requested_index: int,
@@ -303,6 +452,8 @@ class PyAudioSource(IAudioSource):
 
         self._active = False
         self._capturing = False
+        self._capture_intent = False
+        self._waiting_for_device = False
 
     @override
     def is_active(self) -> bool:
@@ -312,6 +463,16 @@ class PyAudioSource(IAudioSource):
     @override
     def is_capturing(self) -> bool:
         return self._capturing
+
+    @property
+    def is_waiting_for_device(self) -> bool:
+        """True iff the source has no live stream and is polling for one.
+
+        Exposed for observability/tests. Not part of ``IAudioSource``
+        because non-PyAudio backends (file source, fakes) don't model
+        device hotplug.
+        """
+        return self._waiting_for_device
 
     @override
     def pause(self) -> None:
@@ -325,6 +486,11 @@ class PyAudioSource(IAudioSource):
 
         Idempotent: calling pause() on a paused source is a no-op.
         """
+        # Always clear capture intent — pause() must override any earlier
+        # resume() that happened while waiting for a device, otherwise a
+        # delayed hotplug attach would start capturing against the user's
+        # current wishes.
+        self._capture_intent = False
         if not self._capturing:
             return
         if self._stream is not None:
@@ -352,10 +518,19 @@ class PyAudioSource(IAudioSource):
         magnitude larger, and the pre-roll buffer covers the small
         sliver in front of the first phoneme.
         """
+        # Record intent unconditionally so a delayed hotplug attach can
+        # honor "user wants to capture" even when no device is available
+        # right now.
+        self._capture_intent = True
         if self._capturing:
             return
         pa = self._audio_interface
         if pa is None:
+            return
+        if self._waiting_for_device:
+            # No stream to (re)open yet — the hotplug poller will attach
+            # one as soon as the OS exposes a device, and will honor the
+            # capture_intent flag we just set.
             return
         if self._stream is not None:
             try:

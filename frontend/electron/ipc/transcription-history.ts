@@ -1,6 +1,11 @@
+import { isRecord } from "../lib/ipc-helpers";
+
 export interface TranscriptionHistoryEntry {
 	durationMs: number;
 	id: string;
+	/** Pre-LLM text (post-processing applied). Omitted when no LLM ran. */
+	originalText?: string;
+	/** Final text (after LLM correction if configured). */
 	text: string;
 	timestamp: number;
 	wordCount: number;
@@ -9,7 +14,7 @@ export interface TranscriptionHistoryEntry {
 export interface TranscriptionHistoryStore {
 	clear(): void;
 	getHistory(): TranscriptionHistoryEntry[];
-	record(text: string, durationMs: number): TranscriptionHistoryEntry | null;
+	record(text: string, durationMs: number, originalText?: string): TranscriptionHistoryEntry | null;
 }
 
 /**
@@ -38,13 +43,6 @@ export function countWords(text: string): number {
 }
 
 type UnknownRecord = Record<string, unknown>;
-
-function isPlainObject(value: unknown): value is UnknownRecord {
-	if (typeof value !== "object") {
-		return false;
-	}
-	return value !== null;
-}
 
 function hasStringId(v: UnknownRecord): boolean {
 	return typeof v.id === "string";
@@ -78,7 +76,7 @@ const FIELD_PREDICATES: ReadonlyArray<(v: UnknownRecord) => boolean> = [
 ];
 
 function isEntry(value: unknown): value is TranscriptionHistoryEntry {
-	if (!isPlainObject(value)) {
+	if (!isRecord(value)) {
 		return false;
 	}
 	return FIELD_PREDICATES.every((pred) => pred(value));
@@ -103,11 +101,12 @@ export function createTranscriptionHistoryStore(options: CreateOptions): Transcr
 	}
 
 	return {
-		record(text, durationMs) {
+		record(text, durationMs, originalText) {
 			const trimmed = text.trim();
 			if (trimmed.length === 0) {
 				return null;
 			}
+			const trimmedOriginal = originalText?.trim();
 			const entry: TranscriptionHistoryEntry = {
 				id: makeId(),
 				timestamp: now(),
@@ -115,6 +114,12 @@ export function createTranscriptionHistoryStore(options: CreateOptions): Transcr
 				wordCount: countWords(trimmed),
 				durationMs: Math.max(0, Math.floor(durationMs)),
 			};
+			// Only attach originalText when it actually differs — saves storage
+			// space and lets the UI cleanly hide "Copy Original" for entries
+			// that never went through the LLM.
+			if (trimmedOriginal && trimmedOriginal.length > 0 && trimmedOriginal !== trimmed) {
+				entry.originalText = trimmedOriginal;
+			}
 			entries.push(entry);
 			if (entries.length > maxEntries) {
 				entries.splice(0, entries.length - maxEntries);

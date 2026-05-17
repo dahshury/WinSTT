@@ -28,6 +28,7 @@ import {
 	type WindowTelemetryPayload,
 } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { TextField } from "@/shared/ui/text-field";
@@ -228,17 +229,20 @@ function OverviewSection({ hasElectron, t }: OverviewSectionProps): ReactNode {
 	);
 }
 
-interface MenuStatusBlockProps {
-	menuStatus: string;
+interface StatusBlockProps {
+	message: string;
 }
 
-function MenuStatusBlock({ menuStatus }: MenuStatusBlockProps): ReactNode {
-	if (!menuStatus) {
+/** Single status block shared by the menu / clipboard / updater sections.
+ *  Null-renders on empty message so callers can pass through their state
+ *  variable without an outer guard. */
+function StatusBlock({ message }: StatusBlockProps): ReactNode {
+	if (!message) {
 		return null;
 	}
 	return (
 		<div className="col-span-2 rounded border border-border bg-surface px-2 py-1 text-foreground-secondary text-xs-tight">
-			{menuStatus}
+			{message}
 		</div>
 	);
 }
@@ -269,7 +273,7 @@ function MenuEditorSection({
 
 	return (
 		<SettingSection icon={MenuSquareIcon} title={t("menuEditor")}>
-			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2">
 					<FormControl caption={t("menuJsonCaption")} label={t("menuJsonLabel")}>
 						<Field.Control
@@ -303,7 +307,7 @@ function MenuEditorSection({
 						{t("resetMenu")}
 					</Button>
 				</div>
-				<MenuStatusBlock menuStatus={menuStatus} />
+				<StatusBlock message={menuStatus} />
 			</div>
 		</SettingSection>
 	);
@@ -335,7 +339,7 @@ function ContextMenuSection({
 
 	return (
 		<SettingSection icon={TouchInteraction03Icon} title={t("contextMenuTitle")}>
-			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2">
 					<Button
 						className="rounded border border-border border-dashed bg-surface px-3 py-4 text-body-sm text-foreground-dim"
@@ -358,21 +362,6 @@ function ContextMenuSection({
 				</div>
 			</div>
 		</SettingSection>
-	);
-}
-
-interface ClipboardStatusBlockProps {
-	clipboardStatus: string;
-}
-
-function ClipboardStatusBlock({ clipboardStatus }: ClipboardStatusBlockProps): ReactNode {
-	if (!clipboardStatus) {
-		return null;
-	}
-	return (
-		<div className="col-span-2 rounded border border-border bg-surface px-2 py-1 text-foreground-secondary text-xs-tight">
-			{clipboardStatus}
-		</div>
 	);
 }
 
@@ -418,14 +407,16 @@ function ClipboardSection({
 
 	return (
 		<SettingSection icon={ClipboardIcon} title={t("clipboardTitle")}>
-			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2">
 					<FormControl caption={t("clipboardCaption")} label={t("clipboardLabel")}>
-						<TextField
-							onChange={(event) => setClipboardInput(event.target.value)}
-							placeholder={t("clipboardPlaceholder")}
-							value={clipboardInput}
-						/>
+						<ElevatedSurface inline>
+							<TextField
+								onChange={(event) => setClipboardInput(event.target.value)}
+								placeholder={t("clipboardPlaceholder")}
+								value={clipboardInput}
+							/>
+						</ElevatedSurface>
 					</FormControl>
 				</div>
 				<div className="col-span-2 flex flex-wrap gap-2">
@@ -451,24 +442,9 @@ function ClipboardSection({
 						{t("clearClipboard")}
 					</Button>
 				</div>
-				<ClipboardStatusBlock clipboardStatus={clipboardStatus} />
+				<StatusBlock message={clipboardStatus} />
 			</div>
 		</SettingSection>
-	);
-}
-
-interface UpdaterStatusBlockProps {
-	updaterStatus: string;
-}
-
-function UpdaterStatusBlock({ updaterStatus }: UpdaterStatusBlockProps): ReactNode {
-	if (!updaterStatus) {
-		return null;
-	}
-	return (
-		<div className="col-span-2 rounded border border-border bg-surface px-2 py-1 text-foreground-secondary text-xs-tight">
-			{updaterStatus}
-		</div>
 	);
 }
 
@@ -555,7 +531,7 @@ function UpdaterSection({
 
 	return (
 		<SettingSection icon={CloudIcon} title={t("updaterTitle")}>
-			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2 flex flex-wrap gap-2">
 					<Button
 						className="rounded-md border border-border bg-surface px-3 py-1.5 text-body-sm hover:bg-surface-hover"
@@ -572,7 +548,7 @@ function UpdaterSection({
 						{t("clearHistory")}
 					</Button>
 				</div>
-				<UpdaterStatusBlock updaterStatus={updaterStatus} />
+				<StatusBlock message={updaterStatus} />
 				<ScrollArea className="col-span-2 max-h-44 rounded border border-border bg-surface">
 					<UpdaterEntries entries={entriesDesc} t={t} />
 				</ScrollArea>
@@ -640,7 +616,7 @@ function TelemetrySection({
 }: TelemetrySectionProps): ReactNode {
 	return (
 		<SettingSection icon={Activity01Icon} title={t("telemetryTitle")}>
-			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+			<div className="flex flex-col divide-y divide-surface-1">
 				<FormControl
 					caption={t("telemetryCaption")}
 					label={t("telemetryLabel")}

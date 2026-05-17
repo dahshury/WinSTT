@@ -13,7 +13,6 @@ beforeEach(() => {
 				...initialSettings.general,
 				visualizerType: "bar",
 				visualizerBarCount: 9,
-				visualizerColor: "#58a6ff",
 			},
 		},
 	});
@@ -37,7 +36,6 @@ describe("AudioVisualizer", () => {
 				general: {
 					...initialSettings.general,
 					visualizerType: type,
-					visualizerColor: "#abcdef",
 					visualizerBarCount: 9,
 				},
 			},

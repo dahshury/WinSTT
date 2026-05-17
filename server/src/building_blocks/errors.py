@@ -33,10 +33,6 @@ class InfrastructureError(DomainError):
     """Base exception for infrastructure-layer errors."""
 
 
-class ValidationError(DomainError):
-    """Raised when input validation fails."""
-
-
 class ResourceError(DomainError):
     """Base exception for resource-related errors."""
 
@@ -65,29 +61,5 @@ class WakeWordError(DomainError):
     """Base exception for wake word detection errors."""
 
 
-class NetworkError(InfrastructureError):
-    """Raised when network operations fail."""
-
-
-class IOError(InfrastructureError):
-    """Raised when I/O operations fail."""
-
-
-class ResourceExhaustedError(ResourceError):
-    """Raised when a resource is exhausted (memory, disk, etc.)."""
-
-
 class DeviceError(InfrastructureError):
     """Raised when audio device operations fail."""
-
-
-class ModelError(InfrastructureError):
-    """Raised when model operations fail (load, inference, etc.)."""
-
-
-class ThreadError(ApplicationError):
-    """Raised when thread operations fail."""
-
-
-class ShutdownError(ApplicationError):
-    """Raised when graceful shutdown fails."""

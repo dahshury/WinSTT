@@ -3,6 +3,7 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { ServerStack01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import type { Ref } from "react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
@@ -18,6 +19,9 @@ export interface SttModelListProps {
 	currentQuantization: OnnxQuantization;
 	hasActiveFilters: boolean;
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
+	/** Forwarded to the overflow-y-auto wrapper so the selector can drive
+	 *  scroll-spy + click-to-scroll for the left family rail. */
+	scrollRef?: Ref<HTMLDivElement>;
 	selectedId: string | undefined;
 	statesById: Record<string, ModelStateEntry>;
 	systemInfo: SystemInfoEntry | null;
@@ -26,7 +30,10 @@ export interface SttModelListProps {
 function AuthorLabel({ family }: { family: FamilyKey }) {
 	const config = getFamilyConfig(family);
 	return (
-		<Combobox.GroupLabel className="sticky top-0 z-10 flex items-center gap-2 border-border/60 border-b bg-surface-elevated/95 px-3 py-1.5 backdrop-blur-sm">
+		<Combobox.GroupLabel
+			className="sticky top-0 z-10 flex items-center gap-2 border-border/60 border-b bg-surface-elevated/95 px-3 py-1.5 backdrop-blur-sm"
+			data-rail-section={family}
+		>
 			<span className={`flex size-4 items-center justify-center rounded ${config.chip}`}>
 				<HugeiconsIcon className="size-3" icon={config.icon} />
 			</span>
@@ -61,9 +68,14 @@ export function SttModelList({
 	currentQuantization,
 	onSelect,
 	hasActiveFilters,
+	scrollRef,
 }: SttModelListProps) {
 	return (
-		<div className="flex min-h-0 flex-1 flex-col overflow-y-auto" data-slot="stt-model-list">
+		<div
+			className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+			data-slot="stt-model-list"
+			ref={scrollRef}
+		>
 			<Combobox.Empty className="block">
 				<EmptyState hasActiveFilters={hasActiveFilters} />
 			</Combobox.Empty>

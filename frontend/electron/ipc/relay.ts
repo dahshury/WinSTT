@@ -6,6 +6,7 @@ import { createSafeSender, type SafeSend } from "../lib/ipc-helpers";
 import { pasteText } from "../lib/paste";
 import { onAudioLevel, onRecordingStart, onRecordingStop } from "../lib/recording-indicator";
 import { consumeRecordingStart, notifyRecordingStop } from "../lib/recording-state";
+import { breadcrumb } from "../lib/sentry-main";
 import { createSerialQueue } from "../lib/serial-queue";
 import { getStoreValue, store } from "../lib/store";
 import {
@@ -28,22 +29,32 @@ function extractEventText(event: Record<string, unknown>): string {
 	return String(event.text ?? "");
 }
 
-function hasLlmModel(provider: unknown): boolean {
+function hasDictationModel(): boolean {
+	const provider = getStoreValue("llm.dictation.provider");
 	if (provider === "openrouter") {
 		return Boolean(getStoreValue("llm.openrouterApiKey"));
 	}
-	return Boolean(getStoreValue("llm.model"));
+	return Boolean(getStoreValue("llm.dictation.model"));
 }
 
-// Dictation cleanup runs only when the master switch AND the dictation
-// sub-feature are both on (and a model is configured). The transforms
-// sub-feature has its own independent gate in transforms.ts.
+// Dictation cleanup runs when the dictation feature is enabled and has a
+// model configured for its chosen provider. There is no master switch —
+// transforms have their own independent gate in transforms.ts.
 function isLlmConfigured(): boolean {
-	const enabled = getStoreValue("llm.enabled");
-	const dictationEnabled = getStoreValue("llm.dictationEnabled");
-	return (
-		enabled === true && dictationEnabled === true && hasLlmModel(getStoreValue("llm.provider"))
-	);
+	return getStoreValue("llm.dictation.enabled") === true && hasDictationModel();
+}
+
+// Listen mode is a passive monitor — captions only. No personalisation,
+// persistence, LLM cleanup, or sentry breadcrumb metrics.
+function isListenMode(): boolean {
+	return getStoreValue("general.recordingMode") === "listen";
+}
+
+// Dictation LLM runs only when configured AND not in listen mode. The
+// overlay-deferral path (recording_stop / empty-text fullSentence) keys
+// off the same predicate so it can hide the pill promptly in listen mode.
+function shouldRunDictationLlm(): boolean {
+	return isLlmConfigured() && !isListenMode();
 }
 
 async function tryLlmProcess(text: string, context: string): Promise<string> {
@@ -69,9 +80,9 @@ async function maybeRunLlm(text: string, context: string, safeSend?: SafeSend): 
 	// already hid the overlay by the time we get here in the typical flow,
 	// so this re-shows it for the duration of the LLM call.
 	showOverlay();
-	safeSend?.("llm:processing-start");
+	safeSend?.(IPC.LLM_PROCESSING_START);
 	const out = await tryLlmProcess(text, context);
-	safeSend?.("llm:processing-end");
+	safeSend?.(IPC.LLM_PROCESSING_END);
 	hideOverlay();
 	return out;
 }
@@ -80,7 +91,7 @@ function notifyEmptyResult(mode: unknown, safeSend: SafeSend): void {
 	if (mode !== "listen") {
 		// Stryker disable next-line StringLiteral: dbg() message is informational only
 		dbg("relay", "fullSentence: empty result, treating as no_audio_detected");
-		safeSend("stt:no-audio-detected");
+		safeSend(IPC.STT_NO_AUDIO_DETECTED);
 	}
 }
 
@@ -93,7 +104,7 @@ function pasteIfDictating(mode: unknown, text: string): void {
 }
 
 interface HistoryCapture {
-	capture(text: string): TranscriptionHistoryEntry | null;
+	capture(text: string, originalText?: string): TranscriptionHistoryEntry | null;
 	notifyStarted(): void;
 	notifyStopped(): void;
 }
@@ -113,17 +124,38 @@ async function handleFullSentence(
 		notifyEmptyResult(mode, safeSend);
 		// Clear any pending context so it doesn't bleed into the next dictation.
 		contextCapture?.clear();
+		// recording_stop deferred its hideOverlay() to us when the dictation LLM
+		// will run (so the pill stays continuous through the thinking indicator).
+		// With no text to process, that work won't happen — hide the overlay now.
+		if (shouldRunDictationLlm()) {
+			try {
+				hideOverlay();
+			} catch (err) {
+				dbg("relay", "hideOverlay failed:", String(err));
+			}
+		}
+		return;
+	}
+
+	// Listen mode is a passive monitor — broadcast the raw caption but skip
+	// every side effect that personalises or persists it: no dictionary /
+	// snippet substitutions, no LLM cleanup, no history capture, no sentry
+	// breadcrumb. Auto-paste is already gated by pasteIfDictating below.
+	if (mode === "listen") {
+		contextCapture?.clear();
+		safeSend(IPC.STT_FULL_SENTENCE, { text: rawText });
 		return;
 	}
 
 	const context = contextCapture ? await contextCapture.consume() : "";
-	const processed = await maybeRunLlm(applyPostProcessing(rawText), context, safeSend);
+	const postProcessed = applyPostProcessing(rawText);
+	const processed = await maybeRunLlm(postProcessed, context, safeSend);
 
+	breadcrumb("recording", "transcription completed", { text_length: processed.length }, "info");
 	// Stryker disable next-line StringLiteral: dbg() message is informational only
 	dbg("relay", `fullSentence: text=${JSON.stringify(processed)} mode=${mode}`);
-	safeSend("stt:full-sentence", { text: processed });
-	history?.capture(processed);
-	// Skip auto-paste in listen mode (passive monitoring, not dictation)
+	safeSend(IPC.STT_FULL_SENTENCE, { text: processed });
+	history?.capture(processed, postProcessed);
 	pasteIfDictating(mode, processed);
 }
 
@@ -156,15 +188,26 @@ function handleRecordingStart(
 		dbg("relay", "ignoring recording_start — no pending hotkey press (stale/duplicate)");
 		return { muted: false, attempted: false };
 	}
-	safeSend("stt:recording-start");
-	history?.notifyStarted();
+	const listen = isListenMode();
+	// Listen mode is a passive monitor — skip sentry breadcrumb (metric),
+	// history bookkeeping (no entries get captured anyway), and the LLM
+	// context snapshot (the LLM never runs).
+	if (!listen) {
+		breadcrumb("recording", "recording started", undefined, "info");
+	}
+	safeSend(IPC.STT_RECORDING_START);
+	if (!listen) {
+		history?.notifyStarted();
+	}
 	onRecordingStart();
 	showOverlay();
-	// Snapshot the user's focused window context for downstream LLM
-	// cleanup. Fire-and-forget — the spawn races with the user's speech
-	// and the consumer (fullSentence) awaits it. Off unless the user
-	// opted in via settings.
-	contextCapture?.capture();
+	if (!listen) {
+		// Snapshot the user's focused window context for downstream LLM
+		// cleanup. Fire-and-forget — the spawn races with the user's speech
+		// and the consumer (fullSentence) awaits it. Off unless the user
+		// opted in via settings.
+		contextCapture?.capture();
+	}
 	const duckLevel = dictationDuckLevel();
 	if (duckLevel > 0) {
 		return { muted: muteSystemAudio(duckLevel), attempted: true };
@@ -173,7 +216,7 @@ function handleRecordingStart(
 }
 
 function handleModelDownloadProgress(event: Record<string, unknown>, safeSend: SafeSend): void {
-	safeSend("stt:model-download-progress", {
+	safeSend(IPC.STT_MODEL_DOWNLOAD_PROGRESS, {
 		model: event.model,
 		progress: event.progress,
 		downloadedBytes: event.downloaded_bytes,
@@ -184,27 +227,54 @@ function handleModelDownloadProgress(event: Record<string, unknown>, safeSend: S
 }
 
 function handleModelSwapStarted(event: Record<string, unknown>, safeSend: SafeSend): void {
-	safeSend("stt:model-swap-started", { kind: event.kind, name: event.name });
+	safeSend(IPC.STT_MODEL_SWAP_STARTED, { kind: event.kind, name: event.name });
 }
 
 function handleModelSwapCompleted(event: Record<string, unknown>, safeSend: SafeSend): void {
-	safeSend("stt:model-swap-completed", { kind: event.kind, name: event.name });
+	safeSend(IPC.STT_MODEL_SWAP_COMPLETED, { kind: event.kind, name: event.name });
 }
 
 function handleModelSwapFailed(event: Record<string, unknown>, safeSend: SafeSend): void {
-	safeSend("stt:model-swap-failed", {
+	// The server classifies every swap failure into a stable category
+	// (network / model_not_found / out_of_memory / disk_full /
+	// incompatible_quantization / model_corrupt / permission_denied /
+	// cancelled / superseded / unknown) so the renderer can pick a
+	// localised toast variant. ``reason`` is the user-readable message,
+	// ``detail`` is the raw exception text for support diagnostics.
+	safeSend(IPC.STT_MODEL_SWAP_FAILED, {
 		kind: event.kind,
 		name: event.name,
 		reason: event.reason,
+		category: event.category ?? "unknown",
+		detail: event.detail ?? "",
 	});
 }
 
 function handleModelCacheChanged(event: Record<string, unknown>, safeSend: SafeSend): void {
-	safeSend("stt:model-cache-changed", { modelId: event.model_id });
+	safeSend(IPC.STT_MODEL_CACHE_CHANGED, { modelId: event.model_id });
+}
+
+// Server fires this once per launch after its background HuggingFace refresh
+// pulls fresh `card_data.language` lists. The catalog payload mirrors the
+// shape of a `list_models` response, so we reuse the same renderer-side
+// store update — every settings panel re-renders its language dropdown
+// without a restart. Mirroring `cachedModelCatalog` keeps STT_GET_MODEL_CATALOG
+// (used by windows opened after the refresh) coherent with the broadcast.
+function handleModelCatalogUpdated(
+	event: Record<string, unknown>,
+	safeSend: SafeSend,
+	updateCache: (models: unknown[]) => void
+): void {
+	const models = Array.isArray(event.models) ? event.models : null;
+	if (!models) {
+		return;
+	}
+	updateCache(models);
+	safeSend(IPC.STT_MODEL_CATALOG, { models });
 }
 
 function handleAudioLevel(event: Record<string, unknown>, safeSend: SafeSend): void {
-	safeSend("stt:audio-level", { level: event.level });
+	safeSend(IPC.STT_AUDIO_LEVEL, { level: event.level });
 	// Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement,StringLiteral: onAudioLevel writes to recording-indicator state with no observable side effect from unit tests
 	if (typeof event.level === "number") {
 		onAudioLevel(event.level);
@@ -217,7 +287,7 @@ function handleRealtimeEvent(event: Record<string, unknown>, safeSend: SafeSend)
 	}
 	// Stryker disable next-line MethodExpression,StringLiteral: dbgVerbose() preview is informational only
 	dbgVerbose("relay", "realtime:", String(event.text).slice(0, 80));
-	safeSend("stt:realtime-text", { text: event.text });
+	safeSend(IPC.STT_REALTIME_TEXT, { text: event.text });
 }
 
 function handleRecordingStop(
@@ -225,23 +295,39 @@ function handleRecordingStop(
 	safeSend: SafeSend,
 	history?: HistoryCapture
 ): boolean {
+	const listen = isListenMode();
+	if (!listen) {
+		breadcrumb("recording", "recording stopped", undefined, "info");
+	}
 	// Clear the recording-state machine first so any duplicate
 	// recording_start that arrives after this stop is rejected by
 	// the consumeRecordingStart() gate.
 	notifyRecordingStop();
-	history?.notifyStopped();
+	if (!listen) {
+		history?.notifyStopped();
+	}
 	// Hide the floating pill FIRST, before any IPC broadcast or downstream
 	// work, so a slow renderer or a hang in another handler can't leave the
 	// overlay window stuck on screen.
+	//
+	// EXCEPTION: when the dictation LLM will run, the pill needs to stay
+	// visible so the thinking indicator can overlay onto the existing pill
+	// rather than the user seeing it disappear → reappear. The hide is
+	// deferred to: (a) maybeRunLlm() after llm:processing-end for the normal
+	// path, or (b) the empty-text branch in handleFullSentence (above) when
+	// VAD finds no transcribable audio. Listen mode never runs the LLM, so
+	// it always hides immediately.
 	// Stryker disable next-line BlockStatement: empty try {} skips hideOverlay() — overlay is not mocked in unit tests so the absence of the call has no observable side effect; covered by Playwright e2e
-	try {
-		hideOverlay();
-		// Stryker disable next-line BlockStatement: empty catch {} suppresses the dbg log only — no observable side effect to assert
-	} catch (err) {
-		// Stryker disable next-line BlockStatement,StringLiteral: dbg() catch is a defensive log with no observable side effect
-		dbg("relay", "hideOverlay failed:", String(err));
+	if (!shouldRunDictationLlm()) {
+		try {
+			hideOverlay();
+			// Stryker disable next-line BlockStatement: empty catch {} suppresses the dbg log only — no observable side effect to assert
+		} catch (err) {
+			// Stryker disable next-line BlockStatement,StringLiteral: dbg() catch is a defensive log with no observable side effect
+			dbg("relay", "hideOverlay failed:", String(err));
+		}
 	}
-	safeSend("stt:recording-stop");
+	safeSend(IPC.STT_RECORDING_STOP);
 	onRecordingStop();
 	// Stryker disable next-line ConditionalExpression: when wasMuted is false the unmute path is unreachable; when true the early-return makes both branches return false
 	if (wasMuted) {
@@ -254,28 +340,40 @@ function handleRecordingStop(
 type SimpleHandler = (event: Record<string, unknown>, safeSend: SafeSend) => void;
 
 const SIMPLE_RELAY_HANDLERS: Record<string, SimpleHandler> = {
-	no_audio_detected: (_e, send) => send("stt:no-audio-detected"),
-	vad_detect_start: (_e, send) => send("stt:vad-start"),
-	vad_detect_stop: (_e, send) => send("stt:vad-stop"),
+	no_audio_detected: (_e, send) => send(IPC.STT_NO_AUDIO_DETECTED),
+	vad_detect_start: (_e, send) => send(IPC.STT_VAD_START),
+	vad_detect_stop: (_e, send) => send(IPC.STT_VAD_STOP),
 	transcription_start: (e, send) =>
-		send("stt:transcription-start", { audioBase64: e.audio_bytes_base64 }),
-	wakeword_detected: (_e, send) => send("stt:wakeword-detected"),
-	wakeword_detection_start: (_e, send) => send("stt:wakeword-detection-start"),
-	wakeword_detection_end: (_e, send) => send("stt:wakeword-detection-end"),
-	model_download_start: (e, send) => send("stt:model-download-start", { model: e.model }),
+		send(IPC.STT_TRANSCRIPTION_START, { audioBase64: e.audio_bytes_base64 }),
+	wakeword_detected: (_e, send) => send(IPC.STT_WAKEWORD_DETECTED),
+	wakeword_detection_start: (_e, send) => send(IPC.STT_WAKEWORD_DETECTION_START),
+	wakeword_detection_end: (_e, send) => send(IPC.STT_WAKEWORD_DETECTION_END),
+	model_download_start: (e, send) => send(IPC.STT_MODEL_DOWNLOAD_START, { model: e.model }),
 	model_download_complete: (e, send) =>
-		send("stt:model-download-complete", {
+		send(IPC.STT_MODEL_DOWNLOAD_COMPLETE, {
 			model: e.model,
 			cancelled: e.cancelled ?? false,
 		}),
-	loopback_started: (e, send) => send("stt:loopback-started", { deviceName: e.deviceName }),
-	loopback_stopped: (_e, send) => send("stt:loopback-stopped"),
+	loopback_started: (e, send) => send(IPC.STT_LOOPBACK_STARTED, { deviceName: e.deviceName }),
+	loopback_stopped: (_e, send) => send(IPC.STT_LOOPBACK_STOPPED),
 	device_switch_failed: (e, send) =>
-		send("stt:device-switch-failed", {
+		send(IPC.STT_DEVICE_SWITCH_FAILED, {
 			requestedIndex: e.requested_index,
 			errorMessage: e.error_message,
 			fallbackIndex: e.fallback_index,
 		}),
+	vad_sensitivity_adapted: (e, send) =>
+		send(IPC.STT_VAD_SENSITIVITY_ADAPTED, {
+			newSensitivity: e.new_sensitivity,
+			noiseFloorRms: e.noise_floor_rms,
+			speechPeakRms: e.speech_peak_rms,
+		}),
+	speaker_segments: (e, send) =>
+		// Forward the per-utterance diarization tuple to the renderer so it
+		// can color the just-committed words per speaker. Times stay in
+		// seconds-relative-to-utterance — the renderer aligns them against
+		// the matching fullSentence's word timings.
+		send(IPC.STT_SPEAKER_SEGMENTS, { segments: e.segments }),
 };
 
 function handleSimpleRelayEvent(
@@ -291,10 +389,16 @@ function handleSimpleRelayEvent(
 	return true;
 }
 
+// Simple-relay event types that must reach EVERY renderer, not just the main
+// window. Overlay needs the VAD/no-audio events; the settings window's
+// dictation model download dialog needs the download lifecycle events to drive
+// its progress bar and auto-close on completion.
 const OVERLAY_RELEVANT_SIMPLE_TYPES = new Set([
 	"no_audio_detected",
 	"vad_detect_start",
 	"vad_detect_stop",
+	"model_download_start",
+	"model_download_complete",
 ]);
 
 interface DispatchContext {
@@ -304,6 +408,11 @@ interface DispatchContext {
 	history?: HistoryCapture;
 	mainSend: SafeSend;
 	setMuted: (value: boolean) => void;
+	// Writes the server's latest catalog payload into the closure-scoped
+	// `cachedModelCatalog` so windows opened after a runtime refresh see
+	// the new languages immediately via STT_GET_MODEL_CATALOG. Optional
+	// because most data-event handlers don't touch the catalog cache.
+	setCatalogCache?: (models: unknown[]) => void;
 }
 
 interface SerialQueueLike {
@@ -383,7 +492,10 @@ const DATA_EVENT_HANDLERS: Record<string, DataEventHandler> = {
 		ctx.setMuted(handleRecordingStop(ctx.getMuted(), ctx.broadcast, ctx.history));
 	},
 	audio_level: (event, ctx) => handleAudioLevel(event, ctx.broadcast),
-	model_download_progress: (event, ctx) => handleModelDownloadProgress(event, ctx.mainSend),
+	// Broadcast so the settings window's dictation download dialog sees
+	// progress alongside the main window. mainSend-only would leave the
+	// settings dialog stuck on the "Download?" prompt with no progress bar.
+	model_download_progress: (event, ctx) => handleModelDownloadProgress(event, ctx.broadcast),
 	// Model swap lifecycle goes to ALL renderers via broadcast — settings
 	// panel listens to revert the picker on failure, status-bar listens to
 	// flip the chip into a loading state during the swap.
@@ -391,6 +503,13 @@ const DATA_EVENT_HANDLERS: Record<string, DataEventHandler> = {
 	model_swap_completed: (event, ctx) => handleModelSwapCompleted(event, ctx.broadcast),
 	model_swap_failed: (event, ctx) => handleModelSwapFailed(event, ctx.broadcast),
 	model_cache_changed: (event, ctx) => handleModelCacheChanged(event, ctx.broadcast),
+	// Server's once-per-launch HuggingFace catalog refresh — pushes a
+	// fresh list with up-to-date `languages` for every model. Update the
+	// closure cache so STT_GET_MODEL_CATALOG returns the new payload, then
+	// broadcast to every renderer so live settings panels re-render their
+	// language dropdowns without a restart.
+	model_catalog_updated: (event, ctx) =>
+		handleModelCatalogUpdated(event, ctx.broadcast, ctx.setCatalogCache ?? (() => undefined)),
 };
 
 function pickSenderForSimpleEvent(type: string, ctx: DispatchContext): SafeSend {
@@ -568,13 +687,13 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		notifyStopped: () => {
 			lastRecordingStopMs = Date.now();
 		},
-		capture: (text) => {
+		capture: (text, originalText) => {
 			const duration = computeRecordingDurationMs(
 				lastRecordingStartMs,
 				lastRecordingStopMs,
 				Date.now()
 			);
-			const entry = historyStore.record(text, duration);
+			const entry = historyStore.record(text, duration, originalText);
 			broadcastHistoryEntry(entry);
 			lastRecordingStartMs = 0;
 			lastRecordingStopMs = 0;
@@ -593,24 +712,36 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 
 	// Allow any window (including settings) to request the cached catalog.
 	// Stryker disable next-line ArrowFunction: handler return is exercised when invoked via IPC — covered by setupRelay smoke test
-	ipcMain.handle("stt:get-model-catalog", () => cachedModelCatalog);
+	ipcMain.handle(IPC.STT_GET_MODEL_CATALOG, () => cachedModelCatalog);
 
 	// Same pattern for the runtime snapshot — late-mounting renderers (overlay
 	// opens after the main window) ask for it once on mount.
-	ipcMain.handle("stt:get-runtime-info", () => cachedRuntimeInfo);
+	ipcMain.handle(IPC.STT_GET_RUNTIME_INFO, () => cachedRuntimeInfo);
 
 	// Allow renderer to query current server-ready status on mount (fixes race condition
 	// where server_ready fires before renderer IPC listeners are subscribed).
 	// Stryker disable next-line ArrowFunction: handler return is exercised when invoked via IPC — covered by setupRelay smoke test
-	ipcMain.handle("stt:get-server-ready", () => serverIsReady);
+	ipcMain.handle(IPC.STT_GET_SERVER_READY, () => serverIsReady);
 
 	// Initialize text post-processing (dictionary + snippet caches + store listeners)
 	initPostProcessing(store);
 
 	// Cancel download handler — sends command on control WebSocket
 	// Stryker disable next-line ArrowFunction,BlockStatement,ObjectLiteral: handler dispatches a control command on invoke — covered by Playwright e2e
-	ipcMain.handle("stt:cancel-download", () => {
+	ipcMain.handle(IPC.STT_CANCEL_DOWNLOAD, () => {
 		client.sendControl({ command: "cancel_download" });
+	});
+
+	// Delete model cache handler — wipes the HF cache for a model so the
+	// "Discard" button on a partial download actually removes the bytes
+	// from disk. The server broadcasts model_cache_changed after the
+	// directory is deleted; the renderer listens for that to refresh the
+	// per-model cache badges.
+	ipcMain.handle("stt:delete-model-cache", (_evt, modelId: unknown) => {
+		if (typeof modelId !== "string" || !modelId) {
+			return;
+		}
+		client.sendControl({ command: "delete_model_cache", model_id: modelId });
 	});
 	// Stryker disable next-line BooleanLiteral: closure init — only assigned via setMuted from recording_start handler before any read
 	let didMuteAudio = false;
@@ -642,6 +773,9 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		setMuted: (value: boolean) => {
 			didMuteAudio = value;
 		},
+		setCatalogCache: (models: unknown[]) => {
+			cachedModelCatalog = models;
+		},
 	};
 
 	const queues: DataEventQueues = { fullSentenceQueue, recordingStateQueue };
@@ -649,7 +783,7 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		processDataEvent(event, queues, ctx);
 
 	const broadcastConnectionChange = (connected: boolean) => {
-		broadcastToAll("stt:connection-change", { connected });
+		broadcastToAll(IPC.STT_CONNECTION_CHANGE, { connected });
 	};
 
 	const onConnected = () => {
@@ -669,14 +803,14 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 	const onModelCatalog = (models: unknown[]) => {
 		cachedModelCatalog = models;
 		// Broadcast to ALL windows (main + settings) so every renderer gets the catalog
-		broadcastToAll("stt:model-catalog", { models });
+		broadcastToAll(IPC.STT_MODEL_CATALOG, { models });
 	};
 
 	const onRuntimeInfo = (info: unknown) => {
 		cachedRuntimeInfo = info;
 		// Broadcast so every renderer (main + overlay + settings) can light the
 		// GPU/CPU chip honestly without polling.
-		broadcastToAll("stt:runtime-info", info);
+		broadcastToAll(IPC.STT_RUNTIME_INFO, info);
 	};
 
 	const onServerReady = () => {
@@ -684,7 +818,7 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		dbg("relay", "Server READY — recorder initialized, sending status=running to renderer");
 		logServerRealtimeConfig();
 		serverIsReady = true;
-		mainSend("stt:server-status", { status: "running" });
+		mainSend(IPC.STT_SERVER_STATUS, { status: "running" });
 
 		// Diagnostic: query the server's actual realtime transcription config
 		client
@@ -707,10 +841,11 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		client.off("model-catalog", onModelCatalog);
 		client.off("runtime-info", onRuntimeInfo);
 		client.off("server-ready", onServerReady);
-		ipcMain.removeHandler("stt:cancel-download");
-		ipcMain.removeHandler("stt:get-model-catalog");
-		ipcMain.removeHandler("stt:get-runtime-info");
-		ipcMain.removeHandler("stt:get-server-ready");
+		ipcMain.removeHandler(IPC.STT_CANCEL_DOWNLOAD);
+		ipcMain.removeHandler("stt:delete-model-cache");
+		ipcMain.removeHandler(IPC.STT_GET_MODEL_CATALOG);
+		ipcMain.removeHandler(IPC.STT_GET_RUNTIME_INFO);
+		ipcMain.removeHandler(IPC.STT_GET_SERVER_READY);
 		ipcMain.removeHandler(IPC.HISTORY_GET_ALL);
 		ipcMain.removeHandler(IPC.HISTORY_CLEAR);
 		cleanupPostProcessing();
@@ -733,8 +868,10 @@ export const __relay_test_helpers__ = {
 	handleRecordingStart,
 	handleRecordingStop,
 	handleSimpleRelayEvent,
-	hasLlmModel,
+	hasDictationModel,
 	isLlmConfigured,
+	isListenMode,
+	shouldRunDictationLlm,
 	logDataEventArrival,
 	logServerRealtimeConfig,
 	logServerRealtimeError,

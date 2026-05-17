@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
+from typing import Any
 
 
 class TranscriberBackend(Enum):
@@ -44,213 +47,139 @@ class ModelInfo:
     available_quantizations: list[str] = field(default_factory=lambda: [""])
 
 
-#: Full quantization matrix shipped by every ``onnx-community/whisper-*`` repo.
-_WHISPER_QUANTS: list[str] = ["", "int8", "fp16", "uint8", "q4", "q4f16", "bnb4"]
-#: onnx-asr-hosted NeMo exports ship the default graph + an int8 variant.
-_NEMO_QUANTS: list[str] = ["", "int8"]
-#: GigaAM / Vosk / T-One repos ship a single default ONNX graph only.
-_DEFAULT_ONLY: list[str] = [""]
+#: Quantization suffixes ORT's CUDAExecutionProvider can actually accelerate.
+#: Per Optimum's GPU guide and ORT quantization docs, CUDA-EP cannot fuse
+#: Q/DQ nodes — int8 / uint8 / q4 / q4f16 / bnb4 all fall back to fp32
+#: compute via QDQ scatter-gather (slower than plain fp32) and the
+#: per-channel int8 path has a known Whisper-encoder bug
+#: (microsoft/onnxruntime#25489) that produces hallucinated output.
+#: Benchmark-confirmed locally: ``int8`` on CUDA ran at 2.4x realtime
+#: AND emitted 8788 hallucinated words on the JFK-loop test (vs 3608 true).
+#: Only fp32 ("") and fp16 are real CUDA wins, so the UI shouldn't tempt
+#: users with the others on a GPU install.
+_GPU_COMPATIBLE_QUANTIZATIONS: frozenset[str] = frozenset({"", "fp16"})
 
 
-def _whisper_models() -> list[ModelInfo]:
-    """Catalog entries for the OpenAI Whisper family, routed through onnx-asr.
+def gpu_filter_quantizations(quants: list[str]) -> list[str]:
+    """Drop sub-fp16 quants from ``quants`` (preserves order, keeps "" + fp16)."""
+    return [q for q in quants if q in _GPU_COMPATIBLE_QUANTIZATIONS]
 
-    User-facing IDs are unchanged from the legacy faster_whisper-era catalog
-    (so persisted settings keep deserializing) but each one now carries
-    ``onnx_model_name`` pointing at the matching ``onnx-community`` HF repo —
-    that's what onnx-asr's resolver actually loads.
+
+def _size_label(params: int) -> str:
+    """Human-readable label derived from an exact param count.
+
+    Sub-billion: ``{N}M`` rounded to the nearest million. ≥1 B: ``{N.NN}B``
+    rounded to two decimals (kept consistent with prior catalog labels).
     """
-    # Only sizes shipped by onnx-community are included. large-v1 / v2 are
-    # absent because there's no upstream ONNX export for them. param_count
-    # comes from OpenAI's published model spec — drives the fitness heuristic.
-    multilingual: list[tuple[str, str, str, int]] = [
-        ("tiny", "Whisper Tiny", "39M", 39_000_000),
-        ("base", "Whisper Base", "74M", 74_000_000),
-        ("small", "Whisper Small", "244M", 244_000_000),
-        ("medium", "Whisper Medium", "769M", 769_000_000),
-        ("large-v3", "Whisper Large v3", "1.5B", 1_540_000_000),
-        ("large-v3-turbo", "Whisper Large v3 Turbo", "809M", 809_000_000),
-    ]
-    english_only: list[tuple[str, str, str, int]] = [
-        ("tiny.en", "Whisper Tiny (EN)", "39M", 39_000_000),
-        ("base.en", "Whisper Base (EN)", "74M", 74_000_000),
-        ("small.en", "Whisper Small (EN)", "244M", 244_000_000),
-        ("medium.en", "Whisper Medium (EN)", "769M", 769_000_000),
-    ]
-    models: list[ModelInfo] = []
-    for model_id, name, size, params in multilingual:
-        models.append(
-            ModelInfo(
-                id=model_id,
-                display_name=name,
-                backend=TranscriberBackend.ONNX_ASR,
-                family="whisper",
-                languages=[],
-                supports_language_detection=True,
-                size_label=size,
-                supports_realtime=True,
-                onnx_model_name=f"onnx-community/whisper-{model_id}",
-                description=f"OpenAI Whisper {model_id} ({size} params)",
-                param_count=params,
-                available_quantizations=list(_WHISPER_QUANTS),
-            )
-        )
-    for model_id, name, size, params in english_only:
-        models.append(
-            ModelInfo(
-                id=model_id,
-                display_name=name,
-                backend=TranscriberBackend.ONNX_ASR,
-                family="whisper",
-                languages=["en"],
-                supports_language_detection=False,
-                size_label=size,
-                supports_realtime=True,
-                onnx_model_name=f"onnx-community/whisper-{model_id}",
-                description=f"OpenAI Whisper {model_id} ({size} params, English only)",
-                param_count=params,
-                available_quantizations=list(_WHISPER_QUANTS),
-            )
-        )
-    return models
+    if params <= 0:
+        return ""
+    if params >= 1_000_000_000:
+        b = params / 1_000_000_000
+        s = f"{int(b)}" if b == int(b) else f"{round(b, 2):g}"
+        return f"{s}B"
+    return f"{round(params / 1_000_000)}M"
 
 
-def _nemo_models() -> list[ModelInfo]:
-    entries: list[tuple[str, str, list[str], bool, str, str]] = [
-        ("nemo-parakeet-ctc-0.6b", "NeMo Parakeet CTC 0.6B", ["en"], False, "600M", "NVIDIA Parakeet CTC model"),
-        ("nemo-parakeet-rnnt-0.6b", "NeMo Parakeet RNNT 0.6B", ["en"], False, "600M", "NVIDIA Parakeet RNNT model"),
-        ("nemo-parakeet-tdt-0.6b-v2", "NeMo Parakeet TDT 0.6B v2", ["en"], False, "600M", "NVIDIA Parakeet TDT v2"),
-        (
-            "nemo-parakeet-tdt-0.6b-v3",
-            "NeMo Parakeet TDT 0.6B v3",
-            [],
-            True,
-            "600M",
-            "NVIDIA Parakeet TDT v3 (multilingual)",
-        ),
-        (
-            "nemo-canary-1b-v2",
-            "NeMo Canary 1B v2",
-            [],
-            True,
-            "1B",
-            "NVIDIA Canary 1B v2 (multilingual, language detection)",
-        ),
-        (
-            "nemo-fastconformer-ru-ctc",
-            "NeMo FastConformer RU CTC",
-            ["ru"],
-            False,
-            "",
-            "NVIDIA FastConformer Russian CTC",
-        ),
-        (
-            "nemo-fastconformer-ru-rnnt",
-            "NeMo FastConformer RU RNNT",
-            ["ru"],
-            False,
-            "",
-            "NVIDIA FastConformer Russian RNNT",
-        ),
-    ]
-    models: list[ModelInfo] = []
-    for model_id, name, langs, lang_detect, size, desc in entries:
-        models.append(
-            ModelInfo(
-                id=model_id,
-                display_name=name,
-                backend=TranscriberBackend.ONNX_ASR,
-                family="nemo",
-                languages=langs,
-                supports_language_detection=lang_detect,
-                size_label=size,
-                supports_realtime=True,
-                onnx_model_name=model_id,
-                description=desc,
-                available_quantizations=list(_NEMO_QUANTS),
-            )
-        )
-    return models
+#: Path to the JSON catalog data file. Colocated with this module so both
+#: dev (``uv run …``) and the PyInstaller frozen bundle resolve it via
+#: ``Path(__file__).parent`` without any environment-specific branches.
+_CATALOG_JSON: Path = Path(__file__).parent / "catalog.json"
 
 
-def _gigaam_models() -> list[ModelInfo]:
-    ids = [
-        ("gigaam-v2-ctc", "GigaAM v2 CTC"),
-        ("gigaam-v2-rnnt", "GigaAM v2 RNNT"),
-        ("gigaam-v3-ctc", "GigaAM v3 CTC"),
-        ("gigaam-v3-rnnt", "GigaAM v3 RNNT"),
-        ("gigaam-v3-e2e-ctc", "GigaAM v3 E2E CTC"),
-        ("gigaam-v3-e2e-rnnt", "GigaAM v3 E2E RNNT"),
-    ]
-    return [
-        ModelInfo(
-            id=model_id,
-            display_name=name,
-            backend=TranscriberBackend.ONNX_ASR,
-            family="gigaam",
-            languages=["ru"],
-            supports_realtime=True,
-            onnx_model_name=model_id,
-            description=f"GigaAM {model_id} (Russian)",
-        )
-        for model_id, name in ids
-    ]
+def _backend_from_str(value: str | None) -> TranscriberBackend:
+    """Coerce a backend slug from the JSON catalog into the enum.
+
+    JSON entries may omit ``backend`` (everything is onnx-asr after the
+    torch-drop) — fall back to ``ONNX_ASR`` so the data file stays terse.
+    """
+    if not value:
+        return TranscriberBackend.ONNX_ASR
+    for member in TranscriberBackend:
+        if member.value == value:
+            return member
+    return TranscriberBackend.ONNX_ASR
 
 
-def _kaldi_models() -> list[ModelInfo]:
-    return [
-        ModelInfo(
-            id="alphacep/vosk-model-ru",
-            display_name="Vosk Russian",
-            backend=TranscriberBackend.ONNX_ASR,
-            family="kaldi",
-            languages=["ru"],
-            supports_realtime=True,
-            onnx_model_name="alphacep/vosk-model-ru",
-            description="Kaldi/Vosk Russian model",
-        ),
-        ModelInfo(
-            id="alphacep/vosk-model-small-ru",
-            display_name="Vosk Russian (Small)",
-            backend=TranscriberBackend.ONNX_ASR,
-            family="kaldi",
-            languages=["ru"],
-            supports_realtime=True,
-            onnx_model_name="alphacep/vosk-model-small-ru",
-            description="Kaldi/Vosk Russian small model",
-        ),
-    ]
+def _model_from_json(entry: dict[str, Any]) -> ModelInfo:
+    """Build a :class:`ModelInfo` from one JSON entry.
+
+    Trusts the editorial fields verbatim and derives ``size_label`` from
+    ``param_count`` so the on-disk JSON stays focused on data the refresh
+    script can verify against HuggingFace.
+    """
+    params = int(entry.get("param_count", 0))
+    quants_raw = entry.get("available_quantizations", [""])
+    quants: list[str] = [str(q) for q in quants_raw] if isinstance(quants_raw, list) else [""]
+    languages_raw = entry.get("languages", [])
+    languages: list[str] = [str(loc) for loc in languages_raw] if isinstance(languages_raw, list) else []
+    return ModelInfo(
+        id=str(entry["id"]),
+        display_name=str(entry.get("display_name", entry["id"])),
+        backend=_backend_from_str(entry.get("backend")),
+        family=str(entry.get("family", "")),
+        languages=languages,
+        supports_language_detection=bool(entry.get("supports_language_detection", False)),
+        size_label=_size_label(params),
+        supports_realtime=bool(entry.get("supports_realtime", False)),
+        onnx_model_name=entry.get("onnx_model_name"),
+        description=str(entry.get("description", "")),
+        param_count=params,
+        available_quantizations=quants,
+    )
 
 
-def _tone_models() -> list[ModelInfo]:
-    return [
-        ModelInfo(
-            id="t-tech/t-one",
-            display_name="T-One",
-            backend=TranscriberBackend.ONNX_ASR,
-            family="t-one",
-            languages=["ru"],
-            supports_realtime=True,
-            onnx_model_name="t-tech/t-one",
-            description="T-Tech T-One Russian ASR",
-        ),
-    ]
+def _load_catalog_entries() -> list[ModelInfo]:
+    """Load every catalog entry from :data:`_CATALOG_JSON`.
+
+    The JSON file is generated/refreshed by ``scripts/refresh_catalog.py``
+    and committed to the repo. Raising on a missing file is intentional —
+    a deployment without the catalog is broken; a silent empty catalog
+    would hide the breakage. The result is then folded with any per-user
+    overlay (see :mod:`catalog_overlay`) so a previous runtime refresh's
+    HF data survives across launches even when the next boot is offline.
+    """
+    with _CATALOG_JSON.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    raw_models = payload.get("models", [])
+    if not isinstance(raw_models, list):
+        msg = f"catalog.json malformed: 'models' must be a list, got {type(raw_models).__name__}"
+        raise ValueError(msg)
+    from src.recorder.domain.catalog_overlay import load_overlay
+
+    overlay = load_overlay()
+    return [_apply_overlay(_model_from_json(entry), overlay) for entry in raw_models]
 
 
-def _whisper_onnx_models() -> list[ModelInfo]:
-    return [
-        ModelInfo(
-            id="whisper-base",
-            display_name="Whisper Base (ONNX)",
-            backend=TranscriberBackend.ONNX_ASR,
-            family="whisper",
-            languages=[],
-            supports_language_detection=True,
-            supports_realtime=True,
-            onnx_model_name="whisper-base",
-            description="OpenAI Whisper Base via ONNX runtime",
-        ),
-    ]
+def _apply_overlay(info: ModelInfo, overlay: dict[str, dict[str, Any]]) -> ModelInfo:
+    """Return ``info`` with any matching overlay fields swapped in.
+
+    Today only ``languages`` is overlayable. The overlay's list is taken
+    verbatim — a runtime refresh that successfully fetched HF metadata is
+    by definition more authoritative than the bundled snapshot.
+    """
+    patch = overlay.get(info.id)
+    if not patch:
+        return info
+    languages = patch.get("languages")
+    if not isinstance(languages, list):
+        return info
+    normalized = [str(loc) for loc in languages if isinstance(loc, str)]
+    if not normalized:
+        return info
+    return ModelInfo(
+        id=info.id,
+        display_name=info.display_name,
+        backend=info.backend,
+        family=info.family,
+        languages=normalized,
+        supports_language_detection=info.supports_language_detection,
+        size_label=info.size_label,
+        supports_realtime=info.supports_realtime,
+        onnx_model_name=info.onnx_model_name,
+        description=info.description,
+        param_count=info.param_count,
+        available_quantizations=info.available_quantizations,
+    )
 
 
 class ModelCatalog:
@@ -258,14 +187,7 @@ class ModelCatalog:
 
     def __init__(self) -> None:
         self._models: dict[str, ModelInfo] = {}
-        for model in (
-            *_whisper_models(),
-            *_nemo_models(),
-            *_gigaam_models(),
-            *_kaldi_models(),
-            *_tone_models(),
-            *_whisper_onnx_models(),
-        ):
+        for model in _load_catalog_entries():
             self._models[model.id] = model
 
     def get(self, model_id: str) -> ModelInfo | None:
@@ -284,10 +206,15 @@ class ModelCatalog:
     def _accepts_any_language(info: ModelInfo) -> bool:
         """Whether ``info`` transcribes every language tag.
 
-        True for models that opt into language detection and for
-        multilingual models (empty ``languages`` whitelist).
+        True only when the whitelist is empty — that's the catalog's
+        "unknown / accepts all" sentinel for entries the refresh script
+        couldn't populate from HuggingFace metadata.
+        ``supports_language_detection`` is orthogonal: Canary 1B v2
+        auto-detects language *within* its 25 European whitelist, but
+        cannot transcribe e.g. Arabic. Conflating the two used to make
+        the language dropdown advertise unsupported languages.
         """
-        return info.supports_language_detection or not info.languages
+        return not info.languages
 
     def _is_universal(self, model_id: str, language: str) -> bool:
         """Whether the pairing is compatible regardless of the whitelist.
@@ -309,18 +236,34 @@ class ModelCatalog:
         Empty ``language`` (= auto-detect) is always compatible. Unknown
         models are treated as compatible — the catalog is not exhaustive of
         every onnx-asr-resolvable name, so refusing here would be too strict.
-        Multilingual models (``languages == []``) and models that opt into
-        ``supports_language_detection`` accept any language tag. Otherwise
-        the language must appear in the model's ``languages`` list.
+        Empty ``languages`` whitelist means "unknown / accepts all"
+        (entries the refresh script couldn't populate). Otherwise the
+        language must appear in the model's ``languages`` list, even when
+        the model supports language detection.
         """
         if self._is_universal(model_id, language):
             return True
         info = self._models[model_id]
         return language in info.languages
 
-    def to_dicts(self) -> list[dict[str, object]]:
+    def to_dicts(self, *, device: str | None = None) -> list[dict[str, object]]:
+        """Serialize the catalog for the frontend.
+
+        When ``device == "cuda"``, ``available_quantizations`` is filtered
+        to those CUDAExecutionProvider can actually accelerate (only fp32
+        and fp16) — sub-fp16 quants either silently fall back to fp32 or
+        hallucinate on CUDA (see :data:`_GPU_COMPATIBLE_QUANTIZATIONS`).
+        Hiding them in the picker stops users picking a "faster"
+        quantization that is in fact slower AND less accurate.
+        """
+        filter_quants = device == "cuda"
         result: list[dict[str, object]] = []
         for m in self._models.values():
+            quants = (
+                gpu_filter_quantizations(m.available_quantizations)
+                if filter_quants
+                else list(m.available_quantizations)
+            )
             result.append(
                 {
                     "id": m.id,
@@ -334,7 +277,7 @@ class ModelCatalog:
                     "onnx_model_name": m.onnx_model_name,
                     "description": m.description,
                     "param_count": m.param_count,
-                    "available_quantizations": m.available_quantizations,
+                    "available_quantizations": quants,
                 }
             )
         return result

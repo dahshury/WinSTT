@@ -10,7 +10,16 @@ import type { Uniforms } from "../ui/ReactShaderToy";
 import type { AgentState } from "./audio-visualizer";
 
 const DEFAULT_SPEED = 5;
-const DEFAULT_AMPLITUDE = 0.025;
+// Amplitude is in UV space (canvas height = 1.0). Server-side audioLevel is
+// `rms / 10000` on int16 samples, which peaks much lower than LiveKit's
+// useTrackVolume (the upstream reference's source) — typical speech sits
+// around 0.05–0.25. We boost the idle baseline and use a perceptual sqrt
+// curve in the speaking branch so the wave visibly fills the canvas instead
+// of barely deviating a few percent.
+const DEFAULT_AMPLITUDE = 0.08;
+const MAX_SPEAKING_AMPLITUDE = 0.4;
+const SPEAKING_AMPLITUDE_BASE = 0.06;
+const SPEAKING_AMPLITUDE_GAIN = 0.9;
 const DEFAULT_FREQUENCY = 10;
 const DEFAULT_TRANSITION: ValueAnimationTransition = { duration: 0.2, ease: "easeOut" };
 
@@ -117,7 +126,12 @@ export function useWaveAnimator(state: AgentState, uniformsRef: React.RefObject<
 
 	useEffect(() => {
 		if (state === "speaking") {
-			animateAmplitude(0.015 + 0.4 * audioLevel, { duration: 0 });
+			const perceptual = Math.sqrt(Math.max(0, audioLevel));
+			const amplitude = Math.min(
+				MAX_SPEAKING_AMPLITUDE,
+				SPEAKING_AMPLITUDE_BASE + SPEAKING_AMPLITUDE_GAIN * perceptual
+			);
+			animateAmplitude(amplitude, { duration: 0 });
 			animateFrequency(20 + 60 * audioLevel, { duration: 0 });
 		}
 	}, [state, audioLevel, animateAmplitude, animateFrequency]);

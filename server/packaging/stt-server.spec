@@ -22,6 +22,7 @@
 # pylint: disable=undefined-variable  — Analysis/EXE/COLLECT are spec globals
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -58,6 +59,60 @@ def _collect_nvidia_dlls() -> list[tuple[str, str]]:
 
 IS_GPU_BUILD = _detect_gpu_build()
 
+# ── UPX configuration ──────────────────────────────────────────────────
+# UPX compresses PE binaries in-place; on the Python C-extension layer
+# (numpy.libs, scipy.libs, pydantic_core, etc.) it typically shaves
+# 30–60 % off DLL size for a one-time decompress cost at first load. The
+# decompressed bytes live in RAM, so cold startup memory rises by a few
+# tens of MB — acceptable for a desktop app.
+#
+# ⚠️ Caveats and exclusions:
+#   1. NVIDIA's CUDA DLLs (cublas*, cudnn*, curand*, cusolver*, cusparse*,
+#      cufft*, nvrtc*, nvJitLink*) are giant, already heavily-compressed
+#      math kernels. UPX gains are near zero AND can corrupt the cuDNN
+#      runtime loader, which sniffs PE headers on import. Skip them all.
+#   2. ``onnxruntime_providers_cuda.dll`` is a Microsoft-signed binary —
+#      UPX would invalidate the signature and trigger SmartScreen.
+#   3. Some Windows Defender heuristics flag UPX-packed PEs as suspicious;
+#      this is the main reason desktop apps shipping to end users tend to
+#      avoid it. If the AV false-positive rate becomes a problem, flip
+#      ``ENABLE_UPX`` below to ``False`` to disable globally.
+#
+# Set ``WINSTT_NO_UPX=1`` in the build environment to bypass UPX entirely
+# without editing this file (useful for reproducing the legacy bundle size
+# or for signed-binary releases that need bit-stability).
+ENABLE_UPX = os.environ.get("WINSTT_NO_UPX", "").strip() not in {"1", "true", "yes"}
+
+UPX_EXCLUDES: list[str] = [
+    # CUDA EP shim — Microsoft-signed and large.
+    "onnxruntime_providers_cuda.dll",
+    "onnxruntime_providers_tensorrt.dll",
+    # cuDNN — runtime sniffs the PE header on import; UPX breaks this.
+    "cudnn*.dll",
+    # cuBLAS — already compressed math kernels.
+    "cublas*.dll",
+    "cublasLt*.dll",
+    # Other NVIDIA libs (kept here as defence-in-depth even though the
+    # ``[gpu]`` extra no longer pulls them; transitive resolves can still
+    # surface them).
+    "curand*.dll",
+    "cufft*.dll",
+    "cusparse*.dll",
+    "cusolver*.dll",
+    "cusolverMg*.dll",
+    "nvrtc*.dll",
+    "nvJitLink*.dll",
+    # OpenSSL — Python embeds it for ssl/hashlib and some downloads. UPX
+    # has historically caused load failures on it under Windows 11.
+    "libcrypto-3-x64.dll",
+    "libssl-3-x64.dll",
+    # Python runtime itself + UCRT — touching these is asking for trouble.
+    "python*.dll",
+    "ucrtbase.dll",
+    "vcruntime*.dll",
+    "VCOMP*.DLL",
+]
+
 # ── Discover dependencies via hooks ────────────────────────────────────
 # ``collect_all`` for runtime libs that load resources via __path__ /
 # importlib at runtime — onnx-asr ships a Silero VAD .onnx next to its
@@ -81,6 +136,13 @@ datas.extend(hf_datas)
 # Pydantic ships compiled validation core via a data file in some envs;
 # collect_data_files picks it up where ``collect_all`` misses.
 datas.extend(collect_data_files("pydantic"))
+# Ship the ASR model catalog JSON next to its loader. ``model_registry.py``
+# resolves it via ``Path(__file__).parent / "catalog.json"``, so the
+# destination directory mirrors the source layout exactly.
+SERVER_ROOT_SPEC = Path(SPECPATH).resolve().parent
+_CATALOG_SRC = SERVER_ROOT_SPEC / "src" / "recorder" / "domain" / "catalog.json"
+if _CATALOG_SRC.is_file():
+    datas.append((str(_CATALOG_SRC), "src/recorder/domain"))
 
 hiddenimports: list[str] = []
 hiddenimports.extend(onnxasr_hidden)
@@ -148,7 +210,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,
+    upx=ENABLE_UPX,
+    upx_exclude=UPX_EXCLUDES,
     console=True,  # keep console so user can see startup logs / progress
     disable_windowed_traceback=False,
     target_arch=None,
@@ -161,7 +224,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=False,
-    upx_exclude=[],
+    upx=ENABLE_UPX,
+    upx_exclude=UPX_EXCLUDES,
     name="stt-server",  # → dist/stt-server/
 )

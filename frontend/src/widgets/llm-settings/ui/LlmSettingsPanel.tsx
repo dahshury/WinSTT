@@ -14,84 +14,97 @@ import {
 	WavingHand01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { computeModelExclusionConfig, OllamaModelSelector, OpenRouterModelSelector } from "@picker";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
+	assessOllamaFit,
 	INDEPENDENT_PRESETS,
+	type PausedPullState,
 	PRESET_LEVELS,
 	PRESETS_WITH_LEVELS,
 	type PresetEntry,
 	type PresetKey,
 	type PresetLevel,
+	RECOMMENDED_OLLAMA_MODELS,
 	TONE_GROUP,
 	useLlmCatalogStore,
+	useOllamaLibraryStore,
 	useOpenRouterCatalogStore,
 } from "@/entities/llm-catalog";
+import { useModelStateStore } from "@/entities/model-catalog";
 import { SettingSection, SettingSubsection, useSettingsStore } from "@/entities/setting";
+import { useWarmupStatusFeed, useWarmupStatusStore } from "@/features/llm-warmup-status";
 import { detectOllama, fetchOllamaModels, startOllama } from "@/shared/api/ipc-client";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { Button } from "@/shared/ui/button";
+import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Modal } from "@/shared/ui/modal";
-import { SearchableSelect } from "@/shared/ui/searchable-select";
 import { Switcher } from "@/shared/ui/switcher";
-import { TextField } from "@/shared/ui/text-field";
-import { Toggle } from "@/shared/ui/toggle";
-import {
-	computeModelExclusionConfig,
-	OpenRouterModelSelector,
-} from "@/widgets/openrouter-model-selector";
+import { PasswordField, TextField } from "@/shared/ui/text-field";
 import { ContextAwarenessSection } from "./ContextAwarenessSection";
 import { TransformsSection } from "./TransformsSection";
+import { WarmupStatusBanner } from "./WarmupStatusBanner";
 
-export interface LlmOllamaManagerSlotProps {
-	currentModel: string;
-	isOpen: boolean;
-	onClose: () => void;
-	onModelInstalled: (model: string) => void;
-}
-
-export interface LlmSettingsPanelProps {
-	renderOllamaManager?: (props: LlmOllamaManagerSlotProps) => ReactNode;
-}
+export type LlmSettingsPanelProps = Record<string, never>;
 
 type TranslateFn = ReturnType<typeof useTranslations>;
 
-interface OllamaModel {
-	name: string;
-	size?: number;
-}
+// Re-uses the spec-generated shape so `details.parameterSize` /
+// `details.quantizationLevel` flow through to the picker.
+type OllamaModel = import("@/shared/api/models").OllamaModel;
 
 type LlmSettings = AppSettingsOutput["llm"];
-type LlmPatch = Partial<LlmSettings>;
-type UpdateLlmFn = (patch: LlmPatch) => void;
-type LlmProvider = LlmSettings["provider"];
+type LlmDictation = LlmSettings["dictation"];
+type LlmTransforms = LlmSettings["transforms"];
+type LlmSharedPatch = Partial<Pick<LlmSettings, "endpoint" | "openrouterApiKey">>;
+type LlmDictationPatch = Partial<LlmDictation>;
+type LlmTransformsPatch = Partial<LlmTransforms>;
+type UpdateSharedFn = (patch: LlmSharedPatch) => void;
+type UpdateDictationFn = (patch: LlmDictationPatch) => void;
+type UpdateTransformsFn = (patch: LlmTransformsPatch) => void;
+type LlmProvider = LlmDictation["provider"];
 
-interface LlmDraftSnapshot {
-	dictationEnabled: boolean;
+type ReasoningEffort = "low" | "medium" | "high";
+type Verbosity = "low" | "medium" | "high";
+
+interface LlmFeatureDraft {
 	enabled: boolean;
-	endpoint: string;
+	maxOutputTokens: number | null;
 	model: string;
-	openrouterApiKey: string;
 	openrouterFallbackModel: string;
 	openrouterModel: string;
-	presets: readonly PresetEntry[];
 	provider: LlmProvider;
-	transformsEnabled: boolean;
+	reasoningEffort: ReasoningEffort;
+	verbosity: Verbosity;
 }
 
-const DEFAULT_LLM: LlmDraftSnapshot = {
+interface LlmDraftSnapshot {
+	dictation: LlmFeatureDraft & { presets: readonly PresetEntry[] };
+	endpoint: string;
+	openrouterApiKey: string;
+	transforms: LlmFeatureDraft;
+}
+
+const DEFAULT_FEATURE: LlmFeatureDraft = {
 	enabled: false,
-	dictationEnabled: true,
-	transformsEnabled: false,
 	provider: "ollama",
-	endpoint: "http://localhost:11434",
 	model: "",
-	presets: [{ key: "neutral" }],
-	openrouterApiKey: "",
 	openrouterModel: "",
 	openrouterFallbackModel: "",
+	reasoningEffort: "medium",
+	verbosity: "medium",
+	maxOutputTokens: null,
+};
+
+const DEFAULT_LLM: LlmDraftSnapshot = {
+	endpoint: "http://localhost:11434",
+	openrouterApiKey: "",
+	dictation: { ...DEFAULT_FEATURE, presets: [{ key: "neutral" }] },
+	transforms: { ...DEFAULT_FEATURE },
 };
 
 type ToneKey = (typeof TONE_GROUP)[number];
@@ -134,13 +147,26 @@ const LEVEL_LABEL_KEY = {
 
 const DEFAULT_LEVEL: PresetLevel = "medium";
 
+function readFeatureSnapshot(
+	incoming: Partial<LlmFeatureDraft> | null | undefined
+): LlmFeatureDraft {
+	return { ...DEFAULT_FEATURE, ...(incoming ?? {}) };
+}
+
 function readLlmSnapshot(llm: Partial<LlmSettings> | null | undefined): LlmDraftSnapshot {
 	const incoming = llm ?? {};
+	const dictationIn = (incoming.dictation ?? {}) as Partial<LlmDictation>;
+	const transformsIn = (incoming.transforms ?? {}) as Partial<LlmTransforms>;
 	const presets =
-		Array.isArray(incoming.presets) && incoming.presets.length > 0
-			? (incoming.presets as readonly PresetEntry[])
-			: DEFAULT_LLM.presets;
-	return { ...DEFAULT_LLM, ...incoming, presets };
+		Array.isArray(dictationIn.presets) && dictationIn.presets.length > 0
+			? (dictationIn.presets as readonly PresetEntry[])
+			: DEFAULT_LLM.dictation.presets;
+	return {
+		endpoint: incoming.endpoint ?? DEFAULT_LLM.endpoint,
+		openrouterApiKey: incoming.openrouterApiKey ?? DEFAULT_LLM.openrouterApiKey,
+		dictation: { ...readFeatureSnapshot(dictationIn), presets },
+		transforms: readFeatureSnapshot(transformsIn),
+	};
 }
 
 function getToneKey(presets: readonly PresetEntry[]): (typeof TONE_GROUP)[number] {
@@ -174,7 +200,8 @@ function setTone(
 function toggleIndependent(
 	presets: readonly PresetEntry[],
 	key: (typeof INDEPENDENT_PRESETS)[number],
-	enabled: boolean
+	enabled: boolean,
+	levelOverride?: PresetLevel
 ): PresetEntry[] {
 	if (!enabled) {
 		return presets.filter((p) => p.key !== key);
@@ -183,7 +210,7 @@ function toggleIndependent(
 		return [...presets];
 	}
 	const entry: PresetEntry = (PRESETS_WITH_LEVELS as readonly string[]).includes(key)
-		? { key, level: DEFAULT_LEVEL }
+		? { key, level: levelOverride ?? DEFAULT_LEVEL }
 		: { key };
 	return [...presets, entry];
 }
@@ -194,15 +221,6 @@ function setIndependentLevel(
 	level: PresetLevel
 ): PresetEntry[] {
 	return presets.map((p) => (p.key === key ? { ...p, level } : p));
-}
-
-function buildOllamaModelOpts(
-	models: readonly OllamaModel[]
-): ReadonlyArray<{ id: string; label: string }> {
-	return models.map((m) => ({
-		id: m.name,
-		label: `${m.name} (${((m.size ?? 0) / 1e9).toFixed(1)} GB)`,
-	}));
 }
 
 function buildToneOpts(t: TranslateFn) {
@@ -263,20 +281,22 @@ function shouldScanOpenRouter(provider: string, apiKey: string, loaded: boolean)
 	return isOpenRouter && hasKey && !loaded;
 }
 
-interface ToggleDeps {
+type SetFeatureEnabled = (value: boolean) => void;
+
+interface FeatureToggleDeps {
 	checkOllamaReachable: () => Promise<boolean>;
 	ollamaLoaded: boolean;
 	openrouterApiKey: string;
 	openrouterLoaded: boolean;
-	provider: string;
+	provider: LlmProvider;
 	scanOllama: () => void;
 	scanOpenRouter: () => void;
+	setEnabled: SetFeatureEnabled;
 	setShowApiKeyDialog: (v: boolean) => void;
 	setShowOllamaDialog: (v: boolean) => void;
-	update: UpdateLlmFn;
 }
 
-async function tryEnableOllama(deps: ToggleDeps): Promise<void> {
+async function tryEnableOllamaForFeature(deps: FeatureToggleDeps): Promise<void> {
 	const reachable = await deps.checkOllamaReachable();
 	if (!reachable) {
 		deps.setShowOllamaDialog(true);
@@ -285,10 +305,10 @@ async function tryEnableOllama(deps: ToggleDeps): Promise<void> {
 	if (!deps.ollamaLoaded) {
 		deps.scanOllama();
 	}
-	deps.update({ enabled: true });
+	deps.setEnabled(true);
 }
 
-function tryEnableOpenRouter(deps: ToggleDeps): void {
+function tryEnableOpenRouterForFeature(deps: FeatureToggleDeps): void {
 	if (!deps.openrouterApiKey) {
 		deps.setShowApiKeyDialog(true);
 		return;
@@ -296,37 +316,58 @@ function tryEnableOpenRouter(deps: ToggleDeps): void {
 	if (!deps.openrouterLoaded) {
 		deps.scanOpenRouter();
 	}
-	deps.update({ enabled: true });
+	deps.setEnabled(true);
 }
 
-async function performToggle(next: boolean, deps: ToggleDeps): Promise<void> {
+async function performFeatureToggle(next: boolean, deps: FeatureToggleDeps): Promise<void> {
 	if (!next) {
-		deps.update({ enabled: false });
+		deps.setEnabled(false);
 		return;
 	}
 	if (deps.provider === "ollama") {
-		await tryEnableOllama(deps);
+		await tryEnableOllamaForFeature(deps);
 		return;
 	}
-	tryEnableOpenRouter(deps);
+	tryEnableOpenRouterForFeature(deps);
+}
+
+interface OllamaPullBundle {
+	cancelPull: (name: string) => void;
+	deleteModel: (name: string) => Promise<unknown>;
+	discardPausedPull: (name: string) => void;
+	getFit: (sizeBytes: number) => {
+		availableBytes: number;
+		fits: boolean;
+		requiredBytes: number;
+		shortfall: "vram" | "ram" | "unknown" | undefined;
+	};
+	pausedPulls: Readonly<Record<string, PausedPullState>>;
+	pullModel: (name: string) => Promise<unknown>;
+	pulls: Readonly<Record<string, import("@/shared/api/models").OllamaPullProgress>>;
+	resumePull: (name: string) => Promise<unknown>;
 }
 
 interface OllamaSectionProps {
 	enabled: boolean;
 	endpoint: string;
+	librarySearch: import("@picker").OllamaModelSelectorProps["librarySearch"];
 	model: string;
 	ollamaError: string | null;
-	ollamaModelOpts: ReadonlyArray<{ id: string; label: string }>;
+	ollamaModels: readonly OllamaModel[];
 	ollamaReachable: boolean | null;
 	ollamaScanning: boolean;
-	openManager: () => void;
+	pullBundle: OllamaPullBundle;
 	scanOllama: () => void;
+	setEndpoint: (endpoint: string) => void;
+	setModel: (model: string) => void;
 	t: TranslateFn;
 	tc: TranslateFn;
-	update: UpdateLlmFn;
 }
 
-function OllamaErrorBanner({ message }: { message: string | null }) {
+/** Shared error banner used by both Ollama and OpenRouter sections.
+ *  Null-renders on empty message so callers can pass their error state
+ *  through directly without an outer guard. */
+function ErrorBanner({ message }: { message: string | null }) {
 	if (!message) {
 		return null;
 	}
@@ -359,58 +400,64 @@ function OllamaSection(props: OllamaSectionProps) {
 		t,
 		tc,
 		endpoint,
+		librarySearch,
 		model,
 		enabled,
-		ollamaModelOpts,
+		ollamaModels,
 		ollamaScanning,
 		ollamaError,
 		ollamaReachable,
 		scanOllama,
-		openManager,
-		update,
+		setEndpoint,
+		setModel,
+		pullBundle,
 	} = props;
 	return (
 		<>
-			<FormControl
-				caption={t("endpointCaption")}
-				label={t("endpoint")}
-				tooltip={t("endpointTooltip")}
-			>
-				<TextField
-					onChange={(e) => update({ endpoint: e.target.value })}
-					placeholder="http://localhost:11434"
-					value={endpoint}
+			<div className="col-span-2">
+				<FormControl
+					caption={t("endpointCaption")}
+					label={t("endpoint")}
+					tooltip={t("endpointTooltip")}
+				>
+					<ElevatedSurface inline>
+						<TextField
+							onChange={(e) => setEndpoint(e.target.value)}
+							placeholder="http://localhost:11434"
+							value={endpoint}
+						/>
+					</ElevatedSurface>
+				</FormControl>
+			</div>
+			<FormControl caption={t("modelCaption")} label={t("model")} tooltip={t("modelTooltip")}>
+				<OllamaModelSelector
+					disabled={ollamaScanning}
+					isLoading={ollamaScanning}
+					librarySearch={librarySearch}
+					models={ollamaModels}
+					onChange={setModel}
+					onDelete={(name) => {
+						void pullBundle.deleteModel(name);
+					}}
+					onDiscardPull={pullBundle.discardPausedPull}
+					onOpen={scanOllama}
+					onPull={(name) => {
+						void pullBundle.pullModel(name);
+					}}
+					onResumePull={(name) => {
+						void pullBundle.resumePull(name);
+					}}
+					onStopPull={pullBundle.cancelPull}
+					pausedPulls={pullBundle.pausedPulls}
+					placeholder={ollamaScanning ? tc("scanning") : t("selectModel")}
+					pulls={pullBundle.pulls}
+					recommendedModels={RECOMMENDED_OLLAMA_MODELS}
+					systemFit={pullBundle.getFit}
+					value={model}
 				/>
 			</FormControl>
 
-			<FormControl caption={t("modelCaption")} label={t("model")} tooltip={t("modelTooltip")}>
-				<div className="flex gap-2">
-					<div className="flex-1">
-						<SearchableSelect
-							disabled={ollamaScanning}
-							onChange={(v) => update({ model: v })}
-							options={ollamaModelOpts}
-							placeholder={ollamaScanning ? tc("scanning") : t("selectModel")}
-							value={model}
-						/>
-					</div>
-					<Button
-						className="h-8 rounded-md border border-border bg-surface-secondary px-3 font-medium text-body transition-colors duration-150 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
-						disabled={ollamaScanning}
-						onClick={scanOllama}
-					>
-						{ollamaScanning ? tc("scanning") : tc("refresh")}
-					</Button>
-					<Button
-						className="h-8 rounded-md border border-accent bg-accent px-3 font-medium text-body text-white transition-colors duration-150 hover:bg-accent-dim"
-						onClick={openManager}
-					>
-						{t("manageModels")}
-					</Button>
-				</div>
-			</FormControl>
-
-			<OllamaErrorBanner message={ollamaError} />
+			<ErrorBanner message={ollamaError} />
 			<OllamaReachabilityWarning enabled={enabled} reachable={ollamaReachable} t={t} />
 		</>
 	);
@@ -418,29 +465,41 @@ function OllamaSection(props: OllamaSectionProps) {
 
 interface OpenRouterSectionProps {
 	fallbackExclusion: ReturnType<typeof computeModelExclusionConfig>;
+	maxOutputTokens: number | null;
+	onApiKeyChange: (key: string) => void;
+	onMaxOutputTokensChange: (value: number | null) => void;
+	onReasoningEffortChange: (value: ReasoningEffort) => void;
+	onVerbosityChange: (value: Verbosity) => void;
 	openrouterApiKey: string;
 	openrouterError: string | null;
 	openrouterFallbackModel: string;
 	openrouterModel: string;
 	openrouterModels: readonly unknown[] | undefined;
 	openrouterScanning: boolean;
+	reasoningEffort: ReasoningEffort;
 	scanOpenRouter: () => void;
+	setFallbackModel: (model: string) => void;
+	setModel: (model: string) => void;
+	/**
+	 * Whether this OpenRouterSection should render the shared API key input.
+	 * The setting itself is shared between features; only the first feature
+	 * using OpenRouter shows the field to avoid duplicating it.
+	 */
+	showApiKeyField: boolean;
 	t: TranslateFn;
 	tc: TranslateFn;
-	update: UpdateLlmFn;
-}
-
-function OpenRouterErrorBanner({ message }: { message: string | null }) {
-	if (!message) {
-		return null;
-	}
-	return <div className="col-span-2 rounded bg-error/10 p-3 text-error text-sm">{message}</div>;
+	verbosity: Verbosity;
 }
 
 function OpenRouterSection(props: OpenRouterSectionProps) {
 	const {
 		t,
 		tc,
+		maxOutputTokens,
+		onApiKeyChange,
+		onMaxOutputTokensChange,
+		onReasoningEffortChange,
+		onVerbosityChange,
 		openrouterApiKey,
 		openrouterModel,
 		openrouterFallbackModel,
@@ -448,27 +507,35 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 		openrouterScanning,
 		openrouterError,
 		fallbackExclusion,
+		reasoningEffort,
 		scanOpenRouter,
-		update,
+		setFallbackModel,
+		setModel,
+		showApiKeyField,
+		verbosity,
 	} = props;
 	const apiKeyMissing = !openrouterApiKey;
-	const refreshDisabled = openrouterScanning || apiKeyMissing;
 	return (
 		<>
-			<div className="col-span-2">
-				<FormControl
-					caption={t("openrouterApiKeyCaption")}
-					label={t("openrouterApiKey")}
-					tooltip={t("openrouterApiKeyTooltip")}
-				>
-					<TextField
-						onChange={(e) => update({ openrouterApiKey: e.target.value })}
-						placeholder={t("openrouterApiKeyPlaceholder")}
-						type="password"
-						value={openrouterApiKey}
-					/>
-				</FormControl>
-			</div>
+			{showApiKeyField ? (
+				<div className="col-span-2">
+					<FormControl
+						caption={t("openrouterApiKeyCaption")}
+						label={t("openrouterApiKey")}
+						tooltip={t("openrouterApiKeyTooltip")}
+					>
+						<ElevatedSurface inline>
+							<PasswordField
+								hideLabel={tc("hidePassword")}
+								onChange={(e) => onApiKeyChange(e.target.value)}
+								placeholder={t("openrouterApiKeyPlaceholder")}
+								revealLabel={tc("showPassword")}
+								value={openrouterApiKey}
+							/>
+						</ElevatedSurface>
+					</FormControl>
+				</div>
+			) : null}
 
 			<div className="col-span-2">
 				<FormControl
@@ -476,24 +543,20 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 					label={t("openrouterModel")}
 					tooltip={t("openrouterModelTooltip")}
 				>
-					<div className="flex gap-2">
-						<div className="flex-1">
-							<OpenRouterModelSelector
-								disabled={apiKeyMissing}
-								isLoading={openrouterScanning}
-								models={openrouterModels as never}
-								onChange={(v) => update({ openrouterModel: v })}
-								value={openrouterModel}
-							/>
-						</div>
-						<Button
-							className="h-8 rounded-md border border-border bg-surface-secondary px-3 font-medium text-body transition-colors duration-150 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
-							disabled={refreshDisabled}
-							onClick={scanOpenRouter}
-						>
-							{openrouterScanning ? tc("scanning") : tc("refresh")}
-						</Button>
-					</div>
+					<OpenRouterModelSelector
+						disabled={apiKeyMissing}
+						isLoading={openrouterScanning}
+						maxOutputTokens={maxOutputTokens}
+						models={openrouterModels as never}
+						onChange={setModel}
+						onMaxOutputTokensChange={onMaxOutputTokensChange}
+						onOpen={scanOpenRouter}
+						onReasoningEffortChange={onReasoningEffortChange}
+						onVerbosityChange={onVerbosityChange}
+						reasoningEffort={reasoningEffort}
+						value={openrouterModel}
+						verbosity={verbosity}
+					/>
 				</FormControl>
 			</div>
 
@@ -509,14 +572,15 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 						fallback={true}
 						isLoading={openrouterScanning}
 						models={openrouterModels as never}
-						onChange={(v) => update({ openrouterFallbackModel: v })}
+						onChange={setFallbackModel}
+						onOpen={scanOpenRouter}
 						placeholder={t("openrouterFallbackModelPlaceholder")}
 						value={openrouterFallbackModel}
 					/>
 				</FormControl>
 			</div>
 
-			<OpenRouterErrorBanner message={openrouterError} />
+			<ErrorBanner message={openrouterError} />
 		</>
 	);
 }
@@ -524,9 +588,21 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 interface IndependentPresetListProps {
 	levelOpts: ReadonlyArray<{ value: PresetLevel; label: string }>;
 	onLevelChange: (key: (typeof INDEPENDENT_PRESETS)[number], level: PresetLevel) => void;
-	onToggle: (key: (typeof INDEPENDENT_PRESETS)[number], on: boolean) => void;
+	onToggle: (key: (typeof INDEPENDENT_PRESETS)[number], on: boolean, level?: PresetLevel) => void;
 	presets: readonly PresetEntry[];
 	t: TranslateFn;
+}
+
+type IndependentKeyT = (typeof INDEPENDENT_PRESETS)[number];
+
+/** Seed the local "last-known level" cache from whatever's persisted. */
+function seedLevelCache(presets: readonly PresetEntry[]): Record<IndependentKeyT, PresetLevel> {
+	const cache: Record<string, PresetLevel> = {};
+	for (const key of INDEPENDENT_PRESETS) {
+		const stored = presets.find((p) => p.key === key)?.level;
+		cache[key] = stored ?? DEFAULT_LEVEL;
+	}
+	return cache as Record<IndependentKeyT, PresetLevel>;
 }
 
 function IndependentPresetList({
@@ -536,70 +612,175 @@ function IndependentPresetList({
 	presets,
 	t,
 }: IndependentPresetListProps) {
+	// Remember each preset's last-known level locally so toggling off then on
+	// restores the user's previous choice instead of snapping back to medium.
+	// Initialized from whatever's persisted; updated whenever the user touches
+	// the switcher OR the persisted level changes from underneath us.
+	const [levelCache, setLevelCache] = useState<Record<IndependentKeyT, PresetLevel>>(() =>
+		seedLevelCache(presets)
+	);
+
+	useEffect(() => {
+		setLevelCache((prev) => {
+			let changed = false;
+			const next = { ...prev };
+			for (const key of INDEPENDENT_PRESETS) {
+				const stored = presets.find((p) => p.key === key)?.level;
+				if (stored !== undefined && stored !== prev[key]) {
+					next[key] = stored;
+					changed = true;
+				}
+			}
+			return changed ? next : prev;
+		});
+	}, [presets]);
+
+	const checkedIndices = new Set<number>();
+	INDEPENDENT_PRESETS.forEach((key, i) => {
+		if (isIndependentEnabled(presets, key)) {
+			checkedIndices.add(i);
+		}
+	});
+
+	const disabledLevelOpts = levelOpts.map((opt) => ({ ...opt, disabled: true }));
+
 	return (
-		<div className="flex flex-col gap-2">
-			{INDEPENDENT_PRESETS.map((key) => {
+		<CheckboxGroup checkedIndices={checkedIndices} className="w-full">
+			{INDEPENDENT_PRESETS.map((key, i) => {
 				const checked = isIndependentEnabled(presets, key);
 				const hasLevel = (PRESETS_WITH_LEVELS as readonly string[]).includes(key);
-				const labelId = `llm-preset-${key}`;
+				const displayedLevel = checked ? getLevel(presets, key) : levelCache[key];
+				const handleLevel = (lvl: PresetLevel) => {
+					setLevelCache((prev) => (prev[key] === lvl ? prev : { ...prev, [key]: lvl }));
+					if (checked) {
+						onLevelChange(key, lvl);
+					}
+				};
 				return (
-					<div
-						className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-surface-tertiary/40 px-3 py-2"
+					<CheckboxItem
+						checked={checked}
+						index={i}
 						key={key}
-					>
-						<div className="flex items-center gap-2">
+						label={t(PRESET_LABEL_KEY[key])}
+						leading={
 							<HugeiconsIcon
 								aria-hidden="true"
 								className="shrink-0 text-foreground-dim"
 								icon={INDEPENDENT_PRESET_ICONS[key]}
 								size={16}
 							/>
-							<span className="font-medium text-body-sm" id={labelId}>
-								{t(PRESET_LABEL_KEY[key])}
-							</span>
-						</div>
-						<div className="flex items-center gap-3">
-							{checked && hasLevel ? (
-								<Switcher
-									onChange={(v) => onLevelChange(key, v as PresetLevel)}
-									options={levelOpts}
-									value={getLevel(presets, key)}
-								/>
-							) : null}
-							<Toggle
-								aria-label={t(PRESET_LABEL_KEY[key])}
-								checked={checked}
-								onCheckedChange={(on) => onToggle(key, on)}
-							/>
-						</div>
-					</div>
+						}
+						onToggle={() => onToggle(key, !checked, levelCache[key])}
+						trailing={
+							hasLevel ? (
+								<ElevatedSurface inline>
+									<Switcher
+										onChange={(v) => handleLevel(v as PresetLevel)}
+										options={checked ? levelOpts : disabledLevelOpts}
+										value={displayedLevel}
+									/>
+								</ElevatedSurface>
+							) : null
+						}
+					/>
 				);
 			})}
-		</div>
+		</CheckboxGroup>
 	);
 }
 
-export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps = {}) {
+interface OllamaCatalogState {
+	error: string | null;
+	isLoaded: boolean;
+	isScanning: boolean;
+	models: readonly OllamaModel[];
+	scanModels: () => void;
+}
+
+interface OpenRouterCatalogState {
+	error: string | null;
+	isLoaded: boolean;
+	isScanning: boolean;
+	models: readonly unknown[];
+	scanModels: () => void;
+}
+
+interface FeatureBlockProps {
+	dictationLayout?: boolean;
+	endpoint: string;
+	feature: "dictation" | "transforms";
+	featureSnapshot: LlmFeatureDraft;
+	librarySearch: import("@picker").OllamaModelSelectorProps["librarySearch"];
+	ollamaCatalog: OllamaCatalogState;
+	ollamaPullBundle: OllamaPullBundle;
+	ollamaReachable: boolean | null;
+	openrouterApiKey: string;
+	openrouterCatalog: OpenRouterCatalogState;
+	setShowApiKeyDialog: (v: boolean) => void;
+	setShowOllamaDialog: (v: boolean) => void;
+	/**
+	 * True for the first feature whose provider is `openrouter`. That feature
+	 * renders the shared `openrouterApiKey` input inline; the second one (if
+	 * also using OpenRouter) does not, so we don't duplicate the field.
+	 */
+	showApiKeyField: boolean;
+	t: TranslateFn;
+	tc: TranslateFn;
+	update: UpdateDictationFn | UpdateTransformsFn;
+	updateShared: UpdateSharedFn;
+	// Last broadcast from main process; null until first warmup pass.
+	// Drives the inline warmup-failure banner so the user can see why
+	// dictation didn't run without reading debug logs.
+	warmupStatus: import("@/shared/api/ipc-client").LlmWarmupStatus | null;
+}
+
+// Toggle handler shared by both feature subsections — pulls together the
+// per-feature preflight (Ollama reachability / OpenRouter API key) without
+// touching the master switch (there is none anymore).
+function useFeatureToggleHandler(
+	props: FeatureBlockProps,
+	checkOllamaReachable: () => Promise<boolean>
+) {
+	return useCallback(
+		async (next: boolean) => {
+			await performFeatureToggle(next, {
+				provider: props.featureSnapshot.provider,
+				openrouterApiKey: props.openrouterApiKey,
+				ollamaLoaded: props.ollamaCatalog.isLoaded,
+				openrouterLoaded: props.openrouterCatalog.isLoaded,
+				checkOllamaReachable,
+				scanOllama: props.ollamaCatalog.scanModels,
+				scanOpenRouter: props.openrouterCatalog.scanModels,
+				setEnabled: (value) =>
+					(props.update as (p: { enabled: boolean }) => void)({ enabled: value }),
+				setShowOllamaDialog: props.setShowOllamaDialog,
+				setShowApiKeyDialog: props.setShowApiKeyDialog,
+			});
+		},
+		[props, checkOllamaReachable]
+	);
+}
+
+export function LlmSettingsPanel() {
 	const llm = useSettingsStore((s) => s.settings.llm);
-	const update = useSettingsStore((s) => s.updateLlmSettings);
+	const updateShared = useSettingsStore((s) => s.updateLlmSettings);
+	const updateDictation = useSettingsStore((s) => s.updateLlmDictation);
+	const updateTransforms = useSettingsStore((s) => s.updateLlmTransforms);
 	const t = useTranslations("llm");
 	const tc = useTranslations("common");
 
-	const snapshot = readLlmSnapshot(llm);
-	const {
-		enabled,
-		dictationEnabled,
-		transformsEnabled,
-		provider,
-		endpoint,
-		model,
-		presets,
-		openrouterApiKey,
-		openrouterModel,
-		openrouterFallbackModel,
-	} = snapshot;
+	// Subscribe to main-process warmup-status broadcasts so the per-feature
+	// banners can surface "Ollama not running" / "model missing" / "model
+	// failed to load" right next to the toggle that the user just enabled.
+	useWarmupStatusFeed();
+	const warmupStatus = useWarmupStatusStore((s) => s.status);
 
-	const fallbackExclusion = computeModelExclusionConfig(openrouterModel);
+	const snapshot = readLlmSnapshot(llm);
+	const { endpoint, openrouterApiKey, dictation, transforms } = snapshot;
+
+	const usesOllama = dictation.provider === "ollama" || transforms.provider === "ollama";
+	const usesOpenRouter =
+		dictation.provider === "openrouter" || transforms.provider === "openrouter";
 
 	const {
 		models: ollamaModels,
@@ -607,6 +788,13 @@ export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps 
 		isScanning: ollamaScanning,
 		error: ollamaError,
 		scanModels: scanOllama,
+		pulls: ollamaPullsRaw,
+		pausedPulls: ollamaPausedPulls,
+		pullModel: ollamaPullModel,
+		cancelPull: ollamaCancelPull,
+		resumePull: ollamaResumePull,
+		discardPausedPull: ollamaDiscardPausedPull,
+		deleteModel: ollamaDeleteModel,
 	} = useLlmCatalogStore(
 		useShallow((s) => ({
 			models: s.models,
@@ -614,8 +802,71 @@ export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps 
 			isScanning: s.isScanning,
 			error: s.error,
 			scanModels: s.scanModels,
+			pulls: s.pulls,
+			pausedPulls: s.pausedPulls,
+			pullModel: s.pullModel,
+			cancelPull: s.cancelPull,
+			resumePull: s.resumePull,
+			discardPausedPull: s.discardPausedPull,
+			deleteModel: s.deleteModel,
 		}))
 	);
+
+	// Flatten the store's `{ progress, startedAt }` shape down to plain
+	// `{ [name]: OllamaPullProgress }` for the selector's `pulls` prop.
+	const ollamaPulls: Record<string, import("@/shared/api/models").OllamaPullProgress> = {};
+	for (const [name, state] of Object.entries(ollamaPullsRaw)) {
+		ollamaPulls[name] = state.progress;
+	}
+
+	const systemInfo = useModelStateStore((s) => s.systemInfo);
+	const getOllamaFit = (sizeBytes: number) => {
+		const a = assessOllamaFit(sizeBytes, systemInfo);
+		return {
+			availableBytes: a.availableBytes,
+			fits: a.fits,
+			requiredBytes: a.requiredBytes,
+			shortfall: a.shortfall,
+		};
+	};
+
+	const ollamaPullBundle: OllamaPullBundle = {
+		cancelPull: (name: string) => {
+			void ollamaCancelPull(name);
+		},
+		deleteModel: ollamaDeleteModel,
+		discardPausedPull: ollamaDiscardPausedPull,
+		getFit: getOllamaFit,
+		pausedPulls: ollamaPausedPulls,
+		pullModel: ollamaPullModel,
+		pulls: ollamaPulls,
+		resumePull: ollamaResumePull,
+	};
+
+	const libraryState = useOllamaLibraryStore(
+		useShallow((s) => ({
+			catalog: s.catalog,
+			error: s.error,
+			isLoaded: s.isLoaded,
+			isLoading: s.isLoading,
+			tagsByModel: s.tagsByModel,
+			loadCatalog: s.loadCatalog,
+			fetchTags: s.fetchTags,
+		}))
+	);
+	const librarySearchProps: import("@picker").OllamaModelSelectorProps["librarySearch"] = {
+		catalog: libraryState.catalog,
+		error: libraryState.error,
+		isLoaded: libraryState.isLoaded,
+		isLoading: libraryState.isLoading,
+		tagsByModel: libraryState.tagsByModel,
+		loadCatalog: () => {
+			void libraryState.loadCatalog();
+		},
+		fetchTags: (m) => {
+			void libraryState.fetchTags(m);
+		},
+	};
 
 	const {
 		models: openrouterModels,
@@ -633,7 +884,7 @@ export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps 
 		}))
 	);
 
-	// Reachability hint shown inline when LLM is on but Ollama isn't responding.
+	// Reachability hint shown inline when any feature is on + uses Ollama.
 	const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null);
 
 	const checkOllamaReachable = useCallback(async () => {
@@ -643,204 +894,238 @@ export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps 
 	}, []);
 
 	useEffect(() => {
-		const isOllamaEnabled = enabled && provider === "ollama";
-		if (isOllamaEnabled) {
+		const anyOllamaEnabled =
+			(dictation.enabled && dictation.provider === "ollama") ||
+			(transforms.enabled && transforms.provider === "ollama");
+		if (anyOllamaEnabled) {
 			checkOllamaReachable().catch(() => undefined);
 		}
-	}, [enabled, provider, checkOllamaReachable]);
+	}, [
+		dictation.enabled,
+		dictation.provider,
+		transforms.enabled,
+		transforms.provider,
+		checkOllamaReachable,
+	]);
 
 	useEffect(() => {
-		const needsScan = provider === "ollama" && !ollamaLoaded;
-		if (needsScan) {
+		if (usesOllama && !ollamaLoaded) {
 			scanOllama();
 		}
-	}, [provider, ollamaLoaded, scanOllama]);
+	}, [usesOllama, ollamaLoaded, scanOllama]);
 
 	useEffect(() => {
-		if (shouldScanOpenRouter(provider, openrouterApiKey, openrouterLoaded)) {
+		if (shouldScanOpenRouter("openrouter", openrouterApiKey, openrouterLoaded) && usesOpenRouter) {
 			scanOpenRouter();
 		}
-	}, [provider, openrouterApiKey, openrouterLoaded, scanOpenRouter]);
+	}, [usesOpenRouter, openrouterApiKey, openrouterLoaded, scanOpenRouter]);
 
-	// After a scan, ensure llm.model points at an available Ollama model.
+	// After a scan, ensure each feature's Ollama model still exists.
 	useEffect(() => {
-		const replacement = shouldSyncOllamaModel(provider, ollamaModels, model);
+		const replacement = shouldSyncOllamaModel(dictation.provider, ollamaModels, dictation.model);
 		if (replacement) {
-			update({ model: replacement });
+			updateDictation({ model: replacement });
 		}
-	}, [provider, ollamaModels, model, update]);
+	}, [dictation.provider, dictation.model, ollamaModels, updateDictation]);
 
-	// Toggle gating
+	useEffect(() => {
+		const replacement = shouldSyncOllamaModel(transforms.provider, ollamaModels, transforms.model);
+		if (replacement) {
+			updateTransforms({ model: replacement });
+		}
+	}, [transforms.provider, transforms.model, ollamaModels, updateTransforms]);
+
+	// Per-feature toggle gating: each feature's "turn on" flow may open one of
+	// these dialogs (Ollama install/run, or OpenRouter API key entry) when the
+	// chosen provider isn't yet configured. The model-manager dialog is opened
+	// only from inside the Ollama section of whichever feature triggered it.
 	const [showOllamaDialog, setShowOllamaDialog] = useState(false);
 	const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
-	const [showModelManager, setShowModelManager] = useState(false);
-
-	const openModelManager = useCallback(() => setShowModelManager(true), []);
-	const closeModelManager = useCallback(() => setShowModelManager(false), []);
-	const handleModelInstalled = useCallback((name: string) => update({ model: name }), [update]);
-
-	const handleToggle = useCallback(
-		async (next: boolean) => {
-			await performToggle(next, {
-				provider,
-				openrouterApiKey,
-				ollamaLoaded,
-				openrouterLoaded,
-				checkOllamaReachable,
-				scanOllama,
-				scanOpenRouter,
-				update,
-				setShowOllamaDialog,
-				setShowApiKeyDialog,
-			});
-		},
-		[
-			provider,
-			openrouterApiKey,
-			ollamaLoaded,
-			openrouterLoaded,
-			checkOllamaReachable,
-			scanOllama,
-			scanOpenRouter,
-			update,
-		]
-	);
+	// Tracks which feature initiated the OllamaDialog / ApiKeyDialog so the
+	// dialog completion handler knows which feature to enable.
+	const [pendingFeature, setPendingFeature] = useState<"dictation" | "transforms" | null>(null);
 
 	const handleOllamaStarted = useCallback(() => {
 		setShowOllamaDialog(false);
 		scanOllama();
-		update({ enabled: true });
-	}, [scanOllama, update]);
+		if (pendingFeature === "dictation") {
+			updateDictation({ enabled: true });
+		} else if (pendingFeature === "transforms") {
+			updateTransforms({ enabled: true });
+		}
+		setPendingFeature(null);
+	}, [scanOllama, pendingFeature, updateDictation, updateTransforms]);
 
 	const handleApiKeySaved = useCallback(
 		(key: string) => {
-			update({ openrouterApiKey: key, enabled: true });
+			updateShared({ openrouterApiKey: key });
 			setShowApiKeyDialog(false);
 			scanOpenRouter();
+			if (pendingFeature === "dictation") {
+				updateDictation({ enabled: true });
+			} else if (pendingFeature === "transforms") {
+				updateTransforms({ enabled: true });
+			}
+			setPendingFeature(null);
 		},
-		[update, scanOpenRouter]
+		[updateShared, scanOpenRouter, pendingFeature, updateDictation, updateTransforms]
 	);
 
-	const ollamaModelOpts = buildOllamaModelOpts(ollamaModels as readonly OllamaModel[]);
+	const setShowOllamaDialogFor = useCallback(
+		(feature: "dictation" | "transforms") => (v: boolean) => {
+			setShowOllamaDialog(v);
+			if (v) {
+				setPendingFeature(feature);
+			}
+		},
+		[]
+	);
+	const setShowApiKeyDialogFor = useCallback(
+		(feature: "dictation" | "transforms") => (v: boolean) => {
+			setShowApiKeyDialog(v);
+			if (v) {
+				setPendingFeature(feature);
+			}
+		},
+		[]
+	);
+
 	const toneOpts = buildToneOpts(t);
 	const levelOpts = buildLevelOpts(t);
 	const providerOpts = buildProviderOpts(t);
-	const isOllamaProvider = provider === "ollama";
-	const activeTone = getToneKey(presets);
+	const activeTone = getToneKey(dictation.presets);
+
+	const ollamaCatalogState: OllamaCatalogState = {
+		error: ollamaError,
+		isLoaded: ollamaLoaded,
+		isScanning: ollamaScanning,
+		models: ollamaModels as readonly OllamaModel[],
+		scanModels: scanOllama,
+	};
+	const openrouterCatalogState: OpenRouterCatalogState = {
+		error: openrouterError,
+		isLoaded: openrouterLoaded,
+		isScanning: openrouterScanning,
+		models: openrouterModels as readonly unknown[],
+		scanModels: scanOpenRouter,
+	};
+
+	// Pick the single feature that renders the shared API key input. We can't
+	// render it twice (it's one setting) and we don't want to surface it at all
+	// when neither feature uses OpenRouter — that's the whole point of gating.
+	const apiKeyOwner: "dictation" | "transforms" | null =
+		dictation.provider === "openrouter"
+			? "dictation"
+			: transforms.provider === "openrouter"
+				? "transforms"
+				: null;
 
 	return (
 		<>
-			<SettingSection
-				icon={AiBrain02Icon}
-				onToggle={handleToggle}
-				title={t("title")}
-				toggled={enabled}
-			>
-				<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
-					<div className="col-span-2">
-						<FormControl
-							caption={t("providerCaption")}
-							label={t("provider")}
-							tooltip={t("providerTooltip")}
-						>
-							<Switcher
-								onChange={(v) => update({ provider: v })}
-								options={providerOpts}
-								value={provider}
-							/>
-						</FormControl>
-					</div>
-
-					{isOllamaProvider ? (
-						<OllamaSection
-							enabled={enabled}
-							endpoint={endpoint}
-							model={model}
-							ollamaError={ollamaError}
-							ollamaModelOpts={ollamaModelOpts}
-							ollamaReachable={ollamaReachable}
-							ollamaScanning={ollamaScanning}
-							openManager={openModelManager}
-							scanOllama={scanOllama}
-							t={t}
-							tc={tc}
-							update={update}
-						/>
-					) : (
-						<OpenRouterSection
-							fallbackExclusion={fallbackExclusion}
-							openrouterApiKey={openrouterApiKey}
-							openrouterError={openrouterError}
-							openrouterFallbackModel={openrouterFallbackModel}
-							openrouterModel={openrouterModel}
-							openrouterModels={openrouterModels as readonly unknown[]}
-							openrouterScanning={openrouterScanning}
-							scanOpenRouter={scanOpenRouter}
-							t={t}
-							tc={tc}
-							update={update}
-						/>
-					)}
-				</div>
-
-				<SettingSubsection
-					caption={t("subDictationCaption")}
-					icon={PencilIcon}
-					onToggle={(v) => update({ dictationEnabled: v })}
-					title={t("subDictationTitle")}
-					toggled={dictationEnabled}
+			<SettingSection icon={AiBrain02Icon} title={t("title")}>
+				{/* The OpenRouter API key lives inside the OpenRouter section
+				    of whichever feature uses it; the Ollama endpoint URL now
+				    lives inside each feature's OllamaSection (rendered under
+				    the provider Switcher) so it appears in-context. */}
+				<FeatureBlock
+					checkOllamaReachable={checkOllamaReachable}
+					endpoint={endpoint}
+					feature="dictation"
+					featureSnapshot={dictation}
+					librarySearch={librarySearchProps}
+					ollamaCatalog={ollamaCatalogState}
+					ollamaPullBundle={ollamaPullBundle}
+					ollamaReachable={ollamaReachable}
+					openrouterApiKey={openrouterApiKey}
+					openrouterCatalog={openrouterCatalogState}
+					providerOpts={providerOpts}
+					setShowApiKeyDialog={setShowApiKeyDialogFor("dictation")}
+					setShowOllamaDialog={setShowOllamaDialogFor("dictation")}
+					showApiKeyField={apiKeyOwner === "dictation"}
+					t={t}
+					tc={tc}
+					update={updateDictation}
+					updateShared={updateShared}
+					warmupStatus={warmupStatus}
 				>
-					<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+					<div className="flex flex-col divide-y divide-surface-1">
 						<div className="col-span-2">
 							<FormControl caption={t("toneCaption")} label={t("tone")} tooltip={t("toneTooltip")}>
-								<Switcher
-									onChange={(v) =>
-										update({ presets: setTone(presets, v as (typeof TONE_GROUP)[number]) })
-									}
-									options={toneOpts}
-									value={activeTone}
-								/>
+								<ElevatedSurface>
+									<Switcher
+										onChange={(v) =>
+											updateDictation({
+												presets: setTone(dictation.presets, v as (typeof TONE_GROUP)[number]),
+											})
+										}
+										options={toneOpts}
+										value={activeTone}
+									/>
+								</ElevatedSurface>
 							</FormControl>
 						</div>
-
 						<div className="col-span-2">
 							<FormControl
 								caption={t("modifiersCaption")}
 								label={t("modifiers")}
 								tooltip={t("modifiersTooltip")}
 							>
-								<IndependentPresetList
-									levelOpts={levelOpts}
-									onLevelChange={(key, lvl) =>
-										update({ presets: setIndependentLevel(presets, key, lvl) })
-									}
-									onToggle={(key, on) => update({ presets: toggleIndependent(presets, key, on) })}
-									presets={presets}
-									t={t}
-								/>
+								<ElevatedSurface>
+									<IndependentPresetList
+										levelOpts={levelOpts}
+										onLevelChange={(key, lvl) =>
+											updateDictation({
+												presets: setIndependentLevel(dictation.presets, key, lvl),
+											})
+										}
+										onToggle={(key, on, level) =>
+											updateDictation({
+												presets: toggleIndependent(dictation.presets, key, on, level),
+											})
+										}
+										presets={dictation.presets}
+										t={t}
+									/>
+								</ElevatedSurface>
 							</FormControl>
 						</div>
-
 						<div className="col-span-2">
 							<ContextAwarenessSection />
 						</div>
 					</div>
-				</SettingSubsection>
+				</FeatureBlock>
 
-				<SettingSubsection
-					caption={t("transformsCaption")}
-					icon={MagicWand01Icon}
-					onToggle={(v) => update({ transformsEnabled: v })}
-					title={t("subTransformTitle")}
-					toggled={transformsEnabled}
+				<FeatureBlock
+					checkOllamaReachable={checkOllamaReachable}
+					endpoint={endpoint}
+					feature="transforms"
+					featureSnapshot={transforms}
+					librarySearch={librarySearchProps}
+					ollamaCatalog={ollamaCatalogState}
+					ollamaPullBundle={ollamaPullBundle}
+					ollamaReachable={ollamaReachable}
+					openrouterApiKey={openrouterApiKey}
+					openrouterCatalog={openrouterCatalogState}
+					providerOpts={providerOpts}
+					setShowApiKeyDialog={setShowApiKeyDialogFor("transforms")}
+					setShowOllamaDialog={setShowOllamaDialogFor("transforms")}
+					showApiKeyField={apiKeyOwner === "transforms"}
+					t={t}
+					tc={tc}
+					update={updateTransforms}
+					updateShared={updateShared}
+					warmupStatus={warmupStatus}
 				>
 					<TransformsSection />
-				</SettingSubsection>
+				</FeatureBlock>
 			</SettingSection>
 
 			<OllamaDialog
 				isOpen={showOllamaDialog}
-				onClose={() => setShowOllamaDialog(false)}
+				onClose={() => {
+					setShowOllamaDialog(false);
+					setPendingFeature(null);
+				}}
 				onStarted={handleOllamaStarted}
 				t={t}
 				tc={tc}
@@ -849,19 +1134,149 @@ export function LlmSettingsPanel({ renderOllamaManager }: LlmSettingsPanelProps 
 			<ApiKeyDialog
 				initialKey={openrouterApiKey}
 				isOpen={showApiKeyDialog}
-				onClose={() => setShowApiKeyDialog(false)}
+				onClose={() => {
+					setShowApiKeyDialog(false);
+					setPendingFeature(null);
+				}}
 				onSave={handleApiKeySaved}
 				t={t}
 				tc={tc}
 			/>
-
-			{renderOllamaManager?.({
-				currentModel: model,
-				isOpen: showModelManager,
-				onClose: closeModelManager,
-				onModelInstalled: handleModelInstalled,
-			})}
 		</>
+	);
+}
+
+interface FeatureBlockComponentProps extends FeatureBlockProps {
+	checkOllamaReachable: () => Promise<boolean>;
+	children: ReactNode;
+	providerOpts: ReadonlyArray<{ label: string; value: string }>;
+}
+
+function FeatureBlock(props: FeatureBlockComponentProps) {
+	const {
+		endpoint,
+		feature,
+		featureSnapshot,
+		librarySearch,
+		ollamaCatalog,
+		ollamaPullBundle,
+		openrouterCatalog,
+		openrouterApiKey,
+		ollamaReachable,
+		providerOpts,
+		setShowOllamaDialog,
+		setShowApiKeyDialog,
+		showApiKeyField,
+		checkOllamaReachable,
+		update,
+		updateShared,
+		warmupStatus,
+		t,
+		tc,
+		children,
+	} = props;
+	const handleToggle = useFeatureToggleHandler(
+		{
+			endpoint,
+			feature,
+			featureSnapshot,
+			librarySearch,
+			ollamaCatalog,
+			ollamaPullBundle,
+			openrouterCatalog,
+			openrouterApiKey,
+			ollamaReachable,
+			setShowOllamaDialog,
+			setShowApiKeyDialog,
+			showApiKeyField,
+			update,
+			updateShared,
+			warmupStatus,
+			t,
+			tc,
+		},
+		checkOllamaReachable
+	);
+	const fallbackExclusion = computeModelExclusionConfig(featureSnapshot.openrouterModel);
+	const updateAny = update as (p: Partial<LlmFeatureDraft>) => void;
+	const isDictation = feature === "dictation";
+	return (
+		<SettingSubsection
+			caption={isDictation ? t("subDictationCaption") : t("transformsCaption")}
+			icon={isDictation ? PencilIcon : MagicWand01Icon}
+			onToggle={handleToggle}
+			title={isDictation ? t("subDictationTitle") : t("subTransformTitle")}
+			toggled={featureSnapshot.enabled}
+		>
+			<div className="flex flex-col divide-y divide-surface-1">
+				<div className="col-span-2">
+					<FormControl
+						caption={t("providerCaption")}
+						label={t("provider")}
+						tooltip={t("providerTooltip")}
+					>
+						<ElevatedSurface>
+							<Switcher
+								onChange={(v) => updateAny({ provider: v as LlmProvider })}
+								options={providerOpts}
+								value={featureSnapshot.provider}
+							/>
+						</ElevatedSurface>
+					</FormControl>
+				</div>
+				{featureSnapshot.provider === "ollama" ? (
+					<OllamaSection
+						enabled={featureSnapshot.enabled}
+						endpoint={endpoint}
+						librarySearch={librarySearch}
+						model={featureSnapshot.model}
+						ollamaError={ollamaCatalog.error}
+						ollamaModels={ollamaCatalog.models}
+						ollamaReachable={ollamaReachable}
+						ollamaScanning={ollamaCatalog.isScanning}
+						pullBundle={ollamaPullBundle}
+						scanOllama={ollamaCatalog.scanModels}
+						setEndpoint={(v) => updateShared({ endpoint: v })}
+						setModel={(v) => updateAny({ model: v })}
+						t={t}
+						tc={tc}
+					/>
+				) : (
+					<OpenRouterSection
+						fallbackExclusion={fallbackExclusion}
+						maxOutputTokens={featureSnapshot.maxOutputTokens}
+						onApiKeyChange={(key) => updateShared({ openrouterApiKey: key })}
+						onMaxOutputTokensChange={(v) => updateAny({ maxOutputTokens: v })}
+						onReasoningEffortChange={(v) => updateAny({ reasoningEffort: v })}
+						onVerbosityChange={(v) => updateAny({ verbosity: v })}
+						openrouterApiKey={openrouterApiKey}
+						openrouterError={openrouterCatalog.error}
+						openrouterFallbackModel={featureSnapshot.openrouterFallbackModel}
+						openrouterModel={featureSnapshot.openrouterModel}
+						openrouterModels={openrouterCatalog.models}
+						openrouterScanning={openrouterCatalog.isScanning}
+						reasoningEffort={featureSnapshot.reasoningEffort}
+						scanOpenRouter={openrouterCatalog.scanModels}
+						setFallbackModel={(v) => updateAny({ openrouterFallbackModel: v })}
+						setModel={(v) => updateAny({ openrouterModel: v })}
+						showApiKeyField={showApiKeyField}
+						t={t}
+						tc={tc}
+						verbosity={featureSnapshot.verbosity}
+					/>
+				)}
+				{featureSnapshot.enabled ? (
+					<WarmupStatusBanner
+						feature={feature}
+						model={featureSnapshot.model}
+						onRetry={checkOllamaReachable}
+						provider={featureSnapshot.provider}
+						status={warmupStatus}
+					/>
+				) : null}
+			</div>
+			{children}
+		</SettingSubsection>
 	);
 }
 
@@ -1073,8 +1488,9 @@ function ApiKeyDialog({ t, tc, isOpen, onClose, onSave, initialKey }: ApiKeyDial
 			<div className="flex flex-col gap-4 p-6">
 				<h2 className="font-semibold text-foreground text-lg">{t("apiKeyRequired")}</h2>
 				<p className="text-foreground-secondary text-sm">{t("apiKeyRequiredDescription")}</p>
-				<TextField
+				<PasswordField
 					defaultValue={initialKey}
+					hideLabel={tc("hidePassword")}
 					key={isOpen ? "open" : "closed"}
 					onChange={(e) => setHasValue(e.target.value.trim().length > 0)}
 					onKeyDown={(e) => {
@@ -1084,7 +1500,7 @@ function ApiKeyDialog({ t, tc, isOpen, onClose, onSave, initialKey }: ApiKeyDial
 					}}
 					placeholder={t("openrouterApiKeyPlaceholder")}
 					ref={inputRef}
-					type="password"
+					revealLabel={tc("showPassword")}
 				/>
 				<div className="flex gap-3">
 					<Button
@@ -1115,18 +1531,19 @@ function ApiKeyDialog({ t, tc, isOpen, onClose, onSave, initialKey }: ApiKeyDial
 // Test-only exports — pure helpers extracted from the panel logic.
 export const __llm_settings_panel_test_helpers__ = {
 	readLlmSnapshot,
-	buildOllamaModelOpts,
+	readFeatureSnapshot,
 	buildToneOpts,
 	buildLevelOpts,
 	buildProviderOpts,
 	pickReplacementOllamaModel,
 	shouldSyncOllamaModel,
 	shouldScanOpenRouter,
-	tryEnableOllama,
-	tryEnableOpenRouter,
-	performToggle,
+	tryEnableOllamaForFeature,
+	tryEnableOpenRouterForFeature,
+	performFeatureToggle,
 	getOllamaDialogTexts,
 	DEFAULT_LLM,
+	DEFAULT_FEATURE,
 	getToneKey,
 	isIndependentEnabled,
 	getLevel,

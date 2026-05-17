@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useConnectionStore } from "@/entities/connection";
-import { useCatalogStore } from "@/entities/model-catalog";
+import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useListenStore } from "@/features/listen-mode";
 import { useDownloadStore } from "@/features/model-download";
@@ -23,6 +23,10 @@ beforeEach(() => {
 	// Zustand store and never reset it. Force the empty initial state so the
 	// model menu deterministically falls back to WHISPER_MODELS here.
 	useCatalogStore.setState({ models: [], isLoaded: false });
+	// Likewise reset the swap store — otherwise leftover `activeMain` from
+	// the model-swap-store tests would flip the chip into a Spinner and the
+	// menu role assertions in this suite would fail.
+	useModelSwapStore.setState({ activeMain: null, activeRealtime: null });
 });
 
 afterEach(() => {
@@ -102,6 +106,24 @@ describe("StatusBar", () => {
 		// Falls back to WHISPER_MODELS when the catalog is empty in tests.
 		// "large-v2" is one of the fallback options and is not the current selection.
 		expect(screen.getByRole("menuitemradio", { name: "large-v2" })).toBeDefined();
+	});
+
+	test("renders a switching-to indicator with spinner while a main-model swap is in flight", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				model: { ...initialSettings.model, model: "tiny" },
+			},
+		});
+		useModelSwapStore.setState({ activeMain: "large-v2", activeRealtime: null });
+		render(
+			<IntlProvider>
+				<StatusBar />
+			</IntlProvider>
+		);
+		expect(document.body.textContent).toContain("large-v2");
+		// While swapping, the picker chip is replaced — no menu trigger button.
+		expect(screen.queryByRole("button", { name: /model/i })).toBeNull();
 	});
 
 	test("clicking a model option in the menu updates the settings store", () => {

@@ -1,0 +1,44 @@
+{
+  "tiny": [
+    "fp16",
+    "q4",
+    "bnb4"
+  ],
+  "base": [
+    "fp16",
+    "q4",
+    "bnb4"
+  ],
+  "small": [
+    "fp16",
+    "q4",
+    "bnb4"
+  ],
+  "medium": [],
+  "large-v3": [],
+  "large-v3-turbo": [
+    "fp16",
+    "q4",
+    "bnb4"
+  ],
+  "tiny.en": [],
+  "base.en": [
+    "fp16",
+    "q4",
+    "bnb4"
+  ],
+  "small.en": [
+    "fp16",
+    "q4"
+  ],
+  "medium.en": [],
+  "lite-whisper-large-v3-turbo": [
+    "fp16"
+  ],
+  "lite-whisper-large-v3-turbo-acc": [
+    "fp16"
+  ],
+  "lite-whisper-large-v3-turbo-fast": [
+    "fp16"
+  ]
+}

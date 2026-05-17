@@ -27,4 +27,17 @@ describe("Toggle", () => {
 		fireEvent.click(screen.getByRole("switch"));
 		expect(onChange).not.toHaveBeenCalled();
 	});
+
+	test("renders inline label when label prop is provided", () => {
+		render(<Toggle checked={true} label="Dark mode" onCheckedChange={() => undefined} />);
+		expect(screen.getByText("Dark mode")).toBeDefined();
+		expect(screen.getByRole("switch", { name: "Dark mode" })).toBeDefined();
+	});
+
+	test("clicking the inline label toggles the switch", () => {
+		const onChange = mock(() => undefined);
+		render(<Toggle checked={false} label="Notifications" onCheckedChange={onChange} />);
+		fireEvent.click(screen.getByText("Notifications"));
+		expect(onChange).toHaveBeenCalledTimes(1);
+	});
 });

@@ -1,12 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import {
-	formatCombo,
-	HotkeyRecorder,
-	resolveDisplayText,
-	resolveRecorderState,
-} from "./HotkeyRecorder";
+import { formatCombo, HotkeyRecorder, resolveDisplayText } from "./HotkeyRecorder";
 
 const startCalls: number[] = [];
 const stopCalls: number[] = [];
@@ -62,25 +57,6 @@ describe("formatCombo", () => {
 	});
 });
 
-describe("resolveRecorderState", () => {
-	const stop = () => undefined;
-	const start = () => undefined;
-	test("returns recording classes when recording=true", () => {
-		const s = resolveRecorderState(true, stop, start, "Stop", "Record");
-		expect(s.displayClass).toContain("bg-orange-dim");
-		expect(s.btnClass).toContain("bg-error-dim");
-		expect(s.btnLabel).toBe("Stop");
-		expect(s.btnAction).toBe(stop);
-	});
-	test("returns idle classes when recording=false", () => {
-		const s = resolveRecorderState(false, stop, start, "Stop", "Record");
-		expect(s.displayClass).toContain("bg-surface-tertiary");
-		expect(s.btnClass).not.toContain("bg-error-dim");
-		expect(s.btnLabel).toBe("Record");
-		expect(s.btnAction).toBe(start);
-	});
-});
-
 describe("resolveDisplayText", () => {
 	test("when not recording returns formatted currentKey", () => {
 		expect(resolveDisplayText(false, [], "LCtrl+A", "Press keys")).toBe("L Ctrl + A");
@@ -101,18 +77,17 @@ describe("HotkeyRecorder", () => {
 		expect(screen.getByText(/L Ctrl/)).toBeDefined();
 	});
 
-	test("the record button is initially in 'Record' state", () => {
+	test("the record button is initially in the idle (Record) state", () => {
 		renderIt();
-		const buttons = screen.getAllByRole("button");
-		const recBtn = buttons.find((b) => /record/i.test(b.textContent ?? ""));
+		// Idle state: button is aria-labelled "Record" (icon-only).
+		const recBtn = screen.getByRole("button", { name: /record/i });
 		expect(recBtn).toBeDefined();
 	});
 
-	test("clicking 'Record' calls hotkeyStartRecording (via window.electronAPI.invoke)", () => {
+	test("clicking the record button calls hotkeyStartRecording (via window.electronAPI.invoke)", () => {
 		renderIt();
-		const buttons = screen.getAllByRole("button");
-		const recBtn = buttons.find((b) => /record/i.test(b.textContent ?? ""));
-		fireEvent.click(recBtn!);
+		const recBtn = screen.getByRole("button", { name: /record/i });
+		fireEvent.click(recBtn);
 		expect(startCalls.length).toBe(1);
 	});
 });

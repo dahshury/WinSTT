@@ -1,0 +1,105 @@
+<frozen runpy>:128: RuntimeWarning: 'src.stt_server.server' found in sys.modules after import of package 'src.stt_server', but prior to execution of 'src.stt_server.server'; this may result in unpredictable behaviour
+[1m[96mStarting server, please wait...[0m
+2026-05-17 19:09:39 [INFO] [src.stt_server.observability] Sentry disabled (no SENTRY_DSN)
+[92mControl server started on [94mws://localhost:9011[0m
+[92mData server started on [94mws://localhost:9012[0m
+[92mInitializing RealtimeSTT server with parameters:[0m
+  [94m┌──────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────┐[0m
+  [94m│[0m Parameter                        [94m│[0m Value                                                                            [94m│[0m
+  [94m├──────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤[0m
+  [94m│[0m model                            [94m│[0m tiny                                                                             [94m│[0m
+  [94m│[0m download_root                    [94m│[0m None                                                                             [94m│[0m
+  [94m│[0m realtime_model_type              [94m│[0m tiny                                                                             [94m│[0m
+  [94m│[0m language                         [94m│[0m en                                                                               [94m│[0m
+  [94m│[0m batch_size                       [94m│[0m 16                                                                               [94m│[0m
+  [94m│[0m init_realtime_after_seconds      [94m│[0m 0.2                                                                              [94m│[0m
+  [94m│[0m realtime_batch_size              [94m│[0m 16                                                                               [94m│[0m
+  [94m│[0m initial_prompt_realtime          [94m│[0m                                                                                  [94m│[0m
+  [94m│[0m input_device_index               [94m│[0m 1                                                                                [94m│[0m
+  [94m│[0m silero_sensitivity               [94m│[0m 0.05                                                                             [94m│[0m
+  [94m│[0m silero_use_onnx                  [94m│[0m False                                                                            [94m│[0m
+  [94m│[0m webrtc_sensitivity               [94m│[0m 3                                                                                [94m│[0m
+  [94m│[0m post_speech_silence_duration     [94m│[0m 0.7                                                                              [94m│[0m
+  [94m│[0m min_length_of_recording          [94m│[0m 1.1                                                                              [94m│[0m
+  [94m│[0m min_gap_between_recordings       [94m│[0m 0                                                                                [94m│[0m
+  [94m│[0m enable_realtime_transcription    [94m│[0m True                                                                             [94m│[0m
+  [94m│[0m realtime_processing_pause        [94m│[0m 0.02                                                                             [94m│[0m
+  [94m│[0m silero_deactivity_detection      [94m│[0m True                                                                             [94m│[0m
+  [94m│[0m early_transcription_on_silence   [94m│[0m 0.2                                                                              [94m│[0m
+  [94m│[0m beam_size                        [94m│[0m 5                                                                                [94m│[0m
+  [94m│[0m beam_size_realtime               [94m│[0m 3                                                                                [94m│[0m
+  [94m│[0m initial_prompt                   [94m│[0m Incomplete thoughts should end with '...'. Examples of complete thoughts: 'The s [94m│[0m
+  [94m│[0m                                  [94m│[0m ky is blue.' 'She walked home.' Examples of incomplete thoughts: 'When the sky.. [94m│[0m
+  [94m│[0m                                  [94m│[0m .' 'Because he...'                                                               [94m│[0m
+  [94m│[0m wake_words                       [94m│[0m                                                                                  [94m│[0m
+  [94m│[0m wake_words_sensitivity           [94m│[0m 0.5                                                                              [94m│[0m
+  [94m│[0m wake_word_timeout                [94m│[0m 5.0                                                                              [94m│[0m
+  [94m│[0m wake_word_activation_delay       [94m│[0m 0                                                                                [94m│[0m
+  [94m│[0m wakeword_backend                 [94m│[0m none                                                                             [94m│[0m
+  [94m│[0m openwakeword_model_paths         [94m│[0m None                                                                             [94m│[0m
+  [94m│[0m openwakeword_inference_framework [94m│[0m tensorflow                                                                       [94m│[0m
+  [94m│[0m wake_word_buffer_duration        [94m│[0m 1.0                                                                              [94m│[0m
+  [94m│[0m use_main_model_for_realtime      [94m│[0m False                                                                            [94m│[0m
+  [94m│[0m enable_diarization               [94m│[0m False                                                                            [94m│[0m
+  [94m│[0m diarization_max_speakers         [94m│[0m 8                                                                                [94m│[0m
+  [94m│[0m spinner                          [94m│[0m False                                                                            [94m│[0m
+  [94m│[0m use_microphone                   [94m│[0m True                                                                             [94m│[0m
+  [94m│[0m on_realtime_transcription_update [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_no_audio_detected             [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_recording_start               [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_recording_stop                [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_vad_detect_start              [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_vad_detect_stop               [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_wakeword_detected             [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_wakeword_detection_end        [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_wakeword_detection_start      [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_transcription_start           [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_audio_level                   [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_turn_detection_start          [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_turn_detection_stop           [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_model_download_start          [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_model_download_progress       [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_model_download_complete       [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_model_download_cancelled      [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_device_switch_failed          [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_device_became_available       [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_model_swap_started            [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_model_swap_completed          [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_model_swap_failed             [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_vad_sensitivity_adapted       [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m on_speaker_segments_detected     [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m cancel_download_check            [94m│[0m <callback>                                                                       [94m│[0m
+  [94m│[0m no_log_file                      [94m│[0m True                                                                             [94m│[0m
+  [94m│[0m use_extended_logging             [94m│[0m False                                                                            [94m│[0m
+  [94m│[0m level                            [94m│[0m 30                                                                               [94m│[0m
+  [94m│[0m compute_type                     [94m│[0m default                                                                          [94m│[0m
+  [94m│[0m gpu_device_index                 [94m│[0m 0                                                                                [94m│[0m
+  [94m│[0m device                           [94m│[0m cuda                                                                             [94m│[0m
+  [94m│[0m handle_buffer_overflow           [94m│[0m False                                                                            [94m│[0m
+  [94m│[0m suppress_tokens                  [94m│[0m [-1]                                                                             [94m│[0m
+  [94m│[0m allowed_latency_limit            [94m│[0m 100                                                                              [94m│[0m
+  [94m│[0m faster_whisper_vad_filter        [94m│[0m False                                                                            [94m│[0m
+  [94m│[0m backend                          [94m│[0m                                                                                  [94m│[0m
+  [94m│[0m onnx_quantization                [94m│[0m                                                                                  [94m│[0m
+  [94m└──────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────┘[0m
+[92mLoading and warming up models...[0m
+2026-05-17 19:09:39 [INFO] [src.recorder.infrastructure.device] Injected 9 NVIDIA wheel DLL directories
+2026-05-17 19:09:39 [INFO] [src.recorder.infrastructure.onnxasr_transcriber] Loading onnx-asr model onnx-community/whisper-tiny (quantization=None)
+2026-05-17 19:09:41 [INFO] [src.recorder.infrastructure.onnxasr_transcriber] onnx-asr model onnx-community/whisper-tiny loaded; providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
+2026-05-17 19:09:41 [INFO] [src.recorder.infrastructure.onnxasr_transcriber] Silero VAD cache miss — loading for providers=('CUDAExecutionProvider', 'CPUExecutionProvider')
+ [ 0 ; 9 3 m 2 0 2 6 - 0 5 - 1 7   1 9 : 0 9 : 4 1 . 4 3 9 1 3 5 5   [ W : o n n x r u n t i m e : ,   t r a n s f o r m e r _ m e m c p y . c c : 1 1 1   o n n x r u n t i m e : : M e m c p y T r a n s f o r m e r : : A p p l y I m p l ]   1   M e m c p y   n o d e s   a r e   a d d e d   t o   t h e   g r a p h   s p o x _ g r a p h   f o r   C U D A E x e c u t i o n P r o v i d e r .   I t   m i g h t   h a v e   n e g a t i v e   i m p a c t   o n   p e r f o r m a n c e   ( i n c l u d i n g   u n a b l e   t o   r u n   C U D A   g r a p h ) .   S e t   s e s s i o n _ o p t i o n s . l o g _ s e v e r i t y _ l e v e l = 1   t o   s e e   t h e   d e t a i l   l o g s   b e f o r e   t h i s   m e s s a g e .  [ m 
+ 2026-05-17 19:09:41 [INFO] [src.recorder.infrastructure.onnxasr_transcriber] Silero VAD loaded + cached
+2026-05-17 19:09:41 [INFO] [src.recorder.infrastructure.onnxasr_transcriber] Loading onnx-asr model onnx-community/whisper-tiny (quantization=None)
+2026-05-17 19:09:44 [INFO] [src.recorder.infrastructure.onnxasr_transcriber] onnx-asr model onnx-community/whisper-tiny loaded; providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
+2026-05-17 19:09:44 [INFO] [src.recorder.infrastructure.onnxasr_transcriber] Silero VAD skipped (segment_with_vad=False — bounded-short caller)
+[92m[1mRecorder initialized[0m
+[92mServer started. Press Ctrl+C to stop the server.[0m
+2026-05-17 19:09:45 [WARNING] [src.recorder.application.recorder_service] Realtime worker STARTED (model=tiny)
+[92mControl client connected[0m
+  [19:09:48.935] [96mCall recorder.request_model_swap(main(large-v3-turbo))[0m
+[94m[model-swap] start: kind=main name=large-v3-turbo[0m
+2026-05-17 19:09:49 [INFO] [src.recorder.infrastructure.onnxasr_transcriber] Loading onnx-asr model onnx-community/whisper-large-v3-turbo (quantization=None)
+2026-05-17 19:09:55 [INFO] [src.recorder.infrastructure.onnxasr_transcriber] onnx-asr model onnx-community/whisper-large-v3-turbo loaded; providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
+2026-05-17 19:09:55 [INFO] [src.recorder.infrastructure.onnxasr_transcriber] Silero VAD cache hit (providers=('CUDAExecutionProvider', 'CPUExecutionProvider'))
+[92m[model-swap] done: kind=main name=large-v3-turbo[0m
+2026-05-17 19:09:55 [INFO] [src.recorder.application.swap_benchmark] [swap-benchmark] kind=main name=large-v3-turbo outcome=completed total=6417ms phases=[unload=124ms gc=17ms load=6273ms commit=0ms] rss_delta=[after_unload=-77MB after_load=+2173MB] cpu_pct=294.2

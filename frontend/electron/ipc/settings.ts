@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { appSettingsSchema } from "../../src/shared/config/settings-schema";
 import { getErrorMessage, ValidationError } from "../../src/shared/lib/errors";
+import { decryptSecret, encryptSecret, SECRET_DOT_PATHS } from "../lib/secret-storage";
 import { store } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
 import { isSttProcessRunning, restartSttProcess } from "./stt-process-deps";
@@ -217,7 +218,7 @@ export function setupSettingsHandlers(sttClient?: SttClient): void {
 	ipcMain.removeHandler("settings:load");
 	ipcMain.handle("settings:load", () => {
 		try {
-			return store.store;
+			return decryptSecretsForRenderer(store.store);
 		} catch (error) {
 			console.error("[settings] Failed to load settings:", getErrorMessage(error));
 			throw new ValidationError("Failed to load settings", undefined, {
@@ -238,15 +239,64 @@ function snapshotSettings(): Record<string, unknown> {
 	for (const key of ALLOWED_SETTINGS_KEYS) {
 		out[key] = store.get(key);
 	}
-	return out;
+	// Restart-detection compares this snapshot against the renderer-supplied
+	// settings (plaintext). Decrypt secrets here so the diff is on like-for-like
+	// values; otherwise the key field would always look "changed".
+	return decryptSecretsForRenderer(out);
 }
 
 function applySettings(settings: Record<string, unknown>): void {
-	for (const [key, value] of Object.entries(settings)) {
+	const toPersist = encryptSecretsForDisk(settings);
+	for (const [key, value] of Object.entries(toPersist)) {
 		if (ALLOWED_SETTINGS_KEYS.has(key)) {
 			store.set(key, value);
 		}
 	}
+}
+
+function walkSecretField(
+	settings: Record<string, unknown>,
+	dotPath: string,
+	transform: (v: unknown) => unknown
+): void {
+	const [section, field] = dotPath.split(".");
+	if (!(section && field)) {
+		return;
+	}
+	const sectionVal = settings[section];
+	if (!sectionVal || typeof sectionVal !== "object" || Array.isArray(sectionVal)) {
+		return;
+	}
+	const obj = sectionVal as Record<string, unknown>;
+	if (!(field in obj)) {
+		return;
+	}
+	obj[field] = transform(obj[field]);
+}
+
+/**
+ * Return a defensive deep-copy of `settings` with every secret-at-rest field
+ * decrypted to plaintext. Safe to send to the renderer over IPC.
+ */
+function decryptSecretsForRenderer(settings: Record<string, unknown>): Record<string, unknown> {
+	const clone = structuredClone(settings) as Record<string, unknown>;
+	for (const dotPath of SECRET_DOT_PATHS) {
+		walkSecretField(clone, dotPath, (v) => decryptSecret(v));
+	}
+	return clone;
+}
+
+/**
+ * Return a defensive deep-copy of `settings` with every secret-at-rest field
+ * encrypted into its on-disk envelope. The renderer always sends plaintext;
+ * this is the boundary where it gets sealed.
+ */
+function encryptSecretsForDisk(settings: Record<string, unknown>): Record<string, unknown> {
+	const clone = structuredClone(settings) as Record<string, unknown>;
+	for (const dotPath of SECRET_DOT_PATHS) {
+		walkSecretField(clone, dotPath, (v) => (typeof v === "string" ? encryptSecret(v) : v));
+	}
+	return clone;
 }
 
 function broadcastSettingsToOtherWindows(

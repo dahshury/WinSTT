@@ -413,6 +413,127 @@ describe("useLlmCatalogStore.cancelPull", () => {
 	});
 });
 
+describe("useLlmCatalogStore pause/resume flow", () => {
+	test("a 'cancelled' status moves the active pull into pausedPulls with the last progress", () => {
+		useLlmCatalogStore.setState({
+			pulls: {
+				phi: {
+					progress: {
+						model: "phi",
+						status: "downloading",
+						statusText: "downloading",
+						percent: 60,
+					},
+					startedAt: 100,
+				},
+			},
+			pausedPulls: {},
+		});
+		useLlmCatalogStore.getState().setPullProgress({ model: "phi", status: "cancelled" });
+		const state = useLlmCatalogStore.getState();
+		expect(state.pulls.phi).toBeUndefined();
+		expect(state.pausedPulls.phi).toBeDefined();
+		// The paused snapshot must carry the LAST known active progress, not
+		// the cancelled status itself — that's what the UI bar renders.
+		expect(state.pausedPulls.phi?.progress.percent).toBe(60);
+		expect(state.pausedPulls.phi?.progress.status).toBe("downloading");
+	});
+
+	test("a 'cancelled' status with no active pull does not synthesize a paused entry", () => {
+		useLlmCatalogStore.setState({ pulls: {}, pausedPulls: {} });
+		useLlmCatalogStore.getState().setPullProgress({ model: "ghost", status: "cancelled" });
+		const state = useLlmCatalogStore.getState();
+		expect(state.pausedPulls.ghost).toBeUndefined();
+	});
+
+	test("a 'success' status clears any paused entry for the same model", () => {
+		useLlmCatalogStore.setState({
+			pulls: {},
+			pausedPulls: {
+				phi: {
+					progress: { model: "phi", status: "downloading", percent: 30 },
+					pausedAt: 1,
+				},
+			},
+		});
+		useLlmCatalogStore.getState().setPullProgress({ model: "phi", status: "success" });
+		expect(useLlmCatalogStore.getState().pausedPulls.phi).toBeUndefined();
+	});
+
+	test("an 'error' status clears any paused entry for the same model", () => {
+		useLlmCatalogStore.setState({
+			pulls: {},
+			pausedPulls: {
+				phi: {
+					progress: { model: "phi", status: "downloading", percent: 50 },
+					pausedAt: 1,
+				},
+			},
+		});
+		useLlmCatalogStore.getState().setPullProgress({ model: "phi", status: "error", error: "bad" });
+		expect(useLlmCatalogStore.getState().pausedPulls.phi).toBeUndefined();
+	});
+
+	test("a non-terminal progress drops any paused entry for the same model (resume started)", () => {
+		useLlmCatalogStore.setState({
+			pulls: {},
+			pausedPulls: {
+				phi: {
+					progress: { model: "phi", status: "downloading", percent: 30 },
+					pausedAt: 1,
+				},
+			},
+		});
+		useLlmCatalogStore
+			.getState()
+			.setPullProgress({ model: "phi", status: "downloading", percent: 35 });
+		const state = useLlmCatalogStore.getState();
+		expect(state.pausedPulls.phi).toBeUndefined();
+		expect(state.pulls.phi).toBeDefined();
+	});
+
+	test("discardPausedPull removes the entry without touching active pulls", () => {
+		useLlmCatalogStore.setState({
+			pulls: {
+				other: {
+					progress: { model: "other", status: "downloading", percent: 1 },
+					startedAt: 1,
+				},
+			},
+			pausedPulls: {
+				phi: {
+					progress: { model: "phi", status: "downloading", percent: 60 },
+					pausedAt: 1,
+				},
+			},
+		});
+		useLlmCatalogStore.getState().discardPausedPull("phi");
+		const state = useLlmCatalogStore.getState();
+		expect(state.pausedPulls.phi).toBeUndefined();
+		expect(state.pulls.other).toBeDefined();
+	});
+
+	test("discardPausedPull is a no-op when the model has no paused entry", () => {
+		useLlmCatalogStore.setState({ pulls: {}, pausedPulls: {} });
+		expect(() => useLlmCatalogStore.getState().discardPausedPull("nope")).not.toThrow();
+	});
+
+	test("resumePull just delegates to pullModel (Ollama resumes from partial blobs on disk)", async () => {
+		useLlmCatalogStore.setState({
+			pulls: {},
+			pausedPulls: {
+				phi: {
+					progress: { model: "phi", status: "downloading", percent: 80 },
+					pausedAt: 1,
+				},
+			},
+			isScanning: false,
+		});
+		const result = await useLlmCatalogStore.getState().resumePull("phi");
+		expect(result.success).toBe(true);
+	});
+});
+
 describe("useLlmCatalogStore.deleteModel", () => {
 	test("returns success and triggers scan after deletion", async () => {
 		fetchSpy.mockClear();

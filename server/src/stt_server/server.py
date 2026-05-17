@@ -48,27 +48,179 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 import websockets
-from colorama import init
 
 from src.building_blocks.terminal import TerminalColors as bcolors
+from src.building_blocks.terminal import enable_ansi_on_windows, force_utf8_stdio, format_now_hms_ms
 from src.recorder import AudioToTextRecorder
 from src.stt_server.callbacks import build_recorder_callbacks
 from src.stt_server.cli import parse_arguments
 from src.stt_server.control_handler import control_handler
 from src.stt_server.data_handler import broadcast_audio_messages, data_handler
 from src.stt_server.loopback import LoopbackCapture
+from src.stt_server.observability import configure_observability
 from src.stt_server.state import ServerState
 from src.stt_server.text_processing import preprocess_text, text_detected
 
-init()
+# Order matters: switch stdio to UTF-8 BEFORE any print() can fire, so
+# the startup banner's box-drawing characters (┌ ─ │ …) don't crash the
+# recorder thread on Windows cp1252 consoles.
+force_utf8_stdio()
+enable_ansi_on_windows()
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+#: Startup safety-net: the model the recorder will fall back to when the
+#: user's chosen model can't be loaded (corrupted cache that can't be
+#: refetched, repo removed, network down with no cache, etc.). ``tiny`` is
+#: the smallest Whisper export and the most likely candidate to either be
+#: already cached or to download in seconds. The fallback only kicks in
+#: during startup — runtime model swaps initiated by the renderer keep
+#: surfacing failures through the existing ``model_swap_failed`` path.
+_STARTUP_FALLBACK_MODEL = "tiny"
+
+
+def _emit_download_cancelled(
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+    model_name: str,
+) -> None:
+    """Mirror the legacy cancellation event the renderer's modal watches for."""
+    state.cancel_download_requested = False
+    print(f"{bcolors.WARNING}[download] cancelled: {model_name}{bcolors.ENDC}")
+    message = json.dumps({"type": "model_download_complete", "model": model_name, "cancelled": True})
+    state.download_state = None
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
+
+def _emit_startup_fallback_swap_failed(
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+    *,
+    original: str,
+    loaded: str,
+    reason: str,
+) -> None:
+    """Inform the renderer that startup load fell back to a different model.
+
+    Reuses the existing ``model_swap_failed`` event so the renderer's
+    :file:`SwapFailureToast` lights up unchanged — the user sees the same
+    "swap failed" UX they'd see for an in-session swap. The ``runtime_info``
+    in :py:func:`server_ready` carries ``loaded`` as the new active model
+    and the renderer's :file:`sync-active-model` hook reconciles its picker
+    + settings to match.
+    """
+    message = json.dumps(
+        {
+            "type": "model_swap_failed",
+            "kind": "main",
+            "name": original,
+            "reason": f"Failed to load {original} at startup — loaded {loaded} instead",
+            "category": "unknown",
+            "detail": reason,
+        }
+    )
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
+
+def _try_load_recorder(state: ServerState, model_name: str) -> str | None:
+    """Build + warm up the recorder with ``model_name``.
+
+    ``AudioToTextRecorder.__init__`` is lazy — the actual ONNX session load
+    happens in :py:meth:`warmup`. So a fallback that only wraps construction
+    misses every real load failure (file-not-found, corrupt graph, missing
+    fp16 variant, ORT init failure). We call warmup here so any of those
+    surface as a clean failure that the caller can fall back from.
+
+    Returns ``None`` on success (``state.recorder`` is live and warm). On
+    failure, returns a short human-readable reason string and leaves
+    ``state.recorder`` cleared so the next attempt starts from a clean
+    slot. Explicit user-cancellation (``DownloadCancelledError``) propagates
+    so the caller can distinguish "the user said no" from "the file is
+    broken".
+    """
+    from src.recorder.domain.errors import DownloadCancelledError
+
+    config = {**state.recorder_config, "model": model_name}
+    try:
+        state.recorder = AudioToTextRecorder(**config)
+        # Force eager load; lazy init defers ORT session creation to first
+        # use, which would surface failures long after _recorder_thread
+        # has handed off to the WS event loop.
+        state.recorder.warmup()
+    except DownloadCancelledError:
+        state.recorder = None
+        raise
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        print(f"{bcolors.WARNING}[startup] failed to load '{model_name}': {reason}{bcolors.ENDC}")
+        state.recorder = None
+        return reason
+    return None
+
+
+def _load_recorder_with_fallback(state: ServerState, loop: asyncio.AbstractEventLoop) -> bool:
+    """Load the user's chosen model, falling back to ``tiny`` on failure.
+
+    Returns True when a recorder is live (possibly on the fallback model);
+    False when every candidate failed. On a successful fallback, the chosen
+    fallback is persisted via :func:`persist_setting` so the next restart
+    doesn't reproduce the failure, and the renderer learns about the swap
+    through the ``server_ready`` payload's ``runtime_info.model`` field
+    (the renderer's active-model reconciler updates the picker + toasts).
+
+    An explicit user-initiated cancellation (:class:`DownloadCancelledError`)
+    short-circuits the chain — the renderer asked for that exact cancel and
+    silently swapping to a different model would be misleading.
+    """
+    from src.recorder.domain.errors import DownloadCancelledError
+    from src.stt_server.cli import persist_setting
+
+    user_model = state.recorder_config.get("model", "unknown")
+    chain: list[str] = [user_model]
+    if user_model != _STARTUP_FALLBACK_MODEL:
+        chain.append(_STARTUP_FALLBACK_MODEL)
+
+    first_failure_reason: str | None = None
+    for candidate in chain:
+        try:
+            failure = _try_load_recorder(state, candidate)
+            if failure is None:
+                if candidate != user_model:
+                    print(
+                        f"{bcolors.WARNING}[startup] fell back to '{candidate}' "
+                        f"after '{user_model}' failed{bcolors.ENDC}"
+                    )
+                    _emit_startup_fallback_swap_failed(
+                        state,
+                        loop,
+                        original=user_model,
+                        loaded=candidate,
+                        reason=first_failure_reason or "load failed",
+                    )
+                persist_setting("model", candidate)
+                # Keep ``state.recorder_config["model"]`` in sync with the
+                # actually-loaded model so subsequent code paths (banner,
+                # logs, runtime_info builders) report the right name.
+                state.recorder_config["model"] = candidate
+                return True
+            if first_failure_reason is None:
+                first_failure_reason = failure
+        except DownloadCancelledError:
+            _emit_download_cancelled(state, loop, candidate)
+            return False
+
+    print(
+        f"{bcolors.FAIL}[startup] every candidate failed "
+        f"({', '.join(chain)}) — server will run without a recorder{bcolors.ENDC}"
+    )
+    return False
 
 
 def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> None:
@@ -90,23 +242,13 @@ def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> Non
         for chunk in chunks[1:]:
             print(f"  {c}│{e} {' ' * key_w} {c}│{e} {chunk:<{val_w}} {c}│{e}")
     print(bot)
-    try:
-        state.recorder = AudioToTextRecorder(**state.recorder_config)
-    except Exception as e:
-        from src.recorder.domain.errors import DownloadCancelledError
-
-        if isinstance(e, DownloadCancelledError):
-            state.cancel_download_requested = False
-            model_name = state.recorder_config.get("model", "unknown")
-            print(f"{bcolors.WARNING}[download] cancelled: {model_name}{bcolors.ENDC}")
-            message = json.dumps({"type": "model_download_complete", "model": model_name, "cancelled": True})
-            state.download_state = None
-            asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
-            state.recorder_ready.set()
-            return
-        raise
-    print(f"{bcolors.OKGREEN}Models loaded, warming up CUDA kernels...{bcolors.ENDC}")
-    state.recorder.warmup()
+    print(f"{bcolors.OKGREEN}Loading and warming up models...{bcolors.ENDC}")
+    if not _load_recorder_with_fallback(state, loop):
+        # Every fallback failed (or user cancelled the original download). Unblock
+        # main() so the WS servers can still accept connections — the renderer
+        # will see ``state.recorder is None`` and surface its own error path.
+        state.recorder_ready.set()
+        return
     # Backend-agnostic ready marker — Electron's stt-process.ts greps for this
     # exact phrase to flip the spawned-server status to "running".  Keep the
     # text stable across backend swaps (faster-whisper, onnx-asr, …) so the
@@ -136,7 +278,7 @@ def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> Non
         message = json.dumps({"type": "fullSentence", "text": full_sentence})
         asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
 
-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        timestamp = format_now_hms_ms()
         if state.extended_logging:
             print(
                 f"  [{timestamp}] Full text: {bcolors.BOLD}Sentence:{bcolors.ENDC} "
@@ -169,9 +311,81 @@ def _persistent_watchdog(state: ServerState) -> None:
                 os._exit(1)
 
 
+def _refresh_catalog_languages_in_background(state: ServerState, loop: asyncio.AbstractEventLoop) -> None:
+    """Worker thread: pull fresh language metadata from HF and broadcast it.
+
+    Runs once per server launch. On success: persists the new overlay so
+    next launch is correct before the network call completes, and pushes
+    the refreshed catalog out the data channel so any open settings panel
+    re-renders the language dropdown without restart. All failure modes
+    (no network, HF outage, missing huggingface_hub install) are logged
+    at debug and swallowed — the bundled catalog plus prior overlay is a
+    valid fallback.
+    """
+    try:
+        from src.recorder.domain.catalog_overlay import load_overlay, save_overlay
+        from src.recorder.domain.catalog_refresh import fetch_language_overlay
+        from src.recorder.domain.model_registry import ModelCatalog
+    except Exception:  # pragma: no cover - defensive
+        return
+    try:
+        catalog = ModelCatalog()
+        new_overlay = fetch_language_overlay(catalog.list_all())
+    except Exception as exc:
+        print(f"{bcolors.WARNING}[catalog-refresh] HF fetch failed: {type(exc).__name__}: {exc}{bcolors.ENDC}")
+        return
+    if not new_overlay:
+        return
+    existing = load_overlay()
+    if existing == new_overlay:
+        return
+    save_overlay(new_overlay)
+    # Re-build the catalog so the overlay we just wrote is reflected in
+    # the broadcast payload. Sending the bundled snapshot would defeat
+    # the point — settings panel would still see Arabic on Canary until
+    # the user restarts the app.
+    try:
+        from src.stt_server.control_handler import _active_device
+
+        refreshed = ModelCatalog()
+        device = _active_device(state)
+    except Exception:
+        return
+    payload = json.dumps(
+        {"type": "model_catalog_updated", "models": refreshed.to_dicts(device=device)},
+    )
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(payload), loop)
+
+
+def _resolve_log_dir(args_log_dir: str | None) -> Path | None:
+    """Pick the log directory: CLI flag wins, then ``WINSTT_LOG_DIR`` env var."""
+    raw = args_log_dir or os.environ.get("WINSTT_LOG_DIR")
+    if not raw:
+        return None
+    return Path(raw).expanduser()
+
+
+def _resolve_release() -> str | None:
+    """Read the server's own package version for Sentry's ``release`` field."""
+    try:
+        return f"winstt-server@{version('winstt-server')}"
+    except PackageNotFoundError:
+        return None
+
+
 async def main_async() -> None:
     """Async entry point — sets up WebSocket servers, recorder, and shutdown handling."""
     args = parse_arguments()
+
+    # Configure logging + Sentry as early as possible so that any errors below
+    # (websocket bind failures, recorder init crashes, etc.) land in the log
+    # file and — if a DSN is set — also flow to Sentry. Must come before any
+    # heavy imports / threading.
+    configure_observability(
+        log_dir=_resolve_log_dir(args.log_dir),
+        debug=bool(getattr(args, "debug", False)),
+        release=_resolve_release(),
+    )
 
     loopback_capture = LoopbackCapture()
     state = ServerState.from_args(args, loopback_capture)
@@ -219,6 +433,9 @@ async def main_async() -> None:
         "openwakeword_inference_framework": args.openwakeword_inference_framework,
         "wake_word_buffer_duration": args.wake_word_buffer_duration,
         "use_main_model_for_realtime": args.use_main_model_for_realtime,
+        # Diarization — facade kwargs map to DiarizationConfig.enabled / .max_speakers.
+        "enable_diarization": args.enable_diarization,
+        "diarization_max_speakers": args.diarization_max_speakers,
         "spinner": False,
         "use_microphone": True,
         "on_realtime_transcription_update": _text_detected_cb,
@@ -281,8 +498,11 @@ async def main_async() -> None:
                 try:
                     if state.recorder is not None:
                         state.recorder.abort()
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Signal handler — keep this print-based, not logger.* (the
+                    # logging subsystem may not be safe to call from a signal
+                    # context). The shutdown continues regardless.
+                    print(f"{bcolors.WARNING}recorder.abort() failed in SIGINT handler: {e}{bcolors.ENDC}")
                 _request_shutdown()
 
             signal.signal(signal.SIGINT, _win_signal_handler)
@@ -329,6 +549,18 @@ async def main_async() -> None:
                 state.recorder._sigint_reinstall = _reinstall_sigint
 
         print(f"{bcolors.OKGREEN}Server started. Press Ctrl+C to stop the server.{bcolors.ENDC}")
+
+        # Kick off a background HuggingFace refresh of the model catalog's
+        # language whitelists. The bundled catalog.json snapshot was taken
+        # at release; per-program-run refresh keeps the picker honest when
+        # NVIDIA / openai update a model card. Failure here is silent —
+        # the bundled (or last cached) overlay is always a valid fallback.
+        threading.Thread(
+            target=_refresh_catalog_languages_in_background,
+            args=(state, loop),
+            daemon=True,
+            name="catalog-refresh",
+        ).start()
 
         while not state.shutdown_event.is_set():
             await asyncio.sleep(0.5)

@@ -76,6 +76,8 @@ export default function RootError({
 	reset: () => void;
 }) {
 	useEffect(() => {
+		// Console.error is captured by main's `console-message` listener and
+		// flows into Sentry there. No renderer-side Sentry SDK by design.
 		console.error("[RootError]", error);
 	}, [error]);
 

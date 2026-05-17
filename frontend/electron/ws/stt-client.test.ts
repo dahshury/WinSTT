@@ -77,7 +77,6 @@ const {
 	SttClient,
 	dataMessagePreview,
 	controlMessagePreview,
-	isObjectPayload,
 	parseControlMessage,
 	resolveSttClientOptions,
 } = await import("./stt-client");
@@ -615,24 +614,6 @@ describe("resolveSttClientOptions", () => {
 			controlPort: 8011,
 			dataPort: 2,
 		});
-	});
-});
-
-describe("isObjectPayload", () => {
-	test("returns true for plain object", () => {
-		expect(isObjectPayload({ foo: 1 })).toBe(true);
-	});
-	test("returns true for arrays (object-typed)", () => {
-		expect(isObjectPayload([1, 2])).toBe(true);
-	});
-	test("returns false for null", () => {
-		expect(isObjectPayload(null)).toBe(false);
-	});
-	test("returns false for primitives", () => {
-		expect(isObjectPayload(undefined)).toBe(false);
-		expect(isObjectPayload("s")).toBe(false);
-		expect(isObjectPayload(0)).toBe(false);
-		expect(isObjectPayload(false)).toBe(false);
 	});
 });
 

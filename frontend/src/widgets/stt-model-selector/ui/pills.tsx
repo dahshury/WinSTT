@@ -47,6 +47,25 @@ export function QuantCacheDot({ cache }: { cache: ModelCacheInfo | undefined }) 
 	return <span className={cn("size-1.5 shrink-0 rounded-full", QUANT_DOT_CLASS[state])} />;
 }
 
+/**
+ * Compact "NN%" label rendered inline on a precision pill when the cache
+ * is partial. Hidden for "cached" / "not_cached" — the coloured dot
+ * already conveys those two cleanly. Pulling the percent on screen lets
+ * users compare resumable downloads at a glance without hovering each
+ * pill to read the tooltip.
+ */
+export function QuantCachePercent({ cache }: { cache: ModelCacheInfo | undefined }) {
+	if (cache?.state !== "partial") {
+		return null;
+	}
+	const percent = Math.round((cache.progress ?? 0) * 100);
+	return (
+		<span className="font-medium text-[10px] text-amber-600 tabular-nums leading-none dark:text-amber-400">
+			{percent}%
+		</span>
+	);
+}
+
 export function quantCacheStatus(cache: ModelCacheInfo | undefined): string {
 	if (cache?.state === "cached") {
 		return "Downloaded";

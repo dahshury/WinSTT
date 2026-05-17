@@ -14,19 +14,43 @@
  * Each call returns a FRESH object (no shared spies between files).
  */
 
+// `@sentry/electron/main` reads `process.versions.electron` at module-load time
+// to determine the host Electron version. Under `bun test` (plain Node) that
+// field is `undefined`, which crashes `parseSemver` inside @sentry/core. Stub a
+// plausible value so any sentry-main.ts transitive import loads cleanly. Cast
+// is required because `versions` is typed as `Readonly<{...}>` in @types/node.
+if (typeof process !== "undefined" && !process.versions.electron) {
+	(process.versions as Record<string, string>).electron = "30.0.0";
+}
+
 type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>;
 type IpcListener = (event: unknown, ...args: unknown[]) => void;
 
 export interface ElectronMockHandle {
 	app: {
 		getPath: (name: string) => string;
+		getAppPath: () => string;
+		getVersion: () => string;
+		getName: () => string;
 		isPackaged: boolean;
+		isReady: () => boolean;
 		on: (event: string, cb: (...args: unknown[]) => void) => void;
 		off: (event: string, cb: (...args: unknown[]) => void) => void;
+		once: (event: string, cb: (...args: unknown[]) => void) => void;
+		removeListener: (event: string, cb: (...args: unknown[]) => void) => void;
 		quit: () => void;
+		exit: (code?: number) => void;
 		whenReady: () => Promise<void>;
 		setLoginItemSettings: (s: Record<string, unknown>) => void;
 		getLoginItemSettings: () => Record<string, unknown>;
+		getAppMetrics: () => unknown[];
+		getGPUInfo: (level: string) => Promise<unknown>;
+		commandLine: { appendSwitch: (...args: unknown[]) => void };
+		name: string;
+	};
+	autoUpdater: {
+		on: (event: string, cb: (...args: unknown[]) => void) => void;
+		off: (event: string, cb: (...args: unknown[]) => void) => void;
 	};
 	BrowserWindow: {
 		getAllWindows: () => unknown[];
@@ -35,6 +59,11 @@ export interface ElectronMockHandle {
 		readText: () => string;
 		writeText: (text: string) => void;
 		clear: () => void;
+	};
+	crashReporter: {
+		start: (options: Record<string, unknown>) => void;
+		getLastCrashReport: () => unknown;
+		getUploadedReports: () => unknown[];
 	};
 	dialog: {
 		showOpenDialogSync: () => string[] | undefined;
@@ -57,6 +86,22 @@ export interface ElectronMockHandle {
 	nativeImage: {
 		createFromPath: (path: string) => { isEmpty: () => boolean };
 	};
+	net: {
+		request: (...args: unknown[]) => unknown;
+	};
+	// `powerMonitor`, `autoUpdater`, `crashReporter`, `protocol`, `session`,
+	// `webContents`, and `net` are not consumed by application code in tests but
+	// must exist so that `@sentry/electron/main` and its sub-integrations can
+	// `import { ... } from "electron"` without throwing module load errors.
+	powerMonitor: {
+		on: (event: string, cb: (...args: unknown[]) => void) => void;
+		off: (event: string, cb: (...args: unknown[]) => void) => void;
+	};
+	protocol: {
+		registerSchemesAsPrivileged: (schemes: unknown[]) => void;
+		registerStringProtocol: (...args: unknown[]) => void;
+		handle: (...args: unknown[]) => void;
+	};
 	safeStorage: {
 		isEncryptionAvailable: () => boolean;
 		encryptString: (s: string) => Buffer;
@@ -70,6 +115,12 @@ export interface ElectronMockHandle {
 		};
 		getAllDisplays: () => unknown[];
 	};
+	session: {
+		defaultSession: {
+			webRequest: { onHeadersReceived: (...args: unknown[]) => void };
+			clearCache: () => Promise<void>;
+		};
+	};
 	shell: {
 		openExternal: (url: string) => Promise<void>;
 		showItemInFolder: (path: string) => void;
@@ -78,6 +129,9 @@ export interface ElectronMockHandle {
 		getMediaAccessStatus: () => string;
 	};
 	Tray: new (path: string) => unknown;
+	webContents: {
+		getAllWebContents: () => unknown[];
+	};
 }
 
 export function electronMock(): ElectronMockHandle {
@@ -129,13 +183,30 @@ export function electronMock(): ElectronMockHandle {
 	return {
 		app: {
 			getPath: (name: string) => `/mock/${name}`,
+			getAppPath: () => "/mock/app",
+			getVersion: () => "0.0.0-test",
+			getName: () => "winstt-test",
 			isPackaged: false,
+			// Return `false` so `electron-log`'s `onAppReady` defers the
+			// synchronous `initializePreload` path. That path tries to write
+			// a preload file under `userData` (which doesn't exist in tests)
+			// AND calls `session.getPreloads()` (not in our mock surface),
+			// resulting in `logger.warn(err)` calls that pollute test
+			// expectations spying on `console.log` for `dbg()` output.
+			isReady: () => false,
 			on: () => undefined,
 			off: () => undefined,
+			once: () => undefined,
+			removeListener: () => undefined,
 			quit: () => undefined,
+			exit: () => undefined,
 			whenReady: () => Promise.resolve(),
 			setLoginItemSettings: () => undefined,
 			getLoginItemSettings: () => ({ openAtLogin: false }),
+			getAppMetrics: () => [],
+			getGPUInfo: () => Promise.resolve({}),
+			commandLine: { appendSwitch: () => undefined },
+			name: "winstt-test",
 		},
 		BrowserWindow: {
 			getAllWindows: () => [],
@@ -155,6 +226,36 @@ export function electronMock(): ElectronMockHandle {
 		},
 		nativeImage: {
 			createFromPath: () => ({ isEmpty: () => false }),
+		},
+		powerMonitor: {
+			on: () => undefined,
+			off: () => undefined,
+		},
+		autoUpdater: {
+			on: () => undefined,
+			off: () => undefined,
+		},
+		crashReporter: {
+			start: () => undefined,
+			getLastCrashReport: () => null,
+			getUploadedReports: () => [],
+		},
+		protocol: {
+			registerSchemesAsPrivileged: () => undefined,
+			registerStringProtocol: () => undefined,
+			handle: () => undefined,
+		},
+		session: {
+			defaultSession: {
+				webRequest: { onHeadersReceived: () => undefined },
+				clearCache: () => Promise.resolve(),
+			},
+		},
+		webContents: {
+			getAllWebContents: () => [],
+		},
+		net: {
+			request: () => undefined,
 		},
 		screen: {
 			getPrimaryDisplay: () => ({

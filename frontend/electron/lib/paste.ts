@@ -1,13 +1,20 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { app, clipboard } from "electron";
+import { app, clipboard, type NativeImage } from "electron";
 import { setPasteGuard } from "../ipc/hotkey";
 import { dbg } from "./debug-log";
 
 /**
  * Paste the transcribed text into the focused window via the bundled
  * `winstt-paste.exe` native helper.
+ *
+ * Primary path: `--type` mode (per-char SendInput KEYEVENTF_UNICODE). The
+ * user's clipboard is NEVER touched in the success path. This is more
+ * universal than Ctrl+V because targets that don't bind Ctrl+V to paste
+ * (Vim/Neovim normal+insert, certain IMEs, some terminals) still accept
+ * raw WM_CHAR. The per-event cost is real but mitigated by the paste-guard
+ * short-circuit in both uiohook listeners (`hotkey.ts` + `transform-hotkeys.ts`).
  *
  * Why a compiled C binary instead of PowerShell:
  *   - Cold-start: <50ms vs PowerShell's 2-8s under Defender scanning.
@@ -17,18 +24,29 @@ import { dbg } from "./debug-log";
  *   - The binary handles modifier-release, terminal detection
  *     (Ctrl+Shift+V for terminals), and exits in a known short window.
  *
- * Lifecycle:
- *   1. Mirror the text to the system clipboard (so the binary's Ctrl+V
- *      reads the right thing, and so the user can re-paste manually).
- *   2. setPasteGuard(true) — uiohook ignores the synthetic key events
+ * Lifecycle (primary path — clipboard untouched):
+ *   1. setPasteGuard(true) — uiohook ignores the synthetic key events
  *      from the binary so they can't be misread as a user releasing
  *      the PTT hotkey.
- *   3. spawn the binary with a 2.5s hard timeout.
- *   4. setPasteGuard(false) in finally — guaranteed to lift, otherwise
+ *   2. spawn `winstt-paste.exe --type`, write UTF-8 text to its stdin.
+ *      The binary types each character via KEYEVENTF_UNICODE.
+ *   3. setPasteGuard(false) in finally — guaranteed to lift, otherwise
  *      the hotkey handler stays blocked and the app appears frozen.
  *
+ * Fallback (only when `--type` reports failure — e.g. SendInput refused
+ * by a DirectInput-only target, RDP session, or sandboxed app):
+ *   1. snapshot the user's clipboard (text + html + rtf + image)
+ *   2. write the transcript to the clipboard
+ *   3. send Ctrl+V via the regular paste binary
+ *   4. wait CLIPBOARD_RESTORE_DELAY_MS for the target app to consume
+ *   5. restore the captured clipboard snapshot
+ *
+ * In cooldown (after both paths fail), pastes are dropped silently — we
+ * don't touch the clipboard and don't risk another SendInput stall. The
+ * text is still visible in the renderer's transcription history.
+ *
  * Calls are serialized via `pasteInFlight` so concurrent fullSentence
- * events can't stack and clobber each other's clipboard contents.
+ * events can't stack and trip over each other.
  */
 
 const PASTE_TIMEOUT_MS = 2500;
@@ -44,8 +62,9 @@ const PASTE_GUARD_TAIL_MS = 50;
  * timeout almost always means an AV / accessibility keyboard hook is
  * blocking SendInput in another process — and on the terminal fallback
  * path that can take the OS-wide input queue down with it (60+ second
- * system freezes). During cooldown we still write to the clipboard so
- * the user can `Ctrl+V` manually; we just don't risk another hang.
+ * system freezes). During cooldown we drop silently — no clipboard
+ * write, no spawn — and the user can re-dictate or copy from the
+ * transcription history.
  */
 const PASTE_COOLDOWN_MS = 30_000;
 /**
@@ -67,6 +86,15 @@ const PASTE_COOLDOWN_MS = 30_000;
  * had time to drain through the hook chain.
  */
 const PASTE_MIN_GAP_MS = 350;
+/**
+ * After the clipboard fallback's Ctrl+V is dispatched, hold the transcript
+ * on the clipboard this long before restoring the user's previous value.
+ * Target apps consume Ctrl+V well within this window in practice. If the
+ * user copies something fresh during the paste window, that fresh copy
+ * gets clobbered by the restore — this is the inherent trade-off of the
+ * fallback path, opted into explicitly.
+ */
+const CLIPBOARD_RESTORE_DELAY_MS = 120;
 
 let pasteInFlight: Promise<void> | null = null;
 /** How many pastes are queued (in-flight + waiting). Diagnostic only. */
@@ -75,6 +103,22 @@ let queueDepth = 0;
 let cooldownUntil = 0;
 /** Epoch ms when the last paste binary spawn returned. Used to gap pastes. */
 let lastSpawnFinishedAt = 0;
+/**
+ * Test-only log of every `pasteText(...)` invocation, in order. Production
+ * code never reads it; renderers / other modules observe paste behavior via
+ * the IPC events `pasteText` ultimately triggers, not by introspecting this
+ * array. Kept module-local and exposed only via the `__*ForTesting__`
+ * helpers so tests can assert "pasteText was called with X" without
+ * mocking the whole module (mock.module is process-global in Bun and
+ * mocking `../lib/paste` would poison this file's own test suite).
+ *
+ * Bounded: pasteText() trims the head once the log grows past
+ * PASTE_CALL_LOG_MAX so a long dictation session can't accumulate every
+ * transcript string. Tests assert on `toContain`, which is unaffected by
+ * head-trimming as long as the recent push is preserved.
+ */
+const pasteCallLog: string[] = [];
+const PASTE_CALL_LOG_MAX = 100;
 
 function getBinaryCandidate(): string {
 	if (app.isPackaged) {
@@ -175,11 +219,15 @@ export function closeBinaryRun(run: BinaryRun, code: number | null): void {
  * Spawn the binary into the existing run. On failure, finish the run with a
  * descriptive reason and return false so the caller can stop wiring handlers.
  * Returns true on a successful spawn (caller should attach child handlers).
+ *
+ * When `args` includes `--type`, stdin is opened so the caller can write the
+ * text payload; otherwise stdin is ignored.
  */
-export function spawnInto(run: BinaryRun, binPath: string): boolean {
+export function spawnInto(run: BinaryRun, binPath: string, args: string[] = []): boolean {
 	try {
-		run.child = spawn(binPath, [], {
-			stdio: ["ignore", "pipe", "pipe"],
+		const wantsStdin = args.includes("--type");
+		run.child = spawn(binPath, args, {
+			stdio: [wantsStdin ? "pipe" : "ignore", "pipe", "pipe"],
 			windowsHide: true,
 		});
 		return true;
@@ -226,11 +274,12 @@ export function makeBinaryRun(
  */
 export function startBinaryRun(
 	resolve: (value: { ok: boolean; reason?: string }) => void,
-	binPath: string
+	binPath: string,
+	args: string[] = []
 ): BinaryRun {
 	const run = makeBinaryRun(resolve);
 	run.killTimer = setTimeout(() => killBinaryOnTimeout(run), PASTE_TIMEOUT_MS);
-	if (spawnInto(run, binPath)) {
+	if (spawnInto(run, binPath, args)) {
 		attachChildHandlers(run);
 	}
 	return run;
@@ -238,6 +287,31 @@ export function startBinaryRun(
 
 function runBinary(binPath: string): Promise<{ ok: boolean; reason?: string }> {
 	return new Promise((resolve) => startBinaryRun(resolve, binPath));
+}
+
+/**
+ * Spawn the native helper in `--type` mode and stream the transcript on
+ * stdin. Resolves once the binary exits (success or failure) or the
+ * watchdog kills it. Any unexpected error while wiring stdin is treated
+ * as a paste failure so the caller can fall back to the clipboard path.
+ */
+function runTypeBinary(binPath: string, text: string): Promise<{ ok: boolean; reason?: string }> {
+	return new Promise((resolve) => {
+		const run = startBinaryRun(resolve, binPath, ["--type"]);
+		const stdin = run.child?.stdin;
+		if (!stdin) {
+			finishBinaryRun(run, false, "no stdin on spawned --type child");
+			return;
+		}
+		try {
+			stdin.on("error", (err) => {
+				finishBinaryRun(run, false, `stdin error: ${err.message}`);
+			});
+			stdin.end(text, "utf8");
+		} catch (err) {
+			finishBinaryRun(run, false, `stdin write failed: ${(err as Error).message}`);
+		}
+	});
 }
 
 /** Write text to clipboard, returning false if it fails. */
@@ -278,7 +352,7 @@ export function handleBinaryResult(
 	waitedMs: number
 ): void {
 	if (result.ok) {
-		logIfSlow(waitedMs, elapsed);
+		logPasteOk(waitedMs, elapsed);
 		return;
 	}
 	tripCooldown(result.reason, elapsed);
@@ -290,26 +364,30 @@ function tripCooldown(reason: string | undefined, elapsed: number): void {
 	dbg("paste", `entering cooldown for ${PASTE_COOLDOWN_MS}ms`);
 }
 
-function logIfSlow(waitedMs: number, elapsed: number): void {
-	if (isSlowPaste(waitedMs, elapsed)) {
-		dbg("paste", `ok in ${elapsed}ms (queued for ${waitedMs}ms, depth=${queueDepth})`);
-	}
+function logPasteOk(waitedMs: number, elapsed: number): void {
+	// Always log success so we can see the flow end-to-end. A normal Ctrl+V
+	// paste should complete in ~150ms (10ms spawn + ~50ms binary + 120ms
+	// clipboard-consume delay). If the target app never received the paste
+	// despite the binary reporting success, the rendered "ok in Xms" still
+	// gives us a timestamp to correlate against the user's screen recording.
+	const tag = isSlowPaste(waitedMs, elapsed) ? "SLOW" : "ok";
+	dbg("paste", `${tag} in ${elapsed}ms (queued for ${waitedMs}ms, depth=${queueDepth})`);
 }
 
 /**
  * Resolve the binary path + cooldown state into a "what should we do now"
  * decision. Returning the path means "spawn the binary"; returning null
- * means "the clipboard write was enough — skip the spawn".
+ * means we should drop this paste silently — the clipboard is never
+ * written in either branch.
  */
 export function decideSpawnTarget(now: number): string | null {
 	const binPath = getBinary();
 	if (!binPath) {
-		// No binary — text is on the clipboard but we can't auto-paste.
 		return null;
 	}
 	if (now < cooldownUntil) {
 		const remaining = cooldownUntil - now;
-		dbg("paste", `in cooldown (${remaining}ms left) — text on clipboard, use Ctrl+V`);
+		dbg("paste", `in cooldown (${remaining}ms left) — dropping paste`);
 		return null;
 	}
 	return binPath;
@@ -317,32 +395,149 @@ export function decideSpawnTarget(now: number): string | null {
 
 async function runPasteOnce(text: string, enqueuedAt: number): Promise<void> {
 	const waitedMs = Date.now() - enqueuedAt;
-	if (!writeClipboard(text)) {
-		return;
-	}
 	const binPath = decideSpawnTarget(Date.now());
 	if (!binPath) {
 		return;
 	}
 	await enforcePaceGap();
-	await spawnPasteWithGuard(binPath, waitedMs);
+	await spawnPasteWithGuard(binPath, text, waitedMs);
 }
 
-async function spawnPasteWithGuard(binPath: string, waitedMs: number): Promise<void> {
+/**
+ * Try the typing path first (no clipboard); fall back to a clipboard-paste
+ * with restore only when the typing path failed. The guard wraps both
+ * attempts so uiohook stays muted for the whole synthetic-input window.
+ */
+async function spawnPasteWithGuard(binPath: string, text: string, waitedMs: number): Promise<void> {
 	setPasteGuard(true);
 	const t0 = Date.now();
 	try {
-		const result = await runBinary(binPath);
+		const result = await tryTypeThenFallback(binPath, text);
 		handleBinaryResult(result, Date.now() - t0, waitedMs);
 	} finally {
 		// CRITICAL: must always lift the guard. Hold for a tail window so
-		// trailing synthetic events from the binary's terminal-fallback
-		// `RestoreModifiers` don't slip through after the guard has lifted.
+		// trailing synthetic events from the binary's `RestoreModifiers`
+		// don't slip through after the guard has lifted.
 		await new Promise<void>((r) => setTimeout(r, PASTE_GUARD_TAIL_MS));
 		setPasteGuard(false);
 		// Mark the spawn boundary AFTER the tail wait — that's when the
 		// next paste's PASTE_MIN_GAP_MS pacing should start counting.
 		lastSpawnFinishedAt = Date.now();
+	}
+}
+
+async function tryTypeThenFallback(
+	binPath: string,
+	text: string
+): Promise<{ ok: boolean; reason?: string }> {
+	const typeResult = await runTypeBinary(binPath, text);
+	if (typeResult.ok) {
+		return typeResult;
+	}
+	dbg("paste", `--type failed (${typeResult.reason ?? "unknown"}), trying clipboard fallback`);
+	const fallbackResult = await runClipboardFallback(binPath, text);
+	if (!fallbackResult.ok) {
+		return {
+			ok: false,
+			reason: `type:${typeResult.reason ?? "unknown"};clip:${fallbackResult.reason ?? "unknown"}`,
+		};
+	}
+	return fallbackResult;
+}
+
+/**
+ * Last-resort path: snapshot the user's clipboard (text + html + rtf + image),
+ * drop the transcript on it, send Ctrl+V via the binary, restore the captured
+ * snapshot. The restore runs in `finally` so a binary timeout / non-zero exit
+ * can't leave the user's clipboard polluted.
+ */
+async function runClipboardFallback(
+	binPath: string,
+	text: string
+): Promise<{ ok: boolean; reason?: string }> {
+	const snapshot = captureClipboardSnapshot();
+	if (!writeClipboard(text)) {
+		return { ok: false, reason: "fallback clipboard write failed" };
+	}
+	let result: { ok: boolean; reason?: string };
+	try {
+		result = await runBinary(binPath);
+	} finally {
+		await new Promise<void>((r) => setTimeout(r, CLIPBOARD_RESTORE_DELAY_MS));
+		restoreClipboardSnapshot(snapshot);
+	}
+	return result;
+}
+
+/**
+ * Best-effort multi-format snapshot of the system clipboard. Electron's
+ * top-level `clipboard.write({text, html, image, rtf, bookmark})` lets us
+ * round-trip the common formats in one call; anything outside that set
+ * (CF_HDROP file lists, custom CF_xxx) is unavoidably lost on restore —
+ * an accepted limitation that every "clipboard sandwich" dictation app
+ * (Whispering, voicetypr, openwhispr) ships with.
+ */
+export interface ClipboardSnapshot {
+	html: string;
+	image: NativeImage | null;
+	rtf: string;
+	text: string;
+}
+
+function readClipboardFormat<T>(read: () => T, empty: T, format: string): T {
+	try {
+		return read();
+	} catch (err) {
+		dbg("paste", `clipboard.read${format} failed: ${(err as Error).message}`);
+		return empty;
+	}
+}
+
+export function captureClipboardSnapshot(): ClipboardSnapshot {
+	const image = readClipboardFormat(() => clipboard.readImage(), null, "Image");
+	return {
+		text: readClipboardFormat(() => clipboard.readText() ?? "", "", "Text"),
+		html: readClipboardFormat(() => clipboard.readHTML() ?? "", "", "HTML"),
+		rtf: readClipboardFormat(() => clipboard.readRTF() ?? "", "", "RTF"),
+		image: image && !image.isEmpty() ? image : null,
+	};
+}
+
+export function restoreClipboardSnapshot(snapshot: ClipboardSnapshot): void {
+	const hasAny =
+		snapshot.text !== "" || snapshot.html !== "" || snapshot.rtf !== "" || snapshot.image !== null;
+	if (!hasAny) {
+		// Original clipboard was empty (or unreadable) — leave the transcript
+		// in place. Forcing an explicit clear here would race with any app
+		// that pasted between the binary exit and this point.
+		return;
+	}
+	try {
+		const payload: Parameters<typeof clipboard.write>[0] = {};
+		if (snapshot.text !== "") {
+			payload.text = snapshot.text;
+		}
+		if (snapshot.html !== "") {
+			payload.html = snapshot.html;
+		}
+		if (snapshot.rtf !== "") {
+			payload.rtf = snapshot.rtf;
+		}
+		if (snapshot.image !== null) {
+			payload.image = snapshot.image;
+		}
+		clipboard.write(payload);
+	} catch (err) {
+		dbg("paste", `clipboard restore failed: ${(err as Error).message}`);
+		// Fall back to a plain-text restore so SOMETHING gets back on the
+		// clipboard rather than leaving the transcript stranded there.
+		if (snapshot.text !== "") {
+			try {
+				clipboard.writeText(snapshot.text);
+			} catch (err2) {
+				dbg("paste", `text-only restore also failed: ${(err2 as Error).message}`);
+			}
+		}
 	}
 }
 
@@ -357,6 +552,12 @@ export function shouldSkipPaste(text: string): boolean {
 export function pasteText(text: string): void {
 	if (shouldSkipPaste(text)) {
 		return;
+	}
+	pasteCallLog.push(text);
+	if (pasteCallLog.length > PASTE_CALL_LOG_MAX) {
+		// Drop oldest entries so a long dictation session can't grow the log
+		// without bound. Recent pushes (what tests assert on) are preserved.
+		pasteCallLog.splice(0, pasteCallLog.length - PASTE_CALL_LOG_MAX);
 	}
 	const enqueuedAt = Date.now();
 	queueDepth += 1;
@@ -409,4 +610,14 @@ export function __makeBinaryRunForTesting__(
 	resolve: (value: { ok: boolean; reason?: string }) => void
 ): BinaryRun {
 	return makeBinaryRun(resolve);
+}
+
+/** Test hook: read every text that has been passed to `pasteText` so far. */
+export function __getPasteCallsForTesting__(): readonly string[] {
+	return pasteCallLog;
+}
+
+/** Test hook: clear the pasteText invocation log. */
+export function __resetPasteCallsForTesting__(): void {
+	pasteCallLog.length = 0;
 }

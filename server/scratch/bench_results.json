@@ -1,0 +1,58 @@
+[
+  {
+    "stack": "onnx_asr",
+    "quant": "fp32",
+    "load_s": 2.103358400000161,
+    "infer_s": 1.2880692000003364,
+    "audio_s": 203.2834375,
+    "rtf": 157.82027665900785,
+    "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now. That means I've done work. MGH is the work I have done, believe me. I've increased the potential energy of this object 15 times 10, so about 150 joules. If I let it fall, then that will be converted to"
+  },
+  {
+    "stack": "onnx_asr",
+    "quant": "fp16",
+    "load_s": 0.7935328999997182,
+    "infer_s": 3.6077933999999914,
+    "audio_s": 203.2834375,
+    "rtf": 56.34564260248396,
+    "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now. That means I've done work. MGH is the work I have done, believe me. I've increased the potential energy of this object 15 times 10, so about 150 joules. If I let it fall, then that will be converted to"
+  },
+  {
+    "stack": "onnx_asr",
+    "quant": "int8",
+    "error": "load: Fail: [ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+  },
+  {
+    "stack": "onnx_asr",
+    "quant": "uint8",
+    "error": "load: Fail: [ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+  },
+  {
+    "stack": "optimum-merged-fp32",
+    "load_s": 46.02898789999972,
+    "infer_s": 2.6127738999998655,
+    "audio_s": 203.2834375,
+    "rtf": 77.8036850031342,
+    "text": " Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now. That means I've done work. MGH is the work I have done, believe me. I've increased the potential energy of this object 15 times 10, so about 150 joules. If I let it fall, then that will be converted"
+  },
+  {
+    "stack": "optimum-split-fp32",
+    "load_s": 53.16367020000007,
+    "infer_s": 2.3651638000001185,
+    "audio_s": 203.2834375,
+    "rtf": 85.94898902984639,
+    "text": " Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now. That means I've done work. MGH is the work I have done, believe me. I've increased the potential energy of this object 15 times 10, so about 150 joules. If I let it fall, then that will be converted"
+  },
+  {
+    "stack": "optimum-merged-fp16",
+    "error": "load: TypeError: ORTModelForConditionalGeneration._from_pretrained() got an unexpected keyword argument 'file_name'"
+  },
+  {
+    "stack": "sherpa-onnx",
+    "load_s": 0.4321141999998872,
+    "infer_s": 4.191614400000162,
+    "audio_s": 203.2834375,
+    "rtf": 48.49764746966995,
+    "text": " Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now. That means I've done work. MGH is the work I have done, believe me. I've increased the potential energy of this object 15 times 10, so about 150 joules. If I let it fall, then that will be"
+  }
+]

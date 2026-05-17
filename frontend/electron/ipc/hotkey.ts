@@ -5,6 +5,7 @@ import { dbg, dbgVerbose } from "../lib/debug-log";
 import { createSafeSender } from "../lib/ipc-helpers";
 import { codesToNames, KEYCODE_TO_NAME, parseAccelerator } from "../lib/keycodes";
 import { notifyHotkeyPressed } from "../lib/recording-state";
+import { breadcrumb } from "../lib/sentry-main";
 import { playRecordingSound } from "../lib/sound";
 import { getStoreValue } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
@@ -74,8 +75,19 @@ export function setPasteGuard(active: boolean): void {
 	}
 }
 
+/**
+ * True while a paste binary is mid-run. Read by sibling input modules
+ * (e.g. transform-hotkeys.ts) so they can short-circuit on the synthetic
+ * keystroke flood from `winstt-paste.exe` instead of pushing scancodes
+ * into their own `pressed` set or iterating combos per char.
+ */
+export function isPasteGuardActive(): boolean {
+	return pasteGuard;
+}
+
 export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): () => void {
 	let targetKeyCodes: Set<number> | null = null;
+	let targetAccelerator = "";
 	const pressedKeys = new Set<number>();
 	// Stryker disable next-line BooleanLiteral: closure init — setIsActive() always overwrites before observation in tests
 	let isActive = false;
@@ -224,6 +236,7 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		comboFullyReleased = false;
 		notifyHotkeyPressed();
 		const mode = getStoreValue("general.recordingMode");
+		breadcrumb("input", "hotkey pressed", { accelerator: targetAccelerator });
 		// Stryker disable next-line StringLiteral: dbg() message is informational only
 		dbg("hotkey", `PRESSED — combo matched, mode=${mode}, connected=${sttClient.isConnected}`);
 		if (shouldPlayRecordingSound(mode)) {
@@ -237,6 +250,7 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		comboFullyReleased = false;
 		notifyHotkeyPressed();
 		const mode = getStoreValue("general.recordingMode");
+		breadcrumb("input", "hotkey pressed", { accelerator: targetAccelerator });
 		// Stryker disable next-line StringLiteral: dbg() message is informational only
 		dbg("hotkey", `PRESSED (deferred — pressed during paste guard), mode=${mode}`);
 		if (shouldPlayRecordingSound(mode)) {
@@ -366,6 +380,7 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 			return false;
 		}
 		targetKeyCodes = codes;
+		targetAccelerator = accelerator;
 		pressedKeys.clear();
 		setIsActive(false);
 		comboFullyReleased = true;
@@ -376,6 +391,7 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 
 	const handleUnregister = () => {
 		targetKeyCodes = null;
+		targetAccelerator = "";
 		pressedKeys.clear();
 		setIsActive(false);
 		// Stryker disable next-line BooleanLiteral: equivalent — handleRegister always resets `comboFullyReleased = true` again at the start of any subsequent registration, so flipping this assignment to false produces identical observable state.

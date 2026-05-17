@@ -7,14 +7,6 @@
  */
 
 /**
- * Whether the OpenRouter model-list refresh button should be disabled.
- * Disabled when a scan is already in progress or no API key has been entered.
- */
-export function computeRefreshDisabled(isScanning: boolean, apiKey: string): boolean {
-	return isScanning || apiKey.length === 0;
-}
-
-/**
  * Determine whether the submit button in the API-key dialog should be enabled.
  * Returns true when the trimmed key is non-empty.
  */

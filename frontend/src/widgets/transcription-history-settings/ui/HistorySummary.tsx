@@ -118,7 +118,7 @@ export function HistorySummary({ stats }: HistorySummaryProps) {
 						/>
 						<div aria-hidden className={`absolute top-0 bottom-0 left-0 w-[2px] ${a.rail}`} />
 						<div className="relative flex flex-col gap-2.5 px-3 py-2.5 pl-[14px]">
-							<div className="flex items-center gap-2">
+							<div className="flex items-start gap-2">
 								<div
 									className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] ring-1 ring-inset ${a.chipBg} ${a.chipRing}`}
 								>
@@ -130,7 +130,7 @@ export function HistorySummary({ stats }: HistorySummaryProps) {
 										strokeWidth={1.75}
 									/>
 								</div>
-								<div className="truncate font-mono text-[10px] text-foreground-muted uppercase leading-none tracking-[0.14em]">
+								<div className="line-clamp-2 min-w-0 break-words font-mono text-[10px] text-foreground-muted uppercase leading-[1.25] tracking-[0.1em]">
 									{tile.label}
 								</div>
 							</div>

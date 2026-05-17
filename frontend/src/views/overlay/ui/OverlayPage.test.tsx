@@ -3,6 +3,8 @@ import { act, cleanup, render } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
+import { useVisualizerStore } from "@/features/audio-visualizer";
+import { useLlmProcessingStore } from "@/features/llm-processing";
 import { OverlayPage } from "./OverlayPage";
 
 // Pristine schema defaults, NOT a live `getState()` snapshot: sibling suites
@@ -35,7 +37,12 @@ const inertElectronApi: typeof window.electronAPI = {
 
 beforeEach(() => {
 	window.electronAPI = inertElectronApi;
-	useTranscriptionStore.setState({ currentRealtime: "", ephemeral: null });
+	useTranscriptionStore.setState({
+		currentRealtime: "",
+		ephemeral: null,
+		isRecordingActive: false,
+	});
+	useVisualizerStore.setState({ isSpeaking: false });
 	useSettingsStore.setState({ settings: structuredClone(initialSettings) });
 });
 
@@ -47,7 +54,12 @@ afterEach(() => {
 	// wipes the ephemeral state a later test just set.
 	cleanup();
 	window.electronAPI = originalElectronApi;
-	useTranscriptionStore.setState({ currentRealtime: "", ephemeral: null });
+	useTranscriptionStore.setState({
+		currentRealtime: "",
+		ephemeral: null,
+		isRecordingActive: false,
+	});
+	useVisualizerStore.setState({ isSpeaking: false });
 	useSettingsStore.setState({ settings: structuredClone(initialSettings) });
 });
 
@@ -81,6 +93,51 @@ describe("OverlayPage", () => {
 		useSettingsStore.setState({ settings: initialSettings });
 	});
 
+	test("shows the pill the moment VAD reports speech (before any transcription text arrives)", () => {
+		// Reproduces the user's "make it show faster" request: with the
+		// recording armed but no transcription chunk yet, VAD's
+		// `vad_detect_start` should pop the pill so the visualizer is on
+		// screen the instant the user begins speaking.
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: { ...initialSettings.general, liveTranscriptionDisplay: "both" },
+			},
+		});
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: true,
+		});
+		useVisualizerStore.setState({ isSpeaking: true });
+		const { container } = renderOverlay();
+		const pill = container.querySelector(".rounded-2xl");
+		expect(pill).not.toBeNull();
+		// No transcription text yet — the text row stays out until realtime
+		// chunks arrive. The visualizer-only pill is the early-show state.
+		expect(container.querySelector(".line-clamp-5")).toBeNull();
+	});
+
+	test("VAD-driven show still respects the isRecordingActive gate (stale isSpeaking can't flash an unarmed pill)", () => {
+		// If a previous session left `isSpeaking=true` behind (e.g. an
+		// abnormal stop that skipped `recordingStopped`), the pill must
+		// still stay hidden until the next `recording_start` arms us.
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: { ...initialSettings.general, liveTranscriptionDisplay: "both" },
+			},
+		});
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: false,
+		});
+		useVisualizerStore.setState({ isSpeaking: true });
+		const { container } = renderOverlay();
+		expect(container.querySelector(".rounded-2xl")).toBeNull();
+	});
+
 	test("shows the pill once realtime text arrives", () => {
 		useSettingsStore.setState({
 			settings: {
@@ -88,12 +145,41 @@ describe("OverlayPage", () => {
 				general: { ...initialSettings.general, liveTranscriptionDisplay: "both" },
 			},
 		});
-		useTranscriptionStore.setState({ currentRealtime: "spoken words", ephemeral: null });
+		useTranscriptionStore.setState({
+			currentRealtime: "spoken words",
+			ephemeral: null,
+			isRecordingActive: true,
+		});
 		const { container } = renderOverlay();
 		const pill = container.querySelector(".rounded-2xl");
 		expect(pill).not.toBeNull();
 		useSettingsStore.setState({ settings: initialSettings });
-		useTranscriptionStore.setState({ currentRealtime: "", ephemeral: null });
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: false,
+		});
+	});
+
+	test("hides the pill when realtime text is set but isRecordingActive is false (stale from prior session)", () => {
+		// Repro of the bug: between sessions, the renderer may still hold
+		// realtime/ephemeral text from the previous press. When the overlay
+		// BrowserWindow becomes visible for the next PTT press, the first
+		// paint runs before STT_RECORDING_START arrives — so the gate must
+		// hide the pill until that event re-arms it.
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: { ...initialSettings.general, liveTranscriptionDisplay: "both" },
+			},
+		});
+		useTranscriptionStore.setState({
+			currentRealtime: "previous session text",
+			ephemeral: { text: "no audio detected", timestamp: 0 },
+			isRecordingActive: false,
+		});
+		const { container } = renderOverlay();
+		expect(container.querySelector(".rounded-2xl")).toBeNull();
 	});
 
 	test("shows transcription text when realtime is set and liveTranscriptionDisplay includes the pill", () => {
@@ -103,12 +189,20 @@ describe("OverlayPage", () => {
 				general: { ...initialSettings.general, liveTranscriptionDisplay: "in-pill" },
 			},
 		});
-		useTranscriptionStore.setState({ currentRealtime: "hello world", ephemeral: null });
+		useTranscriptionStore.setState({
+			currentRealtime: "hello world",
+			ephemeral: null,
+			isRecordingActive: true,
+		});
 		const { container } = renderOverlay();
 		const textDiv = container.querySelector(".line-clamp-5");
 		expect(textDiv?.textContent).toContain("hello world");
 		useSettingsStore.setState({ settings: initialSettings });
-		useTranscriptionStore.setState({ currentRealtime: "", ephemeral: null });
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: false,
+		});
 	});
 
 	test("does not show text when liveTranscriptionDisplay is 'in-app' only", () => {
@@ -118,12 +212,20 @@ describe("OverlayPage", () => {
 				general: { ...initialSettings.general, liveTranscriptionDisplay: "in-app" },
 			},
 		});
-		useTranscriptionStore.setState({ currentRealtime: "should be hidden", ephemeral: null });
+		useTranscriptionStore.setState({
+			currentRealtime: "should be hidden",
+			ephemeral: null,
+			isRecordingActive: true,
+		});
 		const { container } = renderOverlay();
 		const textDiv = container.querySelector(".line-clamp-5");
 		expect(textDiv).toBeNull();
 		useSettingsStore.setState({ settings: initialSettings });
-		useTranscriptionStore.setState({ currentRealtime: "", ephemeral: null });
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: false,
+		});
 	});
 
 	test("does not show text when liveTranscriptionDisplay is 'none'", () => {
@@ -133,12 +235,20 @@ describe("OverlayPage", () => {
 				general: { ...initialSettings.general, liveTranscriptionDisplay: "none" },
 			},
 		});
-		useTranscriptionStore.setState({ currentRealtime: "should be hidden", ephemeral: null });
+		useTranscriptionStore.setState({
+			currentRealtime: "should be hidden",
+			ephemeral: null,
+			isRecordingActive: true,
+		});
 		const { container } = renderOverlay();
 		const textDiv = container.querySelector(".line-clamp-5");
 		expect(textDiv).toBeNull();
 		useSettingsStore.setState({ settings: initialSettings });
-		useTranscriptionStore.setState({ currentRealtime: "", ephemeral: null });
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: false,
+		});
 	});
 
 	test("shows ephemeral text when realtime is empty", () => {
@@ -158,12 +268,17 @@ describe("OverlayPage", () => {
 			useTranscriptionStore.setState({
 				currentRealtime: "",
 				ephemeral: { text: "ephemeral preview", timestamp: 0 },
+				isRecordingActive: true,
 			});
 		});
 		const textDiv = container.querySelector(".line-clamp-5");
 		expect(textDiv?.textContent).toContain("ephemeral preview");
 		useSettingsStore.setState({ settings: initialSettings });
-		useTranscriptionStore.setState({ currentRealtime: "", ephemeral: null });
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: false,
+		});
 	});
 
 	test("applies correct zoom factor for different size presets", () => {
@@ -180,11 +295,87 @@ describe("OverlayPage", () => {
 				},
 			},
 		});
-		useTranscriptionStore.setState({ currentRealtime: "rendering", ephemeral: null });
+		useTranscriptionStore.setState({
+			currentRealtime: "rendering",
+			ephemeral: null,
+			isRecordingActive: true,
+		});
 		const { container } = renderOverlay();
 		const zoomDiv = container.querySelector("[style*='zoom']");
 		expect(zoomDiv).not.toBeNull();
 		useSettingsStore.setState({ settings: initialSettings });
-		useTranscriptionStore.setState({ currentRealtime: "", ephemeral: null });
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: false,
+		});
+	});
+
+	test("visibilitychange to 'visible' synchronously clears stale transcription + LLM + speaking state", () => {
+		renderOverlay();
+		// Simulate stale state left over from a prior session (the exact
+		// scenario the user reported: previous transcription still in
+		// currentRealtime / ephemeral when the overlay BrowserWindow re-shows).
+		// `isSpeaking` joins the reset because the pill now keys off VAD
+		// detection — a stale `true` would flash the visualizer on re-show.
+		act(() => {
+			useTranscriptionStore.setState({
+				currentRealtime: "previous session text",
+				ephemeral: { text: "no audio detected", timestamp: 0 },
+				isRecordingActive: false,
+			});
+			useLlmProcessingStore.setState({ isThinking: true });
+			useVisualizerStore.setState({ isSpeaking: true });
+		});
+		// Happy-dom defaults visibilityState to "visible"; the handler reads
+		// `document.visibilityState`, so dispatching the event after stale
+		// state is in place exercises the reset path.
+		act(() => {
+			document.dispatchEvent(new Event("visibilitychange"));
+		});
+		const t = useTranscriptionStore.getState();
+		expect(t.currentRealtime).toBe("");
+		expect(t.ephemeral).toBeNull();
+		expect(t.isRecordingActive).toBe(false);
+		expect(useLlmProcessingStore.getState().isThinking).toBe(false);
+		expect(useVisualizerStore.getState().isSpeaking).toBe(false);
+	});
+
+	test("visibilitychange to 'hidden' does NOT clear state (only the visible transition resets)", () => {
+		renderOverlay();
+		act(() => {
+			useTranscriptionStore.setState({
+				currentRealtime: "still in flight",
+				ephemeral: null,
+				isRecordingActive: true,
+			});
+		});
+		// Flip happy-dom's visibilityState to hidden so the handler's guard
+		// short-circuits — state must be left untouched.
+		const originalDescriptor = Object.getOwnPropertyDescriptor(
+			Document.prototype,
+			"visibilityState"
+		);
+		Object.defineProperty(document, "visibilityState", {
+			configurable: true,
+			get: () => "hidden",
+		});
+		try {
+			act(() => {
+				document.dispatchEvent(new Event("visibilitychange"));
+			});
+			const t = useTranscriptionStore.getState();
+			expect(t.currentRealtime).toBe("still in flight");
+			expect(t.isRecordingActive).toBe(true);
+		} finally {
+			if (originalDescriptor) {
+				Object.defineProperty(document, "visibilityState", originalDescriptor);
+			} else {
+				// happy-dom's default is on the instance, not the prototype —
+				// delete the temporary override so subsequent tests get the
+				// default "visible" value back.
+				Reflect.deleteProperty(document, "visibilityState");
+			}
+		}
 	});
 });

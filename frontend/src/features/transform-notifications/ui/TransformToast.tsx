@@ -95,7 +95,7 @@ export function TransformToast() {
 	return (
 		<div
 			aria-live="polite"
-			className="fixed right-4 bottom-4 z-[400] w-[360px] max-w-[90vw] rounded-md border border-border bg-surface-secondary p-3 shadow-lg"
+			className="fixed right-4 bottom-4 z-toast w-[360px] max-w-[90vw] rounded-md border border-border bg-surface-secondary p-3 shadow-lg"
 			role="status"
 		>
 			<div className="mb-1 flex items-start gap-2">

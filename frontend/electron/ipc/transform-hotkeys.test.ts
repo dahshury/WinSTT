@@ -128,7 +128,7 @@ function reset(): void {
 describe("transform-hotkeys: combo matching", () => {
 	test("rebuildCombos ignores transforms with empty hotkey", () => {
 		reset();
-		storeValues["llm.transforms"] = [
+		storeValues["llm.transforms.prompts"] = [
 			{ id: "a", hotkey: "" },
 			{ id: "b", hotkey: "LCtrl+LShift+P" },
 		];
@@ -139,7 +139,7 @@ describe("transform-hotkeys: combo matching", () => {
 
 	test("rebuildCombos drops unparseable hotkeys", () => {
 		reset();
-		storeValues["llm.transforms"] = [
+		storeValues["llm.transforms.prompts"] = [
 			{ id: "a", hotkey: "LCtrl+NotAKey" },
 			{ id: "b", hotkey: "LCtrl+LShift+P" },
 		];
@@ -150,7 +150,7 @@ describe("transform-hotkeys: combo matching", () => {
 
 	test("fires applyTransform when full combo becomes held", () => {
 		reset();
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		helpers.rebuildCombos();
 		const combo = helpers.getCombos()[0];
 		expect(combo).toBeDefined();
@@ -169,7 +169,7 @@ describe("transform-hotkeys: combo matching", () => {
 
 	test("does NOT re-fire while combo stays held (auto-repeat guard)", () => {
 		reset();
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		helpers.rebuildCombos();
 		const combo = helpers.getCombos()[0];
 		if (!combo) {
@@ -187,7 +187,7 @@ describe("transform-hotkeys: combo matching", () => {
 
 	test("re-fires after releasing and re-pressing", () => {
 		reset();
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		helpers.rebuildCombos();
 		const combo = helpers.getCombos()[0];
 		if (!combo) {
@@ -208,7 +208,7 @@ describe("transform-hotkeys: combo matching", () => {
 
 	test("multiple transforms with valid combos register independently", () => {
 		reset();
-		storeValues["llm.transforms"] = [
+		storeValues["llm.transforms.prompts"] = [
 			{ id: "polish", hotkey: "LCtrl+LShift+P" },
 			// The second uses different modifiers to dodge UiohookKey-mock gaps —
 			// the only thing this test cares about is "two combos register".
@@ -220,7 +220,7 @@ describe("transform-hotkeys: combo matching", () => {
 
 	test("handleKeyUp clears fired flag once combo is no longer fully held", () => {
 		reset();
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		helpers.rebuildCombos();
 		const combo = helpers.getCombos()[0];
 		if (!combo) {
@@ -238,7 +238,7 @@ describe("transform-hotkeys: combo matching", () => {
 
 	test("handleKeyUp leaves fired flag intact when combo is still fully held", () => {
 		reset();
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		helpers.rebuildCombos();
 		const combo = helpers.getCombos()[0];
 		if (!combo) {
@@ -255,7 +255,7 @@ describe("transform-hotkeys: combo matching", () => {
 
 	test("handleKeyUp is a no-op for transforms that never fired", () => {
 		reset();
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		helpers.rebuildCombos();
 		const combo = helpers.getCombos()[0];
 		if (!combo) {
@@ -267,13 +267,53 @@ describe("transform-hotkeys: combo matching", () => {
 		helpers.handleKeyUp({ keycode: keys[0] as number });
 		expect(helpers.getFired().size).toBe(0);
 	});
+
+	test("handleKeyDown/Up are short-circuited while the paste guard is active", async () => {
+		// Synthetic keystrokes from `winstt-paste.exe --type` arrive at the
+		// uiohook listener at 2 events per char. Without the guard check this
+		// handler does `pressed.add` + `maybeFireCombos` per event — a 500-char
+		// transcript = 1000 needless iterations. Verify the early-return path
+		// (1) doesn't grow the `pressed` set with synthetic keycodes, and (2)
+		// doesn't accidentally fire any combo while the guard is active.
+		const { setPasteGuard } = await import("./hotkey");
+		reset();
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		helpers.rebuildCombos();
+		const combo = helpers.getCombos()[0];
+		if (!combo) {
+			return;
+		}
+		const keys = Array.from(combo.combo);
+		// `helpers.resetForTesting` only clears state when `listenerInstalled`
+		// is true (we never call setupTransformHotkeys in unit tests). Prior
+		// tests in this file may have left codes in the module-level `pressed`
+		// set, so capture a baseline and assert NO growth from synthetic events.
+		const pressedBefore = helpers.getPressed().size;
+		const firedBefore = helpers.getFired().size;
+		setPasteGuard(true);
+		try {
+			for (const k of keys) {
+				helpers.handleKeyDown({ keycode: k as number });
+			}
+			expect(helpers.getPressed().size).toBe(pressedBefore);
+			expect(applyCalls.length).toBe(0);
+			expect(helpers.getFired().size).toBe(firedBefore);
+			// Matching keyups also short-circuit — set stays at the baseline.
+			for (const k of keys) {
+				helpers.handleKeyUp({ keycode: k as number });
+			}
+			expect(helpers.getPressed().size).toBe(pressedBefore);
+		} finally {
+			setPasteGuard(false);
+		}
+	});
 });
 
 describe("transform-hotkeys: applyTransform rejection", () => {
 	test("swallows applyTransform rejection without crashing", async () => {
 		reset();
 		applyTransformShouldReject = true;
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		helpers.rebuildCombos();
 		const combo = helpers.getCombos()[0];
 		if (!combo) {
@@ -292,7 +332,7 @@ describe("transform-hotkeys: applyTransform rejection", () => {
 	test("rejection .catch logs a non-Error value via String() branch", async () => {
 		reset();
 		applyTransformRejectWithString = true;
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		helpers.rebuildCombos();
 		const combo = helpers.getCombos()[0];
 		if (!combo) {
@@ -309,7 +349,7 @@ describe("transform-hotkeys: applyTransform rejection", () => {
 describe("transform-hotkeys: setup / cleanup lifecycle", () => {
 	test("setupTransformHotkeys installs uIOhook listeners and a store subscription", () => {
 		reset();
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		const handle = setupTransformHotkeys();
 		expect(uioListeners.keydown.length).toBe(1);
 		expect(uioListeners.keyup.length).toBe(1);
@@ -324,7 +364,7 @@ describe("transform-hotkeys: setup / cleanup lifecycle", () => {
 
 	test("setupTransformHotkeys is idempotent on a second call", () => {
 		reset();
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		const first = setupTransformHotkeys();
 		const second = setupTransformHotkeys();
 		// Second call must not install additional listeners.
@@ -339,11 +379,11 @@ describe("transform-hotkeys: setup / cleanup lifecycle", () => {
 
 	test("store change re-runs rebuildCombos via the subscription callback", () => {
 		reset();
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		const handle = setupTransformHotkeys();
 		expect(helpers.getCombos().length).toBe(1);
 		// Mutate the store and fire the change notification.
-		storeValues["llm.transforms"] = [
+		storeValues["llm.transforms.prompts"] = [
 			{ id: "polish", hotkey: "LCtrl+LShift+P" },
 			{ id: "engineer", hotkey: "LCtrl+LAlt+P" },
 		];
@@ -356,7 +396,7 @@ describe("transform-hotkeys: setup / cleanup lifecycle", () => {
 
 	test("dispose() called twice — second call is a safe no-op", () => {
 		reset();
-		storeValues["llm.transforms"] = [];
+		storeValues["llm.transforms.prompts"] = [];
 		const handle = setupTransformHotkeys();
 		handle.dispose();
 		// Second dispose hits the !listenerInstalled early-return guard.
@@ -366,7 +406,7 @@ describe("transform-hotkeys: setup / cleanup lifecycle", () => {
 
 	test("end-to-end: a keydown emitted via uIOhook fires the registered transform", () => {
 		reset();
-		storeValues["llm.transforms"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
+		storeValues["llm.transforms.prompts"] = [{ id: "polish", hotkey: "LCtrl+LShift+P" }];
 		const handle = setupTransformHotkeys();
 		const combo = helpers.getCombos()[0];
 		if (!combo) {

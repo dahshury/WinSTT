@@ -60,10 +60,10 @@ export function OptInDialog({
 		>
 			<AlertDialog.Portal>
 				<AlertDialog.Backdrop
-					className={`${dialogAnimation.backdrop} fixed inset-0 z-[300] bg-black/60 backdrop-blur-sm`}
+					className={`${dialogAnimation.backdrop} fixed inset-0 z-confirm-backdrop bg-black/60 backdrop-blur-sm`}
 				/>
 				<AlertDialog.Popup
-					className={`${dialogAnimation.popup} fixed top-1/2 left-1/2 z-[301] flex w-[460px] max-w-[90vw] flex-col gap-4 rounded-xl border border-border bg-surface-secondary p-6 outline-none`}
+					className={`${dialogAnimation.popup} fixed top-1/2 left-1/2 z-confirm flex w-[460px] max-w-[90vw] flex-col gap-4 rounded-xl border border-border bg-surface-secondary p-6 outline-none`}
 				>
 					<AlertDialog.Title className="m-0 font-sans font-semibold text-[15px] text-foreground">
 						{title}

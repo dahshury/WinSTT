@@ -134,7 +134,7 @@ export function AudioVisualizerWave({
 	// Mutable uniforms ref — animators write here directly, ReactShaderToy reads on each frame
 	const uniformsRef = useRef<Uniforms>({
 		uSpeed: { type: "1f", value: 5 },
-		uAmplitude: { type: "1f", value: 0.025 },
+		uAmplitude: { type: "1f", value: 0.08 },
 		uFrequency: { type: "1f", value: 10 },
 		uMix: { type: "1f", value: 1.0 },
 		uLineWidth: { type: "1f", value: _lineWidth },

@@ -9,6 +9,7 @@ import {
 	ValidationError,
 } from "../../src/shared/lib/errors";
 import { createSafeSender, type SafeSend } from "../lib/ipc-helpers";
+import { breadcrumb } from "../lib/sentry-main";
 import { getStoreValue } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
 
@@ -364,6 +365,15 @@ async function validateAndResolveOutput(
  * Start a file transcription request.
  * Can be called from IPC handlers or directly from main process code (e.g., tray menu).
  */
+async function getFileSizeBytes(filePath: string): Promise<number> {
+	try {
+		const stat = await fs.promises.stat(filePath);
+		return stat.size;
+	} catch {
+		return -1;
+	}
+}
+
 export async function transcribeFile(
 	client: SttClient,
 	filePath: string,
@@ -374,6 +384,10 @@ export async function transcribeFile(
 		// User cancelled the save dialog — don't start transcription.
 		return { requestId: "" };
 	}
+	// File size only — never include the file path or content in breadcrumbs.
+	breadcrumb("file-transcribe", "file submitted", {
+		size_bytes: await getFileSizeBytes(filePath),
+	});
 	const requestId = enqueueTranscription(
 		client,
 		filePath,

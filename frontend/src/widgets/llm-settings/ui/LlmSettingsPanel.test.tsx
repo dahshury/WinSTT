@@ -26,25 +26,19 @@ describe("LlmSettingsPanel helpers — readLlmSnapshot", () => {
 	});
 
 	test("merges partial llm settings over the defaults", () => {
+		// `readLlmSnapshot` accepts a forgiving partial input (the runtime body
+		// re-defaults missing fields), but its TS signature reflects the strict
+		// shape — cast for the test fixture to exercise the partial-merge logic.
 		const snap = helpers.readLlmSnapshot({
-			provider: "openrouter",
 			openrouterApiKey: "sk-test",
+			dictation: { provider: "openrouter" } as any,
 		});
-		expect(snap.provider).toBe("openrouter");
+		expect(snap.dictation.provider).toBe("openrouter");
 		expect(snap.openrouterApiKey).toBe("sk-test");
 		expect(snap.endpoint).toBe(helpers.DEFAULT_LLM.endpoint);
-	});
-});
-
-describe("LlmSettingsPanel helpers — buildOllamaModelOpts", () => {
-	test("formats name and size as GB", () => {
-		const opts = helpers.buildOllamaModelOpts([{ name: "llama3", size: 4_500_000_000 }]);
-		expect(opts).toEqual([{ id: "llama3", label: "llama3 (4.5 GB)" }]);
-	});
-
-	test("uses 0 GB when size is missing", () => {
-		const opts = helpers.buildOllamaModelOpts([{ name: "phi" }]);
-		expect(opts[0]).toEqual({ id: "phi", label: "phi (0.0 GB)" });
+		// Transforms defaults remain untouched
+		expect(snap.transforms.provider).toBe("ollama");
+		expect(snap.transforms.enabled).toBe(false);
 	});
 });
 
@@ -179,9 +173,9 @@ interface ToggleDepsForTest {
 	provider: string;
 	scanOllama: ReturnType<typeof mock>;
 	scanOpenRouter: ReturnType<typeof mock>;
+	setEnabled: ReturnType<typeof mock>;
 	setShowApiKeyDialog: ReturnType<typeof mock>;
 	setShowOllamaDialog: ReturnType<typeof mock>;
-	update: ReturnType<typeof mock>;
 }
 
 function makeDeps(overrides: Partial<ToggleDepsForTest> = {}): ToggleDepsForTest {
@@ -193,51 +187,51 @@ function makeDeps(overrides: Partial<ToggleDepsForTest> = {}): ToggleDepsForTest
 		checkOllamaReachable: mock(() => Promise.resolve(true)),
 		scanOllama: mock(() => undefined),
 		scanOpenRouter: mock(() => undefined),
-		update: mock(() => undefined),
+		setEnabled: mock(() => undefined),
 		setShowOllamaDialog: mock(() => undefined),
 		setShowApiKeyDialog: mock(() => undefined),
 		...overrides,
 	};
 }
 
-describe("LlmSettingsPanel helpers — tryEnableOllama", () => {
+describe("LlmSettingsPanel helpers — tryEnableOllamaForFeature", () => {
 	test("opens dialog when Ollama is unreachable", async () => {
 		const deps = makeDeps({
 			checkOllamaReachable: mock(() => Promise.resolve(false)),
 		});
-		await helpers.tryEnableOllama(deps as any);
+		await helpers.tryEnableOllamaForFeature(deps as any);
 		expect(deps.setShowOllamaDialog).toHaveBeenCalledWith(true);
-		expect(deps.update).not.toHaveBeenCalled();
+		expect(deps.setEnabled).not.toHaveBeenCalled();
 	});
 
 	test("scans and enables when reachable and not yet loaded", async () => {
 		const deps = makeDeps();
-		await helpers.tryEnableOllama(deps as any);
+		await helpers.tryEnableOllamaForFeature(deps as any);
 		expect(deps.scanOllama).toHaveBeenCalledTimes(1);
-		expect(deps.update).toHaveBeenCalledWith({ enabled: true });
+		expect(deps.setEnabled).toHaveBeenCalledWith(true);
 	});
 
 	test("skips scan when already loaded", async () => {
 		const deps = makeDeps({ ollamaLoaded: true });
-		await helpers.tryEnableOllama(deps as any);
+		await helpers.tryEnableOllamaForFeature(deps as any);
 		expect(deps.scanOllama).not.toHaveBeenCalled();
-		expect(deps.update).toHaveBeenCalledWith({ enabled: true });
+		expect(deps.setEnabled).toHaveBeenCalledWith(true);
 	});
 });
 
-describe("LlmSettingsPanel helpers — tryEnableOpenRouter", () => {
+describe("LlmSettingsPanel helpers — tryEnableOpenRouterForFeature", () => {
 	test("opens api key dialog when key missing", () => {
 		const deps = makeDeps({ provider: "openrouter" });
-		helpers.tryEnableOpenRouter(deps as any);
+		helpers.tryEnableOpenRouterForFeature(deps as any);
 		expect(deps.setShowApiKeyDialog).toHaveBeenCalledWith(true);
-		expect(deps.update).not.toHaveBeenCalled();
+		expect(deps.setEnabled).not.toHaveBeenCalled();
 	});
 
 	test("enables and scans when key present and not loaded", () => {
 		const deps = makeDeps({ provider: "openrouter", openrouterApiKey: "k" });
-		helpers.tryEnableOpenRouter(deps as any);
+		helpers.tryEnableOpenRouterForFeature(deps as any);
 		expect(deps.scanOpenRouter).toHaveBeenCalled();
-		expect(deps.update).toHaveBeenCalledWith({ enabled: true });
+		expect(deps.setEnabled).toHaveBeenCalledWith(true);
 	});
 
 	test("skips scan when already loaded", () => {
@@ -246,29 +240,29 @@ describe("LlmSettingsPanel helpers — tryEnableOpenRouter", () => {
 			openrouterApiKey: "k",
 			openrouterLoaded: true,
 		});
-		helpers.tryEnableOpenRouter(deps as any);
+		helpers.tryEnableOpenRouterForFeature(deps as any);
 		expect(deps.scanOpenRouter).not.toHaveBeenCalled();
-		expect(deps.update).toHaveBeenCalledWith({ enabled: true });
+		expect(deps.setEnabled).toHaveBeenCalledWith(true);
 	});
 });
 
-describe("LlmSettingsPanel helpers — performToggle", () => {
+describe("LlmSettingsPanel helpers — performFeatureToggle", () => {
 	test("disables without provider checks when next is false", async () => {
 		const deps = makeDeps();
-		await helpers.performToggle(false, deps as any);
-		expect(deps.update).toHaveBeenCalledWith({ enabled: false });
+		await helpers.performFeatureToggle(false, deps as any);
+		expect(deps.setEnabled).toHaveBeenCalledWith(false);
 		expect(deps.checkOllamaReachable).not.toHaveBeenCalled();
 	});
 
 	test("delegates to ollama enable path when provider=ollama", async () => {
 		const deps = makeDeps({ provider: "ollama" });
-		await helpers.performToggle(true, deps as any);
+		await helpers.performFeatureToggle(true, deps as any);
 		expect(deps.checkOllamaReachable).toHaveBeenCalled();
 	});
 
 	test("delegates to openrouter enable path when provider=openrouter", async () => {
 		const deps = makeDeps({ provider: "openrouter" });
-		await helpers.performToggle(true, deps as any);
+		await helpers.performFeatureToggle(true, deps as any);
 		expect(deps.setShowApiKeyDialog).toHaveBeenCalledWith(true);
 	});
 });
@@ -287,10 +281,43 @@ describe("LlmSettingsPanel helpers — getOllamaDialogTexts", () => {
 	});
 });
 
-describe("LlmSettingsPanel helpers — DEFAULT_LLM", () => {
-	test("contains expected baseline values", () => {
-		expect(helpers.DEFAULT_LLM.enabled).toBe(false);
-		expect(helpers.DEFAULT_LLM.provider).toBe("ollama");
+describe("LlmSettingsPanel helpers — DEFAULT_LLM / DEFAULT_FEATURE", () => {
+	test("DEFAULT_LLM contains expected baseline values", () => {
 		expect(helpers.DEFAULT_LLM.endpoint).toBe("http://localhost:11434");
+		expect(helpers.DEFAULT_LLM.openrouterApiKey).toBe("");
+		expect(helpers.DEFAULT_LLM.dictation.enabled).toBe(false);
+		expect(helpers.DEFAULT_LLM.dictation.provider).toBe("ollama");
+		expect(helpers.DEFAULT_LLM.dictation.model).toBe("");
+		expect(helpers.DEFAULT_LLM.dictation.presets).toEqual([{ key: "neutral" }]);
+		expect(helpers.DEFAULT_LLM.transforms.enabled).toBe(false);
+		expect(helpers.DEFAULT_LLM.transforms.provider).toBe("ollama");
+		expect(helpers.DEFAULT_LLM.transforms.model).toBe("");
+	});
+
+	test("DEFAULT_FEATURE is the shared per-feature baseline (no presets)", () => {
+		expect(helpers.DEFAULT_FEATURE).toEqual({
+			enabled: false,
+			provider: "ollama",
+			model: "",
+			openrouterModel: "",
+			openrouterFallbackModel: "",
+			reasoningEffort: "medium",
+			verbosity: "medium",
+			maxOutputTokens: null,
+		});
+	});
+});
+
+describe("LlmSettingsPanel helpers — readFeatureSnapshot", () => {
+	test("returns DEFAULT_FEATURE when input is null", () => {
+		expect(helpers.readFeatureSnapshot(null)).toEqual(helpers.DEFAULT_FEATURE);
+	});
+
+	test("merges partial feature settings over the feature defaults", () => {
+		const snap = helpers.readFeatureSnapshot({ provider: "openrouter", enabled: true });
+		expect(snap.provider).toBe("openrouter");
+		expect(snap.enabled).toBe(true);
+		expect(snap.model).toBe("");
+		expect(snap.openrouterModel).toBe("");
 	});
 });

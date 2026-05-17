@@ -140,13 +140,6 @@ describe("generalSettingsSchema", () => {
 		}
 	});
 
-	test("visualizerColor must be a hex color", () => {
-		expect(() => generalSettingsSchema.parse({ visualizerColor: "blue" })).toThrow();
-		expect(generalSettingsSchema.parse({ visualizerColor: "#abcdef" }).visualizerColor).toBe(
-			"#abcdef"
-		);
-	});
-
 	test("visualizerBarCount bounded [3, 21]", () => {
 		expect(generalSettingsSchema.parse({ visualizerBarCount: 3 }).visualizerBarCount).toBe(3);
 		expect(generalSettingsSchema.parse({ visualizerBarCount: 21 }).visualizerBarCount).toBe(21);
@@ -215,22 +208,20 @@ describe("llmSettingsSchema", () => {
 		expect(() => llmSettingsSchema.parse({ endpoint: "not a url" })).toThrow();
 	});
 
-	test("timeout bounded [1000, 30000]", () => {
-		expect(llmSettingsSchema.parse({ timeout: 1000 }).timeout).toBe(1000);
-		expect(llmSettingsSchema.parse({ timeout: 30_000 }).timeout).toBe(30_000);
-		expect(() => llmSettingsSchema.parse({ timeout: 999 })).toThrow();
-		expect(() => llmSettingsSchema.parse({ timeout: 30_001 })).toThrow();
+	test("dictation.presets must contain known preset keys", () => {
+		expect(
+			llmSettingsSchema.parse({ dictation: { presets: [{ key: "neutral" as const }] } }).dictation
+				.presets
+		).toEqual([{ key: "neutral" }]);
+		expect(() => llmSettingsSchema.parse({ dictation: { presets: [{ key: "spicy" }] } })).toThrow();
 	});
 
-	test("presets must contain known preset keys", () => {
-		expect(llmSettingsSchema.parse({ presets: [{ key: "neutral" as const }] }).presets).toEqual([
-			{ key: "neutral" },
-		]);
-		expect(() => llmSettingsSchema.parse({ presets: [{ key: "spicy" }] })).toThrow();
+	test("dictation.provider must be ollama or openrouter", () => {
+		expect(() => llmSettingsSchema.parse({ dictation: { provider: "openai" } })).toThrow();
 	});
 
-	test("provider must be ollama or openrouter", () => {
-		expect(() => llmSettingsSchema.parse({ provider: "openai" })).toThrow();
+	test("transforms.provider must be ollama or openrouter", () => {
+		expect(() => llmSettingsSchema.parse({ transforms: { provider: "openai" } })).toThrow();
 	});
 });
 
@@ -323,6 +314,10 @@ describe("generalSettingsSchema defaults (lock-down)", () => {
 
 	test("startMinimized defaults to false", () => {
 		expect(generalSettingsSchema.parse({}).startMinimized).toBe(false);
+	});
+
+	test("sendCrashReports defaults to true (opt-out model)", () => {
+		expect(generalSettingsSchema.parse({}).sendCrashReports).toBe(true);
 	});
 
 	test("systemAudioReductionWhileDictating defaults to 0 (off)", () => {
@@ -424,18 +419,6 @@ describe("generalSettingsSchema defaults (lock-down)", () => {
 
 	test("visualizerType defaults to 'bar'", () => {
 		expect(generalSettingsSchema.parse({}).visualizerType).toBe("bar");
-	});
-
-	test("visualizerColor defaults to '#58a6ff'", () => {
-		expect(generalSettingsSchema.parse({}).visualizerColor).toBe("#58a6ff");
-	});
-
-	test("visualizerColor regex requires both leading # AND trailing $ anchors", () => {
-		// Locks down both `^` and `$` anchors of the color regex /^#[0-9a-fA-F]{6}$/.
-		// Mutants drop the `^` (allowing prefixes like "x#abcdef") or drop the `$`
-		// (allowing suffixes like "#abcdef-extra").
-		expect(() => generalSettingsSchema.parse({ visualizerColor: "x#abcdef" })).toThrow();
-		expect(() => generalSettingsSchema.parse({ visualizerColor: "#abcdef-extra" })).toThrow();
 	});
 });
 
@@ -579,32 +562,52 @@ describe("addSnippetEntrySchema trims and rejects whitespace-only", () => {
 });
 
 describe("llmSettingsSchema defaults (lock-down)", () => {
-	test("enabled defaults to false", () => {
-		expect(llmSettingsSchema.parse({}).enabled).toBe(false);
+	test("dictation.enabled defaults to false", () => {
+		expect(llmSettingsSchema.parse({}).dictation.enabled).toBe(false);
 	});
 
-	test("provider enum accepts both 'ollama' and 'openrouter'", () => {
-		expect(llmSettingsSchema.parse({}).provider).toBe("ollama");
-		expect(llmSettingsSchema.parse({ provider: "openrouter" }).provider).toBe("openrouter");
+	test("transforms.enabled defaults to false", () => {
+		expect(llmSettingsSchema.parse({}).transforms.enabled).toBe(false);
 	});
 
-	test("provider rejects empty string", () => {
-		expect(() => llmSettingsSchema.parse({ provider: "" })).toThrow();
+	test("dictation.provider enum accepts both 'ollama' and 'openrouter'", () => {
+		expect(llmSettingsSchema.parse({}).dictation.provider).toBe("ollama");
+		expect(
+			llmSettingsSchema.parse({ dictation: { provider: "openrouter" } }).dictation.provider
+		).toBe("openrouter");
+	});
+
+	test("dictation.provider rejects empty string", () => {
+		expect(() => llmSettingsSchema.parse({ dictation: { provider: "" } })).toThrow();
+	});
+
+	test("transforms.provider rejects empty string", () => {
+		expect(() => llmSettingsSchema.parse({ transforms: { provider: "" } })).toThrow();
 	});
 
 	test("endpoint defaults to http://localhost:11434", () => {
 		expect(llmSettingsSchema.parse({}).endpoint).toBe("http://localhost:11434");
 	});
 
-	test("model, openrouter*, default to empty strings", () => {
-		const out = llmSettingsSchema.parse({});
+	test("openrouterApiKey defaults to empty string (shared)", () => {
+		expect(llmSettingsSchema.parse({}).openrouterApiKey).toBe("");
+	});
+
+	test("dictation.model / openrouter* default to empty strings", () => {
+		const out = llmSettingsSchema.parse({}).dictation;
 		expect(out.model).toBe("");
-		expect(out.openrouterApiKey).toBe("");
 		expect(out.openrouterModel).toBe("");
 		expect(out.openrouterFallbackModel).toBe("");
 	});
 
-	test("presets enum accepts each of the ten canonical preset keys", () => {
+	test("transforms.model / openrouter* default to empty strings", () => {
+		const out = llmSettingsSchema.parse({}).transforms;
+		expect(out.model).toBe("");
+		expect(out.openrouterModel).toBe("");
+		expect(out.openrouterFallbackModel).toBe("");
+	});
+
+	test("dictation.presets enum accepts each of the ten canonical preset keys", () => {
 		for (const p of [
 			"neutral",
 			"formal",
@@ -617,50 +620,42 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 			"restructure",
 			"rewordForClarity",
 		] as const) {
-			expect(llmSettingsSchema.parse({ presets: [{ key: p }] }).presets).toEqual([{ key: p }]);
+			expect(
+				llmSettingsSchema.parse({ dictation: { presets: [{ key: p }] } }).dictation.presets
+			).toEqual([{ key: p }]);
 		}
 	});
 
-	test("presets rejects empty key", () => {
-		expect(() => llmSettingsSchema.parse({ presets: [{ key: "" }] })).toThrow();
+	test("dictation.presets rejects empty key", () => {
+		expect(() => llmSettingsSchema.parse({ dictation: { presets: [{ key: "" }] } })).toThrow();
 	});
 
-	test("presets rejects two tone keys together", () => {
+	test("dictation.presets rejects two tone keys together", () => {
 		expect(() =>
 			llmSettingsSchema.parse({
-				presets: [{ key: "formal" }, { key: "casual" }],
+				dictation: { presets: [{ key: "formal" }, { key: "casual" }] },
 			})
 		).toThrow();
 	});
 
-	test("presets rejects level on a preset that does not support levels", () => {
+	test("dictation.presets rejects level on a preset that does not support levels", () => {
 		expect(() =>
 			llmSettingsSchema.parse({
-				presets: [{ key: "neutral", level: "high" }],
+				dictation: { presets: [{ key: "neutral", level: "high" }] },
 			})
 		).toThrow();
 	});
 
-	test("timeout defaults to 5000", () => {
-		expect(llmSettingsSchema.parse({}).timeout).toBe(5000);
-	});
-
-	test("transforms default seeds from BUILTIN_TRANSFORMS, preserving order and values", () => {
-		// Locks the L204 `.default([...BUILTIN_TRANSFORMS])` shape. The default
-		// flows through `z.array(transformSchema)`, so each transform's own
-		// `.default("")` / `.default(false)` fills in any optional fields.
-		// We assert the full output equals the seeded built-ins after parsing —
-		// any mutation that drops the spread or swaps the source array would
-		// either change the count, the order, or the canonical field values.
-		const out = llmSettingsSchema.parse({}).transforms;
+	test("transforms.prompts default seeds from BUILTIN_TRANSFORMS, preserving order and values", () => {
+		// The default flows through `z.array(transformSchema)`, so each transform's
+		// own `.default("")` / `.default(false)` fills in any optional fields.
+		// Assert the full output equals the seeded built-ins after parsing — any
+		// mutation that drops the spread or swaps the source array would either
+		// change the count, the order, or the canonical field values.
+		const out = llmSettingsSchema.parse({}).transforms.prompts;
 		expect(out).toHaveLength(BUILTIN_TRANSFORMS.length);
 		expect(out).toEqual(BUILTIN_TRANSFORMS.map((t) => transformSchema.parse(t)));
-		// Re-assert the canonical built-in ids so the test fails closed if
-		// someone reorders or renames an entry in BUILTIN_TRANSFORMS without
-		// updating the rest of the codebase.
 		expect(out.map((t) => t.id)).toEqual(["polish", "prompt-engineer"]);
-		// Every default-seeded transform must report builtin: true so the UI
-		// can hide the delete affordance.
 		for (const t of out) {
 			expect(t.builtin).toBe(true);
 			expect(t.hotkey).toBe("");
@@ -669,12 +664,11 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 		}
 	});
 
-	test("transforms default is a fresh array each parse — mutating one parse leaves the next intact", () => {
-		// Locks the L204 `[...BUILTIN_TRANSFORMS]` spread. Without it, every
-		// parse would share the same array reference and consumers that mutate
-		// (e.g. push a user-added transform) would leak across `parse({})`
-		// calls, corrupting the default for the next reader.
-		const a = llmSettingsSchema.parse({}).transforms;
+	test("transforms.prompts default is a fresh array each parse — mutating one parse leaves the next intact", () => {
+		// Without the `[...BUILTIN_TRANSFORMS]` spread, every parse would share
+		// the same array reference and consumers that mutate (e.g. push a
+		// user-added transform) would leak across `parse({})` calls.
+		const a = llmSettingsSchema.parse({}).transforms.prompts;
 		a.push({
 			id: "leak",
 			name: "leak",
@@ -682,23 +676,23 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 			hotkey: "",
 			builtin: false,
 		});
-		const b = llmSettingsSchema.parse({}).transforms;
+		const b = llmSettingsSchema.parse({}).transforms.prompts;
 		expect(b).toHaveLength(BUILTIN_TRANSFORMS.length);
 		expect(b.find((t) => t.id === "leak")).toBeUndefined();
 	});
 
-	test("explicit transforms input is honoured (no double-defaulting)", () => {
-		// Locks the L204 contract: passing transforms explicitly bypasses the
-		// default but still flows through transformSchema (so each entry's
-		// optional fields get their per-field defaults).
+	test("explicit transforms.prompts input is honoured (no double-defaulting)", () => {
+		// Passing transforms.prompts explicitly bypasses the default but still
+		// flows through transformSchema (so each entry's optional fields get
+		// their per-field defaults).
 		const out = llmSettingsSchema.parse({
-			transforms: [{ id: "custom", name: "Custom" }],
-		}).transforms;
+			transforms: { prompts: [{ id: "custom", name: "Custom" }] },
+		}).transforms.prompts;
 		expect(out).toEqual([{ id: "custom", name: "Custom", prompt: "", hotkey: "", builtin: false }]);
 	});
 
 	test("BUILTIN_TRANSFORMS entries each parse cleanly through transformSchema", () => {
-		// Lock-down for the L175 BUILTIN_TRANSFORMS shape: if anyone shortens
+		// Lock-down for the BUILTIN_TRANSFORMS shape: if anyone shortens
 		// `id`/`name` to "" or drops the `prompt` body, transformSchema
 		// (.min(1) on id/name) will reject it here.
 		for (const t of BUILTIN_TRANSFORMS) {
@@ -763,9 +757,9 @@ describe("explicit parse-time validation (kills `.default()` mutations that bypa
 		expect(generalSettingsSchema.parse({}).visualizerSize).toBe("xs");
 	});
 
-	test("llm presets default is [{key:'neutral'}]", () => {
+	test("llm.dictation.presets default is [{key:'neutral'}]", () => {
 		const out = llmSettingsSchema.parse({});
-		expect(out.presets).toEqual([{ key: "neutral" }]);
+		expect(out.dictation.presets).toEqual([{ key: "neutral" }]);
 	});
 });
 
@@ -777,17 +771,19 @@ describe("appSettingsSchema (composed)", () => {
 		expect(out.audio.sampleRate).toBe(16_000);
 		expect(out.dictionary).toEqual([]);
 		expect(out.snippets).toEqual([]);
-		expect(out.llm.enabled).toBe(false);
+		expect(out.llm.dictation.enabled).toBe(false);
+		expect(out.llm.transforms.enabled).toBe(false);
 	});
 
 	test("partial input fills defaults for missing branches", () => {
 		const out = appSettingsSchema.parse({
 			general: { recordingMode: "toggle" },
-			llm: { enabled: true },
+			llm: { dictation: { enabled: true } },
 		});
 		expect(out.general.recordingMode).toBe("toggle");
 		expect(out.general.minimizeToTray).toBe(true); // default
-		expect(out.llm.enabled).toBe(true);
-		expect(out.llm.provider).toBe("ollama"); // default
+		expect(out.llm.dictation.enabled).toBe(true);
+		expect(out.llm.dictation.provider).toBe("ollama"); // default
+		expect(out.llm.transforms.enabled).toBe(false); // independent
 	});
 });

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useHotkeyStore } from "../model/hotkey-store";
-import { HotkeyDisplay, resolveKbdClass } from "./HotkeyDisplay";
+import { HotkeyDisplay, resolveTone } from "./HotkeyDisplay";
 
 beforeEach(() => {
 	useHotkeyStore.setState({
@@ -28,23 +28,16 @@ function renderIt(isConnected: boolean) {
 	);
 }
 
-describe("resolveKbdClass", () => {
-	test("returns disconnected class when isConnected=false", () => {
-		const cls = resolveKbdClass(false, false);
-		expect(cls).toContain("opacity-60");
+describe("resolveTone", () => {
+	test("returns 'muted' when disconnected", () => {
+		expect(resolveTone(false, false)).toBe("muted");
+		expect(resolveTone(false, true)).toBe("muted");
 	});
-	test("returns disconnected class even when isPressed=true and not connected", () => {
-		const cls = resolveKbdClass(false, true);
-		expect(cls).toContain("opacity-60");
+	test("returns 'active' when connected and pressed", () => {
+		expect(resolveTone(true, true)).toBe("active");
 	});
-	test("returns pressed class when connected and pressed", () => {
-		const cls = resolveKbdClass(true, true);
-		expect(cls).toContain("bg-orange-dim");
-	});
-	test("returns idle class when connected and not pressed", () => {
-		const cls = resolveKbdClass(true, false);
-		expect(cls).toContain("bg-surface-tertiary");
-		expect(cls).not.toContain("opacity-60");
+	test("returns 'default' when connected and idle", () => {
+		expect(resolveTone(true, false)).toBe("default");
 	});
 });
 
@@ -56,23 +49,28 @@ describe("HotkeyDisplay", () => {
 		expect(screen.getByText("A")).toBeDefined();
 	});
 
-	test("renders '+' separator between keys", () => {
+	test("renders a separator between keys", () => {
 		useHotkeyStore.setState({ accelerator: "LCtrl+A" });
 		renderIt(true);
-		expect(screen.getAllByText("+").length).toBeGreaterThan(0);
+		// Separator is a stylised full-width plus (U+FF0B) for visual
+		// hierarchy; what matters is that *something* lives between keys.
+		expect(screen.getAllByText(/[+＋]/).length).toBeGreaterThan(0);
 	});
 
-	test("applies the connected styling when isConnected=true and not pressed", () => {
+	test("group exposes the idle tone when connected and not pressed", () => {
 		const { container } = renderIt(true);
-		const kbd = container.querySelector("kbd") as HTMLElement;
-		expect(kbd.className).toContain("border-border");
-		expect(kbd.className).not.toContain("opacity-60");
+		const group = container.querySelector('[role="group"]') as HTMLElement;
+		expect(group).not.toBeNull();
+		expect(group.dataset.tone).toBe("default");
+		expect(group.dataset.disconnected).toBeUndefined();
+		expect(group.dataset.pressed).toBeUndefined();
 	});
 
-	test("applies dimmed styling when not connected", () => {
+	test("group exposes the muted tone when disconnected", () => {
 		const { container } = renderIt(false);
-		const kbd = container.querySelector("kbd") as HTMLElement;
-		expect(kbd.className).toContain("opacity-60");
+		const group = container.querySelector('[role="group"]') as HTMLElement;
+		expect(group.dataset.tone).toBe("muted");
+		expect(group.dataset.disconnected).toBe("true");
 	});
 
 	test("renders the recording pulse dot when isPressed AND connected", () => {

@@ -1,0 +1,21 @@
+# Normalize all text files to LF on commit. Override Windows autocrlf so the
+# repo stays consistent regardless of platform; Biome / Ruff / linters all
+# default to LF and complaining about CRLF in CI on Windows runners is a
+# distraction.
+* text=auto eol=lf
+
+# Native helpers and assets are binary — never touch line endings.
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.onnx binary
+*.bin binary

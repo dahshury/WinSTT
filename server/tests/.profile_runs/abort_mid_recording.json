@@ -1,0 +1,431 @@
+{
+  "name": "abort_mid_recording",
+  "duration_s": 5.7906049999983225,
+  "samples": 63,
+  "rss_mb": {
+    "min": 1299.93359375,
+    "max": 1323.76953125,
+    "mean": 1301.7821180555557
+  },
+  "cpu_pct": {
+    "max": 540.9,
+    "mean": 343.2
+  },
+  "vram_used_mb": {
+    "min": 9773.0,
+    "max": 9773.0,
+    "mean": 9773.0
+  },
+  "gpu_util_pct": {
+    "max": 51.0,
+    "mean": 23.793650793650794
+  },
+  "markers": [
+    {
+      "name": "profile-start",
+      "t": 0.0010058999978355132
+    },
+    {
+      "name": "recorder-start",
+      "t": 0.0010113999996974599
+    },
+    {
+      "name": "feed-begin",
+      "t": 0.0010700999991968274
+    },
+    {
+      "name": "abort",
+      "t": 5.505574999999226
+    },
+    {
+      "name": "profile-stop",
+      "t": 5.805932999999641
+    }
+  ],
+  "events": [
+    {
+      "t": 0.0010432999988552183,
+      "kind": "recording_started",
+      "extra": {}
+    },
+    {
+      "t": 0.1403790999975172,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.2749346999989939,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.37101609999808716,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.46954469999764115,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.5755539999991015,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.6718590999989829,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.7719604999983858,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.8732189999973343,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.9729409999999916,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.0392434999994293,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.1423540999967372,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.2417967999972461,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.3548557999965851,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 10
+      }
+    },
+    {
+      "t": 1.448402599999099,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.5563921999964805,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 17
+      }
+    },
+    {
+      "t": 1.656852299998718,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 17
+      }
+    },
+    {
+      "t": 1.7601727999972354,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 17
+      }
+    },
+    {
+      "t": 1.8597009999975853,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 21
+      }
+    },
+    {
+      "t": 1.963823299996875,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 2.0656463999985135,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 2.161012299999129,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 25
+      }
+    },
+    {
+      "t": 2.264543199999025,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 26
+      }
+    },
+    {
+      "t": 2.3733848999982,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 2.4676362999998673,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 2.565129099999467,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 2.665200699997513,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 2.7666724999980943,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 2.868927599996823,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 2.9760722999999416,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 3.0729171999992104,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 3.175033799998346,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 3.2734419999978854,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 3.38189379999676,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 3.4843375999989803,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 3.580661499996495,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 3.682173799999873,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 31
+      }
+    },
+    {
+      "t": 3.782044699997641,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 27
+      }
+    },
+    {
+      "t": 3.8788870999997016,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 31
+      }
+    },
+    {
+      "t": 3.9844407999989926,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 31
+      }
+    },
+    {
+      "t": 4.084197399999539,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 31
+      }
+    },
+    {
+      "t": 4.194002899999759,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 35
+      }
+    },
+    {
+      "t": 4.29388789999939,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 35
+      }
+    },
+    {
+      "t": 4.390023899999505,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 36
+      }
+    },
+    {
+      "t": 4.492558599999029,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 36
+      }
+    },
+    {
+      "t": 4.603628599998046,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 36
+      }
+    },
+    {
+      "t": 4.703707399999985,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 36
+      }
+    },
+    {
+      "t": 4.797668399998656,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 36
+      }
+    },
+    {
+      "t": 4.895126899999013,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 36
+      }
+    },
+    {
+      "t": 5.000201599999855,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 36
+      }
+    },
+    {
+      "t": 5.102634799997759,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 36
+      }
+    },
+    {
+      "t": 5.1992019999997865,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 36
+      }
+    },
+    {
+      "t": 5.299919699999009,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 36
+      }
+    },
+    {
+      "t": 5.410763899999438,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 36
+      }
+    },
+    {
+      "t": 5.501852399997006,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 39
+      }
+    }
+  ],
+  "gpu_available": true
+}

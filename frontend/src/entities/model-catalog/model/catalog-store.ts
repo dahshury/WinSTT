@@ -9,7 +9,7 @@ export interface ModelInfo {
 	backend: "faster_whisper" | "onnx_asr";
 	description: string;
 	displayName: string;
-	family: "whisper" | "nemo" | "gigaam" | "kaldi" | "t-one";
+	family: "whisper" | "lite-whisper" | "nemo" | "gigaam" | "kaldi" | "t-one";
 	id: string;
 	languages: string[];
 	onnxModelName: string | null;
@@ -23,7 +23,7 @@ const rawModelInfoSchema = z.object({
 	id: z.string(),
 	display_name: z.string(),
 	backend: z.enum(["faster_whisper", "onnx_asr"]),
-	family: z.enum(["whisper", "nemo", "gigaam", "kaldi", "t-one"]),
+	family: z.enum(["whisper", "lite-whisper", "nemo", "gigaam", "kaldi", "t-one"]),
 	languages: z.array(z.string()),
 	supports_language_detection: z.boolean(),
 	size_label: z.string(),

@@ -77,3 +77,41 @@ class TestBootstrap:
         # Catalog is not exhaustive — onnx-asr accepts arbitrary HF repo paths.
         config = RecorderConfig.from_kwargs(model="org/some-unknown-model", language="ja")
         _validate_language_against_model(config)
+
+
+class TestResolveQuantization:
+    """``_resolve_quantization`` enforces the param-count-gated auto-fp16-on-CUDA
+    policy. Auto means fp32 everywhere except CUDA + large models, because
+    fp16 is *slower* than fp32 below ~500M params (cast overhead at I/O
+    boundaries dominates the small attention layers) and has no CPU EP
+    acceleration at all."""
+
+    def _resolve(self, requested: str, device: str, params: int) -> str | None:
+        from src.recorder.bootstrap import _resolve_quantization
+
+        return _resolve_quantization(requested, device, params)
+
+    def test_auto_cpu_returns_fp32_even_for_large_models(self) -> None:
+        # CPU EP has no fp16 kernels — fp16 there just round-trips through fp32.
+        assert self._resolve("auto", "cpu", 1_500_000_000) is None
+        assert self._resolve("", "cpu", 1_500_000_000) is None  # empty string = auto
+
+    def test_auto_cuda_picks_fp32_for_small_models(self) -> None:
+        # tiny / base / small all fall below the 500M breakeven.
+        for params in (39_000_000, 74_000_000, 244_000_000, 499_999_999):
+            # The actual resolved device depends on local install — when CUDA is
+            # available the threshold matters; when CUDA falls back to CPU we
+            # also get fp32. Either way: small models on auto -> fp32.
+            assert self._resolve("auto", "cuda", params) is None, f"unexpected fp16 at {params} params"
+
+    def test_concrete_quant_passes_through(self) -> None:
+        # Explicit user selection is honoured verbatim; the load-time path in
+        # OnnxAsrTranscriber wraps fp16 with the patch+EXTENDED workaround.
+        assert self._resolve("fp16", "cpu", 39_000_000) == "fp16"
+        assert self._resolve("q4", "cpu", 39_000_000) == "q4"
+        assert self._resolve("bnb4", "cuda", 1_500_000_000) == "bnb4"
+
+    def test_unknown_model_with_no_param_count_stays_fp32_on_auto(self) -> None:
+        # An off-catalog repo (param_count defaults to 0) must not trigger
+        # auto-fp16 — we can't vouch for its size.
+        assert self._resolve("auto", "cuda", 0) is None

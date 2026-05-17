@@ -280,6 +280,8 @@ export function ipcClientMock(): Record<string, unknown> {
 		onLoopbackStopped: (cb: () => void) => on(IPC.STT_LOOPBACK_STOPPED, cb),
 		onDeviceSwitchFailed: (cb: (p: unknown) => void) =>
 			onTyped(IPC.STT_DEVICE_SWITCH_FAILED, (d: unknown) => d, cb),
+		onVadSensitivityAdapted: (cb: (p: unknown) => void) =>
+			onTyped(IPC.STT_VAD_SENSITIVITY_ADAPTED, (d: unknown) => d, cb),
 
 		// Dialog / menus
 		dialogOpenFile: (filters?: unknown, title?: unknown) =>
@@ -412,8 +414,20 @@ export function ipcClientMock(): Record<string, unknown> {
 				{ success: false, model: "", error: "IPC unavailable" },
 				{ model }
 			),
+		searchOllamaLibrary: (query: string, page = 0) =>
+			invokeOrDefault<unknown>(
+				IPC.LLM_SEARCH_OLLAMA_LIBRARY,
+				{ hits: [], hasMore: false, page, query },
+				{ query, page }
+			),
+		fetchOllamaLibraryTags: (model: string) =>
+			invokeOrDefault<unknown>(IPC.LLM_FETCH_OLLAMA_TAGS, { model, tags: [] }, { model }),
+		fetchOllamaLibraryCatalog: () =>
+			invokeOrDefault<unknown>(IPC.LLM_FETCH_OLLAMA_LIBRARY, { hits: [] }),
 		onOllamaPullProgress: (cb: (p: unknown) => void) => onCast(IPC.LLM_PULL_PROGRESS, cb),
 		onLlmProcessingStart: (cb: () => void) => on(IPC.LLM_PROCESSING_START, cb),
 		onLlmProcessingEnd: (cb: () => void) => on(IPC.LLM_PROCESSING_END, cb),
+		getLlmWarmupStatus: () => invokeOrDefault<unknown>(IPC.LLM_GET_WARMUP_STATUS, null),
+		onLlmWarmupStatus: (cb: (status: unknown) => void) => onCast(IPC.LLM_WARMUP_STATUS, cb),
 	};
 }

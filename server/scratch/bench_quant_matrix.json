@@ -1,0 +1,694 @@
+{
+  "tiny": {
+    "fp32": {
+      "label": "tiny@fp32",
+      "quant": "fp32",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 0.95,
+      "infer_s": 1.51,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "fp16": {
+      "label": "tiny@fp16",
+      "quant": "fp16",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 0.81,
+      "infer_s": 3.23,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "int8": {
+      "label": "tiny@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "uint8": {
+      "label": "tiny@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "q4": {
+      "label": "tiny@q4",
+      "quant": "q4",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 0.76,
+      "infer_s": 1.9,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "q4f16": {
+      "label": "tiny@q4f16",
+      "quant": "q4f16",
+      "status": "RESOLVE",
+      "err": "File '**/encoder_model?q4f16.onnx' not found in path 'C:\\Users\\MASTE\\.cache\\huggingface\\hub\\models--onnx-community--whisper-tiny\\snapshots\\ff4177021cc41f7db950912b73ea4fdf7d01d8e7'."
+    },
+    "bnb4": {
+      "label": "tiny@bnb4",
+      "quant": "bnb4",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 0.78,
+      "infer_s": 2.68,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    }
+  },
+  "base": {
+    "fp32": {
+      "label": "base@fp32",
+      "quant": "fp32",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 1.21,
+      "infer_s": 2.69,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "fp16": {
+      "label": "base@fp16",
+      "quant": "fp16",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 1.12,
+      "infer_s": 3.86,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "int8": {
+      "label": "base@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "uint8": {
+      "label": "base@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "q4": {
+      "label": "base@q4",
+      "quant": "q4",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 1.02,
+      "infer_s": 2.19,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "q4f16": {
+      "label": "base@q4f16",
+      "quant": "q4f16",
+      "status": "RESOLVE",
+      "err": "File '**/encoder_model?q4f16.onnx' not found in path 'C:\\Users\\MASTE\\.cache\\huggingface\\hub\\models--onnx-community--whisper-base\\snapshots\\1846881b6b3a3024392c1eea3ad983695bc23925'."
+    },
+    "bnb4": {
+      "label": "base@bnb4",
+      "quant": "bnb4",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 1.03,
+      "infer_s": 3.19,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    }
+  },
+  "small": {
+    "fp32": {
+      "label": "small@fp32",
+      "quant": "fp32",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 2.66,
+      "infer_s": 4.33,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms, and I can lift it up one meter, which I have done now."
+    },
+    "fp16": {
+      "label": "small@fp16",
+      "quant": "fp16",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 2.2,
+      "infer_s": 6.35,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms, and I can lift it up one meter, which I have done now."
+    },
+    "int8": {
+      "label": "small@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "uint8": {
+      "label": "small@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "q4": {
+      "label": "small@q4",
+      "quant": "q4",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 1.81,
+      "infer_s": 4.15,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms, and I can lift it up one meter, which I have done now."
+    },
+    "q4f16": {
+      "label": "small@q4f16",
+      "quant": "q4f16",
+      "status": "RESOLVE",
+      "err": "File '**/encoder_model?q4f16.onnx' not found in path 'C:\\Users\\MASTE\\.cache\\huggingface\\hub\\models--onnx-community--whisper-small\\snapshots\\36050c46d777d46dc4b5f43f6d90574fc38f8732'."
+    },
+    "bnb4": {
+      "label": "small@bnb4",
+      "quant": "bnb4",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 1.69,
+      "infer_s": 3.99,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms, and I can lift it up one meter, which I have done now."
+    }
+  },
+  "medium": {
+    "fp32": {
+      "label": "medium@fp32",
+      "quant": "fp32",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907d-0230e5642f4204607361197c;d199840d-cd57-416e-a513-c7f752b194c8)"
+    },
+    "fp16": {
+      "label": "medium@fp16",
+      "quant": "fp16",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907d-45c723b923dc6fc4345c1f13;15491ceb-4508-456d-a07f-839ec5e445f5)"
+    },
+    "int8": {
+      "label": "medium@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907d-4c21ddbd5fc4c81f4b70219b;d0a33629-69d4-4d92-832b-6bce73ed1b80)"
+    },
+    "uint8": {
+      "label": "medium@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907d-7636d54b524d301f4f1e8c67;1ace6f2d-cd3a-4b42-9774-8a57250b2d94)"
+    },
+    "q4": {
+      "label": "medium@q4",
+      "quant": "q4",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907e-0db015962338a8ae4b9b6f14;dc6dbced-7b00-4c6c-b76c-b388afc0b825)"
+    },
+    "q4f16": {
+      "label": "medium@q4f16",
+      "quant": "q4f16",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907e-24fbcd7364c2260e28ac94f7;d35eb620-84ab-4b27-afee-49d79565bd94)"
+    },
+    "bnb4": {
+      "label": "medium@bnb4",
+      "quant": "bnb4",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907e-57fca3432e1b78134fbaa2e8;eb18f413-eec4-4275-9521-b0cba7e2fbff)"
+    }
+  },
+  "large-v3": {
+    "fp32": {
+      "label": "large-v3@fp32",
+      "quant": "fp32",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907e-2445b9a509978a333c464beb;c7593e6d-7ece-4238-bc09-ecb705ee4e0e)"
+    },
+    "fp16": {
+      "label": "large-v3@fp16",
+      "quant": "fp16",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907e-5d20e8e75647159b5b53d752;ecad9edd-d0f5-4170-b985-c469fcb23262)"
+    },
+    "int8": {
+      "label": "large-v3@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907f-7268095a2ce0493563cdafb9;c4142b4c-d2b2-4543-98d0-4a16fc9acb35)"
+    },
+    "uint8": {
+      "label": "large-v3@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907f-58e4956a7b0a3c701dd7852f;b89b2c55-8bd9-425e-83c8-a1bf5fae3c92)"
+    },
+    "q4": {
+      "label": "large-v3@q4",
+      "quant": "q4",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907f-4124720b67e2c5931ca68987;13fe3b39-efbf-47e2-affa-10f923a84c46)"
+    },
+    "q4f16": {
+      "label": "large-v3@q4f16",
+      "quant": "q4f16",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907f-38168c8118b4dfdb46d36685;0b4d287e-c1fb-40b9-b968-912510801141)"
+    },
+    "bnb4": {
+      "label": "large-v3@bnb4",
+      "quant": "bnb4",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a09907f-09d3d6411d47cc1e4fd4ab56;b062c89f-0acf-4820-b46e-02785c4508aa)"
+    }
+  },
+  "large-v3-turbo": {
+    "fp32": {
+      "label": "large-v3-turbo@fp32",
+      "quant": "fp32",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 4.25,
+      "infer_s": 6.63,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "fp16": {
+      "label": "large-v3-turbo@fp16",
+      "quant": "fp16",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 2.2,
+      "infer_s": 10.44,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "int8": {
+      "label": "large-v3-turbo@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "uint8": {
+      "label": "large-v3-turbo@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "q4": {
+      "label": "large-v3-turbo@q4",
+      "quant": "q4",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 278.44,
+      "infer_s": 29.64,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "q4f16": {
+      "label": "large-v3-turbo@q4f16",
+      "quant": "q4f16",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : Exception during initialization: E:\\_work\\1\\s\\onnxruntime\\core\\graph\\graph_utils.cc:30 onnxruntime::graph_utils::GetIndexFromName itr != node_args.end() was false. Attempting to get index by a name which does not exist:InsertedPrecisionFreeCast_/layers.3/final_layer_n"
+    },
+    "bnb4": {
+      "label": "large-v3-turbo@bnb4",
+      "quant": "bnb4",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 265.67,
+      "infer_s": 6.44,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    }
+  },
+  "tiny.en": {
+    "fp32": {
+      "label": "tiny.en@fp32",
+      "quant": "fp32",
+      "status": "EMPTY",
+      "similarity": 0.0,
+      "load_s": 0.77,
+      "infer_s": 0.98,
+      "text": ""
+    },
+    "fp16": {
+      "label": "tiny.en@fp16",
+      "quant": "fp16",
+      "status": "EMPTY",
+      "similarity": 0.0,
+      "load_s": 0.73,
+      "infer_s": 0.67,
+      "text": ""
+    },
+    "int8": {
+      "label": "tiny.en@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "uint8": {
+      "label": "tiny.en@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "q4": {
+      "label": "tiny.en@q4",
+      "quant": "q4",
+      "status": "EMPTY",
+      "similarity": 0.0,
+      "load_s": 0.73,
+      "infer_s": 0.68,
+      "text": ""
+    },
+    "q4f16": {
+      "label": "tiny.en@q4f16",
+      "quant": "q4f16",
+      "status": "RESOLVE",
+      "err": "File '**/encoder_model?q4f16.onnx' not found in path 'C:\\Users\\MASTE\\.cache\\huggingface\\hub\\models--onnx-community--whisper-tiny.en\\snapshots\\2575352d61be1bf7225cf8f8b268a4678025fc58'."
+    },
+    "bnb4": {
+      "label": "tiny.en@bnb4",
+      "quant": "bnb4",
+      "status": "EMPTY",
+      "similarity": 0.0,
+      "load_s": 0.71,
+      "infer_s": 0.73,
+      "text": ""
+    }
+  },
+  "base.en": {
+    "fp32": {
+      "label": "base.en@fp32",
+      "quant": "fp32",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 1.16,
+      "infer_s": 2.56,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms, and I can lift it up one meter, which I have done now."
+    },
+    "fp16": {
+      "label": "base.en@fp16",
+      "quant": "fp16",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 1.03,
+      "infer_s": 3.9,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms, and I can lift it up one meter, which I have done now."
+    },
+    "int8": {
+      "label": "base.en@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "uint8": {
+      "label": "base.en@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "q4": {
+      "label": "base.en@q4",
+      "quant": "q4",
+      "status": "OK",
+      "similarity": 0.997,
+      "load_s": 0.93,
+      "infer_s": 2.61,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "q4f16": {
+      "label": "base.en@q4f16",
+      "quant": "q4f16",
+      "status": "RESOLVE",
+      "err": "File '**/encoder_model?q4f16.onnx' not found in path 'C:\\Users\\MASTE\\.cache\\huggingface\\hub\\models--onnx-community--whisper-base.en\\snapshots\\51eefc0af78b103839eda9e7e4f4186acc6517fe'."
+    },
+    "bnb4": {
+      "label": "base.en@bnb4",
+      "quant": "bnb4",
+      "status": "OK",
+      "similarity": 0.997,
+      "load_s": 0.93,
+      "infer_s": 3.03,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    }
+  },
+  "small.en": {
+    "fp32": {
+      "label": "small.en@fp32",
+      "quant": "fp32",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 2.5,
+      "infer_s": 3.69,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "fp16": {
+      "label": "small.en@fp16",
+      "quant": "fp16",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 4.01,
+      "infer_s": 5.01,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "int8": {
+      "label": "small.en@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "uint8": {
+      "label": "small.en@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "q4": {
+      "label": "small.en@q4",
+      "quant": "q4",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 1.73,
+      "infer_s": 3.89,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "q4f16": {
+      "label": "small.en@q4f16",
+      "quant": "q4f16",
+      "status": "RESOLVE",
+      "err": "File '**/encoder_model?q4f16.onnx' not found in path 'C:\\Users\\MASTE\\.cache\\huggingface\\hub\\models--onnx-community--whisper-small.en\\snapshots\\482fb8ba081b6e906f92efe103622316b2a0cc69'."
+    },
+    "bnb4": {
+      "label": "small.en@bnb4",
+      "quant": "bnb4",
+      "status": "DEGRADED",
+      "similarity": 0.792,
+      "load_s": 1.69,
+      "infer_s": 4.01,
+      "text": "I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    }
+  },
+  "medium.en": {
+    "fp32": {
+      "label": "medium.en@fp32",
+      "quant": "fp32",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a099681-0b2cb10a5c5d7a7a2f15a34e;8b0754e7-ce86-4321-adac-0ff77b465ec3)"
+    },
+    "fp16": {
+      "label": "medium.en@fp16",
+      "quant": "fp16",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a099681-206610573a7eee89214ed22b;701dc088-ec15-4a11-8a71-cfda1e60bd32)"
+    },
+    "int8": {
+      "label": "medium.en@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a099681-1231d2633ce3242a0c67060e;3fb296ab-63a8-4855-b1b1-5e9fc81ee14f)"
+    },
+    "uint8": {
+      "label": "medium.en@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a099682-378a97dd5271a27831066288;a78f6463-3b8f-4a16-8a76-768a08b70c7e)"
+    },
+    "q4": {
+      "label": "medium.en@q4",
+      "quant": "q4",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a099682-31cc8c8d576423d35da7d5c8;921dc65d-4e6c-47ea-b4be-e8b6678398c7)"
+    },
+    "q4f16": {
+      "label": "medium.en@q4f16",
+      "quant": "q4f16",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a099682-4e43a8a96292d54b3fa0e6de;9d44c91b-58e1-4dba-b833-c89d31b7ce5a)"
+    },
+    "bnb4": {
+      "label": "medium.en@bnb4",
+      "quant": "bnb4",
+      "status": "LOAD_FAIL",
+      "err": "401 Client Error. (Request ID: Root=1-6a099682-23abc57c62d77390486bc9da;7b684db2-261d-464c-9910-1f2f11f25b02)"
+    }
+  },
+  "lite-whisper-large-v3-turbo": {
+    "fp32": {
+      "label": "lite-whisper-large-v3-turbo@fp32",
+      "quant": "fp32",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 3.98,
+      "infer_s": 5.64,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "fp16": {
+      "label": "lite-whisper-large-v3-turbo@fp16",
+      "quant": "fp16",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 1.78,
+      "infer_s": 8.51,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "int8": {
+      "label": "lite-whisper-large-v3-turbo@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "uint8": {
+      "label": "lite-whisper-large-v3-turbo@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "q4": {
+      "label": "lite-whisper-large-v3-turbo@q4",
+      "quant": "q4",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 1.76,
+      "infer_s": 11.42,
+      "text": "... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ..."
+    },
+    "q4f16": {
+      "label": "lite-whisper-large-v3-turbo@q4f16",
+      "quant": "q4f16",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : Exception during initialization: E:\\_work\\1\\s\\onnxruntime\\core\\graph\\graph_utils.cc:30 onnxruntime::graph_utils::GetIndexFromName itr != node_args.end() was false. Attempting to get index by a name which does not exist:InsertedPrecisionFreeCast_/layers.0/self_attn_lay"
+    },
+    "bnb4": {
+      "label": "lite-whisper-large-v3-turbo@bnb4",
+      "quant": "bnb4",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 1.68,
+      "infer_s": 14.22,
+      "text": "... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ..."
+    }
+  },
+  "lite-whisper-large-v3-turbo-acc": {
+    "fp32": {
+      "label": "lite-whisper-large-v3-turbo-acc@fp32",
+      "quant": "fp32",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 4.22,
+      "infer_s": 5.63,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "fp16": {
+      "label": "lite-whisper-large-v3-turbo-acc@fp16",
+      "quant": "fp16",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 1.61,
+      "infer_s": 8.34,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "int8": {
+      "label": "lite-whisper-large-v3-turbo-acc@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "uint8": {
+      "label": "lite-whisper-large-v3-turbo-acc@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "q4": {
+      "label": "lite-whisper-large-v3-turbo-acc@q4",
+      "quant": "q4",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 1.85,
+      "infer_s": 10.88,
+      "text": "... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ..."
+    },
+    "q4f16": {
+      "label": "lite-whisper-large-v3-turbo-acc@q4f16",
+      "quant": "q4f16",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : Exception during initialization: E:\\_work\\1\\s\\onnxruntime\\core\\graph\\graph_utils.cc:30 onnxruntime::graph_utils::GetIndexFromName itr != node_args.end() was false. Attempting to get index by a name which does not exist:InsertedPrecisionFreeCast_/layers.0/self_attn_lay"
+    },
+    "bnb4": {
+      "label": "lite-whisper-large-v3-turbo-acc@bnb4",
+      "quant": "bnb4",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 1.66,
+      "infer_s": 14.5,
+      "text": "... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ..."
+    }
+  },
+  "lite-whisper-large-v3-turbo-fast": {
+    "fp32": {
+      "label": "lite-whisper-large-v3-turbo-fast@fp32",
+      "quant": "fp32",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 3.93,
+      "infer_s": 5.26,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "fp16": {
+      "label": "lite-whisper-large-v3-turbo-fast@fp16",
+      "quant": "fp16",
+      "status": "OK",
+      "similarity": 1.0,
+      "load_s": 1.57,
+      "infer_s": 8.44,
+      "text": "Now I want to return to the conservation of mechanical energy. I have here a pendulum. I have an object that weighs 15 kilograms and I can lift it up one meter, which I have done now."
+    },
+    "int8": {
+      "label": "lite-whisper-large-v3-turbo-fast@int8",
+      "quant": "int8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "uint8": {
+      "label": "lite-whisper-large-v3-turbo-fast@uint8",
+      "quant": "uint8",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : qdq_actions.cc:137 onnxruntime::QDQ::`anonymous-namespace'::TransposeDQWeightsForMatMulNBits Missing required scale: model.decoder.embed_tokens.weight_merged_0_scale for node: model.decoder.embed_tokens.weight_transposed_DequantizeLinear"
+    },
+    "q4": {
+      "label": "lite-whisper-large-v3-turbo-fast@q4",
+      "quant": "q4",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 1.76,
+      "infer_s": 10.63,
+      "text": "... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ..."
+    },
+    "q4f16": {
+      "label": "lite-whisper-large-v3-turbo-fast@q4f16",
+      "quant": "q4f16",
+      "status": "LOAD_FAIL",
+      "err": "[ONNXRuntimeError] : 1 : FAIL : Exception during initialization: E:\\_work\\1\\s\\onnxruntime\\core\\graph\\graph_utils.cc:30 onnxruntime::graph_utils::GetIndexFromName itr != node_args.end() was false. Attempting to get index by a name which does not exist:InsertedPrecisionFreeCast_/layers.0/self_attn_lay"
+    },
+    "bnb4": {
+      "label": "lite-whisper-large-v3-turbo-fast@bnb4",
+      "quant": "bnb4",
+      "status": "DIVERGENT",
+      "similarity": 0.0,
+      "load_s": 1.65,
+      "infer_s": 14.26,
+      "text": "... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ..."
+    }
+  }
+}

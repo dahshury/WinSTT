@@ -19,13 +19,14 @@ const storeValues: Record<string, unknown> = {};
 const ipcHandlers: Record<string, (...args: unknown[]) => unknown> = {};
 const ipcRemovedChannels: string[] = [];
 
-// Track every clipboard.writeText call. The real `pasteText()` mirrors
-// the text to the clipboard before spawning the native helper; in tests
-// the helper binary is absent so the spawn fails silently, but the
-// clipboard.writeText IS called synchronously inside runPasteOnce.
-// Asserting on these calls lets us detect whether pasteIfDictating
-// actually invoked pasteText (kills L65/L66 string mutations).
+// Track every clipboard.writeText call. With the `--type` primary paste
+// flow, the user's clipboard stays untouched on the success path. The
+// clipboard sandwich is only used as a fallback (clipboard-aware reads
+// kept on the mock so the snapshot/restore helpers don't throw). We
+// assert pasteText invocation via paste's own __getPasteCallsForTesting__
+// log; clipboardWrites is informational.
 const clipboardWrites: string[] = [];
+const emptyImage = { isEmpty: () => true } as unknown as Electron.NativeImage;
 
 mock.module("electron", () => ({
 	...electronMock(),
@@ -35,11 +36,19 @@ mock.module("electron", () => ({
 	},
 	clipboard: {
 		readText: () => "",
+		readHTML: () => "",
+		readRTF: () => "",
+		readImage: () => emptyImage,
 		writeText: (text: string) => {
 			clipboardWrites.push(text);
 		},
+		write: (payload: { text?: string }) => {
+			if (typeof payload.text === "string") {
+				clipboardWrites.push(payload.text);
+			}
+		},
 		clear: () => undefined,
-	},
+	} as unknown as Electron.Clipboard,
 	ipcMain: {
 		handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
 			ipcHandlers[channel] = handler;
@@ -144,6 +153,20 @@ function resetState(): void {
 	ipcRemovedChannels.length = 0;
 	storeKeyAccesses.length = 0;
 	clipboardWrites.length = 0;
+	// Best-effort: clear paste's invocation log. We can't reach into the
+	// module's bindings synchronously here (it's imported async), so the
+	// individual tests that observe `pasteCalls` clear it themselves
+	// before exercising the code path.
+}
+
+async function readPasteCalls(): Promise<readonly string[]> {
+	const pasteMod = await import("../lib/paste");
+	return pasteMod.__getPasteCallsForTesting__();
+}
+
+async function resetPasteCalls(): Promise<void> {
+	const pasteMod = await import("../lib/paste");
+	pasteMod.__resetPasteCallsForTesting__();
 }
 
 describe("relay module", () => {
@@ -169,7 +192,10 @@ describe("relay pure helpers", () => {
 		["vad_detect_stop", "broadcast"],
 		["transcription_start", "mainSend"],
 		["wakeword_detected", "mainSend"],
-		["model_download_start", "mainSend"],
+		// Download lifecycle events broadcast so the settings window's
+		// dictation download dialog can drive its progress bar.
+		["model_download_start", "broadcast"],
+		["model_download_complete", "broadcast"],
 	])("pickSenderForSimpleEvent(%p) routes via %s", (type, expected) => {
 		const broadcast = () => undefined;
 		const mainSend = () => undefined;
@@ -183,10 +209,14 @@ describe("relay pure helpers", () => {
 		expect(sender).toBe(expected === "broadcast" ? broadcast : mainSend);
 	});
 
-	test("OVERLAY_RELEVANT_SIMPLE_TYPES contains expected overlay-relevant types", () => {
+	test("OVERLAY_RELEVANT_SIMPLE_TYPES contains expected broadcast-bound types", () => {
 		expect(helpers.OVERLAY_RELEVANT_SIMPLE_TYPES.has("no_audio_detected")).toBe(true);
 		expect(helpers.OVERLAY_RELEVANT_SIMPLE_TYPES.has("vad_detect_start")).toBe(true);
 		expect(helpers.OVERLAY_RELEVANT_SIMPLE_TYPES.has("vad_detect_stop")).toBe(true);
+		// Download lifecycle events must broadcast so the settings-window
+		// dictation download dialog can drive its progress UI.
+		expect(helpers.OVERLAY_RELEVANT_SIMPLE_TYPES.has("model_download_start")).toBe(true);
+		expect(helpers.OVERLAY_RELEVANT_SIMPLE_TYPES.has("model_download_complete")).toBe(true);
 		expect(helpers.OVERLAY_RELEVANT_SIMPLE_TYPES.has("transcription_start")).toBe(false);
 	});
 
@@ -237,61 +267,57 @@ describe("relay pure helpers", () => {
 	});
 });
 
-describe("hasLlmModel", () => {
+describe("hasDictationModel", () => {
 	test("returns true when provider is openrouter and openrouterApiKey is set", () => {
 		resetState();
+		storeValues["llm.dictation.provider"] = "openrouter";
 		storeValues["llm.openrouterApiKey"] = "sk-abc";
-		expect(helpers.hasLlmModel("openrouter")).toBe(true);
+		expect(helpers.hasDictationModel()).toBe(true);
 	});
 
 	test("returns false when provider is openrouter and openrouterApiKey is empty", () => {
 		resetState();
+		storeValues["llm.dictation.provider"] = "openrouter";
 		storeValues["llm.openrouterApiKey"] = "";
-		expect(helpers.hasLlmModel("openrouter")).toBe(false);
+		expect(helpers.hasDictationModel()).toBe(false);
 	});
 
 	test("returns true when provider is not openrouter and model is set", () => {
 		resetState();
-		storeValues["llm.model"] = "mistral";
-		expect(helpers.hasLlmModel("ollama")).toBe(true);
+		storeValues["llm.dictation.provider"] = "ollama";
+		storeValues["llm.dictation.model"] = "mistral";
+		expect(helpers.hasDictationModel()).toBe(true);
 	});
 
 	test("returns false when provider is not openrouter and model is empty", () => {
 		resetState();
-		storeValues["llm.model"] = "";
-		expect(helpers.hasLlmModel("ollama")).toBe(false);
+		storeValues["llm.dictation.provider"] = "ollama";
+		storeValues["llm.dictation.model"] = "";
+		expect(helpers.hasDictationModel()).toBe(false);
 	});
 });
 
 describe("isLlmConfigured", () => {
-	test("returns false when llm.enabled is false", () => {
+	test("returns false when llm.dictation.enabled is false", () => {
 		resetState();
-		storeValues["llm.enabled"] = false;
-		storeValues["llm.model"] = "mistral";
+		storeValues["llm.dictation.enabled"] = false;
+		storeValues["llm.dictation.model"] = "mistral";
 		expect(helpers.isLlmConfigured()).toBe(false);
 	});
 
-	test("returns false when llm.enabled is true but no model configured", () => {
+	test("returns false when dictation enabled but no model configured", () => {
 		resetState();
-		storeValues["llm.enabled"] = true;
-		storeValues["llm.model"] = "";
+		storeValues["llm.dictation.enabled"] = true;
+		storeValues["llm.dictation.model"] = "";
 		expect(helpers.isLlmConfigured()).toBe(false);
 	});
 
-	test("returns true when llm.enabled is true and model is configured", () => {
+	test("returns true when dictation enabled and model is configured", () => {
 		resetState();
-		storeValues["llm.enabled"] = true;
-		storeValues["llm.dictationEnabled"] = true;
-		storeValues["llm.model"] = "mistral";
+		storeValues["llm.dictation.enabled"] = true;
+		storeValues["llm.dictation.provider"] = "ollama";
+		storeValues["llm.dictation.model"] = "mistral";
 		expect(helpers.isLlmConfigured()).toBe(true);
-	});
-
-	test("returns false when master is on + model set but dictation sub-feature is off", () => {
-		resetState();
-		storeValues["llm.enabled"] = true;
-		storeValues["llm.dictationEnabled"] = false;
-		storeValues["llm.model"] = "mistral";
-		expect(helpers.isLlmConfigured()).toBe(false);
 	});
 });
 
@@ -299,11 +325,12 @@ describe("tryLlmProcess and maybeRunLlm", () => {
 	test("tryLlmProcess returns input text when LLM call fails (catches error and falls back)", async () => {
 		// In the test environment, processText() will fail (no LLM server),
 		// so tryLlmProcess catches the error and returns the original text.
+		// Fetch against a closed local port fails immediately (ECONNREFUSED).
 		resetState();
-		// Provide store values so processText doesn't throw on missing keys
-		storeValues["llm.provider"] = "ollama";
-		storeValues["llm.presets"] = [{ key: "neutral" }];
-		storeValues["llm.timeout"] = 1; // 1ms timeout guarantees fast failure
+		storeValues["llm.dictation.provider"] = "ollama";
+		storeValues["llm.dictation.presets"] = [{ key: "neutral" }];
+		storeValues["llm.endpoint"] = "http://localhost:1";
+		storeValues["llm.dictation.model"] = "mistral";
 		const result = await helpers.tryLlmProcess("hello world", "");
 		// Either it returns the original text (error caught) or a processed version
 		expect(typeof result).toBe("string");
@@ -311,13 +338,13 @@ describe("tryLlmProcess and maybeRunLlm", () => {
 
 	test("maybeRunLlm calls tryLlmProcess when LLM is configured", async () => {
 		resetState();
-		storeValues["llm.enabled"] = true;
-		storeValues["llm.model"] = "mistral";
-		storeValues["llm.provider"] = "ollama";
-		storeValues["llm.presets"] = [{ key: "neutral" }];
-		storeValues["llm.timeout"] = 1; // fast timeout → LLM fails → fallback to original
+		storeValues["llm.dictation.enabled"] = true;
+		storeValues["llm.dictation.model"] = "mistral";
+		storeValues["llm.dictation.provider"] = "ollama";
+		storeValues["llm.endpoint"] = "http://localhost:1";
+		storeValues["llm.dictation.presets"] = [{ key: "neutral" }];
 		// When LLM is configured, maybeRunLlm delegates to tryLlmProcess which
-		// catches the network error and returns the original text.
+		// catches the connection error and returns the original text.
 		const result = await helpers.maybeRunLlm("test input", "");
 		expect(typeof result).toBe("string");
 	});
@@ -326,7 +353,6 @@ describe("tryLlmProcess and maybeRunLlm", () => {
 describe("handleFullSentence context-awareness flow", () => {
 	test("consumes the context-capture promise when a fullSentence arrives", async () => {
 		resetState();
-		storeValues["llm.enabled"] = false; // skip the actual LLM call
 		storeValues["general.recordingMode"] = "ptt";
 		let consumed = 0;
 		const ctxCap = {
@@ -365,7 +391,6 @@ describe("handleFullSentence context-awareness flow", () => {
 
 	test("works without a contextCapture (back-compat: feature off)", async () => {
 		resetState();
-		storeValues["llm.enabled"] = false;
 		storeValues["general.recordingMode"] = "ptt";
 		const sentLog: Array<{ channel: string; args: unknown[] }> = [];
 		const send = (channel: string, ...args: unknown[]) => {
@@ -674,6 +699,19 @@ describe("SIMPLE_RELAY_HANDLERS additional coverage", () => {
 		expect(p.fallbackIndex).toBe(0);
 	});
 
+	test("vad_sensitivity_adapted sends stt:vad-sensitivity-adapted with camelCased fields", () => {
+		const { calls, send } = makeSender();
+		helpers.SIMPLE_RELAY_HANDLERS.vad_sensitivity_adapted?.(
+			{ new_sensitivity: 0.42, noise_floor_rms: 120.0, speech_peak_rms: 6000.5 },
+			send
+		);
+		expect(calls[0]?.channel).toBe("stt:vad-sensitivity-adapted");
+		const p = calls[0]?.args[0] as Record<string, unknown>;
+		expect(p.newSensitivity).toBe(0.42);
+		expect(p.noiseFloorRms).toBe(120.0);
+		expect(p.speechPeakRms).toBe(6000.5);
+	});
+
 	test("model_download_complete with explicit cancelled=true", () => {
 		const { calls, send } = makeSender();
 		helpers.SIMPLE_RELAY_HANDLERS.model_download_complete?.({ model: "m", cancelled: true }, send);
@@ -814,10 +852,10 @@ describe("dispatchDataEvent", () => {
 		expect(broadcastSent.some((s) => s.ch === "stt:no-audio-detected")).toBe(true);
 	});
 
-	test("routes model_download_start via mainSend (not overlay-relevant)", async () => {
-		const { ctx, sent } = makeCtx();
+	test("routes model_download_start via broadcast (reaches settings window)", async () => {
+		const { ctx, broadcastSent } = makeCtx();
 		await helpers.dispatchDataEvent("model_download_start", { model: "whisper" }, ctx);
-		expect(sent.some((s) => s.ch === "stt:model-download-start")).toBe(true);
+		expect(broadcastSent.some((s) => s.ch === "stt:model-download-start")).toBe(true);
 	});
 
 	test("handles unknown event types without throwing", async () => {
@@ -830,7 +868,6 @@ describe("dispatchDataEvent", () => {
 	test("fullSentence with empty text dispatches notifyEmptyResult in ptt mode", async () => {
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["llm.enabled"] = false;
 		const { ctx, broadcastSent } = makeCtx();
 		await helpers.dispatchDataEvent("fullSentence", { text: "  " }, ctx);
 		expect(broadcastSent.some((s) => s.ch === "stt:no-audio-detected")).toBe(true);
@@ -839,14 +876,13 @@ describe("dispatchDataEvent", () => {
 	test("fullSentence with non-empty text sends stt:full-sentence", async () => {
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["llm.enabled"] = false;
 		const { ctx, broadcastSent } = makeCtx();
 		await helpers.dispatchDataEvent("fullSentence", { text: "hello" }, ctx);
 		expect(broadcastSent.some((s) => s.ch === "stt:full-sentence")).toBe(true);
 	});
 
-	test("model_download_progress routes via mainSend", async () => {
-		const { ctx, sent } = makeCtx();
+	test("model_download_progress routes via broadcast (reaches settings window)", async () => {
+		const { ctx, broadcastSent } = makeCtx();
 		await helpers.dispatchDataEvent(
 			"model_download_progress",
 			{
@@ -859,7 +895,7 @@ describe("dispatchDataEvent", () => {
 			},
 			ctx
 		);
-		expect(sent.some((s) => s.ch === "stt:model-download-progress")).toBe(true);
+		expect(broadcastSent.some((s) => s.ch === "stt:model-download-progress")).toBe(true);
 	});
 
 	test("recording_start does not throw", async () => {
@@ -1012,7 +1048,6 @@ describe("setupRelay", () => {
 	test("data-event with fullSentence is processed without throwing", async () => {
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["llm.enabled"] = false;
 		const client = makeMockClient();
 		const win = makeMockWindow();
 		const w = makeMockWindow();
@@ -1067,7 +1102,6 @@ describe("handleFullSentence payload assertions", () => {
 		// Targets the ObjectLiteral mutation { text: processed } → {}.
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["llm.enabled"] = false;
 		const calls: Array<{ ch: string; args: unknown[] }> = [];
 		const safeSend = (ch: string, ...args: unknown[]) => calls.push({ ch, args });
 		await helpers.handleFullSentence({ text: "hello world" }, safeSend);
@@ -1088,7 +1122,6 @@ describe("handleFullSentence payload assertions", () => {
 		// asserted by other tests).
 		resetState();
 		storeValues["general.recordingMode"] = "listen";
-		storeValues["llm.enabled"] = false;
 		const calls: Array<{ ch: string; args: unknown[] }> = [];
 		const safeSend = (ch: string, ...args: unknown[]) => calls.push({ ch, args });
 		await helpers.handleFullSentence({ text: "listening only" }, safeSend);
@@ -1478,23 +1511,22 @@ describe("handleModelDownloadProgress payload completeness", () => {
 // ── New tests targeting remaining mutation-test survivors ─────────────
 
 describe("isLlmConfigured reads from exact store keys (kills L32 string mutation)", () => {
-	test("reads from llm.provider key — placing model under wrong key yields false", () => {
-		// Targets L32 `getStoreValue("llm.provider")` → `getStoreValue("")`.
-		// With "" the lookup returns undefined, so hasLlmModel("openrouter")
-		// branch is not selected and it falls back to checking llm.model.
+	test("reads from llm.dictation.provider key — placing model under wrong key yields false", () => {
+		// Targets `getStoreValue("llm.dictation.provider")` → `getStoreValue("")`.
+		// With "" the lookup returns undefined, so hasDictationModel's openrouter
+		// branch is not selected and it falls back to checking llm.dictation.model.
 		resetState();
-		storeValues["llm.enabled"] = true;
-		storeValues["llm.dictationEnabled"] = true;
+		storeValues["llm.dictation.enabled"] = true;
 		// Model under a stale key — only the openrouterApiKey is set under
 		// the openrouter branch
 		storeValues["llm.openrouterApiKey"] = "sk-real-key";
-		storeValues["llm.model"] = ""; // explicitly empty
+		storeValues["llm.dictation.model"] = ""; // explicitly empty
 		// With provider="openrouter" we expect true (api key present)
-		storeValues["llm.provider"] = "openrouter";
+		storeValues["llm.dictation.provider"] = "openrouter";
 		expect(helpers.isLlmConfigured()).toBe(true);
 		// If the provider lookup mutated to "", provider becomes undefined,
-		// hasLlmModel falls into the "not openrouter" branch and reads
-		// llm.model (which is "") — yielding false.
+		// hasDictationModel falls into the "not openrouter" branch and reads
+		// llm.dictation.model (which is "") — yielding false.
 	});
 });
 
@@ -1505,7 +1537,6 @@ describe("maybeRunLlm short-circuits when LLM disabled (kills L49 conditional/bo
 		// IMMEDIATELY without invoking processText. We assert by passing a
 		// unique sentinel string and verifying it returns unchanged.
 		resetState();
-		storeValues["llm.enabled"] = false;
 		const sentinel = "UNIQUE_SENTINEL_PASSTHROUGH_42";
 		const result = await helpers.maybeRunLlm(sentinel, "");
 		expect(result).toBe(sentinel);
@@ -1513,50 +1544,42 @@ describe("maybeRunLlm short-circuits when LLM disabled (kills L49 conditional/bo
 
 	test("returns input text when LLM disabled even if model is set", async () => {
 		resetState();
-		storeValues["llm.enabled"] = false;
-		storeValues["llm.model"] = "mistral";
+		storeValues["llm.dictation.model"] = "mistral";
 		const result = await helpers.maybeRunLlm("hello world", "");
 		expect(result).toBe("hello world");
 	});
 
-	test("does NOT invoke processText when LLM is disabled (no llm.presets/llm.timeout store access)", async () => {
+	test("does NOT invoke processText when LLM is disabled (no llm.dictation.presets store access)", async () => {
 		// Targets L49 `if (!isLlmConfigured())` → `if (isLlmConfigured())`,
 		// → `true`, → `false`, and L49:26 BlockStatement → `{}`.
-		// processText (in llm.ts) reads `llm.presets` and `llm.timeout`. If
-		// the early-return path is mutated to fall through, tryLlmProcess
-		// runs and processText fetches these keys. We detect by asserting
-		// no read of those keys when LLM is disabled.
+		// processText (in llm.ts) reads `llm.dictation.presets`. If the early-return
+		// path is mutated to fall through, tryLlmProcess runs and processText
+		// fetches this key. We detect by asserting no read of it when disabled.
 		resetState();
-		storeValues["llm.enabled"] = false;
 		await helpers.maybeRunLlm("anything", "");
-		expect(storeKeyAccesses).not.toContain("llm.presets");
-		expect(storeKeyAccesses).not.toContain("llm.timeout");
+		expect(storeKeyAccesses).not.toContain("llm.dictation.presets");
 	});
 
-	test("DOES invoke processText path when LLM is configured (llm.presets is queried)", async () => {
+	test("DOES invoke processText path when LLM is configured (llm.dictation.presets is queried)", async () => {
 		// Pairs with the previous test — when LLM IS configured, processText
-		// runs (and throws — we catch & return original), producing reads of
-		// "llm.presets" and "llm.timeout". This kills the inverse mutation
-		// (L49:6 → `false`) where the early-return is always taken.
+		// runs (and throws — we catch & return original), producing a read of
+		// "llm.dictation.presets". This kills the inverse mutation (L49:6 → `false`)
+		// where the early-return is always taken.
 		resetState();
-		storeValues["llm.enabled"] = true;
-		storeValues["llm.dictationEnabled"] = true;
-		storeValues["llm.provider"] = "ollama";
-		storeValues["llm.model"] = "mistral";
-		storeValues["llm.presets"] = [{ key: "neutral" }];
-		storeValues["llm.timeout"] = 1; // 1ms forces fast failure
+		storeValues["llm.dictation.enabled"] = true;
+		storeValues["llm.dictation.provider"] = "ollama";
+		storeValues["llm.dictation.model"] = "mistral";
+		storeValues["llm.endpoint"] = "http://localhost:1";
+		storeValues["llm.dictation.presets"] = [{ key: "neutral" }];
 		await helpers.maybeRunLlm("anything", "");
-		// At least one of these keys is accessed by processText/runProcessText
-		const sawPresetOrTimeout =
-			storeKeyAccesses.includes("llm.presets") || storeKeyAccesses.includes("llm.timeout");
-		expect(sawPresetOrTimeout).toBe(true);
+		expect(storeKeyAccesses).toContain("llm.dictation.presets");
 	});
 });
 
 describe("pasteIfDictating observable side effect (kills L65/L66 string mutations)", () => {
 	// Helper to wait for any queued paste work to drain. pasteText() enqueues
-	// the work on a Promise chain (pasteInFlight), so we await flushPastePending
-	// to ensure clipboard.writeText has actually run by the time we assert.
+	// the work on a Promise chain (pasteInFlight); we await flushPastePending
+	// to ensure the call log we read afterwards reflects the full dispatch.
 	async function awaitPasteFlush(): Promise<void> {
 		const pasteMod = await import("../lib/paste");
 		await pasteMod.flushPastePending();
@@ -1564,30 +1587,31 @@ describe("pasteIfDictating observable side effect (kills L65/L66 string mutation
 		await new Promise<void>((r) => setTimeout(r, 5));
 	}
 
-	test("listen mode does NOT mirror text to clipboard (pasteText is skipped)", async () => {
+	test("listen mode does NOT invoke pasteText (clipboard untouched, no enqueue)", async () => {
 		// Targets L65 `mode !== "listen"` → `mode !== ""`.
-		// In listen mode, original skips pasteText, no clipboard write.
-		// Mutated to `mode !== ""`, "listen" still triggers paste — clipboard
-		// would have a write.
+		// In listen mode, original skips pasteText entirely.
 		resetState();
+		await resetPasteCalls();
 		helpers.pasteIfDictating("listen", "should-not-paste");
 		await awaitPasteFlush();
+		// pasteText was NOT invoked, so the clipboard sandwich never ran.
 		expect(clipboardWrites.length).toBe(0);
+		const calls = await readPasteCalls();
+		expect(calls).toHaveLength(0);
 	});
 
-	test("ptt mode mirrors text+space to clipboard via pasteText (kills L66 backtick template mutation)", async () => {
+	test("ptt mode invokes pasteText with text+space (kills L66 backtick template mutation)", async () => {
 		// Targets L66 `pasteText(\`\${text} \`)` → `pasteText(\`\`)`.
-		// pasteText writes to clipboard before spawning the helper. With the
-		// mutation, an empty string is passed; pasteText then no-ops on the
-		// empty-text guard. Original passes `${text} ` (with trailing space).
-		// We assert the EXACT content written to the clipboard.
+		// The mutation passes an empty string, which pasteText short-circuits
+		// on the empty-text guard before recording it in the call log.
 		resetState();
+		await resetPasteCalls();
 		helpers.pasteIfDictating("ptt", "hello");
 		await awaitPasteFlush();
-		// clipboard.writeText receives the EXACT string `${text} ` (text+space)
-		expect(clipboardWrites).toContain("hello ");
-		// The mutation `pasteText(\`\`)` would result in the empty-text guard
-		// inside pasteText() short-circuiting BEFORE clipboard.writeText runs.
+		const calls = await readPasteCalls();
+		expect(calls).toContain("hello ");
+		// `--type` mode never writes to the clipboard on success.
+		expect(clipboardWrites.length).toBe(0);
 	});
 
 	test("empty-string mode (≠ 'listen') still triggers paste (kills L65 mode !== '' mutation)", async () => {
@@ -1595,11 +1619,12 @@ describe("pasteIfDictating observable side effect (kills L65/L66 string mutation
 		// Original: "" !== "listen" is true → paste fires.
 		// Mutant: "" !== "" is false → paste does NOT fire.
 		resetState();
+		await resetPasteCalls();
 		helpers.pasteIfDictating("", "should-paste");
 		await awaitPasteFlush();
-		// We expect at least one clipboard write (= pasteText was invoked).
-		expect(clipboardWrites.length).toBeGreaterThan(0);
-		expect(clipboardWrites).toContain("should-paste ");
+		const calls = await readPasteCalls();
+		expect(calls.length).toBeGreaterThan(0);
+		expect(calls).toContain("should-paste ");
 	});
 });
 
@@ -1680,7 +1705,6 @@ describe("processDataEvent enqueueIfRouted return value (kills L251 boolean muta
 		};
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["llm.enabled"] = false;
 		const ctx = {
 			broadcast: (ch: string, ...args: unknown[]) => directCalls.push({ ch, args }),
 			mainSend: (ch: string, ...args: unknown[]) => directCalls.push({ ch, args }),
@@ -2226,7 +2250,6 @@ describe("setupRelay history capture flow exercises computeRecordingDurationMs +
 		// a duration via the extracted helper and broadcasts the new entry.
 		resetState();
 		storeValues["general.recordingMode"] = "ptt";
-		storeValues["llm.enabled"] = false;
 		const recordingState = await import("../lib/recording-state");
 		recordingState.__resetRecordingStateForTesting__();
 		recordingState.notifyHotkeyPressed();

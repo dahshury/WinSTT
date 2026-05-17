@@ -8,14 +8,22 @@ import { useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useMemo } from "react";
 import { useInputDevices } from "@/entities/audio-device";
 import { useConnectionStore } from "@/entities/connection";
-import { buildModelOpts, useCatalogStore } from "@/entities/model-catalog";
+import { buildModelOpts, useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { ConnectionIndicator } from "@/features/connect-server";
 import { useListenStore } from "@/features/listen-mode";
 import { useDownloadStore } from "@/features/model-download";
 import { HotkeyDisplay } from "@/features/push-to-talk";
 import { WHISPER_MODELS } from "@/shared/config/defaults";
+import {
+	SurfaceProvider,
+	surfaceClasses,
+	surfaceHighlightedBg,
+	surfaceHoverBg,
+	useSurface,
+} from "@/shared/lib/surface";
 import type { SelectOption } from "@/shared/ui/select";
+import { Spinner } from "@/shared/ui/spinner";
 import { Tooltip } from "@/shared/ui/tooltip";
 
 const FOOTER_TOOLTIP_DELAY = 1500;
@@ -59,12 +67,17 @@ function FooterMenuChip({
 	tooltip,
 	value,
 }: FooterMenuChipProps): ReactNode {
+	const substrate = useSurface();
+	const hoverLevel = Math.min(substrate + 2, 8);
+	const popupLevel = Math.min(substrate + 2, 8);
+	const popupShadow = Math.max(popupLevel, 6);
+	const highlightLevel = Math.min(popupLevel + 1, 8);
 	return (
 		<Menu.Root>
 			<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
 				<Menu.Trigger
 					aria-label={ariaLabel}
-					className="flex max-w-[140px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors hover:bg-surface-hover focus-visible:ring-1 focus-visible:ring-accent"
+					className={`flex max-w-[140px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
 				>
 					<HugeiconsIcon
 						aria-hidden="true"
@@ -82,26 +95,58 @@ function FooterMenuChip({
 				</Menu.Trigger>
 			</Tooltip>
 			<Menu.Portal>
-				<Menu.Positioner align="end" className="z-[200] outline-none" side="top" sideOffset={6}>
-					<Menu.Popup className="select-popup max-h-60 min-w-[var(--anchor-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm border border-border bg-surface-elevated py-1 shadow-md transition-[transform,opacity] duration-150 ease-out">
-						<Menu.RadioGroup onValueChange={onChange} value={value}>
-							{options.map((opt) => (
-								<Menu.RadioItem
-									className="mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs px-2.5 py-[6px] text-body text-foreground leading-normal outline-none data-[highlighted]:bg-surface-hover data-[checked]:text-accent"
-									closeOnClick
-									key={opt.id}
-									value={opt.id}
-								>
-									<span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-										{opt.label}
-									</span>
-								</Menu.RadioItem>
-							))}
-						</Menu.RadioGroup>
-					</Menu.Popup>
-				</Menu.Positioner>
+				<SurfaceProvider value={popupLevel}>
+					<Menu.Positioner
+						align="end"
+						className="z-popover outline-none"
+						collisionPadding={8}
+						side="top"
+						sideOffset={6}
+					>
+						<Menu.Popup
+							className={`select-popup min-w-[var(--anchor-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm ${surfaceClasses(popupLevel, popupShadow)} py-1 transition-[transform,opacity] duration-150 ease-out [max-height:min(15rem,var(--available-height))] [max-width:var(--available-width)]`}
+						>
+							<Menu.RadioGroup onValueChange={onChange} value={value}>
+								{options.map((opt) => (
+									<Menu.RadioItem
+										className={`mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs px-2.5 py-[6px] text-body text-foreground leading-normal outline-none ${surfaceHighlightedBg(highlightLevel)} data-[checked]:text-accent`}
+										closeOnClick
+										key={opt.id}
+										value={opt.id}
+									>
+										<span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+											{opt.label}
+										</span>
+									</Menu.RadioItem>
+								))}
+							</Menu.RadioGroup>
+						</Menu.Popup>
+					</Menu.Positioner>
+				</SurfaceProvider>
 			</Menu.Portal>
 		</Menu.Root>
+	);
+}
+
+interface ModelSwapChipProps {
+	label: string;
+	tooltip: string;
+}
+
+/** Read-only chip shown in place of the model picker while a swap is in
+ * flight. Mirrors the FooterMenuChip surface treatment so the bar layout
+ * doesn't shift, just without the dropdown affordance. */
+function ModelSwapChip({ label, tooltip }: ModelSwapChipProps): ReactNode {
+	return (
+		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
+			<span
+				aria-live="polite"
+				className="flex max-w-[180px] cursor-default select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim"
+			>
+				<Spinner className="size-2.5 border" />
+				<span className="min-w-0 truncate">{label}</span>
+			</span>
+		</Tooltip>
 	);
 }
 
@@ -115,6 +160,7 @@ export function StatusBar() {
 	const listenDeviceName = useListenStore((s) => s.deviceName);
 	const isDownloading = useDownloadStore((s) => s.isDownloading);
 	const connectionStatus = useConnectionStore((s) => s.connectionStatus);
+	const swappingMain = useModelSwapStore((s) => s.activeMain);
 	const t = useTranslations("statusBar");
 	const tAudio = useTranslations("audio");
 	const tModel = useTranslations("model");
@@ -169,10 +215,12 @@ export function StatusBar() {
 		[updateAudio]
 	);
 
+	const substrate = useSurface();
+	const barLevel = Math.min(substrate + 1, 8);
 	return (
 		<div
 			className={[
-				"flex shrink-0 items-center justify-between overflow-hidden whitespace-nowrap border-border border-t bg-surface-primary px-2 py-1 font-mono",
+				`flex shrink-0 items-center justify-between overflow-hidden whitespace-nowrap border-border border-t ${surfaceClasses(barLevel, 1)} px-2 py-1 font-mono`,
 				isDownloading && "pointer-events-none opacity-50",
 			]
 				.filter(Boolean)
@@ -213,15 +261,22 @@ export function StatusBar() {
 				{currentModel && (
 					<>
 						<Separator className="h-3 w-px bg-border" orientation="vertical" />
-						<FooterMenuChip
-							ariaLabel={tModel("model")}
-							icon={AiAudioIcon}
-							label={currentModel}
-							onChange={handleModelChange}
-							options={modelOpts}
-							tooltip={t("modelTooltip", { model: currentModel })}
-							value={currentModel}
-						/>
+						{swappingMain ? (
+							<ModelSwapChip
+								label={t("switchingModel", { model: swappingMain })}
+								tooltip={t("switchingModelTooltip", { model: swappingMain })}
+							/>
+						) : (
+							<FooterMenuChip
+								ariaLabel={tModel("model")}
+								icon={AiAudioIcon}
+								label={currentModel}
+								onChange={handleModelChange}
+								options={modelOpts}
+								tooltip={t("modelTooltip", { model: currentModel })}
+								value={currentModel}
+							/>
+						)}
 					</>
 				)}
 			</div>

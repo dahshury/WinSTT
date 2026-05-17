@@ -36,17 +36,14 @@ export const AudioVisualizer = memo(function AudioVisualizer({
 	const recordingMode = useSettingsStore(
 		(s) => (s.settings.general?.recordingMode ?? "ptt") as RecordingMode
 	);
-	// Recording mode is the single visual identity for the active mode — it
-	// overrides the user-picked visualizerColor on the main page so the bars
-	// match the tray icon and settings switcher.
-	const visualizerColor = RECORDING_MODE_COLOR_HEX[recordingMode] as `#${string}`;
+	const color = RECORDING_MODE_COLOR_HEX[recordingMode] as `#${string}`;
 
 	if (size === "auto") {
 		return (
 			<AutoSizedVisualizer
 				barCount={barCount}
 				className={className}
-				color={visualizerColor}
+				color={color}
 				type={visualizerType}
 			/>
 		);
@@ -56,7 +53,7 @@ export const AudioVisualizer = memo(function AudioVisualizer({
 		<VisualizerVariant
 			barCount={barCount}
 			className={className}
-			color={visualizerColor}
+			color={color}
 			size={size}
 			type={visualizerType}
 		/>

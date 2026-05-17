@@ -11,7 +11,12 @@ directories:
 files:
   - "!**/*"
   - dist-electron/**/*
-  - out/**/*
+  # Only the Next.js standalone server tree is needed at runtime. The wider
+  # `out/**/*` glob used to bundle Next's dev cache (out/dev/, up to 1.5 GB)
+  # and intermediate build artefacts (out/server/, out/build/, etc.) into
+  # the asar — `prepare-next-standalone` already copies `out/static` and
+  # `public/` inside `out/standalone/`, so nothing else from `out/` is needed.
+  - out/standalone/**/*
   - package.json
   - "node_modules/uiohook-napi/**/*"
   - "node_modules/node-gyp-build/**/*"

@@ -53,6 +53,19 @@ mock.module("electron", () => ({
 			);
 		},
 	},
+	// settings.ts imports `../lib/secret-storage`, which uses `safeStorage`.
+	// The shim round-trips strings so encrypt(plain) → decrypt → plain.
+	safeStorage: {
+		isEncryptionAvailable: () => true,
+		encryptString: (s: string) => Buffer.from(`E(${s})`, "utf8"),
+		decryptString: (b: Buffer) => {
+			const txt = b.toString("utf8");
+			if (txt.startsWith("E(") && txt.endsWith(")")) {
+				return txt.slice(2, -1);
+			}
+			throw new Error("bad blob");
+		},
+	},
 }));
 
 import { storeMock } from "@test/mocks/store";
@@ -125,16 +138,88 @@ describe("setupSettingsHandlers", () => {
 		expect(appListeners.get("before-quit")?.length ?? 0).toBeGreaterThan(0);
 	});
 
-	test("settings:load returns the store contents", async () => {
+	test("settings:load returns the store contents (decrypted clone)", async () => {
 		setupSettingsHandlers();
 		const handler = handlers.get("settings:load");
-		expect(await handler!(undefined)).toBe(storeData);
+		// settings:load returns a defensive clone with secrets decrypted so the
+		// renderer never sees on-disk envelopes. Compare by value, not identity.
+		expect(await handler!(undefined)).toEqual(storeData);
 	});
 
 	test("cleanupSettingsHandlers removes the handler and listener", () => {
 		setupSettingsHandlers();
 		cleanupSettingsHandlers();
 		expect(handlers.has("settings:load")).toBe(false);
+	});
+
+	test("settings:load decrypts the openrouter api key for the renderer", async () => {
+		storeData = { llm: { openrouterApiKey: "enc:v1:RShzay1vci10ZXN0KQ==" } };
+		setupSettingsHandlers();
+		const handler = handlers.get("settings:load");
+		const result = (await handler!(undefined)) as { llm: { openrouterApiKey: string } };
+		expect(result.llm.openrouterApiKey).toBe("sk-or-test");
+	});
+
+	test("settings:load passes legacy plaintext through unchanged", async () => {
+		storeData = { llm: { openrouterApiKey: "sk-or-legacy" } };
+		setupSettingsHandlers();
+		const handler = handlers.get("settings:load");
+		const result = (await handler!(undefined)) as { llm: { openrouterApiKey: string } };
+		expect(result.llm.openrouterApiKey).toBe("sk-or-legacy");
+	});
+
+	test("settings:load does not mutate the on-disk store reference", async () => {
+		storeData = { llm: { openrouterApiKey: "enc:v1:RShzay1vci10ZXN0KQ==" } };
+		setupSettingsHandlers();
+		const handler = handlers.get("settings:load");
+		await handler!(undefined);
+		// The on-disk value must remain its encrypted form.
+		expect((storeData.llm as { openrouterApiKey: string }).openrouterApiKey).toBe(
+			"enc:v1:RShzay1vci10ZXN0KQ=="
+		);
+	});
+});
+
+describe("settings:save encryption", () => {
+	test("encrypts the openrouter api key before persisting", () => {
+		storeData = {};
+		setupSettingsHandlers();
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: { llm: { openrouterApiKey: "sk-or-fresh" } },
+		});
+		const persisted = (storeData.llm as { openrouterApiKey: string }).openrouterApiKey;
+		expect(persisted.startsWith("enc:v1:")).toBe(true);
+		expect(persisted).not.toBe("sk-or-fresh");
+	});
+
+	test("does not encrypt a non-secret field", () => {
+		storeData = {};
+		setupSettingsHandlers();
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: { llm: { endpoint: "http://localhost:11434" } },
+		});
+		expect((storeData.llm as { endpoint: string }).endpoint).toBe("http://localhost:11434");
+	});
+
+	test("broadcasts plaintext (not ciphertext) to other windows", () => {
+		storeData = {};
+		setupSettingsHandlers();
+		const senderEvents: Array<{ channel: string; payload: unknown }> = [];
+		const otherEvents: Array<{ channel: string; payload: unknown }> = [];
+		const sender = createWindow(1, senderEvents);
+		const other = createWindow(2, otherEvents);
+		allWindows.push(sender, other);
+		fireEvent("settings:save", sender.webContents, {
+			settings: { llm: { openrouterApiKey: "sk-or-fresh" } },
+		});
+		const broadcast = otherEvents.find((e) => e.channel === "settings:changed");
+		expect(broadcast).toBeTruthy();
+		const payload = broadcast?.payload as {
+			settings: { llm: { openrouterApiKey: string } };
+		};
+		expect(payload.settings.llm.openrouterApiKey).toBe("sk-or-fresh");
 	});
 });
 

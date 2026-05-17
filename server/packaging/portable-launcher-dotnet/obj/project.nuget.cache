@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "dgSpecHash": "cet6Th/98Ts=",
+  "success": true,
+  "projectFilePath": "E:\\DL\\Projects\\WinSTT\\server\\packaging\\portable-launcher-dotnet\\PortableLauncher.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\MASTE\\.nuget\\packages\\microsoft.net.illink.tasks\\8.0.22\\microsoft.net.illink.tasks.8.0.22.nupkg.sha512",
+    "C:\\Users\\MASTE\\.nuget\\packages\\sharpcompress\\0.40.0\\sharpcompress.0.40.0.nupkg.sha512",
+    "C:\\Users\\MASTE\\.nuget\\packages\\system.buffers\\4.6.0\\system.buffers.4.6.0.nupkg.sha512",
+    "C:\\Users\\MASTE\\.nuget\\packages\\zstdsharp.port\\0.8.5\\zstdsharp.port.0.8.5.nupkg.sha512",
+    "C:\\Users\\MASTE\\.nuget\\packages\\microsoft.netcore.app.ref\\8.0.22\\microsoft.netcore.app.ref.8.0.22.nupkg.sha512",
+    "C:\\Users\\MASTE\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.22\\microsoft.netcore.app.runtime.win-x64.8.0.22.nupkg.sha512",
+    "C:\\Users\\MASTE\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\8.0.22\\microsoft.windowsdesktop.app.ref.8.0.22.nupkg.sha512",
+    "C:\\Users\\MASTE\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.22\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.22.nupkg.sha512",
+    "C:\\Users\\MASTE\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\8.0.22\\microsoft.aspnetcore.app.ref.8.0.22.nupkg.sha512",
+    "C:\\Users\\MASTE\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.22\\microsoft.aspnetcore.app.runtime.win-x64.8.0.22.nupkg.sha512",
+    "C:\\Users\\MASTE\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\8.0.22\\microsoft.netcore.app.host.win-x64.8.0.22.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1902",
+      "level": "Warning",
+      "message": "Package 'SharpCompress' 0.40.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-6c8g-7p36-r338",
+      "projectPath": "E:\\DL\\Projects\\WinSTT\\server\\packaging\\portable-launcher-dotnet\\PortableLauncher.csproj",
+      "warningLevel": 1,
+      "filePath": "E:\\DL\\Projects\\WinSTT\\server\\packaging\\portable-launcher-dotnet\\PortableLauncher.csproj",
+      "libraryId": "SharpCompress",
+      "targetGraphs": [
+        "net8.0",
+        "net8.0/win-x64"
+      ]
+    }
+  ]
+}

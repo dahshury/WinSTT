@@ -29,6 +29,7 @@ from src.recorder.infrastructure.model_cache import (
     ModelCacheState,
     probe_cache_state,
     probe_cache_state_by_quantization,
+    resolve_hf_repo,
 )
 from src.recorder.infrastructure.system_info import SystemInfo, get_system_info
 
@@ -117,8 +118,8 @@ def _cache_by_quantization_for(model: ModelInfo) -> dict[str, dict[str, Any]]:
     Empty for catalog entries with no HF repo (legacy aliases) — the UI
     falls back to the flat ``cache`` field there.
     """
-    hf_repo = model.onnx_model_name
-    if not hf_repo or "/" not in hf_repo:
+    hf_repo = resolve_hf_repo(model.onnx_model_name)
+    if hf_repo is None:
         return {}
     per_quant = probe_cache_state_by_quantization(hf_repo, model.available_quantizations)
     return {quant: _cache_dict(state) for quant, state in per_quant.items()}
@@ -126,8 +127,8 @@ def _cache_by_quantization_for(model: ModelInfo) -> dict[str, dict[str, Any]]:
 
 def _cache_state_for(model: ModelInfo) -> ModelCacheState:
     """Probe HF cache for ``model``. Falls back to ``not_cached`` on unknown HF ids."""
-    hf_repo = model.onnx_model_name
-    if not hf_repo or "/" not in hf_repo:
+    hf_repo = resolve_hf_repo(model.onnx_model_name)
+    if hf_repo is None:
         # Catalog entries without an HF repo (legacy aliases) can't be
         # cached in the HF hub sense. Render as not_cached so the UI
         # at least won't claim they're ready.

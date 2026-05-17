@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
 import { getErrorMessage, ValidationError } from "../../src/shared/lib/errors";
 import { dbg } from "../lib/debug-log";
+import { isPlainObject } from "../lib/ipc-helpers";
 import { pasteText } from "../lib/paste";
 import { captureSelection } from "../lib/selection-capture";
 import { getStoreValue } from "../lib/store";
@@ -22,10 +23,6 @@ interface ApplyPayload {
 interface PreviewPayload {
 	systemPrompt: string;
 	text: string;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -57,28 +54,24 @@ function assertPreviewPayload(payload: unknown): asserts payload is PreviewPaylo
 }
 
 function findTransform(transformId: string): StoredTransform | undefined {
-	const transforms = getStoreValue("llm.transforms");
-	return transforms.find((t) => t.id === transformId);
+	const prompts = getStoreValue("llm.transforms.prompts");
+	return prompts.find((t) => t.id === transformId);
 }
 
-function hasLlmModel(): boolean {
-	if (getStoreValue("llm.provider") === "openrouter") {
+function hasTransformsModel(): boolean {
+	if (getStoreValue("llm.transforms.provider") === "openrouter") {
 		return Boolean(getStoreValue("llm.openrouterApiKey"));
 	}
-	return Boolean(getStoreValue("llm.model"));
+	return Boolean(getStoreValue("llm.transforms.model"));
 }
 
 /**
- * Transforms run only when the LLM master switch AND the transforms
- * sub-feature are both on, with a model configured. Mirrors the dictation
- * gate in relay.ts (`isLlmConfigured`) but keyed off `llm.transformsEnabled`.
+ * Transforms run when the transforms feature is enabled and a model is
+ * configured for its chosen provider. There is no master switch —
+ * dictation has its own independent gate in relay.ts.
  */
 function isTransformsEnabled(): boolean {
-	return (
-		getStoreValue("llm.enabled") === true &&
-		getStoreValue("llm.transformsEnabled") === true &&
-		hasLlmModel()
-	);
+	return getStoreValue("llm.transforms.enabled") === true && hasTransformsModel();
 }
 
 function sendToWindow(win: BrowserWindow, channel: string, payload: unknown): void {
@@ -221,7 +214,7 @@ export const __transforms_test_helpers__ = {
 	asRecord,
 	broadcastAll,
 	findTransform,
-	hasLlmModel,
+	hasTransformsModel,
 	isNonEmptyString,
 	isTransformsEnabled,
 	requireEnabledTransform,

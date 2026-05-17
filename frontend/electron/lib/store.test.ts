@@ -10,6 +10,23 @@ import { electronStoreMock } from "../../test/mocks/electron-store";
 // dot-path get/set) BEFORE importing the source.
 mock.module("electron-store", () => electronStoreMock());
 
+// `./secret-storage` (imported transitively by store.ts) pulls in `electron`
+// for safeStorage. Provide a no-op DPAPI shim so the module can load — the
+// secret-storage logic is exercised directly in its own test file.
+mock.module("electron", () => ({
+	safeStorage: {
+		isEncryptionAvailable: () => true,
+		encryptString: (s: string) => Buffer.from(`E(${s})`, "utf8"),
+		decryptString: (b: Buffer) => {
+			const txt = b.toString("utf8");
+			if (txt.startsWith("E(") && txt.endsWith(")")) {
+				return txt.slice(2, -1);
+			}
+			throw new Error("bad blob");
+		},
+	},
+}));
+
 const storeModule = await import("./store");
 const { store, getStoreValue, getStoreRaw, applyStoreMigration } = storeModule;
 
@@ -99,15 +116,23 @@ describe("store module", () => {
 		expect(s("hotkey.pushToTalkKey")).toBe("LCtrl+LMeta");
 		expect(s("dictionary")).toEqual([]);
 		expect(s("snippets")).toEqual([]);
-		expect(s("llm.enabled")).toBe(false);
-		expect(s("llm.provider")).toBe("ollama");
+		// Shared LLM infrastructure
 		expect(s("llm.endpoint")).toBe("http://localhost:11434");
-		expect(s("llm.model")).toBe("");
 		expect(s("llm.openrouterApiKey")).toBe("");
-		expect(s("llm.openrouterModel")).toBe("");
-		expect(s("llm.openrouterFallbackModel")).toBe("");
-		expect(s("llm.presets")).toEqual([{ key: "neutral" }]);
 		expect(s("llm.timeout")).toBe(5000);
+		// Per-feature dictation config
+		expect(s("llm.dictation.enabled")).toBe(false);
+		expect(s("llm.dictation.provider")).toBe("ollama");
+		expect(s("llm.dictation.model")).toBe("");
+		expect(s("llm.dictation.openrouterModel")).toBe("");
+		expect(s("llm.dictation.openrouterFallbackModel")).toBe("");
+		expect(s("llm.dictation.presets")).toEqual([{ key: "neutral" }]);
+		// Per-feature transforms config
+		expect(s("llm.transforms.enabled")).toBe(false);
+		expect(s("llm.transforms.provider")).toBe("ollama");
+		expect(s("llm.transforms.model")).toBe("");
+		expect(s("llm.transforms.openrouterModel")).toBe("");
+		expect(s("llm.transforms.openrouterFallbackModel")).toBe("");
 	});
 
 	itIfClean(
@@ -196,12 +221,12 @@ describe("store module", () => {
 });
 
 describe("store migration block (module-load side effects)", () => {
-	itIfClean("migration sets _schemaVersion to the SCHEMA_VERSION (8) at load time", () => {
+	itIfClean("migration sets _schemaVersion to the SCHEMA_VERSION (9) at load time", () => {
 		// The migration block runs once when ./store is imported. With a fresh
 		// MockStore (empty `_schemaVersion`), `getStoreValue` returns undefined,
-		// `?? 1` makes currentVersion=1, `1 < 8` triggers migration which
-		// writes _schemaVersion=8.
-		expect((store.get as (k: string) => unknown)("_schemaVersion")).toBe(8);
+		// `?? 1` makes currentVersion=1, `1 < 9` triggers migration which
+		// writes _schemaVersion=9.
+		expect((store.get as (k: string) => unknown)("_schemaVersion")).toBe(9);
 	});
 
 	itIfClean("migration v4 path resets audio.inputDeviceIndex to null", () => {
@@ -275,7 +300,7 @@ describe("applyStoreMigration (pure)", () => {
 
 	itIfMigrationLoaded("does nothing when current >= SCHEMA_VERSION (boundary equal)", () => {
 		const writes: Write[] = [];
-		applyStoreMigration(8, fakeRead({}), fakeWrite(writes), () => undefined);
+		applyStoreMigration(9, fakeRead({}), fakeWrite(writes), () => undefined);
 		expect(writes).toEqual([]);
 	});
 
@@ -302,10 +327,11 @@ describe("applyStoreMigration (pure)", () => {
 		expect(map.get("quality.useMainModelForRealtime")).toBe(false);
 		expect(map.get("audio.sileroSensitivity")).toBe(0.4);
 		expect(map.get("audio.inputDeviceIndex")).toBeNull();
-		expect(map.get("llm.presets")).toEqual([{ key: "neutral" }]);
+		// v9 migration moves llm.presets into llm.dictation.presets
+		expect(map.get("llm.dictation.presets")).toEqual([{ key: "neutral" }]);
 		expect(map.get("general.liveTranscriptionDisplay")).toBe("both");
 		expect(map.get("general.systemAudioReductionWhileDictating")).toBe(0);
-		expect(map.get("_schemaVersion")).toBe(8);
+		expect(map.get("_schemaVersion")).toBe(9);
 	});
 
 	itIfMigrationLoaded(
@@ -436,14 +462,14 @@ describe("applyStoreMigration (pure)", () => {
 		);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.from).toBe(2);
-		expect(calls[0]?.to).toBe(8);
+		expect(calls[0]?.to).toBe(9);
 		expect(calls[0]?.msg).toMatch(/_schemaVersion/);
 	});
 
 	itIfMigrationLoaded("does not log when no migration runs", () => {
 		const writes: Write[] = [];
 		const { log, calls } = fakeLog();
-		applyStoreMigration(8, fakeRead({}), fakeWrite(writes), log);
+		applyStoreMigration(9, fakeRead({}), fakeWrite(writes), log);
 		expect(calls).toEqual([]);
 	});
 
@@ -461,7 +487,7 @@ describe("applyStoreMigration (pure)", () => {
 		);
 		const last = writes.at(-1);
 		expect(last?.key).toBe("_schemaVersion");
-		expect(last?.value).toBe(8);
+		expect(last?.value).toBe(9);
 	});
 
 	itIfMigrationLoaded(
@@ -535,15 +561,19 @@ describe("applyStoreMigration (pure)", () => {
 	itIfMigrationLoaded(
 		"v8 migration turns BOTH sub-flags on when the LLM master was enabled",
 		() => {
+			// v8's `migrateLlmSubFlags` reads from `store.get` directly (not the
+			// `read` accessor harness), so we have to seed the underlying store.
+			store.set("llm.enabled", true);
+			store.set("llm.transforms", []);
 			const writes: Write[] = [];
+			// current=7, target=8 — but applyStoreMigration always runs through to
+			// SCHEMA_VERSION (9). Catch only the v8 writes here.
 			applyStoreMigration(
 				7,
 				fakeRead({
 					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
-					"llm.enabled": true,
-					"llm.transforms": [],
 				}),
 				fakeWrite(writes),
 				() => undefined
@@ -557,6 +587,10 @@ describe("applyStoreMigration (pure)", () => {
 	itIfMigrationLoaded(
 		"v8 migration turns sub-flags on when a transform has a hotkey, even with LLM off",
 		() => {
+			store.set("llm.enabled", false);
+			store.set("llm.transforms", [
+				{ id: "x", name: "X", prompt: "p", hotkey: "LCtrl+P", builtin: false },
+			]);
 			const writes: Write[] = [];
 			applyStoreMigration(
 				7,
@@ -564,10 +598,6 @@ describe("applyStoreMigration (pure)", () => {
 					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
-					"llm.enabled": false,
-					"llm.transforms": [
-						{ id: "x", name: "X", prompt: "p", hotkey: "LCtrl+P", builtin: false },
-					],
 				}),
 				fakeWrite(writes),
 				() => undefined
@@ -581,6 +611,8 @@ describe("applyStoreMigration (pure)", () => {
 	itIfMigrationLoaded(
 		"v8 migration leaves sub-flags untouched when LLM was off and no transform hotkeys",
 		() => {
+			store.set("llm.enabled", false);
+			store.set("llm.transforms", [{ id: "x", name: "X", prompt: "p", hotkey: "", builtin: true }]);
 			const writes: Write[] = [];
 			applyStoreMigration(
 				7,
@@ -588,8 +620,6 @@ describe("applyStoreMigration (pure)", () => {
 					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
-					"llm.enabled": false,
-					"llm.transforms": [{ id: "x", name: "X", prompt: "p", hotkey: "", builtin: true }],
 				}),
 				fakeWrite(writes),
 				() => undefined
@@ -597,6 +627,251 @@ describe("applyStoreMigration (pure)", () => {
 			const keys = writes.map((w) => w.key);
 			expect(keys).not.toContain("llm.dictationEnabled");
 			expect(keys).not.toContain("llm.transformsEnabled");
+		}
+	);
+
+	// ── v9 migration: split shared LLM config into per-feature blocks ────
+	//
+	// v9's `migrateLlmPerFeatureConfig` reads legacy keys via `store.get`
+	// (so seed via `store.set`), then writes the new nested shape via the
+	// `write` callback. The migration delete-then-write pattern means
+	// legacy keys are removed from the underlying store after migration.
+
+	itIfMigrationLoaded(
+		"v9 migration: dictation.enabled true when master ON and dictationEnabled true",
+		() => {
+			store.set("llm.enabled", true);
+			store.set("llm.dictationEnabled", true);
+			const writes: Write[] = [];
+			applyStoreMigration(
+				8,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+				}),
+				fakeWrite(writes),
+				() => undefined
+			);
+			const map = new Map(writes.map((w) => [w.key, w.value]));
+			expect(map.get("llm.dictation.enabled")).toBe(true);
+		}
+	);
+
+	itIfMigrationLoaded("v9 migration: dictation.enabled false when master OFF (regardless)", () => {
+		store.set("llm.enabled", false);
+		store.set("llm.dictationEnabled", true);
+		const writes: Write[] = [];
+		applyStoreMigration(
+			8,
+			fakeRead({
+				"quality.enableRealtimeTranscription": true,
+				"quality.useMainModelForRealtime": false,
+				"audio.sileroSensitivity": 0.4,
+			}),
+			fakeWrite(writes),
+			() => undefined
+		);
+		const map = new Map(writes.map((w) => [w.key, w.value]));
+		expect(map.get("llm.dictation.enabled")).toBe(false);
+	});
+
+	itIfMigrationLoaded(
+		"v9 migration: transforms.enabled true only when master ON AND transformsEnabled true",
+		() => {
+			store.set("llm.enabled", true);
+			store.set("llm.transformsEnabled", true);
+			const writes: Write[] = [];
+			applyStoreMigration(
+				8,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+				}),
+				fakeWrite(writes),
+				() => undefined
+			);
+			const map = new Map(writes.map((w) => [w.key, w.value]));
+			expect(map.get("llm.transforms.enabled")).toBe(true);
+		}
+	);
+
+	itIfMigrationLoaded(
+		"v9 migration: transforms.enabled false when master OFF even if transformsEnabled true",
+		() => {
+			store.set("llm.enabled", false);
+			store.set("llm.transformsEnabled", true);
+			const writes: Write[] = [];
+			applyStoreMigration(
+				8,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+				}),
+				fakeWrite(writes),
+				() => undefined
+			);
+			const map = new Map(writes.map((w) => [w.key, w.value]));
+			expect(map.get("llm.transforms.enabled")).toBe(false);
+		}
+	);
+
+	itIfMigrationLoaded(
+		"v9 migration: transforms.enabled false when master ON but transformsEnabled false",
+		() => {
+			store.set("llm.enabled", true);
+			store.set("llm.transformsEnabled", false);
+			const writes: Write[] = [];
+			applyStoreMigration(
+				8,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+				}),
+				fakeWrite(writes),
+				() => undefined
+			);
+			const map = new Map(writes.map((w) => [w.key, w.value]));
+			expect(map.get("llm.transforms.enabled")).toBe(false);
+		}
+	);
+
+	itIfMigrationLoaded(
+		"v9 migration deletes legacy per-feature LLM keys but preserves llm.timeout",
+		() => {
+			// Seed every legacy key so we can verify they're all removed after migration.
+			// `llm.timeout` stays at the top level under the new schema (it's a shared
+			// infra setting like `llm.endpoint` / `llm.openrouterApiKey`) so the
+			// migration must NOT delete it.
+			store.set("llm.enabled", true);
+			store.set("llm.dictationEnabled", true);
+			store.set("llm.transformsEnabled", true);
+			store.set("llm.provider", "openrouter");
+			store.set("llm.model", "llama3");
+			store.set("llm.openrouterModel", "openai/gpt-4o");
+			store.set("llm.openrouterFallbackModel", "openai/gpt-3.5-turbo");
+			store.set("llm.presets", [{ key: "formal" }]);
+			store.set("llm.transforms", []);
+			store.set("llm.timeout", 12_345);
+			applyStoreMigration(
+				8,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+				}),
+				(k, v) => {
+					store.set(k, v);
+				},
+				() => undefined
+			);
+			// Legacy per-feature keys must be gone.
+			expect((store.get as (k: string) => unknown)("llm.enabled")).toBeUndefined();
+			expect((store.get as (k: string) => unknown)("llm.dictationEnabled")).toBeUndefined();
+			expect((store.get as (k: string) => unknown)("llm.transformsEnabled")).toBeUndefined();
+			expect((store.get as (k: string) => unknown)("llm.provider")).toBeUndefined();
+			expect((store.get as (k: string) => unknown)("llm.model")).toBeUndefined();
+			expect((store.get as (k: string) => unknown)("llm.openrouterModel")).toBeUndefined();
+			expect((store.get as (k: string) => unknown)("llm.openrouterFallbackModel")).toBeUndefined();
+			expect((store.get as (k: string) => unknown)("llm.presets")).toBeUndefined();
+			// llm.timeout stays — it's shared infrastructure, not per-feature.
+			expect((store.get as (k: string) => unknown)("llm.timeout")).toBe(12_345);
+		}
+	);
+
+	itIfMigrationLoaded(
+		"v9 migration: legacy llm.transforms (array) → llm.transforms.prompts",
+		() => {
+			const legacyPrompts = [
+				{ id: "polish", name: "Polish", prompt: "p", hotkey: "", builtin: true },
+			];
+			store.set("llm.transforms", legacyPrompts);
+			const writes: Write[] = [];
+			applyStoreMigration(
+				8,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+				}),
+				fakeWrite(writes),
+				() => undefined
+			);
+			const map = new Map(writes.map((w) => [w.key, w.value]));
+			expect(map.get("llm.transforms.prompts")).toEqual(legacyPrompts);
+		}
+	);
+
+	itIfMigrationLoaded("v9 migration: legacy llm.presets → llm.dictation.presets", () => {
+		const legacyPresets = [{ key: "formal" }];
+		store.set("llm.presets", legacyPresets);
+		const writes: Write[] = [];
+		applyStoreMigration(
+			8,
+			fakeRead({
+				"quality.enableRealtimeTranscription": true,
+				"quality.useMainModelForRealtime": false,
+				"audio.sileroSensitivity": 0.4,
+			}),
+			fakeWrite(writes),
+			() => undefined
+		);
+		const map = new Map(writes.map((w) => [w.key, w.value]));
+		expect(map.get("llm.dictation.presets")).toEqual(legacyPresets);
+	});
+
+	itIfMigrationLoaded(
+		"v9 migration: shared provider/model copies into both dictation and transforms",
+		() => {
+			store.set("llm.provider", "openrouter");
+			store.set("llm.model", "llama3");
+			store.set("llm.openrouterModel", "openai/gpt-4o");
+			store.set("llm.openrouterFallbackModel", "openai/gpt-3.5-turbo");
+			const writes: Write[] = [];
+			applyStoreMigration(
+				8,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+				}),
+				fakeWrite(writes),
+				() => undefined
+			);
+			const map = new Map(writes.map((w) => [w.key, w.value]));
+			expect(map.get("llm.dictation.provider")).toBe("openrouter");
+			expect(map.get("llm.dictation.model")).toBe("llama3");
+			expect(map.get("llm.dictation.openrouterModel")).toBe("openai/gpt-4o");
+			expect(map.get("llm.dictation.openrouterFallbackModel")).toBe("openai/gpt-3.5-turbo");
+			expect(map.get("llm.transforms.provider")).toBe("openrouter");
+			expect(map.get("llm.transforms.model")).toBe("llama3");
+			expect(map.get("llm.transforms.openrouterModel")).toBe("openai/gpt-4o");
+			expect(map.get("llm.transforms.openrouterFallbackModel")).toBe("openai/gpt-3.5-turbo");
+		}
+	);
+
+	itIfMigrationLoaded(
+		"v9 migration: defaults legacy provider that isn't 'openrouter' to 'ollama'",
+		() => {
+			// Legacy could have provider="local" or undefined; v9 normalizes both to "ollama".
+			store.set("llm.provider", "local");
+			const writes: Write[] = [];
+			applyStoreMigration(
+				8,
+				fakeRead({
+					"quality.enableRealtimeTranscription": true,
+					"quality.useMainModelForRealtime": false,
+					"audio.sileroSensitivity": 0.4,
+				}),
+				fakeWrite(writes),
+				() => undefined
+			);
+			const map = new Map(writes.map((w) => [w.key, w.value]));
+			expect(map.get("llm.dictation.provider")).toBe("ollama");
+			expect(map.get("llm.transforms.provider")).toBe("ollama");
 		}
 	);
 });

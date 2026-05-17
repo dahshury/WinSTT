@@ -217,9 +217,13 @@ def resolve_device(requested: str) -> str:
 
     "cuda" is honored only when the CUDA execution provider is registered
     AND its DLL chain is actually loadable (so we don't spam the user
-    with provider-bridge failure logs every model load). Non-cuda values
-    pass through unchanged.
+    with provider-bridge failure logs every model load). "auto" is treated
+    as "prefer cuda, probe, fall back to cpu" — same path as an explicit
+    "cuda" request but without the warning when the probe fails. Other
+    values (e.g. "cpu", "dml") pass through unchanged.
     """
+    if requested == "auto":
+        requested = "cuda"
     if requested != "cuda":
         return requested
     try:
@@ -243,7 +247,27 @@ def resolve_device(requested: str) -> str:
     return "cuda"
 
 
-def providers_for_device(device: str) -> list[str] | None:
+# CUDA EP provider options. We *tried* sherpa-onnx's recommended
+# ``cudnn_conv_algo_search="HEURISTIC"`` here (session.cc:310-316 — they pick
+# it to avoid EXHAUSTIVE's multi-second first-run search) — but on a 30-min
+# JFK benchmark with whisper-base + RTX 3080 Ti it produced a **4.5x
+# steady-state regression** (42x→9.4x realtime). The heuristic algorithm
+# pick was wrong for our encoder's conv shapes on Ampere. ORT's default
+# (``EXHAUSTIVE``) is slower to warm up but materially faster in steady
+# state for our workload, so we leave the search algorithm at the default.
+# Other knobs left at default too: ``enable_cuda_graph`` requires zero
+# Memcpy nodes in the graph (microsoft/onnxruntime#15490) which we can't
+# guarantee without a custom fp16 conversion of the export.
+_CUDA_EP_OPTIONS: dict[str, str] = {}
+
+
+# Provider-list entry as accepted by onnxruntime.InferenceSession: either a
+# bare EP name or a (name, options_dict) tuple. onnx-asr forwards either form
+# straight through, so callers don't need to know the difference.
+ProviderEntry = str | tuple[str, dict[str, str]]
+
+
+def providers_for_device(device: str) -> list[ProviderEntry] | None:
     """Translate a user-facing ``device`` string into a pinned ORT provider list.
 
     ``"cuda"`` requests are honoured only when a GPU-class provider is
@@ -259,6 +283,9 @@ def providers_for_device(device: str) -> list[str] | None:
     automatically without editing this function. ``TensorrtExecutionProvider``
     is intentionally excluded via :data:`GPU_PROVIDERS` — see the comment
     there for why.
+
+    On CUDA the returned entries carry tuned provider options
+    (:data:`_CUDA_EP_OPTIONS`) so every model load uses the same settings.
 
     Lives in ``device.py`` (not bootstrap) so non-bootstrap call sites
     (e.g. :class:`SileroVAD`) can request the same list without violating
@@ -277,4 +304,11 @@ def providers_for_device(device: str) -> list[str] | None:
     gpu_providers = [p for p in available if p in GPU_PROVIDERS]
     if not gpu_providers:
         return ["CPUExecutionProvider"]
-    return [*gpu_providers, "CPUExecutionProvider"]
+    entries: list[ProviderEntry] = []
+    for p in gpu_providers:
+        if p == "CUDAExecutionProvider" and _CUDA_EP_OPTIONS:
+            entries.append((p, dict(_CUDA_EP_OPTIONS)))
+        else:
+            entries.append(p)
+    entries.append("CPUExecutionProvider")
+    return entries

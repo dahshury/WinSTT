@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { useInputDevices } from "@/entities/audio-device";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { HotkeyRecorder } from "@/features/record-hotkey";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Select, type SelectOption } from "@/shared/ui/select";
 
@@ -37,31 +38,39 @@ export function AudioSettingsPanel() {
 			{/* ── Input Device (hidden in Listen mode — loopback device is used instead) */}
 			{recordingMode !== "listen" && (
 				<SettingSection icon={Mic01Icon} title={t("inputDevice")}>
-					<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+					<div className="flex flex-col divide-y divide-surface-1">
 						<FormControl
 							caption={t("deviceCaption")}
 							label={t("device")}
 							tooltip={t("deviceTooltip")}
 						>
-							<Select
-								onChange={(v) =>
-									update({
-										inputDeviceIndex: v === "default" ? null : Number.parseInt(v, 10),
-									})
-								}
-								options={deviceOptions}
-								value={currentDeviceId}
-							/>
+							<ElevatedSurface inline>
+								<Select
+									onChange={(v) =>
+										update({
+											inputDeviceIndex: v === "default" ? null : Number.parseInt(v, 10),
+										})
+									}
+									options={deviceOptions}
+									value={currentDeviceId}
+								/>
+							</ElevatedSurface>
 						</FormControl>
 					</div>
 				</SettingSection>
 			)}
 
-			{/* ── Hotkey ─────────────────────────────────────────── */}
+			{/* ── Hotkey (disabled in Listen mode — the hotkey isn't used to
+			    start/stop a server-driven listen session) */}
 			<SettingSection icon={KeyboardIcon} title={th("configuration")}>
 				<div className="py-2">
 					<FormControl
-						caption={th("pushToTalkKeyCaption")}
+						caption={
+							recordingMode === "listen"
+								? th("pushToTalkKeyCaptionDisabled")
+								: th("pushToTalkKeyCaption")
+						}
+						disabled={recordingMode === "listen"}
 						label={th("pushToTalkKey")}
 						tooltip={th("pushToTalkKeyTooltip")}
 					>

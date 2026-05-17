@@ -11,7 +11,9 @@ import { useListenMode } from "@/features/listen-mode";
 import { useTranscriptionFeed } from "@/features/live-transcription";
 import { useDownloadListener } from "@/features/model-download";
 import { usePushToTalk } from "@/features/push-to-talk";
+import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
+import { useVadCalibration } from "@/features/vad-calibration";
 import { gpuGetInfo } from "@/shared/api/ipc-client";
 import { useRecordingSound } from "@/shared/lib/use-recording-sound";
 
@@ -24,10 +26,12 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 	useVisualizerSync();
 	usePushToTalk();
 	useSyncSettings();
+	useSyncActiveModel();
 	useDownloadListener();
 	useFileTranscriptionListener();
 	useListenMode();
 	useDeviceSwitchFeedback();
+	useVadCalibration();
 	useRecordingSound();
 
 	// Model catalog is self-initializing — see catalog-store.ts

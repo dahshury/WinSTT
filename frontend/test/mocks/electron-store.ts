@@ -40,6 +40,23 @@ function setByPath(obj: Record<string, unknown>, key: string, value: unknown): v
 	cur[parts.at(-1) as string] = value;
 }
 
+function deleteByPath(obj: Record<string, unknown>, key: string): void {
+	const parts = key.split(".");
+	if (parts.length === 1) {
+		delete obj[key];
+		return;
+	}
+	let cur: Record<string, unknown> = obj;
+	for (let i = 0; i < parts.length - 1; i++) {
+		const p = parts[i] as string;
+		if (cur[p] == null || typeof cur[p] !== "object" || Array.isArray(cur[p])) {
+			return;
+		}
+		cur = cur[p] as Record<string, unknown>;
+	}
+	delete cur[parts.at(-1) as string];
+}
+
 export class MockStore<T extends Record<string, unknown> = Record<string, unknown>> {
 	store: Record<string, unknown>;
 	private readonly listeners = new Map<string, Array<(value: unknown, prev: unknown) => void>>();
@@ -62,7 +79,7 @@ export class MockStore<T extends Record<string, unknown> = Record<string, unknow
 	}
 
 	delete(key: string): void {
-		delete this.store[key];
+		deleteByPath(this.store, key);
 	}
 
 	has(key: string): boolean {

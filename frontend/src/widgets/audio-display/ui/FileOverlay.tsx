@@ -4,6 +4,7 @@ import { Progress } from "@base-ui/react/progress";
 import { memo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
+import { surfaceBg, surfaceBg90, useSurface } from "@/shared/lib/surface";
 
 export const FileOverlay = memo(function FileOverlay() {
 	const { status, progress, message, fileName } = useFileTranscriptionStore(
@@ -15,12 +16,17 @@ export const FileOverlay = memo(function FileOverlay() {
 		}))
 	);
 
+	const substrate = useSurface();
+	const trackLevel = Math.min(substrate + 1, 8);
+
 	if (status === "idle") {
 		return null;
 	}
 
 	return (
-		<div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-surface-secondary/90">
+		<div
+			className={`absolute inset-0 z-raised flex flex-col items-center justify-center gap-2 ${surfaceBg90(substrate)}`}
+		>
 			{status === "processing" && (
 				<>
 					<Progress.Root
@@ -31,7 +37,7 @@ export const FileOverlay = memo(function FileOverlay() {
 							<Progress.Label className="font-medium text-foreground">{fileName}</Progress.Label>
 							<Progress.Value>{(formattedValue: string | null) => formattedValue}</Progress.Value>
 						</div>
-						<Progress.Track className="h-3 overflow-hidden rounded-full bg-surface-tertiary">
+						<Progress.Track className={`h-3 overflow-hidden rounded-full ${surfaceBg(trackLevel)}`}>
 							<Progress.Indicator className="h-full rounded-full bg-teal transition-[width] duration-200 ease-out" />
 						</Progress.Track>
 					</Progress.Root>

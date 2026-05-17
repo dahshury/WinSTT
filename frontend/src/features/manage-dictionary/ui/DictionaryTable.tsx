@@ -12,6 +12,15 @@ import { type AddDictionaryEntry, addDictionaryEntrySchema } from "@/shared/conf
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { FormControl } from "@/shared/ui/form-control";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableEmpty,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/shared/ui/table";
 import { TextField } from "@/shared/ui/text-field";
 import { Tooltip } from "@/shared/ui/tooltip";
 
@@ -81,39 +90,45 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 					</FormControl>
 				</div>
 				<Button
-					className="h-8 rounded-md bg-accent px-3 font-medium text-black text-body transition-colors duration-150 hover:bg-accent-hover"
+					className="mb-3 h-8 rounded-md bg-accent px-3 font-medium text-black text-body transition-colors duration-150 hover:bg-accent-hover"
 					disabled={isAddDisabled}
 					type="submit"
 				>
 					{tc("add")}
 				</Button>
 			</Form>
-			<div className="flex flex-col gap-1">
-				{entries.map((entry) => (
-					<div
-						className="flex items-center justify-between rounded border border-border bg-surface-tertiary px-3 py-2 text-body"
-						key={entry.id}
-					>
-						<span>
-							<span className="text-foreground-secondary">{entry.find}</span>
-							<span className="text-foreground-muted">{" → "}</span>
-							<span className="text-foreground">{entry.replace}</span>
-						</span>
-						<Tooltip content={tc("delete")}>
-							<Button
-								aria-label={`${tc("delete")} "${entry.find}"`}
-								className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
-								onClick={() => onRemove(entry.id)}
-							>
-								<HugeiconsIcon icon={Delete02Icon} size={14} />
-							</Button>
-						</Tooltip>
-					</div>
-				))}
-				{entries.length === 0 && (
-					<p className="py-4 text-center text-body text-foreground-muted">{t("emptyState")}</p>
-				)}
-			</div>
+			<Table containerClassName="rounded border border-border bg-surface-tertiary overflow-hidden">
+				<TableHeader>
+					<TableRow>
+						<TableHead>{t("find")}</TableHead>
+						<TableHead>{t("replace")}</TableHead>
+						<TableHead className="w-10" />
+					</TableRow>
+				</TableHeader>
+				<TableBody>
+					{entries.length === 0 ? (
+						<TableEmpty colSpan={3}>{t("emptyState")}</TableEmpty>
+					) : (
+						entries.map((entry, idx) => (
+							<TableRow index={idx} key={entry.id}>
+								<TableCell className="text-foreground-secondary">{entry.find}</TableCell>
+								<TableCell className="text-foreground">{entry.replace}</TableCell>
+								<TableCell className="w-10 text-right">
+									<Tooltip content={tc("delete")}>
+										<Button
+											aria-label={`${tc("delete")} "${entry.find}"`}
+											className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
+											onClick={() => onRemove(entry.id)}
+										>
+											<HugeiconsIcon icon={Delete02Icon} size={14} />
+										</Button>
+									</Tooltip>
+								</TableCell>
+							</TableRow>
+						))
+					)}
+				</TableBody>
+			</Table>
 			{onClearAll && (
 				<>
 					<ConfirmDialog

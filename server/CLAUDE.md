@@ -40,9 +40,8 @@ src/
       pipeline.py          # RecordingPipeline (Worker) — VAD loop & state machine
       dto.py               # Data transfer objects
     infrastructure/     # Concrete adapters (PyAudio, WebRTC, Silero, Whisper, etc.)
-    bootstrap.py        # DI wiring (Kink container)
-    __init__.py         # AudioToTextRecorder facade (100+ kwargs, lazy init)
-    client.py           # WebSocket client
+    bootstrap.py        # Reusable adapter/callback builders (helpers, not a composition root)
+    __init__.py         # AudioToTextRecorder facade (100+ kwargs, lazy init, composition root)
   stt_server/           # WebSocket STT server (control + data channels)
 ```
 
@@ -157,19 +156,16 @@ The public API. Backward-compatible with monolith's 100+ kwargs.
 
 ## 8. DI & Bootstrap
 
-**Kink container.** `bootstrap.py` is the single composition root.
+The facade (`recorder/__init__.py`, `AudioToTextRecorder._ensure_service`) is the sole composition root. `bootstrap.py` is a helpers module — it exports reusable builders (`build_transcriber`, `build_realtime_transcriber`, `DownloadCallbacks`), the callback bridge (`wire_callback`, `wire_callback_with_text`, `wire_all_callbacks`, `CALLBACK_EVENT_MAP`), the wake-word backend registry (`WAKE_WORD_BACKENDS`), and the language-compatibility guard (`_validate_language_against_model`).
 
-```python
-bootstrap_di(config, callbacks) → RecorderService
-```
+The facade composes:
 
 1. Create EventBus + Clock
-2. Wire callbacks → events
-3. Build adapters (audio source, VAD, transcriber, wake word)
-4. Register in `di[IPort] = adapter`
-5. Create & return RecorderService
+2. Wire callbacks → events via `wire_all_callbacks`
+3. Build adapters (audio source, VAD, transcriber, wake word) using the bootstrap helpers
+4. Construct `RecorderService` with the wired dependencies
 
-**Rule:** Only `bootstrap.py` and the facade instantiate infrastructure. Application/domain never `import` concrete adapters.
+**Rule:** Only the facade instantiates infrastructure. Application/domain never `import` concrete adapters; helpers in `bootstrap.py` are the canonical place for adapter construction logic shared between live composition and model swaps.
 
 ---
 

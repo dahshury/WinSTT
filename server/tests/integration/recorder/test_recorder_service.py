@@ -761,6 +761,24 @@ class TestRecorderService:
         assert transcriber.call_count == 1
         service.shutdown()
 
+    def test_warmup_is_safe_when_main_transcriber_slot_is_none(self) -> None:
+        """Defensive guard: a swap can leave the slot transiently ``None``,
+        and an unlucky warmup re-call should not crash."""
+        service, _, _, _ = self._make_service()
+        service._transcriber = None  # type: ignore[assignment]
+        service.warmup()  # must not raise
+        service.shutdown()
+
+    def test_swap_transcriber_safe_when_old_is_none(self) -> None:
+        """First install (or post-failed-restore state): the old slot is
+        ``None``, so ``swap_transcriber`` skips the shutdown call."""
+        service, _, _, _ = self._make_service()
+        service._transcriber = None  # type: ignore[assignment]
+        new_transcriber = FakeTranscriber()
+        service.swap_transcriber(new_transcriber)
+        assert service._transcriber is new_transcriber
+        service.shutdown()
+
     def test_abort_unblocks_wait_audio(self) -> None:
         """abort() puts a sentinel on the queue so wait_audio() returns False immediately."""
         service, _, _, _ = self._make_service()
@@ -1008,7 +1026,8 @@ class TestRecorderService:
         service.request_model_swap("realtime", "some/model")
         assert len(failures) == 1
         assert failures[0].kind == "realtime"
-        assert "disabled" in failures[0].reason
+        assert "disabled" in failures[0].reason.lower()
+        assert failures[0].detail == "realtime transcription is disabled"
         service.shutdown()
 
     def _swap_service(
@@ -1085,62 +1104,119 @@ class TestRecorderService:
         assert service._config.realtime.realtime_model_type == "onnx-community/whisper-tiny"
         service.shutdown()
 
-    def test_model_swap_load_failure_emits_failed(self) -> None:
+    def test_model_swap_load_failure_emits_failed_and_restores(self) -> None:
+        """Unload-first contract: the old model is shut down BEFORE we try
+        to load the new one, so a failed load can't leave the old in
+        place verbatim — we rebuild it from its saved name. The slot ends
+        up with a fresh instance loaded from the previous config."""
         from src.recorder.domain.events import ModelSwapFailed
 
         service, old, event_bus, _ = self._make_service()
+        original_name = service._config.transcription.model
         failures: list[ModelSwapFailed] = []
         event_bus.subscribe(ModelSwapFailed, failures.append)
 
-        def boom(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
-            raise RuntimeError("disk full")
+        rebuilt = FakeTranscriber()
+        call_log: list[str] = []
 
-        service._load_transcriber = boom  # type: ignore[method-assign]
+        def loader(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+            call_log.append(name)
+            if name == "x/y":
+                raise type("ConnectionError", (Exception,), {})("dns lookup failed")
+            return rebuilt
+
+        service._load_transcriber = loader  # type: ignore[method-assign]
         service.request_model_swap("main", "x/y")
         self._wait_for(lambda: len(failures) == 1)
-        assert "RuntimeError: disk full" in failures[0].reason
-        # Current transcriber untouched.
-        assert service._transcriber is old
+        # Reason is the localised user message; category + detail let
+        # the renderer pick a variant and surface the raw exception.
+        assert failures[0].category == "network"
+        assert "internet" in failures[0].reason.lower()
+        assert "ConnectionError" in failures[0].detail
+        # Old was shut down on the unload phase.
+        assert old.shutdown_called
+        # Restore loaded the previous model name back into the slot.
+        self._wait_for(lambda: service._transcriber is rebuilt)
+        assert "x/y" in call_log
+        assert original_name in call_log
+        assert service._config.transcription.model == original_name
         service.shutdown()
 
-    def test_model_swap_cancelled_mid_download(self) -> None:
+    def test_model_swap_cancelled_mid_download_restores_previous(self) -> None:
         from src.recorder.domain.errors import DownloadCancelledError
         from src.recorder.domain.events import ModelSwapFailed
 
         service, old, event_bus, _ = self._make_service()
+        original_name = service._config.transcription.model
         failures: list[ModelSwapFailed] = []
         event_bus.subscribe(ModelSwapFailed, failures.append)
 
-        def cancelled(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
-            raise DownloadCancelledError(name)
+        rebuilt = FakeTranscriber()
 
-        service._load_transcriber = cancelled  # type: ignore[method-assign]
+        def loader(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+            if name == "x/y":
+                raise DownloadCancelledError(name)
+            return rebuilt
+
+        service._load_transcriber = loader  # type: ignore[method-assign]
         service.request_model_swap("main", "x/y")
         self._wait_for(lambda: len(failures) == 1)
-        assert failures[0].reason == "cancelled"
-        assert service._transcriber is old
+        assert failures[0].category == "cancelled"
+        assert "cancelled" in failures[0].reason.lower()
+        assert old.shutdown_called
+        self._wait_for(lambda: service._transcriber is rebuilt)
+        assert service._config.transcription.model == original_name
+        service.shutdown()
+
+    def test_model_swap_load_failure_with_lost_restore_leaves_slot_empty(self) -> None:
+        """If the restore *also* fails, the slot stays ``None`` and
+        future transcribe calls skip via ``_safe_transcribe``."""
+        from src.recorder.domain.events import ModelSwapFailed
+
+        service, _, event_bus, _ = self._make_service()
+        failures: list[ModelSwapFailed] = []
+        event_bus.subscribe(ModelSwapFailed, failures.append)
+
+        def always_boom(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+            raise RuntimeError("CUDA out of memory")
+
+        service._load_transcriber = always_boom  # type: ignore[method-assign]
+        service.request_model_swap("main", "x/y")
+        self._wait_for(lambda: len(failures) == 1)
+        self._wait_for(lambda: service._transcriber is None)
+        assert failures[0].category == "out_of_memory"
+        # Now a transcribe attempt skips gracefully instead of raising.
+        assert service.transcribe() == ""
         service.shutdown()
 
     def test_model_swap_superseded_when_cancel_set_after_load(self) -> None:
+        """If a newer swap supersedes us between load and commit, the
+        half-built new model is dropped, ``ModelSwapFailed("superseded")``
+        fires, and the previous model is rebuilt into the slot."""
         from src.recorder.domain.events import ModelSwapFailed
 
         service, old, event_bus, _ = self._make_service()
+        original_name = service._config.transcription.model
         failures: list[ModelSwapFailed] = []
         event_bus.subscribe(ModelSwapFailed, failures.append)
         new_fake = FakeTranscriber()
+        rebuilt = FakeTranscriber()
 
-        def load_then_supersede(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
-            # Simulate a newer swap arriving: set this kind's cancel event
-            # after the model is built but before the commit.
-            service._swap_cancel_events["main"].set()
-            return new_fake
+        def loader(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+            if name == "x/y":
+                # Simulate a newer swap arriving mid-load.
+                service._swap_cancel_events["main"].set()
+                return new_fake
+            return rebuilt
 
-        service._load_transcriber = load_then_supersede  # type: ignore[method-assign]
+        service._load_transcriber = loader  # type: ignore[method-assign]
         service.request_model_swap("main", "x/y")
         self._wait_for(lambda: len(failures) == 1)
-        assert failures[0].reason == "superseded"
-        assert service._transcriber is old
-        assert new_fake.shutdown_called  # half-built model dropped
+        assert failures[0].category == "superseded"
+        assert new_fake.shutdown_called  # half-built new is dropped
+        assert old.shutdown_called  # old was already shut down on the unload phase
+        self._wait_for(lambda: service._transcriber is rebuilt)
+        assert service._config.transcription.model == original_name
         service.shutdown()
 
     def test_request_model_swap_cancels_prior_inflight(self) -> None:
@@ -1250,6 +1326,25 @@ class TestRecorderService:
         service._config.realtime.realtime_model_type = "onnx-community/whisper-tiny"
         info = service.runtime_info()
         assert info["realtime_model"] == "onnx-community/whisper-tiny"
+        service.shutdown()
+
+    def test_runtime_info_quantization_normalises_empty(self) -> None:
+        """Empty-string quantization (the default fp32 export) is reported as
+        the empty string; non-empty quants are passed through verbatim.
+        Exercises both branches of the `or ""` normalisation so the
+        ``onnx_quantization`` / ``realtime_quantization`` fields are honest
+        when the user hasn't picked a specific precision."""
+        service, _, _, _ = self._make_service()
+        # Default fp32: empty string in config → empty string in runtime_info
+        service._config.transcription.onnx_quantization = ""
+        info = service.runtime_info()
+        assert info["onnx_quantization"] == ""
+        assert info["realtime_quantization"] == ""
+        # Specific quant survives the normalisation
+        service._config.transcription.onnx_quantization = "fp16"
+        info = service.runtime_info()
+        assert info["onnx_quantization"] == "fp16"
+        assert info["realtime_quantization"] == "fp16"
         service.shutdown()
 
     # ---- extracted helper unit tests ----
@@ -1382,21 +1477,20 @@ class TestRecorderService:
             stop.set()
             thread.join()
 
-    def test_shutdown_old_transcriber_swallows_exception(self) -> None:
+    def test_shutdown_transcriber_safely_swallows_exception(self) -> None:
         old = FakeTranscriber()
-        new = FakeTranscriber()
 
         def boom() -> None:
             raise RuntimeError("ort cleanup blew up")
 
         old.shutdown = boom  # type: ignore[method-assign]
-        # Old differs from new → shutdown is attempted, exception swallowed.
-        RecorderService._shutdown_old_transcriber("main", old, new)
+        # Exception must be swallowed so the swap worker can keep
+        # making progress toward installing the new model.
+        RecorderService._shutdown_transcriber_safely("main", old)
 
-    def test_shutdown_old_transcriber_noop_when_same_instance(self) -> None:
-        same = FakeTranscriber()
-        RecorderService._shutdown_old_transcriber("main", same, same)
-        assert not same.shutdown_called
+    def test_shutdown_transcriber_safely_noop_when_none(self) -> None:
+        # First-install case: nothing in the slot yet, helper is a no-op.
+        RecorderService._shutdown_transcriber_safely("main", None)
 
     def test_handle_audio_read_error_stops_after_max_errors(self) -> None:
         service, _, _, _ = self._make_service()
@@ -1470,6 +1564,87 @@ class TestRecorderService:
         service._audio_buffer.add_frame(chunk)
         service._realtime_committed_frames = 0
         assert service._realtime_commit_if_needed() == 0
+        service.shutdown()
+
+    def test_commit_chunk_skips_when_realtime_transcriber_is_none(self) -> None:
+        """During an unload-first realtime swap the slot is briefly None;
+        ``_commit_chunk`` must skip instead of crashing."""
+        service, _, _, _ = self._make_service(realtime_transcriber=FakeTranscriber())
+        chunk = struct.pack("<512h", *([100] * 512))
+        for _ in range(10):
+            service._audio_buffer.add_frame(chunk)
+        # Detach the realtime transcriber to simulate the mid-swap state.
+        service._realtime_transcriber = None
+        service._realtime_committed_text = ""
+        service._commit_chunk(0, 5)
+        assert service._realtime_committed_text == ""
+        service.shutdown()
+
+    def test_realtime_publish_fresh_skips_when_realtime_transcriber_is_none(self) -> None:
+        service, _, _, _ = self._make_service(realtime_transcriber=FakeTranscriber())
+        # State machine must be in a recording state so the function
+        # reaches the transcribe call (it early-exits otherwise — see the
+        # adjacent test for that branch).
+        service.listen()
+        service.start()
+        chunk = struct.pack("<512h", *([100] * 512))
+        for _ in range(10):
+            service._audio_buffer.add_frame(chunk)
+        service._realtime_transcriber = None
+        service._last_realtime_text = "untouched"
+        service._realtime_publish_fresh(0)
+        # _safe_transcribe returned None → realtime worker bailed
+        # without overwriting the cached text.
+        assert service._last_realtime_text == "untouched"
+        service.shutdown()
+
+    def test_realtime_publish_fresh_early_exits_when_not_recording(self) -> None:
+        """Optimization guard: realtime worker bails before transcribing if
+        the user has already ended dictation (saves ~390ms at end of clip)."""
+        rt = FakeTranscriber()
+        service, _, _, _ = self._make_service(realtime_transcriber=rt)
+        # No listen/start — state stays INACTIVE, so the early-exit fires.
+        chunk = struct.pack("<512h", *([100] * 512))
+        for _ in range(10):
+            service._audio_buffer.add_frame(chunk)
+        service._realtime_publish_fresh(0)
+        assert rt.call_count == 0
+        service.shutdown()
+
+    def test_run_full_transcription_returns_empty_when_main_transcriber_is_none(self) -> None:
+        """Main transcribe path during the swap returns "" instead of crashing."""
+        service, _, _, _ = self._make_service()
+        service._transcriber = None  # type: ignore[assignment]
+        audio = np.zeros(16000, dtype=np.float32)
+        text = service._run_full_transcription(audio, frame_count=10, audio_seconds=0.5)
+        assert text == ""
+        service.shutdown()
+
+    def test_attempt_restore_returns_no_previous_when_name_empty(self) -> None:
+        """Edge case: first install (no prior model). ``_attempt_restore``
+        is a no-op and the benchmark line tags the swap accordingly."""
+        from src.recorder.application.swap_benchmark import SwapBenchmark
+
+        service, _, _, _ = self._make_service()
+        bench = SwapBenchmark("main", "x/y")
+        outcome = service._attempt_restore("main", "", bench)
+        assert outcome == "no_previous"
+        service.shutdown()
+
+    def test_attempt_restore_lost_when_rebuild_fails(self) -> None:
+        """If rebuilding the previous model also fails, the slot is left
+        empty and the benchmark line tags it as ``lost``."""
+        from src.recorder.application.swap_benchmark import SwapBenchmark
+
+        service, _, _, _ = self._make_service()
+
+        def always_boom(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+            raise RuntimeError("ENOSPC")
+
+        service._load_transcriber = always_boom  # type: ignore[method-assign]
+        bench = SwapBenchmark("main", "x/y")
+        outcome = service._attempt_restore("main", "previous/model", bench)
+        assert outcome == "lost"
         service.shutdown()
 
     def test_commit_chunk_skips_append_when_text_blank(self) -> None:

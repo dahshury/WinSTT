@@ -16,6 +16,7 @@ from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import (
     AudioChunkRecorded,
     AudioLevelComputed,
+    DeviceBecameAvailable,
     DeviceSwitchFailed,
     DownloadProgress,
     ModelSwapCompleted,
@@ -24,13 +25,16 @@ from src.recorder.domain.events import (
     NoAudioDetected,
     RealtimeTranscriptionStabilized,
     RealtimeTranscriptionUpdate,
+    RecorderEvent,
     RecordingStarted,
     RecordingStopped,
+    SpeakerSegmentsDetected,
     TranscriptionStarted,
     TurnDetectionStarted,
     TurnDetectionStopped,
     VADDetectStarted,
     VADDetectStopped,
+    VADSensitivityAdapted,
     VADStarted,
     VADStopped,
     WakeWordDetected,
@@ -77,7 +81,7 @@ class DownloadCallbacks:
 
 
 # Callback name -> event type mapping for the bridge
-CALLBACK_EVENT_MAP: dict[str, type] = {
+CALLBACK_EVENT_MAP: dict[str, type[RecorderEvent]] = {
     "on_recording_start": RecordingStarted,
     "on_recording_stop": RecordingStopped,
     "on_no_audio_detected": NoAudioDetected,
@@ -97,18 +101,21 @@ CALLBACK_EVENT_MAP: dict[str, type] = {
     "on_realtime_transcription_stabilized": RealtimeTranscriptionStabilized,
     "on_audio_level": AudioLevelComputed,
     "on_device_switch_failed": DeviceSwitchFailed,
+    "on_device_became_available": DeviceBecameAvailable,
     "on_model_swap_started": ModelSwapStarted,
     "on_model_swap_completed": ModelSwapCompleted,
     "on_model_swap_failed": ModelSwapFailed,
+    "on_vad_sensitivity_adapted": VADSensitivityAdapted,
+    "on_speaker_segments_detected": SpeakerSegmentsDetected,
 }
 
 
-def wire_callback(event_bus: EventBus, event_type: type, callback: SimpleCallback) -> None:
+def wire_callback(event_bus: EventBus, event_type: type[RecorderEvent], callback: SimpleCallback) -> None:
     """Wire a legacy callback to the event bus."""
     event_bus.subscribe(event_type, lambda _event: callback())
 
 
-def wire_callback_with_text(event_bus: EventBus, event_type: type, callback: TextCallback) -> None:
+def wire_callback_with_text(event_bus: EventBus, event_type: type[RecorderEvent], callback: TextCallback) -> None:
     """Wire a legacy callback that receives text argument."""
 
     def _handler(event: object) -> None:
@@ -117,7 +124,7 @@ def wire_callback_with_text(event_bus: EventBus, event_type: type, callback: Tex
     event_bus.subscribe(event_type, _handler)
 
 
-def wire_callback_with_level(event_bus: EventBus, event_type: type, callback: LevelCallback) -> None:
+def wire_callback_with_level(event_bus: EventBus, event_type: type[RecorderEvent], callback: LevelCallback) -> None:
     """Wire a legacy callback that receives a float level argument."""
 
     def _handler(event: object) -> None:
@@ -126,7 +133,7 @@ def wire_callback_with_level(event_bus: EventBus, event_type: type, callback: Le
     event_bus.subscribe(event_type, _handler)
 
 
-def wire_callback_with_audio(event_bus: EventBus, event_type: type, callback: SimpleCallback) -> None:
+def wire_callback_with_audio(event_bus: EventBus, event_type: type[RecorderEvent], callback: SimpleCallback) -> None:
     """Wire the on_transcription_start callback that receives audio bytes."""
 
     def _handler(event: object) -> None:
@@ -139,7 +146,7 @@ def wire_callback_with_audio(event_bus: EventBus, event_type: type, callback: Si
 
 def wire_callback_with_device_switch(
     event_bus: EventBus,
-    event_type: type,
+    event_type: type[RecorderEvent],
     callback: Callable[[int, str, int | None], None],
 ) -> None:
     """Wire the on_device_switch_failed callback (3 args: requested, error, fallback)."""
@@ -151,9 +158,22 @@ def wire_callback_with_device_switch(
     event_bus.subscribe(event_type, _handler)
 
 
+def wire_callback_with_device_index(
+    event_bus: EventBus,
+    event_type: type[RecorderEvent],
+    callback: Callable[[int], None],
+) -> None:
+    """Wire the on_device_became_available callback (1 arg: device_index)."""
+
+    def _handler(event: object) -> None:
+        callback(cast(DeviceBecameAvailable, event).device_index)
+
+    event_bus.subscribe(event_type, _handler)
+
+
 def wire_callback_with_model_swap(
     event_bus: EventBus,
-    event_type: type,
+    event_type: type[RecorderEvent],
     callback: Callable[[str, str], None],
 ) -> None:
     """Wire ModelSwapStarted / ModelSwapCompleted callbacks (kind, name)."""
@@ -167,14 +187,47 @@ def wire_callback_with_model_swap(
 
 def wire_callback_with_model_swap_failed(
     event_bus: EventBus,
-    event_type: type,
-    callback: Callable[[str, str, str], None],
+    event_type: type[RecorderEvent],
+    callback: Callable[[str, str, str, str, str], None],
 ) -> None:
-    """Wire ModelSwapFailed callback (kind, name, reason)."""
+    """Wire ModelSwapFailed callback (kind, name, reason, category, detail).
+
+    ``reason`` is the human-readable headline, ``category`` is the
+    stable enum code the renderer keys off, and ``detail`` is the
+    technical exception text for support diagnostics.
+    """
 
     def _handler(event: object) -> None:
         e = cast(ModelSwapFailed, event)
-        callback(e.kind, e.name, e.reason)
+        callback(e.kind, e.name, e.reason, e.category, e.detail)
+
+    event_bus.subscribe(event_type, _handler)
+
+
+def wire_callback_with_vad_sensitivity(
+    event_bus: EventBus,
+    event_type: type[RecorderEvent],
+    callback: Callable[[float, float, float], None],
+) -> None:
+    """Wire VADSensitivityAdapted callback (new_sensitivity, noise_floor, peak)."""
+
+    def _handler(event: object) -> None:
+        e = cast(VADSensitivityAdapted, event)
+        callback(e.new_sensitivity, e.noise_floor_rms, e.speech_peak_rms)
+
+    event_bus.subscribe(event_type, _handler)
+
+
+def wire_callback_with_speaker_segments(
+    event_bus: EventBus,
+    event_type: type[RecorderEvent],
+    callback: Callable[[tuple[Any, ...]], None],
+) -> None:
+    """Wire ``on_speaker_segments_detected`` (receives the segments tuple)."""
+
+    def _handler(event: object) -> None:
+        e = cast(SpeakerSegmentsDetected, event)
+        callback(e.segments)
 
     event_bus.subscribe(event_type, _handler)
 
@@ -199,10 +252,32 @@ def wire_all_callbacks(event_bus: EventBus, callbacks: CallbackMap) -> None:
                 event_type,
                 cast(Callable[[int, str, int | None], None], cb_func),
             )
+        elif event_type is DeviceBecameAvailable:
+            wire_callback_with_device_index(
+                event_bus,
+                event_type,
+                cast(Callable[[int], None], cb_func),
+            )
         elif event_type in {ModelSwapStarted, ModelSwapCompleted}:
             wire_callback_with_model_swap(event_bus, event_type, cast(Callable[[str, str], None], cb_func))
         elif event_type is ModelSwapFailed:
-            wire_callback_with_model_swap_failed(event_bus, event_type, cast(Callable[[str, str, str], None], cb_func))
+            wire_callback_with_model_swap_failed(
+                event_bus,
+                event_type,
+                cast(Callable[[str, str, str, str, str], None], cb_func),
+            )
+        elif event_type is VADSensitivityAdapted:
+            wire_callback_with_vad_sensitivity(
+                event_bus,
+                event_type,
+                cast(Callable[[float, float, float], None], cb_func),
+            )
+        elif event_type is SpeakerSegmentsDetected:
+            wire_callback_with_speaker_segments(
+                event_bus,
+                event_type,
+                cast(Callable[[tuple[Any, ...]], None], cb_func),
+            )
         else:
             wire_callback(event_bus, event_type, cast(SimpleCallback, cb_func))
 
@@ -225,7 +300,11 @@ def build_transcriber(
     catalog = ModelCatalog()
     info = catalog.get(model_name)
     onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
-    quantization = config.transcription.onnx_quantization or None
+    quantization = _resolve_quantization(
+        config.transcription.onnx_quantization,
+        config.transcription.device,
+        info.param_count if info else 0,
+    )
     from src.recorder.infrastructure.device import providers_for_device
 
     providers = providers_for_device(config.transcription.device)
@@ -238,6 +317,75 @@ def build_transcriber(
         providers=providers,
         on_download_progress=progress_handler,
     )
+
+
+#: Auto-fp16-on-CUDA only kicks in for models at or above this param count.
+#: Smaller models lose to fp32 because cast overhead at encoder/decoder I/O
+#: dominates the small attention compute. Threshold benchmarked on RTX 3080 Ti
+#: against ``physicsworks.wav`` (see ``server/scratch/bench_fp16_crossover.log``):
+#:
+#: - tiny (39M):  fp32 718x rtf, fp16 434x rtf  -> fp32 wins 1.7x
+#: - base (74M):  fp32 384x rtf, fp16 329x rtf  -> fp32 wins 1.2x
+#: - small (244M): tied (~159x rtf both)
+#: - large-v3-turbo (809M): fp32 73x rtf, fp16 245x rtf  -> fp16 wins 3.4x
+#:
+#: 500M is the breakeven floor: below it fp16 is at best tied and at worst
+#: noticeably slower; above it fp16 starts winning materially.
+_FP16_AUTO_PARAM_THRESHOLD: int = 500_000_000
+
+
+def _resolve_quantization(requested: str, device: str, param_count: int = 0) -> str | None:
+    """Resolve ``onnx_quantization`` to what onnx-asr should load.
+
+    Behaviour:
+
+    * **``"auto"`` / ``""``** — picks fp16 on CUDA only for models at or
+      above :data:`_FP16_AUTO_PARAM_THRESHOLD` (500M params). Smaller
+      models stay on fp32 because cast overhead at the encoder/decoder
+      I/O boundaries dominates their compute (benchmark: tiny 718x rtf
+      fp32 vs 434x rtf fp16; small ties; large-v3-turbo 73x rtf fp32 vs
+      245x rtf fp16). On CPU, auto is *always* fp32: ORT's
+      CPUExecutionProvider has no fp16 kernels, so fp16 there casts to
+      fp32 internally then back, paying double overhead (tiny.en CPU 158x
+      vs 56x rtf). Empty string is treated as auto for backward compat
+      with configs persisted before the default flipped from ``""``
+      (fp32-explicit) to ``"auto"``.
+    * **Concrete fp16** — pass through. Users who explicitly select fp16
+      hit the patch-on-load path in
+      :class:`~src.recorder.infrastructure.onnxasr_transcriber.OnnxAsrTranscriber`
+      that repairs the malformed onnx-community decoder (subgraph output
+      names + dtype annotations) and lowers the session optimization
+      level past LAYOUT to dodge the ORT ``SimplifiedLayerNormFusion``
+      bug on the fp16 encoder.
+    * **Concrete sub-fp16** (``int8`` / ``q4`` / ``q4f16`` / ``bnb4`` / ``uint8``)
+      on CUDA — silently fall back to fp32 with a warning. ORT's
+      CUDAExecutionProvider can't fuse Q/DQ nodes (every one runs via
+      scatter-gather at fp32 anyway) and per-channel int8 has a known
+      Whisper-encoder hallucination bug (microsoft/onnxruntime#25489) we
+      benchmark-confirmed locally. Honoring the request would be actively
+      harmful.
+    """
+    from src.recorder.domain.model_registry import _GPU_COMPATIBLE_QUANTIZATIONS
+    from src.recorder.infrastructure.device import resolve_device
+
+    resolved_dev = resolve_device(device)
+    quant = (requested or "").strip()
+
+    if quant in {"auto", ""}:
+        if resolved_dev == "cuda" and param_count >= _FP16_AUTO_PARAM_THRESHOLD:
+            return "fp16"
+        return None
+
+    if resolved_dev == "cuda" and quant not in _GPU_COMPATIBLE_QUANTIZATIONS:
+        logger.warning(
+            "onnx_quantization=%r requested but not GPU-compatible on "
+            "CUDAExecutionProvider (it would fall back to fp32 compute and "
+            "is prone to hallucination). Loading fp32 instead. To use this "
+            "quantization, switch the transcription device to 'cpu'.",
+            quant,
+        )
+        return None
+    return quant
 
 
 def build_realtime_transcriber(
@@ -254,7 +402,11 @@ def build_realtime_transcriber(
     catalog = ModelCatalog()
     info = catalog.get(model_name)
     onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
-    quantization = config.transcription.onnx_quantization or None
+    quantization = _resolve_quantization(
+        config.transcription.onnx_quantization,
+        config.transcription.device,
+        info.param_count if info else 0,
+    )
     from src.recorder.infrastructure.device import providers_for_device
 
     providers = providers_for_device(config.transcription.device)

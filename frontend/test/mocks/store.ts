@@ -70,7 +70,6 @@ const STORE_DEFAULTS: Record<string, unknown> = {
 		liveTranscriptionDisplay: "both",
 		visualizerType: "bar",
 		visualizerBarCount: 9,
-		visualizerColor: "#58a6ff",
 	},
 	quality: {
 		enableRealtimeTranscription: true,
@@ -84,17 +83,24 @@ const STORE_DEFAULTS: Record<string, unknown> = {
 		sileroDeactivityDetection: true,
 	},
 	llm: {
-		enabled: false,
-		dictationEnabled: true,
-		transformsEnabled: false,
-		provider: "ollama",
-		model: "",
-		presets: [{ key: "neutral" }],
 		endpoint: "http://localhost:11434",
 		openrouterApiKey: "",
-		openrouterModel: "",
-		openrouterFallbackModel: "",
-		timeout: 5000,
+		dictation: {
+			enabled: false,
+			provider: "ollama",
+			model: "",
+			openrouterModel: "",
+			openrouterFallbackModel: "",
+			presets: [{ key: "neutral" }],
+		},
+		transforms: {
+			enabled: false,
+			provider: "ollama",
+			model: "",
+			openrouterModel: "",
+			openrouterFallbackModel: "",
+			prompts: [],
+		},
 	},
 };
 

@@ -22,10 +22,21 @@ describe("useTranscriptionStore initial state (factory defaults)", () => {
 	test("starts with a null ephemeral message", () => {
 		expect(useTranscriptionStore.getInitialState().ephemeral).toBeNull();
 	});
+
+	test("starts with isRecordingActive set to false", () => {
+		// Locks the default so the overlay pill stays hidden on a fresh
+		// renderer mount until a real recording_start event flips this true.
+		expect(useTranscriptionStore.getInitialState().isRecordingActive).toBe(false);
+	});
 });
 
 beforeEach(() => {
-	useTranscriptionStore.setState({ items: [], currentRealtime: "", ephemeral: null });
+	useTranscriptionStore.setState({
+		items: [],
+		currentRealtime: "",
+		ephemeral: null,
+		isRecordingActive: false,
+	});
 });
 
 describe("useTranscriptionStore", () => {
@@ -47,6 +58,21 @@ describe("useTranscriptionStore", () => {
 		const items = useTranscriptionStore.getState().items;
 		expect(items.map((i) => i.text)).toEqual(["first", "second"]);
 		expect(items[0]?.id).not.toBe(items[1]?.id);
+	});
+
+	test("addFinalSentence caps the live feed at 500 items (drops oldest)", () => {
+		// Append 501 sentences; the very first one should fall off and the
+		// oldest retained entry should be #1, not #0. Without the cap, the
+		// feed grows unbounded across a long dictation session — O(N²) total
+		// allocation pressure since `addFinalSentence` does `[...items, new]`.
+		const total = 501;
+		for (let i = 0; i < total; i++) {
+			useTranscriptionStore.getState().addFinalSentence(`sentence-${i}`);
+		}
+		const items = useTranscriptionStore.getState().items;
+		expect(items).toHaveLength(500);
+		expect(items[0]?.text).toBe("sentence-1");
+		expect(items.at(-1)?.text).toBe(`sentence-${total - 1}`);
 	});
 
 	test("setRealtimeText replaces the live preview", () => {
@@ -78,5 +104,18 @@ describe("useTranscriptionStore", () => {
 		expect(state.items).toEqual([]);
 		expect(state.currentRealtime).toBe("");
 		expect(state.ephemeral).toBeNull();
+	});
+
+	test("setRecordingActive toggles the isRecordingActive flag", () => {
+		useTranscriptionStore.getState().setRecordingActive(true);
+		expect(useTranscriptionStore.getState().isRecordingActive).toBe(true);
+		useTranscriptionStore.getState().setRecordingActive(false);
+		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
+	});
+
+	test("clearAll also resets isRecordingActive to false", () => {
+		useTranscriptionStore.getState().setRecordingActive(true);
+		useTranscriptionStore.getState().clearAll();
+		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
 	});
 });

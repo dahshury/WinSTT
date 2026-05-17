@@ -2,6 +2,7 @@ import { uIOhook } from "uiohook-napi";
 import { dbg } from "../lib/debug-log";
 import { parseAccelerator } from "../lib/keycodes";
 import { store } from "../lib/store";
+import { isPasteGuardActive } from "./hotkey";
 import { applyTransform } from "./transforms";
 
 interface RegisteredCombo {
@@ -38,7 +39,7 @@ interface RawTransform {
 }
 
 function loadRawTransforms(): RawTransform[] {
-	return (store.get("llm.transforms") ?? []) as RawTransform[];
+	return (store.get("llm.transforms.prompts") ?? []) as RawTransform[];
 }
 
 /**
@@ -118,6 +119,13 @@ function maybeFireCombos(): void {
 }
 
 function handleKeyDown(event: { keycode: number }): void {
+	// Synthetic keystrokes from `winstt-paste.exe --type` flood this hook
+	// at 2 events per character; skip the entire pipeline (Set mutation +
+	// combo iteration) for the duration of the paste. The matching keyup
+	// is also skipped, so the `pressed` set stays balanced.
+	if (isPasteGuardActive()) {
+		return;
+	}
 	pressed.add(event.keycode);
 	maybeFireCombos();
 }
@@ -132,6 +140,11 @@ function isFiredFlagStale(entry: RegisteredCombo): boolean {
 }
 
 function handleKeyUp(event: { keycode: number }): void {
+	// See handleKeyDown — skip synthetic events from the paste binary so
+	// the per-char flood doesn't churn the `pressed` set or combos array.
+	if (isPasteGuardActive()) {
+		return;
+	}
 	pressed.delete(event.keycode);
 	// Clear any fired-flag whose combo is no longer fully held — once the
 	// user releases part of the combo, allow re-fire on next full press.
@@ -159,9 +172,18 @@ export function setupTransformHotkeys(): ListenerHandle {
 	uIOhook.on("keyup", onKeyUp);
 
 	// electron-store onDidChange fires whenever the persisted file changes.
-	// `unknown` reaches us as `unknown` (electron-store v11 stops typing
-	// arbitrary key paths), so we just rebuild on any change to llm.transforms.
+	// The `settings:save` IPC handler rewrites every `llm.*` key on every
+	// save (even transient ones triggered by VAD sensitivity adaptation
+	// after each dictation), so a naive listener rebuilds combos on every
+	// PTT release. Gate on a JSON-stable fingerprint of the transforms
+	// subtree so identical writes are a no-op.
+	let lastTransformsFingerprint = JSON.stringify(loadRawTransforms());
 	storeUnsubscribe = store.onDidChange("llm", () => {
+		const next = JSON.stringify(loadRawTransforms());
+		if (next === lastTransformsFingerprint) {
+			return;
+		}
+		lastTransformsFingerprint = next;
 		rebuildCombos();
 	});
 

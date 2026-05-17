@@ -5,6 +5,8 @@ import { useTranslations } from "next-intl";
 import { useConnectionStore } from "@/entities/connection";
 import { useSettingsStore } from "@/entities/setting";
 import { TranscriptionLine, useTranscriptionStore } from "@/entities/transcription";
+import { Elevated } from "@/shared/lib/surface";
+import { ScrollingText } from "@/shared/ui/scrolling-text";
 import { useAutoScroll } from "../lib/use-auto-scroll";
 
 export function TranscriptionFeed() {
@@ -19,38 +21,41 @@ export function TranscriptionFeed() {
 	const scrollRef = useAutoScroll<HTMLDivElement>([items.length, liveText]);
 
 	return (
-		<ScrollArea.Root className="flex flex-1 flex-col rounded-lg border border-border bg-surface-secondary">
-			<ScrollArea.Viewport
-				className="h-full"
-				ref={scrollRef}
-				style={{
-					WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 20%)",
-				}}
-			>
-				<ScrollArea.Content className="flex flex-1 flex-col p-2">
-					{items.map((item, index) => (
-						<TranscriptionLine index={index} item={item} key={item.id} />
-					))}
-					{liveText && (
-						<TranscriptionLine
-							index={items.length}
-							item={{
-								id: "realtime",
-								type: "realtime",
-								text: liveText,
-								timestamp: 0,
-							}}
-						/>
-					)}
-					{items.length === 0 && !liveText && (
-						<EmptyState connected={connectionStatus === "connected"} />
-					)}
-				</ScrollArea.Content>
-			</ScrollArea.Viewport>
-			<ScrollArea.Scrollbar className="pointer-events-none m-1 flex w-1 justify-center rounded opacity-0 transition-opacity duration-150 data-[hovering]:pointer-events-auto data-[scrolling]:pointer-events-auto data-[hovering]:opacity-100 data-[scrolling]:opacity-100 data-[scrolling]:duration-0">
-				<ScrollArea.Thumb className="w-full rounded bg-foreground-dim" />
-			</ScrollArea.Scrollbar>
-		</ScrollArea.Root>
+		<Elevated className="flex flex-1 flex-col rounded-lg" offset={2}>
+			<ScrollArea.Root className="flex flex-1 flex-col">
+				<ScrollArea.Viewport
+					className="h-full"
+					ref={scrollRef}
+					style={{
+						WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 20%)",
+					}}
+				>
+					<ScrollArea.Content className="flex flex-1 flex-col p-2">
+						{items.map((item, index) => (
+							<TranscriptionLine index={index} item={item} key={item.id} />
+						))}
+						{liveText && (
+							<div className="flex animate-fade-in gap-2 rounded px-3 py-1.5 motion-reduce:animate-none">
+								<div className="mt-1.5 h-3 w-0.5 shrink-0 rounded-full bg-foreground-dim" />
+								<ScrollingText
+									className="flex-1 font-sans text-foreground-muted text-sm italic"
+									fadeColor="var(--color-surface-secondary)"
+									lineHeight={1.625}
+									maxLines={3}
+									text={liveText}
+								/>
+							</div>
+						)}
+						{items.length === 0 && !liveText && (
+							<EmptyState connected={connectionStatus === "connected"} />
+						)}
+					</ScrollArea.Content>
+				</ScrollArea.Viewport>
+				<ScrollArea.Scrollbar className="pointer-events-none m-1 flex w-1 justify-center rounded opacity-0 transition-opacity duration-150 data-[hovering]:pointer-events-auto data-[scrolling]:pointer-events-auto data-[hovering]:opacity-100 data-[scrolling]:opacity-100 data-[scrolling]:duration-0">
+					<ScrollArea.Thumb className="w-full rounded bg-foreground-dim" />
+				</ScrollArea.Scrollbar>
+			</ScrollArea.Root>
+		</Elevated>
 	);
 }
 

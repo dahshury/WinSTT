@@ -22,7 +22,9 @@
       "@/*": ["./src/*"],
       "@spec/*": ["../spec/generated/ts/*"],
       "@electron/*": ["./electron/*"],
-      "@test/*": ["./test/*"]
+      "@test/*": ["./test/*"],
+      "@picker": ["./packages/model-picker/src/index.ts"],
+      "@picker/*": ["./packages/model-picker/src/*"]
     },
     "plugins": [
       {

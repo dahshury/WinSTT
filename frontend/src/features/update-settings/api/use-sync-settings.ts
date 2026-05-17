@@ -66,7 +66,12 @@ function syncModelParams(settings: AppSettings, prev: AppSettings | undefined) {
 	const prevModel = prev?.model;
 	const isInitial = !prev;
 	sendIfChanged(model?.language, prevModel?.language, "language", isInitial);
-	sendIfChanged(model?.model, prevModel?.model, "model", isInitial);
+	// Intentionally NOT syncing `model.model` via set_parameter: every model
+	// change in the UI goes through `sttReloadModel` (stt:reload-model), which
+	// is the canonical swap path. Mirroring it here would fire a second swap
+	// — the recorder's `model.setter` spawns its own swap thread — and the two
+	// races produce duplicate downloads, duplicate Loading logs, and the
+	// download-cancel/revert dance we saw in production.
 }
 
 function syncQualityParams(settings: AppSettings, prev: AppSettings | undefined) {

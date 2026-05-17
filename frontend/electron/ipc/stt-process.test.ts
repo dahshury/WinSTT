@@ -92,6 +92,18 @@ mock.module("../lib/debug-log", () => ({
 	dbgVerbose: (tag: string, ...args: unknown[]) => {
 		dbgCalls.push({ tag, args });
 	},
+	// `getLogger` is consumed transitively by `sentry-main.ts` (imported via
+	// the `breadcrumb` helper added in stt-process.ts). Stub it so this module
+	// can load under test without pulling in the real electron-log transport.
+	getLogger: () => ({
+		info: () => undefined,
+		warn: () => undefined,
+		error: () => undefined,
+		verbose: () => undefined,
+		debug: () => undefined,
+		silly: () => undefined,
+		log: () => undefined,
+	}),
 }));
 
 function dbgHas(tag: string, messageContains: string): boolean {

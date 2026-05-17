@@ -10,6 +10,7 @@ mock.module("../ipc/hotkey", () => ({
 
 let lastClipboard = "";
 let clipboardThrowOnNext = false;
+const emptyImage = { isEmpty: () => true } as unknown as Electron.NativeImage;
 mock.module("electron", () => {
 	const base = electronMock();
 	base.clipboard = {
@@ -24,7 +25,18 @@ mock.module("electron", () => {
 		clear: () => {
 			lastClipboard = "";
 		},
-	};
+		// captureClipboardSnapshot / restoreClipboardSnapshot use these as
+		// part of the multi-format save/restore. The text-only mock surface
+		// is sufficient — the test asserts on `lastClipboard` only.
+		readHTML: () => "",
+		readRTF: () => "",
+		readImage: () => emptyImage,
+		write: (payload: { text?: string }) => {
+			if (typeof payload.text === "string") {
+				lastClipboard = payload.text;
+			}
+		},
+	} as unknown as Electron.Clipboard;
 	// Don't replace `base.app` — other test files share this process-global
 	// mock and rely on full app surface (getPath, on, etc).
 	(base.app as unknown as { isPackaged: boolean }).isPackaged = false;
@@ -45,6 +57,7 @@ mock.module("node:fs", () => ({
 interface SpawnArgs {
 	args: string[];
 	cmd: string;
+	stdin: string;
 }
 const spawnLog: SpawnArgs[] = [];
 const spawnStub: {
@@ -53,13 +66,16 @@ const spawnStub: {
 	hangs: boolean;
 	stderr?: string;
 	throwOnSpawn?: string;
+	/** When set, the Nth spawn uses this exit code instead of `exitCode`. */
+	exitCodeSequence?: number[];
 } = {
 	exitCode: 0,
 	hangs: false,
 };
 mock.module("node:child_process", () => ({
 	spawn: (cmd: string, args: string[]) => {
-		spawnLog.push({ cmd, args });
+		const record: SpawnArgs = { cmd, args, stdin: "" };
+		spawnLog.push(record);
 		if (spawnStub.throwOnSpawn) {
 			const msg = spawnStub.throwOnSpawn;
 			spawnStub.throwOnSpawn = undefined;
@@ -67,6 +83,17 @@ mock.module("node:child_process", () => ({
 		}
 		const handlers = new Map<string, Array<(...a: unknown[]) => void>>();
 		const stderrHandlers: Array<(chunk: Buffer) => void> = [];
+		const stdinHandlers = new Map<string, Array<(...a: unknown[]) => void>>();
+		const stdin = {
+			on: (ev: string, fn: (...a: unknown[]) => void) => {
+				const list = stdinHandlers.get(ev) ?? [];
+				list.push(fn);
+				stdinHandlers.set(ev, list);
+			},
+			end: (text: string) => {
+				record.stdin += text;
+			},
+		};
 		const child = {
 			stdout: {
 				on: () => undefined,
@@ -76,6 +103,9 @@ mock.module("node:child_process", () => ({
 					stderrHandlers.push(fn);
 				},
 			},
+			// Only expose stdin when the caller passed `--type` — mirrors the
+			// real spawnInto() which sets stdio[0] = "pipe" only in that case.
+			stdin: args.includes("--type") ? stdin : null,
 			on: (ev: string, fn: (...a: unknown[]) => void) => {
 				const list = handlers.get(ev) ?? [];
 				list.push(fn);
@@ -83,6 +113,7 @@ mock.module("node:child_process", () => ({
 			},
 			kill: () => undefined,
 		};
+		const spawnIndex = spawnLog.length - 1;
 		// Fire the configured outcome on next microtask so the await in
 		// runBinary actually awaits something.
 		queueMicrotask(() => {
@@ -99,8 +130,9 @@ mock.module("node:child_process", () => ({
 					fn(new Error(spawnStub.emitError));
 				}
 			}
+			const exit = spawnStub.exitCodeSequence?.[spawnIndex] ?? spawnStub.exitCode;
 			for (const fn of handlers.get("close") ?? []) {
-				fn(spawnStub.exitCode);
+				fn(exit);
 			}
 		});
 		return child;
@@ -141,6 +173,7 @@ beforeEach(() => {
 	spawnStub.emitError = undefined;
 	spawnStub.stderr = undefined;
 	spawnStub.throwOnSpawn = undefined;
+	spawnStub.exitCodeSequence = undefined;
 	clipboardThrowOnNext = false;
 });
 
@@ -161,21 +194,25 @@ describe("pasteText", () => {
 		expect(spawnLog.length).toBe(beforeSpawns);
 	});
 
-	test("on win32: writes clipboard, toggles paste guard, spawns winstt-paste.exe", async () => {
+	test("on win32: skips clipboard, toggles guard, spawns winstt-paste.exe --type with text on stdin", async () => {
 		if (process.platform !== "win32") {
 			return;
 		}
 		guardLog.length = 0;
 		spawnLog.length = 0;
+		lastClipboard = "user-prior-content";
 		spawnStub.exitCode = 0;
 		spawnStub.hangs = false;
 		spawnStub.emitError = undefined;
 		pasteText("hello world");
 		await flushPastePending();
-		expect(lastClipboard).toBe("hello world");
+		// CRITICAL: the user's clipboard must NOT be touched in the success path.
+		expect(lastClipboard).toBe("user-prior-content");
 		expect(guardLog).toEqual([true, false]);
 		expect(spawnLog.length).toBe(1);
 		expect(spawnLog[0]?.cmd).toContain("winstt-paste.exe");
+		expect(spawnLog[0]?.args).toEqual(["--type"]);
+		expect(spawnLog[0]?.stdin).toBe("hello world");
 	});
 
 	test("paste guard is cleared even when the binary fails", async () => {
@@ -203,43 +240,68 @@ describe("pasteText", () => {
 		await flushPastePending();
 	});
 
-	test("on win32: serial pastes leave clipboard at the last text and guard cleanly off", async () => {
+	test("on win32: serial pastes never touch the clipboard and guard cleanly toggles", async () => {
 		if (process.platform !== "win32") {
 			return;
 		}
 		guardLog.length = 0;
 		spawnLog.length = 0;
+		lastClipboard = "";
 		spawnStub.exitCode = 0;
 		pasteText("alpha");
 		pasteText("beta");
 		pasteText("gamma");
 		await flushPastePending();
 		expect(guardLog).toEqual([true, false, true, false, true, false]);
-		expect(lastClipboard).toBe("gamma");
+		// Each spawn used --type mode, so clipboard never received the text.
+		expect(lastClipboard).toBe("");
 		expect(spawnLog.length).toBe(3);
+		expect(spawnLog.map((s) => s.stdin)).toEqual(["alpha", "beta", "gamma"]);
 	});
 
-	test("on win32: a paste failure trips the circuit breaker — next paste skips the binary", async () => {
+	test("on win32: --type failure falls back to clipboard + Ctrl+V and restores", async () => {
 		if (process.platform !== "win32") {
 			return;
 		}
 		spawnLog.length = 0;
-		// First paste: simulate a hang (binary fails). Trips the cooldown.
-		spawnStub.exitCode = 1;
-		spawnStub.hangs = false;
+		lastClipboard = "original-clipboard";
+		// First spawn (--type) fails, second spawn (Ctrl+V fallback) succeeds.
+		spawnStub.exitCodeSequence = [1, 0];
+		pasteText("transcript");
+		await flushPastePending();
+		// Two spawns: one --type, one Ctrl+V (no args).
+		expect(spawnLog.length).toBe(2);
+		expect(spawnLog[0]?.args).toEqual(["--type"]);
+		expect(spawnLog[0]?.stdin).toBe("transcript");
+		expect(spawnLog[1]?.args).toEqual([]);
+		// The fallback writes the transcript onto the clipboard then restores
+		// the user's original value. Final state: original is back.
+		expect(lastClipboard).toBe("original-clipboard");
+	});
+
+	test("on win32: cooldown drops the paste silently — clipboard untouched, no spawn", async () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnLog.length = 0;
+		lastClipboard = "user-content";
+		// First paste: BOTH --type and the clipboard fallback fail. Cooldown trips.
+		spawnStub.exitCodeSequence = [1, 1];
 		pasteText("first");
 		await flushPastePending();
-		expect(spawnLog.length).toBe(1);
+		// 2 spawns (type + fallback). Clipboard restored to original.
+		expect(spawnLog.length).toBe(2);
+		expect(lastClipboard).toBe("user-content");
 
-		// Second paste: still within cooldown. Clipboard should update,
-		// but no second binary spawn — protecting against a cascade of
-		// SendInput hangs that could freeze the OS input queue.
+		// Second paste arrives within cooldown — we drop it entirely.
 		spawnLog.length = 0;
-		spawnStub.exitCode = 0; // even if the binary would succeed, we shouldn't try
+		spawnStub.exitCodeSequence = undefined;
+		spawnStub.exitCode = 0;
 		pasteText("second");
 		await flushPastePending();
-		expect(lastClipboard).toBe("second");
+		// No spawn AND no clipboard write — the user's clipboard stays intact.
 		expect(spawnLog.length).toBe(0);
+		expect(lastClipboard).toBe("user-content");
 	});
 });
 

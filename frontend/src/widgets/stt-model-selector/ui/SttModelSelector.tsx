@@ -1,12 +1,12 @@
 "use client";
 
 import { Combobox } from "@base-ui/react/combobox";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { Spinner } from "@/shared/ui/spinner";
-import { groupModelsByAuthor } from "../lib/family-helpers";
+import { type FamilyKey, groupModelsByAuthor } from "../lib/family-helpers";
 import {
 	collectFilterableLanguages,
 	EMPTY_FILTER_STATE,
@@ -14,6 +14,7 @@ import {
 	hasActiveFilters,
 	type SttFilterState,
 } from "../lib/filter-state";
+import { SttFamilyRail } from "./SttFamilyRail";
 import { SttFiltersMenu } from "./SttFiltersMenu";
 import { SttModelList } from "./SttModelList";
 import { SttModelSelectorTrigger } from "./SttModelSelectorTrigger";
@@ -67,6 +68,8 @@ export function SttModelSelector({
 	const [open, setOpen] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
 	const [filters, setFilters] = useState<SttFilterState>(EMPTY_FILTER_STATE);
+	const [activeFamily, setActiveFamily] = useState<FamilyKey | null>(null);
+	const scrollRef = useRef<HTMLDivElement | null>(null);
 
 	const baseModels = applyPrefilter(models, prefilter);
 	// Menu filters (cached / realtime / language / hardware) prune the items;
@@ -84,6 +87,54 @@ export function SttModelSelector({
 	const filtersActive = hasActiveFilters(filters) || searchQuery.trim() !== "";
 	const availableLanguages = collectFilterableLanguages(baseModels);
 
+	// Scroll-spy: as the user scrolls through model cards, find whichever
+	// sticky section header is currently pinned at the top of the visible
+	// list and surface its family as the rail's active tile. We can't use
+	// IntersectionObserver directly on the sticky headers because once
+	// they stick they leave the original threshold zone — instead we read
+	// each section's bounding rect on every scroll tick (cheap; <10 sections)
+	// and pick the one whose top is closest to (but not past) the scroller's
+	// top edge. ``open`` is in the deps so the effect re-runs when the
+	// popup mounts and the ref becomes live.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: groups is intentionally not in deps — re-installing the listener on every keystroke would steal focus from the search input.
+	useEffect(() => {
+		if (!open) {
+			return;
+		}
+		const scroller = scrollRef.current;
+		if (!scroller) {
+			return;
+		}
+		const tick = () => {
+			const headers = scroller.querySelectorAll<HTMLElement>("[data-rail-section]");
+			const scrollerTop = scroller.getBoundingClientRect().top;
+			let bestFamily: FamilyKey | null = null;
+			let bestDistance = Number.POSITIVE_INFINITY;
+			for (const header of headers) {
+				const family = header.dataset.railSection as FamilyKey | undefined;
+				if (!family) {
+					continue;
+				}
+				// A sticky header's getBoundingClientRect().top is the *current*
+				// pinned position, which equals scrollerTop while it's the
+				// top-most section. Pick the section whose top is at or just
+				// above the scroller's top edge (smallest non-negative delta).
+				const delta = header.getBoundingClientRect().top - scrollerTop;
+				const score = delta < -2 ? -delta : delta + 100_000; // prefer the one that's just barely above
+				if (score < bestDistance) {
+					bestDistance = score;
+					bestFamily = family;
+				}
+			}
+			if (bestFamily) {
+				setActiveFamily(bestFamily);
+			}
+		};
+		tick();
+		scroller.addEventListener("scroll", tick, { passive: true });
+		return () => scroller.removeEventListener("scroll", tick);
+	}, [open]);
+
 	const handleSelect = (modelId: string, quantization?: OnnxQuantization) => {
 		onChange(modelId, quantization);
 		setOpen(false);
@@ -96,6 +147,18 @@ export function SttModelSelector({
 		if (next) {
 			handleSelect(next.id);
 		}
+	};
+
+	const handleRailSelect = (family: FamilyKey) => {
+		setActiveFamily(family);
+		const scroller = scrollRef.current;
+		if (!scroller) {
+			return;
+		}
+		const target = scroller.querySelector<HTMLElement>(
+			`[data-rail-section="${CSS.escape(family)}"]`
+		);
+		target?.scrollIntoView({ block: "start", behavior: "smooth" });
 	};
 
 	return (
@@ -141,14 +204,24 @@ export function SttModelSelector({
 									/>
 								</div>
 							</div>
-							<SttModelList
-								currentQuantization={currentQuantization}
-								hasActiveFilters={filtersActive}
-								onSelect={handleSelect}
-								selectedId={value}
-								statesById={statesById}
-								systemInfo={systemInfo}
-							/>
+							<div className="flex min-h-0 flex-1">
+								{groups.length > 1 ? (
+									<SttFamilyRail
+										activeFamily={activeFamily}
+										groups={groups}
+										onSelect={handleRailSelect}
+									/>
+								) : null}
+								<SttModelList
+									currentQuantization={currentQuantization}
+									hasActiveFilters={filtersActive}
+									onSelect={handleSelect}
+									scrollRef={scrollRef}
+									selectedId={value}
+									statesById={statesById}
+									systemInfo={systemInfo}
+								/>
+							</div>
 						</Combobox.Popup>
 					</Combobox.Positioner>
 				</Combobox.Portal>

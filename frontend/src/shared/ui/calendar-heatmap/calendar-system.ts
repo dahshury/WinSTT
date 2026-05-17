@@ -101,7 +101,18 @@ interface HijriParts {
 	y: number;
 }
 
+// Memoize Hijri part extraction keyed by epoch-day. Year-grid and month-grid
+// opens re-resolve the same dates many times; without caching this dominates
+// the main thread (~4k Intl.format calls per Hijri year-grid open).
+const HIJRI_PARTS_CACHE_LIMIT = 4096;
+const hijriPartsCache = new Map<number, HijriParts>();
+
 function hijriPartsOf(date: Date): HijriParts {
+	const epochDay = Math.floor(date.getTime() / MS_PER_DAY);
+	const cached = hijriPartsCache.get(epochDay);
+	if (cached) {
+		return cached;
+	}
 	const parts = hijriNumeric.formatToParts(date);
 	let y = 0;
 	let m = 0;
@@ -115,7 +126,16 @@ function hijriPartsOf(date: Date): HijriParts {
 			d = Number.parseInt(p.value, 10);
 		}
 	}
-	return { y, m, d };
+	const result: HijriParts = { y, m, d };
+	if (hijriPartsCache.size >= HIJRI_PARTS_CACHE_LIMIT) {
+		// Simple FIFO eviction: drop the oldest insertion. Map preserves insertion order.
+		const firstKey = hijriPartsCache.keys().next().value;
+		if (firstKey !== undefined) {
+			hijriPartsCache.delete(firstKey);
+		}
+	}
+	hijriPartsCache.set(epochDay, result);
+	return result;
 }
 
 function startOfHijriMonth(date: Date): Date {
@@ -147,15 +167,19 @@ function startOfHijriYear(date: Date): Date {
 	return addHijriMonths(date, 1 - hijriPartsOf(date).m);
 }
 
+// Average Hijri year is 354.367 days (11 leap × 355 + 19 common × 354 over 30y).
+// Used only to position cell-anchor dates inside the target Hijri year for the
+// year-grid; the displayed label is computed exactly from arithmetic.
+const HIJRI_YEAR_AVG_DAYS = 354;
+
 const hijri: CalendarSystem = {
 	monthLabel: (date) => hijriMonthYear.format(date),
 	monthOnlyLabel: (date) => hijriMonthOnly.format(date),
 	yearLabel: (date) => String(hijriPartsOf(date).y),
 	yearRangeLabel: (date, count) => {
-		const years = hijri.yearsAround(date, count);
-		const first = years[0];
-		const last = years.at(-1);
-		return first && last ? `${first.label} – ${last.label}` : "";
+		const half = Math.floor(count / 2);
+		const anchorYear = hijriPartsOf(date).y;
+		return `${anchorYear - half} – ${anchorYear - half + count - 1}`;
 	},
 	dayNumber: (date) => hijriPartsOf(date).d,
 	isSameDisplayMonth: (a, b) => {
@@ -175,12 +199,28 @@ const hijri: CalendarSystem = {
 		});
 	},
 	yearsAround: (date, count) => {
+		// Year-grid only needs LABELS (Hijri year numbers) plus a Gregorian `date`
+		// that lands somewhere inside that Hijri year so consumers can use it as
+		// an anchor and have `monthsOfYear` normalize it later.
+		//
+		// Pre-fix this walked month-by-month and ran ~4k Intl.format() calls.
+		// We compute the anchor's Hijri year with one cheap call, then for each
+		// cell shift the anchor by `offset × ~354 days`. Drift over the typical
+		// ±6-year span is at most ~6 days, so a mid-year anchor is guaranteed to
+		// stay inside the target Hijri year.
 		const half = Math.floor(count / 2);
-		let cursor = startOfHijriYear(addHijriMonths(date, -half * 12));
-		return Array.from({ length: count }, () => {
-			const entry: LabeledDate = { date: cursor, label: String(hijriPartsOf(cursor).y) };
-			cursor = addHijriMonths(cursor, 12);
-			return entry;
+		const anchorParts = hijriPartsOf(date);
+		const anchorYear = anchorParts.y;
+		// Move the cursor to roughly mid-year (~day 177) of the anchor's Hijri year
+		// using Gregorian day-arithmetic only. (m-1)*~29.5 + d days into the year,
+		// then shift to day 177.
+		const dayInHijriYear = Math.round((anchorParts.m - 1) * 29.5) + anchorParts.d;
+		const midYearBase = addDays(startOfDay(date), 177 - dayInHijriYear);
+		return Array.from({ length: count }, (_, i) => {
+			const yearOffset = i - half;
+			const cellDate =
+				yearOffset === 0 ? midYearBase : addDays(midYearBase, yearOffset * HIJRI_YEAR_AVG_DAYS);
+			return { date: cellDate, label: String(anchorYear + yearOffset) };
 		});
 	},
 };

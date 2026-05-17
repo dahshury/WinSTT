@@ -41,7 +41,7 @@ from src.recorder.infrastructure.file_source import FileAudioSource
 logger = logging.getLogger(__name__)
 
 # Re-export for convenience
-__all__ = ["AudioToTextRecorder", "AudioToTextRecorderClient"]
+__all__ = ["AudioToTextRecorder"]
 
 
 class _BoolFlag:
@@ -137,12 +137,19 @@ class AudioToTextRecorder:
         on_recorded_chunk: ChunkCallback | None = None,
         on_audio_level: LevelCallback | None = None,
         on_device_switch_failed: Callable[[int, str, int | None], None] | None = None,
+        on_device_became_available: Callable[[int], None] | None = None,
         # Model swap lifecycle (Phase 1) — fired when request_model_swap()
         # begins, succeeds, or fails. ``started`` / ``completed`` get (kind, name);
         # ``failed`` adds a third ``reason`` arg.
         on_model_swap_started: Callable[[str, str], None] | None = None,
         on_model_swap_completed: Callable[[str, str], None] | None = None,
         on_model_swap_failed: Callable[[str, str, str], None] | None = None,
+        on_vad_sensitivity_adapted: Callable[[float, float, float], None] | None = None,
+        #: Diarization callback — fires after each utterance when speaker
+        #: segmentation is enabled. Receives the tuple of segments from
+        #: :class:`SpeakerSegmentsDetected`. ``None`` (the default) leaves
+        #: the callback unwired; the recorder still runs without it.
+        on_speaker_segments_detected: Callable[[Any], None] | None = None,
         debug_mode: bool = False,
         handle_buffer_overflow: bool = True,
         beam_size: int = 5,
@@ -170,6 +177,10 @@ class AudioToTextRecorder:
         # Backend selection
         backend: str = "",
         onnx_quantization: str = "",
+        # Diarization — see :class:`DiarizationConfig`. Off by default; first
+        # ``enable_diarization=True`` build downloads ~32 MB of ONNX models.
+        enable_diarization: bool = False,
+        diarization_max_speakers: int = 8,
     ) -> None:
         if suppress_tokens is None:
             suppress_tokens = [-1]
@@ -236,6 +247,11 @@ class AudioToTextRecorder:
             no_log_file=no_log_file,
             use_extended_logging=use_extended_logging,
             start_callback_in_new_thread=start_callback_in_new_thread,
+            # Diarization — route to :class:`DiarizationConfig`. Field names
+            # ``enabled`` / ``max_speakers`` are unique to that sub-config, so
+            # ``_field_owner_index`` lands them in the right bucket.
+            enabled=enable_diarization,
+            max_speakers=diarization_max_speakers,
         )
 
         # Collect callbacks
@@ -259,9 +275,12 @@ class AudioToTextRecorder:
             "on_realtime_transcription_update": on_realtime_transcription_update,
             "on_realtime_transcription_stabilized": on_realtime_transcription_stabilized,
             "on_device_switch_failed": on_device_switch_failed,
+            "on_device_became_available": on_device_became_available,
             "on_model_swap_started": on_model_swap_started,
             "on_model_swap_completed": on_model_swap_completed,
             "on_model_swap_failed": on_model_swap_failed,
+            "on_vad_sensitivity_adapted": on_vad_sensitivity_adapted,
+            "on_speaker_segments_detected": on_speaker_segments_detected,
         }
 
         # Download progress callbacks (typed separately — they accept model name / progress args)
@@ -276,6 +295,7 @@ class AudioToTextRecorder:
         self._clock = Clock.system_clock()
         self._service: RecorderService | None = None
         self._silero_vad: Any = None  # Live SileroVAD reference for runtime sensitivity updates
+        self._vad_calibrator: Any = None  # Cross-utterance Silero sensitivity adapter
         self._init_lock = threading.Lock()
         self.use_microphone = _BoolFlag(use_microphone)
         self._sigint_reinstall: SimpleCallback | None = None
@@ -301,7 +321,7 @@ class AudioToTextRecorder:
 
             audio_source: IAudioSource
             if self._config.audio.use_microphone:
-                from src.recorder.domain.events import DeviceSwitchFailed
+                from src.recorder.domain.events import DeviceBecameAvailable, DeviceSwitchFailed
                 from src.recorder.infrastructure.pyaudio_source import PyAudioSource
 
                 event_bus = self._event_bus
@@ -321,11 +341,20 @@ class AudioToTextRecorder:
                         )
                     )
 
+                def _on_device_became_available(device_index: int) -> None:
+                    event_bus.publish(
+                        DeviceBecameAvailable(
+                            timestamp=clock.get_current_time(),
+                            device_index=device_index,
+                        )
+                    )
+
                 audio_source = PyAudioSource(
                     input_device_index=self._config.audio.input_device_index,
                     target_sample_rate=SampleRate(self._config.audio.sample_rate),
                     buffer_size=BufferSize(self._config.audio.buffer_size),
                     on_device_switch_failed=_on_device_switch_failed,
+                    on_device_became_available=_on_device_became_available,
                 )
             else:
                 audio_source = FileAudioSource(
@@ -380,11 +409,26 @@ class AudioToTextRecorder:
                 else:
                     realtime_transcriber = build_realtime_transcriber(self._config, download_callbacks=dl_cbs)
 
+            # Optional diarizer — only constructed when the feature flag is on,
+            # so disabled users don't pay the ~32 MB first-use download.
+            diarizer: Any = None
+            if self._config.diarization.enabled:
+                from src.recorder.infrastructure.onnxasr_diarizer import OnnxAsrDiarizer
+
+                diarizer = OnnxAsrDiarizer(
+                    max_speakers=self._config.diarization.max_speakers,
+                    delta_new=self._config.diarization.delta_new,
+                    rho_update=self._config.diarization.rho_update,
+                    segmentation_model=self._config.diarization.segmentation_model,
+                    embedding_model=self._config.diarization.embedding_model,
+                )
+
             self._service = RecorderService(
                 audio_source=audio_source,
                 vad=vad,
                 transcriber=transcriber,
                 realtime_transcriber=realtime_transcriber,
+                diarizer=diarizer,
                 config=self._config,
                 event_bus=self._event_bus,
                 clock=self._clock,
@@ -395,6 +439,19 @@ class AudioToTextRecorder:
             # one subscription on the ``model_download_progress`` channel
             # — swaps and initial loads use the exact same event shape.
             self._service.set_swap_progress_sink(dl_cbs.make_progress_handler())
+
+            # Cross-utterance adaptive Silero sensitivity. The calibrator
+            # subscribes to recording lifecycle events on the same bus the
+            # service uses, so wiring is just "construct and forget".
+            from src.recorder.application.vad_calibrator import VADCalibrator
+
+            silero_ref = silero
+            self._vad_calibrator = VADCalibrator(
+                event_bus=self._event_bus,
+                clock=self._clock,
+                get_sensitivity=lambda: silero_ref.sensitivity,
+                set_sensitivity=lambda v: setattr(silero_ref, "sensitivity", v),
+            )
 
             # Sync any microphone state changes made before initialization
             if self.use_microphone.value != self._config.audio.use_microphone:
@@ -650,11 +707,3 @@ class AudioToTextRecorder:
         traceback: TracebackType | None,
     ) -> None:
         self.shutdown()
-
-
-def __getattr__(name: str) -> Any:  # pragma: no cover  # noqa: ANN401
-    if name == "AudioToTextRecorderClient":
-        from src.recorder.client import AudioToTextRecorderClient
-
-        return AudioToTextRecorderClient
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

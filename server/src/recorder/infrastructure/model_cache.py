@@ -83,6 +83,27 @@ def _hub_cache_dir() -> Path | None:
     return Path(hf_constants.HF_HUB_CACHE)
 
 
+def resolve_hf_repo(model_name: str | None) -> str | None:
+    """Map an onnx-asr alias to a real HF ``org/repo`` id.
+
+    Catalog entries for the NeMo / GigaAM / canonical ``whisper-base``
+    families use onnx-asr's short aliases (e.g. ``nemo-canary-1b-v2``)
+    rather than a slashed HF repo id; onnx-asr's resolver maps those at
+    load time and the cache probe needs the same mapping to find the
+    snapshot on disk. Pass-through if the name is already ``org/repo``.
+    Returns ``None`` for empty input or unmapped aliases.
+    """
+    if not model_name:
+        return None
+    if "/" in model_name:
+        return model_name
+    try:
+        from onnx_asr.resolver import model_repos
+    except ImportError:  # pragma: no cover — onnx_asr is a hard dependency
+        return None
+    return model_repos.get(model_name)
+
+
 def _model_snapshot_dir(cache_root: Path, hf_repo_id: str) -> Path:
     """Path of the snapshot directory for ``hf_repo_id`` within the HF cache.
 
@@ -161,6 +182,33 @@ def _state_from_weight_files(weight_files: list[Path], blobs_dir: Path) -> Model
             pass
 
     return ModelCacheState(state="cached", downloaded_bytes=downloaded, total_bytes=downloaded)
+
+
+def delete_cache(hf_repo_id: str) -> bool:
+    """Remove every cached file for ``hf_repo_id`` from the HF hub cache.
+
+    Wipes the entire ``models--<org>--<repo>`` tree — snapshots, blobs,
+    refs, and any in-flight ``.incomplete`` markers — so a subsequent
+    download starts fresh instead of resuming from the partial bytes.
+
+    Returns True when the directory existed and was removed (or partially
+    removed); False when there was nothing on disk to delete. Never
+    raises — the UI calls this from a control command and must always
+    get a deterministic reply, so OS-level errors are swallowed and we
+    proceed as if the cache had been cleared. The next cache probe will
+    surface any residue as ``partial`` and the user can retry.
+    """
+    cache_root = _hub_cache_dir()
+    if cache_root is None:
+        return False
+    safe = "models--" + hf_repo_id.replace("/", "--")
+    repo_dir = cache_root / safe
+    if not repo_dir.exists():
+        return False
+    import shutil
+
+    shutil.rmtree(repo_dir, ignore_errors=True)
+    return True
 
 
 def probe_cache_state(hf_repo_id: str) -> ModelCacheState:

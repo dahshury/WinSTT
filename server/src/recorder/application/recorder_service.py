@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections
+import gc
 import logging
 import queue
 import re
@@ -20,7 +21,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from src.building_blocks.types import TextCallback
+    from src.recorder.application.swap_benchmark import SwapBenchmark
     from src.recorder.domain.model_registry import ModelInfo
+    from src.recorder.domain.ports.transcriber import TranscriptionResult
 from src.recorder.application.pipeline import RecordingPipeline
 from src.recorder.domain.audio_buffer import AudioBuffer
 from src.recorder.domain.config import RecorderConfig
@@ -32,14 +35,22 @@ from src.recorder.domain.events import (
     ModelSwapStarted,
     NoAudioDetected,
     RealtimeTranscriptionUpdate,
+    SpeakerSegmentsDetected,
     TranscriptionCompleted,
     TranscriptionStarted,
 )
 from src.recorder.domain.ports.audio_source import IAudioSource
+from src.recorder.domain.ports.diarizer import IDiarizer
 from src.recorder.domain.ports.transcriber import ITranscriber
 from src.recorder.domain.ports.vad import IVoiceActivityDetector
 from src.recorder.domain.ports.wake_word import IWakeWordDetector
 from src.recorder.domain.state_machine import RecorderState, RecorderStateMachine
+from src.recorder.domain.swap_errors import (
+    SwapErrorCategory,
+    SwapErrorInfo,
+    classify_swap_error,
+    superseded_info,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +121,7 @@ class RecorderService:
         transcriber: ITranscriber,
         wake_word_detector: IWakeWordDetector | None = None,
         realtime_transcriber: ITranscriber | None = None,
+        diarizer: IDiarizer | None = None,
         config: RecorderConfig,
         event_bus: EventBus,
         clock: Clock | None = None,
@@ -119,6 +131,9 @@ class RecorderService:
         self._transcriber = transcriber
         self._wake_word_detector = wake_word_detector
         self._realtime_transcriber = realtime_transcriber
+        # Diarizer is optional — None means "no per-utterance speaker labels".
+        # Wired by the facade only when ``DiarizationConfig.enabled`` is true.
+        self._diarizer = diarizer
         self._config = config
         self._event_bus = event_bus
         self._clock = clock if clock is not None else Clock.system_clock()
@@ -149,7 +164,24 @@ class RecorderService:
         self._realtime_thread: threading.Thread | None = None
         self._transcription_result: queue.Queue[str] = queue.Queue()
         self._feed_buffer = bytearray()
-        self._transcriber_lock = threading.Lock()
+        # Per-slot transcriber locks. The realtime worker and main ``text()``
+        # both call ``_safe_transcribe``; when the slots hold *different*
+        # transcriber instances (the default — ``use_main_model_for_realtime``
+        # is off), serialising them on a single lock means main waits behind
+        # an in-flight realtime full-buffer transcribe at end of dictation
+        # (the realtime fresh-window pass can be ~equal in size to the final
+        # main pass right before PTT release). Profiling showed ~390 ms added
+        # to a JFK-length dictation from that contention. Per-slot locks make
+        # main + realtime independent for the common case while still pinning
+        # the same lock to both slots when they share a transcriber instance
+        # (so the ORT session — which isn't reentrant-safe — is still
+        # serialised against itself).
+        self._main_transcriber_lock = threading.Lock()
+        self._realtime_transcriber_lock: threading.Lock = (
+            self._main_transcriber_lock
+            if realtime_transcriber is not None and realtime_transcriber is transcriber
+            else threading.Lock()
+        )
         # Realtime stable-text accumulator state — owned and reset by the
         # realtime worker thread.
         self._realtime_committed_text: str = ""
@@ -205,6 +237,20 @@ class RecorderService:
 
         self._event_bus.publish(TranscriptionCompleted(timestamp=self._clock.get_current_time(), text=text))
 
+        # Diarization runs *after* the transcript event so a slow diarizer
+        # never delays text delivery to the renderer; the speaker_segments
+        # event reaches the client a beat later and is applied to the
+        # already-rendered text.
+        if self._diarizer is not None and text:
+            try:
+                segments = self._diarizer.diarize(audio)
+            except Exception:  # noqa: BLE001 — never let diarization crash text()
+                logger.exception("[diarizer] diarize failed; skipping speaker_segments emission")
+                segments = ()
+            self._event_bus.publish(
+                SpeakerSegmentsDetected(timestamp=self._clock.get_current_time(), segments=segments)
+            )
+
         self._finalize_transcription_state()
         self._dispatch_transcription_callback(on_transcription_finished, text)
         return text
@@ -218,6 +264,34 @@ class RecorderService:
         rms = float(np.sqrt(np.mean(audio * audio)))
         nonzero_frac = float(np.count_nonzero(audio)) / audio.size
         return peak, rms, nonzero_frac
+
+    def _safe_transcribe(
+        self,
+        transcriber: ITranscriber | None,
+        audio: np.ndarray[Any, Any],
+        language: str,
+        *,
+        lock: threading.Lock | None = None,
+    ) -> TranscriptionResult | None:
+        """Call ``transcriber.transcribe`` under the slot's lock if available.
+
+        Returns ``None`` when the slot is empty or the transcriber is
+        mid-shutdown — both transient states during a model swap. The
+        lock is held for the whole call so the swap worker can't yank
+        the model out from under us between the readiness check and the
+        transcribe call.
+
+        ``lock`` defaults to the main lock for backward compatibility with
+        ``transcribe()`` and warmup paths; explicit per-slot locks are
+        passed by the main-text and realtime-worker call sites so they no
+        longer block each other on different transcriber instances.
+        """
+        if lock is None:
+            lock = self._main_transcriber_lock
+        with lock:
+            if transcriber is None or not transcriber.is_ready():
+                return None
+            return transcriber.transcribe(audio, language)
 
     def _run_full_transcription(
         self,
@@ -243,8 +317,14 @@ class RecorderService:
             nonzero_frac,
         )
         transcribe_start = time.time()
-        with self._transcriber_lock:
-            result = self._transcriber.transcribe(audio, self._config.transcription.language)
+        result = self._safe_transcribe(self._transcriber, audio, self._config.transcription.language)
+        if result is None:
+            # Swap-in-flight: the user's dictation can't be transcribed
+            # right now. Log it so the gap is visible in logs but don't
+            # crash the pipeline. The UI is already showing "Switching
+            # to {model}..." so the user understands why.
+            logger.warning("[main-transcribe] skipped — model swap in progress")
+            return ""
         text = self._preprocess_output(result.text)
         logger.warning(
             "[main-transcribe] done in %.2fs — text length=%d chars",
@@ -452,7 +532,10 @@ class RecorderService:
             logger.warning("%s did not terminate within timeout", label)
 
     def _shutdown_transcribers(self) -> None:
-        self._safe_step("shutting down transcriber", self._transcriber.shutdown)
+        # Slots can be transiently ``None`` if shutdown races with a
+        # model swap that just detached the old transcriber.
+        if self._transcriber is not None:
+            self._safe_step("shutting down transcriber", self._transcriber.shutdown)
         rt = self._realtime_transcriber
         if rt is not None and rt is not self._transcriber:
             self._safe_step("shutting down realtime transcriber", rt.shutdown)
@@ -469,7 +552,11 @@ class RecorderService:
         """
         dummy = np.zeros(16000, dtype=np.float32)  # 1 s silence @ 16 kHz
         lang = self._config.transcription.language
-        self._transcriber.transcribe(dummy, lang)
+        # Warmup runs immediately after construction (before any swap is
+        # possible) but the slots are typed as Optional via the swap
+        # bookkeeping — guard for type safety / defensive code.
+        if self._transcriber is not None:
+            self._transcriber.transcribe(dummy, lang)
         if self._realtime_transcriber is not None:
             self._realtime_transcriber.transcribe(dummy, lang)
 
@@ -540,34 +627,57 @@ class RecorderService:
 
     def transcribe(self) -> str:
         audio = self._audio_buffer.get_audio_array()
-        with self._transcriber_lock:
-            result = self._transcriber.transcribe(audio, self._config.transcription.language)
+        result = self._safe_transcribe(self._transcriber, audio, self._config.transcription.language)
+        if result is None:
+            logger.warning("transcribe() skipped — model swap in progress")
+            return ""
         return self._preprocess_output(result.text)
 
     def swap_transcriber(self, new: ITranscriber) -> None:
-        with self._transcriber_lock:
+        with self._main_transcriber_lock:
             old = self._transcriber
             self._transcriber = new
-        old.shutdown()
+        if old is not None:
+            old.shutdown()
 
     # ── Live model swap ─────────────────────────────────────────────────
     #
-    # The pattern: build the new transcriber on a background thread (so
-    # ``request_model_swap`` returns immediately to the WS handler), keep
-    # the old transcriber active during the build so PTT presses still
-    # work, then atomically swap pointers under ``_transcriber_lock`` once
-    # the new model is loaded. Old model is shut down after the swap to
-    # release ORT sessions (verified bounded RSS — see lifecycle tests in
-    # ``examples/onnx-asr/tests/onnx_asr/test_lifecycle_close.py``).
+    # The pattern (unload-first): ``request_model_swap`` spawns a daemon
+    # thread that emits ``ModelSwapStarted`` immediately and then runs
+    # three phases under the bench:
+    #   1. **unload** — detach the current transcriber from its slot
+    #      under ``_transcriber_lock`` (so concurrent transcribe callers
+    #      see ``None`` and skip via ``_safe_transcribe``) and call
+    #      ``shutdown()`` outside the lock so transcribe callers waiting
+    #      on it aren't blocked on the ORT cleanup walk.
+    #   2. **gc** — ``gc.collect()`` so the ORT session graph (and its
+    #      CUDA allocations) is released *before* we ask CUDA to allocate
+    #      for the new model. Without this the new load may briefly
+    #      contend for VRAM that's still pending dtor.
+    #   3. **load + commit** — build the new transcriber on this thread,
+    #      then atomically install it under ``_transcriber_lock``.
     #
-    # Cancellation: a per-kind ``threading.Event`` is checked from the
-    # download progress callback; setting it raises ``DownloadCancelledError``
-    # mid-download, the thread emits ``ModelSwapFailed`` and exits without
-    # touching the current transcriber.
+    # This costs a brief "no transcriber" window — transcribe attempts
+    # during the swap return empty (main) or skip silently (realtime) —
+    # but the peak memory is now ``max(old, new)`` instead of ``old + new``,
+    # which is the relevant constraint on the GPU build.
     #
-    # Concurrency: only one swap per kind ("main" / "realtime") at a time.
-    # A second request for the same kind cancels the in-flight one (its
-    # half-built transcriber gets dropped) before kicking off the new one.
+    # **Cancellation**: a per-kind ``threading.Event`` is checked from
+    # the download progress callback; setting it raises
+    # ``DownloadCancelledError`` mid-download. The worker emits
+    # ``ModelSwapFailed("cancelled")`` and then attempts to rebuild the
+    # previous model from its saved name (``_attempt_restore``) so the
+    # slot is back to a usable state.
+    #
+    # **Concurrency**: only one swap per kind ("main" / "realtime") at a
+    # time. A second request for the same kind cancels the in-flight one
+    # (its half-built transcriber is shut down) before kicking off the
+    # new one.
+    #
+    # Every swap emits a single ``[swap-benchmark]`` ``logger.info`` line
+    # with phase timings, RSS deltas, and CPU% — that's the only place
+    # the diagnostic numbers are exposed; nothing on the event bus
+    # carries them.
     def set_swap_progress_sink(self, sink: Any | None) -> None:  # noqa: ANN401 — duck-typed callback
         """Install a download-progress callback used by ``request_model_swap``.
 
@@ -617,13 +727,17 @@ class RecorderService:
             msg = f"Unknown model swap kind: {kind!r}"
             raise ValueError(msg)
         if self._realtime_swap_disabled(kind):
-            self._event_bus.publish(
-                ModelSwapFailed(
-                    timestamp=self._clock.get_current_time(),
-                    kind=kind,
-                    name=name,
-                    reason="realtime transcription is disabled",
-                )
+            self._publish_swap_failed(
+                kind,
+                name,
+                SwapErrorInfo(
+                    category=SwapErrorCategory.UNKNOWN,
+                    user_message=(
+                        "Realtime transcription is disabled — enable it in "
+                        "Settings → Model to swap the realtime model."
+                    ),
+                    technical_detail="realtime transcription is disabled",
+                ),
             )
             return False
         return True
@@ -636,52 +750,194 @@ class RecorderService:
         if prior_cancel is not None:
             prior_cancel.set()
 
-    def _publish_swap_failed(self, kind: str, name: str, reason: str) -> None:
+    def _publish_swap_failed(self, kind: str, name: str, info: SwapErrorInfo) -> None:
+        """Emit a structured ``ModelSwapFailed`` carrying category + detail.
+
+        ``info.user_message`` becomes ``reason`` — the renderer treats
+        that as the toast headline. ``info.category`` is the stable
+        enum code the renderer keys off to pick its localised variant.
+        ``info.technical_detail`` is for the log line / bug report.
+        """
         self._event_bus.publish(
             ModelSwapFailed(
                 timestamp=self._clock.get_current_time(),
                 kind=kind,
                 name=name,
-                reason=reason,
+                reason=info.user_message,
+                category=info.category.value,
+                detail=info.technical_detail,
             )
         )
 
     def _swap_worker(self, kind: str, name: str, cancel_event: threading.Event) -> None:
-        """Background worker that builds + swaps a transcriber. Emits lifecycle events."""
-        self._event_bus.publish(ModelSwapStarted(timestamp=self._clock.get_current_time(), kind=kind, name=name))
-        new_transcriber = self._build_new_transcriber(kind, name, cancel_event)
-        if new_transcriber is None:
-            return
-        # New transcriber is loaded — do the atomic pointer swap. The
-        # transcribe path acquires ``_transcriber_lock`` for every call,
-        # so this is safe even during an active recording cycle.
-        if cancel_event.is_set():
-            # A newer swap was requested mid-load; drop this one rather
-            # than racing the newer swap's worker.
-            new_transcriber.shutdown()
-            self._publish_swap_failed(kind, name, "superseded")
-            return
-        old = self._commit_swap(kind, name, new_transcriber)
-        self._shutdown_old_transcriber(kind, old, new_transcriber)
-        self._event_bus.publish(ModelSwapCompleted(timestamp=self._clock.get_current_time(), kind=kind, name=name))
+        """Background worker: unload old → load new → commit.
 
-    def _build_new_transcriber(
+        Unload-first ordering eliminates the brief memory peak where both
+        models coexist in RAM/VRAM. While the new model is being loaded
+        the slot is None, so concurrent transcribe attempts short-circuit
+        (see ``_safe_transcribe``). If the new load fails or is
+        superseded, we attempt to rebuild the previous model from its
+        saved name so the user isn't left without a transcriber.
+
+        Every swap emits a single ``[swap-benchmark]`` log line with
+        per-phase timings, RSS deltas, and CPU% — that's the only place
+        these numbers are exposed; nothing on the event bus has the
+        diagnostic payload.
+        """
+        from src.recorder.application.swap_benchmark import SwapBenchmark
+
+        bench = SwapBenchmark(kind, name)
+        self._event_bus.publish(ModelSwapStarted(timestamp=self._clock.get_current_time(), kind=kind, name=name))
+
+        # Remember which model was loaded before we tear it down, so a
+        # failed load can put it back. The config still holds the old
+        # name at this point — ``_install_transcriber`` writes the new
+        # one only after a successful commit.
+        previous_name = self._previous_model_name(kind)
+
+        # ── Phase 1: unload old + GC ───────────────────────────────
+        old = self._detach_current_transcriber(kind)
+        with bench.phase("unload"):
+            self._shutdown_transcriber_safely(kind, old)
+        # gc.collect() forces Python to drop the now-unreferenced ORT
+        # session graph synchronously. Without it, the dtor (and the
+        # corresponding CUDA free) runs on a later GC pass and the new
+        # load may briefly contend for VRAM that's still pending release.
+        with bench.phase("gc"):
+            gc.collect()
+        bench.sample_memory("after_unload")
+
+        # ── Phase 2: load new ──────────────────────────────────────
+        new_transcriber, load_outcome = self._load_new_for_swap(kind, name, cancel_event, bench)
+        bench.sample_memory("after_load")
+
+        if new_transcriber is None or cancel_event.is_set():
+            # Drop the (now-orphan) half-built new transcriber if a
+            # newer swap superseded us between load and commit. The
+            # newer swap's worker will handle the next install.
+            if new_transcriber is not None and cancel_event.is_set():
+                self._shutdown_transcriber_safely(kind, new_transcriber)
+                self._publish_swap_failed(kind, name, superseded_info(name))
+                load_outcome = "superseded"
+            restore_outcome = self._attempt_restore(kind, previous_name, bench)
+            bench.log(f"{load_outcome}_{restore_outcome}")
+            return
+
+        # ── Phase 3: commit ────────────────────────────────────────
+        with bench.phase("commit"):
+            self._install_transcriber(kind, name, new_transcriber)
+
+        self._event_bus.publish(ModelSwapCompleted(timestamp=self._clock.get_current_time(), kind=kind, name=name))
+        bench.log("completed")
+
+    def _previous_model_name(self, kind: str) -> str:
+        """Return the model name currently recorded in config for ``kind``.
+
+        Called *before* the swap mutates anything, so the value reflects
+        what was loaded prior to this swap attempt — exactly the right
+        thing to rebuild on failure.
+        """
+        if kind == "main":
+            return self._config.transcription.model
+        return self._config.realtime.realtime_model_type
+
+    def _detach_current_transcriber(self, kind: str) -> ITranscriber | None:
+        """Atomically pull the current transcriber out of its slot.
+
+        Briefly holds the matching per-slot lock to make the pointer null;
+        concurrent transcribe callers then see ``None`` and skip via
+        ``_safe_transcribe``. The shutdown itself happens *outside* the
+        lock so transcribe callers waiting on it aren't blocked on the
+        ORT cleanup walk.
+        """
+        old: ITranscriber | None
+        lock = self._main_transcriber_lock if kind == "main" else self._realtime_transcriber_lock
+        with lock:
+            if kind == "main":
+                old = self._transcriber
+                self._transcriber = None  # type: ignore[assignment]  # transient swap state — guarded by _safe_transcribe
+                return old
+            old = self._realtime_transcriber
+            self._realtime_transcriber = None
+            return old
+
+    @staticmethod
+    def _shutdown_transcriber_safely(kind: str, t: ITranscriber | None) -> None:
+        """``t.shutdown()`` with logging; swallows exceptions so the swap
+        worker can keep making progress toward installing the new model."""
+        if t is None:
+            return
+        try:
+            t.shutdown()
+        except Exception:
+            logger.exception("Old %s transcriber shutdown raised", kind)
+
+    def _load_new_for_swap(
         self,
         kind: str,
         name: str,
         cancel_event: threading.Event,
-    ) -> ITranscriber | None:
-        """Load the new transcriber. Emits ``ModelSwapFailed`` + returns None on error."""
-        try:
-            return self._load_transcriber(name, _SwapProgress(self, name, cancel_event))
-        except DownloadCancelledError:
-            logger.info("Model swap %s → %s cancelled mid-download", kind, name)
-            self._publish_swap_failed(kind, name, "cancelled")
-            return None
-        except Exception as e:
-            logger.exception("Model swap %s → %s failed during load", kind, name)
-            self._publish_swap_failed(kind, name, f"{type(e).__name__}: {e}")
-            return None
+        bench: SwapBenchmark,
+    ) -> tuple[ITranscriber | None, str]:
+        """Load the new transcriber inside the bench's ``load`` phase.
+
+        Returns ``(transcriber_or_None, outcome_tag)``. On failure also
+        emits ``ModelSwapFailed`` on the event bus so the UI's revert
+        path fires before the (optional) restore attempt runs.
+        """
+        with bench.phase("load"):
+            try:
+                new = self._load_transcriber(name, _SwapProgress(self, name, cancel_event))
+            except (DownloadCancelledError, Exception) as e:
+                info = classify_swap_error(e)
+                # CANCELLED stays at INFO level; anything else logs the
+                # full traceback so support has it for diagnosis.
+                if info.category is SwapErrorCategory.CANCELLED:
+                    logger.info(
+                        "Model swap %s → %s cancelled mid-download: %s",
+                        kind,
+                        name,
+                        info.technical_detail,
+                    )
+                else:
+                    logger.exception(
+                        "Model swap %s → %s failed [%s]: %s",
+                        kind,
+                        name,
+                        info.category.value,
+                        info.technical_detail,
+                    )
+                self._publish_swap_failed(kind, name, info)
+                return None, info.category.value
+        return new, "completed"
+
+    def _attempt_restore(self, kind: str, previous_name: str, bench: SwapBenchmark) -> str:
+        """Rebuild the previously-loaded model after a failed/cancelled swap.
+
+        Returns a short tag for the benchmark line:
+        ``"restored"`` (slot is healthy again), ``"no_previous"`` (this
+        swap was the first install — nothing to fall back to), or
+        ``"lost"`` (rebuild itself failed — the slot stays empty and the
+        user must pick another model or restart the server).
+
+        Uses a no-op progress sink: the rebuild typically hits the HF
+        cache and finishes in seconds, and surfacing fake "downloading"
+        events would just confuse the UI right after a failure.
+        """
+        if not previous_name:
+            return "no_previous"
+        with bench.phase("restore"):
+            try:
+                restored = self._load_transcriber(previous_name, lambda _progress: None)
+            except Exception:
+                logger.exception(
+                    "Restore of %s transcriber to previous model %s failed — slot left empty",
+                    kind,
+                    previous_name,
+                )
+                return "lost"
+        self._install_transcriber(kind, previous_name, restored)
+        return "restored"
 
     def _load_transcriber(
         self,
@@ -709,38 +965,16 @@ class RecorderService:
             return info.onnx_model_name
         return name
 
-    def _commit_swap(self, kind: str, name: str, new_transcriber: ITranscriber) -> ITranscriber | None:
-        """Atomically install ``new_transcriber`` under the lock; return the old one."""
-        old: ITranscriber | None
-        with self._transcriber_lock:
+    def _install_transcriber(self, kind: str, name: str, new_transcriber: ITranscriber) -> None:
+        """Commit ``new_transcriber`` into the kind's slot and update config."""
+        lock = self._main_transcriber_lock if kind == "main" else self._realtime_transcriber_lock
+        with lock:
             if kind == "main":
-                old = self._transcriber
                 self._transcriber = new_transcriber
                 self._config.transcription.model = name
-                return old
-            old = self._realtime_transcriber
-            self._realtime_transcriber = new_transcriber
-            self._config.realtime.realtime_model_type = name
-            return old
-
-    @classmethod
-    def _shutdown_old_transcriber(
-        cls,
-        kind: str,
-        old: ITranscriber | None,
-        new_transcriber: ITranscriber,
-    ) -> None:
-        # Shutdown the old model AFTER releasing the lock so transcribe()
-        # callers aren't blocked on the ORT cleanup walk.
-        if cls._old_transcriber_replaced(old, new_transcriber):
-            try:
-                old.shutdown()  # type: ignore[union-attr]  # guarded above
-            except Exception:
-                logger.exception("Old %s transcriber shutdown raised", kind)
-
-    @staticmethod
-    def _old_transcriber_replaced(old: ITranscriber | None, new_transcriber: ITranscriber) -> bool:
-        return old is not None and old is not new_transcriber
+            else:
+                self._realtime_transcriber = new_transcriber
+                self._config.realtime.realtime_model_type = name
 
     @property
     def state(self) -> RecorderState:
@@ -798,6 +1032,13 @@ class RecorderService:
           - ``model``: the main model name (HF id)
           - ``realtime_model``: realtime model name when realtime is enabled,
             ``None`` otherwise
+          - ``onnx_quantization``: quantization suffix currently loaded
+            (empty string for the default fp32 export), or ``None`` when
+            no quantization is set
+          - ``realtime_quantization``: same, for the realtime transcriber.
+            Mirrors ``onnx_quantization`` today (we don't split the setting
+            per slot), but exposed explicitly so the fit-assessment code
+            never has to assume the two match.
 
         Drives the frontend's bottom-left GPU/CPU chip — the renderer can no
         longer guess from ``nvidia-smi`` because that lies when the user
@@ -810,6 +1051,8 @@ class RecorderService:
             "is_gpu": self._transcriber_is_gpu(),
             "model": self._config.transcription.model,
             "realtime_model": self._realtime_model_name(),
+            "onnx_quantization": self._config.transcription.onnx_quantization or "",
+            "realtime_quantization": self._config.transcription.onnx_quantization or "",
         }
         return info
 
@@ -962,17 +1205,21 @@ class RecorderService:
         return self._realtime_committed_frames
 
     def _commit_chunk(self, committed_frames: int, commit_chunk_frames: int) -> None:
-        assert self._realtime_transcriber is not None
         commit_audio = self._audio_buffer.get_audio_array_slice(
             committed_frames, committed_frames + commit_chunk_frames
         )
         if len(commit_audio) == 0:
             return
-        with self._transcriber_lock:
-            commit_result = self._realtime_transcriber.transcribe(
-                commit_audio,
-                self._config.transcription.language,
-            )
+        # Realtime preview must not block when the realtime transcriber
+        # is mid-swap — better to skip a tick than to stall the worker.
+        commit_result = self._safe_transcribe(
+            self._realtime_transcriber,
+            commit_audio,
+            self._config.transcription.language,
+            lock=self._realtime_transcriber_lock,
+        )
+        if commit_result is None:
+            return
         commit_text = self._preprocess_output(commit_result.text)
         if commit_text:
             self._append_committed_text(commit_text)
@@ -984,16 +1231,26 @@ class RecorderService:
             self._realtime_committed_text = commit_text
 
     def _realtime_publish_fresh(self, committed_frames: int) -> None:
-        assert self._realtime_transcriber is not None
         # Transcribe the fresh window past the watermark for the live preview.
+        # ``is_recording`` is re-checked just before the (potentially long)
+        # transcribe call: when the user releases PTT the state machine has
+        # already flipped to TRANSCRIBING but the realtime worker may have
+        # already entered this method. Bailing here saves an entire fresh
+        # whisper-base pass that main is about to do anyway — measured as
+        # ~390 ms of saved end-of-dictation latency on a JFK-length clip.
+        if not self._state_machine.is_recording:
+            return
         audio_array = self._audio_buffer.get_audio_array_slice(committed_frames, None)
         if len(audio_array) == 0:  # pragma: no cover
             return
-        with self._transcriber_lock:
-            result = self._realtime_transcriber.transcribe(
-                audio_array,
-                self._config.transcription.language,
-            )
+        result = self._safe_transcribe(
+            self._realtime_transcriber,
+            audio_array,
+            self._config.transcription.language,
+            lock=self._realtime_transcriber_lock,
+        )
+        if result is None:
+            return
         fresh_text = self._preprocess_output(result.text)
         text = self._assemble_realtime_text(fresh_text)
         if self._state_machine.is_recording:  # pragma: no branch

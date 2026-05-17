@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import time
 import wave
-from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -15,7 +14,7 @@ from scipy.signal import resample
 from websockets.asyncio.server import ServerConnection
 
 from src.building_blocks.terminal import TerminalColors as bcolors
-from src.building_blocks.terminal import debug_print, format_timestamp_ns
+from src.building_blocks.terminal import debug_print, format_now_hms_ms, format_timestamp_ns
 from src.stt_server.state import ServerState
 
 FORMAT = pyaudio.paInt16
@@ -114,7 +113,7 @@ async def broadcast_audio_messages(state: ServerState) -> None:
         message = await state.audio_queue.get()
         for conn in list(state.data_connections):
             try:
-                timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                timestamp = format_now_hms_ms()
                 if state.extended_logging:
                     print(
                         f"  [{timestamp}] Sending message: {bcolors.OKBLUE}{message}{bcolors.ENDC}\n",

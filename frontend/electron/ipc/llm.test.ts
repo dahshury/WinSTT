@@ -50,9 +50,7 @@ const {
 	setupLlm,
 	__llm_test_helpers__: helpers,
 } = await import("./llm");
-const { ConnectionError, TimeoutError, ValidationError } = await import(
-	"../../src/shared/lib/errors"
-);
+const { ConnectionError, ValidationError } = await import("../../src/shared/lib/errors");
 
 const ENDPOINT = "http://localhost:65535";
 
@@ -226,9 +224,8 @@ describe("llm pure helpers", () => {
 		expect(JSON.parse(out)).toEqual({ text: "hello world" });
 	});
 
-	test("isPassThroughError true for ConnectionError/TimeoutError/ValidationError", () => {
+	test("isPassThroughError true for ConnectionError/ValidationError", () => {
 		expect(helpers.isPassThroughError(new ConnectionError("x", "endpoint", false))).toBe(true);
-		expect(helpers.isPassThroughError(new TimeoutError(100, "op"))).toBe(true);
 		expect(helpers.isPassThroughError(new ValidationError("x", "f"))).toBe(true);
 	});
 
@@ -238,55 +235,14 @@ describe("llm pure helpers", () => {
 		expect(helpers.isPassThroughError(undefined)).toBe(false);
 	});
 
-	test("isAbortLikeTimeoutError true only for Error with name TimeoutError", () => {
-		const err = new Error("timed out");
-		err.name = "TimeoutError";
-		expect(helpers.isAbortLikeTimeoutError(err)).toBe(true);
-		expect(helpers.isAbortLikeTimeoutError(new Error("plain"))).toBe(false);
-		expect(helpers.isAbortLikeTimeoutError("string")).toBe(false);
-	});
-
-	test("toTimeoutErrorOrNull returns TimeoutError when input is abort-like", () => {
-		const err = new Error("timed out");
-		err.name = "TimeoutError";
-		const out = helpers.toTimeoutErrorOrNull(
-			err,
-			{ provider: "ollama", presets: [{ key: "neutral" as const }], timeout: 1000 },
-			42
-		);
-		expect(out).toBeInstanceOf(TimeoutError);
-	});
-
-	test("toTimeoutErrorOrNull returns null for non-abort errors", () => {
-		expect(
-			helpers.toTimeoutErrorOrNull(
-				new Error("other"),
-				{ provider: "ollama", presets: [{ key: "neutral" as const }], timeout: 1000 },
-				10
-			)
-		).toBeNull();
-	});
-
 	test("mapAndThrowOrReturn rethrows pass-through errors", () => {
 		expect(() =>
 			helpers.mapAndThrowOrReturn(
 				new ValidationError("bad", "field"),
-				{ provider: "ollama", presets: [{ key: "neutral" as const }], timeout: 1000 },
+				{ provider: "ollama", presets: [{ key: "neutral" as const }], timeout: 5000 },
 				"text"
 			)
 		).toThrow(ValidationError);
-	});
-
-	test("mapAndThrowOrReturn converts abort-like to TimeoutError", () => {
-		const err = new Error("aborted");
-		err.name = "TimeoutError";
-		expect(() =>
-			helpers.mapAndThrowOrReturn(
-				err,
-				{ provider: "ollama", presets: [{ key: "neutral" as const }], timeout: 1000 },
-				"text"
-			)
-		).toThrow(TimeoutError);
 	});
 
 	test("mapAndThrowOrReturn falls back to original text for unknown errors", () => {
@@ -296,7 +252,7 @@ describe("llm pure helpers", () => {
 		try {
 			const result = helpers.mapAndThrowOrReturn(
 				new Error("random"),
-				{ provider: "ollama", presets: [{ key: "neutral" as const }], timeout: 1000 },
+				{ provider: "ollama", presets: [{ key: "neutral" as const }], timeout: 5000 },
 				"original text"
 			);
 			expect(result).toBe("original text");
@@ -794,8 +750,8 @@ describe("runProcessText — provider routing", () => {
 		globalThis.fetch = originalFetch;
 	});
 
-	test("routes to Ollama when provider is 'ollama' (store model=undefined → ValidationError)", async () => {
-		// The store mock returns undefined for "llm.model", so processWithOllama throws
+	test("routes to Ollama when provider is 'ollama' (store model='' → ValidationError)", async () => {
+		// The store mock returns "" for "llm.dictation.model", so processWithOllama throws
 		// ValidationError("Ollama model is required"). This proves the ollama path is taken.
 		await expect(
 			helpers.runProcessText("hello", "ollama", [{ key: "neutral" as const }], 5000, "")
@@ -993,7 +949,7 @@ describe("processText", () => {
 	});
 
 	test("returns transformed text via Ollama when provider is ollama", async () => {
-		// store mock returns "llm.provider" = undefined but we can simulate ollama path
+		// store mock returns "llm.dictation.provider" = "ollama" but model is ""
 		// by stubbing fetch to return a valid Ollama response
 		globalThis.fetch = mock(() =>
 			Promise.resolve(
@@ -1008,8 +964,8 @@ describe("processText", () => {
 				)
 			)
 		) as unknown as typeof fetch;
-		// The store mock returns undefined for "llm.provider" which causes runOllamaPath to be called
-		// (since it's not "openrouter"). But model would be undefined → ValidationError.
+		// The store mock returns "ollama" for "llm.dictation.provider" which causes runOllamaPath
+		// to be called. But model would be "" → ValidationError.
 		// So we test that it at least calls through properly.
 		const { ValidationError } = await import("../../src/shared/lib/errors");
 		await expect(processText("hello world")).rejects.toBeInstanceOf(ValidationError);
@@ -1326,32 +1282,7 @@ describe("processText — assertNonEmptyString path", () => {
 	});
 });
 
-// ── isPlainObject / assertPlainObject / assertStringField (extracted) ─
-
-describe("isPlainObject", () => {
-	test("returns false for null", () => {
-		expect(helpers.isPlainObject(null)).toBe(false);
-	});
-
-	test("returns false for undefined", () => {
-		expect(helpers.isPlainObject(undefined)).toBe(false);
-	});
-
-	test("returns false for primitives", () => {
-		expect(helpers.isPlainObject(42)).toBe(false);
-		expect(helpers.isPlainObject("hello")).toBe(false);
-		expect(helpers.isPlainObject(true)).toBe(false);
-	});
-
-	test("returns true for plain objects", () => {
-		expect(helpers.isPlainObject({})).toBe(true);
-		expect(helpers.isPlainObject({ key: "value" })).toBe(true);
-	});
-
-	test("returns true for arrays (objects in JS)", () => {
-		expect(helpers.isPlainObject([])).toBe(true);
-	});
-});
+// ── assertPlainObject / assertStringField (extracted) ─
 
 describe("assertPlainObject", () => {
 	test("does not throw for plain object", () => {
@@ -1504,8 +1435,8 @@ describe("processTextWithCustomPrompt", () => {
 		);
 	});
 
-	test("routes through ollama path (store mock returns undefined model → ValidationError)", async () => {
-		// store.getStoreValue returns undefined for llm.model, so runCustomPromptPath →
+	test("routes through ollama path (store mock returns '' model → ValidationError)", async () => {
+		// store.getStoreValue returns "" for llm.transforms.model, so runCustomPromptPath →
 		// processWithOllamaCustom → assertNonEmptyString throws ValidationError.
 		// mapAndThrowOrReturn rethrows it (ValidationError is pass-through).
 		const origErr = console.error;
@@ -1589,5 +1520,219 @@ describe("setupLlm teardown", () => {
 		const teardown2 = setupLlm();
 		expect(() => teardown1()).not.toThrow();
 		expect(() => teardown2()).not.toThrow();
+	});
+});
+
+// ── Warmup helpers ────────────────────────────────────────────────────
+
+describe("collectEnabledOllamaModels", () => {
+	const originalGetStoreValue = helpers as unknown as {
+		collectEnabledOllamaModels: () => string[];
+	};
+
+	test("returns empty when neither feature is enabled", () => {
+		// The shared mock leaves dictation/transforms disabled (catch defaults
+		// trigger because the underlying storeValues has no overrides for these
+		// keys in this test file).
+		expect(originalGetStoreValue.collectEnabledOllamaModels()).toEqual([]);
+	});
+});
+
+describe("warmupOllamaModel", () => {
+	const originalFetch = globalThis.fetch;
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	type WarmupOutcome = "ok" | "unreachable" | "model-not-found" | "load-failed" | "skipped";
+	type WarmupResult = { model: string; outcome: WarmupOutcome; errorBody?: string };
+	type WarmupFn = (endpoint: string, model: string) => Promise<WarmupResult>;
+
+	const warmup = (helpers as unknown as { warmupOllamaModel: WarmupFn }).warmupOllamaModel;
+
+	test('returns "skipped" when model is empty (no fetch)', async () => {
+		const fetchSpy = mock(() => Promise.resolve(new Response("{}")));
+		globalThis.fetch = fetchSpy as unknown as typeof fetch;
+		const out = await warmup(ENDPOINT, "");
+		expect(out.outcome).toBe("skipped");
+		expect(out.model).toBe("");
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	test("POSTs /api/generate with keep_alive and empty prompt", async () => {
+		const fetchSpy = mock(() =>
+			Promise.resolve(new Response(JSON.stringify({ response: "" }), { status: 200 }))
+		);
+		globalThis.fetch = fetchSpy as unknown as typeof fetch;
+		const out = await warmup(ENDPOINT, "gemma3:4b");
+		expect(out.outcome).toBe("ok");
+		expect(out.model).toBe("gemma3:4b");
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		const args = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+		expect(args[0]).toContain("/api/generate");
+		const body = JSON.parse(String(args[1].body));
+		expect(body.model).toBe("gemma3:4b");
+		expect(body.prompt).toBe("");
+		expect(body.keep_alive).toBe("30m");
+		expect(body.stream).toBe(false);
+	});
+
+	test('returns "unreachable" + errorBody when fetch rejects (Ollama not running)', async () => {
+		globalThis.fetch = mock(() =>
+			Promise.reject(new TypeError("fetch failed"))
+		) as unknown as typeof fetch;
+		const out = await warmup(ENDPOINT, "gemma3:4b");
+		expect(out.outcome).toBe("unreachable");
+		expect(out.errorBody).toContain("fetch failed");
+	});
+
+	test('returns "model-not-found" + errorBody on HTTP 404 (model not installed)', async () => {
+		globalThis.fetch = mock(() =>
+			Promise.resolve(
+				new Response(JSON.stringify({ error: "model 'foo' not found, try pulling it first" }), {
+					status: 404,
+				})
+			)
+		) as unknown as typeof fetch;
+		const out = await warmup(ENDPOINT, "foo");
+		expect(out.outcome).toBe("model-not-found");
+		expect(out.errorBody).toContain("not found");
+	});
+
+	test('returns "load-failed" on HTTP 500 (corrupted or incompatible model file)', async () => {
+		globalThis.fetch = mock(() =>
+			Promise.resolve(
+				new Response(JSON.stringify({ error: "model runner crashed" }), { status: 500 })
+			)
+		) as unknown as typeof fetch;
+		const out = await warmup(ENDPOINT, "gemma3:4b");
+		expect(out.outcome).toBe("load-failed");
+		expect(out.errorBody).toContain("model runner crashed");
+	});
+
+	test('returns "load-failed" on other non-2xx (e.g. 503 service unavailable)', async () => {
+		globalThis.fetch = mock(() =>
+			Promise.resolve(new Response("nope", { status: 503 }))
+		) as unknown as typeof fetch;
+		const out = await warmup(ENDPOINT, "gemma3:4b");
+		expect(out.outcome).toBe("load-failed");
+	});
+});
+
+describe("classifyWarmupResponse", () => {
+	type ClassifyFn = (
+		status: number
+	) => "ok" | "unreachable" | "model-not-found" | "load-failed" | "skipped";
+	const classify = (helpers as unknown as { classifyWarmupResponse: ClassifyFn })
+		.classifyWarmupResponse;
+
+	test("404 → model-not-found", () => {
+		expect(classify(404)).toBe("model-not-found");
+	});
+
+	test("500 → load-failed", () => {
+		expect(classify(500)).toBe("load-failed");
+	});
+
+	test("503 → load-failed", () => {
+		expect(classify(503)).toBe("load-failed");
+	});
+});
+
+describe("isLoopbackEndpoint", () => {
+	type LoopbackFn = (endpoint: string) => boolean;
+	const isLoopback = (helpers as unknown as { isLoopbackEndpoint: LoopbackFn }).isLoopbackEndpoint;
+
+	test("localhost variants are loopback", () => {
+		expect(isLoopback("http://localhost:11434")).toBe(true);
+		expect(isLoopback("http://127.0.0.1:11434")).toBe(true);
+		expect(isLoopback("http://[::1]:11434")).toBe(true);
+	});
+
+	test("remote hosts are not loopback (no auto-start)", () => {
+		expect(isLoopback("http://ollama.internal:11434")).toBe(false);
+		expect(isLoopback("https://10.0.0.5:11434")).toBe(false);
+	});
+
+	test("empty input is not loopback", () => {
+		expect(isLoopback("")).toBe(false);
+	});
+});
+
+describe("ensureOllamaReachable", () => {
+	const originalFetch = globalThis.fetch;
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	type EnsureFn = (endpoint: string) => Promise<boolean>;
+	const ensure = (helpers as unknown as { ensureOllamaReachable: EnsureFn }).ensureOllamaReachable;
+
+	test("returns true immediately when /api/tags responds 200", async () => {
+		globalThis.fetch = mock(() =>
+			Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }))
+		) as unknown as typeof fetch;
+		expect(await ensure(ENDPOINT)).toBe(true);
+	});
+
+	test("returns false for remote endpoints when unreachable (does not try to auto-start)", async () => {
+		globalThis.fetch = mock(() =>
+			Promise.reject(new TypeError("fetch failed"))
+		) as unknown as typeof fetch;
+		expect(await ensure("http://remote.example.com:11434")).toBe(false);
+	});
+});
+
+describe("buildOllamaChatBody includes keep_alive", () => {
+	test("chat body carries keep_alive so the model stays hot after a real call", () => {
+		const body = JSON.parse(helpers.buildOllamaChatBody("m", [], 10));
+		expect(body.keep_alive).toBe("30m");
+	});
+});
+
+describe("warmup status broadcast", () => {
+	type WarmupStatus = {
+		endpoint: string;
+		reachable: boolean | null;
+		ollamaInstalled: boolean;
+		models: Array<{ model: string; outcome: string; errorBody?: string }>;
+		timestamp: number;
+	};
+	const broadcast = (helpers as unknown as { broadcastWarmupStatus: (s: WarmupStatus) => void })
+		.broadcastWarmupStatus;
+	const getLast = (helpers as unknown as { getLastWarmupStatus: () => WarmupStatus | null })
+		.getLastWarmupStatus;
+
+	test("broadcastWarmupStatus stores the last payload so settings-window can pull it on mount", () => {
+		const payload: WarmupStatus = {
+			endpoint: ENDPOINT,
+			reachable: true,
+			ollamaInstalled: true,
+			models: [{ model: "gemma3:4b", outcome: "ok" }],
+			timestamp: 42,
+		};
+		broadcast(payload);
+		expect(getLast()).toEqual(payload);
+	});
+
+	test("subsequent broadcast overwrites the cached snapshot", () => {
+		broadcast({
+			endpoint: ENDPOINT,
+			reachable: true,
+			ollamaInstalled: true,
+			models: [],
+			timestamp: 1,
+		});
+		const next: WarmupStatus = {
+			endpoint: ENDPOINT,
+			reachable: false,
+			ollamaInstalled: false,
+			models: [{ model: "x", outcome: "unreachable" }],
+			timestamp: 2,
+		};
+		broadcast(next);
+		expect(getLast()).toEqual(next);
 	});
 });

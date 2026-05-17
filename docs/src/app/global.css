@@ -20,9 +20,28 @@
   --color-fd-primary-foreground: hsl(240, 10%, 3.9%);
   --color-fd-secondary: hsl(240, 4%, 10%);
   --color-fd-secondary-foreground: hsl(0, 0%, 92%);
-  --color-fd-accent: hsla(43, 96%, 40%, 30%);
-  --color-fd-accent-foreground: hsl(43, 96%, 80%);
+  /* Solid neutral surface for selected/active rows. Replaces the old
+     hsla(43, 96%, 40%, 30%) yellow tint that washed out against the popover
+     bg in dropdowns, popovers, search results, tab menus, and nav menus.
+     `bg-fd-accent/50` (used for hover) now resolves to a softer half-opacity
+     neutral via Tailwind's color-mix, naturally weaker than the full bg. */
+  --color-fd-accent: hsl(240, 4%, 16%);
+  --color-fd-accent-foreground: hsl(0, 0%, 95%);
   --color-fd-ring: hsl(43, 96%, 45%);
+}
+
+/* Currently-selected indicators: sidebar active link + language-select
+   current item both used `bg-fd-primary/10 text-fd-primary` — a faint
+   yellow tint with yellow text, low contrast against the popover/sidebar
+   surface. Replace with a solid neutral surface + a 2px accent left bar
+   so the active row is instantly readable while the brand cue is
+   preserved. The combinator selector targets only paired usages, so
+   `text-fd-primary` headings and links elsewhere are untouched. */
+#nd-sidebar [data-active="true"],
+.bg-fd-primary\/10.text-fd-primary {
+  background-color: hsl(240, 4%, 18%);
+  color: var(--color-fd-foreground);
+  box-shadow: inset 2px 0 0 0 var(--color-fd-primary);
 }
 
 :root {

@@ -5,7 +5,8 @@
     "src/**/*.{ts,tsx}",
     "electron/**/*.ts",
     "test/**/*.{ts,tsx}",
-    "**/*.test.{ts,tsx}"
+    "**/*.test.{ts,tsx}",
+    "stryker.conf.json"
   ],
   "project": [
     "app/**/*.{ts,tsx}",
@@ -13,6 +14,9 @@
     "electron/**/*.ts",
     "test/**/*.{ts,tsx}"
   ],
-  "ignore": ["spec/**/*"],
-  "ignoreDependencies": ["tailwindcss", "postcss", "electron-updater"]
+  "ignoreDependencies": [
+    "tailwindcss",
+    "@stryker-mutator/core",
+    "@stryker-mutator/command-runner"
+  ]
 }

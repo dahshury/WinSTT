@@ -143,6 +143,60 @@ describe("createTranscriptionHistoryStore.record", () => {
 		history.record("c", 1);
 		expect(history.getHistory().map((e) => e.text)).toEqual(["a", "b", "c"]);
 	});
+
+	test("captures originalText when it differs from the final text", () => {
+		const store = makeStore();
+		const history = createTranscriptionHistoryStore({
+			maxEntries: 5,
+			now: () => 1,
+			makeId,
+			store,
+			storeKey: "history",
+		});
+		const entry = history.record("Hello, world.", 1000, "hello world");
+		expect(entry?.text).toBe("Hello, world.");
+		expect(entry?.originalText).toBe("hello world");
+	});
+
+	test("omits originalText when it matches the final text (no LLM rewrite)", () => {
+		const store = makeStore();
+		const history = createTranscriptionHistoryStore({
+			maxEntries: 5,
+			now: () => 1,
+			makeId,
+			store,
+			storeKey: "history",
+		});
+		const entry = history.record("same text", 1000, "same text");
+		expect(entry?.text).toBe("same text");
+		expect(entry?.originalText).toBeUndefined();
+	});
+
+	test("omits originalText when only whitespace differences exist (trim equality)", () => {
+		const store = makeStore();
+		const history = createTranscriptionHistoryStore({
+			maxEntries: 5,
+			now: () => 1,
+			makeId,
+			store,
+			storeKey: "history",
+		});
+		const entry = history.record("hello", 1000, "  hello  ");
+		expect(entry?.originalText).toBeUndefined();
+	});
+
+	test("ignores empty originalText", () => {
+		const store = makeStore();
+		const history = createTranscriptionHistoryStore({
+			maxEntries: 5,
+			now: () => 1,
+			makeId,
+			store,
+			storeKey: "history",
+		});
+		const entry = history.record("hello", 1000, "");
+		expect(entry?.originalText).toBeUndefined();
+	});
 });
 
 describe("createTranscriptionHistoryStore.getHistory", () => {

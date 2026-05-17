@@ -24,7 +24,7 @@ export function MainPage() {
 			{isListenMode && (
 				<>
 					{/* Drag strip — dedicated titlebar-drag region above canvas */}
-					<div className="titlebar-drag absolute top-0 right-0 left-0 z-30 flex h-5 items-center justify-center">
+					<div className="titlebar-drag absolute top-0 right-0 left-0 z-titlebar flex h-5 items-center justify-center">
 						<div className="pointer-events-none flex gap-[3px]">
 							<div className="size-[3px] rounded-full bg-white/[0.08]" />
 							<div className="size-[3px] rounded-full bg-white/[0.08]" />
@@ -35,7 +35,7 @@ export function MainPage() {
 					<Tooltip content={th("switchToPtt")}>
 						<Button
 							aria-label={th("switchToPtt")}
-							className="titlebar-no-drag absolute top-1 right-1 z-40 gap-1.5 rounded-md px-2 py-1 opacity-[0.15] transition-opacity duration-200 hover:bg-white/10 hover:opacity-100"
+							className="titlebar-no-drag absolute top-1 right-1 z-titlebar-float gap-1.5 rounded-md px-2 py-1 opacity-[0.15] transition-opacity duration-200 hover:bg-white/10 hover:opacity-100"
 							onClick={() => updateGeneral({ recordingMode: "ptt" })}
 						>
 							<HugeiconsIcon className="text-white/60" icon={Mic01Icon} size={14} />

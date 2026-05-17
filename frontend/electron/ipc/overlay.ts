@@ -31,6 +31,27 @@ const HIDE_REAPPLY_DELAYS_MS = [50, 150, 400] as const;
 const RECONCILE_INTERVAL_MS = 200;
 const RECONCILE_MAX_DURATION_MS = 2000;
 
+/**
+ * DWM caches the most recently composited surface of transparent / always-on-
+ * top windows. When the overlay is hidden after one session and shown again
+ * for the next PTT press, the cached frame (pill + previous text) is what the
+ * user sees for one or two compositor cycles — *before* the renderer's fresh
+ * post-`recording_start` paint reaches the GPU. Background throttling on the
+ * hidden window means the renderer's "clear" paint from the previous session
+ * never updated the cache while hidden either, so the cache is whatever was
+ * last on-screen.
+ *
+ * To hide that flash, `applyShow` reveals the window at opacity 0 first, then
+ * ramps to 1 after this delay — enough for the renderer to:
+ *   1. process STT_RECORDING_START IPC (~one event-loop tick),
+ *   2. run Zustand setters + React reconcile (~one tick),
+ *   3. submit a fresh paint to the compositor (~one frame).
+ *
+ * 80ms covers all three with margin while staying well under the ~150ms
+ * threshold at which users perceive a deliberate delay.
+ */
+const SHOW_OPACITY_RAMP_DELAY_MS = 80;
+
 let overlayWindow: BrowserWindow | null = null;
 
 type DesiredState = "hidden" | "shown";
@@ -96,6 +117,14 @@ function applyHide(): void {
 	safeCall(() => win.hide());
 }
 
+function safeReturn<T>(fn: () => T, fallback: T): T {
+	try {
+		return fn();
+	} catch {
+		return fallback;
+	}
+}
+
 function applyShow(x: number, y: number): void {
 	const win = overlayWindow;
 	// Stryker disable next-line ConditionalExpression,BlockStatement: defensive
@@ -105,10 +134,40 @@ function applyShow(x: number, y: number): void {
 		return;
 	}
 	// Position first so the user never sees a flash at the offscreen
-	// coordinates, then opacity, then show.
+	// coordinates.
 	safeCall(() => win.setPosition(x, y));
-	safeCall(() => win.setOpacity(1));
+
+	// If we're re-showing an already-visible window (e.g. `maybeRunLlm` calls
+	// `showOverlay()` when the pill is already on screen to overlay the
+	// thinking indicator), skip the opacity ramp — keep it fully opaque.
+	if (safeReturn(() => win.isVisible(), false)) {
+		safeCall(() => win.setOpacity(1));
+		safeCall(() => win.showInactive());
+		return;
+	}
+
+	// Fresh show after a hide. Reveal at opacity 0, then ramp to 1 after the
+	// renderer has had time to paint its post-`recording_start` empty state
+	// into the compositor. See SHOW_OPACITY_RAMP_DELAY_MS for the rationale.
+	safeCall(() => win.setOpacity(0));
 	safeCall(() => win.showInactive());
+	pendingTimers.push(
+		setTimeout(() => {
+			// `clearPendingTimers` would have cancelled this if a hide raced
+			// in, but `desired` is the source of truth — re-check before
+			// flipping opacity so a hide-then-show within the ramp window
+			// can't accidentally reveal the still-stale composited surface.
+			if (desired !== "shown") {
+				return;
+			}
+			const w = overlayWindow;
+			if (!w) {
+				return;
+			}
+			// `safeCall` already absorbs the "window destroyed" case.
+			safeCall(() => w.setOpacity(1));
+		}, SHOW_OPACITY_RAMP_DELAY_MS)
+	);
 }
 
 // Stryker disable next-line ConditionalExpression,BlockStatement,EqualityOperator: belt-and-

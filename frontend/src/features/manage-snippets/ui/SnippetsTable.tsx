@@ -12,6 +12,15 @@ import { type AddSnippetEntry, addSnippetEntrySchema } from "@/shared/config/set
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { FormControl } from "@/shared/ui/form-control";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableEmpty,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/shared/ui/table";
 import { TextField } from "@/shared/ui/text-field";
 import { Tooltip } from "@/shared/ui/tooltip";
 
@@ -80,39 +89,45 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 					</FormControl>
 				</div>
 				<Button
-					className="h-8 rounded-md bg-accent px-3 font-medium text-black text-body transition-colors duration-150 hover:bg-accent-hover"
+					className="mb-3 h-8 rounded-md bg-accent px-3 font-medium text-black text-body transition-colors duration-150 hover:bg-accent-hover"
 					disabled={isAddDisabled}
 					type="submit"
 				>
 					{tc("add")}
 				</Button>
 			</Form>
-			<div className="flex flex-col gap-1">
-				{entries.map((entry) => (
-					<div
-						className="flex items-center justify-between rounded border border-border bg-surface-tertiary px-3 py-2 text-body"
-						key={entry.id}
-					>
-						<span>
-							<span className="text-purple">{entry.trigger}</span>
-							<span className="text-foreground-muted">{" → "}</span>
-							<span className="text-foreground">{entry.expansion}</span>
-						</span>
-						<Tooltip content={tc("delete")}>
-							<Button
-								aria-label={`${tc("delete")} "${entry.trigger}"`}
-								className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
-								onClick={() => onRemove(entry.id)}
-							>
-								<HugeiconsIcon icon={Delete02Icon} size={14} />
-							</Button>
-						</Tooltip>
-					</div>
-				))}
-				{entries.length === 0 && (
-					<p className="py-4 text-center text-body text-foreground-muted">{t("emptyState")}</p>
-				)}
-			</div>
+			<Table containerClassName="rounded border border-border bg-surface-tertiary overflow-hidden">
+				<TableHeader>
+					<TableRow>
+						<TableHead className="w-1/3">{t("trigger")}</TableHead>
+						<TableHead>{t("expansion")}</TableHead>
+						<TableHead className="w-10" />
+					</TableRow>
+				</TableHeader>
+				<TableBody>
+					{entries.length === 0 ? (
+						<TableEmpty colSpan={3}>{t("emptyState")}</TableEmpty>
+					) : (
+						entries.map((entry, idx) => (
+							<TableRow index={idx} key={entry.id}>
+								<TableCell className="w-1/3 text-purple">{entry.trigger}</TableCell>
+								<TableCell className="text-foreground">{entry.expansion}</TableCell>
+								<TableCell className="w-10 text-right">
+									<Tooltip content={tc("delete")}>
+										<Button
+											aria-label={`${tc("delete")} "${entry.trigger}"`}
+											className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
+											onClick={() => onRemove(entry.id)}
+										>
+											<HugeiconsIcon icon={Delete02Icon} size={14} />
+										</Button>
+									</Tooltip>
+								</TableCell>
+							</TableRow>
+						))
+					)}
+				</TableBody>
+			</Table>
 			{onClearAll && (
 				<>
 					<ConfirmDialog

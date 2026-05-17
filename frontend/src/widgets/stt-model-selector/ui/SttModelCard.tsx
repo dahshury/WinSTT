@@ -8,8 +8,10 @@ import {
 	LiveStreaming02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { useShallow } from "zustand/react/shallow";
 import type { ModelInfo } from "@/entities/model-catalog";
-import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
+import { useDownloadStore } from "@/features/model-download";
+import type { ModelCacheInfo, ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
@@ -20,13 +22,29 @@ import { getFamilyConfig } from "../lib/family-helpers";
 import { isUncomfortable } from "../lib/hardware-fit";
 import { getQuantizationOptions } from "../lib/quantization-helpers";
 import { variantMeta } from "../lib/variant-helpers";
-import { QuantCacheDot, quantCacheStatus } from "./pills";
+import { type DownloadPhase, DownloadActions, DownloadProgressBar } from "./download-pane";
+import { QuantCacheDot, QuantCachePercent, quantCacheStatus } from "./pills";
+
+// Prefixes we strip from displayName before rendering inside a family
+// group. The family label ("Whisper") covers most cases; Lite-Whisper is
+// catalogued under the "whisper" family for grouping but its display name
+// still starts with "Lite-Whisper " — without this extra prefix every
+// Lite-Whisper card showed the full "Lite-Whisper Large v3 Turbo
+// (Accelerated)" string and pushed the right-edge badges off the card.
+const VARIANT_LABEL_STRIP_PREFIXES = ["Lite-Whisper"];
 
 /** "Whisper Large v3" → "Large v3" (the group header already says Whisper). */
 function variantLabel(model: ModelInfo): string {
 	const familyLabel = getFamilyConfig(model.family).label;
-	const stripped = model.displayName.replace(new RegExp(`^${familyLabel}\\s+`), "");
-	return stripped.length > 0 ? stripped : model.displayName;
+	const candidates = [familyLabel, ...VARIANT_LABEL_STRIP_PREFIXES];
+	let label = model.displayName;
+	for (const prefix of candidates) {
+		const next = label.replace(new RegExp(`^${prefix}\\s+`), "");
+		if (next.length > 0 && next !== label) {
+			label = next;
+		}
+	}
+	return label;
 }
 
 interface AttributeSegment {
@@ -166,6 +184,7 @@ function PrecisionGroup({
 							>
 								<QuantCacheDot cache={cache} />
 								{opt.label}
+								<QuantCachePercent cache={cache} />
 							</button>
 						</Tooltip>
 					);
@@ -192,6 +211,94 @@ const CARD_BASE = cn(
 );
 const CARD_SELECTED = "border-accent/50 bg-accent/[0.08] ring-1 ring-accent/25";
 
+/**
+ * Resolve the inline download pane phase for one model card.
+ *
+ * Phase priority:
+ *  1. ``active``  — the global download store reports THIS model is in
+ *                   flight right now (cache may still read "partial" mid-pull,
+ *                   so the live signal wins).
+ *  2. ``paused``  — current-quant cache exists but isn't complete; the user
+ *                   has a resumable partial download on disk.
+ *  3. ``idle``    — nothing on disk and no live pull. Pane is hidden.
+ */
+function resolveDownloadPhase(
+	modelId: string,
+	cache: ModelCacheInfo | undefined,
+	live: { isDownloading: boolean; modelName: string | null }
+): DownloadPhase {
+	if (live.isDownloading && live.modelName === modelId) {
+		return "active";
+	}
+	if (cache?.state === "partial") {
+		return "paused";
+	}
+	return "idle";
+}
+
+interface DownloadPaneProps {
+	cache: ModelCacheInfo | undefined;
+	currentQuantization: OnnxQuantization;
+	model: ModelInfo;
+	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
+}
+
+/**
+ * Inline progress + Stop / Resume / Discard / Download cluster shown
+ * below the precision row. Hidden on idle so untouched cards stay tidy —
+ * the precision dots already convey "not downloaded" at a glance.
+ */
+function DownloadPane({ model, cache, currentQuantization, onSelect }: DownloadPaneProps) {
+	const live = useDownloadStore(
+		useShallow((s) => ({
+			isDownloading: s.isDownloading,
+			modelName: s.modelName,
+			progress: s.progress,
+			cancelDownload: s.cancelDownload,
+			discardCache: s.discardCache,
+		}))
+	);
+	const phase = resolveDownloadPhase(model.id, cache, live);
+	if (phase === "idle") {
+		return null;
+	}
+	// Active pulls a percent off the live download store (rounded 0-100);
+	// paused reads off the on-disk partial cache (0-1 fraction). Both
+	// feed the same shared progress bar.
+	const livePercent = live.progress;
+	const partialPercent =
+		cache?.state === "partial" ? Math.round((cache.progress ?? 0) * 100) : null;
+	const handleDownload = () => onSelect(model.id, currentQuantization);
+	return (
+		<div className="flex flex-col gap-2">
+			<div className="flex items-center justify-between gap-2">
+				{phase === "active" ? (
+					<DownloadProgressBar
+						className="min-w-0 flex-1"
+						label={livePercent == null ? "Starting…" : `${livePercent}% — Downloading`}
+						percent={livePercent}
+						variant="active"
+					/>
+				) : (
+					<DownloadProgressBar
+						className="min-w-0 flex-1"
+						label={partialPercent == null ? "Paused" : `Paused at ${partialPercent}%`}
+						percent={partialPercent}
+						variant="paused"
+					/>
+				)}
+				<DownloadActions
+					onDiscard={() => live.discardCache(model.id)}
+					onDownload={handleDownload}
+					onResume={handleDownload}
+					onStop={live.cancelDownload}
+					phase={phase}
+				/>
+			</div>
+		</div>
+	);
+}
+
 export function SttModelCard({
 	model,
 	state,
@@ -203,6 +310,7 @@ export function SttModelCard({
 	const isSelected = model.id === selectedId;
 	const bytes = formatBytes(state?.estimated_bytes ?? 0);
 	const segments = buildAttributeSegments(model, state, systemInfo);
+	const currentCache = resolveQuantCache(state, currentQuantization);
 	return (
 		<Combobox.Item className={cn(CARD_BASE, isSelected && CARD_SELECTED)} value={model}>
 			<div className="flex items-center justify-between gap-2.5">
@@ -210,9 +318,14 @@ export function SttModelCard({
 					{isSelected ? (
 						<HugeiconsIcon className="size-3.5 shrink-0 text-accent" icon={CheckmarkCircle02Icon} />
 					) : null}
-					<span className="truncate font-semibold text-body-sm leading-tight">
-						{variantLabel(model)}
-					</span>
+					{/* Tooltip surfaces the full displayName when truncation kicks in
+					    so users can read the long Lite-Whisper / Russian-CTC names
+					    without resizing the popup. */}
+					<Tooltip content={model.displayName} side="top">
+						<span className="min-w-0 truncate font-semibold text-body-sm leading-tight">
+							{variantLabel(model)}
+						</span>
+					</Tooltip>
 					<span className="shrink-0 text-[11px] text-foreground-muted tabular-nums">
 						{model.sizeLabel}
 						{bytes ? ` · ${bytes}` : ""}
@@ -226,6 +339,12 @@ export function SttModelCard({
 				model={model}
 				onSelect={onSelect}
 				state={state}
+			/>
+			<DownloadPane
+				cache={currentCache}
+				currentQuantization={currentQuantization}
+				model={model}
+				onSelect={onSelect}
 			/>
 		</Combobox.Item>
 	);

@@ -1,0 +1,35 @@
+{
+  "name": "init",
+  "duration_s": 0.5806429000003845,
+  "samples": 6,
+  "rss_mb": {
+    "min": 1183.66796875,
+    "max": 1185.0703125,
+    "mean": 1184.751953125
+  },
+  "cpu_pct": {
+    "max": 2704.3,
+    "mean": 701.3833333333333
+  },
+  "vram_used_mb": {
+    "min": 7862.0,
+    "max": 7868.0,
+    "mean": 7863.0
+  },
+  "gpu_util_pct": {
+    "max": 2.0,
+    "mean": 1.3333333333333333
+  },
+  "markers": [
+    {
+      "name": "profile-start",
+      "t": 0.08963340000263997
+    },
+    {
+      "name": "profile-stop",
+      "t": 0.5899672000014107
+    }
+  ],
+  "events": [],
+  "gpu_available": true
+}

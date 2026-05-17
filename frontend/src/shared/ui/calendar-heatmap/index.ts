@@ -7,3 +7,7 @@ export {
 	type WeightedDateEntry,
 } from "./CalendarHeatmap";
 export type { CalendarSystemId } from "./calendar-system";
+export {
+	buildDefaultCalendarPresets,
+	type DefaultCalendarPresetLabels,
+} from "./presets";

@@ -167,13 +167,39 @@ class ModelSwapFailed(RecorderEvent):
     """A model swap aborted — load error, OOM, network failure, or cancel.
 
     The current transcriber is unchanged (the previous model remains
-    active). The frontend should revert its picker to whatever the
-    server's current model name is, and surface ``reason`` to the user.
+    active, or has been rebuilt via the swap worker's restore path).
+    The frontend uses ``category`` to pick a localised toast variant
+    (network icon, OOM advice, etc.) and falls back to ``reason`` as
+    the human-readable headline. ``detail`` carries the technical
+    string for diagnostic logs / bug reports.
+
+    Defaulted ``category`` / ``detail`` so older callers that emit only
+    a flat reason still construct successfully — see
+    :func:`src.recorder.domain.swap_errors.classify_swap_error` for the
+    canonical mapping.
     """
 
     kind: str
     name: str
     reason: str
+    category: str = "unknown"
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class VADSensitivityAdapted(RecorderEvent):
+    """Cross-utterance VAD calibrator settled on a new Silero sensitivity.
+
+    Fires once per recording with a non-empty transcription, after the
+    calibrator updates the running ``SileroVAD.sensitivity``. The renderer
+    keeps a per-input-device map of the last adapted value so subsequent
+    sessions seed adaptation with the right starting point for the device
+    in use.
+    """
+
+    new_sensitivity: float
+    noise_floor_rms: float
+    speech_peak_rms: float
 
 
 @dataclass(frozen=True)
@@ -192,3 +218,44 @@ class DeviceSwitchFailed(RecorderEvent):
     requested_index: int
     error_message: str
     fallback_index: int | None
+
+
+@dataclass(frozen=True)
+class SpeakerSegment:
+    """One speaker-attributed time range within an utterance."""
+
+    start: float
+    """Segment start in seconds, relative to utterance start."""
+    end: float
+    """Segment end in seconds, relative to utterance start."""
+    speaker: int
+    """Stable session-wide speaker id assigned by the online clusterer."""
+
+
+@dataclass(frozen=True)
+class SpeakerSegmentsDetected(RecorderEvent):
+    """Diarization completed for the just-transcribed utterance.
+
+    Fires immediately after :class:`TranscriptionCompleted` when
+    ``DiarizationConfig.enabled`` is true. ``segments`` may be empty if the
+    audio contained no detectable speech (silence, sub-threshold noise) —
+    consumers should treat that case as "single unknown speaker" rather than
+    an error.
+    """
+
+    segments: tuple[SpeakerSegment, ...]
+
+
+@dataclass(frozen=True)
+class DeviceBecameAvailable(RecorderEvent):
+    """A previously-absent input device is now openable.
+
+    Fires when the audio source's hotplug-wait state ends — either because
+    the server booted with no microphone and the OS later exposed one, or
+    because a working device was unplugged mid-run and a replacement has
+    been attached. ``device_index`` is the PyAudio input-device index now
+    in use. Paired with ``DeviceSwitchFailed``: failure tells the UI to
+    revert; this one tells the UI "you can record again".
+    """
+
+    device_index: int

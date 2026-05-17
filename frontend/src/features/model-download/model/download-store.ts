@@ -1,5 +1,8 @@
 import { create } from "zustand";
-import { cancelDownload as ipcCancelDownload } from "@/shared/api/ipc-client";
+import {
+	cancelDownload as ipcCancelDownload,
+	deleteModelCache as ipcDeleteModelCache,
+} from "@/shared/api/ipc-client";
 
 export interface DownloadProgressPayload {
 	downloadedBytes?: number;
@@ -12,6 +15,7 @@ export interface DownloadProgressPayload {
 interface DownloadState {
 	cancelDownload: () => void;
 	cancelled: boolean;
+	discardCache: (modelId: string) => void;
 	downloadedBytes: number;
 	etaSeconds: number;
 	isDownloading: boolean;
@@ -70,5 +74,8 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 	},
 	cancelDownload: () => {
 		ipcCancelDownload();
+	},
+	discardCache: (modelId: string) => {
+		ipcDeleteModelCache(modelId);
 	},
 }));

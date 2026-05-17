@@ -40,7 +40,11 @@ class TranscriptionConfig(StrictMutableModel):
     language: str = ""
     compute_type: str = "default"
     gpu_device_index: int | list[int] = 0
-    device: str = "cuda"
+    # "auto" probes CUDA at runtime and falls back to CPU when its DLL chain
+    # isn't actually loadable (see :func:`device.resolve_device`). "cuda" /
+    # "cpu" still pin the device explicitly; persisted configs from before
+    # the "auto" default landed continue to work.
+    device: str = "auto"
     beam_size: int = 5
     initial_prompt: str | list[int] | None = None
     suppress_tokens: list[int] | None = Field(default_factory=lambda: [-1])
@@ -55,7 +59,14 @@ class TranscriptionConfig(StrictMutableModel):
     early_transcription_on_silence: float = 0
     allowed_latency_limit: int = 100
     backend: str = ""
-    onnx_quantization: str = ""
+    # "auto" picks fp16 when the resolved device is CUDA AND the model
+    # actually ships an fp16 ONNX (most onnx-community Whisper repos do);
+    # otherwise falls back to fp32. Empty string is treated as auto for
+    # backward compatibility with configs persisted before the default
+    # changed. Concrete sub-fp16 values (int8/q4/q4f16/bnb4/uint8) work
+    # only on the CPU device — they fall back to fp32 with a warning on
+    # CUDA per :func:`bootstrap._resolve_quantization`.
+    onnx_quantization: str = "auto"
 
 
 class RealtimeConfig(StrictMutableModel):
@@ -86,6 +97,28 @@ class EndpointConfig(StrictMutableModel):
     smart_endpoint_model: str = "KoljaB/SentenceFinishedClassification"
 
 
+class DiarizationConfig(StrictMutableModel):
+    """Per-utterance speaker diarization with session-wide identity tracking.
+
+    When ``enabled``, the recorder runs each completed utterance's audio through
+    ``onnx_asr.SessionDiarizer`` and publishes a :class:`SpeakerSegmentsDetected`
+    event right after :class:`TranscriptionCompleted`. Adds ~35 MB to the bundle
+    (pyannote-segmentation-3.0 + wespeaker-voxceleb-resnet34-LM) on first use.
+    """
+
+    enabled: bool = False
+    max_speakers: int = Field(default=8, ge=1, le=50)
+    # Cosine-distance cutoff for the online clusterer: a new embedding within
+    # this distance of an existing centroid is matched; otherwise a fresh
+    # speaker ID is minted. 0.5 is calibrated for wespeaker-resnet34-LM.
+    delta_new: float = Field(default=0.5, ge=0.0, le=2.0)
+    # Minimum per-segment active-frame ratio to update a centroid (avoids
+    # corrupting clean centroids with noisy short crops).
+    rho_update: float = Field(default=0.3, ge=0.0, le=1.0)
+    segmentation_model: str = "onnx-community/pyannote-segmentation-3.0"
+    embedding_model: str = "wespeaker-voxceleb-resnet34-LM"
+
+
 class UIConfig(StrictMutableModel):
     spinner: bool = True
     ensure_sentence_starting_uppercase: bool = True
@@ -105,6 +138,7 @@ class RecorderConfig(StrictMutableModel):
     wake_word: WakeWordConfig = Field(default_factory=WakeWordConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
     endpoint: EndpointConfig = Field(default_factory=EndpointConfig)
+    diarization: DiarizationConfig = Field(default_factory=DiarizationConfig)
 
     # Sub-config classes in priority order: a kwarg is routed to the first
     # class that declares a matching field (preserves the original
@@ -117,6 +151,7 @@ class RecorderConfig(StrictMutableModel):
         WakeWordConfig,
         UIConfig,
         EndpointConfig,
+        DiarizationConfig,
     )
 
     @staticmethod
@@ -159,9 +194,16 @@ class RecorderConfig(StrictMutableModel):
 
     @classmethod
     def from_kwargs(cls, **kwargs: Any) -> RecorderConfig:  # noqa: ANN401
-        audio_kw, vad_kw, transcription_kw, realtime_kw, wake_word_kw, ui_kw, endpoint_kw = cls._route_kwargs(
-            kwargs, cls._SUBCONFIGS
-        )
+        (
+            audio_kw,
+            vad_kw,
+            transcription_kw,
+            realtime_kw,
+            wake_word_kw,
+            ui_kw,
+            endpoint_kw,
+            diarization_kw,
+        ) = cls._route_kwargs(kwargs, cls._SUBCONFIGS)
         return cls(
             audio=AudioConfig(**audio_kw),
             vad=VADConfig(**vad_kw),
@@ -170,4 +212,5 @@ class RecorderConfig(StrictMutableModel):
             wake_word=WakeWordConfig(**wake_word_kw),
             ui=UIConfig(**ui_kw),
             endpoint=EndpointConfig(**endpoint_kw),
+            diarization=DiarizationConfig(**diarization_kw),
         )

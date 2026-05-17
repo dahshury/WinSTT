@@ -1,0 +1,17 @@
+export {
+	InputGroup,
+	InputGroupAddon,
+	type InputGroupAddonAlign,
+	type InputGroupAddonProps,
+	InputGroupButton,
+	type InputGroupButtonProps,
+	InputGroupContent,
+	type InputGroupContentProps,
+	InputGroupInput,
+	type InputGroupInputProps,
+	type InputGroupProps,
+	type InputGroupSize,
+	InputGroupText,
+	type InputGroupTextProps,
+	type InputGroupTone,
+} from "./InputGroup";

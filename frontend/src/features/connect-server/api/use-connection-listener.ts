@@ -71,8 +71,9 @@ export function useConnectionListener(): void {
 
 	// Runtime info — initial fetch covers renderers that mount after the
 	// server's server_ready broadcast (overlay/settings); the live
-	// subscription keeps it in sync if the runtime ever changes (model
-	// reload after settings change).
+	// subscription keeps it in sync as the server pushes updates (e.g.
+	// after every ``model_swap_completed`` — see ``on_model_swap_completed``
+	// in the server's callbacks for the broadcast).
 	useEffect(() => {
 		fetchRuntimeInfo()
 			.then((info) => setRuntimeInfo(info))

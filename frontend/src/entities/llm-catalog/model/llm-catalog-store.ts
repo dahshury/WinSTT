@@ -19,16 +19,40 @@ export interface PullState {
 	startedAt: number;
 }
 
+/**
+ * A pull that the user stopped before completion. Ollama keeps the partial
+ * blob files on disk; calling {@link LlmCatalogState.resumePull} re-issues
+ * /api/pull, which picks up from the existing blobs (or starts fresh if
+ * Ollama GC'd them — either way the user ends up with the model).
+ *
+ * We track this in-memory only. After an app restart the paused state
+ * disappears from the UI; the partial blobs are still on disk, so the
+ * user just sees the model as "not installed" and can pull it (which
+ * still resumes from disk). Persisting across restarts isn't worth the
+ * complexity for what's essentially a recovery hint.
+ */
+export interface PausedPullState {
+	pausedAt: number;
+	/** Last known progress before the cancel landed — used to render the
+	 *  dimmed progress bar so the user can see "I was at 60% before stopping". */
+	progress: OllamaPullProgress;
+}
+
 interface LlmCatalogState {
 	cancelPull: (model: string) => Promise<void>;
 	deleteModel: (model: string) => Promise<{ success: boolean; error?: string }>;
+	/** Forget a paused pull from the UI. Doesn't touch disk — the partial
+	 *  blobs stay until the next pull either consumes them or Ollama GCs. */
+	discardPausedPull: (model: string) => void;
 	error: string | null;
 	isLoaded: boolean;
 	isReachable: boolean;
 	isScanning: boolean;
 	models: OllamaModel[];
+	pausedPulls: Record<string, PausedPullState>;
 	pullModel: (model: string) => Promise<{ success: boolean; error?: string }>;
 	pulls: Record<string, PullState>;
+	resumePull: (model: string) => Promise<{ success: boolean; error?: string }>;
 	scanModels: () => Promise<void>;
 	setError: (error: string | null) => void;
 	setModels: (models: OllamaModel[]) => void;
@@ -79,16 +103,44 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	isReachable: false,
 	error: null,
 	pulls: {},
+	pausedPulls: {},
 	setModels: (models) => set({ models, isLoaded: true, error: null }),
 	setScanning: (scanning) => set({ isScanning: scanning }),
 	setError: (error) => set({ error, isLoaded: true }),
 	setPullProgress: (progress) => {
-		const { pulls } = get();
+		const { pulls, pausedPulls } = get();
+		const existing = pulls[progress.model];
 		if (isTerminalStatus(progress.status)) {
-			const next = { ...pulls };
-			delete next[progress.model];
-			set({ pulls: next });
+			const nextPulls = { ...pulls };
+			delete nextPulls[progress.model];
+			// On a "cancelled" terminal status, preserve the last known
+			// progress so the UI can offer Resume + show where we stopped.
+			// On "success" or "error", clear any paused state for the same
+			// model — the partial bytes are either consumed or moot.
+			if (progress.status === "cancelled" && existing) {
+				set({
+					pulls: nextPulls,
+					pausedPulls: {
+						...pausedPulls,
+						[progress.model]: {
+							progress: existing.progress,
+							pausedAt: Date.now(),
+						},
+					},
+				});
+				return;
+			}
+			const nextPaused = { ...pausedPulls };
+			delete nextPaused[progress.model];
+			set({ pulls: nextPulls, pausedPulls: nextPaused });
 			return;
+		}
+		// Any non-terminal progress means we're actively transferring — drop
+		// any paused state for this model so the UI doesn't show both bars.
+		const nextPaused = { ...pausedPulls };
+		const hadPaused = nextPaused[progress.model] != null;
+		if (hadPaused) {
+			delete nextPaused[progress.model];
 		}
 		set({
 			pulls: {
@@ -98,6 +150,7 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 					startedAt: pulls[progress.model]?.startedAt ?? Date.now(),
 				},
 			},
+			...(hadPaused ? { pausedPulls: nextPaused } : {}),
 		});
 	},
 	scanModels: async () => {
@@ -113,18 +166,29 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 		}
 	},
 	pullModel: async (model) => {
-		const { pulls } = get();
+		const { pulls, pausedPulls } = get();
 		if (pulls[model]) {
 			return { success: false, error: "Already pulling" };
+		}
+		// Resume path: when this `pullModel` call is actually a resume of a
+		// previously-cancelled pull, seed the optimistic "starting" entry with
+		// the last known percent so the bar doesn't flash back to 0% before
+		// the server's first progress frame arrives. The paused entry is
+		// cleared below as part of the same atomic set.
+		const paused = pausedPulls[model];
+		const seededProgress: OllamaPullProgress = paused
+			? { ...paused.progress, status: "pulling", statusText: "resuming" }
+			: { model, status: "pulling", statusText: "starting" };
+		const nextPaused = { ...pausedPulls };
+		if (paused) {
+			delete nextPaused[model];
 		}
 		set({
 			pulls: {
 				...pulls,
-				[model]: {
-					progress: { model, status: "pulling", statusText: "starting" },
-					startedAt: Date.now(),
-				},
+				[model]: { progress: seededProgress, startedAt: Date.now() },
 			},
+			...(paused ? { pausedPulls: nextPaused } : {}),
 		});
 		const result = await pullOllamaModel(model);
 		if (result.success) {
@@ -134,6 +198,23 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	},
 	cancelPull: async (model) => {
 		await cancelOllamaModelPull(model);
+	},
+	/**
+	 * Resume a previously-paused pull. Semantically distinct from `pullModel`
+	 * (we display a "Resume" button instead of "Install"), but functionally
+	 * just re-issues /api/pull — Ollama handles continuity with on-disk
+	 * partial blobs automatically. The paused state is cleared as soon as
+	 * the first non-terminal progress arrives (see `setPullProgress`).
+	 */
+	resumePull: async (model) => get().pullModel(model),
+	discardPausedPull: (model) => {
+		const { pausedPulls } = get();
+		if (!pausedPulls[model]) {
+			return;
+		}
+		const next = { ...pausedPulls };
+		delete next[model];
+		set({ pausedPulls: next });
 	},
 	deleteModel: async (model) => {
 		const result = await deleteOllamaModel(model);

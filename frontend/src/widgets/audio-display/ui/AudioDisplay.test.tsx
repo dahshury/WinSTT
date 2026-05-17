@@ -117,9 +117,8 @@ describe("AudioDisplay helpers — getContainerClassName", () => {
 		expect(cls).not.toContain("border ");
 	});
 
-	test("includes border classes outside listen mode", () => {
+	test("includes rounded corners outside listen mode", () => {
 		const cls = helpers.getContainerClassName(false);
 		expect(cls).toContain("rounded-lg");
-		expect(cls).toContain("border");
 	});
 });

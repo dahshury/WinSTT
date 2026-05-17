@@ -1,0 +1,217 @@
+{
+  "name": "silence_input",
+  "duration_s": 2.0637738999976136,
+  "samples": 23,
+  "rss_mb": {
+    "min": 1299.93359375,
+    "max": 1320.33984375,
+    "mean": 1301.7888926630435
+  },
+  "cpu_pct": {
+    "max": 432.2,
+    "mean": 111.8695652173913
+  },
+  "vram_used_mb": {
+    "min": 9773.0,
+    "max": 9773.0,
+    "mean": 9773.0
+  },
+  "gpu_util_pct": {
+    "max": 46.0,
+    "mean": 16.652173913043477
+  },
+  "markers": [
+    {
+      "name": "profile-start",
+      "t": 0.0008142999977280851
+    },
+    {
+      "name": "cycle-start",
+      "t": 0.000818499996967148
+    },
+    {
+      "name": "recorder-start",
+      "t": 0.0008198999967135023
+    },
+    {
+      "name": "feed-begin",
+      "t": 0.0008675999997649342
+    },
+    {
+      "name": "feed-end",
+      "t": 2.017277599999943
+    },
+    {
+      "name": "recorder-stop",
+      "t": 2.0176238999993075
+    },
+    {
+      "name": "transcribe-observed",
+      "t": 2.06925069999852
+    },
+    {
+      "name": "profile-stop",
+      "t": 2.069267699996999
+    }
+  ],
+  "events": [
+    {
+      "t": 0.0008667999973113183,
+      "kind": "recording_started",
+      "extra": {}
+    },
+    {
+      "t": 0.13378179999926942,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.23847399999795016,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.33803449999686563,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.4378956999971706,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.5384298999997554,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.6414649999969697,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.7422601999969629,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.8410408999989158,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 0.9419252999978198,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.0469520999977249,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.1446652999984508,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.247591099996498,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.3461514999980864,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.4464238000000478,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.5485326999987592,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.6476517999981297,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.751507799999672,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.8516745999986597,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 1.9521166999984416,
+      "kind": "realtime_update",
+      "extra": {
+        "text_len": 0
+      }
+    },
+    {
+      "t": 2.0176124999998137,
+      "kind": "recording_stopped",
+      "extra": {}
+    },
+    {
+      "t": 2.0177389999989828,
+      "kind": "transcription_started",
+      "extra": {
+        "audio_bytes": 64512
+      }
+    },
+    {
+      "t": 2.064372099997854,
+      "kind": "transcription_completed",
+      "extra": {
+        "text_len": 0
+      }
+    }
+  ],
+  "gpu_available": true
+}

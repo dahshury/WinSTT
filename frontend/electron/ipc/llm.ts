@@ -20,18 +20,32 @@ import {
 import { buildOllamaApiUrl, normalizeOllamaEndpoint } from "../../src/shared/lib/ollama-endpoint";
 import { parseModelSelection } from "../../src/shared/lib/openrouter-model-selection";
 import { dbg } from "../lib/debug-log";
-import { getStoreValue } from "../lib/store";
+import { getStoreValue, store } from "../lib/store";
 
 const execFileAsync = promisify(execFile);
 const NEWLINE_RE = /\r?\n/;
 
 // ── Ollama API response schemas ───────────────────────────────────────
 
+// Ollama returns `details` on `/api/tags` items. Each subfield is optional
+// (older Ollama versions may omit them) and `.nullish()` so any one model
+// with `null` somewhere doesn't reject the whole catalog.
+const ollamaDetailsSchema = z
+	.object({
+		format: z.string().nullish(),
+		family: z.string().nullish(),
+		families: z.array(z.string()).nullish(),
+		parameter_size: z.string().nullish(),
+		quantization_level: z.string().nullish(),
+	})
+	.partial();
+
 const ollamaTagsModelSchema = z.object({
 	name: z.string(),
 	size: z.number(),
 	modified_at: z.string().optional(),
 	modifiedAt: z.string().optional(),
+	details: ollamaDetailsSchema.nullish(),
 });
 
 const ollamaTagsResponseSchema = z.object({
@@ -48,7 +62,16 @@ const ollamaChatResponseSchema = z.object({
 	done: z.boolean(),
 });
 
+interface OllamaModelDetails {
+	families?: string[];
+	family?: string;
+	format?: string;
+	parameterSize?: string;
+	quantizationLevel?: string;
+}
+
 interface OllamaModel {
+	details?: OllamaModelDetails;
 	modifiedAt: string;
 	name: string;
 	size: number;
@@ -95,13 +118,31 @@ const openRouterPricingSchema = z
 	})
 	.partial();
 
+// Architecture surface — modalities drive the picker's per-row modality chips.
+// OpenRouter returns these fields as either strings, arrays, OR `null` (commonly
+// `instruct_type: null` for chat-only models); `.nullish()` accepts both null
+// and undefined so the scan doesn't reject ~half the catalog on `null` values.
+const openRouterArchitectureSchema = z
+	.object({
+		modality: z.string().nullish(),
+		tokenizer: z.string().nullish(),
+		instruct_type: z.string().nullish(),
+		input_modalities: z.array(z.string()).nullish(),
+		output_modalities: z.array(z.string()).nullish(),
+	})
+	.partial();
+
 const openRouterModelSchema = z.object({
 	id: z.string(),
 	name: z.string(),
-	description: z.string().optional(),
-	context_length: z.number().int().optional(),
-	pricing: openRouterPricingSchema.optional(),
-	supported_parameters: z.array(z.string()).optional(),
+	// OpenRouter returns `null` (not absent) for missing descriptions and
+	// context_length on some models; `.nullish()` accepts both so the scan
+	// doesn't reject the whole catalog over a few sparse rows.
+	description: z.string().nullish(),
+	context_length: z.number().int().nullish(),
+	pricing: openRouterPricingSchema.nullish(),
+	supported_parameters: z.array(z.string()).nullish(),
+	architecture: openRouterArchitectureSchema.nullish(),
 });
 
 const openRouterModelsResponseSchema = z.object({
@@ -128,6 +169,7 @@ const openRouterEndpointSchema = z.object({
 });
 
 interface OpenRouterScanModel {
+	architecture?: z.infer<typeof openRouterArchitectureSchema>;
 	context_length?: number;
 	description?: string;
 	endpoints?: z.infer<typeof openRouterEndpointSchema>[];
@@ -140,6 +182,20 @@ interface OpenRouterScanModel {
 	supported_parameters?: string[];
 	variant?: KnownVariant;
 }
+
+// `/api/v1/models/{author}/{slug}/endpoints` returns the per-model detail
+// payload: full (un-truncated) description + the array of infrastructure
+// providers hosting the model. This is the data that powers the provider
+// rail expansion, the per-provider pricing/features/quantization chips, and
+// the structured-output / tool-use icons in the picker rows.
+const openRouterEndpointsDetailSchema = z.object({
+	description: z.string().optional(),
+	endpoints: z.array(openRouterEndpointSchema).optional(),
+});
+
+const openRouterEndpointsResponseSchema = z.object({
+	data: openRouterEndpointsDetailSchema.optional(),
+});
 
 interface OpenRouterScanResult {
 	error?: string;
@@ -257,7 +313,20 @@ function mapOllamaTagsModels(
 
 function toOllamaModel(item: z.infer<typeof ollamaTagsModelSchema>): OllamaModel {
 	const modifiedAt = item.modifiedAt ?? item.modified_at ?? "";
-	return { name: item.name, size: item.size, modifiedAt };
+	const d = item.details;
+	// Normalize details: drop the wrapper entirely when every field is absent
+	// so consumers can `if (model.details)` for "we have something to render".
+	const details: OllamaModelDetails | undefined = d
+		? {
+				format: d.format ?? undefined,
+				family: d.family ?? undefined,
+				families: d.families ?? undefined,
+				parameterSize: d.parameter_size ?? undefined,
+				quantizationLevel: d.quantization_level ?? undefined,
+			}
+		: undefined;
+	const hasAny = details && Object.values(details).some((v) => v !== undefined);
+	return { name: item.name, size: item.size, modifiedAt, details: hasAny ? details : undefined };
 }
 
 function parseOllamaTagsOrFail(json: unknown): OllamaScanResult {
@@ -299,6 +368,14 @@ async function assertOllamaResponseOk(
 	);
 }
 
+// Ollama unloads idle models after 5 min by default. Asking for 30 min on
+// every request lets a warm model stay hot between dictations and survives
+// the periodic warmup interval below (which re-hits the model well within
+// this window). The warmup loop is the *only* thing keeping the model alive
+// across long pauses; the chat-body keep_alive just makes sure each
+// successful call resets the timer.
+const OLLAMA_KEEP_ALIVE = "30m";
+
 function buildOllamaChatBody(
 	model: string,
 	messages: OllamaChatMessage[],
@@ -308,6 +385,7 @@ function buildOllamaChatBody(
 		model,
 		messages,
 		stream: false,
+		keep_alive: OLLAMA_KEEP_ALIVE,
 		options: {
 			temperature: 0.3,
 			top_p: 0.9,
@@ -372,18 +450,181 @@ function returnTextIfEmpty(generated: string, fallback: string): string {
 
 function enrichOpenRouterModel(m: z.infer<typeof openRouterModelSchema>): OpenRouterScanModel {
 	const { maker, model_name, variant } = parseMakerAndName(m.id);
+	// Normalize `null` → `undefined` so the public shape (and the openapi-typed
+	// frontend) doesn't have to thread null-handling through every downstream
+	// renderer. OpenRouter is inconsistent about this — some endpoints return
+	// `null`, others omit the field entirely; we collapse both to "absent".
 	return {
 		id: m.id,
 		name: m.name,
-		description: m.description,
-		context_length: m.context_length,
-		pricing: m.pricing,
+		description: m.description ?? undefined,
+		context_length: m.context_length ?? undefined,
+		pricing: m.pricing ?? undefined,
 		provider: "openrouter",
 		maker,
 		model_name,
 		variant,
-		supported_parameters: m.supported_parameters,
+		supported_parameters: m.supported_parameters ?? undefined,
+		architecture: m.architecture ?? undefined,
 	};
+}
+
+/**
+ * The `/models` listing returns a marketing blurb already truncated by
+ * OpenRouter (often ending with `...` or `…`). The per-model `/endpoints`
+ * detail returns the full description. Prefer the longer one — and if both
+ * look truncated, prefer the one without a trailing ellipsis.
+ */
+function pickLongerDescription(
+	listing: string | undefined,
+	detail: string | undefined
+): string | undefined {
+	if (!listing) {
+		return detail;
+	}
+	if (!detail) {
+		return listing;
+	}
+	const a = listing.trimEnd();
+	const b = detail.trimEnd();
+	const aEllipsis = a.endsWith("...") || a.endsWith("…");
+	const bEllipsis = b.endsWith("...") || b.endsWith("…");
+	if (aEllipsis && !bEllipsis) {
+		return detail;
+	}
+	if (!aEllipsis && bEllipsis) {
+		return listing;
+	}
+	return b.length > a.length ? detail : listing;
+}
+
+/**
+ * Split a model id (`author/slug` or `author/slug:variant`) into the parts
+ * needed to build the `/models/{author}/{slug}/endpoints` URL. Returns null
+ * when the id doesn't carry both an author and a slug — those models
+ * (synthetic `openrouter/auto`, malformed ids) simply have no detail page.
+ */
+function parseModelIdForDetail(modelId: string): { author: string; slug: string } | null {
+	const [authorSlug] = modelId.split(":");
+	if (!authorSlug) {
+		return null;
+	}
+	const parts = authorSlug.split("/");
+	if (parts.length < 2) {
+		return null;
+	}
+	const [author, ...slugParts] = parts;
+	if (!author || slugParts.length === 0) {
+		return null;
+	}
+	return { author, slug: slugParts.join("/") };
+}
+
+/**
+ * Fetch the per-model detail (`description` + `endpoints[]`) from
+ * `/api/v1/models/{author}/{slug}/endpoints`. Returns null when the request
+ * fails or the payload doesn't match the schema — callers fall back to the
+ * un-enriched model in that case so a single failure doesn't poison the list.
+ */
+async function fetchModelEndpoints(
+	modelId: string,
+	apiKey: string
+): Promise<{ description?: string; endpoints: z.infer<typeof openRouterEndpointSchema>[] } | null> {
+	const parsed = parseModelIdForDetail(modelId);
+	if (!parsed) {
+		return null;
+	}
+	const url = `https://openrouter.ai/api/v1/models/${parsed.author}/${parsed.slug}/endpoints`;
+	const response = await safeFetch(
+		url,
+		{
+			method: "GET",
+			headers: buildAuthHeaders(apiKey),
+			signal: AbortSignal.timeout(10_000),
+		},
+		`OpenRouter /endpoints for ${modelId}`
+	);
+	if (isFetchError(response) || !response.ok) {
+		return null;
+	}
+	let json: unknown;
+	try {
+		json = await response.json();
+	} catch {
+		return null;
+	}
+	const parsedJson = openRouterEndpointsResponseSchema.safeParse(json);
+	if (!parsedJson.success) {
+		return null;
+	}
+	const data = parsedJson.data.data;
+	if (!data) {
+		return null;
+	}
+	return {
+		description: data.description,
+		endpoints: data.endpoints ?? [],
+	};
+}
+
+/**
+ * Tiny inline concurrency limiter — avoids pulling in the `p-limit` dependency
+ * for a one-call-site need. Caps the number of in-flight promises returned by
+ * `task()` at `limit`. Each input is passed through `task` and the resolved
+ * results are returned in input order.
+ */
+async function mapWithConcurrency<T, R>(
+	items: readonly T[],
+	limit: number,
+	task: (item: T) => Promise<R>
+): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let cursor = 0;
+	const workerCount = Math.min(limit, items.length);
+	const runWorker = async () => {
+		while (cursor < items.length) {
+			const myIndex = cursor++;
+			results[myIndex] = await task(items[myIndex] as T);
+		}
+	};
+	await Promise.all(Array.from({ length: workerCount }, runWorker));
+	return results;
+}
+
+/**
+ * Enrich the top-level model list with per-model endpoint detail, in
+ * parallel, with a fixed concurrency cap. After this runs, every model
+ * carries the array of infrastructure providers hosting it (plus their
+ * pricing, quantization, max_completion_tokens, supported_parameters, etc.),
+ * which is what the picker's provider rail / feature chips / quantization
+ * chips actually need to render.
+ *
+ * Failures on individual models are swallowed and the model is returned
+ * with its un-enriched (endpoint-less) shape — a single 429 on a niche model
+ * shouldn't blank out the whole catalog.
+ */
+const OPENROUTER_ENRICHMENT_CONCURRENCY = 10;
+
+async function enrichOpenRouterModelsWithEndpoints(
+	models: readonly OpenRouterScanModel[],
+	apiKey: string
+): Promise<OpenRouterScanModel[]> {
+	return mapWithConcurrency(models, OPENROUTER_ENRICHMENT_CONCURRENCY, async (model) => {
+		try {
+			const detail = await fetchModelEndpoints(model.id, apiKey);
+			if (!detail) {
+				return model;
+			}
+			return {
+				...model,
+				description: pickLongerDescription(model.description, detail.description),
+				endpoints: detail.endpoints,
+			};
+		} catch (err) {
+			dbg("llm", `Failed to enrich ${model.id}:`, getErrorMessage(err));
+			return model;
+		}
+	});
 }
 
 function parseOpenRouterModelsOrFail(json: unknown): OpenRouterScanResult {
@@ -431,7 +672,7 @@ async function processWithOllama(
 	model: string,
 	presets: readonly PresetEntry[],
 	endpoint: string,
-	timeout: number,
+	_timeout: number,
 	context: string
 ): Promise<string> {
 	assertNonEmptyString(model, "Ollama model is required", "model");
@@ -445,11 +686,15 @@ async function processWithOllama(
 		{ role: "user", content: userPrompt },
 	];
 
+	// Client-side timeout DISABLED — local LLMs (Ollama) routinely exceed
+	// 30s on cold start, and a silent abort + original-text paste is
+	// misleading. The pill stays visible until the model completes. The
+	// `_timeout` parameter is preserved for wiring/settings compatibility
+	// but ignored at the network layer.
 	const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/chat"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: buildOllamaChatBody(model, messages, text.length),
-		signal: AbortSignal.timeout(timeout),
 	});
 
 	await assertOllamaResponseOk(response, {
@@ -525,7 +770,24 @@ export async function scanOpenRouterModels(apiKey: string): Promise<OpenRouterSc
 		return { models: [], reachable: true, error: message };
 	}
 	const json: unknown = await response.json();
-	return parseOpenRouterModelsOrFail(json);
+	const baseResult = parseOpenRouterModelsOrFail(json);
+	if (baseResult.error || baseResult.models.length === 0) {
+		return baseResult;
+	}
+	// Fan out per-model `/endpoints` fetches in parallel (concurrency capped)
+	// to enrich each model with its infrastructure providers. The provider
+	// rail, per-provider pricing, quantization chips, tool/structured-output
+	// icons, and reasoning chips all read off this enriched data.
+	try {
+		const enriched = await enrichOpenRouterModelsWithEndpoints(baseResult.models, apiKey);
+		return { ...baseResult, models: enriched };
+	} catch (err) {
+		// Enrichment failure is non-fatal — fall back to the un-enriched list
+		// so the picker at least shows the model names. Individual per-model
+		// failures are already swallowed inside the enrichment loop.
+		dbg("llm", "OpenRouter endpoint enrichment failed:", getErrorMessage(err));
+		return baseResult;
+	}
 }
 
 async function processWithOpenRouter(
@@ -533,7 +795,7 @@ async function processWithOpenRouter(
 	apiKey: string,
 	modelSelection: string,
 	presets: readonly PresetEntry[],
-	timeout: number,
+	_timeout: number,
 	context: string
 ): Promise<string> {
 	if (!apiKey) {
@@ -555,11 +817,12 @@ async function processWithOpenRouter(
 
 	const model = openrouter.chat(effectiveModelId, buildModelOptions(providerSlug));
 
+	// Client-side timeout DISABLED — `_timeout` is wired through for
+	// settings compatibility but the model runs to completion.
 	const result = await generateObject({
 		model,
 		system: systemPrompt,
 		prompt: userPrompt,
-		abortSignal: AbortSignal.timeout(timeout),
 		schemaName: "TransformedText",
 		schemaDescription: "The transformed text only.",
 		schema: transformedTextSchema,
@@ -619,7 +882,7 @@ function toTimeoutErrorOrNull(
 }
 
 function mapAndThrowOrReturn(err: unknown, ctx: ProcessTextCtx, text: string): string {
-	dbg("llm", "LLM processing failed:", getErrorMessage(err));
+	dbg("llm", `LLM processing failed (provider=${ctx.provider}):`, getErrorMessage(err));
 	if (isPassThroughError(err)) {
 		throw err;
 	}
@@ -669,8 +932,8 @@ function runOpenRouterPath(
 	context: string
 ): Promise<string> {
 	const apiKey = getStoreValue("llm.openrouterApiKey");
-	const primary = getStoreValue("llm.openrouterModel");
-	const fallback = getStoreValue("llm.openrouterFallbackModel");
+	const primary = getStoreValue("llm.dictation.openrouterModel");
+	const fallback = getStoreValue("llm.dictation.openrouterFallbackModel");
 	return runOpenRouterWithFallback(text, apiKey, primary, fallback, presets, timeout, context);
 }
 
@@ -681,7 +944,7 @@ function runOllamaPath(
 	context: string
 ): Promise<string> {
 	const endpoint = getStoreValue("llm.endpoint");
-	const model = getStoreValue("llm.model");
+	const model = getStoreValue("llm.dictation.model");
 	return processWithOllama(text, model, presets, endpoint, timeout, context);
 }
 
@@ -700,6 +963,8 @@ function runProcessText(
 
 /**
  * Process text using either Ollama or OpenRouter, based on stored settings.
+ * Reads the dictation-feature provider/model config so dictation post-
+ * processing can run on a different provider than the transforms feature.
  * OpenRouter goes through the Vercel AI SDK with a strict Zod-validated
  * structured output (`{ text }`), so the result is guaranteed to be plain
  * transformed text with no surrounding commentary.
@@ -711,8 +976,11 @@ function runProcessText(
 export async function processText(text: string, context = ""): Promise<string> {
 	assertNonEmptyString(text, "Text is required for LLM processing", "text");
 
-	const provider = getStoreValue("llm.provider");
-	const presets = getStoreValue("llm.presets") as readonly PresetEntry[];
+	const provider = getStoreValue("llm.dictation.provider");
+	const presets = getStoreValue("llm.dictation.presets") as readonly PresetEntry[];
+	// `llm.timeout` is read so settings/wiring stay live (settings UI, persisted
+	// value, tests asserting `storeKeyAccesses`), but the value is currently
+	// ignored at the network layer — see processWithOllama/processWithOpenRouter.
 	const timeout = getStoreValue("llm.timeout");
 
 	try {
@@ -730,15 +998,15 @@ export async function processText(text: string, context = ""): Promise<string> {
 //      "Return ONLY the transformed text" is non-negotiable.
 //
 // We funnel both providers through the same shape as the preset path so
-// timeouts, error mapping, and structured output (OpenRouter) behave
-// identically.
+// error mapping and structured output (OpenRouter) behave identically.
+// Neither path imposes a client-side timeout — the LLM runs to completion.
 
 async function processWithOllamaCustom(
 	text: string,
 	model: string,
 	systemPrompt: string,
 	endpoint: string,
-	timeout: number
+	_timeout: number
 ): Promise<string> {
 	assertNonEmptyString(model, "Ollama model is required", "model");
 	const normalizedEndpoint = assertValidEndpoint(endpoint);
@@ -749,11 +1017,12 @@ async function processWithOllamaCustom(
 		{ role: "user", content: userPrompt },
 	];
 
+	// Client-side timeout DISABLED (see processWithOllama for rationale).
+	// `_timeout` is wired through for settings/test compatibility.
 	const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/chat"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: buildOllamaChatBody(model, messages, text.length),
-		signal: AbortSignal.timeout(timeout),
 	});
 
 	await assertOllamaResponseOk(response, {
@@ -771,7 +1040,7 @@ async function processWithOpenRouterCustom(
 	apiKey: string,
 	modelSelection: string,
 	systemPrompt: string,
-	timeout: number
+	_timeout: number
 ): Promise<string> {
 	if (!apiKey) {
 		throw new ValidationError("OpenRouter API key is required", "apiKey");
@@ -795,7 +1064,6 @@ async function processWithOpenRouterCustom(
 		model,
 		system: systemPrompt,
 		prompt: userPrompt,
-		abortSignal: AbortSignal.timeout(timeout),
 		schemaName: "TransformedText",
 		schemaDescription: "The transformed text only.",
 		schema: transformedTextSchema,
@@ -808,6 +1076,26 @@ async function processWithOpenRouterCustom(
 	return returnTextIfEmpty(result.object.text.trim(), text);
 }
 
+async function runOpenRouterCustomWithFallback(
+	text: string,
+	apiKey: string,
+	primary: string,
+	fallback: string,
+	systemPrompt: string,
+	timeout: number
+): Promise<string> {
+	try {
+		return await processWithOpenRouterCustom(text, apiKey, primary, systemPrompt, timeout);
+	} catch (primaryErr) {
+		rethrowOrFallbackEligible(primaryErr, fallback);
+		dbg(
+			"llm",
+			`OpenRouter primary failed (${getErrorMessage(primaryErr)}); trying fallback ${fallback}`
+		);
+		return await processWithOpenRouterCustom(text, apiKey, fallback, systemPrompt, timeout);
+	}
+}
+
 function runCustomPromptPath(
 	text: string,
 	systemPrompt: string,
@@ -816,11 +1104,12 @@ function runCustomPromptPath(
 ): Promise<string> {
 	if (provider === "openrouter") {
 		const apiKey = getStoreValue("llm.openrouterApiKey");
-		const primary = getStoreValue("llm.openrouterModel");
-		return processWithOpenRouterCustom(text, apiKey, primary, systemPrompt, timeout);
+		const primary = getStoreValue("llm.transforms.openrouterModel");
+		const fallback = getStoreValue("llm.transforms.openrouterFallbackModel");
+		return runOpenRouterCustomWithFallback(text, apiKey, primary, fallback, systemPrompt, timeout);
 	}
 	const endpoint = getStoreValue("llm.endpoint");
-	const model = getStoreValue("llm.model");
+	const model = getStoreValue("llm.transforms.model");
 	return processWithOllamaCustom(text, model, systemPrompt, endpoint, timeout);
 }
 
@@ -828,6 +1117,9 @@ function runCustomPromptPath(
  * Apply a free-form system prompt to `text` and return the transformed
  * result. Used by the Transforms feature: each transform supplies its
  * own `systemPrompt`, independent from the cleanup preset catalog.
+ *
+ * Reads the transforms-feature provider/model config so transforms can
+ * run on a different provider than dictation cleanup.
  *
  * Optional `context` is fed through the same UIA-context prefix as
  * `processText`, so a transform fired with context-awareness on gets
@@ -841,7 +1133,7 @@ export async function processTextWithCustomPrompt(
 	assertNonEmptyString(text, "Text is required for LLM processing", "text");
 	assertNonEmptyString(systemPrompt, "Transform prompt is required", "systemPrompt");
 
-	const provider = getStoreValue("llm.provider");
+	const provider = getStoreValue("llm.transforms.provider");
 	const timeout = getStoreValue("llm.timeout");
 	const effectiveSystemPrompt = withContextPrefix(systemPrompt, context);
 
@@ -1437,6 +1729,9 @@ export function setupLlm(): () => void {
 	ipcMain.handle(IPC.LLM_PULL_MODEL, handlePullModel);
 	ipcMain.handle(IPC.LLM_CANCEL_PULL_MODEL, handleCancelPull);
 	ipcMain.handle(IPC.LLM_DELETE_MODEL, handleDeleteModel);
+	// Settings window may mount after a warmup has already fired; let it
+	// pull the latest snapshot rather than waiting for the next interval.
+	ipcMain.handle(IPC.LLM_GET_WARMUP_STATUS, () => getLastWarmupStatus());
 
 	return () => {
 		ipcMain.removeHandler(IPC.LLM_SCAN_MODELS);
@@ -1448,11 +1743,428 @@ export function setupLlm(): () => void {
 		ipcMain.removeHandler(IPC.LLM_PULL_MODEL);
 		ipcMain.removeHandler(IPC.LLM_CANCEL_PULL_MODEL);
 		ipcMain.removeHandler(IPC.LLM_DELETE_MODEL);
+		ipcMain.removeHandler(IPC.LLM_GET_WARMUP_STATUS);
 		for (const controller of activePulls.values()) {
 			controller.abort();
 		}
 		activePulls.clear();
 	};
+}
+
+// ── Ollama warmup (keep models hot between dictations) ───────────────
+//
+// Ollama unloads idle models after ~5 min. The first /api/chat after that
+// pays a multi-second model-load tax which makes dictation feel broken —
+// the user sees the recording pill swap to the thinking indicator for ages
+// before any text appears. We preload the configured dictation/transforms
+// model on app start, after settings change, and on a 4-minute interval so
+// the model is always sitting in RAM by the time the user actually dictates.
+//
+// Warmup is fire-and-forget and silent on failure: Ollama may be offline,
+// the model may be wrong, the user may not have a model selected at all.
+// None of those should surface as errors — they just mean the first real
+// call will pay the cold-start tax, which is the status-quo behaviour.
+
+// Re-warm slightly before Ollama would unload the model so it never goes
+// cold between dictations. Default Ollama unload is 5 min; keep_alive on
+// the chat/warmup requests is 30 min, but we still refresh on this cadence
+// to handle store restarts and brief Ollama outages.
+const WARMUP_INTERVAL_MS = 4 * 60 * 1000;
+
+// Debounce settings-driven warmups so toggling a switch a few times in
+// rapid succession doesn't fire N concurrent warmups.
+const WARMUP_SETTINGS_DEBOUNCE_MS = 500;
+
+// Avoid hammering `ollama serve` if a previous spawn already started but
+// hasn't bound the port yet, or if Ollama isn't installed at all. One
+// auto-start per 30 s is plenty — the periodic warmup interval is 4 min,
+// so even a stubborn outage gets a fresh try every two warmups.
+const OLLAMA_AUTO_START_THROTTLE_MS = 30_000;
+
+// After spawning `ollama serve`, give it up to this long to bind the port
+// and accept its first `/api/tags`. Local Ollama usually boots in 1-2 s;
+// 10 s leaves headroom for slower disks and antivirus pre-scan.
+const OLLAMA_BOOT_WAIT_MS = 10_000;
+
+// Hostnames where auto-starting a *local* `ollama serve` actually helps.
+// Remote endpoints (someone else's box) get no auto-start — we can't fix
+// their machine from here, and `detectOllama()` would happily find a
+// local install that has nothing to do with the remote endpoint they
+// configured.
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1", ""]);
+
+function isLoopbackEndpoint(endpoint: string): boolean {
+	const normalized = normalizeOllamaEndpoint(endpoint);
+	if (!normalized) {
+		return false;
+	}
+	try {
+		const url = new URL(normalized);
+		return LOOPBACK_HOSTS.has(url.hostname.toLowerCase());
+	} catch {
+		return false;
+	}
+}
+
+async function pingOllama(endpoint: string, timeoutMs = 2000): Promise<boolean> {
+	const normalized = normalizeOllamaEndpoint(endpoint);
+	if (!normalized) {
+		return false;
+	}
+	try {
+		const response = await fetch(buildOllamaApiUrl(normalized, "/api/tags"), {
+			method: "GET",
+			signal: AbortSignal.timeout(timeoutMs),
+		});
+		return response.ok;
+	} catch {
+		return false;
+	}
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
+}
+
+async function waitForOllama(endpoint: string, totalMs: number): Promise<boolean> {
+	const deadline = Date.now() + totalMs;
+	while (Date.now() < deadline) {
+		// react-doctor-disable-next-line async-await-in-loop
+		if (await pingOllama(endpoint, 1500)) {
+			return true;
+		}
+		// react-doctor-disable-next-line async-await-in-loop
+		await sleep(500);
+	}
+	return false;
+}
+
+let lastAutoStartAttemptMs = 0;
+
+/**
+ * Make sure Ollama is reachable at `endpoint`. If it isn't, attempt to
+ * auto-spawn `ollama serve` (only for loopback endpoints + when Ollama is
+ * actually installed on this machine), then poll for boot.
+ *
+ * Throttled: at most one auto-start every {@link OLLAMA_AUTO_START_THROTTLE_MS}
+ * so a sustained outage doesn't spawn dozens of `ollama serve` processes.
+ *
+ * Returns true when Ollama is reachable (already running or just started),
+ * false otherwise. Callers should skip Ollama work when false — there's
+ * nothing useful to do.
+ */
+async function ensureOllamaReachable(endpoint: string): Promise<boolean> {
+	if (await pingOllama(endpoint)) {
+		return true;
+	}
+	if (!isLoopbackEndpoint(endpoint)) {
+		dbg("llm", `Ollama unreachable at ${endpoint}; remote endpoint — cannot auto-start`);
+		return false;
+	}
+	const now = Date.now();
+	if (now - lastAutoStartAttemptMs < OLLAMA_AUTO_START_THROTTLE_MS) {
+		dbg("llm", "Ollama unreachable; auto-start throttled (recent attempt)");
+		return false;
+	}
+	lastAutoStartAttemptMs = now;
+	const detected = await detectOllama();
+	if (isOllamaUnavailable(detected)) {
+		dbg("llm", "Ollama unreachable and not installed — dictation will be skipped");
+		return false;
+	}
+	dbg("llm", "Ollama unreachable — attempting auto-start");
+	const result = await startOllama();
+	if (!result.started) {
+		dbg("llm", `Ollama auto-start failed: ${result.error ?? "unknown"}`);
+		return false;
+	}
+	const up = await waitForOllama(endpoint, OLLAMA_BOOT_WAIT_MS);
+	if (!up) {
+		dbg("llm", `Ollama auto-started but didn't bind within ${OLLAMA_BOOT_WAIT_MS}ms`);
+		return false;
+	}
+	dbg("llm", "Ollama auto-start succeeded");
+	return true;
+}
+
+/**
+ * Outcome of a single model warmup. Distinguishes the user-actionable
+ * cases (model isn't installed → pull it; model load blew up → reinstall
+ * or pick a different one) from generic transport failures so logs are
+ * useful when something goes wrong.
+ */
+type WarmupOutcome = "ok" | "unreachable" | "model-not-found" | "load-failed" | "skipped";
+
+/**
+ * Ollama returns HTTP 404 with a body like:
+ *   {"error":"model 'gemma3:99b' not found, try pulling it first"}
+ * for an uninstalled model. Other non-2xx responses on /api/generate
+ * (most often 500 with a runner error) indicate the model file is
+ * present but failed to load — typically corruption, incompatible
+ * quant, or out-of-memory.
+ */
+function classifyWarmupResponse(status: number): WarmupOutcome {
+	if (status === 404) {
+		return "model-not-found";
+	}
+	return "load-failed";
+}
+
+interface WarmupModelResult {
+	errorBody?: string;
+	model: string;
+	outcome: WarmupOutcome;
+}
+
+async function warmupOllamaModel(endpoint: string, model: string): Promise<WarmupModelResult> {
+	if (!model) {
+		return { model, outcome: "skipped" };
+	}
+	const normalizedEndpoint = normalizeOllamaEndpoint(endpoint);
+	if (!normalizedEndpoint) {
+		return { model, outcome: "skipped" };
+	}
+	try {
+		// /api/generate with empty prompt loads the model into VRAM/RAM
+		// without producing output. Cheaper than a real chat round-trip.
+		const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/generate"), {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				model,
+				prompt: "",
+				stream: false,
+				keep_alive: OLLAMA_KEEP_ALIVE,
+			}),
+			// Generous timeout — a cold model load can easily take 30s+ on first
+			// run. Bail at 2 min so a hung Ollama doesn't pin a forever-running
+			// fetch on the warmup interval.
+			signal: AbortSignal.timeout(120_000),
+		});
+		if (!response.ok) {
+			const body = await readErrorText(response);
+			const outcome = classifyWarmupResponse(response.status);
+			if (outcome === "model-not-found") {
+				dbg(
+					"llm",
+					`Ollama warmup: model "${model}" not installed — pull it from the Ollama panel. ${body}`
+				);
+			} else {
+				dbg(
+					"llm",
+					`Ollama warmup: model "${model}" failed to load (HTTP ${response.status}) — file may be corrupted, incompatible, or out of memory. ${body}`
+				);
+			}
+			return { model, outcome, errorBody: body };
+		}
+		// Drain the body so the socket can be reused.
+		await response.json().catch(() => undefined);
+		dbg("llm", `Ollama warmup OK: ${model}`);
+		return { model, outcome: "ok" };
+	} catch (err) {
+		const message = getErrorMessage(err);
+		dbg("llm", `Ollama warmup failed for ${model}:`, message);
+		return { model, outcome: "unreachable", errorBody: message };
+	}
+}
+
+function collectEnabledOllamaModels(): string[] {
+	const out = new Set<string>();
+	if (
+		getStoreValue("llm.dictation.enabled") === true &&
+		getStoreValue("llm.dictation.provider") === "ollama"
+	) {
+		const model = getStoreValue("llm.dictation.model");
+		if (model) {
+			out.add(model);
+		}
+	}
+	if (
+		getStoreValue("llm.transforms.enabled") === true &&
+		getStoreValue("llm.transforms.provider") === "ollama"
+	) {
+		const model = getStoreValue("llm.transforms.model");
+		if (model) {
+			out.add(model);
+		}
+	}
+	return Array.from(out);
+}
+
+// Status payload broadcast to all renderers after every warmup pass.
+// The renderer uses this to drive UI banners — "Ollama not running",
+// "Model not installed", "Model failed to load" — so the user has
+// concrete information instead of a silently-stuck dictation toggle.
+interface WarmupStatusPayload {
+	endpoint: string;
+	models: WarmupModelResult[];
+	ollamaInstalled: boolean;
+	// `null` when no Ollama-backed feature is enabled (no work to do).
+	// `true` when /api/tags answers. `false` when unreachable + auto-start
+	// either didn't try (remote / throttled) or failed.
+	reachable: boolean | null;
+	timestamp: number;
+}
+
+let lastWarmupStatus: WarmupStatusPayload | null = null;
+
+function broadcastWarmupStatus(payload: WarmupStatusPayload): void {
+	lastWarmupStatus = payload;
+	const live = BrowserWindow.getAllWindows().filter((bw) => !bw.isDestroyed());
+	for (const bw of live) {
+		try {
+			bw.webContents.send(IPC.LLM_WARMUP_STATUS, payload);
+		} catch (err) {
+			dbg("llm", "broadcastWarmupStatus failed for window:", getErrorMessage(err));
+		}
+	}
+}
+
+function getLastWarmupStatus(): WarmupStatusPayload | null {
+	return lastWarmupStatus;
+}
+
+async function warmupEnabledModels(): Promise<void> {
+	const models = collectEnabledOllamaModels();
+	const endpoint = getStoreValue("llm.endpoint");
+	if (models.length === 0) {
+		// Nothing to warm — but still publish so the renderer can clear
+		// any stale banners when the user disables every Ollama feature.
+		broadcastWarmupStatus({
+			endpoint,
+			reachable: null,
+			ollamaInstalled: false,
+			models: [],
+			timestamp: Date.now(),
+		});
+		return;
+	}
+	// App-just-launched + Ollama-not-running case: bring it up before any
+	// model warmup hits. Without this the first call refuses for ~10 s on
+	// connection refused while the user wonders why dictation is broken.
+	const reachable = await ensureOllamaReachable(endpoint);
+	const detected = await detectOllama().catch(() => ({ installed: false }) as const);
+	if (!reachable) {
+		broadcastWarmupStatus({
+			endpoint,
+			reachable: false,
+			ollamaInstalled: detected.installed === true,
+			// Mark every enabled model as unreachable so the UI can show
+			// the same "Ollama isn't running" message under each subsection.
+			models: models.map((m) => ({ model: m, outcome: "unreachable" as const })),
+			timestamp: Date.now(),
+		});
+		return;
+	}
+	const results = await Promise.all(models.map((m) => warmupOllamaModel(endpoint, m)));
+	broadcastWarmupStatus({
+		endpoint,
+		reachable: true,
+		ollamaInstalled: detected.installed === true,
+		models: results,
+		timestamp: Date.now(),
+	});
+}
+
+let warmupInterval: ReturnType<typeof setInterval> | null = null;
+let warmupStoreUnsub: (() => void) | null = null;
+let warmupDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Last warmup-relevant config signature. The `llm.*` store subtree is rewritten
+ * wholesale by `settings:save` (which copies every key, changed or not), so a
+ * naive `onDidChange("llm")` fires on every dictation cycle (settings save is
+ * triggered by transient updates like VAD sensitivity adaptation). That makes
+ * Ollama warm up on every PTT release — wasted bandwidth + visible Ollama-side
+ * GPU/CPU churn. Gate the listener on a fingerprint of the only fields that
+ * actually affect warmup (provider / model / endpoint / enabled flags) so
+ * unchanged saves are a no-op.
+ */
+let lastWarmupSignature: string | null = null;
+
+function computeWarmupSignature(): string {
+	// Stable JSON ordering — these are the inputs to `collectEnabledOllamaModels`
+	// plus the endpoint that `warmupOllamaModel` POSTs to. Anything outside this
+	// set (presets, openrouter keys, timeout, etc.) doesn't change WHAT we warm
+	// up, so a save that only touches those keys is correctly a no-op.
+	return JSON.stringify({
+		endpoint: getStoreValue("llm.endpoint") ?? "",
+		dictation: {
+			enabled: getStoreValue("llm.dictation.enabled") === true,
+			provider: getStoreValue("llm.dictation.provider") ?? "",
+			model: getStoreValue("llm.dictation.model") ?? "",
+		},
+		transforms: {
+			enabled: getStoreValue("llm.transforms.enabled") === true,
+			provider: getStoreValue("llm.transforms.provider") ?? "",
+			model: getStoreValue("llm.transforms.model") ?? "",
+		},
+	});
+}
+
+function fireWarmup(): void {
+	lastWarmupSignature = computeWarmupSignature();
+	warmupEnabledModels().catch((err) => {
+		dbg("llm", "warmupEnabledModels rejected:", getErrorMessage(err));
+	});
+}
+
+function scheduleDebouncedWarmup(): void {
+	if (warmupDebounceTimer) {
+		clearTimeout(warmupDebounceTimer);
+	}
+	warmupDebounceTimer = setTimeout(() => {
+		warmupDebounceTimer = null;
+		const next = computeWarmupSignature();
+		if (next === lastWarmupSignature) {
+			// Settings save didn't touch any warmup-relevant field — skip.
+			return;
+		}
+		fireWarmup();
+	}, WARMUP_SETTINGS_DEBOUNCE_MS);
+}
+
+/**
+ * Start the Ollama warmup loop. Idempotent — calling it twice tears down
+ * the previous interval/listener before installing fresh ones, so a hot
+ * reload during development doesn't stack timers.
+ *
+ * Returns a cleanup function that stops the interval and unsubscribes from
+ * the store listener; call from app shutdown / module teardown.
+ */
+export function setupLlmWarmup(): () => void {
+	cleanupLlmWarmup();
+
+	// Fire once immediately so the model is ready by the time the user
+	// presses PTT — without this the user pays cold-start on first dictation
+	// every single app launch.
+	fireWarmup();
+
+	warmupInterval = setInterval(fireWarmup, WARMUP_INTERVAL_MS);
+
+	// Any change to the `llm` subtree (enabled toggle, provider switch,
+	// model swap, endpoint edit) → rewarm so the newly-selected model is
+	// hot. Debounced so flipping switches doesn't spam Ollama.
+	warmupStoreUnsub = store.onDidChange("llm", scheduleDebouncedWarmup);
+
+	return cleanupLlmWarmup;
+}
+
+function cleanupLlmWarmup(): void {
+	if (warmupInterval) {
+		clearInterval(warmupInterval);
+		warmupInterval = null;
+	}
+	if (warmupStoreUnsub) {
+		warmupStoreUnsub();
+		warmupStoreUnsub = null;
+	}
+	if (warmupDebounceTimer) {
+		clearTimeout(warmupDebounceTimer);
+		warmupDebounceTimer = null;
+	}
+	lastWarmupSignature = null;
 }
 
 // ── Test-only re-exports of newly extracted pure helpers ─────────────
@@ -1472,8 +2184,6 @@ export const __llm_test_helpers__ = {
 	stripTildePrefix,
 	repairOpenRouterText,
 	isPassThroughError,
-	isAbortLikeTimeoutError,
-	toTimeoutErrorOrNull,
 	mapAndThrowOrReturn,
 	isOllamaUnavailable,
 	getOllamaCandidatePaths,
@@ -1516,4 +2226,19 @@ export const __llm_test_helpers__ = {
 	hasValidPercentInputs,
 	processWithOpenRouterCustom,
 	runCustomPromptPath,
+	// Warmup helpers — exported so tests can assert which models get warmed
+	// without firing real network calls (callers stub fetch).
+	collectEnabledOllamaModels,
+	warmupOllamaModel,
+	warmupEnabledModels,
+	// Reachability + classification helpers for the auto-start + missing/
+	// corrupted-model edge cases.
+	classifyWarmupResponse,
+	isLoopbackEndpoint,
+	pingOllama,
+	ensureOllamaReachable,
+	// Status broadcast accessor — tests assert the renderer-facing
+	// payload shape after a warmup pass.
+	getLastWarmupStatus,
+	broadcastWarmupStatus,
 };

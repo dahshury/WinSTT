@@ -31,15 +31,13 @@
     "check:i18n:strict": "bun run scripts/verify-i18n.ts --strict",
     "next:prepare-standalone": "node scripts/prepare-next-standalone.mjs",
     "native:build": "node scripts/native/build-winstt-paste.cjs && node scripts/native/build-winstt-context.cjs",
-    "electron:compile:main": "tsup electron/main.ts --format esm --outDir dist-electron --external electron --external uiohook-napi --external pngjs --sourcemap",
-    "electron:compile:preload": "tsup electron/preload.ts --format cjs --outDir dist-electron --external electron --sourcemap",
-    "electron:compile": "rm -rf dist-electron && concurrently -n main,preload -c green,yellow \"bun run electron:compile:main\" \"bun run electron:compile:preload\"",
-    "electron:watch:main": "tsup electron/main.ts --format esm --outDir dist-electron --external electron --external uiohook-napi --external pngjs --sourcemap --watch electron --watch src",
-    "electron:watch:preload": "tsup electron/preload.ts --format cjs --outDir dist-electron --external electron --sourcemap --watch electron --watch src",
+    "electron:compile:main": "tsup --config tsup.config.ts",
+    "electron:compile": "rm -rf dist-electron && bun run electron:compile:main",
+    "electron:watch:main": "tsup --config tsup.config.ts --watch electron --watch src",
     "electron:start": "wait-on tcp:3000 file:dist-electron/main.js file:dist-electron/preload.cjs && bun run scripts/dev-electron.ts",
     "electron:rebuild": "electron-rebuild -o uiohook-napi",
     "electron:rebuild:force": "electron-rebuild -f -o uiohook-napi",
-    "electron:dev": "rm -rf dist-electron && bun run native:build && concurrently -k --success first -n next,main,preload,app -c blue,green,yellow,magenta \"bun run dev:next\" \"bun run electron:watch:main\" \"bun run electron:watch:preload\" \"bun run electron:start\"",
+    "electron:dev": "rm -rf dist-electron && bun run native:build && concurrently -k --success first -n next,main,app -c blue,green,magenta \"bun run dev:next\" \"bun run electron:watch:main\" \"bun run electron:start\"",
     "electron:build": "bun run build && bun run next:prepare-standalone && bun run electron:compile && bun run native:build && bun run electron:rebuild:force && electron-builder",
     "electron:build:publish": "bun run build && bun run next:prepare-standalone && bun run electron:compile && bun run native:build && bun run electron:rebuild:force && electron-builder --publish always",
     "electron:build:cpu": "bun run build && bun run next:prepare-standalone && bun run electron:compile && bun run native:build && bun run electron:rebuild:force && electron-builder --config electron-builder.cpu.yml",
@@ -54,9 +52,12 @@
     "@hugeicons/core-free-icons": "^4.1.2",
     "@hugeicons/react": "^1.1.6",
     "@openrouter/ai-sdk-provider": "^2.9.0",
+    "@sentry/electron": "^7.13.0",
     "ai": "^6.0.176",
+    "archiver": "^7.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "electron-log": "^5.4.4",
     "electron-updater": "^6.8.3",
     "fuse.js": "^7.3.0",
     "geist": "^1.7.0",
@@ -82,6 +83,7 @@
     "@stryker-mutator/core": "^9.6.1",
     "@tailwindcss/postcss": "^4.2.4",
     "@testing-library/react": "^16.3.2",
+    "@types/archiver": "^7.0.0",
     "@types/bun": "latest",
     "@types/pngjs": "^6.0.5",
     "@types/react": "^19.2.14",
@@ -105,5 +107,8 @@
   "trustedDependencies": [
     "electron",
     "uiohook-napi"
-  ]
+  ],
+  "overrides": {
+    "yallist": "^4.0.0"
+  }
 }

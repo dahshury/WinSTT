@@ -10,7 +10,12 @@ const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
 beforeEach(() => {
 	listeners.clear();
-	useTranscriptionStore.setState({ items: [], currentRealtime: "", ephemeral: null });
+	useTranscriptionStore.setState({
+		items: [],
+		currentRealtime: "",
+		ephemeral: null,
+		isRecordingActive: false,
+	});
 	window.electronAPI = {
 		...originalApi,
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
@@ -70,5 +75,56 @@ describe("useTranscriptionFeed", () => {
 		});
 		fire(IPC.STT_NO_AUDIO_DETECTED);
 		expect(useTranscriptionStore.getState().ephemeral).not.toBeNull();
+	});
+
+	test("recording_start clears stale state and arms isRecordingActive", () => {
+		// Prime the store with a previous session's text (and a stale ephemeral
+		// from a prior no_audio_detected) so we can verify recording_start wipes
+		// them before the pill could possibly paint them — same race the bug
+		// report describes ("flashes previous transcription on next PTT press").
+		useTranscriptionStore.setState({
+			currentRealtime: "leftover from last press",
+			ephemeral: { text: "no audio detected", timestamp: 0 },
+			isRecordingActive: false,
+		});
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_RECORDING_START);
+		const state = useTranscriptionStore.getState();
+		expect(state.currentRealtime).toBe("");
+		expect(state.ephemeral).toBeNull();
+		expect(state.isRecordingActive).toBe(true);
+	});
+
+	test("full_sentence disarms isRecordingActive (terminal event)", () => {
+		useTranscriptionStore.setState({ isRecordingActive: true });
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_FULL_SENTENCE, { text: "done." });
+		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
+	});
+
+	test("no_audio_detected disarms isRecordingActive (terminal event)", () => {
+		useTranscriptionStore.setState({ isRecordingActive: true });
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_NO_AUDIO_DETECTED);
+		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
+	});
+
+	test("recording_stop does NOT disarm isRecordingActive (pill must survive LLM thinking)", () => {
+		// recording_stop fires before the LLM "thinking" indicator arrives, so
+		// flipping the flag here would hide the pill, then re-show it when
+		// LLM_PROCESSING_START fires — the exact flicker the OverlayPage
+		// comment block warns against.
+		useTranscriptionStore.setState({ isRecordingActive: true });
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_RECORDING_STOP);
+		expect(useTranscriptionStore.getState().isRecordingActive).toBe(true);
 	});
 });

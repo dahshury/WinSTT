@@ -6,6 +6,7 @@ import { memo, useCallback } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useDownloadStore } from "@/features/model-download";
 import { formatBytes } from "@/shared/lib/format-bytes";
+import { surfaceBg, surfaceBg90, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 
 const SIZE_FORMAT = { minUnit: "B", mbDecimals: 1, gbDecimals: 2, kbDecimals: 1 } as const;
@@ -64,13 +65,19 @@ export const DownloadOverlay = memo(function DownloadOverlay() {
 		cancelDownload();
 	}, [cancelDownload]);
 
+	const substrate = useSurface();
+	const trackLevel = Math.min(substrate + 1, 8);
+	const scrimBg = surfaceBg90(substrate);
+
 	if (!isDownloading) {
 		return null;
 	}
 
 	if (cancelled) {
 		return (
-			<div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-surface-secondary/90">
+			<div
+				className={`absolute inset-0 z-raised flex flex-col items-center justify-center ${scrimBg}`}
+			>
 				<p className="font-medium text-error">{t("cancelled")}</p>
 			</div>
 		);
@@ -87,13 +94,15 @@ export const DownloadOverlay = memo(function DownloadOverlay() {
 	]);
 
 	return (
-		<div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-surface-secondary/90">
+		<div
+			className={`absolute inset-0 z-raised flex flex-col items-center justify-center gap-4 ${scrimBg}`}
+		>
 			<Progress.Root className="flex w-3/4 max-w-sm flex-col gap-2" value={progress}>
 				<p className="text-center font-medium text-foreground text-sm">
 					{t("downloadingModel", { model: modelName ?? "" })}
 				</p>
 
-				<Progress.Track className="h-2.5 overflow-hidden rounded-full bg-surface-tertiary">
+				<Progress.Track className={`h-2.5 overflow-hidden rounded-full ${surfaceBg(trackLevel)}`}>
 					<Progress.Indicator className="h-full rounded-full bg-teal transition-[width] duration-200 ease-out" />
 				</Progress.Track>
 

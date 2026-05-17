@@ -1,5 +1,6 @@
 import { ipcMain } from "electron";
 import { dbg, dbgVerbose } from "../lib/debug-log";
+import { isRecord } from "../lib/ipc-helpers";
 import type { SttClient } from "../ws/stt-client";
 
 /**
@@ -287,10 +288,6 @@ const RELOAD_MODEL_COMMAND: Record<ReloadModelKind, "reload_main_model" | "reloa
 		realtime: "reload_realtime_model",
 	};
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === "object";
-}
-
 function parseReloadModelKind(value: unknown): ReloadModelKind | null {
 	return value === "main" || value === "realtime" ? value : null;
 }
@@ -342,6 +339,68 @@ async function handleListModelsWithState(sttClient: SttClient): Promise<unknown>
 	}
 }
 
+async function handleGetLiveResources(sttClient: SttClient, payload: unknown): Promise<unknown> {
+	const force = Boolean(isRecord(payload) && payload.forceRefresh === true);
+	try {
+		return await sttClient.getLiveResources(force);
+	} catch (err) {
+		console.warn("[stt:get-live-resources] request failed:", err);
+		return null;
+	}
+}
+
+interface AssessDictationFitPayload {
+	device?: string | null;
+	modelId: string;
+	quantization?: string;
+}
+
+function parseAssessDictationFitPayload(payload: unknown): AssessDictationFitPayload | null {
+	if (!isRecord(payload)) {
+		return null;
+	}
+	const modelId = payload.modelId;
+	if (typeof modelId !== "string" || !modelId) {
+		return null;
+	}
+	const quantization = typeof payload.quantization === "string" ? payload.quantization : "";
+	const device = typeof payload.device === "string" ? payload.device : null;
+	return { modelId, quantization, device };
+}
+
+async function handleAssessDictationFit(sttClient: SttClient, payload: unknown): Promise<unknown> {
+	const parsed = parseAssessDictationFitPayload(payload);
+	if (!parsed) {
+		return null;
+	}
+	try {
+		return await sttClient.assessDictationFit(
+			parsed.modelId,
+			parsed.quantization ?? "",
+			parsed.device ?? null
+		);
+	} catch (err) {
+		console.warn("[stt:assess-dictation-fit] request failed:", err);
+		return null;
+	}
+}
+
+async function handleAssessOllamaFit(sttClient: SttClient, payload: unknown): Promise<unknown> {
+	if (!isRecord(payload)) {
+		return null;
+	}
+	const sizeBytes = payload.sizeBytes;
+	if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes < 0) {
+		return null;
+	}
+	try {
+		return await sttClient.assessOllamaFit(Math.floor(sizeBytes));
+	} catch (err) {
+		console.warn("[stt:assess-ollama-fit] request failed:", err);
+		return null;
+	}
+}
+
 export function setupSttCommandHandlers(sttClient: SttClient): void {
 	ipcMain.on("stt:set-parameter", (_event, payload: { parameter: string; value: unknown }) => {
 		handleSetParameter(sttClient, payload);
@@ -372,6 +431,21 @@ export function setupSttCommandHandlers(sttClient: SttClient): void {
 	// model_cache_changed event (relayed via stt:model-cache-changed IPC).
 	ipcMain.handle("stt:list-models-with-state", () => handleListModelsWithState(sttClient));
 
+	// Resource-aware model fitness. Renderer fetches a fresh live snapshot
+	// when the settings panel opens (or the refresh button fires) and asks
+	// the server for an authoritative assessment when the user picks a
+	// candidate. Both calls are pre-ready on the server, so the picker
+	// works before any model is loaded.
+	ipcMain.handle("stt:get-live-resources", (_event, payload: unknown) =>
+		handleGetLiveResources(sttClient, payload)
+	);
+	ipcMain.handle("stt:assess-dictation-fit", (_event, payload: unknown) =>
+		handleAssessDictationFit(sttClient, payload)
+	);
+	ipcMain.handle("stt:assess-ollama-fit", (_event, payload: unknown) =>
+		handleAssessOllamaFit(sttClient, payload)
+	);
+
 	// Stryker disable next-line ArrowFunction: handler thunk; the arrow body is exercised by the audio:get-devices integration test, but Stryker's `() => undefined` mutation returns undefined which is also a valid Promise<AudioDevice[]> ⊂ unknown — equivalent at the IPC layer.
 	ipcMain.handle("audio:get-devices", () => handleGetAudioDevices(sttClient));
 }
@@ -393,4 +467,8 @@ export const __stt_commands_test_helpers__ = {
 	buildReloadModelPayload,
 	handleReloadModel,
 	handleListModelsWithState,
+	handleGetLiveResources,
+	handleAssessDictationFit,
+	handleAssessOllamaFit,
+	parseAssessDictationFitPayload,
 };

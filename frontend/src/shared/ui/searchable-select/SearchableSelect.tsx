@@ -3,6 +3,14 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useLayoutEffect, useRef, useState } from "react";
+import {
+	SurfaceProvider,
+	surfaceClasses,
+	surfaceHighlightedBg,
+	surfaceSelectedBg,
+	useSurface,
+} from "@/shared/lib/surface";
 import type { SelectOption } from "@/shared/ui/select";
 import "./searchable-select.css";
 
@@ -19,6 +27,25 @@ function getItemLabel(item: SelectOption | null): string {
 	return item ? item.label : "";
 }
 
+function Badge({ text }: { text: string }) {
+	return (
+		<span className="pointer-events-none inline-flex h-4 min-w-[22px] shrink-0 items-center justify-center rounded-xs border border-border bg-surface-1 px-1 font-mono font-semibold text-[10px] text-foreground-secondary uppercase tracking-wider">
+			{text}
+		</span>
+	);
+}
+
+function OptionIcon({ icon }: { icon: NonNullable<SelectOption["icon"]> }) {
+	return (
+		<HugeiconsIcon
+			aria-hidden="true"
+			className="pointer-events-none shrink-0 text-foreground-muted"
+			icon={icon}
+			size={14}
+		/>
+	);
+}
+
 export function SearchableSelect({
 	options,
 	value,
@@ -28,6 +55,45 @@ export function SearchableSelect({
 	disabled = false,
 }: SearchableSelectProps) {
 	const selected = options.find((o) => o.id === value) ?? null;
+
+	const substrate = useSurface();
+	const inputLevel = Math.min(substrate + 1, 8);
+	const popupLevel = Math.min(substrate + 2, 8);
+	const popupShadow = Math.max(popupLevel, 6);
+	const highlightLevel = Math.min(popupLevel + 1, 8);
+	// Selected row sits a step above hover so the current selection is
+	// instantly readable against the popup — replaces the old translucent
+	// accent tint which washed out against surface-N.
+	const selectedLevel = Math.min(popupLevel + 2, 8);
+
+	// Measure the rendered badge/icon decoration so the input gets exactly
+	// the right left-padding, regardless of how wide the badge text is
+	// ("EN" vs "AUTO" vs "YUE"). A fixed estimate would either clip wider
+	// badges or waste whitespace for short ones.
+	const decorationRef = useRef<HTMLSpanElement>(null);
+	const [decorationWidth, setDecorationWidth] = useState(0);
+	const hasDecoration = Boolean(selected?.badge || selected?.icon);
+	useLayoutEffect(() => {
+		if (!hasDecoration) {
+			setDecorationWidth(0);
+			return;
+		}
+		const node = decorationRef.current;
+		if (!node) {
+			return;
+		}
+		setDecorationWidth(node.offsetWidth);
+		const observer = new ResizeObserver(() => {
+			setDecorationWidth(node.offsetWidth);
+		});
+		observer.observe(node);
+		return () => {
+			observer.disconnect();
+		};
+	}, [hasDecoration]);
+	// 8px matches `left-2` on the decoration span; the trailing 8px is the
+	// gap between the decoration and the typed text.
+	const decorationPadding = hasDecoration ? 8 + decorationWidth + 8 : 0;
 
 	return (
 		<Combobox.Root
@@ -43,10 +109,23 @@ export function SearchableSelect({
 			}}
 			value={selected}
 		>
-			<div className="relative flex w-full items-center">
+			{/* `isolation-isolate` forces a stacking context on this wrapper so the
+			    badge's positioned children can never escape and overlap other
+			    comboboxes / popovers elsewhere on the page. */}
+			<div className="relative isolate flex w-full items-center">
+				{hasDecoration ? (
+					<span
+						className="pointer-events-none absolute top-1/2 left-2 flex -translate-y-1/2 items-center gap-1.5"
+						ref={decorationRef}
+					>
+						{selected?.badge ? <Badge text={selected.badge} /> : null}
+						{selected?.icon ? <OptionIcon icon={selected.icon} /> : null}
+					</span>
+				) : null}
 				<Combobox.Input
-					className="flex h-8 w-full items-center rounded-sm border border-border bg-surface-tertiary pr-7 pl-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-40"
+					className={`flex h-8 w-full items-center rounded-sm ${surfaceClasses(inputLevel)} pr-7 pl-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 disabled:cursor-not-allowed disabled:opacity-40`}
 					placeholder={placeholder}
+					style={decorationPadding > 0 ? { paddingLeft: `${decorationPadding}px` } : undefined}
 				/>
 				<Combobox.Trigger
 					aria-label="Open popup"
@@ -57,27 +136,39 @@ export function SearchableSelect({
 			</div>
 
 			<Combobox.Portal>
-				<Combobox.Positioner className="z-[200] outline-none" sideOffset={4}>
-					<Combobox.Popup className="searchable-select-popup max-h-60 w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm border border-border bg-surface-elevated py-1 shadow-md">
-						<Combobox.Empty className="searchable-select-empty">No models found.</Combobox.Empty>
-						<Combobox.List className="outline-none">
-							{(item: SelectOption) => (
-								<Combobox.Item
-									className="searchable-select-item mx-1 grid cursor-default select-none grid-cols-[12px_1fr] items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none data-[highlighted]:bg-surface-hover data-[selected]:text-accent"
-									key={item.id}
-									value={item}
-								>
-									<Combobox.ItemIndicator className="col-start-1 flex items-center justify-center">
-										<CheckIcon />
-									</Combobox.ItemIndicator>
-									<span className="col-start-2 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-										{item.label}
-									</span>
-								</Combobox.Item>
-							)}
-						</Combobox.List>
-					</Combobox.Popup>
-				</Combobox.Positioner>
+				<SurfaceProvider value={popupLevel}>
+					<Combobox.Positioner
+						className="z-popover outline-none"
+						collisionPadding={8}
+						sideOffset={4}
+					>
+						<Combobox.Popup
+							className={`searchable-select-popup w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm ${surfaceClasses(popupLevel, popupShadow)} py-1 [max-height:min(15rem,var(--available-height))]`}
+						>
+							<Combobox.Empty className="searchable-select-empty">No results found.</Combobox.Empty>
+							<Combobox.List className="outline-none">
+								{(item: SelectOption) => (
+									<Combobox.Item
+										className={`searchable-select-item mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none ${surfaceHighlightedBg(highlightLevel)} ${surfaceSelectedBg(selectedLevel)} data-[selected]:font-medium data-[selected]:text-foreground data-[selected]:shadow-[inset_2px_0_0_0_var(--color-accent)]`}
+										key={item.id}
+										value={item}
+									>
+										<span className="flex w-3 shrink-0 items-center justify-center">
+											<Combobox.ItemIndicator>
+												<CheckIcon />
+											</Combobox.ItemIndicator>
+										</span>
+										{item.badge ? <Badge text={item.badge} /> : null}
+										{item.icon ? <OptionIcon icon={item.icon} /> : null}
+										<span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+											{item.label}
+										</span>
+									</Combobox.Item>
+								)}
+							</Combobox.List>
+						</Combobox.Popup>
+					</Combobox.Positioner>
+				</SurfaceProvider>
 			</Combobox.Portal>
 		</Combobox.Root>
 	);

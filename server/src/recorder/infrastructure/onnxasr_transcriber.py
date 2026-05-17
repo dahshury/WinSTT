@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+import re
+import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from typing_extensions import override
@@ -18,6 +21,167 @@ try:
     import onnx_asr
 except ImportError:
     onnx_asr = None  # type: ignore[assignment]
+
+
+# ── Shared Silero VAD cache ────────────────────────────────────────────
+#
+# Silero is small (~3MB) but loading it into a fresh ORT session takes
+# 100-400ms with CUDA (kernel JIT + provider init). Every previous swap
+# paid that cost because the VAD was owned by the OnnxAsrTranscriber
+# and went away with its ``shutdown()``. The cache below pins one
+# instance per provider tuple so subsequent main-model swaps reuse it
+# verbatim — first swap loads, every later swap on the same device hits
+# the cache for free.
+#
+# Eviction is by provider key: switching CPU↔GPU (or changing the CUDA
+# ordinals) creates a new ORT session bound to the new providers, so
+# the entries are independent. The cached VAD stays alive for the
+# process lifetime — the OS reclaims it at exit. ``_close_cached_vads``
+# is exposed for tests that need a clean slate between cases.
+_VAD_CACHE: dict[tuple[Any, ...], Any] = {}
+_VAD_CACHE_LOCK = threading.Lock()
+
+
+def _vad_cache_key(providers_tuple: tuple[Any, ...] | None) -> tuple[Any, ...]:
+    """Stable cache key for a providers tuple (or the default when None)."""
+    if providers_tuple is None:
+        return ("__default__",)
+    return providers_tuple
+
+
+def _get_or_load_silero_vad(providers_tuple: tuple[Any, ...] | None) -> Any:  # noqa: ANN401
+    """Return the singleton Silero VAD for these providers, loading on first miss.
+
+    Concurrency: ``_VAD_CACHE_LOCK`` is held across the cache lookup +
+    the load itself, so two transcribers constructed simultaneously
+    can't double-load. The lock blocks for the full ``onnx_asr.load_vad``
+    duration on a miss (100-400ms) — acceptable because the alternative
+    is racy double-allocation in VRAM.
+    """
+    assert onnx_asr is not None  # narrowing — caller has already checked
+    key = _vad_cache_key(providers_tuple)
+    with _VAD_CACHE_LOCK:
+        cached = _VAD_CACHE.get(key)
+        if cached is not None:
+            logger.info("Silero VAD cache hit (providers=%s)", key)
+            return cached
+        vad_kwargs: dict[str, Any] = {}
+        if providers_tuple is not None:
+            vad_kwargs["providers"] = providers_tuple
+        logger.info("Silero VAD cache miss — loading for providers=%s", key)
+        vad = onnx_asr.load_vad("silero", **vad_kwargs)
+        _VAD_CACHE[key] = vad
+        logger.info("Silero VAD loaded + cached")
+        return vad
+
+
+def _close_cached_vads() -> None:
+    """Drop the entire VAD cache. Test-only; production process exits drop it."""
+    with _VAD_CACHE_LOCK:
+        for vad in _VAD_CACHE.values():
+            if hasattr(vad, "close"):
+                try:
+                    vad.close()
+                except Exception:
+                    logger.exception("Cached VAD close raised")
+        _VAD_CACHE.clear()
+
+
+#: Matches ORT's complaint about onnx-community Whisper fp16 merged-decoder
+#: exports. The file path is embedded right in the message, so we lift it
+#: out and feed it to :func:`patch_whisper_decoder` for a one-shot retry.
+_FP16_DECODER_LOAD_ERROR = re.compile(
+    r"Load model from (.+?\.onnx) failed:.*Subgraph output.*outer scope value",
+    re.DOTALL,
+)
+
+
+def _extract_fp16_whisper_decoder_path(exc: BaseException) -> Path | None:
+    """Return the malformed decoder path from an ORT load error, or ``None``.
+
+    Only returns a path when the file name matches Whisper's merged-decoder
+    naming (``decoder_model_merged*.onnx``) — guards against patching some
+    unrelated future error that happens to mention "Subgraph output".
+    """
+    match = _FP16_DECODER_LOAD_ERROR.search(str(exc))
+    if not match:
+        return None
+    path = Path(match.group(1))
+    if not path.name.startswith("decoder_model_merged"):
+        return None
+    return path
+
+
+#: ORT's signature for a missing external-data sidecar — the case where
+#: the ``.onnx`` graph landed during an HF download but the ``.onnx.data``
+#: (or ``.onnx_data``) weights file didn't. Matched substring-wise so
+#: minor wording changes in future ORT releases don't break the recovery.
+_EXTERNAL_DATA_MISSING_MARKER = "External data path does not exist"
+
+
+def _is_external_data_missing_error(exc: BaseException) -> bool:
+    """True when ``exc`` is the ORT error for a missing external-data sidecar."""
+    return _EXTERNAL_DATA_MISSING_MARKER in str(exc)
+
+
+def _refetch_hf_snapshot(model_name: str) -> bool:
+    """Re-run ``snapshot_download`` for ``model_name`` to fill in missing files.
+
+    Resolves the catalog alias to a real HF ``org/repo`` via the same
+    upstream table onnx-asr uses (:func:`resolve_hf_repo`), then asks
+    ``huggingface_hub`` to ensure every onnx-asr-relevant file is on disk
+    (``.onnx`` / ``.onnx.data`` / ``.onnx_data`` / ``config.json`` /
+    ``config.yaml``). The HF hub's content-addressable cache makes this a
+    no-op for blobs that completed earlier — only the missing sidecar gets
+    re-downloaded.
+
+    Returns True when a refetch attempt was made (caller should retry the
+    load); False when the repo can't be resolved or ``huggingface_hub``
+    isn't importable. Network failures propagate — the caller's existing
+    error handling surfaces them as a regular load failure.
+    """
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:  # pragma: no cover — hf_hub is a hard dependency
+        return False
+    from src.recorder.infrastructure.model_cache import resolve_hf_repo
+
+    repo = resolve_hf_repo(model_name)
+    if repo is None:
+        return False
+    logger.warning(
+        "Partial HF cache for %s detected — re-fetching %s to complete the download",
+        model_name,
+        repo,
+    )
+    # Match onnx-asr's allow_patterns at examples/onnx-asr/.../resolver.py:110-115
+    # so we pull exactly the files the resolver expects (no surprise extras).
+    # ``*.onnx?data`` covers both istupakov ``.onnx.data`` and onnx-community
+    # ``.onnx_data`` conventions in a single pattern.
+    snapshot_download(
+        repo,
+        allow_patterns=["*.onnx", "*.onnx?data", "config.json", "config.yaml"],
+    )
+    return True
+
+
+def _build_fp16_sess_options() -> Any:  # noqa: ANN401 — onnxruntime.SessionOptions
+    """SessionOptions tuned to load onnx-community Whisper fp16 exports.
+
+    Drops to ``ORT_ENABLE_EXTENDED``: the default ``ORT_ENABLE_ALL`` runs
+    LAYOUT-level fusions including ``SimplifiedLayerNormFusion``, which
+    crashes on the fp16 encoder export with ``Attempting to get index by
+    a name which does not exist: InsertedPrecisionFreeCast_…``. The
+    lower level is benign for our other (non-fp16) sessions when they
+    happen to share this SessionOptions instance — the missing fusions
+    are encoder-shape-specific and don't materially affect throughput on
+    the small/mid Whisper variants.
+    """
+    import onnxruntime as rt
+
+    opts = rt.SessionOptions()
+    opts.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+    return opts
 
 
 def _make_progress_adapter(model_name: str, sink: Callable[[DownloadProgress], None]) -> Callable[[Any], None]:
@@ -146,7 +310,7 @@ class OnnxAsrTranscriber(ITranscriber):
         *,
         model_name: str,
         quantization: str | None = None,
-        providers: list[str] | None = None,
+        providers: list[str | tuple[str, dict[str, str]]] | None = None,
         on_download_progress: Callable[[DownloadProgress], None] | None = None,
         segment_with_vad: bool = True,
     ) -> None:
@@ -154,16 +318,26 @@ class OnnxAsrTranscriber(ITranscriber):
             msg = "onnx_asr is not installed"
             raise RuntimeError(msg)
 
-        providers_tuple: tuple[str, ...] | None = tuple(providers) if providers else None
+        providers_tuple: tuple[str | tuple[str, dict[str, str]], ...] | None = tuple(providers) if providers else None
 
         kwargs: dict[str, Any] = {"quantization": quantization}
         if providers_tuple is not None:
             kwargs["providers"] = providers_tuple
         if on_download_progress is not None:
             kwargs["progress_callback"] = _make_progress_adapter(model_name, on_download_progress)
+        # Explicit fp16 selection on Whisper-family ONNX needs two
+        # accommodations for the onnx-community export defects: lowered
+        # session optimization to dodge an ORT SimplifiedLayerNormFusion
+        # bug on the encoder, and a reactive in-cache patch of the merged
+        # decoder (subgraph output names + dtype annotations). The patch
+        # path fires only when the first load actually fails with the
+        # specific subgraph-output error — fp16 exports of other model
+        # families (or already-patched files) skip straight through.
+        if quantization == "fp16":
+            kwargs["sess_options"] = _build_fp16_sess_options()
 
         logger.info("Loading onnx-asr model %s (quantization=%s)", model_name, quantization)
-        self._model: Any = onnx_asr.load_model(model_name, **kwargs)
+        self._model: Any = self._load_model_with_fp16_repair(model_name, kwargs)
         self._ready = True
         self._model_name = model_name
         # Snapshot the actual ORT providers attached to a representative
@@ -177,17 +351,71 @@ class OnnxAsrTranscriber(ITranscriber):
         # Silero VAD for transcription-time segmentation of long audio.
         # Skipped entirely for bounded-short callers (realtime): no model
         # load, and transcribe() takes the direct single-pass path below.
+        #
+        # The VAD is shared across every transcriber that uses the same
+        # provider tuple — see ``_get_or_load_silero_vad``. We hold a
+        # reference but the cache owns the lifetime; shutdown() drops our
+        # reference but doesn't close the shared instance.
         self._segment_with_vad = segment_with_vad
         self._vad: Any = None
         if segment_with_vad:
-            vad_kwargs: dict[str, Any] = {}
-            if providers_tuple is not None:
-                vad_kwargs["providers"] = providers_tuple
-            logger.info("Loading Silero VAD for transcription-time segmentation")
-            self._vad = onnx_asr.load_vad("silero", **vad_kwargs)
-            logger.info("Silero VAD loaded")
+            self._vad = _get_or_load_silero_vad(providers_tuple)
         else:
             logger.info("Silero VAD skipped (segment_with_vad=False — bounded-short caller)")
+
+    @staticmethod
+    def _load_model_with_fp16_repair(model_name: str, kwargs: dict[str, Any]) -> Any:  # noqa: ANN401
+        """Call ``onnx_asr.load_model`` with one-shot recovery retries.
+
+        Two distinct failure modes get an automatic retry; everything
+        else propagates.
+
+        1. **Partial HF cache.** A previously interrupted download can
+           leave the ``.onnx`` graph file present while the matching
+           ``.onnx.data`` / ``.onnx_data`` external-weights sidecar is
+           still missing. onnx-asr's resolver only checks for the
+           ``.onnx`` file, so ``local_files_only=True`` succeeds and
+           then ORT raises
+           ``External data path does not exist: …onnx.data`` at session
+           init. We re-run ``snapshot_download(local_files_only=False)``
+           to fill the gap and reload.
+
+        2. **fp16 Whisper subgraph defect.** onnx-community Whisper fp16
+           merged-decoder exports declare subgraph outputs with
+           outer-scope names (``logits``, ``present.*``) and fp32 dtype
+           annotations on what is otherwise an fp16 graph. ORT 1.18+
+           rejects the graph; we surgical-patch the file in-place (see
+           :func:`src.recorder.infrastructure.onnx_patch.patch_whisper_decoder`)
+           and retry once.
+        """
+        assert onnx_asr is not None  # narrowing — checked at call site
+        try:
+            return onnx_asr.load_model(model_name, **kwargs)
+        except Exception as exc:
+            if _is_external_data_missing_error(exc) and _refetch_hf_snapshot(model_name):
+                return onnx_asr.load_model(model_name, **kwargs)
+            decoder_path = _extract_fp16_whisper_decoder_path(exc)
+            if decoder_path is None or not decoder_path.exists():
+                raise
+            from src.recorder.infrastructure.onnx_patch import (
+                patch_whisper_decoder,
+                should_skip_patch,
+            )
+
+            if should_skip_patch(decoder_path):
+                # Already patched — the same error means a different bug we can't fix here.
+                raise
+            edits = patch_whisper_decoder(decoder_path)
+            if edits == 0:
+                # Patch was a no-op (different structural bug). Re-raise the original.
+                raise
+            logger.info(
+                "Retrying load of %s after applying %d in-cache fp16 decoder fixes to %s",
+                model_name,
+                edits,
+                decoder_path,
+            )
+            return onnx_asr.load_model(model_name, **kwargs)
 
     @property
     def model_name(self) -> str:
@@ -322,17 +550,18 @@ class OnnxAsrTranscriber(ITranscriber):
 
     @override
     def shutdown(self) -> None:
-        """Release the model and its ORT sessions via onnx-asr's lifecycle API.
+        """Release the ASR model's ORT sessions.
 
-        Releases both the ASR sessions and the always-loaded Silero VAD so
-        a model swap doesn't leak GPU memory.
+        The Silero VAD is *not* closed here — it lives in the shared
+        ``_VAD_CACHE`` and is reused by the next transcriber loaded
+        with the same provider tuple. Closing it would force the next
+        swap to pay the load cost again, which is exactly the
+        regression this cache exists to prevent.
         """
         self._ready = False
         model = self._model
-        vad = self._vad
         self._model = None
+        # Drop our reference to the shared VAD — cache keeps the canonical one.
         self._vad = None
         if model is not None and hasattr(model, "close"):
             model.close()
-        if vad is not None and hasattr(vad, "close"):
-            vad.close()

@@ -51,10 +51,10 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         default="large-v3-turbo",
         help=(
-            "Path to the STT model or model size. Options include: tiny, tiny.en, "
-            "base, base.en, small, small.en, medium, medium.en, large-v1, large-v2, "
-            "large-v3, large-v3-turbo, or any huggingface CTranslate2 STT model such as "
-            "deepdml/faster-whisper-large-v3-turbo-ct2. Default is large-v3-turbo."
+            "STT model id from the catalog (e.g. tiny, base, small, medium, large-v3, "
+            "large-v3-turbo, lite-whisper-large-v3-turbo, nemo-canary-1b-v2) or any "
+            "onnx-asr-resolvable HuggingFace ONNX repo (e.g. onnx-community/whisper-base). "
+            "Default is large-v3-turbo."
         ),
     )
 
@@ -477,6 +477,24 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--enable_diarization",
+        action="store_true",
+        default=False,
+        help=(
+            "Run per-utterance speaker diarization (pyannote-segmentation-3.0 + "
+            "wespeaker-resnet34-LM via onnx-asr) and emit speaker_segments events. "
+            "Downloads ~32 MB of ONNX models on first use. Off by default."
+        ),
+    )
+
+    parser.add_argument(
+        "--diarization_max_speakers",
+        type=int,
+        default=8,
+        help="Max simultaneous global speakers tracked across a session. Default 8.",
+    )
+
+    parser.add_argument(
         "--compute_type",
         type=str,
         default="default",
@@ -561,6 +579,18 @@ def parse_arguments() -> argparse.Namespace:
         help=(
             "Detection speed multiplier for smart endpoint. Higher values make "
             "silence detection faster (shorter pauses). Default is 1.5."
+        ),
+    )
+
+    parser.add_argument(
+        "--log-dir",
+        "--log_dir",
+        type=str,
+        default=None,
+        help=(
+            "Directory to write the rotating server log file (stt-server.log) into. "
+            "Falls back to the WINSTT_LOG_DIR environment variable. When neither is "
+            "set, the server logs only to stdout. The directory is created if missing."
         ),
     )
 

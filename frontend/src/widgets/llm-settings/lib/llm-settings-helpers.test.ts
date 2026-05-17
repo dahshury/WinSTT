@@ -2,36 +2,12 @@ import { describe, expect, mock, test } from "bun:test";
 import {
 	applyOllamaModelReplacementIfNeeded,
 	buildOllamaStartError,
-	computeRefreshDisabled,
 	getOllamaPrimaryAction,
 	getOllamaPrimaryLabelKey,
 	isApiKeyValid,
 	ollamaModelSyncNeeded,
 	readInputValue,
 } from "./llm-settings-helpers";
-
-describe("computeRefreshDisabled", () => {
-	test("returns true when scanning", () => {
-		expect(computeRefreshDisabled(true, "some-key")).toBe(true);
-	});
-
-	test("returns true when API key is empty", () => {
-		expect(computeRefreshDisabled(false, "")).toBe(true);
-	});
-
-	test("returns true when both scanning and key empty", () => {
-		expect(computeRefreshDisabled(true, "")).toBe(true);
-	});
-
-	test("returns false when not scanning and key is present", () => {
-		expect(computeRefreshDisabled(false, "sk-test")).toBe(false);
-	});
-
-	test("returns true when key is whitespace only", () => {
-		// key.length === 0 check — whitespace is still non-zero length, so this is false
-		expect(computeRefreshDisabled(false, "   ")).toBe(false);
-	});
-});
 
 describe("isApiKeyValid", () => {
 	test("returns true for a non-empty trimmed key", () => {

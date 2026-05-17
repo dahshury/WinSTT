@@ -6,6 +6,7 @@ import { useSettingsStore } from "@/entities/setting";
 import { AudioVisualizer } from "@/features/audio-visualizer";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
 import { fileTranscribe, getFilePath } from "@/shared/api/ipc-client";
+import { Elevated, surfaceBg90, useSurface } from "@/shared/lib/surface";
 import { DownloadOverlay } from "./DownloadOverlay";
 import { FileOverlay } from "./FileOverlay";
 import { SubtitleOverlay } from "./SubtitleOverlay";
@@ -88,18 +89,20 @@ async function runTranscription(
 }
 
 function getContainerClassName(isListenMode: boolean): string {
-	const base =
-		"relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-surface-secondary";
-	const border = isListenMode ? "" : "rounded-lg border border-border";
+	const base = "relative flex flex-1 flex-col items-center justify-center overflow-hidden";
+	const border = isListenMode ? "" : "rounded-lg";
 	return `${base} ${border}`;
 }
 
 function DropZoneOverlay({ visible, label }: { visible: boolean; label: string }) {
+	const substrate = useSurface();
 	if (!visible) {
 		return null;
 	}
 	return (
-		<div className="absolute inset-0 z-20 flex items-center justify-center border-2 border-accent border-dashed bg-surface-secondary/90">
+		<div
+			className={`absolute inset-0 z-overlay flex items-center justify-center border-2 border-accent border-dashed ${surfaceBg90(substrate)}`}
+		>
 			<p className="font-medium text-accent text-sm">{label}</p>
 		</div>
 	);
@@ -165,14 +168,15 @@ export function AudioDisplay() {
 	);
 
 	return (
-		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: drop zone for file transcription
-		<section
+		<Elevated
 			aria-label={t("ariaLabel")}
 			className={getContainerClassName(isListenMode)}
+			offset={2}
 			onDragEnter={handleDragEnter}
 			onDragLeave={handleDragLeave}
 			onDragOver={handleDragOver}
 			onDrop={handleDrop}
+			role="region"
 		>
 			<div className="absolute inset-0 flex items-center justify-center">
 				<AudioVisualizer size="auto" />
@@ -183,7 +187,7 @@ export function AudioDisplay() {
 			<DownloadOverlay />
 			<FileOverlay />
 			<SubtitleOverlay />
-		</section>
+		</Elevated>
 	);
 }
 

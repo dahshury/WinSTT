@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
-import { isUncomfortable } from "./hardware-fit";
+import type { FitAssessmentEntry, ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
+import { isUncomfortable, severityFor } from "./hardware-fit";
+
+function assessment(severity: FitAssessmentEntry["severity"]): FitAssessmentEntry {
+	return {
+		severity,
+		target: "gpu",
+		required_bytes: 1,
+		available_bytes: 1,
+		reasons: [],
+	};
+}
 
 function entry(overrides: Partial<ModelStateEntry> = {}): ModelStateEntry {
 	return {
@@ -62,5 +72,42 @@ describe("isUncomfortable", () => {
 		expect(
 			isUncomfortable(entry({ comfortable_on_cpu: false, comfortable_on_gpu: true }), sys(0))
 		).toBe(true);
+	});
+
+	test("live assessment wins over static comfortable flags (critical)", () => {
+		// comfortable_on_* says fine, but the live verdict is critical.
+		expect(
+			isUncomfortable(
+				entry({ comfortable_on_cpu: true, comfortable_on_gpu: true }),
+				sys(1),
+				assessment("critical")
+			)
+		).toBe(true);
+	});
+
+	test("live assessment wins over static comfortable flags (ok)", () => {
+		// comfortable_on_* says won't fit, but live verdict says ok.
+		expect(
+			isUncomfortable(
+				entry({ comfortable_on_cpu: false, comfortable_on_gpu: false }),
+				sys(1),
+				assessment("ok")
+			)
+		).toBe(false);
+	});
+});
+
+describe("severityFor", () => {
+	test("returns live severity when provided", () => {
+		expect(severityFor(entry(), sys(1), assessment("warning"))).toBe("warning");
+	});
+
+	test("falls back to binary uncomfortable when no live data", () => {
+		expect(severityFor(entry({ comfortable_on_cpu: false, comfortable_on_gpu: false }), null)).toBe(
+			"critical"
+		);
+		expect(severityFor(entry({ comfortable_on_cpu: true, comfortable_on_gpu: true }), sys(1))).toBe(
+			"ok"
+		);
 	});
 });

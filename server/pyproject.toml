@@ -17,24 +17,41 @@ dependencies = [
     "numpy",
     "soundfile>=0.13.1",
     "psutil>=5.9",
-    "rich>=13.0",
-    "keyboard>=0.13.5",
-    "pyautogui>=0.9.54",
-    "pyperclip>=1.8",
-    "colorama>=0.4.6",
     "websockets>=16.0",
     "onnx-asr[hub]",
+    # ``onnx`` is needed by ``recorder.infrastructure.onnx_patch`` to repair
+    # malformed onnx-community whisper-*.en fp16 decoder exports in-place in
+    # the HF cache (subgraph output names + dtype annotations). Lightweight
+    # (~10 MB wheel) and only imported on the fp16 path inside the patcher.
+    "onnx>=1.16",
+    # Observability — optional Sentry crash reporting. The SDK is always
+    # imported by ``src/stt_server/observability.py``; whether it actually
+    # phones home is gated on the ``SENTRY_DSN`` env var at runtime.
+    "sentry-sdk>=2.18",
 ]
+# Note: ``pyautogui``, ``keyboard``, ``pyperclip``, ``colorama``, and ``rich``
+# used to live here as runtime deps inherited from the original RealtimeSTT
+# monolith. None are imported by ``server/src/`` after the hexagonal
+# rewrite — paste is handled by the Electron native helper, hotkeys by
+# ``uiohook-napi`` in the renderer, and terminal output by inline ANSI
+# escapes (see ``building_blocks/terminal.py``). Keeping them around just
+# inflated the PyInstaller bundle (~10 MB combined for the CPU flavor).
 
 [project.optional-dependencies]
 # CPU-only ORT — recommended for SaaS / horizontal scaling. Smallest install.
 cpu = ["onnxruntime>=1.18.1"]
-# GPU build — onnxruntime-gpu + NVIDIA's pip-distributed CUDA libs so a
-# torch-free install still has cuDNN 9 / cuBLAS 12 on disk. Without these
-# wheels you'd get ``cublasLt64_12.dll missing`` from ORT at session
-# create time (the symptoms the torch import used to hide). The runtime
-# ``_inject_cuda_dlls`` hook in ``src/recorder/infrastructure/device.py``
-# adds the wheel directories to Python's DLL search path before ORT loads.
+# GPU build — onnxruntime-gpu + the full NVIDIA pip-distributed CUDA lib
+# set. The runtime ``_inject_cuda_dlls`` hook in
+# ``src/recorder/infrastructure/device.py`` adds each wheel's ``bin/``
+# directory to Python's DLL search path before ORT loads.
+#
+# ⚠️ Don't try to slim this list by dropping libs that "Whisper doesn't
+# use". ORT's CUDA EP delay-loads cufft / cusparse / cusolver / curand at
+# session-create time regardless of which ops your model graph contains
+# — the EP itself initializes against the full set and refuses to come
+# up if any is missing (observed: ``cufft64_11.dll could not be loaded …
+# Falling back to CPU``). Removing any of them silently demotes the
+# server to CPU at runtime.
 gpu = [
     "onnxruntime-gpu>=1.18.1",
     "nvidia-cublas-cu12>=12.4",
@@ -65,6 +82,9 @@ dev = [
     # from writing them by hand. CI installs this group via ``uv sync --group dev``.
     "pyinstaller>=6.5",
     "pyinstaller-hooks-contrib>=2024.7",
+    # Only used by ``tests/integration/test_download_progress_e2e.py`` for
+    # pretty progress output during dev. Not bundled into the standalone exe.
+    "rich>=13.0",
 ]
 
 [tool.uv]
@@ -143,7 +163,7 @@ warn_no_return = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","soundfile.*","websocket.*","websockets.*","colorama.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnxruntime.*","torch.*","transformers.*","psutil.*","nvidia.*"]
+module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","soundfile.*","websocket.*","websockets.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnx.*","onnxruntime.*","torch.*","transformers.*","psutil.*","nvidia.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

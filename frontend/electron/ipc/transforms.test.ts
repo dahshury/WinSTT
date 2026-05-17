@@ -146,18 +146,17 @@ afterAll(async () => {
 });
 
 function setTransforms(arr: unknown): void {
-	liveStore.store.set("llm.transforms", arr);
+	liveStore.store.set("llm.transforms.prompts", arr);
 }
 
 function reset(): void {
-	liveStore.store.set("llm.transforms", []);
-	// Transforms now require the LLM master switch + the transforms
-	// sub-feature on, with a model configured (mirrors the real gate).
-	liveStore.store.set("llm.enabled", true);
-	liveStore.store.set("llm.transformsEnabled", true);
-	liveStore.store.set("llm.provider", "local");
+	liveStore.store.set("llm.transforms.prompts", []);
+	// Transforms now require the transforms sub-feature enabled + a model
+	// configured for its provider. There is no master switch.
+	liveStore.store.set("llm.transforms.enabled", true);
+	liveStore.store.set("llm.transforms.provider", "local");
 	liveStore.store.set("llm.openrouterApiKey", "");
-	liveStore.store.set("llm.model", "test-model");
+	liveStore.store.set("llm.transforms.model", "test-model");
 	llmCalls.length = 0;
 	clipboardWrites.length = 0;
 	guardLog.length = 0;
@@ -171,14 +170,18 @@ describe("runTransformPipeline (applyTransform)", () => {
 		setTransforms([
 			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
 		]);
+		const pasteMod = await import("../lib/paste");
+		pasteMod.__resetPasteCallsForTesting__();
 		const result = await runTransformPipeline("polish");
 		expect(result.transformId).toBe("polish");
 		expect(result.before).toBe("hello world");
 		expect(result.after).toBe("TRANSFORMED:hello world");
 		expect(llmCalls).toEqual([{ text: "hello world", prompt: "polish me" }]);
-		// Real `pasteText` mirrors the transformed text to the clipboard
-		// before sending Ctrl+V.
-		expect(clipboardWrites).toContain("TRANSFORMED:hello world");
+		// `pasteText` no longer writes the clipboard on the success path — the
+		// new typing-mode helper streams the text to the binary's stdin. We
+		// observe the invocation via the call log instead.
+		await pasteMod.flushPastePending();
+		expect(pasteMod.__getPasteCallsForTesting__()).toContain("TRANSFORMED:hello world");
 	});
 
 	test("missing transform id throws ValidationError without paste/LLM call", async () => {
@@ -218,18 +221,7 @@ describe("runTransformPipeline (applyTransform)", () => {
 		setTransforms([
 			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
 		]);
-		liveStore.store.set("llm.transformsEnabled", false);
-		await expect(runTransformPipeline("polish")).rejects.toThrow();
-		expect(llmCalls.length).toBe(0);
-		expect(clipboardWrites.length).toBe(0);
-	});
-
-	test("throws when the LLM master switch is off (no LLM call)", async () => {
-		reset();
-		setTransforms([
-			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
-		]);
-		liveStore.store.set("llm.enabled", false);
+		liveStore.store.set("llm.transforms.enabled", false);
 		await expect(runTransformPipeline("polish")).rejects.toThrow();
 		expect(llmCalls.length).toBe(0);
 		expect(clipboardWrites.length).toBe(0);
@@ -237,32 +229,32 @@ describe("runTransformPipeline (applyTransform)", () => {
 });
 
 describe("transforms gate helpers", () => {
-	test("hasLlmModel: false with no model, true once configured", () => {
+	test("hasTransformsModel: false with no model, true once configured", () => {
 		reset();
-		liveStore.store.set("llm.provider", "local");
-		liveStore.store.set("llm.model", "");
-		expect(helpers.hasLlmModel()).toBe(false);
-		liveStore.store.set("llm.model", "some-model");
-		expect(helpers.hasLlmModel()).toBe(true);
+		liveStore.store.set("llm.transforms.provider", "local");
+		liveStore.store.set("llm.transforms.model", "");
+		expect(helpers.hasTransformsModel()).toBe(false);
+		liveStore.store.set("llm.transforms.model", "some-model");
+		expect(helpers.hasTransformsModel()).toBe(true);
 	});
 
-	test("hasLlmModel: openrouter branch keys off the API key", () => {
+	test("hasTransformsModel: openrouter branch keys off the API key", () => {
 		reset();
-		liveStore.store.set("llm.provider", "openrouter");
+		liveStore.store.set("llm.transforms.provider", "openrouter");
 		liveStore.store.set("llm.openrouterApiKey", "");
-		expect(helpers.hasLlmModel()).toBe(false);
+		expect(helpers.hasTransformsModel()).toBe(false);
 		liveStore.store.set("llm.openrouterApiKey", "sk-xxx");
-		expect(helpers.hasLlmModel()).toBe(true);
-		liveStore.store.set("llm.provider", "local");
+		expect(helpers.hasTransformsModel()).toBe(true);
+		liveStore.store.set("llm.transforms.provider", "local");
 	});
 
-	test("isTransformsEnabled: all three conditions must hold", () => {
+	test("isTransformsEnabled: per-feature flag + model must hold", () => {
 		reset();
 		expect(helpers.isTransformsEnabled()).toBe(true);
-		liveStore.store.set("llm.enabled", false);
+		liveStore.store.set("llm.transforms.enabled", false);
 		expect(helpers.isTransformsEnabled()).toBe(false);
-		liveStore.store.set("llm.enabled", true);
-		liveStore.store.set("llm.transformsEnabled", false);
+		liveStore.store.set("llm.transforms.enabled", true);
+		liveStore.store.set("llm.transforms.model", "");
 		expect(helpers.isTransformsEnabled()).toBe(false);
 	});
 

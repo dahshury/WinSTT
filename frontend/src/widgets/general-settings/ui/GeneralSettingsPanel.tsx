@@ -9,7 +9,6 @@ import {
 	FileMusicIcon,
 	GridIcon,
 	Mic01Icon,
-	MusicNote01Icon,
 	PowerSocket01Icon,
 	RadialIcon,
 	RefreshIcon,
@@ -26,12 +25,13 @@ import { useLoopbackDevices } from "@/features/listen-mode";
 import { RECORDING_MODE_COLOR_HEX } from "@/shared/config/recording-mode-color";
 import { isLocale, LOCALE_NAMES, LOCALES, type Locale, useLocaleStore } from "@/shared/i18n";
 import { Button } from "@/shared/ui/button";
-import { ButtonGroup, ButtonGroupText } from "@/shared/ui/button-group";
+import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
+import { SearchableSelect } from "@/shared/ui/searchable-select";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
-import { Switcher } from "@/shared/ui/switcher";
-import { TextField } from "@/shared/ui/text-field";
+import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { useSoundFileDrop } from "../lib/use-sound-file-drop";
@@ -77,6 +77,16 @@ function buildVisualizerTypeOptions(t: GeneralT): SelectOption[] {
 		{ id: "wave", label: t("visualizerWave"), icon: AudioWave02Icon },
 		{ id: "aura", label: t("visualizerAura"), icon: AiBeautifyIcon },
 	] satisfies SelectOption[];
+}
+
+function buildVisualizerTypeSwitcherOptions(t: GeneralT): SwitcherOption[] {
+	return [
+		{ value: "bar", label: t("visualizerBar"), icon: BarChartIcon },
+		{ value: "grid", label: t("visualizerGrid"), icon: GridIcon },
+		{ value: "radial", label: t("visualizerRadial"), icon: RadialIcon },
+		{ value: "wave", label: t("visualizerWave"), icon: AudioWave02Icon },
+		{ value: "aura", label: t("visualizerAura"), icon: AiBeautifyIcon },
+	];
 }
 
 function buildRecordingModeOptions(t: GeneralT): readonly {
@@ -162,7 +172,9 @@ function LoopbackControl({
 			label={t("loopbackDevice")}
 			tooltip={t("loopbackDeviceTooltip")}
 		>
-			<Select onChange={handleLoopbackChange} options={loopbackOpts} value={currentLoopbackId} />
+			<ElevatedSurface inline>
+				<Select onChange={handleLoopbackChange} options={loopbackOpts} value={currentLoopbackId} />
+			</ElevatedSurface>
 		</FormControl>
 	);
 }
@@ -237,32 +249,65 @@ function MuteSystemAudioControl({
 			tooltip={t("muteSystemAudioTooltip")}
 		>
 			{enabled ? (
-				<div className="flex items-center gap-2">
+				<ElevatedSurface className="px-3 py-3">
 					<Slider
 						aria-label={t("muteSystemAudio")}
+						formatValue={(v) => reductionStepLabel(indexToReduction(v), t)}
 						max={REDUCTION_STEPS.length - 1}
 						min={0}
 						onChange={(v) => update({ systemAudioReductionWhileDictating: indexToReduction(v) })}
 						step={1}
 						value={reductionToIndex(level)}
 					/>
-					<span className="w-12 text-right font-mono text-foreground-muted text-xs">
-						{reductionStepLabel(level, t)}
-					</span>
-				</div>
+				</ElevatedSurface>
 			) : undefined}
 		</FormControl>
 	);
 }
 
+interface SpeakerDiarizationControlProps {
+	enabled: boolean;
+	t: GeneralT;
+	update: UpdateFn;
+}
+
+function SpeakerDiarizationControl({
+	enabled,
+	t,
+	update,
+}: SpeakerDiarizationControlProps): ReactNode {
+	return (
+		<FormControl
+			caption={t("speakerDiarizationCaption")}
+			label={t("speakerDiarization")}
+			labelAddon={
+				<Toggle
+					aria-label={t("speakerDiarization")}
+					checked={enabled}
+					onCheckedChange={(v) => update({ speakerDiarization: v })}
+				/>
+			}
+			tooltip={t("speakerDiarizationTooltip")}
+		/>
+	);
+}
+
 interface RecordingSectionProps {
 	currentLoopbackId: string;
+	dragOver: boolean;
+	dropError: string | null;
 	general: GeneralSettings | undefined;
+	handleBrowse: () => void;
 	handleLoopbackChange: (value: string) => void;
+	handleReset: () => void;
+	handlers: ReturnType<typeof useSoundFileDrop>["handlers"];
 	isListenMode: boolean;
 	loopbackOpts: SelectOption[];
 	recordingMode: "ptt" | "toggle" | "listen" | "wakeword";
+	recordingSoundEnabled: boolean;
+	recordingSoundPath: string;
 	t: GeneralT;
+	tc: CommonT;
 	update: UpdateFn;
 }
 
@@ -280,18 +325,21 @@ function WakeWordControl({ t, value, update }: WakeWordControlProps): ReactNode 
 			label={t("wakeWord")}
 			tooltip={t("wakeWordTooltip")}
 		>
-			<Select
-				aria-label={t("wakeWord")}
-				onChange={(v) => update({ wakeWord: v })}
-				options={options}
-				value={value}
-			/>
+			<ElevatedSurface inline>
+				<Select
+					aria-label={t("wakeWord")}
+					onChange={(v) => update({ wakeWord: v })}
+					options={options}
+					value={value}
+				/>
+			</ElevatedSurface>
 		</FormControl>
 	);
 }
 
 function RecordingSection({
 	t,
+	tc,
 	general,
 	recordingMode,
 	isListenMode,
@@ -299,23 +347,34 @@ function RecordingSection({
 	loopbackOpts,
 	currentLoopbackId,
 	handleLoopbackChange,
+	recordingSoundEnabled,
+	recordingSoundPath,
+	dragOver,
+	dropError,
+	handlers,
+	handleBrowse,
+	handleReset,
 }: RecordingSectionProps): ReactNode {
 	const recordingModeOptions = buildRecordingModeOptions(t);
 	return (
 		<SettingSection icon={Mic01Icon} title={t("recording")}>
-			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+			<div className="flex flex-col divide-y divide-surface-1">
 				<FormControl
 					caption={t("recordingModeCaption")}
-					className="col-span-2"
 					label={t("recordingMode")}
 					tooltip={t("recordingModeTooltip")}
 				>
-					<Switcher
-						fullWidth
-						onChange={(v) => update({ recordingMode: v })}
-						options={recordingModeOptions}
-						value={recordingMode}
-					/>
+					{/* Hero control — sets the design template for every other
+					    interactive group on the tab. Same ElevatedSurface wraps
+					    them all so the tab reads as one consistent language. */}
+					<ElevatedSurface>
+						<Switcher
+							fullWidth
+							onChange={(v) => update({ recordingMode: v })}
+							options={recordingModeOptions}
+							value={recordingMode}
+						/>
+					</ElevatedSurface>
 				</FormControl>
 				{recordingMode === "listen" ? (
 					<LoopbackControl
@@ -328,12 +387,45 @@ function RecordingSection({
 				{recordingMode === "wakeword" ? (
 					<WakeWordControl t={t} update={update} value={general?.wakeWord ?? ""} />
 				) : null}
+				{recordingMode === "toggle" ? (
+					<SpeakerDiarizationControl
+						enabled={general?.speakerDiarization ?? false}
+						t={t}
+						update={update}
+					/>
+				) : null}
 				<MuteSystemAudioControl
 					general={general}
 					isListenMode={isListenMode}
 					t={t}
 					update={update}
 				/>
+				{isListenMode ? null : (
+					<>
+						<FormControl
+							caption={t("recordingSoundCaption")}
+							label={t("recordingSound")}
+							labelAddon={
+								<Toggle
+									checked={recordingSoundEnabled}
+									onCheckedChange={(v) => update({ recordingSound: v })}
+								/>
+							}
+						/>
+						{recordingSoundEnabled ? (
+							<SoundFileControl
+								dragOver={dragOver}
+								dropError={dropError}
+								handleBrowse={handleBrowse}
+								handleReset={handleReset}
+								handlers={handlers}
+								recordingSoundPath={recordingSoundPath}
+								t={t}
+								tc={tc}
+							/>
+						) : null}
+					</>
+				)}
 			</div>
 		</SettingSection>
 	);
@@ -350,29 +442,15 @@ interface SoundFileControlProps {
 	tc: CommonT;
 }
 
-function SoundFileResetButton({
-	tc,
-	handleReset,
-}: {
-	tc: CommonT;
-	handleReset: () => void;
-}): ReactNode {
-	return (
-		<Tooltip content={tc("reset")}>
-			<Button
-				aria-label={tc("reset")}
-				className="border-border border-l bg-background px-3 py-1.5 text-foreground-dim transition-colors last:rounded-r hover:bg-surface-tertiary hover:text-foreground"
-				onClick={handleReset}
-			>
-				<HugeiconsIcon icon={RefreshIcon} size={14} />
-			</Button>
-		</Tooltip>
-	);
-}
-
 function dropZoneClass(dragOver: boolean): string {
-	const accent = dragOver ? "border-accent bg-accent/10" : "border-transparent";
-	return `rounded border border-dashed transition-colors ${accent}`;
+	// Shares the ElevatedSurface vocabulary (surface-3 tint, hairline ring,
+	// shadow-elevated) with the rest of the General tab — but keeps a dashed
+	// border because the zone has to *read* as droppable. Drag-over lights up
+	// the accent ring + a subtle scale.
+	const stateful = dragOver
+		? "border-accent/70 bg-accent/8 ring-2 ring-accent/40 scale-[1.01]"
+		: "border-divider-strong bg-surface-3 ring-1 ring-divider shadow-elevated hover:border-accent/40";
+	return `relative flex flex-col items-center gap-3 rounded-lg border-2 border-dashed px-4 py-5 text-center transition-[transform,background-color,border-color,box-shadow] duration-200 ease-out ${stateful}`;
 }
 
 function displaySoundPath(recordingSoundPath: string, t: GeneralT): string {
@@ -387,24 +465,7 @@ function DropErrorMessage({ dropError }: DropErrorMessageProps): ReactNode {
 	if (!dropError) {
 		return null;
 	}
-	return <p className="mt-1 text-error text-xs-tight">{dropError}</p>;
-}
-
-interface MaybeResetButtonProps {
-	handleReset: () => void;
-	recordingSoundPath: string;
-	tc: CommonT;
-}
-
-function MaybeResetButton({
-	tc,
-	recordingSoundPath,
-	handleReset,
-}: MaybeResetButtonProps): ReactNode {
-	if (!recordingSoundPath) {
-		return null;
-	}
-	return <SoundFileResetButton handleReset={handleReset} tc={tc} />;
+	return <p className="mt-2 text-center text-error text-xs-tight">{dropError}</p>;
 }
 
 function SoundFileControl({
@@ -417,97 +478,62 @@ function SoundFileControl({
 	handleBrowse,
 	handleReset,
 }: SoundFileControlProps): ReactNode {
+	const hasCustomSound = recordingSoundPath.length > 0;
+	const pathLabel = displaySoundPath(recordingSoundPath, t);
 	return (
 		<FormControl
 			caption={t("soundFileCaption", { max: MAX_DURATION_SECONDS })}
 			label={t("soundFile")}
 			tooltip={t("soundFileTooltip")}
 		>
-			{/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: drop zone needs drag events */}
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: drop zone needs drag events */}
+			{/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: drop zone surface needs drag events */}
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: drop zone surface needs drag events */}
 			<div
 				className={dropZoneClass(dragOver)}
 				onDragLeave={handlers.onDragLeave}
 				onDragOver={handlers.onDragOver}
 				onDrop={handlers.onDrop}
 			>
-				<ButtonGroup aria-label={t("soundFile")} className="w-full">
-					<ButtonGroupText className="min-w-0 flex-1">
-						<span className="min-w-0 truncate">{displaySoundPath(recordingSoundPath, t)}</span>
-					</ButtonGroupText>
+				<div className="flex size-10 items-center justify-center rounded-full bg-surface-3 text-accent ring-1 ring-divider">
+					<HugeiconsIcon icon={FileMusicIcon} size={18} />
+				</div>
+				<div className="flex min-w-0 flex-col items-center gap-0.5">
+					<span
+						className="max-w-full truncate font-medium text-body text-foreground"
+						title={pathLabel}
+					>
+						{pathLabel}
+					</span>
+					<span className="text-foreground-dim text-xs-tight">
+						{t("soundFileCaption", { max: MAX_DURATION_SECONDS })}
+					</span>
+				</div>
+				<div className="mt-1 flex items-center gap-2">
 					<Tooltip content={tc("browse")}>
 						<Button
 							aria-label={tc("browse")}
-							className="bg-background px-3 py-1.5 text-accent transition-colors last:rounded-r hover:bg-surface-tertiary"
+							className="rounded-md border border-divider bg-surface-3 px-3 py-1.5 font-medium text-body-sm text-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-surface-4 active:scale-[0.98]"
 							onClick={handleBrowse}
 						>
-							<HugeiconsIcon icon={FileMusicIcon} size={14} />
+							{tc("browse")}
 						</Button>
 					</Tooltip>
-					<MaybeResetButton
-						handleReset={handleReset}
-						recordingSoundPath={recordingSoundPath}
-						tc={tc}
-					/>
-				</ButtonGroup>
+					{hasCustomSound ? (
+						<Tooltip content={tc("reset")}>
+							<Button
+								aria-label={tc("reset")}
+								className="inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-1.5 text-body-sm text-foreground-muted transition-[background-color,color,transform] duration-150 ease-out hover:bg-surface-3 hover:text-foreground active:scale-[0.98]"
+								onClick={handleReset}
+							>
+								<HugeiconsIcon icon={RefreshIcon} size={13} />
+								{tc("reset")}
+							</Button>
+						</Tooltip>
+					) : null}
+				</div>
 			</div>
 			<DropErrorMessage dropError={dropError} />
 		</FormControl>
-	);
-}
-
-function soundToggleChecked(isListenMode: boolean, recordingSoundEnabled: boolean): boolean {
-	return isListenMode ? false : recordingSoundEnabled;
-}
-
-interface SoundSectionProps {
-	dragOver: boolean;
-	dropError: string | null;
-	handleBrowse: () => void;
-	handleReset: () => void;
-	handlers: ReturnType<typeof useSoundFileDrop>["handlers"];
-	isListenMode: boolean;
-	recordingSoundEnabled: boolean;
-	recordingSoundPath: string;
-	t: GeneralT;
-	tc: CommonT;
-	update: UpdateFn;
-}
-
-function SoundSection({
-	t,
-	tc,
-	isListenMode,
-	recordingSoundEnabled,
-	recordingSoundPath,
-	update,
-	dragOver,
-	dropError,
-	handlers,
-	handleBrowse,
-	handleReset,
-}: SoundSectionProps): ReactNode {
-	return (
-		<SettingSection
-			icon={MusicNote01Icon}
-			onToggle={(v) => update({ recordingSound: v })}
-			title={t("recordingSound")}
-			toggleDisabled={isListenMode}
-			toggled={soundToggleChecked(isListenMode, recordingSoundEnabled)}
-		>
-			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
-				<SoundFileControl
-					dragOver={dragOver}
-					dropError={dropError}
-					handleBrowse={handleBrowse}
-					handleReset={handleReset}
-					handlers={handlers}
-					recordingSoundPath={recordingSoundPath}
-					t={t}
-					tc={tc}
-				/>
-			</div>
-		</SettingSection>
 	);
 }
 
@@ -520,6 +546,7 @@ interface StartupSectionProps {
 interface StartupFlags {
 	autoStart: boolean;
 	minimizeToTray: boolean;
+	sendCrashReports: boolean;
 	startMinimized: boolean;
 }
 
@@ -532,6 +559,10 @@ function readStartupFlags(general: GeneralSettings | undefined): StartupFlags {
 		autoStart: readBoolFlag(general?.autoStart, false),
 		startMinimized: readBoolFlag(general?.startMinimized, false),
 		minimizeToTray: readBoolFlag(general?.minimizeToTray, true),
+		// Opt-out by default — installers ship with reporting on. The toggle is
+		// surfaced in the Startup section because the change only takes effect
+		// at the next launch (Sentry's init can't be safely reversed at runtime).
+		sendCrashReports: readBoolFlag(general?.sendCrashReports, true),
 	};
 }
 
@@ -539,7 +570,7 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 	const flags = readStartupFlags(general);
 	return (
 		<SettingSection icon={PowerSocket01Icon} title={t("startup")}>
-			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+			<div className="flex flex-col divide-y divide-surface-1">
 				<FormControl
 					caption={t("startOnLoginCaption")}
 					label={t("startOnLogin")}
@@ -570,6 +601,17 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 					}
 					tooltip={t("minimizeToTrayTooltip")}
 				/>
+				<FormControl
+					caption={t("sendCrashReportsCaption")}
+					label={t("sendCrashReports")}
+					labelAddon={
+						<Toggle
+							checked={flags.sendCrashReports}
+							onCheckedChange={(v) => update({ sendCrashReports: v })}
+						/>
+					}
+					tooltip={t("sendCrashReportsTooltip")}
+				/>
 			</div>
 		</SettingSection>
 	);
@@ -598,8 +640,6 @@ export function GeneralSettingsPanel() {
 		t,
 	});
 
-	const visualizerTypeOptions = buildVisualizerTypeOptions(t);
-
 	const recordingSoundEnabled = general?.recordingSound ?? true;
 	const recordingSoundPath = general?.recordingSoundPath ?? "";
 
@@ -611,25 +651,19 @@ export function GeneralSettingsPanel() {
 				setLocale={setLocale}
 				t={t}
 				update={update}
-				visualizerTypeOptions={visualizerTypeOptions}
 			/>
 			<RecordingSection
 				currentLoopbackId={currentLoopbackId}
-				general={general}
-				handleLoopbackChange={handleLoopbackChange}
-				isListenMode={isListenMode}
-				loopbackOpts={loopbackOpts}
-				recordingMode={recordingMode}
-				t={t}
-				update={update}
-			/>
-			<SoundSection
 				dragOver={dragOver}
 				dropError={dropError}
+				general={general}
 				handleBrowse={handleBrowse}
+				handleLoopbackChange={handleLoopbackChange}
 				handleReset={handleReset}
 				handlers={handlers}
 				isListenMode={isListenMode}
+				loopbackOpts={loopbackOpts}
+				recordingMode={recordingMode}
 				recordingSoundEnabled={recordingSoundEnabled}
 				recordingSoundPath={recordingSoundPath}
 				t={t}
@@ -647,7 +681,6 @@ interface DisplaySectionProps {
 	setLocale: (locale: Locale) => void;
 	t: GeneralT;
 	update: UpdateFn;
-	visualizerTypeOptions: SelectOption[];
 }
 
 interface LanguageControlProps {
@@ -663,17 +696,19 @@ function LanguageControl({ locale, setLocale, t }: LanguageControlProps): ReactN
 			label={t("language")}
 			tooltip={t("languageTooltip")}
 		>
-			<Select
-				onChange={(v) => pickLocale(v, setLocale)}
-				options={LANGUAGE_OPTIONS}
-				value={locale}
-			/>
+			<ElevatedSurface inline>
+				<SearchableSelect
+					onChange={(v) => pickLocale(v, setLocale)}
+					options={LANGUAGE_OPTIONS}
+					value={locale}
+				/>
+			</ElevatedSurface>
 		</FormControl>
 	);
 }
 
 interface DisplayFlags {
-	liveDisplayDisabled: boolean;
+	liveDisplayHidden: boolean;
 	overlayEnabled: boolean;
 	subDisabled: boolean;
 }
@@ -686,12 +721,13 @@ function computeDisplayFlags(
 	const showOverlay = general?.showRecordingOverlay ?? true;
 	const overlayEnabled = !isListenMode && showOverlay;
 	const subDisabled = !overlayEnabled;
-	// The combined live-transcription picker as a whole is disabled only when
-	// realtime transcription itself is off. Individual overlay-dependent
-	// choices (in-overlay/both) are disabled separately when the recording
-	// overlay is hidden — see liveOverlayDisabled / buildLiveTranscriptionDisplayOptions.
-	const liveDisplayDisabled = !realtimeEnabled;
-	return { overlayEnabled, subDisabled, liveDisplayDisabled };
+	// The combined live-transcription picker is hidden entirely when realtime
+	// transcription itself is off — without a realtime model there's nothing
+	// to display. Individual overlay-dependent choices (in-overlay/both) are
+	// disabled separately when the recording overlay is hidden — see
+	// liveOverlayDisabled / buildLiveTranscriptionDisplayOptions.
+	const liveDisplayHidden = !realtimeEnabled;
+	return { overlayEnabled, subDisabled, liveDisplayHidden };
 }
 
 type LiveTranscriptionDisplayValue = "none" | "in-app" | "in-pill" | "both";
@@ -771,13 +807,14 @@ function OverlayControl({
 			}
 			tooltip={t("showRecordingOverlayTooltip")}
 		>
-			<div className={subDisabled ? "pointer-events-none opacity-40" : ""}>
+			<ElevatedSurface className={subDisabled ? "pointer-events-none opacity-40" : undefined}>
 				<Switcher
+					fullWidth
 					onChange={(v) => update({ visualizerSize: v })}
 					options={VISUALIZER_SIZE_OPTIONS}
 					value={size}
 				/>
-			</div>
+			</ElevatedSurface>
 		</FormControl>
 	);
 }
@@ -798,41 +835,84 @@ function buildLiveTranscriptionDisplayOptions(
 	];
 }
 
+/** The 4-way union is conceptually two independent booleans — split for the UI. */
+function liveDisplayToFlags(value: LiveTranscriptionDisplayValue): {
+	inApp: boolean;
+	inOverlay: boolean;
+} {
+	return {
+		inApp: value === "in-app" || value === "both",
+		inOverlay: value === "in-pill" || value === "both",
+	};
+}
+
+function flagsToLiveDisplay(inApp: boolean, inOverlay: boolean): LiveTranscriptionDisplayValue {
+	if (inApp && inOverlay) {
+		return "both";
+	}
+	if (inApp) {
+		return "in-app";
+	}
+	if (inOverlay) {
+		return "in-pill";
+	}
+	return "none";
+}
+
 interface LiveTranscriptionDisplayControlProps {
 	general: GeneralSettings | undefined;
-	liveDisplayDisabled: boolean;
 	t: GeneralT;
 	update: UpdateFn;
 }
 
 function LiveTranscriptionDisplayControl({
 	t,
-	liveDisplayDisabled,
 	general,
 	update,
 }: LiveTranscriptionDisplayControlProps): ReactNode {
 	const overlayDisabled = liveOverlayDisabled(general);
 	const stored: LiveTranscriptionDisplayValue = general?.liveTranscriptionDisplay ?? "both";
 	const value = effectiveLiveDisplay(stored, overlayDisabled);
-	const options = buildLiveTranscriptionDisplayOptions(t, overlayDisabled);
+	const { inApp, inOverlay } = liveDisplayToFlags(value);
+	const checkedIndices = new Set<number>();
+	if (inApp) {
+		checkedIndices.add(0);
+	}
+	if (inOverlay) {
+		checkedIndices.add(1);
+	}
+	const setInApp = (next: boolean): void => {
+		update({ liveTranscriptionDisplay: flagsToLiveDisplay(next, inOverlay) });
+	};
+	const setInOverlay = (next: boolean): void => {
+		if (overlayDisabled) {
+			return;
+		}
+		update({ liveTranscriptionDisplay: flagsToLiveDisplay(inApp, next) });
+	};
 	return (
 		<FormControl
 			caption={t("liveTranscriptionDisplayCaption")}
-			disabled={liveDisplayDisabled}
 			label={t("liveTranscriptionDisplay")}
 			tooltip={t("liveTranscriptionDisplayTooltip")}
 		>
-			<div className={liveDisplayDisabled ? "pointer-events-none opacity-40" : ""}>
-				<Switcher
-					onChange={(v) => {
-						if (isLiveTranscriptionDisplayValue(v) && !(overlayDisabled && needsOverlay(v))) {
-							update({ liveTranscriptionDisplay: v });
-						}
-					}}
-					options={options}
-					value={value}
-				/>
-			</div>
+			<ElevatedSurface>
+				<CheckboxGroup checkedIndices={checkedIndices} className="w-full">
+					<CheckboxItem
+						checked={inApp}
+						index={0}
+						label={t("liveTranscriptionDisplayInApp")}
+						onToggle={() => setInApp(!inApp)}
+					/>
+					<CheckboxItem
+						checked={inOverlay}
+						disabled={overlayDisabled}
+						index={1}
+						label={t("liveTranscriptionDisplayInPill")}
+						onToggle={() => setInOverlay(!inOverlay)}
+					/>
+				</CheckboxGroup>
+			</ElevatedSurface>
 		</FormControl>
 	);
 }
@@ -847,40 +927,25 @@ interface VisualizerTypeControlProps {
 	general: GeneralSettings | undefined;
 	t: GeneralT;
 	update: UpdateFn;
-	visualizerTypeOptions: SelectOption[];
 }
 
-function VisualizerTypeControl({
-	t,
-	general,
-	update,
-	visualizerTypeOptions,
-}: VisualizerTypeControlProps): ReactNode {
+function VisualizerTypeControl({ t, general, update }: VisualizerTypeControlProps): ReactNode {
 	const value = general?.visualizerType ?? "bar";
-	const color = general?.visualizerColor ?? "#58a6ff";
+	const options = buildVisualizerTypeSwitcherOptions(t);
 	return (
 		<FormControl
 			caption={t("visualizerTypeCaption")}
 			label={t("visualizerType")}
 			tooltip={t("visualizerTypeTooltip")}
 		>
-			<div className="flex items-center gap-2">
-				<div className="flex-1">
-					<Select
-						onChange={(v) => pickVisualizerType(v, update)}
-						options={visualizerTypeOptions}
-						value={value}
-					/>
-				</div>
-				<TextField
-					aria-label={t("visualizerColor")}
-					className="h-8 w-12 shrink-0 cursor-pointer p-0"
-					onChange={(e) => update({ visualizerColor: e.target.value })}
-					title={t("visualizerColorTooltip")}
-					type="color"
-					value={color}
+			<ElevatedSurface>
+				<Switcher
+					fullWidth
+					onChange={(v) => pickVisualizerType(v, update)}
+					options={options}
+					value={value}
 				/>
-			</div>
+			</ElevatedSurface>
 		</FormControl>
 	);
 }
@@ -903,16 +968,16 @@ function VisualizerBarCountControl({
 			label={t("visualizerBarCount")}
 			tooltip={t("visualizerBarCountTooltip")}
 		>
-			<div className="flex items-center gap-2">
+			<ElevatedSurface className="px-3 py-3">
 				<Slider
+					aria-label={t("visualizerBarCount")}
 					max={21}
 					min={3}
 					onChange={(v) => update({ visualizerBarCount: v })}
 					step={2}
 					value={value}
 				/>
-				<span className="w-12 text-right font-mono text-foreground-muted text-xs">{value}</span>
-			</div>
+			</ElevatedSurface>
 		</FormControl>
 	);
 }
@@ -922,14 +987,7 @@ function isBarVisualizer(general: GeneralSettings | undefined): boolean {
 	return type === "bar";
 }
 
-function DisplaySection({
-	isListenMode,
-	locale,
-	setLocale,
-	t,
-	update,
-	visualizerTypeOptions,
-}: DisplaySectionProps) {
+function DisplaySection({ isListenMode, locale, setLocale, t, update }: DisplaySectionProps) {
 	const general = useSettingsStore((s) => s.settings.general);
 	const realtimeEnabled = useSettingsStore(
 		(s) => s.settings.quality?.enableRealtimeTranscription ?? true
@@ -938,8 +996,9 @@ function DisplaySection({
 
 	return (
 		<SettingSection icon={DashboardCircleIcon} title={t("display")}>
-			<div className="grid grid-cols-2 gap-x-5 gap-y-5 py-2">
+			<div className="flex flex-col divide-y divide-surface-1">
 				<LanguageControl locale={locale} setLocale={setLocale} t={t} />
+				<VisualizerTypeControl general={general} t={t} update={update} />
 				<OverlayControl
 					general={general}
 					isListenMode={isListenMode}
@@ -947,18 +1006,9 @@ function DisplaySection({
 					t={t}
 					update={update}
 				/>
-				<LiveTranscriptionDisplayControl
-					general={general}
-					liveDisplayDisabled={flags.liveDisplayDisabled}
-					t={t}
-					update={update}
-				/>
-				<VisualizerTypeControl
-					general={general}
-					t={t}
-					update={update}
-					visualizerTypeOptions={visualizerTypeOptions}
-				/>
+				{flags.liveDisplayHidden ? null : (
+					<LiveTranscriptionDisplayControl general={general} t={t} update={update} />
+				)}
 				{isBarVisualizer(general) ? (
 					<VisualizerBarCountControl general={general} t={t} update={update} />
 				) : null}
@@ -977,7 +1027,6 @@ export const __general_settings_panel_test_helpers__ = {
 	reductionToIndex,
 	indexToReduction,
 	reductionStepLabel,
-	soundToggleChecked,
 	computeDisplayFlags,
 	liveOverlayDisabled,
 	needsOverlay,

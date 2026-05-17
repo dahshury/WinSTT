@@ -14,6 +14,7 @@ import {
 	shell,
 	type Tray,
 } from "electron";
+import log from "electron-log/main";
 import { IPC } from "../src/shared/api/ipc-channels";
 import { registerAppMenuIpcHandlers } from "./ipc/app-menu-ipc";
 import type { AppMenuBuiltItem } from "./ipc/app-menu-template";
@@ -24,6 +25,7 @@ import {
 	createContextMenuIpcHandler,
 	registerContextMenuIpcHandler,
 } from "./ipc/context-menu-handler";
+import { setupDiagBundleHandler } from "./ipc/diag-bundle";
 import { setupDialogHandlers } from "./ipc/dialog";
 import { setupFileTranscribeHandlers } from "./ipc/file-transcribe";
 import { setupHotkeyHandlers } from "./ipc/hotkey";
@@ -33,8 +35,9 @@ import {
 	encryptIpcPayload,
 	generateIpcPayloadKey,
 } from "./ipc/ipc-payload-crypto";
-import { setupLlm } from "./ipc/llm";
+import { setupLlm, setupLlmWarmup } from "./ipc/llm";
 import { setupLoopbackHandlers } from "./ipc/loopback";
+import { setupOllamaRegistry } from "./ipc/ollama-registry";
 import { hideOverlay, setOverlayWindow, setupOverlayHandlers, showOverlay } from "./ipc/overlay";
 import { setupRelay } from "./ipc/relay";
 import { cleanupSettingsHandlers, setupSettingsHandlers } from "./ipc/settings";
@@ -54,9 +57,19 @@ import { registerWindowTelemetry } from "./ipc/window-telemetry";
 import { dbg } from "./lib/debug-log";
 import { shutdownPsHost } from "./lib/ps-host";
 import { cleanupRecordingIndicator, initRecordingIndicator } from "./lib/recording-indicator";
+import { captureMainException, initSentryMain } from "./lib/sentry-main";
 import { cleanupSound, initSound } from "./lib/sound";
-import { getStoreValue, store } from "./lib/store";
+import { getStoreValue, migrateSecretsAtRest, store } from "./lib/store";
 import { SttClient } from "./ws/stt-client";
+
+// Route every console.* call in the main process and all IPC handlers through
+// electron-log so they land in debug.log under a `[console]` scope. Must run
+// before any handler/side-effect code below executes a console.* call. Renderer
+// console.* is captured separately via the webContents `console-message`
+// listener registered in createWindow(). Note: `log.scope("console")` already
+// returns the LogFunctions record (error/warn/info/log/verbose/debug/silly) —
+// no `.functions` accessor needed (that property lives only on the parent Logger).
+Object.assign(console, log.scope("console"));
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
@@ -66,6 +79,8 @@ let cleanupRelay: (() => void) | null = null;
 let cleanupHotkeys: (() => void) | null = null;
 let cleanupFileTranscribe: (() => void) | null = null;
 let cleanupLlm: (() => void) | null = null;
+let cleanupLlmWarmup: (() => void) | null = null;
+let cleanupOllamaRegistry: (() => void) | null = null;
 let cleanupTransforms: (() => void) | null = null;
 let cleanupTransformHotkeys: (() => void) | null = null;
 let cleanupTrayMenu: (() => void) | null = null;
@@ -78,6 +93,7 @@ let cleanupSecureInvoke: (() => void) | null = null;
 let cleanupWindowControls: (() => void) | null = null;
 let cleanupOverlay: (() => void) | null = null;
 let cleanupSystemLocale: (() => void) | null = null;
+let cleanupDiagBundle: (() => void) | null = null;
 let autoUpdateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let rendererServerProcess: ChildProcess | null = null;
 let rendererBaseUrl = process.env.WINSTT_RENDERER_BASE_URL ?? "http://localhost:3000";
@@ -147,9 +163,11 @@ function recordUpdaterStatus(entry: UpdaterStatusEntryInput): UpdaterStatusEntry
 function setupFatalErrorHandlers(): void {
 	process.on("uncaughtException", (error) => {
 		dbg("crash", "Uncaught exception:", toErrorMessage(error));
+		captureMainException(error, { source: "uncaughtException" });
 	});
 	process.on("unhandledRejection", (reason) => {
 		dbg("crash", "Unhandled rejection:", toErrorMessage(reason));
+		captureMainException(reason, { source: "unhandledRejection" });
 	});
 }
 
@@ -327,9 +345,14 @@ function installCspHook(): void {
 		return;
 	}
 	session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+		// `sentry-ipc:` is the custom protocol that @sentry/electron's renderer SDK
+		// uses to talk to the main-process SDK (scope sync, event forwarding). The
+		// scheme is registered as a privileged protocol handler in main; it never
+		// touches the network. Must be in connect-src for both dev and prod, even
+		// when SENTRY_DSN is unset, because the renderer init runs unconditionally.
 		const csp = isDev
-			? "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* http://localhost:* http://127.0.0.1:*; font-src 'self' http://localhost:* https://cdn.jsdelivr.net data:; img-src 'self' data:"
-			: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; img-src 'self' data:";
+			? "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc: ws://localhost:* http://localhost:* http://127.0.0.1:*; font-src 'self' http://localhost:* https://cdn.jsdelivr.net data:; img-src 'self' data:"
+			: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc:; font-src 'self'; img-src 'self' data:";
 		callback({
 			responseHeaders: {
 				...details.responseHeaders,
@@ -416,6 +439,15 @@ async function initAutoUpdater(): Promise<void> {
 	}
 }
 
+// Sentry main-process init MUST run before setupFatalErrorHandlers() so the
+// SDK's own uncaughtException handler is installed first; ours then captures
+// to Sentry too (Sentry dedupes by error identity, so the double-capture is safe).
+// The `general.sendCrashReports` setting is the user-facing opt-out — when
+// false, `initSentryMain` is a no-op and the renderer skips its own init too
+// (the flag is forwarded via the renderer URL query string, see
+// `getRendererRouteUrl`).
+const sendCrashReports = getStoreValue("general.sendCrashReports") ?? true;
+initSentryMain({ enabled: sendCrashReports });
 setupFatalErrorHandlers();
 
 // Prevent unhandled "error" events on EventEmitter from crashing the app with dialog windows.
@@ -473,6 +505,9 @@ if (gotTheLock) {
 	app
 		.whenReady()
 		.then(async () => {
+			// Encrypt any legacy plaintext secrets persisted before this version.
+			// Must run before any IPC handler that ships settings to the renderer.
+			migrateSecretsAtRest();
 			const baseUrl = isDev
 				? (process.env.WINSTT_RENDERER_BASE_URL ?? "http://localhost:3000")
 				: await startBundledRendererServer();
@@ -530,6 +565,10 @@ if (gotTheLock) {
 		cleanupTrayMenu = null;
 		cleanupLlm?.();
 		cleanupLlm = null;
+		cleanupLlmWarmup?.();
+		cleanupLlmWarmup = null;
+		cleanupOllamaRegistry?.();
+		cleanupOllamaRegistry = null;
 		cleanupTransforms?.();
 		cleanupTransforms = null;
 		cleanupTransformHotkeys?.();
@@ -552,6 +591,8 @@ if (gotTheLock) {
 		cleanupOverlay = null;
 		cleanupSystemLocale?.();
 		cleanupSystemLocale = null;
+		cleanupDiagBundle?.();
+		cleanupDiagBundle = null;
 		disposeGeneralSettingsWatcher?.();
 		disposeGeneralSettingsWatcher = null;
 		cleanupSettingsHandlers();
@@ -592,6 +633,10 @@ function setupGlobalIpcHandlers() {
 	cleanupOverlay = setupOverlayHandlers();
 	cleanupTrayMenu = setupTrayMenuHandlers();
 	cleanupLlm = setupLlm();
+	// Keep Ollama dictation/transforms models hot so the first dictation
+	// after launch doesn't pay the cold-start penalty (~30s for a 7B model).
+	cleanupLlmWarmup = setupLlmWarmup();
+	cleanupOllamaRegistry = setupOllamaRegistry();
 	cleanupTransforms = setupTransforms();
 	cleanupTransformHotkeys = setupTransformHotkeys().dispose;
 	cleanupAppMenu = setupAppMenuHandlers();
@@ -600,6 +645,7 @@ function setupGlobalIpcHandlers() {
 	cleanupUpdaterStatus = setupUpdaterStatusHandlers();
 	cleanupSecureInvoke = setupSecureInvokeHandlers();
 	cleanupSystemLocale = setupSystemLocaleHandler();
+	cleanupDiagBundle = setupDiagBundleHandler();
 }
 
 function setupAppMenuHandlers(): () => void {
@@ -838,7 +884,18 @@ function createOverlayWindow() {
 		skipTaskbar: true,
 		show: false,
 		backgroundColor: "#00000000",
-		webPreferences: sharedWebPreferences,
+		// `backgroundThrottling: false` keeps the renderer painting normally
+		// while the overlay BrowserWindow is hidden between PTT presses. With
+		// the default (throttled to ~1fps), the renderer's post-terminal-event
+		// "clear pill" paint never reaches the GPU / DWM compositor surface,
+		// so DWM's cached frame for this window is whatever was last *visible*
+		// — i.e. the previous session's pill with its transcription text.
+		// On the next `showOverlay()`, DWM displays that cached surface for a
+		// frame or two before the renderer's fresh paint replaces it, which
+		// the user perceives as a brief flash of the old transcription. The
+		// overlay is tiny and empty most of the time, so the extra paints are
+		// cheap; the trade-off favours flash-free re-shows over CPU savings.
+		webPreferences: { ...sharedWebPreferences, backgroundThrottling: false },
 	});
 	protectWindowNavigation(overlayWindow);
 
@@ -937,9 +994,6 @@ function createWindow() {
 	// Load content
 	dbg("window", "Loading content, isDev=", isDev);
 	const loadMainPromise = mainWindow.loadURL(getRendererRouteUrl("/"));
-	if (isDev) {
-		mainWindow.webContents.openDevTools({ mode: "detach" });
-	}
 	loadMainPromise.catch((error) => {
 		dbg("window", "Failed to load main window:", toErrorMessage(error));
 		app.quit();

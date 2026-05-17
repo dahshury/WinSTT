@@ -118,15 +118,47 @@ describe("overlay handlers", () => {
 		expect(() => showOverlay()).not.toThrow();
 	});
 
-	test("showOverlay positions, sets opacity, and shows the window when enabled", () => {
+	test("showOverlay reveals the window at opacity 0 first, then ramps to 1 after a frame", async () => {
 		const win = makeWindow();
 		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
 		showOverlay();
-		// All three layers must be touched in this order so the user
-		// never sees a flash at offscreen coords or 0 opacity.
-		// Position math: width=1920, winWidth=800, x=(1920-800)/2=560
-		//                height=1080, winHeight=120, y=1080-120-60=900
+		// Synchronously: position → opacity 0 → show. We open invisible so
+		// DWM's cached composited surface from the *previous* session can't
+		// flash through before the renderer paints its post-`recording_start`
+		// state. Position math: width=1920, winWidth=800, x=(1920-800)/2=560;
+		// height=1080, winHeight=120, y=1080-120-60=900.
+		expect(win.calls).toEqual(["setPosition:560,900", "opacity:0", "show"]);
+		// After the ramp delay, opacity flips to 1.
+		await new Promise<void>((r) => setTimeout(r, 120));
+		expect(win.calls).toEqual(["setPosition:560,900", "opacity:0", "show", "opacity:1"]);
+	});
+
+	test("showOverlay on an ALREADY-visible window keeps opacity 1 (no fade-out for LLM-thinking re-shows)", () => {
+		const win = makeWindow();
+		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		// Make the window already visible BEFORE the showOverlay call —
+		// matches the `maybeRunLlm` re-show path where the pill must stay
+		// continuously visible.
+		win.visible = true;
+		showOverlay();
+		// No opacity-0 step — we never dim a visible pill.
 		expect(win.calls).toEqual(["setPosition:560,900", "opacity:1", "show"]);
+	});
+
+	test("hide that lands inside the opacity-ramp window cancels the pending opacity:1", async () => {
+		const win = makeWindow();
+		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		showOverlay();
+		// Mid-ramp: hide. The pending setTimeout that would have flipped
+		// opacity to 1 must be a no-op (defended by both clearPendingTimers
+		// and the desired-state recheck inside the timer).
+		hideOverlay();
+		await new Promise<void>((r) => setTimeout(r, 150));
+		// The synchronous opacity:1 that would otherwise reveal DWM's stale
+		// cached frame on the next physical show must not appear after the
+		// hide. (The hide itself adds an opacity:0; we tolerate it here.)
+		const opacityOnes = win.calls.filter((c) => c === "opacity:1");
+		expect(opacityOnes).toHaveLength(0);
 	});
 
 	test("showOverlay centers horizontally using (workWidth - winWidth) / 2 (kills * 2 / + mutants)", () => {
@@ -185,14 +217,17 @@ describe("overlay handlers", () => {
 		expect(win.positions[0]?.[1]).toBe(-10_000);
 	});
 
-	test("rapid stop → start sequence: pill ends up visible (show after hide)", () => {
+	test("rapid stop → start sequence: pill ends up visible (show after hide)", async () => {
 		const win = makeWindow();
 		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
 		hideOverlay();
 		showOverlay();
-		// At the end of a stop → start cycle: the show steps must follow
-		// the hide steps so the final state is "visible at the right
-		// position with full opacity".
+		// opacity:1 now lands AFTER the ramp delay rather than synchronously
+		// alongside `show`, so wait past it before checking the terminal state.
+		await new Promise<void>((r) => setTimeout(r, 120));
+		// At the end of a stop → start cycle: the final visible state must
+		// be "visible at the right position with full opacity", regardless
+		// of the intermediate opacity-0 reveal step.
 		const lastOpacity1 = win.calls.lastIndexOf("opacity:1");
 		const lastOpacity0 = win.calls.lastIndexOf("opacity:0");
 		const lastShow = win.calls.lastIndexOf("show");

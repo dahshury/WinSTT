@@ -36,6 +36,7 @@ components:
           model_download_progress: "#/components/schemas/ModelDownloadProgressEvent"
           model_download_complete: "#/components/schemas/ModelDownloadCompleteEvent"
           audio_level: "#/components/schemas/AudioLevelEvent"
+          speaker_segments: "#/components/schemas/SpeakerSegmentsEvent"
       oneOf:
         - $ref: "#/components/schemas/RealtimeTextEvent"
         - $ref: "#/components/schemas/FullSentenceEvent"
@@ -57,6 +58,42 @@ components:
         - $ref: "#/components/schemas/ModelDownloadProgressEvent"
         - $ref: "#/components/schemas/ModelDownloadCompleteEvent"
         - $ref: "#/components/schemas/AudioLevelEvent"
+        - $ref: "#/components/schemas/SpeakerSegmentsEvent"
+
+    SpeakerSegment:
+      type: object
+      required: [start, end, speaker]
+      properties:
+        start:
+          type: number
+          format: float
+          description: Segment start in seconds, relative to utterance start.
+        end:
+          type: number
+          format: float
+          description: Segment end in seconds, relative to utterance start.
+        speaker:
+          type: integer
+          description: Stable session-wide speaker id assigned by the online clusterer.
+
+    SpeakerSegmentsEvent:
+      type: object
+      description: >
+        Per-utterance speaker diarization result. Fires immediately after the
+        matching ``fullSentence`` event when ``diarization.enabled`` is true
+        in the recorder config. ``segments`` may be empty when the audio
+        contained no detectable speech; consumers should treat that case as
+        "single unknown speaker" and apply a neutral colour rather than
+        erroring.
+      required: [type, segments]
+      properties:
+        type:
+          type: string
+          const: speaker_segments
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpeakerSegment"
 
     RealtimeTextEvent:
       type: object
@@ -437,6 +474,7 @@ components:
       type: string
       enum:
         - whisper
+        - lite-whisper
         - nemo
         - gigaam
         - kaldi
@@ -780,79 +818,120 @@ components:
       enum: [ollama, openrouter]
       description: Which LLM backend to use for text transformation.
 
-    LlmSettings:
+    LlmFeatureConfig:
       type: object
+      description: >-
+        Per-feature provider config. Dictation and transforms each carry their
+        own copy, so one can run on Ollama while the other uses OpenRouter
+        (or both can share the same provider with different models).
       properties:
         enabled:
           type: boolean
           default: false
           description: >-
-            Master switch: the LLM provider/model is configured and reachable.
-            Gates the shared provider config and both sub-features below — when
-            false, neither dictation post-processing nor text transformation
-            runs regardless of their own flags.
-        dictationEnabled:
-          type: boolean
-          default: true
-          description: >-
-            Sub-feature: apply the cleanup `presets` (tone + modifiers) to
-            dictated speech text. Only takes effect when `enabled` is true.
-        transformsEnabled:
-          type: boolean
-          default: false
-          description: >-
-            Sub-feature: allow `transforms` (custom prompts on the currently
-            selected text, via hotkey or the Transforms UI). Only takes effect
-            when `enabled` is true.
+            Whether this feature is active. The feature runs iff `enabled` is
+            true AND a model is configured for the chosen provider. There is
+            no master switch — when both features are off, the LLM subsystem
+            is dormant.
         provider:
           $ref: "#/components/schemas/LlmProvider"
-        endpoint:
-          type: string
-          default: "http://localhost:11434"
-          description: Ollama endpoint (only used when provider is "ollama").
         model:
           type: string
           default: ""
           description: Ollama model name (only used when provider is "ollama").
-        openrouterApiKey:
-          type: string
-          default: ""
-          description: OpenRouter API key (only used when provider is "openrouter").
         openrouterModel:
           type: string
           default: ""
           description: >-
             OpenRouter model selection encoded as `modelId` or `modelId@providerSlug`.
-            Empty string means "OpenRouter Auto".
+            Empty string means "OpenRouter Auto". Only used when provider is "openrouter".
         openrouterFallbackModel:
           type: string
           default: ""
           description: >-
             Optional fallback model. Same encoding as `openrouterModel`. When set,
-            the LLM IPC retries with this model if the primary model errors or times
-            out. Empty string disables fallback.
-        presets:
-          type: array
-          default: [{ key: neutral }]
+            the LLM IPC retries with this model if the primary errors or times out.
+            Empty string disables fallback.
+        reasoningEffort:
+          type: string
+          enum: [low, medium, high]
+          default: medium
           description: >-
-            Ordered list of text-transformation presets to apply. At most one
-            tone preset (neutral/formal/friendly/technical/casual) may appear.
-            `level` is only valid for `summarize` and `concise`.
-          items:
-            $ref: "#/components/schemas/LlmPresetEntry"
+            OpenRouter `reasoning.effort` parameter. Only sent when the selected
+            model advertises reasoning support via `supported_parameters`.
+        verbosity:
+          type: string
+          enum: [low, medium, high]
+          default: medium
+          description: >-
+            OpenRouter `verbosity` parameter. Only sent when the selected model
+            advertises support via `supported_parameters`.
+        maxOutputTokens:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: >-
+            Cap on the response length (`max_tokens`). Null lets the model decide.
+            Only sent when the selected model advertises `max_tokens` support.
+
+    LlmDictationConfig:
+      allOf:
+        - $ref: "#/components/schemas/LlmFeatureConfig"
+        - type: object
+          properties:
+            presets:
+              type: array
+              default: [{ key: neutral }]
+              description: >-
+                Ordered list of cleanup presets to apply to dictated text. At
+                most one tone preset (neutral/formal/friendly/technical/casual)
+                may appear. `level` is only valid for `summarize` and `concise`.
+              items:
+                $ref: "#/components/schemas/LlmPresetEntry"
+
+    LlmTransformsConfig:
+      allOf:
+        - $ref: "#/components/schemas/LlmFeatureConfig"
+        - type: object
+          properties:
+            prompts:
+              type: array
+              description: >-
+                User-configurable text transforms triggered by a hotkey on the
+                currently-selected text. Each transform carries its own system
+                prompt and an optional hotkey. Built-in entries are flagged so
+                the UI can show a Reset action instead of Delete.
+              items:
+                $ref: "#/components/schemas/Transform"
+
+    LlmSettings:
+      type: object
+      description: >-
+        LLM configuration. Per-feature provider/model lives under `dictation`
+        and `transforms`; the fields below are shared infrastructure (one
+        Ollama instance, one OpenRouter account).
+      properties:
+        endpoint:
+          type: string
+          default: "http://localhost:11434"
+          description: Ollama endpoint URL — shared across both features.
+        openrouterApiKey:
+          type: string
+          default: ""
+          description: OpenRouter API key — shared across both features.
+        dictation:
+          $ref: "#/components/schemas/LlmDictationConfig"
+        transforms:
+          $ref: "#/components/schemas/LlmTransformsConfig"
         timeout:
           type: integer
           default: 5000
-        transforms:
-          type: array
           description: >-
-            User-configurable text transforms triggered by a hotkey on the
-            currently-selected text. Each transform carries its own system
-            prompt (independent from the dictation cleanup presets) and an
-            optional hotkey. Built-in entries are flagged so the UI can show
-            a Reset action instead of Delete.
-          items:
-            $ref: "#/components/schemas/Transform"
+            Client-side request timeout in milliseconds. Persisted and wired
+            through the IPC layer, but currently NOT applied at the network
+            layer — local LLMs (Ollama cold start) routinely exceed any finite
+            cap, so an abort would silently paste un-processed text. Kept for
+            settings/IPC stability.
 
     Transform:
       type: object
@@ -909,6 +988,30 @@ components:
         level:
           $ref: "#/components/schemas/LlmPresetLevel"
 
+    OllamaModelDetails:
+      type: object
+      description: |
+        Per-model detail metadata returned by Ollama `/api/tags`. Drives the
+        picker's family grouping, parameter-size chip, and quantization chip.
+      properties:
+        format:
+          type: string
+          description: On-disk format (typically `gguf`).
+        family:
+          type: string
+          description: Primary model family (e.g. `llama`, `qwen`, `gemma`).
+        families:
+          type: array
+          description: All families the model belongs to (multi-family hybrids).
+          items:
+            type: string
+        parameterSize:
+          type: string
+          description: Parameter count label (e.g. `7B`, `1.2B`, `8x7B`).
+        quantizationLevel:
+          type: string
+          description: Quantization level (e.g. `Q4_K_M`, `Q8_0`, `F16`).
+
     OllamaModel:
       type: object
       required: [name]
@@ -920,6 +1023,112 @@ components:
         modifiedAt:
           type: string
           format: date-time
+        details:
+          $ref: "#/components/schemas/OllamaModelDetails"
+
+    OllamaLibraryHit:
+      type: object
+      required: [name]
+      description: |
+        A single search hit scraped from ollama.com/search. Represents a model
+        family (e.g. `gemma3`) — its individual tags are fetched separately via
+        the per-model tags endpoint.
+      properties:
+        name:
+          type: string
+          description: Canonical library slug (e.g. `gemma3`, `llama3.2`).
+        description:
+          type: string
+          description: One-line description scraped from the search card.
+        pulls:
+          type: string
+          description: Human-readable pull count (e.g. `1.2M`).
+        updated:
+          type: string
+          description: Human-readable last-updated label (e.g. `2 weeks ago`).
+        capabilities:
+          type: array
+          description: Tag capabilities scraped from the search card (e.g. `tools`, `vision`).
+          items:
+            type: string
+
+    OllamaLibrarySearchResult:
+      type: object
+      required: [hits, hasMore, page, query]
+      properties:
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/OllamaLibraryHit"
+        hasMore:
+          type: boolean
+          description: True when more pages remain — the client can request the next page.
+        page:
+          type: integer
+          description: Zero-based page index of these results.
+        query:
+          type: string
+          description: Echoed query so callers can ignore stale responses.
+        error:
+          type: string
+          description: Set when the scrape failed (network error, parse error). `hits` will be empty.
+
+    OllamaLibraryCatalogResult:
+      type: object
+      required: [hits]
+      description: |
+        Full Ollama library catalog scraped from ollama.com/library in one
+        shot. Cached aggressively because the library only changes when new
+        models are published. The renderer filters this list client-side
+        rather than hitting the search endpoint per keystroke.
+      properties:
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/OllamaLibraryHit"
+        error:
+          type: string
+
+    OllamaLibraryTag:
+      type: object
+      required: [name]
+      description: A single pullable tag of a library model (e.g. `gemma3:4b`).
+      properties:
+        name:
+          type: string
+          description: Full pull tag including base (e.g. `gemma3:4b`, `gemma3:4b-q8_0`).
+        sizeBytes:
+          type: integer
+          format: int64
+          description: Approximate on-disk size in bytes (parsed from the `3.3GB`-style label).
+        sizeLabel:
+          type: string
+          description: Raw human-readable size label as shown on ollama.com (e.g. `3.3GB`).
+        contextWindow:
+          type: string
+          description: Context-window label (e.g. `128K`).
+        quantization:
+          type: string
+          description: Quantization marker parsed from the tag suffix (e.g. `Q4_K_M`, `Q8_0`, `fp16`).
+        parameterSize:
+          type: string
+          description: Parameter-size label parsed from the tag (e.g. `4b`, `12b`).
+        isLatest:
+          type: boolean
+          description: True when this is the `latest` alias.
+
+    OllamaLibraryTagsResult:
+      type: object
+      required: [model, tags]
+      properties:
+        model:
+          type: string
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/OllamaLibraryTag"
+        error:
+          type: string
 
     OllamaScanResult:
       type: object
@@ -1111,6 +1320,30 @@ components:
           type: number
           nullable: true
 
+    OpenRouterArchitecture:
+      type: object
+      description: |
+        Model architecture metadata returned by the OpenRouter `/api/v1/models`
+        listing. Drives the modality chips rendered in the model picker rows.
+      properties:
+        modality:
+          type: string
+          description: Legacy single-string modality (e.g. "text->text", "text+image->text").
+        tokenizer:
+          type: string
+        instruct_type:
+          type: string
+        input_modalities:
+          type: array
+          description: Modalities the model accepts (e.g. ["text", "image", "audio"]).
+          items:
+            type: string
+        output_modalities:
+          type: array
+          description: Modalities the model produces (e.g. ["text"], ["embeddings"]).
+          items:
+            type: string
+
     OpenRouterModel:
       type: object
       required: [id, name]
@@ -1139,6 +1372,8 @@ components:
           type: string
           enum: [free, extended, exacto, nitro, floor, thinking, online]
           nullable: true
+        architecture:
+          $ref: "#/components/schemas/OpenRouterArchitecture"
         endpoints:
           type: array
           items:
@@ -1230,6 +1465,199 @@ components:
           type: string
         available:
           type: boolean
+
+    # ─── Live resource snapshot ───────────────────────────────────────
+
+    LiveGpuInfo:
+      type: object
+      description: |
+        Per-GPU snapshot from `nvidia-smi`. `total_vram_bytes` is repeated
+        from static `SystemInfo` so the renderer can derive used/free
+        percentages from a single payload.
+      required: [name, total_vram_bytes, used_vram_bytes, free_vram_bytes, utilization_percent]
+      properties:
+        name:
+          type: string
+        total_vram_bytes:
+          type: integer
+          format: int64
+        used_vram_bytes:
+          type: integer
+          format: int64
+        free_vram_bytes:
+          type: integer
+          format: int64
+        utilization_percent:
+          type: integer
+          minimum: -1
+          maximum: 100
+          description: |
+            GPU compute utilization (0..100). `-1` when nvidia-smi did
+            not report a value (e.g. driver too old). Renderer treats
+            negative values as "unknown" and hides the chip.
+
+    LiveResources:
+      type: object
+      description: |
+        Live host snapshot used by the resource-aware model picker.
+        Fields are best-effort; missing probes return zero/empty.
+      required:
+        - ram_total_bytes
+        - ram_available_bytes
+        - cpu_count_logical
+        - cpu_count_physical
+        - cpu_percent
+        - gpus
+      properties:
+        ram_total_bytes:
+          type: integer
+          format: int64
+        ram_available_bytes:
+          type: integer
+          format: int64
+          description: psutil's `virtual_memory().available` — bytes that can be allocated without swapping.
+        cpu_count_logical:
+          type: integer
+          minimum: 0
+        cpu_count_physical:
+          type: integer
+          minimum: 0
+        cpu_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: |
+            Non-blocking system-wide CPU% sample (averaged across logical
+            cores). `0.0` on the first call after process start (psutil
+            needs a prior sample to delta against) and after `psutil` is
+            missing — the renderer treats `0.0` as "no recent reading".
+        gpus:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiveGpuInfo"
+
+    # ─── Fit assessment ───────────────────────────────────────────────
+
+    FitSeverity:
+      type: string
+      description: |
+        Three-tier verdict. `ok` renders nothing; `warning` renders an
+        inline ⚠ chip; `critical` renders an inline ⛔ chip and triggers
+        the post-selection modal that requires "Proceed anyway".
+      enum: [ok, warning, critical]
+
+    FitTarget:
+      type: string
+      description: Predicted device the candidate would run on.
+      enum: [gpu, cpu, neither]
+
+    FitReason:
+      type: string
+      description: |
+        Stable i18n keys for why the verdict was reached. The renderer
+        maps each value to a localized line in the warning modal.
+        Multiple reasons may apply per assessment.
+      enum:
+        - exceeds_vram
+        - exceeds_ram
+        - tight_vram
+        - tight_ram
+        - no_gpu_available
+        - requires_cpu_quant
+        - stt_already_uses_gpu
+        - stt_already_uses_ram
+        - unknown_footprint
+        - ok
+
+    DictationFitAssessment:
+      type: object
+      required: [severity, target, required_bytes, available_bytes, reasons]
+      properties:
+        severity:
+          $ref: "#/components/schemas/FitSeverity"
+        target:
+          $ref: "#/components/schemas/FitTarget"
+        required_bytes:
+          type: integer
+          format: int64
+          description: Estimated resident bytes the candidate model would consume.
+        available_bytes:
+          type: integer
+          format: int64
+          description: |
+            Bytes available on `target` after accounting for what's already
+            loaded (and what `target` itself contributes, where applicable).
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/FitReason"
+
+    OllamaFitAssessment:
+      type: object
+      required: [severity, target, required_bytes, available_bytes, reasons]
+      properties:
+        severity:
+          $ref: "#/components/schemas/FitSeverity"
+        target:
+          $ref: "#/components/schemas/FitTarget"
+        required_bytes:
+          type: integer
+          format: int64
+          description: |
+            `size_bytes * 1.2 + 1 GB` — accounts for KV cache and activations
+            beyond the raw GGUF weight file.
+        available_bytes:
+          type: integer
+          format: int64
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/FitReason"
+
+    GetLiveResourcesCommand:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          const: get_live_resources
+        force_refresh:
+          type: boolean
+          default: false
+          description: Bypass the ~1s TTL cache (wire to a manual "refresh" button).
+        request_id:
+          type: integer
+
+    AssessDictationModelFitCommand:
+      type: object
+      required: [command, model_id]
+      properties:
+        command:
+          type: string
+          const: assess_dictation_model_fit
+        model_id:
+          type: string
+        quantization:
+          type: string
+          default: ""
+        device:
+          type: string
+          nullable: true
+        request_id:
+          type: integer
+
+    AssessOllamaModelFitCommand:
+      type: object
+      required: [command, size_bytes]
+      properties:
+        command:
+          type: string
+          const: assess_ollama_model_fit
+        size_bytes:
+          type: integer
+          format: int64
+        request_id:
+          type: integer
 
     ServerStatus:
       type: string

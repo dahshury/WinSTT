@@ -3,6 +3,8 @@ import WebSocket from "ws";
 import { z } from "zod";
 import { ConnectionError, getErrorMessage, TimeoutError } from "../../src/shared/lib/errors";
 import { dbgVerbose } from "../lib/debug-log";
+import { isRecord } from "../lib/ipc-helpers";
+import { breadcrumb } from "../lib/sentry-main";
 
 // ── Zod schemas for WebSocket message validation ─────────────────────
 
@@ -105,7 +107,7 @@ export class SttClient extends EventEmitter {
 		// The server may piggy-back the runtime snapshot on server_ready —
 		// re-emit it as its own event so the relay can broadcast a chip
 		// update without sniffing the same field twice.
-		if (isObjectPayload(data.runtime_info)) {
+		if (isRecord(data.runtime_info)) {
 			this.emit("runtime-info", data.runtime_info);
 		}
 	}
@@ -117,7 +119,7 @@ export class SttClient extends EventEmitter {
 	}
 
 	private handleGetRuntimeInfoEvent(data: ControlEventData): void {
-		if (isObjectPayload(data.value)) {
+		if (isRecord(data.value)) {
 			this.emit("runtime-info", data.value);
 		}
 	}
@@ -226,6 +228,7 @@ export class SttClient extends EventEmitter {
 				// drops we want to emit "disconnected" / "error" again.
 				this._disconnectedEmitted = false;
 				this._errorEmittedThisCycle = false;
+				breadcrumb("stt", "server connected", undefined, "info");
 				this.emit("connected");
 				// Request model catalog
 				this.sendControl({ command: "list_models" });
@@ -307,6 +310,36 @@ export class SttClient extends EventEmitter {
 		return this.sendRequest({ command: "list_models_with_state" }, "listModelsWithState");
 	}
 
+	getLiveResources(forceRefresh = false): Promise<unknown> {
+		return this.sendRequest(
+			{ command: "get_live_resources", force_refresh: forceRefresh },
+			"getLiveResources"
+		);
+	}
+
+	assessDictationFit(
+		modelId: string,
+		quantization = "",
+		device: string | null = null
+	): Promise<unknown> {
+		return this.sendRequest(
+			{
+				command: "assess_dictation_model_fit",
+				model_id: modelId,
+				quantization,
+				device,
+			},
+			"assessDictationFit"
+		);
+	}
+
+	assessOllamaFit(sizeBytes: number): Promise<unknown> {
+		return this.sendRequest(
+			{ command: "assess_ollama_model_fit", size_bytes: sizeBytes },
+			"assessOllamaFit"
+		);
+	}
+
 	startLoopback(deviceIndex: number): void {
 		this.sendControl({
 			command: "start_loopback",
@@ -341,6 +374,7 @@ export class SttClient extends EventEmitter {
 		this.rejectAllPending(
 			new ConnectionError("Connection lost", `${this.host}:${this.controlPort}`, true)
 		);
+		breadcrumb("stt", "server disconnected", undefined, "warning");
 		this.emit("disconnected");
 		this.scheduleReconnect();
 	}
@@ -509,11 +543,6 @@ export function resolveSttClientOptions(options: SttClientOptions): Required<Stt
 		dataPort = DEFAULT_DATA_PORT,
 	} = options;
 	return { host, controlPort, dataPort };
-}
-
-/** Type guard matching the legacy `value && typeof value === "object"` predicate. */
-export function isObjectPayload(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === "object";
 }
 
 /**

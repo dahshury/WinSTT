@@ -132,39 +132,28 @@ describe("GeneralSettingsPanel helpers — reduction slider mapping", () => {
 	});
 });
 
-describe("GeneralSettingsPanel helpers — soundToggleChecked", () => {
-	const cases: [boolean, boolean, boolean][] = [
-		[true, true, false],
-		[false, true, true],
-		[false, false, false],
-	];
-	test.each(cases)("listen=%s enabled=%s -> %s", (listen, enabled, expected) => {
-		expect(helpers.soundToggleChecked(listen, enabled)).toBe(expected);
-	});
-});
-
 describe("GeneralSettingsPanel helpers — computeDisplayFlags", () => {
 	test("everything enabled when overlay shown, not listen, realtime on", () => {
 		const flags = helpers.computeDisplayFlags(false, { showRecordingOverlay: true } as any, true);
 		expect(flags).toEqual({
 			overlayEnabled: true,
 			subDisabled: false,
-			liveDisplayDisabled: false,
+			liveDisplayHidden: false,
 		});
 	});
 
-	test("listen mode disables the overlay/size picker but leaves the live-transcription picker enabled", () => {
-		// liveDisplayDisabled hinges only on realtime — listen mode keeps the
-		// in-app option meaningful so the picker stays interactable.
+	test("listen mode disables the overlay/size picker but leaves the live-transcription picker visible", () => {
+		// liveDisplayHidden hinges only on realtime — listen mode keeps the
+		// in-app option meaningful so the picker stays rendered.
 		const flags = helpers.computeDisplayFlags(true, { showRecordingOverlay: true } as any, true);
 		expect(flags.overlayEnabled).toBe(false);
 		expect(flags.subDisabled).toBe(true);
-		expect(flags.liveDisplayDisabled).toBe(false);
+		expect(flags.liveDisplayHidden).toBe(false);
 	});
 
-	test("realtime off disables the combined live-transcription picker", () => {
+	test("realtime off hides the combined live-transcription picker", () => {
 		const flags = helpers.computeDisplayFlags(false, { showRecordingOverlay: true } as any, false);
-		expect(flags.liveDisplayDisabled).toBe(true);
+		expect(flags.liveDisplayHidden).toBe(true);
 	});
 });
 
@@ -285,8 +274,8 @@ describe("GeneralSettingsPanel helpers — dropZoneClass", () => {
 		expect(helpers.dropZoneClass(true)).toContain("border-accent");
 	});
 
-	test("uses transparent border otherwise", () => {
-		expect(helpers.dropZoneClass(false)).toContain("border-transparent");
+	test("uses the divider border at rest", () => {
+		expect(helpers.dropZoneClass(false)).toContain("border-divider-strong");
 	});
 });
 
@@ -318,6 +307,7 @@ describe("GeneralSettingsPanel helpers — readStartupFlags", () => {
 			autoStart: false,
 			startMinimized: false,
 			minimizeToTray: true,
+			sendCrashReports: true,
 		});
 	});
 
@@ -326,11 +316,13 @@ describe("GeneralSettingsPanel helpers — readStartupFlags", () => {
 			autoStart: true,
 			startMinimized: true,
 			minimizeToTray: false,
+			sendCrashReports: false,
 		} as any);
 		expect(flags).toEqual({
 			autoStart: true,
 			startMinimized: true,
 			minimizeToTray: false,
+			sendCrashReports: false,
 		});
 	});
 });

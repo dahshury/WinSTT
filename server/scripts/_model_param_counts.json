@@ -1,0 +1,182 @@
+{
+  "tiny": {
+    "params": 37760640,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph"
+  },
+  "base": {
+    "params": 72593920,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph"
+  },
+  "small": {
+    "params": 241734912,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph"
+  },
+  "medium": {
+    "params": 769000000,
+    "source": "published",
+    "approximate": false,
+    "note": "OpenAI Whisper paper Table 1"
+  },
+  "large-v3": {
+    "params": 1550000000,
+    "source": "published",
+    "approximate": false,
+    "note": "OpenAI Whisper model card (huggingface.co/openai/whisper-large-v3)"
+  },
+  "large-v3-turbo": {
+    "params": 795766657,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph"
+  },
+  "tiny.en": {
+    "params": 37760256,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph"
+  },
+  "base.en": {
+    "params": 74000000,
+    "source": "published",
+    "approximate": false,
+    "note": "OpenAI Whisper paper Table 1"
+  },
+  "small.en": {
+    "params": 244000000,
+    "source": "published",
+    "approximate": false,
+    "note": "OpenAI Whisper paper Table 1"
+  },
+  "medium.en": {
+    "params": 769000000,
+    "source": "published",
+    "approximate": false,
+    "note": "OpenAI Whisper paper Table 1"
+  },
+  "lite-whisper-large-v3-turbo": {
+    "params": 534359083,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph"
+  },
+  "lite-whisper-large-v3-turbo-acc": {
+    "params": 581299243,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph"
+  },
+  "lite-whisper-large-v3-turbo-fast": {
+    "params": 473840689,
+    "source": "measured",
+    "approximate": true,
+    "note": "from quantized graph (slightly inflated by QDQ overhead)"
+  },
+  "nemo-parakeet-ctc-0.6b": {
+    "params": 600000000,
+    "source": "published",
+    "approximate": false,
+    "note": "NVIDIA NeMo parakeet_ctc_0.6b card"
+  },
+  "nemo-parakeet-rnnt-0.6b": {
+    "params": 600000000,
+    "source": "published",
+    "approximate": false,
+    "note": "NVIDIA NeMo parakeet_rnnt_0.6b card"
+  },
+  "nemo-parakeet-tdt-0.6b-v2": {
+    "params": 600000000,
+    "source": "published",
+    "approximate": false,
+    "note": "NVIDIA NeMo parakeet_tdt_0.6b_v2 card"
+  },
+  "nemo-parakeet-tdt-0.6b-v3": {
+    "params": 626983558,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph"
+  },
+  "nemo-canary-1b-v2": {
+    "params": 978000000,
+    "source": "published",
+    "approximate": false,
+    "note": "NVIDIA NeMo canary-1b-v2 card (978M)"
+  },
+  "nemo-fastconformer-ru-ctc": {
+    "params": 109270705,
+    "source": "measured",
+    "approximate": true,
+    "note": "from quantized graph (slightly inflated by QDQ overhead)"
+  },
+  "nemo-fastconformer-ru-rnnt": {
+    "params": 114078382,
+    "source": "measured",
+    "approximate": true,
+    "note": "from quantized graph (slightly inflated by QDQ overhead)"
+  },
+  "gigaam-v2-ctc": {
+    "params": 232561341,
+    "source": "measured",
+    "approximate": true,
+    "note": "from quantized graph (slightly inflated by QDQ overhead)"
+  },
+  "gigaam-v2-rnnt": {
+    "params": 233727546,
+    "source": "measured",
+    "approximate": true,
+    "note": "from quantized graph (slightly inflated by QDQ overhead)"
+  },
+  "gigaam-v3-ctc": {
+    "params": 243000000,
+    "source": "published",
+    "approximate": false,
+    "note": "Sber GigaAM-v3 model card"
+  },
+  "gigaam-v3-rnnt": {
+    "params": 243000000,
+    "source": "published",
+    "approximate": false,
+    "note": "Sber GigaAM-v3 model card"
+  },
+  "gigaam-v3-e2e-ctc": {
+    "params": 243000000,
+    "source": "published",
+    "approximate": false,
+    "note": "Sber GigaAM-v3 E2E model card"
+  },
+  "gigaam-v3-e2e-rnnt": {
+    "params": 243000000,
+    "source": "published",
+    "approximate": false,
+    "note": "Sber GigaAM-v3 E2E model card"
+  },
+  "alphacep/vosk-model-ru": {
+    "params": 65016922,
+    "source": "measured",
+    "approximate": true,
+    "note": "from quantized graph (slightly inflated by QDQ overhead)"
+  },
+  "alphacep/vosk-model-small-ru": {
+    "params": 22986644,
+    "source": "measured",
+    "approximate": true,
+    "note": "from quantized graph (slightly inflated by QDQ overhead)"
+  },
+  "t-tech/t-one": {
+    "params": 71697827,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph"
+  },
+  "whisper-base": {
+    "params": 75142144,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph"
+  }
+}

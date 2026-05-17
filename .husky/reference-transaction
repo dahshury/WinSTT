@@ -1,0 +1,52 @@
+#!/usr/bin/env sh
+# WINSTT_NO_STASH_GUARD: block any operation that creates or moves a `refs/stash` ref.
+#
+# Git fires `reference-transaction` for every ref update. We read the staged
+# updates from stdin (`<old-oid> <new-oid> <ref-name>` per line) and abort the
+# transaction by exiting non-zero whenever we see a stash ref in the "prepared"
+# phase. The hook fires three times per transaction (prepared / committed /
+# aborted) so we only check during `prepared` — aborting later is moot.
+#
+# Why: `git stash` in this repo is catastrophic — the working tree is large,
+# pop-conflicts are routine, and a stashed mid-refactor can hold the user's
+# work hostage. See memory/feedback_no_git_stash.md.
+#
+# Escape hatch: `WINSTT_ALLOW_STASH=1 git stash ...` (don't use this lightly).
+# Disable entirely (NOT recommended): `HUSKY=0 git stash ...`.
+
+state="$1"
+
+# Only abort during the prepared phase — once committed/aborted, the
+# transaction is sealed and exiting non-zero has no effect.
+[ "$state" = "prepared" ] || exit 0
+
+# User opt-out for genuine emergencies.
+[ "${WINSTT_ALLOW_STASH:-0}" = "1" ] && exit 0
+
+while IFS=' ' read -r old new ref; do
+	case "$ref" in
+		refs/stash)
+			cat >&2 <<'EOF'
+
+husky - git stash is BLOCKED in this repository.
+
+  This codebase routinely has a huge uncommitted working tree, and stash
+  pop conflicts have historically held the user's in-progress refactor
+  hostage. See memory/feedback_no_git_stash.md.
+
+  Alternatives:
+    - `git diff` to inspect, `git show <ref>:<path>` to compare without
+      mutating the index.
+    - `cp <file> <file>.bak` if you need a temporary side copy.
+    - `git worktree add ../winstt-scratch` for an isolated checkout.
+
+  If you ABSOLUTELY have to bypass this guard:
+    WINSTT_ALLOW_STASH=1 git stash ...
+
+EOF
+			exit 1
+			;;
+	esac
+done
+
+exit 0

@@ -7,8 +7,14 @@ import type {
 	AppSettingsSaveInput,
 	AudioDevice,
 	GpuInfo,
+	LlmWarmupModelStatus,
+	LlmWarmupOutcome,
+	LlmWarmupStatus,
 	OllamaDeleteResult,
 	OllamaDetectResult,
+	OllamaLibraryCatalogResult as OllamaLibraryCatalogResultT,
+	OllamaLibrarySearchResult as OllamaLibrarySearchResultT,
+	OllamaLibraryTagsResult as OllamaLibraryTagsResultT,
 	OllamaModel,
 	OllamaPullProgress,
 	OllamaPullResult,
@@ -16,6 +22,9 @@ import type {
 	OpenRouterScanResult,
 	ServerStatus,
 } from "./models";
+
+export type { LlmWarmupModelStatus, LlmWarmupOutcome, LlmWarmupStatus };
+
 import { decodeSettingsPayload } from "./settings-codec";
 
 type AppSettings = ReturnType<typeof decodeSettingsPayload>;
@@ -250,6 +259,9 @@ export const onModelDownloadComplete = (cb: (model: string, cancelled: boolean) 
 
 export const cancelDownload = () => invokeOrDefault<void>(IPC.STT_CANCEL_DOWNLOAD, undefined);
 
+export const deleteModelCache = (modelId: string) =>
+	invokeOrDefault<void>(IPC.STT_DELETE_MODEL_CACHE, undefined, modelId);
+
 export const onModelCatalog = (cb: (models: unknown[]) => void) =>
 	onTyped(IPC.STT_MODEL_CATALOG, (d: { models: unknown[] }) => d.models, cb);
 
@@ -281,7 +293,27 @@ interface ModelSwapPayload {
 	name: string;
 }
 
-interface ModelSwapFailedPayload extends ModelSwapPayload {
+/** Stable category codes mirroring the server's ``SwapErrorCategory``.
+ * Adding a value here is a wire-format extension — keep in sync with
+ * ``server/src/recorder/domain/swap_errors.py``. */
+export type ModelSwapFailedCategory =
+	| "cancelled"
+	| "network"
+	| "model_not_found"
+	| "incompatible_quantization"
+	| "model_corrupt"
+	| "out_of_memory"
+	| "disk_full"
+	| "permission_denied"
+	| "superseded"
+	| "unknown";
+
+export interface ModelSwapFailedPayload extends ModelSwapPayload {
+	/** Stable category for picking a toast variant / icon. */
+	category: ModelSwapFailedCategory;
+	/** Raw exception text for diagnostics — not shown to the user by default. */
+	detail: string;
+	/** Human-readable headline localised on the server. */
 	reason: string;
 }
 
@@ -334,6 +366,70 @@ export interface ModelsWithStatePayload {
 
 export const fetchModelsWithState = () =>
 	invokeOrDefault<ModelsWithStatePayload | null>(IPC.STT_LIST_MODELS_WITH_STATE, null);
+
+// ── Resource-aware fitness ─────────────────────────────────────────────
+// Live host snapshot + server-authoritative fit assessments.
+// Spec source of truth: spec/openapi.yaml LiveResources / *FitAssessment.
+
+export interface LiveGpuEntry {
+	free_vram_bytes: number;
+	name: string;
+	total_vram_bytes: number;
+	used_vram_bytes: number;
+	utilization_percent: number;
+}
+
+export interface LiveResourcesEntry {
+	cpu_count_logical: number;
+	cpu_count_physical: number;
+	cpu_percent: number;
+	gpus: LiveGpuEntry[];
+	ram_available_bytes: number;
+	ram_total_bytes: number;
+}
+
+export type FitSeverity = "ok" | "warning" | "critical";
+export type FitTarget = "gpu" | "cpu" | "neither";
+export type FitReason =
+	| "exceeds_vram"
+	| "exceeds_ram"
+	| "tight_vram"
+	| "tight_ram"
+	| "no_gpu_available"
+	| "requires_cpu_quant"
+	| "stt_already_uses_gpu"
+	| "stt_already_uses_ram"
+	| "unknown_footprint"
+	| "ok";
+
+export interface FitAssessmentEntry {
+	available_bytes: number;
+	reasons: FitReason[];
+	required_bytes: number;
+	severity: FitSeverity;
+	target: FitTarget;
+}
+
+export const fetchLiveResources = (forceRefresh = false) =>
+	invokeOrDefault<LiveResourcesEntry | null>(IPC.STT_GET_LIVE_RESOURCES, null, {
+		forceRefresh,
+	});
+
+export const assessDictationFit = (
+	modelId: string,
+	quantization = "",
+	device: string | null = null
+) =>
+	invokeOrDefault<FitAssessmentEntry | null>(IPC.STT_ASSESS_DICTATION_FIT, null, {
+		modelId,
+		quantization,
+		device,
+	});
+
+export const assessOllamaFitOnServer = (sizeBytes: number) =>
+	invokeOrDefault<FitAssessmentEntry | null>(IPC.STT_ASSESS_OLLAMA_FIT, null, {
+		sizeBytes,
+	});
 
 export const onModelCacheChanged = (cb: (modelId: string) => void) =>
 	on(IPC.STT_MODEL_CACHE_CHANGED, (data) => {
@@ -493,6 +589,9 @@ export const onWindowTelemetry = (cb: (payload: WindowTelemetryPayload) => void)
 export interface TranscriptionHistoryEntry {
 	durationMs: number;
 	id: string;
+	/** Pre-LLM text (post-processing applied). Omitted when no LLM ran. */
+	originalText?: string;
+	/** Final text (after LLM correction if configured). */
 	text: string;
 	timestamp: number;
 	wordCount: number;
@@ -656,8 +755,96 @@ export const cancelOllamaModelPull = (model: string): Promise<{ cancelled: boole
 export const deleteOllamaModel = (model: string): Promise<OllamaDeleteResult> =>
 	invokeOrDefault<OllamaDeleteResult>(IPC.LLM_DELETE_MODEL, OLLAMA_DELETE_FALLBACK, { model });
 
+const OLLAMA_LIBRARY_SEARCH_FALLBACK: OllamaLibrarySearchResultT = {
+	hits: [],
+	hasMore: false,
+	page: 0,
+	query: "",
+};
+
+const OLLAMA_LIBRARY_TAGS_FALLBACK: OllamaLibraryTagsResultT = {
+	model: "",
+	tags: [],
+};
+
+export const searchOllamaLibrary = (query: string, page = 0): Promise<OllamaLibrarySearchResultT> =>
+	invokeOrDefault<OllamaLibrarySearchResultT>(
+		IPC.LLM_SEARCH_OLLAMA_LIBRARY,
+		{ ...OLLAMA_LIBRARY_SEARCH_FALLBACK, query, page },
+		{ query, page }
+	);
+
+export const fetchOllamaLibraryTags = (model: string): Promise<OllamaLibraryTagsResultT> =>
+	invokeOrDefault<OllamaLibraryTagsResultT>(
+		IPC.LLM_FETCH_OLLAMA_TAGS,
+		{ ...OLLAMA_LIBRARY_TAGS_FALLBACK, model },
+		{ model }
+	);
+
+const OLLAMA_LIBRARY_CATALOG_FALLBACK: OllamaLibraryCatalogResultT = { hits: [] };
+
+export const fetchOllamaLibraryCatalog = (): Promise<OllamaLibraryCatalogResultT> =>
+	invokeOrDefault<OllamaLibraryCatalogResultT>(
+		IPC.LLM_FETCH_OLLAMA_LIBRARY,
+		OLLAMA_LIBRARY_CATALOG_FALLBACK
+	);
+
 export const onOllamaPullProgress = (cb: (progress: OllamaPullProgress) => void): (() => void) =>
 	onCast(IPC.LLM_PULL_PROGRESS, cb);
 
 export const onLlmProcessingStart = (cb: () => void) => on(IPC.LLM_PROCESSING_START, cb);
 export const onLlmProcessingEnd = (cb: () => void) => on(IPC.LLM_PROCESSING_END, cb);
+
+// Warmup status — main-process broadcaster is still WIP. Until it lands,
+// the invoke handler is missing in main, so `invokeOrDefault` falls back
+// to `null` and the subscriber never fires. Renderer code consuming this
+// surface treats `null` as "no warmup info yet, hide the banner".
+export const getLlmWarmupStatus = () =>
+	invokeOrDefault<LlmWarmupStatus | null>(IPC.LLM_GET_WARMUP_STATUS, null);
+
+export const onLlmWarmupStatus = (cb: (status: LlmWarmupStatus | null) => void): (() => void) =>
+	onCast(IPC.LLM_WARMUP_STATUS, cb);
+
+// VAD sensitivity adaptation — emitted by the STT server when the
+// adaptive Silero calibrator settles on a new value. Main-side relay is
+// still WIP; until it's hooked up, the subscriber never fires and the
+// renderer's calibration store stays at its last persisted value.
+export interface VadSensitivityAdaptedEvent {
+	newSensitivity: number;
+	noiseFloorRms?: number;
+	speechPeakRms?: number;
+}
+
+export const onVadSensitivityAdapted = (
+	cb: (event: VadSensitivityAdaptedEvent) => void
+): (() => void) => onCast(IPC.STT_VAD_SENSITIVITY_ADAPTED, cb);
+
+// ── Diarization ─────────────────────────────────────────────────────
+export interface SpeakerSegmentPayload {
+	end: number;
+	speaker: number;
+	start: number;
+}
+
+export const onSpeakerSegments = (cb: (segments: SpeakerSegmentPayload[]) => void) =>
+	onTyped(IPC.STT_SPEAKER_SEGMENTS, (d: { segments: SpeakerSegmentPayload[] }) => d.segments, cb);
+
+// ── Diagnostics ──────────────────────────────────────────────────────
+// Open the userData folder in the OS file explorer. Returns `{ ok, error? }`
+// so the tray can toast on failure (rare — would require the OS shell to
+// reject opening %APPDATA%).
+export const diagOpenLogsFolder = (): Promise<{ ok: boolean; error?: string }> =>
+	invokeOrDefault(IPC.DIAG_OPEN_LOGS_FOLDER, { ok: false, error: "IPC unavailable" });
+
+// Prompt the user to save a zip containing debug.log + stt-server.log +
+// system-info.txt. `cancelled === true` means the user dismissed the save
+// dialog; `ok === true` means the zip was written to disk.
+export interface DiagSaveBundleResult {
+	cancelled?: boolean;
+	error?: string;
+	ok: boolean;
+	path?: string;
+}
+
+export const diagSaveBundle = (): Promise<DiagSaveBundleResult> =>
+	invokeOrDefault(IPC.DIAG_SAVE_BUNDLE, { ok: false, error: "IPC unavailable" });

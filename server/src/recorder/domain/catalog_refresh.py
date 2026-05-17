@@ -1,0 +1,114 @@
+"""Runtime HuggingFace catalog refresh — language whitelist fetcher.
+
+A leaner sibling of ``scripts/refresh_catalog.py`` for use inside the
+running server: only fetches the editorial fields the upstream model card
+is authoritative for (currently ``languages``), and stays defensive so a
+slow or failing HF call never blocks server startup.
+
+The script-side counterpart still owns release-time refresh of
+``available_quantizations`` and ``param_count`` — those depend on a
+filename scan + sidecar measurements and don't change between releases
+often enough to warrant runtime re-fetch.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.recorder.domain.model_registry import ModelInfo
+
+logger = logging.getLogger(__name__)
+
+#: For Whisper-family entries the onnx-community / Xenova mirrors don't
+#: propagate language metadata in their model cards. Fall back to the
+#: openai upstream — every Whisper ONNX export wraps the same 99-language
+#: decoder head. ``.en`` checkpoints are special-cased separately.
+_FAMILY_LANGUAGE_REFERENCE: dict[str, str] = {
+    "whisper": "openai/whisper-tiny",
+    "lite-whisper": "openai/whisper-tiny",
+}
+
+
+def _is_english_only_whisper(info: ModelInfo) -> bool:
+    """Whether ``info`` is a Whisper ``.en`` checkpoint (English-only head)."""
+    if info.family not in {"whisper", "lite-whisper"}:
+        return False
+    onnx = info.onnx_model_name or ""
+    return info.id.endswith(".en") or onnx.endswith(".en")
+
+
+def _resolve_hf_repo(onnx_model_name: str | None) -> str | None:
+    """Map an entry's ``onnx_model_name`` to a real HF ``org/repo`` id."""
+    if not onnx_model_name:
+        return None
+    if "/" in onnx_model_name:
+        return onnx_model_name
+    try:
+        from onnx_asr.resolver import model_repos
+    except ImportError:  # pragma: no cover - onnx_asr is always installed at runtime
+        return None
+    return model_repos.get(onnx_model_name)
+
+
+def _fetch_card_languages(repo_id: str) -> list[str] | None:
+    """Return the ``card_data.language`` list for a HF repo, or ``None``."""
+    try:
+        from huggingface_hub import HfApi
+    except ImportError:  # pragma: no cover - huggingface_hub is always installed at runtime
+        return None
+    try:
+        info = HfApi().model_info(repo_id)
+    except Exception as exc:
+        logger.debug("model_info(%r) failed: %s: %s", repo_id, type(exc).__name__, exc)
+        return None
+    card = info.card_data
+    if card is None:
+        return None
+    raw = getattr(card, "language", None)
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        return [str(x) for x in raw if isinstance(x, str)]
+    return None
+
+
+def _languages_for(info: ModelInfo) -> list[str] | None:
+    """Authoritative language whitelist for ``info``, or ``None`` to skip.
+
+    ``.en`` Whisper variants are pinned to ``["en"]`` since the mirror
+    metadata is silent and the decoder cannot emit other languages.
+    Whisper-family entries route through the openai reference repo
+    (mirrors don't propagate the field). Everything else uses the
+    resolved repo's own model-card data.
+    """
+    if _is_english_only_whisper(info):
+        return ["en"]
+    fallback_repo = _FAMILY_LANGUAGE_REFERENCE.get(info.family)
+    if fallback_repo is not None:
+        return _fetch_card_languages(fallback_repo)
+    repo = _resolve_hf_repo(info.onnx_model_name)
+    if repo is None:
+        return None
+    return _fetch_card_languages(repo)
+
+
+def fetch_language_overlay(models: list[ModelInfo]) -> dict[str, dict[str, list[str]]]:
+    """Build a ``{model_id: {"languages": [...]}}`` overlay for ``models``.
+
+    Only entries whose HF metadata could actually be fetched make it into
+    the result — that way a partial refresh writes a partial overlay
+    instead of clobbering bundled data with empty lists. Caller persists
+    via :func:`catalog_overlay.save_overlay` and merges into a live
+    :class:`ModelCatalog`.
+    """
+    overlay: dict[str, dict[str, list[str]]] = {}
+    for info in models:
+        langs = _languages_for(info)
+        if not langs:
+            continue
+        overlay[info.id] = {"languages": sorted(set(langs))}
+    return overlay

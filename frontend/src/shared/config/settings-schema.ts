@@ -43,6 +43,17 @@ export const audioSettingsSchema = z.object({
 	minLengthOfRecording: z.number().default(1.1),
 	minGapBetweenRecordings: z.number().default(0),
 	preRecordingBufferDuration: z.number().default(1.0),
+	// Adaptive-VAD calibration map keyed by input-device name. The server
+	// publishes `vad_sensitivity_adapted` after each successful recording
+	// with the new Silero value; we store it under the currently-selected
+	// device's name and re-apply on subsequent device switches so each mic
+	// boots into adaptation with its own last-known sensitivity instead of
+	// whatever the previously-active device drifted to. `.catch({})` keeps
+	// older builds without this key from wiping the whole audio section.
+	sileroSensitivityByDeviceName: z
+		.record(z.string(), z.number().min(0).max(1))
+		.default({})
+		.catch({}),
 });
 
 export const generalSettingsSchema = z.object({
@@ -79,11 +90,18 @@ export const generalSettingsSchema = z.object({
 		.catch("both"),
 	visualizerType: z.enum(["bar", "grid", "radial", "wave", "aura"]).default("bar"),
 	visualizerBarCount: z.number().int().min(3).max(21).default(9),
-	visualizerColor: z
-		.string()
-		.regex(/^#[0-9a-fA-F]{6}$/)
-		.default("#58a6ff"),
 	contextAwareness: z.boolean().default(false),
+	// Speaker diarization — per-utterance, with session-wide identity tracking.
+	// Toggle-mode only in the UI (long-form dictation is where multi-speaker
+	// conversations actually happen); the server still runs the same pipeline
+	// regardless of recording mode. First-run downloads ~32 MB of ONNX models.
+	speakerDiarization: z.boolean().default(false),
+	// Opt-out toggle for Sentry crash/error reporting. Defaults to `true` —
+	// installers ship with reporting on so we collect the early-adopter crash
+	// data we can't reproduce locally. Restart required on toggle: Sentry's
+	// `init()` can't be cleanly reversed at runtime, so the renderer + main
+	// SDKs both read this flag once at startup.
+	sendCrashReports: z.boolean().default(true),
 });
 
 export const hotkeySettingsSchema = z.object({
@@ -200,27 +218,55 @@ export const BUILTIN_TRANSFORMS: readonly z.output<typeof transformSchema>[] = [
 	},
 ];
 
-export const llmSettingsSchema = z.object({
-	// Master switch — provider/model configured & reachable. Gates everything
-	// below; when false neither sub-feature runs regardless of its own flag.
-	enabled: z.boolean().default(false),
-	// Sub-feature: apply cleanup presets (tone + modifiers) to dictated text.
-	dictationEnabled: z.boolean().default(true),
-	// Sub-feature: custom-prompt transforms on the selected text (hotkey / UI).
-	transformsEnabled: z.boolean().default(false),
+// Per-feature provider config. Dictation and transforms each pick their own
+// provider (Ollama or OpenRouter) and own model selection independently — so
+// e.g. dictation can run a fast local Ollama while transforms hits an
+// OpenRouter frontier model. Infra-level fields (Ollama endpoint URL,
+// OpenRouter API key) stay shared on `llmSettingsSchema` — one Ollama
+// instance, one OpenRouter account.
+const llmFeatureBaseShape = {
 	provider: z.enum(["ollama", "openrouter"]).default("ollama"),
-	endpoint: z.string().url().default("http://localhost:11434"),
 	model: z.string().default(""),
-	openrouterApiKey: z.string().default(""),
 	openrouterModel: z.string().default(""),
 	openrouterFallbackModel: z.string().default(""),
+	// OpenRouter request-tuning parameters. Only sent on the wire when the
+	// selected model's `supported_parameters` advertises support, but the
+	// defaults persist so the picker's ReasoningControls renders consistent
+	// initial values regardless of the previously-selected model.
+	reasoningEffort: z.enum(["low", "medium", "high"]).default("medium"),
+	verbosity: z.enum(["low", "medium", "high"]).default("medium"),
+	maxOutputTokens: z.number().int().min(1).nullable().default(null),
+};
+
+export const llmDictationSchema = z.object({
+	enabled: z.boolean().default(false),
+	...llmFeatureBaseShape,
 	presets: presetsSchema,
+});
+
+export const llmTransformsSchema = z.object({
+	enabled: z.boolean().default(false),
+	...llmFeatureBaseShape,
+	// User-authored custom prompts triggered by hotkey / UI. The array is
+	// seeded with BUILTIN_TRANSFORMS on first run; transformSchema's own
+	// per-field defaults fill in any partial entries persisted in older builds.
+	prompts: z.array(transformSchema).default([...BUILTIN_TRANSFORMS]),
+});
+
+export const llmSettingsSchema = z.object({
+	// Shared infrastructure (one Ollama instance, one OpenRouter account).
+	endpoint: z.string().url().default("http://localhost:11434"),
+	openrouterApiKey: z.string().default(""),
+	// Per-feature config — each independently picks provider + model.
+	// The feature runs iff its own `enabled` is true AND a model is configured;
+	// there is no master switch (the IPC layer treats "no model" as off).
+	dictation: llmDictationSchema.prefault({}),
+	transforms: llmTransformsSchema.prefault({}),
+	// Client-side request timeout (ms). Wired through but currently NOT applied
+	// at the network layer — local LLMs (Ollama cold start) routinely exceed any
+	// finite cap, and a silent abort + un-processed-text paste is misleading.
+	// Kept here so the persisted setting / IPC plumbing / tests stay stable.
 	timeout: z.number().int().min(1000).max(30_000).default(5000),
-	// Pass BUILTIN_TRANSFORMS straight through — transformSchema's own
-	// .default("")/.default(false) fill in any optional fields, so we don't
-	// need a wrapper that nullish-coalesces each property (the wrapper used
-	// to bump CC to 4 via three `??` operators).
-	transforms: z.array(transformSchema).default([...BUILTIN_TRANSFORMS]),
 });
 
 export const appSettingsSchema = z.object({

@@ -1,13 +1,15 @@
 "use client";
 
 import { Separator } from "@base-ui/react/separator";
-import { ArrowDown01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { ArrowDown01Icon, Bug01Icon, Folder01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import { useInputDevices } from "@/entities/audio-device";
 import { IPC } from "@/shared/api/ipc-channels";
 import {
+	diagOpenLogsFolder,
+	diagSaveBundle,
 	dialogOpenFile,
 	fileTranscribe,
 	ipcSend,
@@ -18,6 +20,13 @@ import {
 } from "@/shared/api/ipc-client";
 import type { RecordingMode } from "@/shared/config/recording-mode-color";
 import { cn } from "@/shared/lib/cn";
+import {
+	SurfaceProvider,
+	surfaceActivePseudoBg,
+	surfaceClasses,
+	surfaceHoverBg,
+	useSurface,
+} from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { Switcher } from "@/shared/ui/switcher";
 
@@ -158,6 +167,16 @@ export function TrayMenu() {
 		ipcSend(IPC.WINDOW_QUIT);
 	};
 
+	const handleOpenLogsFolder = async () => {
+		await diagOpenLogsFolder();
+		closeTrayMenu();
+	};
+
+	const handleSaveDiagBundle = async () => {
+		closeTrayMenu();
+		await diagSaveBundle();
+	};
+
 	const recordingModeOptions: ReadonlyArray<{ value: RecordingMode; label: string }> = [
 		{ value: "ptt", label: t("modePtt") },
 		{ value: "toggle", label: t("modeToggle") },
@@ -182,115 +201,184 @@ export function TrayMenu() {
 		};
 	}, [devices, defaultDevice, inputDeviceIndex, tAudio]);
 
+	const substrate = useSurface();
+	const menuLevel = Math.min(substrate + 4, 8);
+	const submenuLevel = Math.min(menuLevel + 1, 8);
+	const hoverLevel = Math.min(menuLevel + 1, 8);
+	const activeLevel = Math.min(menuLevel + 2, 8);
+	const hoverBg = surfaceHoverBg(hoverLevel);
+	const activeBg = surfaceActivePseudoBg(activeLevel);
 	return (
-		<div
-			className={cn(
-				"w-fit rounded-md border border-border bg-surface p-1 shadow-2xl",
-				"font-sans text-body-sm text-foreground"
-			)}
-			ref={containerRef}
-		>
-			<MenuItem onClick={handleShowWindow} shortcut="Ctrl+Shift+W">
-				{t("showWindow")}
-			</MenuItem>
-			<MenuItem onClick={handleSettings} shortcut="Ctrl+,">
-				{t("openSettings")}
-			</MenuItem>
-
-			<MenuSeparator />
-
-			<div className="p-1">
-				<Switcher
-					fullWidth
-					onChange={handleModeChange}
-					options={recordingModeOptions}
-					value={recordingMode}
-				/>
-			</div>
-
-			<MenuSeparator />
-
-			<Button
-				aria-expanded={isDeviceListOpen}
+		<SurfaceProvider value={menuLevel}>
+			<div
 				className={cn(
-					"w-full justify-between gap-3 rounded px-3 py-1.5 text-left transition-colors",
-					"hover:bg-surface-hover hover:text-foreground active:bg-surface-active"
+					"w-fit rounded-md p-1",
+					surfaceClasses(menuLevel, Math.max(menuLevel, 7)),
+					"font-sans text-body-sm text-foreground"
 				)}
-				onClick={() => dispatch({ type: "toggle-device-list" })}
+				ref={containerRef}
 			>
-				<span className="flex min-w-0 items-center gap-2">
+				<MenuItem
+					activeBg={activeBg}
+					hoverBg={hoverBg}
+					onClick={handleShowWindow}
+					shortcut="Ctrl+Shift+W"
+				>
+					{t("showWindow")}
+				</MenuItem>
+				<MenuItem activeBg={activeBg} hoverBg={hoverBg} onClick={handleSettings} shortcut="Ctrl+,">
+					{t("openSettings")}
+				</MenuItem>
+
+				<MenuSeparator />
+
+				<div className="p-1">
+					<Switcher
+						fullWidth
+						onChange={handleModeChange}
+						options={recordingModeOptions}
+						value={recordingMode}
+					/>
+				</div>
+
+				<MenuSeparator />
+
+				<Button
+					aria-expanded={isDeviceListOpen}
+					className={cn(
+						"w-full justify-between gap-3 rounded px-3 py-1.5 text-left transition-colors",
+						hoverBg,
+						"hover:text-foreground",
+						activeBg
+					)}
+					onClick={() => dispatch({ type: "toggle-device-list" })}
+				>
+					<span className="flex min-w-0 items-center gap-2">
+						<HugeiconsIcon
+							aria-hidden="true"
+							className="shrink-0 text-foreground-dim"
+							icon={Mic01Icon}
+							size={13}
+						/>
+						<span className="truncate">{currentDeviceLabel}</span>
+					</span>
 					<HugeiconsIcon
 						aria-hidden="true"
-						className="shrink-0 text-foreground-dim"
-						icon={Mic01Icon}
-						size={13}
+						className={cn(
+							"shrink-0 text-foreground-muted transition-transform",
+							isDeviceListOpen && "rotate-180"
+						)}
+						icon={ArrowDown01Icon}
+						size={11}
 					/>
-					<span className="truncate">{currentDeviceLabel}</span>
-				</span>
-				<HugeiconsIcon
-					aria-hidden="true"
-					className={cn(
-						"shrink-0 text-foreground-muted transition-transform",
-						isDeviceListOpen && "rotate-180"
-					)}
-					icon={ArrowDown01Icon}
-					size={11}
-				/>
-			</Button>
-			{isDeviceListOpen && (
-				<div className="mx-1 mt-0.5 max-h-48 overflow-y-auto rounded-sm border border-border bg-surface-secondary py-0.5">
-					{deviceOptions.map((opt) => (
-						<Button
-							aria-pressed={opt.id === currentDeviceId}
-							className={cn(
-								"w-full justify-start truncate rounded px-2 py-1 text-left text-2xs transition-colors hover:bg-surface-hover",
-								opt.id === currentDeviceId ? "text-accent" : "text-foreground-dim"
-							)}
-							key={opt.id}
-							onClick={() => handleDeviceChange(opt.id)}
-						>
-							<span className="truncate">{opt.label}</span>
-						</Button>
-					))}
-				</div>
-			)}
+				</Button>
+				{isDeviceListOpen && (
+					<div
+						className={cn(
+							"mx-1 mt-0.5 max-h-48 overflow-y-auto rounded-sm py-0.5",
+							surfaceClasses(submenuLevel)
+						)}
+					>
+						{deviceOptions.map((opt) => (
+							<Button
+								aria-pressed={opt.id === currentDeviceId}
+								className={cn(
+									"w-full justify-start truncate rounded px-2 py-1 text-left text-2xs transition-colors",
+									hoverBg,
+									opt.id === currentDeviceId ? "text-accent" : "text-foreground-dim"
+								)}
+								key={opt.id}
+								onClick={() => handleDeviceChange(opt.id)}
+							>
+								<span className="truncate">{opt.label}</span>
+							</Button>
+						))}
+					</div>
+				)}
 
-			<MenuSeparator />
+				<MenuSeparator />
 
-			<MenuItem disabled={!isConnected} onClick={handleTranscribeFile} shortcut="Ctrl+Shift+T">
-				{t("transcribeFile")}
-			</MenuItem>
-			<MenuItem disabled>{t("checkForUpdates")}</MenuItem>
+				<MenuItem
+					activeBg={activeBg}
+					disabled={!isConnected}
+					hoverBg={hoverBg}
+					onClick={handleTranscribeFile}
+					shortcut="Ctrl+Shift+T"
+				>
+					{t("transcribeFile")}
+				</MenuItem>
+				<MenuItem activeBg={activeBg} disabled hoverBg={hoverBg}>
+					{t("checkForUpdates")}
+				</MenuItem>
 
-			<MenuSeparator />
+				<MenuSeparator />
 
-			<MenuItem onClick={handleQuit} shortcut="Ctrl+Q">
-				{t("quit")}
-			</MenuItem>
-		</div>
+				<MenuItem
+					activeBg={activeBg}
+					hoverBg={hoverBg}
+					icon={Folder01Icon}
+					onClick={handleOpenLogsFolder}
+				>
+					{t("openLogsFolder")}
+				</MenuItem>
+				<MenuItem
+					activeBg={activeBg}
+					hoverBg={hoverBg}
+					icon={Bug01Icon}
+					onClick={handleSaveDiagBundle}
+				>
+					{t("saveDiagnosticBundle")}
+				</MenuItem>
+
+				<MenuSeparator />
+
+				<MenuItem activeBg={activeBg} hoverBg={hoverBg} onClick={handleQuit} shortcut="Ctrl+Q">
+					{t("quit")}
+				</MenuItem>
+			</div>
+		</SurfaceProvider>
 	);
 }
 
 interface MenuItemProps {
+	activeBg: string;
 	children: React.ReactNode;
 	disabled?: boolean;
+	hoverBg: string;
+	icon?: IconSvgElement;
 	onClick?: () => void;
 	shortcut?: string;
 }
 
-function MenuItem({ children, onClick, disabled, shortcut }: MenuItemProps) {
+function MenuItem({
+	children,
+	onClick,
+	disabled,
+	shortcut,
+	hoverBg,
+	activeBg,
+	icon,
+}: MenuItemProps) {
 	return (
 		<Button
 			className={cn(
 				"w-full justify-between gap-3 rounded px-3 py-1.5 text-left transition-colors",
-				disabled
-					? "text-foreground-dim"
-					: "hover:bg-surface-hover hover:text-foreground active:bg-surface-active"
+				disabled ? "text-foreground-dim" : `${hoverBg} ${activeBg} hover:text-foreground`
 			)}
 			disabled={disabled}
 			onClick={onClick}
 		>
-			<span>{children}</span>
+			<span className="flex min-w-0 items-center gap-2">
+				{icon && (
+					<HugeiconsIcon
+						aria-hidden="true"
+						className="shrink-0 text-foreground-dim"
+						icon={icon}
+						size={13}
+					/>
+				)}
+				<span className="truncate">{children}</span>
+			</span>
 			{shortcut && <span className="text-[10px] text-foreground-muted">{shortcut}</span>}
 		</Button>
 	);

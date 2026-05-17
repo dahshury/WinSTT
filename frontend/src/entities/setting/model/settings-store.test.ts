@@ -42,10 +42,34 @@ describe("useSettingsStore mutators", () => {
 		expect(useSettingsStore.getState().settings.hotkey.pushToTalkKey).toBe("Ctrl+S");
 	});
 
-	test("updateLlmSettings merges patch", () => {
-		useSettingsStore.getState().updateLlmSettings({ enabled: true, presets: [{ key: "formal" }] });
-		expect(useSettingsStore.getState().settings.llm.enabled).toBe(true);
-		expect(useSettingsStore.getState().settings.llm.presets).toEqual([{ key: "formal" }]);
+	test("updateLlmSettings merges shared-field patch (endpoint, openrouterApiKey)", () => {
+		useSettingsStore.getState().updateLlmSettings({
+			endpoint: "http://example.com:11434",
+			openrouterApiKey: "sk-test",
+		});
+		expect(useSettingsStore.getState().settings.llm.endpoint).toBe("http://example.com:11434");
+		expect(useSettingsStore.getState().settings.llm.openrouterApiKey).toBe("sk-test");
+		// Default per-feature state must remain untouched
+		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(false);
+		expect(useSettingsStore.getState().settings.llm.transforms.enabled).toBe(false);
+	});
+
+	test("updateLlmDictation merges patch into the dictation sub-tree only", () => {
+		useSettingsStore.getState().updateLlmDictation({ enabled: true, presets: [{ key: "formal" }] });
+		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(true);
+		expect(useSettingsStore.getState().settings.llm.dictation.presets).toEqual([{ key: "formal" }]);
+		// Other branches untouched
+		expect(useSettingsStore.getState().settings.llm.transforms.enabled).toBe(false);
+		expect(useSettingsStore.getState().settings.llm.endpoint).toBe("http://localhost:11434");
+	});
+
+	test("updateLlmTransforms merges patch into the transforms sub-tree only", () => {
+		useSettingsStore.getState().updateLlmTransforms({ enabled: true, model: "llama3" });
+		expect(useSettingsStore.getState().settings.llm.transforms.enabled).toBe(true);
+		expect(useSettingsStore.getState().settings.llm.transforms.model).toBe("llama3");
+		// Dictation branch untouched
+		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(false);
+		expect(useSettingsStore.getState().settings.llm.dictation.model).toBe("");
 	});
 
 	test("updateDictionary replaces the dictionary list wholesale", () => {

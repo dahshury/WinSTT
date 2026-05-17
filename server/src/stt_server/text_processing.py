@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from datetime import datetime
 from difflib import SequenceMatcher
 
 from src.building_blocks.terminal import TerminalColors as bcolors
+from src.building_blocks.terminal import format_now_hms_ms
 from src.stt_server.state import ServerState
 
 
@@ -134,7 +134,7 @@ def text_detected(text: str, state: ServerState, loop: asyncio.AbstractEventLoop
     message = json.dumps({"type": "realtime", "text": text})
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
 
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    timestamp = format_now_hms_ms()
 
     if state.extended_logging:
         print(

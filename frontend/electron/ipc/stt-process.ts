@@ -4,6 +4,7 @@ import path from "node:path";
 import { app, ipcMain } from "electron";
 import { getErrorMessage, NotFoundError, ProcessSpawnError } from "../../src/shared/lib/errors";
 import { dbg } from "../lib/debug-log";
+import { breadcrumb, getResolvedSentryDsn } from "../lib/sentry-main";
 import { getStoreRaw, getStoreValue, store } from "../lib/store";
 
 let sttProcess: ChildProcess | null = null;
@@ -54,6 +55,15 @@ const SETTINGS_TO_CLI: [storePath: string, cliFlag: string][] = [
  */
 const BOOLEAN_OPTIONAL_CLI: [storePath: string, cliFlag: string][] = [
 	["quality.enableRealtimeTranscription", "--enable_realtime_transcription"],
+];
+
+/**
+ * Boolean ``store_true`` flags — pushed only when the setting is truthy.
+ * For diarization in particular, the flag's absence is what disables the
+ * feature on the server (matches the CLI default of ``False``).
+ */
+const STORE_TRUE_CLI: [storePath: string, cliFlag: string][] = [
+	["general.speakerDiarization", "--enable_diarization"],
 ];
 
 function isEmptyStoreValue(value: unknown): boolean {
@@ -112,6 +122,18 @@ function applyWakeWordFlags(args: string[]): void {
 	args.push("--wake_words", word);
 }
 
+/**
+ * Append `--log-dir <userData>` so the Python server writes `stt-server.log`
+ * to the same directory as Electron's `debug.log` for unified diagnostics.
+ */
+function applyLogDirFlag(args: string[]): void {
+	try {
+		args.push("--log-dir", app.getPath("userData"));
+	} catch {
+		// userData may not be available pre-app-ready in dev edge cases — skip silently.
+	}
+}
+
 /** Read all relevant settings from electron-store and convert to CLI args */
 function buildServerArgs(baseArgs: string[]): string[] {
 	const args = [...baseArgs];
@@ -121,8 +143,14 @@ function buildServerArgs(baseArgs: string[]): string[] {
 	for (const [storePath, cliFlag] of BOOLEAN_OPTIONAL_CLI) {
 		applyBooleanOptionalFlag(args, getStoreRaw(storePath), cliFlag);
 	}
+	for (const [storePath, cliFlag] of STORE_TRUE_CLI) {
+		if (getStoreRaw(storePath) === true) {
+			args.push(cliFlag);
+		}
+	}
 	applySileroDeactivityFlag(args);
 	applyWakeWordFlags(args);
+	applyLogDirFlag(args);
 	return args;
 }
 
@@ -189,7 +217,15 @@ function attachProcessHandlers(proc: ChildProcess) {
 		console.error("[stt-server]", data.toString().trimEnd());
 	});
 
-	proc.on("exit", () => {
+	proc.on("exit", (code, signal) => {
+		const exitCode = typeof code === "number" ? code : -1;
+		const exitSignal = signal ?? "";
+		breadcrumb(
+			"process",
+			"stt-server exited",
+			{ code: exitCode, signal: exitSignal },
+			exitCode === 0 || exitCode === -1 ? "info" : "warning"
+		);
 		if (sttProcess === proc) {
 			sttProcess = null;
 			status = "idle";
@@ -211,6 +247,31 @@ function attachProcessHandlers(proc: ChildProcess) {
 	});
 }
 
+/**
+ * Build the env block for the spawned STT server. Only forward `SENTRY_DSN`
+ * to the Python child when:
+ *
+ *   1. The user has *not* opted out (`general.sendCrashReports !== false`), and
+ *   2. We can resolve a DSN from runtime env or the build-time injected constant
+ *      (via `getResolvedSentryDsn`).
+ *
+ * Otherwise we omit the var entirely so the Python server boots with its
+ * Sentry SDK disabled by default. Always inherits the parent env so other
+ * vars (PATH, CUDA, etc.) propagate normally.
+ */
+function buildServerEnv(): NodeJS.ProcessEnv {
+	const sendCrashReports = getStoreValue("general.sendCrashReports") !== false;
+	const dsn = sendCrashReports ? getResolvedSentryDsn() : undefined;
+	if (!dsn) {
+		// Strip any inherited SENTRY_DSN from the parent env when the user opted
+		// out — otherwise a developer running with the env var set would still
+		// see the child reporting against the user's wishes.
+		const { SENTRY_DSN: _omitDsn, ...rest } = process.env;
+		return rest;
+	}
+	return { ...process.env, SENTRY_DSN: dsn };
+}
+
 /** Spawn the STT server process with the given CLI args. */
 function spawnServer(): void {
 	const serverDir = resolveServerDir();
@@ -222,10 +283,12 @@ function spawnServer(): void {
 	const proc = spawn(command, args, {
 		cwd: serverDir,
 		shell: false,
+		env: buildServerEnv(),
 	});
 
 	sttProcess = proc;
 	attachProcessHandlers(proc);
+	breadcrumb("process", "stt-server spawned");
 	dbg("stt-spawn", "CLI args:", args.join(" "));
 	dbg(
 		"stt-spawn",

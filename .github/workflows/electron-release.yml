@@ -49,6 +49,15 @@ jobs:
         with:
           bun-version: "1.3.6"
 
+      # UPX shrinks PyInstaller-bundled C extensions by 30–60 %. The spec
+      # at ``server/packaging/stt-server.spec`` enables it by default when
+      # the ``upx`` binary is on PATH and excludes CUDA + signed DLLs from
+      # compression (UPX would corrupt them or trigger antivirus). Set
+      # ``WINSTT_NO_UPX=1`` here to bypass.
+      - name: Install UPX
+        shell: pwsh
+        run: choco install upx -y --no-progress
+
       # The PyInstaller build step lives outside the frontend's working
       # directory; it installs Python deps and produces
       # frontend/stt-server-dist-${flavor}/ which electron-builder reads.

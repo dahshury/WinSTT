@@ -9,14 +9,13 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 import websockets
 from websockets.asyncio.server import ServerConnection
 
 from src.building_blocks.terminal import TerminalColors as bcolors
-from src.building_blocks.terminal import debug_print
+from src.building_blocks.terminal import debug_print, format_now_hms_ms
 from src.stt_server.cli import persist_setting
 from src.stt_server.file_transcribe import handle_transcribe_file
 from src.stt_server.state import ServerState
@@ -106,23 +105,51 @@ ALLOWED_PARAMETERS: list[str] = [
 ]
 
 
+def _active_device(state: ServerState) -> str | None:
+    """Best-effort current transcription device for catalog filtering.
+
+    Used to hide GPU-incompatible quantizations from the model picker when
+    the user is actually on CUDA (sub-fp16 quants on CUDAExecutionProvider
+    are slower than fp32 and can hallucinate). Reads from the live recorder
+    when initialized, else from the raw recorder_config dict, else returns
+    None (catalog returns full quant list — frontend shows everything).
+    """
+    rec = state.recorder
+    if rec is not None:
+        svc = getattr(rec, "_service", None)
+        if svc is not None:
+            cfg = getattr(svc, "_config", None)
+            if cfg is not None:
+                dev = getattr(cfg.transcription, "device", None)
+                if isinstance(dev, str):
+                    return dev
+    cfg = state.recorder_config
+    if isinstance(cfg, dict):
+        tx = cfg.get("transcription")
+        if isinstance(tx, dict):
+            dev = tx.get("device")
+            if isinstance(dev, str):
+                return dev
+    return None
+
+
 def _log_set(name: str, value: object) -> None:
     """Print a timestamped parameter-set log line."""
-    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    ts = format_now_hms_ms()
     v = f"{value:.2f}" if isinstance(value, float) else value
     print(f"  [{ts}] {bcolors.OKGREEN}Set {name} to: {bcolors.OKBLUE}{v}{bcolors.ENDC}")
 
 
 def _log_call(name: str, args: object = None) -> None:
     """Print a timestamped method-call log line."""
-    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    ts = format_now_hms_ms()
     suffix = f"({args})" if args else "()"
     print(f"  [{ts}] {bcolors.OKCYAN}Call recorder.{name}{suffix}{bcolors.ENDC}")
 
 
 def _log_get(name: str, value: str) -> None:
     """Print a timestamped parameter-get log line."""
-    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    ts = format_now_hms_ms()
     print(f"  [{ts}] {bcolors.OKGREEN}Get {name}: {bcolors.OKBLUE}{value}{bcolors.ENDC}")
 
 
@@ -146,7 +173,7 @@ async def control_handler(websocket: ServerConnection, state: ServerState) -> No
             if state.recorder is not None:
                 ready_payload["runtime_info"] = state.recorder.runtime_info()
         except Exception:
-            pass
+            logger.warning("runtime_info() failed while building server_ready payload", exc_info=True)
         await websocket.send(json.dumps(ready_payload))
     try:
         async for message in websocket:
@@ -397,7 +424,10 @@ async def _handle_list_models(ws: ServerConnection, state: ServerState, data: di
     from src.recorder.domain.model_registry import ModelCatalog
 
     catalog = ModelCatalog()
-    await ws.send(json.dumps({"status": "success", "command": "list_models", "models": catalog.to_dicts()}))
+    device = _active_device(state)
+    await ws.send(
+        json.dumps({"status": "success", "command": "list_models", "models": catalog.to_dicts(device=device)})
+    )
 
 
 @register_command("list_models_with_state")
@@ -426,13 +456,14 @@ async def _handle_list_models_with_state(
     sys_info = get_system_info()
     states = [model_state_dict(m, sys_info) for m in catalog.list_all()]
     request_id = data.get("request_id")
+    device = _active_device(state)
     # Wrap in ``value`` so SttClient.sendRequest() resolves the promise
     # with the full payload (it reads ``data.value`` by convention).
     payload: dict[str, Any] = {
         "status": "success",
         "command": "list_models_with_state",
         "value": {
-            "models": catalog.to_dicts(),
+            "models": catalog.to_dicts(device=device),
             "states": states,
             "system_info": system_info_dict(sys_info),
         },
@@ -782,3 +813,197 @@ async def _handle_cancel_download(ws: ServerConnection, state: ServerState, data
     state.cancel_download_requested = True
     print(f"{bcolors.WARNING}[download] cancel requested by client{bcolors.ENDC}")
     await ws.send(json.dumps({"status": "success", "message": "Download cancel requested"}))
+
+
+@register_command("get_live_resources", pre_ready=True)
+async def _handle_get_live_resources(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Return a fresh live host-resource snapshot (RAM / CPU / per-GPU VRAM).
+
+    ``pre_ready=True`` so the Settings panel can render resource badges
+    before the recorder has finished loading its initial model. The
+    snapshot is cached for ~1 s (see ``live_resources`` module) so a
+    picker that renders 40 rows doesn't fan out 40 nvidia-smi probes.
+    ``force_refresh`` (boolean) bypasses the cache — wired for a manual
+    refresh button.
+    """
+    from src.recorder.infrastructure.live_resources import get_live_resources, live_resources_dict
+
+    request_id = data.get("request_id")
+    force = bool(data.get("force_refresh", False))
+    snapshot = get_live_resources(force_refresh=force)
+    payload: dict[str, Any] = {
+        "status": "success",
+        "command": "get_live_resources",
+        "value": live_resources_dict(snapshot),
+    }
+    if request_id is not None:
+        payload["request_id"] = request_id
+    await ws.send(json.dumps(payload))
+
+
+def _current_loaded_for_assess(state: ServerState) -> tuple[str | None, str | None, str | None, str | None]:
+    """Best-effort: pull currently loaded main/realtime + quants for fit assess.
+
+    Falls back to (None, None, None, None) when the recorder isn't up yet
+    (pre-ready dispatch). The renderer side already knows about the user's
+    most recent choice via settings store, but the *server* truth — what's
+    actually resident in memory — is what fit-assessment needs.
+    """
+    rec = state.recorder
+    if rec is None:
+        return (None, None, None, None)
+    try:
+        info = rec.runtime_info()
+    except Exception:
+        logger.warning("runtime_info() failed while building assess context", exc_info=True)
+        return (None, None, None, None)
+    return (
+        info.get("model"),
+        info.get("onnx_quantization") or "",
+        info.get("realtime_model"),
+        info.get("realtime_quantization") or "",
+    )
+
+
+@register_command("assess_dictation_model_fit", pre_ready=True)
+async def _handle_assess_dictation_model_fit(
+    ws: ServerConnection,
+    state: ServerState,
+    data: dict[str, Any],
+) -> None:
+    """Return a server-authoritative fit assessment for a dictation candidate.
+
+    Inputs (in ``data``):
+      - ``model_id`` (required)
+      - ``quantization`` (default "")
+      - ``device`` (optional; "cpu"/"auto"/None)
+
+    Replies with the wire-format dict from ``dictation_fit_dict``. Pre-ready
+    so the Settings panel can fetch verdicts before any model is loaded.
+    """
+    from src.recorder.domain.model_registry import ModelCatalog
+    from src.recorder.infrastructure.fit_assessment import (
+        assess_dictation_fit,
+        dictation_fit_dict,
+    )
+    from src.recorder.infrastructure.live_resources import get_live_resources
+
+    request_id = data.get("request_id")
+    model_id = data.get("model_id")
+    if not isinstance(model_id, str) or not model_id:
+        await ws.send(json.dumps({"status": "error", "message": "missing or invalid 'model_id' field"}))
+        return
+    quantization = data.get("quantization", "")
+    if not isinstance(quantization, str):
+        quantization = ""
+    requested_device = data.get("device")
+    if requested_device is not None and not isinstance(requested_device, str):
+        requested_device = None
+
+    loaded_main, loaded_main_quant, loaded_realtime, loaded_realtime_quant = _current_loaded_for_assess(state)
+    catalog = ModelCatalog()
+    live = get_live_resources()
+    assessment = assess_dictation_fit(
+        model_id,
+        catalog=catalog,
+        candidate_quant=quantization,
+        requested_device=requested_device,
+        loaded_main=loaded_main,
+        loaded_main_quant=loaded_main_quant,
+        loaded_realtime=loaded_realtime,
+        loaded_realtime_quant=loaded_realtime_quant,
+        live=live,
+    )
+    payload: dict[str, Any] = {
+        "status": "success",
+        "command": "assess_dictation_model_fit",
+        "value": dictation_fit_dict(assessment),
+    }
+    if request_id is not None:
+        payload["request_id"] = request_id
+    await ws.send(json.dumps(payload))
+
+
+@register_command("assess_ollama_model_fit", pre_ready=True)
+async def _handle_assess_ollama_model_fit(
+    ws: ServerConnection,
+    state: ServerState,
+    data: dict[str, Any],
+) -> None:
+    """Return a fit assessment for an Ollama LLM of ``size_bytes`` on top of STT.
+
+    The verdict accounts for whatever dictation models are currently
+    loaded — the Ollama dialog needs this so an Ollama recommendation
+    stacked on top of a large Whisper doesn't get green-lit.
+    """
+    from src.recorder.domain.model_registry import ModelCatalog
+    from src.recorder.infrastructure.fit_assessment import (
+        assess_ollama_fit,
+        ollama_fit_dict,
+    )
+    from src.recorder.infrastructure.live_resources import get_live_resources
+
+    request_id = data.get("request_id")
+    size_bytes = data.get("size_bytes", 0)
+    try:
+        size_int = int(size_bytes)
+    except (TypeError, ValueError):
+        await ws.send(json.dumps({"status": "error", "message": "invalid 'size_bytes' field"}))
+        return
+
+    loaded_main, loaded_main_quant, loaded_realtime, loaded_realtime_quant = _current_loaded_for_assess(state)
+    catalog = ModelCatalog()
+    live = get_live_resources()
+    assessment = assess_ollama_fit(
+        size_int,
+        catalog=catalog,
+        loaded_main=loaded_main,
+        loaded_main_quant=loaded_main_quant,
+        loaded_realtime=loaded_realtime,
+        loaded_realtime_quant=loaded_realtime_quant,
+        live=live,
+    )
+    payload: dict[str, Any] = {
+        "status": "success",
+        "command": "assess_ollama_model_fit",
+        "value": ollama_fit_dict(assessment),
+    }
+    if request_id is not None:
+        payload["request_id"] = request_id
+    await ws.send(json.dumps(payload))
+
+
+@register_command("delete_model_cache", pre_ready=True)
+async def _handle_delete_model_cache(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Delete the HF cache directory for ``data["model_id"]`` and broadcast invalidation.
+
+    Lets the renderer offer a "Discard" button for partial downloads: the
+    next cache probe will report ``not_cached`` and the UI clears the
+    paused-at-X% state. ``pre_ready=True`` so the user can wipe a partial
+    download even before the recorder is fully booted (the catalog lookup
+    works without it).
+    """
+    from src.recorder.domain.model_registry import ModelCatalog
+    from src.recorder.infrastructure.model_cache import delete_cache, resolve_hf_repo
+
+    model_id = data.get("model_id") or data.get("model")
+    if not isinstance(model_id, str) or not model_id:
+        await ws.send(json.dumps({"status": "error", "message": "missing or invalid 'model_id' field"}))
+        return
+    catalog = ModelCatalog()
+    info = catalog.get(model_id)
+    # NeMo / GigaAM / whisper-base catalog entries carry an onnx-asr short
+    # alias (e.g. "nemo-canary-1b-v2") instead of "org/repo". Resolve via
+    # onnx-asr's mapping table — without this, every "Discard" on a NeMo
+    # model used to bail out with "no HF repo".
+    hf_repo = resolve_hf_repo(info.onnx_model_name if info else None)
+    if info is None or hf_repo is None:
+        await ws.send(json.dumps({"status": "error", "message": f"no HF repo for model '{model_id}'"}))
+        return
+    removed = delete_cache(hf_repo)
+    print(f"{bcolors.WARNING}[cache] delete requested for {model_id} (removed={removed}){bcolors.ENDC}")
+    # Broadcast invalidation so any open settings panel re-fetches state.
+    loop = asyncio.get_event_loop()
+    cache_message = json.dumps({"type": "model_cache_changed", "model_id": model_id})
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(cache_message), loop)
+    await ws.send(json.dumps({"status": "success", "message": f"cache deleted: {model_id}", "removed": removed}))

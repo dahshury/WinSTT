@@ -12,26 +12,69 @@
 	--color-surface-active: oklch(25% 0.015 265);
 
 	/* Surface elevation scale (1 darkest → 8 brightest), paired with shadow-surface-N.
-	   Page substrate: surface-1. Section cards: surface-3. Inset controls: surface-5. */
-	--color-surface-1: oklch(7.5% 0.015 265);
-	--color-surface-2: oklch(9.5% 0.015 265);
-	--color-surface-3: oklch(12% 0.015 265);
-	--color-surface-4: oklch(15.5% 0.013 265);
-	--color-surface-5: oklch(19% 0.013 265);
-	--color-surface-6: oklch(22.5% 0.015 265);
-	--color-surface-7: oklch(26% 0.015 265);
-	--color-surface-8: oklch(30% 0.015 260);
+	   Page substrate: surface-1. Section cards: surface-3. Inset controls: surface-5.
+	   Step is ~4% L per level so adjacent surfaces stay visually distinct in
+	   dark mode (eye needs ≥3% to register). */
+	--color-surface-1: oklch(8% 0.015 265);
+	--color-surface-2: oklch(12% 0.015 265);
+	--color-surface-3: oklch(16% 0.015 265);
+	--color-surface-4: oklch(20% 0.013 265);
+	--color-surface-5: oklch(24% 0.013 265);
+	--color-surface-6: oklch(28% 0.014 265);
+	--color-surface-7: oklch(32% 0.015 265);
+	--color-surface-8: oklch(36% 0.015 260);
 
-	--shadow-surface-1: none;
-	--shadow-surface-2: 0 1px 1px oklch(0% 0 0 / 0.45);
+	/* Shadow recipe (fluidfunctionalism dark-mode pattern):
+	   1) inset top highlight  → light kissing the top edge
+	   2) inset 1px ring       → subtle inner border
+	   3) outer 1px hairline   → crisp dark outline against substrate
+	   4) one or more drops    → stacked, doubling blur, increasing alpha
+	   Each level adds a heavier drop layer; the inner highlights brighten
+	   slightly so taller elements feel more illuminated. */
+	--shadow-surface-1:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.03),
+		inset 0 0 0 1px oklch(100% 0 0 / 0.02), 0 0 0 1px oklch(0% 0 0 / 0.35),
+		0 1px 1px 0 oklch(0% 0 0 / 0.25);
+	--shadow-surface-2:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.04),
+		inset 0 0 0 1px oklch(100% 0 0 / 0.025), 0 0 0 1px oklch(0% 0 0 / 0.4),
+		0 1px 2px 0 oklch(0% 0 0 / 0.3);
 	--shadow-surface-3:
-		0 1px 2px oklch(0% 0 0 / 0.55), 0 0 0 1px oklch(0% 0 0 / 0.25) inset;
-	--shadow-surface-4: 0 2px 4px oklch(0% 0 0 / 0.5);
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.05),
+		inset 0 0 0 1px oklch(100% 0 0 / 0.03),
+		0 0 0 1px oklch(0% 0 0 / 0.45),
+		0 1px 2px 0 oklch(0% 0 0 / 0.35),
+		0 2px 4px 0 oklch(0% 0 0 / 0.2);
+	--shadow-surface-4:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.06),
+		inset 0 0 0 1px oklch(100% 0 0 / 0.035),
+		0 0 0 1px oklch(0% 0 0 / 0.5),
+		0 2px 4px 0 oklch(0% 0 0 / 0.4),
+		0 4px 8px 0 oklch(0% 0 0 / 0.22);
 	--shadow-surface-5:
-		0 4px 10px oklch(0% 0 0 / 0.55), 0 0 0 1px oklch(100% 0 0 / 0.02) inset;
-	--shadow-surface-6: 0 6px 16px oklch(0% 0 0 / 0.55);
-	--shadow-surface-7: 0 8px 24px oklch(0% 0 0 / 0.6);
-	--shadow-surface-8: 0 12px 32px oklch(0% 0 0 / 0.65);
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.07),
+		inset 0 0 0 1px oklch(100% 0 0 / 0.04),
+		0 0 0 1px oklch(0% 0 0 / 0.55),
+		0 4px 8px 0 oklch(0% 0 0 / 0.4),
+		0 8px 16px 0 oklch(0% 0 0 / 0.22);
+	--shadow-surface-6:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.08),
+		inset 0 0 0 1px oklch(100% 0 0 / 0.045),
+		0 0 0 1px oklch(0% 0 0 / 0.55),
+		0 6px 12px 0 oklch(0% 0 0 / 0.4),
+		0 12px 24px 0 oklch(0% 0 0 / 0.25);
+	--shadow-surface-7:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.09),
+		inset 0 0 0 1px oklch(100% 0 0 / 0.05),
+		0 0 0 1px oklch(0% 0 0 / 0.6),
+		0 8px 16px 0 oklch(0% 0 0 / 0.45),
+		0 16px 32px 0 oklch(0% 0 0 / 0.28);
+	--shadow-surface-8:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.1),
+		inset 0 0 0 1px oklch(100% 0 0 / 0.055),
+		0 0 0 1px oklch(0% 0 0 / 0.65),
+		0 12px 24px 0 oklch(0% 0 0 / 0.5),
+		0 24px 48px 0 oklch(0% 0 0 / 0.3);
 
 	/* Foreground — blue-tinted whites */
 	--color-foreground: oklch(94% 0.015 265);
@@ -52,10 +95,12 @@
 	--color-teal-hover: oklch(77% 0.1 245);
 	--color-teal-dim: oklch(14.5% 0.04 260);
 
-	/* Purple → Soft Blue (settings section headers, snippet triggers, highlights) */
-	--color-purple: oklch(77% 0.1 245);
-	--color-purple-hover: oklch(84% 0.07 240);
-	--color-purple-dim: oklch(16% 0.04 260);
+	/* Purple — kept as token aliases for legacy call sites; visually folded
+	   into teal so the UI reads with one functional accent (Docker blue) +
+	   one state accent (teal) instead of three competing hues. */
+	--color-purple: var(--color-teal);
+	--color-purple-hover: var(--color-teal-hover);
+	--color-purple-dim: var(--color-teal-dim);
 
 	/* Orange → Accent Blue (hotkey pressed, recording indicators) */
 	--color-orange: oklch(62% 0.19 260);
@@ -74,6 +119,12 @@
 	--color-border: oklch(19% 0.015 260);
 	--color-border-hover: oklch(25% 0.015 260);
 	--color-border-accent: oklch(62% 0.19 260 / 0.25);
+	/* Hairline divider — translucent foreground over substrate. The
+	   reference (n8n.io) leans on rgba(255,255,255,0.08–0.15) for the same
+	   role; this is the OKLch equivalent in our palette. Use for inner-card
+	   dividers and subdued separators where `border-border` reads too heavy. */
+	--color-divider: oklch(94% 0.015 265 / 0.08);
+	--color-divider-strong: oklch(94% 0.015 265 / 0.14);
 
 	/* Radii — rounded-xs, rounded-sm, rounded-md, rounded-lg */
 	--radius-xs: 3px;
@@ -85,7 +136,7 @@
 	--font-sans: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
 	--font-mono: var(--font-geist-mono), "SF Mono", "Cascadia Code", monospace;
 
-	/* Text sizes — text-2xs, text-xs-tight, text-body, text-body-sm */
+	/* Text sizes — text-2xs, text-xs-tight, text-body, text-body-sm, text-subtitle, text-title */
 	--text-2xs: 10px;
 	--text-2xs--line-height: 1.4;
 	--text-xs-tight: 11px;
@@ -94,12 +145,36 @@
 	--text-body-sm--line-height: 1.5;
 	--text-body: 13px;
 	--text-body--line-height: 1.5;
+	/* Hierarchy sizes for the redesigned settings shell.
+	   - text-subtitle: subsection headings, comfortable body+1 step
+	   - text-title:    section headings, distinctly larger than body */
+	--text-subtitle: 14px;
+	--text-subtitle--line-height: 1.45;
+	--text-title: 18px;
+	--text-title--line-height: 1.3;
+	/* Tight negative tracking on large display text — n8n.io reference uses
+	   roughly -0.02em on its 48–54px headlines. Same proportion scaled down. */
+	--text-title--letter-spacing: -0.02em;
 
-	/* Shadows */
-	--shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.6);
-	--shadow-md: 0 4px 12px oklch(0% 0 0 / 0.5);
-	--shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.6);
+	/* Shadows — tinted with the substrate hue (blue ~265) instead of pure
+	   black so layered surfaces feel cohesive, not punched-out. */
+	--shadow-sm: 0 1px 2px oklch(3% 0.02 265 / 0.6);
+	--shadow-md: 0 4px 12px oklch(3% 0.02 265 / 0.5);
+	--shadow-lg: 0 8px 24px oklch(3% 0.02 265 / 0.6);
 	--shadow-glow: 0 0 20px oklch(62% 0.19 260 / 0.08);
+	/* Signature elevated-control shadow — fluidfunctionalism recipe
+	   (inset highlight + inset ring + outer hairline + stacked drops) plus
+	   the n8n-extracted accent bottom edge as our brand signature. Apply
+	   to primary CTAs and any control that should read as crafted, not
+	   generic. */
+	--shadow-elevated:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.08),
+		inset 0 0 0 1px oklch(100% 0 0 / 0.04),
+		inset 0 -8px 16px -8px oklch(100% 0 0 / 0.04),
+		0 0 0 1px oklch(0% 0 0 / 0.5),
+		0 1px 2px 0 oklch(0% 0 0 / 0.4),
+		0 4px 12px 0 oklch(0% 0 0 / 0.3),
+		0 7px 0 -12px oklch(62% 0.19 260 / 0.7);
 
 	/* Animations — animate-fade-in, animate-slide-in, etc. */
 	--animate-fade-in: fade-in 200ms ease-out;
@@ -107,6 +182,69 @@
 	--animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
 	--animate-recording-pulse: recording-pulse 1s ease-in-out infinite;
 	--animate-recording-pulse-slow: recording-pulse 2s ease-in-out infinite;
+
+	/* z-index scale — keep in sync with shared/config/z-index.ts.
+	   `--z-index-*` isn't a built-in Tailwind v4 namespace, so the matching
+	   `z-{name}` utilities are declared via `@utility` below. JSX uses the
+	   tokens (z-popover, z-modal, etc.); inline styles read `Z_INDEX.popover`.
+	   In-flow local stacking <100; portaled overlays ≥1000 (spaced by 100). */
+	--z-index-raised: 10;
+	--z-index-overlay: 20;
+	--z-index-titlebar: 30;
+	--z-index-titlebar-float: 40;
+	--z-index-modal-backdrop: 1000;
+	--z-index-modal: 1001;
+	--z-index-popover: 1100;
+	--z-index-popover-submenu: 1101;
+	--z-index-tooltip: 1200;
+	--z-index-confirm-backdrop: 1300;
+	--z-index-confirm: 1301;
+	--z-index-toast: 1400;
+	--z-index-noise-overlay: 9999;
+}
+
+/* ── z-index utilities ─────────────────────────────────────────────────
+   One @utility per layer so Tailwind generates `z-popover`, `z-modal`, etc.
+   Each reads the matching `--z-index-*` token defined in @theme above so
+   there's a single source of truth shared with `shared/config/z-index.ts`. */
+@utility z-raised {
+	z-index: var(--z-index-raised);
+}
+@utility z-overlay {
+	z-index: var(--z-index-overlay);
+}
+@utility z-titlebar {
+	z-index: var(--z-index-titlebar);
+}
+@utility z-titlebar-float {
+	z-index: var(--z-index-titlebar-float);
+}
+@utility z-modal-backdrop {
+	z-index: var(--z-index-modal-backdrop);
+}
+@utility z-modal {
+	z-index: var(--z-index-modal);
+}
+@utility z-popover {
+	z-index: var(--z-index-popover);
+}
+@utility z-popover-submenu {
+	z-index: var(--z-index-popover-submenu);
+}
+@utility z-tooltip {
+	z-index: var(--z-index-tooltip);
+}
+@utility z-confirm-backdrop {
+	z-index: var(--z-index-confirm-backdrop);
+}
+@utility z-confirm {
+	z-index: var(--z-index-confirm);
+}
+@utility z-toast {
+	z-index: var(--z-index-toast);
+}
+@utility z-noise-overlay {
+	z-index: var(--z-index-noise-overlay);
 }
 
 /* ── Legacy aliases for existing var() references in CSSProperties ── */
@@ -223,6 +361,11 @@
 		color: var(--color-foreground);
 		user-select: none;
 		background: var(--color-surface);
+		/* Lock digits to the same advance width so counters, timestamps, sizes,
+		   and progress percentages stop jittering as values change. */
+		font-variant-numeric: tabular-nums;
+		font-feature-settings: "tnum";
+		scroll-behavior: smooth;
 	}
 
 	/* Frameless window drag regions */
@@ -305,10 +448,10 @@
 	.noise-overlay::before {
 		position: fixed;
 		inset: 0;
-		z-index: 9999; /* Z_INDEX.NOISE_OVERLAY — keep in sync with shared/config/z-index.ts */
+		z-index: var(--z-index-noise-overlay);
 		pointer-events: none;
 		content: "";
 		background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' /%3E%3C/svg%3E");
-		opacity: 0.015; /* Z_INDEX.NOISE_OVERLAY — keep in sync with shared/config/z-index.ts */
+		opacity: 0.015;
 	}
 }

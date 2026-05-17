@@ -29,6 +29,12 @@ export const IPC = {
 	STT_LIST_MODELS_WITH_STATE: "stt:list-models-with-state",
 	STT_MODEL_CACHE_CHANGED: "stt:model-cache-changed",
 	STT_CANCEL_DOWNLOAD: "stt:cancel-download",
+	STT_DELETE_MODEL_CACHE: "stt:delete-model-cache",
+	STT_GET_LIVE_RESOURCES: "stt:get-live-resources",
+	STT_ASSESS_DICTATION_FIT: "stt:assess-dictation-fit",
+	STT_ASSESS_OLLAMA_FIT: "stt:assess-ollama-fit",
+	STT_VAD_SENSITIVITY_ADAPTED: "stt:vad-sensitivity-adapted",
+	STT_SPEAKER_SEGMENTS: "stt:speaker-segments",
 
 	// Hotkey events (main → renderer)
 	HOTKEY_PRESSED: "hotkey:pressed",
@@ -122,6 +128,9 @@ export const IPC = {
 	LLM_CANCEL_PULL_MODEL: "llm:cancel-pull-model",
 	LLM_DELETE_MODEL: "llm:delete-model",
 	LLM_PROCESS_TEXT_CUSTOM: "llm:process-text-custom",
+	LLM_SEARCH_OLLAMA_LIBRARY: "llm:search-ollama-library",
+	LLM_FETCH_OLLAMA_LIBRARY: "llm:fetch-ollama-library",
+	LLM_FETCH_OLLAMA_TAGS: "llm:fetch-ollama-tags",
 
 	// Transforms (renderer → main)
 	TRANSFORMS_APPLY: "transforms:apply",
@@ -136,6 +145,13 @@ export const IPC = {
 	LLM_PULL_PROGRESS: "llm:pull-progress",
 	LLM_PROCESSING_START: "llm:processing-start",
 	LLM_PROCESSING_END: "llm:processing-end",
+	// Warmup status — invoke pulls the last snapshot on mount, broadcast
+	// fires whenever the periodic probe in main runs. Main-side wiring is
+	// still WIP; until it lands, the invoke handler is missing and the
+	// renderer's `invokeOrDefault` falls back to `null` so the banner stays
+	// hidden.
+	LLM_GET_WARMUP_STATUS: "llm:get-warmup-status",
+	LLM_WARMUP_STATUS: "llm:warmup-status",
 	UPDATER_GET_STATUS_HISTORY: "updater:get-status-history",
 	UPDATER_CLEAR_STATUS_HISTORY: "updater:clear-status-history",
 	UPDATER_STATUS: "updater:status",
@@ -149,6 +165,10 @@ export const IPC = {
 
 	// Transcription history (main → renderer)
 	HISTORY_ADDED: "history:added",
+
+	// Diagnostics bundle (renderer → main)
+	DIAG_OPEN_LOGS_FOLDER: "diag:open-logs-folder",
+	DIAG_SAVE_BUNDLE: "diag:save-bundle",
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];
@@ -211,6 +231,10 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_RELOAD_MODEL]: ["send"],
 	[IPC.STT_LIST_MODELS_WITH_STATE]: ["invoke"],
 	[IPC.STT_CANCEL_DOWNLOAD]: ["invoke"],
+	[IPC.STT_DELETE_MODEL_CACHE]: ["invoke"],
+	[IPC.STT_GET_LIVE_RESOURCES]: ["invoke"],
+	[IPC.STT_ASSESS_DICTATION_FIT]: ["invoke"],
+	[IPC.STT_ASSESS_OLLAMA_FIT]: ["invoke"],
 
 	// Hotkey
 	[IPC.HOTKEY_PRESSED]: ["on"],
@@ -288,6 +312,9 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.LLM_CANCEL_PULL_MODEL]: ["invoke"],
 	[IPC.LLM_DELETE_MODEL]: ["invoke"],
 	[IPC.LLM_PROCESS_TEXT_CUSTOM]: ["invoke"],
+	[IPC.LLM_SEARCH_OLLAMA_LIBRARY]: ["invoke"],
+	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: ["invoke"],
+	[IPC.LLM_FETCH_OLLAMA_TAGS]: ["invoke"],
 
 	// Transforms
 	[IPC.TRANSFORMS_APPLY]: ["invoke"],
@@ -317,6 +344,20 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.HISTORY_GET_ALL]: ["invoke"],
 	[IPC.HISTORY_CLEAR]: ["invoke"],
 	[IPC.HISTORY_ADDED]: ["on"],
+
+	// LLM warmup status
+	[IPC.LLM_GET_WARMUP_STATUS]: ["invoke"],
+	[IPC.LLM_WARMUP_STATUS]: ["on"],
+
+	// VAD calibration broadcast (server → main → renderer)
+	[IPC.STT_VAD_SENSITIVITY_ADAPTED]: ["on"],
+
+	// Speaker diarization (server → main → renderer)
+	[IPC.STT_SPEAKER_SEGMENTS]: ["on"],
+
+	// Diagnostics bundle (renderer → main)
+	[IPC.DIAG_OPEN_LOGS_FOLDER]: ["invoke"],
+	[IPC.DIAG_SAVE_BUNDLE]: ["invoke"],
 };
 
 /** Return every channel whose direction list includes the given direction. */

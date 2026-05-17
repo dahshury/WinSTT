@@ -45,9 +45,12 @@ _NON_SIMPLE_CALLBACKS: frozenset[str] = frozenset(
         "on_turn_detection_start",
         "on_turn_detection_stop",
         "on_device_switch_failed",
+        "on_device_became_available",
         "on_model_swap_started",
         "on_model_swap_completed",
         "on_model_swap_failed",
+        "on_vad_sensitivity_adapted",
+        "on_speaker_segments_detected",
         # Domain events the server intentionally does not relay over the wire.
         "on_vad_start",
         "on_vad_stop",
@@ -181,23 +184,80 @@ def on_model_swap_completed(
     # badges without polling list_models_with_state.
     cache_message = json.dumps({"type": "model_cache_changed", "model_id": name})
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(cache_message), loop)
+    # Broadcast the fresh runtime_info to every control connection. Without
+    # this, the renderer's cached ``runtimeInfo.model`` lags behind the
+    # actually-loaded model — and the active-model reconciler races against
+    # the stale snapshot to revert the user's pick. Piggybacks on the
+    # existing ``handleGetRuntimeInfoEvent`` shape in the WS client so no
+    # new client-side wiring is needed.
+    if state.recorder is None:
+        return
+    try:
+        info = state.recorder.runtime_info()
+    except Exception:
+        # runtime_info() failed (post-swap inconsistency); the cache will
+        # heal on the next get_runtime_info request or server_ready.
+        return
+    rt_payload = json.dumps({"command": "get_runtime_info", "status": "success", "value": info})
+    for ws in list(state.control_connections):
+        asyncio.run_coroutine_threadsafe(ws.send(rt_payload), loop)
 
 
 def on_model_swap_failed(
     kind: str,
     name: str,
     reason: str,
+    category: str,
+    detail: str,
     state: ServerState,
     loop: asyncio.AbstractEventLoop,
 ) -> None:
     """Forward a model-swap-failed event so the renderer can revert + toast.
 
-    The previous model is still active server-side — the frontend's
-    settings store should roll its picker back to whatever the server
-    currently reports via ``runtime_info``.
+    The previous model is still active server-side (rebuilt by the swap
+    worker's restore path when possible). The renderer keys off
+    ``category`` to pick a localised toast variant and uses ``reason``
+    as a fallback headline; ``detail`` is the technical detail for
+    diagnostic logs / bug reports.
     """
-    print(f"{bcolors.WARNING}[model-swap] failed: kind={kind} name={name} reason={reason}{bcolors.ENDC}")
-    message = json.dumps({"type": "model_swap_failed", "kind": kind, "name": name, "reason": reason})
+    print(
+        f"{bcolors.WARNING}[model-swap] failed: kind={kind} name={name} "
+        f"category={category} reason={reason} detail={detail}{bcolors.ENDC}"
+    )
+    message = json.dumps(
+        {
+            "type": "model_swap_failed",
+            "kind": kind,
+            "name": name,
+            "reason": reason,
+            "category": category,
+            "detail": detail,
+        }
+    )
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
+
+def on_vad_sensitivity_adapted(
+    new_sensitivity: float,
+    noise_floor_rms: float,
+    speech_peak_rms: float,
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Forward an adaptive-VAD update so the renderer can persist it per device.
+
+    The server is device-agnostic; the renderer correlates the event with
+    whichever input device is currently selected and stores
+    ``new_sensitivity`` under that device's name in its settings map.
+    """
+    message = json.dumps(
+        {
+            "type": "vad_sensitivity_adapted",
+            "new_sensitivity": round(new_sensitivity, 4),
+            "noise_floor_rms": round(noise_floor_rms, 4),
+            "speech_peak_rms": round(speech_peak_rms, 4),
+        }
+    )
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
 
 
@@ -225,6 +285,47 @@ def on_device_switch_failed(
             "requested_index": requested_index,
             "error_message": error_message,
             "fallback_index": fallback_index,
+        }
+    )
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
+
+def on_speaker_segments_detected(
+    segments: tuple[Any, ...],
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Forward diarization results so the renderer can color words per speaker.
+
+    Fires once per utterance, immediately after the matching ``fullSentence``
+    event. ``segments`` is a tuple of :class:`SpeakerSegment` whose ``start``
+    / ``end`` are seconds relative to the utterance start (NOT wall-clock).
+    The renderer applies them to the most-recent committed sentence.
+    """
+    payload = [{"start": round(seg.start, 3), "end": round(seg.end, 3), "speaker": seg.speaker} for seg in segments]
+    message = json.dumps({"type": "speaker_segments", "segments": payload})
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
+
+def on_device_became_available(
+    device_index: int,
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Forward a hotplug-attach event to the renderer.
+
+    Fires when the audio source's waiting-for-device state ends — either
+    because the server booted with no microphone and one was plugged in,
+    or a working mic was unplugged mid-run and replaced. Renderer uses
+    this to refresh the input-device list and surface a toast so the user
+    knows recording is possible again. Mirrors ``device_switch_failed``
+    but in the success direction.
+    """
+    print(f"{bcolors.OKGREEN}[device-attach] index={device_index}{bcolors.ENDC}")
+    message = json.dumps(
+        {
+            "type": "device_became_available",
+            "device_index": device_index,
         }
     )
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
@@ -265,9 +366,12 @@ def build_recorder_callbacks(state: ServerState, loop: asyncio.AbstractEventLoop
     callbacks["on_model_download_complete"] = _make_state_callback(loop, on_model_download_complete, state)
     callbacks["on_model_download_cancelled"] = _make_state_callback(loop, on_model_download_cancelled, state)
     callbacks["on_device_switch_failed"] = _make_state_callback(loop, on_device_switch_failed, state)
+    callbacks["on_device_became_available"] = _make_state_callback(loop, on_device_became_available, state)
     callbacks["on_model_swap_started"] = _make_state_callback(loop, on_model_swap_started, state)
     callbacks["on_model_swap_completed"] = _make_state_callback(loop, on_model_swap_completed, state)
     callbacks["on_model_swap_failed"] = _make_state_callback(loop, on_model_swap_failed, state)
+    callbacks["on_vad_sensitivity_adapted"] = _make_state_callback(loop, on_vad_sensitivity_adapted, state)
+    callbacks["on_speaker_segments_detected"] = _make_state_callback(loop, on_speaker_segments_detected, state)
     callbacks["cancel_download_check"] = lambda: state.cancel_download_requested
 
     return callbacks

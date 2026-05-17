@@ -16,6 +16,10 @@ logs
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
+# electron-log rotation artefact (debug.old.log) — debug.log is matched by *.log
+debug.log
+debug.old.log
+
 # dotenv environment variable files
 .env
 .env.development.local
@@ -45,3 +49,9 @@ fsd-violations.json
 
 # Stryker mutation testing scratch space (regenerated each run)
 .stryker-tmp/
+
+# Design-system extraction artifacts from `npx extract-design-system`.
+# Kept locally as reference (raw + normalized + starter tokens); not imported
+# into the app — globals.css is the source of truth.
+.extract-design-system/
+design-system/

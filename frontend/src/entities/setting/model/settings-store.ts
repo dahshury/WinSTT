@@ -14,7 +14,15 @@ interface SettingsState {
 	updateDictionary: (dictionary: AppSettingsOutput["dictionary"]) => void;
 	updateGeneralSettings: (patch: Partial<AppSettingsOutput["general"]>) => void;
 	updateHotkeySettings: (patch: Partial<AppSettingsOutput["hotkey"]>) => void;
-	updateLlmSettings: (patch: Partial<AppSettingsOutput["llm"]>) => void;
+	updateLlmDictation: (patch: Partial<AppSettingsOutput["llm"]["dictation"]>) => void;
+	/**
+	 * Patches top-level shared fields on `settings.llm` (endpoint, openrouterApiKey).
+	 * For per-feature config use `updateLlmDictation` / `updateLlmTransforms`.
+	 */
+	updateLlmSettings: (
+		patch: Partial<Omit<AppSettingsOutput["llm"], "dictation" | "transforms">>
+	) => void;
+	updateLlmTransforms: (patch: Partial<AppSettingsOutput["llm"]["transforms"]>) => void;
 	updateModelSettings: (patch: Partial<AppSettingsOutput["model"]>) => void;
 	updateQualitySettings: (patch: Partial<AppSettingsOutput["quality"]>) => void;
 	updateSnippets: (snippets: AppSettingsOutput["snippets"]) => void;
@@ -69,6 +77,26 @@ export const useSettingsStore = create<SettingsState>()(
 					settings: {
 						...state.settings,
 						llm: { ...state.settings.llm, ...patch },
+					},
+				})),
+			updateLlmDictation: (patch) =>
+				set((state) => ({
+					settings: {
+						...state.settings,
+						llm: {
+							...state.settings.llm,
+							dictation: { ...state.settings.llm.dictation, ...patch },
+						},
+					},
+				})),
+			updateLlmTransforms: (patch) =>
+				set((state) => ({
+					settings: {
+						...state.settings,
+						llm: {
+							...state.settings.llm,
+							transforms: { ...state.settings.llm.transforms, ...patch },
+						},
 					},
 				})),
 			updateDictionary: (dictionary) =>

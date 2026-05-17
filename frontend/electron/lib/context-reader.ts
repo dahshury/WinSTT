@@ -8,6 +8,7 @@ import {
 	type WindowContextSnapshot,
 } from "./context-snapshot";
 import { dbg } from "./debug-log";
+import { isPlainObject } from "./ipc-helpers";
 
 export { EMPTY_CONTEXT, formatContextForPrompt, type WindowContextSnapshot };
 
@@ -58,10 +59,6 @@ function getBinary(): string | null {
 		}
 	}
 	return cachedBinary;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function asString(value: unknown): string {

@@ -1,5 +1,12 @@
 import Store from "electron-store";
 import { z } from "zod";
+import {
+	decryptSecret,
+	encryptSecret,
+	isEncryptedSecret,
+	isSecretDotPath,
+	SECRET_DOT_PATHS,
+} from "./secret-storage";
 
 // ── Zod schemas for individual store values (dot-path access) ────────
 // These validate the raw `unknown` return of store.get("section.key").
@@ -18,6 +25,11 @@ const storeValueSchemas = {
 	"general.liveTranscriptionDisplay": z.enum(["none", "in-app", "in-pill", "both"]).catch("both"),
 	"general.systemAudioReductionWhileDictating": z.number().int().min(0).max(100).catch(0),
 	"general.contextAwareness": z.boolean().catch(false),
+	// Opt-out toggle for Sentry crash/error reporting. Defaults to true (opt-out
+	// model — installers ship with reporting on so we get the early crash data
+	// that lets us fix bugs users can't reproduce). Takes effect on next launch;
+	// `initSentryMain` reads this synchronously at startup.
+	"general.sendCrashReports": z.boolean().catch(true),
 	// quality
 	"quality.enableRealtimeTranscription": z.boolean().catch(true),
 	"quality.useMainModelForRealtime": z.boolean().catch(false),
@@ -25,13 +37,20 @@ const storeValueSchemas = {
 	// audio
 	"audio.sileroSensitivity": z.number().catch(0.4),
 	"audio.sileroDeactivityDetection": z.boolean().catch(true),
-	// llm
-	"llm.enabled": z.boolean().catch(false),
-	"llm.dictationEnabled": z.boolean().catch(true),
-	"llm.transformsEnabled": z.boolean().catch(false),
-	"llm.provider": z.enum(["ollama", "openrouter"]).catch("ollama"),
-	"llm.model": z.string().catch(""),
-	"llm.presets": z
+	// llm — shared infrastructure (one Ollama instance, one OpenRouter account)
+	"llm.endpoint": z.string().catch("http://localhost:11434"),
+	"llm.openrouterApiKey": z.string().catch(""),
+	// Wired through but currently NOT applied at the network layer (see
+	// processWithOllama / processWithOpenRouter — `_timeout` is read but the
+	// AbortSignal.timeout was removed because local LLM cold-start exceeds it).
+	"llm.timeout": z.number().int().catch(5000),
+	// llm.dictation — per-feature config for dictation post-processing
+	"llm.dictation.enabled": z.boolean().catch(false),
+	"llm.dictation.provider": z.enum(["ollama", "openrouter"]).catch("ollama"),
+	"llm.dictation.model": z.string().catch(""),
+	"llm.dictation.openrouterModel": z.string().catch(""),
+	"llm.dictation.openrouterFallbackModel": z.string().catch(""),
+	"llm.dictation.presets": z
 		.array(
 			z.object({
 				key: z.enum([
@@ -50,12 +69,13 @@ const storeValueSchemas = {
 			})
 		)
 		.catch([{ key: "neutral" as const }]),
-	"llm.endpoint": z.string().catch("http://localhost:11434"),
-	"llm.openrouterApiKey": z.string().catch(""),
-	"llm.openrouterModel": z.string().catch(""),
-	"llm.openrouterFallbackModel": z.string().catch(""),
-	"llm.timeout": z.number().int().catch(5000),
-	"llm.transforms": z
+	// llm.transforms — per-feature config for custom-prompt transforms
+	"llm.transforms.enabled": z.boolean().catch(false),
+	"llm.transforms.provider": z.enum(["ollama", "openrouter"]).catch("ollama"),
+	"llm.transforms.model": z.string().catch(""),
+	"llm.transforms.openrouterModel": z.string().catch(""),
+	"llm.transforms.openrouterFallbackModel": z.string().catch(""),
+	"llm.transforms.prompts": z
 		.array(
 			z.object({
 				id: z.string(),
@@ -86,7 +106,15 @@ export function getStoreValue<K extends keyof StoreValueSchemas>(
 	// through to the runtime get-by-path implementation.
 	const raw = store.get(key as string);
 	const schema = storeValueSchemas[key];
-	return (schema as unknown as z.ZodType<z.output<StoreValueSchemas[K]>>).parse(raw);
+	const parsed = (schema as unknown as z.ZodType<z.output<StoreValueSchemas[K]>>).parse(raw);
+	// Secret-at-rest fields are persisted as `enc:v1:<base64>` envelopes;
+	// callers expect plaintext. Decrypt transparently here so every read site
+	// stays unaware of the storage format. Legacy plaintext (no prefix) passes
+	// through unchanged until `migrateSecretsAtRest()` rewrites it.
+	if (isSecretDotPath(key as string)) {
+		return decryptSecret(parsed) as z.output<StoreValueSchemas[K]>;
+	}
+	return parsed;
 }
 
 /**
@@ -162,6 +190,7 @@ export const store = new Store({
 			minLengthOfRecording: 1.1,
 			minGapBetweenRecordings: 0,
 			preRecordingBufferDuration: 1.0,
+			sileroSensitivityByDeviceName: {},
 		},
 		general: {
 			autoStart: false,
@@ -182,6 +211,10 @@ export const store = new Store({
 			visualizerBarCount: 9,
 			visualizerColor: "#58a6ff",
 			contextAwareness: false,
+			// Sentry crash-report opt-out: defaults to true (reporting on).
+			// Toggling requires app restart — `initSentryMain` reads it once
+			// synchronously at startup; runtime live-reconfigure isn't safe.
+			sendCrashReports: true,
 		},
 		hotkey: {
 			pushToTalkKey: "LCtrl+LMeta",
@@ -189,24 +222,31 @@ export const store = new Store({
 		dictionary: [],
 		snippets: [],
 		llm: {
-			enabled: false,
-			dictationEnabled: true,
-			transformsEnabled: false,
-			provider: "ollama" as const,
 			endpoint: "http://localhost:11434",
-			model: "",
 			openrouterApiKey: "",
-			openrouterModel: "",
-			openrouterFallbackModel: "",
-			presets: [{ key: "neutral" as const }],
 			timeout: 5000,
-			transforms: [] as Array<{
-				id: string;
-				name: string;
-				prompt: string;
-				hotkey: string;
-				builtin: boolean;
-			}>,
+			dictation: {
+				enabled: false,
+				provider: "ollama" as const,
+				model: "",
+				openrouterModel: "",
+				openrouterFallbackModel: "",
+				presets: [{ key: "neutral" as const }],
+			},
+			transforms: {
+				enabled: false,
+				provider: "ollama" as const,
+				model: "",
+				openrouterModel: "",
+				openrouterFallbackModel: "",
+				prompts: [] as Array<{
+					id: string;
+					name: string;
+					prompt: string;
+					hotkey: string;
+					builtin: boolean;
+				}>,
+			},
 		},
 		windowBounds: null as { x: number; y: number; width: number; height: number } | null,
 	},
@@ -215,7 +255,7 @@ export const store = new Store({
 // ── One-time migration for stale persisted values ────────────────────
 // electron-store defaults only apply when a key is missing. If old defaults
 // were persisted via settings:save, they override new defaults silently.
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 type LiveTranscriptionDisplay = "none" | "in-app" | "in-pill" | "both";
 
@@ -286,8 +326,6 @@ function migrateMuteToReduction(write: StoreWrite): void {
 	store.delete("general.muteSystemAudioWhileDictating" as never);
 }
 
-type StoreRead = <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreValueSchemas[K]>;
-
 /**
  * v8: split the single `llm.enabled` toggle into a master switch plus two
  * sub-feature flags (`llm.dictationEnabled`, `llm.transformsEnabled`).
@@ -295,17 +333,97 @@ type StoreRead = <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreVa
  * ungated entirely (it fired whenever a hotkey was bound + a model set).
  * Preserve both behaviors: anyone who had the LLM on, or who has a transform
  * hotkey bound, gets both sub-flags turned on so the upgrade is invisible.
+ *
+ * Uses `store.get` directly (not the typed `read` accessor) because the
+ * legacy `llm.enabled` and `llm.transforms` (array) keys are no longer
+ * registered in `storeValueSchemas` after the v9 cleanup.
  */
-function migrateLlmSubFlags(read: StoreRead, write: StoreWrite): void {
-	const hadLlmOn = read("llm.enabled") === true;
-	const transforms = read("llm.transforms");
+function migrateLlmSubFlags(write: StoreWrite): void {
+	const hadLlmOn = store.get("llm.enabled") === true;
+	const legacyTransforms = store.get("llm.transforms") as unknown;
 	const hasTransformHotkey =
-		Array.isArray(transforms) && transforms.some((t) => (t?.hotkey ?? "").trim() !== "");
+		Array.isArray(legacyTransforms) &&
+		legacyTransforms.some((t: { hotkey?: string }) => (t?.hotkey ?? "").trim() !== "");
 	if (hadLlmOn || hasTransformHotkey) {
 		write("llm.dictationEnabled", true);
 		write("llm.transformsEnabled", true);
 	}
 }
+
+/**
+ * v9: drop the single shared `llm.provider`/`llm.model`/etc. and the
+ * `llm.enabled` master switch in favor of per-feature config blocks
+ * (`llm.dictation.*`, `llm.transforms.*`). Each feature now picks its own
+ * provider and model independently — dictation can run on local Ollama
+ * while transforms hits an OpenRouter frontier model (or vice versa).
+ *
+ * Preserves behavior:
+ *   - new dictation.enabled = (legacy enabled) && (legacy dictationEnabled)
+ *   - new transforms.enabled = (legacy enabled) && (legacy transformsEnabled)
+ *   - shared provider/model fields are copied into BOTH feature blocks so
+ *     users see the same setup they had before, just doubled.
+ *   - llm.presets → llm.dictation.presets
+ *   - llm.transforms (array) → llm.transforms.prompts
+ *
+ * Legacy `llm.transforms` was an array; the new `llm.transforms` is an
+ * object whose `prompts` field holds the array. Delete the legacy key
+ * BEFORE writing any nested `llm.transforms.*` field so electron-store
+ * doesn't try to treat the array as an object.
+ */
+function migrateLlmPerFeatureConfig(write: StoreWrite): void {
+	// Snapshot legacy values up-front — once we start deleting / overwriting
+	// `llm.transforms` (array → object), later reads would return the new shape.
+	const masterOn = store.get("llm.enabled") === true;
+	const dictationOn = store.get("llm.dictationEnabled");
+	const transformsOn = store.get("llm.transformsEnabled");
+	const provider = store.get("llm.provider") as unknown;
+	const model = store.get("llm.model") as unknown;
+	const openrouterModel = store.get("llm.openrouterModel") as unknown;
+	const openrouterFallbackModel = store.get("llm.openrouterFallbackModel") as unknown;
+	const presets = store.get("llm.presets") as unknown;
+	const legacyPrompts = store.get("llm.transforms") as unknown;
+
+	const newDictationEnabled = masterOn && dictationOn !== false;
+	const newTransformsEnabled = masterOn && transformsOn === true;
+	const sharedProvider = provider === "openrouter" ? "openrouter" : "ollama";
+	const sharedModel = typeof model === "string" ? model : "";
+	const sharedOpenrouterModel = typeof openrouterModel === "string" ? openrouterModel : "";
+	const sharedOpenrouterFallback =
+		typeof openrouterFallbackModel === "string" ? openrouterFallbackModel : "";
+	const dictationPresets =
+		Array.isArray(presets) && presets.length > 0 ? presets : [{ key: "neutral" }];
+	const transformsPrompts = Array.isArray(legacyPrompts) ? legacyPrompts : [];
+
+	// Delete legacy keys FIRST so the dot-path writes below can create the
+	// new `llm.dictation` / `llm.transforms` objects without colliding with
+	// the existing array at `llm.transforms`.
+	store.delete("llm.enabled" as never);
+	store.delete("llm.dictationEnabled" as never);
+	store.delete("llm.transformsEnabled" as never);
+	store.delete("llm.provider" as never);
+	store.delete("llm.model" as never);
+	store.delete("llm.openrouterModel" as never);
+	store.delete("llm.openrouterFallbackModel" as never);
+	store.delete("llm.presets" as never);
+	store.delete("llm.transforms" as never);
+	// `llm.timeout` stays at the top level under `llm.*` — it's wired through
+	// the new schema (see settings-schema.ts) so we do NOT delete it here.
+
+	write("llm.dictation.enabled", newDictationEnabled);
+	write("llm.dictation.provider", sharedProvider);
+	write("llm.dictation.model", sharedModel);
+	write("llm.dictation.openrouterModel", sharedOpenrouterModel);
+	write("llm.dictation.openrouterFallbackModel", sharedOpenrouterFallback);
+	write("llm.dictation.presets", dictationPresets);
+	write("llm.transforms.enabled", newTransformsEnabled);
+	write("llm.transforms.provider", sharedProvider);
+	write("llm.transforms.model", sharedModel);
+	write("llm.transforms.openrouterModel", sharedOpenrouterModel);
+	write("llm.transforms.openrouterFallbackModel", sharedOpenrouterFallback);
+	write("llm.transforms.prompts", transformsPrompts);
+}
+
+type StoreRead = <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreValueSchemas[K]>;
 
 /**
  * Pure migration step: given a current schema version and accessors, mutates
@@ -352,7 +470,10 @@ export function applyStoreMigration(
 			migrateMuteToReduction(write);
 		}
 		if (current < 8) {
-			migrateLlmSubFlags(read, write);
+			migrateLlmSubFlags(write);
+		}
+		if (current < 9) {
+			migrateLlmPerFeatureConfig(write);
 		}
 		log("[store] Migration applied: _schemaVersion", current, SCHEMA_VERSION);
 		write("_schemaVersion", SCHEMA_VERSION);
@@ -363,3 +484,42 @@ const currentVersion = getStoreValue("_schemaVersion") ?? 1;
 applyStoreMigration(currentVersion, getStoreValue, (key, value) => {
 	store.set(key, value);
 });
+
+/**
+ * Write a plaintext value to a secret-at-rest field. Encrypts via the
+ * platform keystore before persisting. No-op for non-secret keys (so this
+ * accessor can be used uniformly when persisting a settings patch).
+ */
+export function setStoreSecret(dotPath: string, plaintext: unknown): void {
+	if (typeof plaintext !== "string") {
+		return;
+	}
+	if (isSecretDotPath(dotPath)) {
+		store.set(dotPath, encryptSecret(plaintext));
+	} else {
+		store.set(dotPath, plaintext);
+	}
+}
+
+/**
+ * One-time pass that rewrites any legacy plaintext values at the SECRET_DOT_PATHS
+ * into their encrypted-envelope form. Must run AFTER `app.whenReady()` because
+ * Electron's `safeStorage` is not usable before that on macOS/Linux. Idempotent —
+ * already-encrypted values pass straight through.
+ */
+export function migrateSecretsAtRest(): void {
+	for (const dotPath of SECRET_DOT_PATHS) {
+		const raw = store.get(dotPath);
+		if (typeof raw !== "string" || raw === "") {
+			continue;
+		}
+		if (isEncryptedSecret(raw)) {
+			continue;
+		}
+		const wrapped = encryptSecret(raw);
+		if (wrapped !== raw) {
+			store.set(dotPath, wrapped);
+			console.log(`[store] Encrypted secret at rest: ${dotPath}`);
+		}
+	}
+}

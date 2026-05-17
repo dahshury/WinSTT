@@ -17,20 +17,21 @@ export interface PresetEntry {
 	level?: PresetLevel;
 }
 
-const NEUTRAL_PROMPT = "Fix grammar and punctuation only. Preserve the original tone and style.";
+const NEUTRAL_PROMPT =
+	"Fix grammar, punctuation, and spelling only. Do not reword. Preserve tone, style, and structure.";
 
 const LEVELED_PROMPTS = {
 	concise: {
-		light: "Trim filler words and minor redundancy. Keep the original phrasing and length closely.",
-		medium: "Tighten the prose. Cut redundant phrasing, merge repetitive sentences, drop hedging.",
-		high: "Compress to the minimum word count. Drop every word that isn't load-bearing while preserving all key information.",
+		light: "Tighten wording. Cut filler and redundancy. Preserve every idea, structure, and tone.",
+		medium: "Compress wording. Cut filler, hedging, and repetition. Preserve every idea and tone.",
+		high: "Minimize word count. Strip every non-load-bearing word. Preserve every idea and tone.",
 	},
 	summarize: {
 		light:
-			"Summarize aggressively into note form. Keep only the core action or decision and its key reason. Drop pleasantries, rhetorical questions, hedging, and indecision. Sentence fragments and lowercase are acceptable.",
+			"Shorten by cutting low-priority details. Preserve core meaning, key points, structure, and tone.",
 		medium:
-			'Summarize while preserving the message\'s structure. Keep greetings, questions, and key points intact. Remove hedging ("I think maybe"), filler, and redundancy. Rewrite into clean, complete short sentences with a natural conversational tone.',
-		high: "Summarize into a polished, refined message. Keep all key points and questions, but rewrite freely for clarity and economy. Combine related ideas — e.g., merge an action with its reason — using direct, idiomatic phrasing.",
+			"Shorten substantially. Drop non-essential details, examples, and asides. Preserve every key point and the tone.",
+		high: "Compress to core meaning only. Keep the central message and critical points; cut all supporting detail.",
 	},
 } as const satisfies Record<"concise" | "summarize", Record<PresetLevel, string>>;
 
@@ -38,18 +39,22 @@ const DEFAULT_LEVEL: PresetLevel = "medium";
 
 const PROMPT_RESOLVERS: Record<PresetKey, (level?: PresetLevel) => string> = {
 	neutral: () => NEUTRAL_PROMPT,
-	formal: () => "Convert to professional business English with formal tone.",
-	friendly: () => "Make the text warm, conversational, and approachable.",
-	technical: () => "Use precise technical terminology and formal structure.",
-	casual: () => "Make relaxed and conversational with natural contractions.",
+	formal: () =>
+		"Rewrite in professional business English. Remove contractions, slang, and casual phrasing. Preserve meaning and structure.",
+	friendly: () =>
+		"Rewrite in a warm, conversational tone with approachable wording. Preserve meaning and ideas.",
+	technical: () =>
+		"Rewrite with precise technical terminology and rigorous structure. Replace vague terms with exact ones. Preserve meaning.",
+	casual: () =>
+		"Rewrite in a relaxed, conversational register with natural contractions and casual phrasing. Preserve meaning.",
 	concise: (level) => LEVELED_PROMPTS.concise[level ?? DEFAULT_LEVEL],
 	summarize: (level) => LEVELED_PROMPTS.summarize[level ?? DEFAULT_LEVEL],
 	reorder: () =>
-		"Reorder the sentences for logical flow without rewriting them. Group related ideas; lead with the most important point.",
+		"Reorder sentences for logical flow without rewording them. Lead with the most important point; group related ideas.",
 	restructure: () =>
-		"Restructure the text for clear logical flow. Break long sentences, reorganize paragraphs by topic, and add transitions where needed.",
+		"Reorganize the text into a clearer shape: group by topic, split long sentences, add transitions. Preserve meaning.",
 	rewordForClarity: () =>
-		"Reword unclear or awkward phrases for clarity. Keep the original meaning and tone; change wording only where it improves comprehension.",
+		"Rewrite confusing or awkward phrasing into clearer language. Preserve meaning and tone; change wording only where it aids comprehension.",
 };
 
 export const TONE_GROUP = [
