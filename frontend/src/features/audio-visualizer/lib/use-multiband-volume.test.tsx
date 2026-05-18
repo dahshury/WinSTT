@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { useVisualizerStore } from "../model/visualizer-store";
 import {
 	computeAmplified,
@@ -33,6 +33,81 @@ describe("useMultibandVolume", () => {
 	test("each band starts at 0 (silent baseline)", () => {
 		const { result } = renderHook(() => useMultibandVolume(4));
 		expect(result.current).toEqual([0, 0, 0, 0]);
+	});
+
+	test("rAF loop emits non-zero bands when audio is present", async () => {
+		useVisualizerStore.setState({ audioLevel: 0.6 });
+		const { result, unmount } = renderHook(() => useMultibandVolume(6));
+		// happy-dom shims requestAnimationFrame onto setTimeout; yield a few
+		// macrotasks so the `update` loop runs the audible branch (lines 91-101)
+		// and writes a fresh band array via setVolumes. The audible branch
+		// self-reschedules forever, so we DON'T wrap the wait in act() (which
+		// would never quiesce) — we just poll then unmount to stop the loop.
+		await new Promise((r) => setTimeout(r, 60));
+		expect(result.current).toHaveLength(6);
+		expect(result.current.some((v) => v > 0)).toBe(true);
+		unmount();
+	});
+
+	test("silence after audio reallocates a fresh zero array (non-zero prev branch)", async () => {
+		// First produce a non-zero frame, then drop to silence so the
+		// setVolumes updater's `prev.every(v => v === 0)` is FALSE and it must
+		// return `new Array(n).fill(0)` (the reallocation branch).
+		useVisualizerStore.setState({ audioLevel: 0.6 });
+		const { result, unmount } = renderHook(() => useMultibandVolume(4));
+		await new Promise((r) => setTimeout(r, 60));
+		expect(result.current.some((v) => v > 0)).toBe(true);
+		useVisualizerStore.setState({ audioLevel: 0 });
+		await new Promise((r) => setTimeout(r, 60));
+		expect(result.current).toEqual([0, 0, 0, 0]);
+		unmount();
+	});
+
+	test("silence branch settles to zeros and parks the loop", async () => {
+		// audioLevel below SILENCE_THRESHOLD: the update closure takes the quiet
+		// branch, the setVolumes updater replaces the array with zeros, then on
+		// the second frame `zeroSettled` short-circuits and the loop parks.
+		useVisualizerStore.setState({ audioLevel: 0 });
+		const { result, unmount } = renderHook(() => useMultibandVolume(5));
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 60));
+		});
+		expect(result.current).toEqual([0, 0, 0, 0, 0]);
+		unmount();
+	});
+
+	test("the setVolumes updater keeps the same array when already all-zero", async () => {
+		// Drives the `prev.length === n && prev.every(v => v === 0)` true-branch
+		// (the early `return prev` that avoids reallocating on repeated silence).
+		useVisualizerStore.setState({ audioLevel: 0 });
+		const { result, unmount } = renderHook(() => useMultibandVolume(3));
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 40));
+		});
+		const firstZeroFrame = result.current;
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 40));
+		});
+		// Still all zeros and still length 3 across frames.
+		expect(result.current).toEqual([0, 0, 0]);
+		expect(firstZeroFrame).toEqual([0, 0, 0]);
+		unmount();
+	});
+
+	test("store subscription restarts the parked loop when audio resumes", async () => {
+		// Start silent so the loop parks (rafRef = 0). Then bump audioLevel above
+		// SILENCE_THRESHOLD: the store subscription fires ensureRunning(), which
+		// reschedules the rAF loop and produces non-zero bands.
+		useVisualizerStore.setState({ audioLevel: 0 });
+		const { result, unmount } = renderHook(() => useMultibandVolume(4));
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 60));
+		});
+		expect(result.current).toEqual([0, 0, 0, 0]);
+		useVisualizerStore.setState({ audioLevel: 0.7 });
+		await new Promise((r) => setTimeout(r, 60));
+		expect(result.current.some((v) => v > 0)).toBe(true);
+		unmount();
 	});
 });
 

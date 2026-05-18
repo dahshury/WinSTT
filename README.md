@@ -1,16 +1,42 @@
 # WinSTT
 
-Windows speech-to-text desktop application with optional AI-powered text enhancement. Python backend (WebSocket STT server) + Electron frontend. All processing runs locally — no cloud APIs, no telemetry.
+Windows speech-to-text desktop application with optional AI text enhancement and text-to-speech. A Python backend (WebSocket STT server) paired with an Electron frontend. **All transcription runs locally** — audio never leaves your machine, no usage analytics. Optional LLM cleanup runs locally via Ollama, or via OpenRouter if you opt in. Anonymized crash reports (Sentry) are on by default and can be disabled in settings.
 
-## Prerequisites
+## Features
+
+- **Real-time transcription** — live preview while you speak (fast model) plus an accurate final pass (main model)
+- **30+ STT models** — Whisper, Lite-Whisper, NVIDIA NeMo (Parakeet/Canary), GigaAM, Vosk/Kaldi, T-One — all ONNX, switchable from the UI
+- **Four recording modes** — push-to-talk, toggle, **listen** (passive loopback capture), and **wake word** (Porcupine)
+- **LLM text enhancement** — clean up dictation or run custom hotkey-triggered transforms via local Ollama or OpenRouter
+- **Text-to-speech** — read selected text aloud with the bundled Kokoro-82M ONNX voice model
+- **File transcription** — drop audio files, export plain text or SRT subtitles
+- **Custom dictionary & snippets** — fuzzy-match term correction and trigger-based text expansion
+- **Transcription history dashboard** — local log of every dictation with stats, an activity heatmap, and search
+- **Localized UI** — English, Spanish, French, Chinese, Hindi, Arabic
+- **CPU or GPU** — ships as two installers; GPU build bundles the full CUDA stack and falls back to CPU automatically
+
+## Download (end users)
+
+Each release publishes two NSIS installers on the [GitHub Releases](https://github.com/dahshury/winstt2/releases) page:
+
+| Installer | Size | Use when |
+|-----------|------|----------|
+| `WinSTT-CPU-Setup-<version>.exe` | ~150 MB | No NVIDIA GPU, or you want the smaller download |
+| `WinSTT-GPU-Setup-<version>.exe` | ~2 GB | You have an NVIDIA GPU + recent driver (bundles CUDA; falls back to CPU if unavailable) |
+
+Both wrap the same Electron app and a bundled `stt-server.exe` — no Python or extra setup required for end users. The sections below are for **development** only.
+
+## Prerequisites (development)
 
 | Tool | Install |
 |------|---------|
 | [Git](https://git-scm.com/) | Required to clone the repo and the `onnx-asr` dependency |
 | [uv](https://docs.astral.sh/uv/) | Python package manager — installs Python and server deps |
 | [Bun](https://bun.sh/) | JavaScript runtime — installs frontend deps |
-| NVIDIA GPU + [CUDA 12.4](https://developer.nvidia.com/cuda-toolkit) | Optional but recommended for fast inference |
-| [Ollama](https://ollama.com) | Optional — enables LLM post-processing of transcriptions |
+| NVIDIA GPU + recent driver | Optional — enables CUDA-accelerated inference (`gpu` extra) |
+| [Ollama](https://ollama.com) | Optional — enables local LLM cleanup / custom transforms |
+
+> The transcription stack is **ONNX-only**. There is no PyTorch or faster-whisper dependency. PyTorch is pulled in *only* for the optional `sentence-classifier` extra (Smart Endpoint).
 
 ## Quick Start (One-Click)
 
@@ -41,12 +67,16 @@ git clone https://github.com/istupakov/onnx-asr.git examples/onnx-asr
 
 ### 3. Install server dependencies
 
+Pick a GPU story via the `cpu` or `gpu` extra:
+
 ```bash
 cd server
-uv sync
+uv sync --extra cpu          # CPU-only ONNX Runtime (~small)
+# or
+uv sync --extra gpu          # onnxruntime-gpu + full NVIDIA CUDA wheels (~2 GB)
 ```
 
-This installs Python 3.11 (if missing), CUDA-enabled PyTorch, Whisper, and all other server packages into a local `.venv`.
+Optional extras can be combined: `--extra tts` (Kokoro text-to-speech), `--extra sentence-classifier` (Smart Endpoint, pulls PyTorch).
 
 ### 4. Install frontend dependencies
 
@@ -82,14 +112,15 @@ cd frontend
 bun electron:dev
 ```
 
-The app connects to the server over WebSocket (ports 8011/8012 by default).
+The app connects to the server over dual WebSocket channels (control JSON on 8011, binary audio on 8012 by default).
 
 ## Project Structure
 
 ```
 WinSTT/
-├── server/          Python STT engine (hexagonal architecture)
+├── server/          Python STT + TTS engine (hexagonal architecture)
 ├── frontend/        Electron + Next.js desktop app (FSD architecture)
+│   └── packages/    Internal packages (e.g. model-picker)
 ├── docs/            Fumadocs documentation site
 ├── spec/            OpenAPI spec (shared type contract)
 ├── examples/        Local dependencies (gitignored)
@@ -107,6 +138,19 @@ bun dev
 ```
 
 Opens at http://localhost:3000.
+
+## Packaging (release builds)
+
+WinSTT ships in two flavors per release. Build the server first, then the matching installer:
+
+| Command | Description |
+|---------|-------------|
+| `pwsh server/packaging/build.ps1 -Flavor cpu` | Build the CPU `stt-server.exe` → `frontend/stt-server-dist-cpu/` |
+| `pwsh server/packaging/build.ps1 -Flavor gpu` | Build the GPU `stt-server.exe` → `frontend/stt-server-dist-gpu/` |
+| `bun run electron:build:cpu` | Build the CPU installer |
+| `bun run electron:build:gpu` | Build the GPU installer |
+
+Tagging a release (`git tag v0.X.0 && git push --tags`) runs the CPU + GPU jobs as a matrix and publishes both installers to the same GitHub Release.
 
 ## Useful Commands
 
@@ -130,3 +174,6 @@ Opens at http://localhost:3000.
 | `bun typecheck` | TypeScript check |
 | `bun lint` | Biome linting |
 | `bun test` | Run tests |
+| `bun generate` | Regenerate TS types from OpenAPI spec |
+</content>
+</invoke>

@@ -8,6 +8,7 @@ afterEach(() => {
 
 const SAMPLE: LlmWarmupStatus = {
 	endpoint: "http://localhost:11434",
+	inProgress: false,
 	reachable: true,
 	ollamaInstalled: true,
 	models: [{ model: "gemma3:4b", outcome: "ok" }],

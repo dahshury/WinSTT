@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from src.building_blocks.types import ChunkCallback
+    from src.recorder.domain.ports.wake_word import IWakeWordDetector
 from src.recorder.application.recorder_service import RecorderService
 from src.recorder.domain.config import RecorderConfig
 
@@ -423,11 +424,41 @@ class AudioToTextRecorder:
                     embedding_model=self._config.diarization.embedding_model,
                 )
 
+            # Optional wake-word detector. The bootstrap registry maps every
+            # accepted backend alias (pvp/pvporcupine/oww/openwakeword/...)
+            # to a builder; pick one from the configured backend name and
+            # construct under a try/except so a missing dependency or a
+            # malformed config degrades to "no wake word" instead of
+            # crashing the whole recorder. Pipeline gracefully handles
+            # ``wake_word_detector=None`` by short-circuiting `_process_wake_word`.
+            wake_word_detector: IWakeWordDetector | None = None
+            backend_name = self._config.wake_word.wakeword_backend
+            if backend_name:
+                from src.recorder.bootstrap import WAKE_WORD_BACKENDS
+
+                builder = WAKE_WORD_BACKENDS.get(backend_name)
+                if builder is None:
+                    logger.warning(
+                        "wake_word: unknown backend %r — supported aliases: %s",
+                        backend_name,
+                        sorted(WAKE_WORD_BACKENDS),
+                    )
+                else:
+                    try:
+                        wake_word_detector = builder(self._config)
+                    except Exception:
+                        logger.exception(
+                            "wake_word: failed to build %s detector — recorder will run"
+                            " without wake-word detection (degrades to VAD-onset listening)",
+                            backend_name,
+                        )
+
             self._service = RecorderService(
                 audio_source=audio_source,
                 vad=vad,
                 transcriber=transcriber,
                 realtime_transcriber=realtime_transcriber,
+                wake_word_detector=wake_word_detector,
                 diarizer=diarizer,
                 config=self._config,
                 event_bus=self._event_bus,

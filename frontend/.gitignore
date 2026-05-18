@@ -55,3 +55,5 @@ fsd-violations.json
 # into the app — globals.css is the source of truth.
 .extract-design-system/
 design-system/
+.fsd-ledger/
+.fsd-fixtures-tmp/

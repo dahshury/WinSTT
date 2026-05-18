@@ -74,18 +74,16 @@ export function SearchableSelect({
 	const [decorationWidth, setDecorationWidth] = useState(0);
 	const hasDecoration = Boolean(selected?.badge || selected?.icon);
 	useLayoutEffect(() => {
-		if (!hasDecoration) {
-			setDecorationWidth(0);
-			return;
-		}
-		const node = decorationRef.current;
+		// When there's no decoration the measured width is irrelevant —
+		// `decorationPadding` already short-circuits to 0 via `hasDecoration`,
+		// so we skip the redundant state write and only sync on real nodes.
+		const node = hasDecoration ? decorationRef.current : null;
 		if (!node) {
 			return;
 		}
-		setDecorationWidth(node.offsetWidth);
-		const observer = new ResizeObserver(() => {
-			setDecorationWidth(node.offsetWidth);
-		});
+		const sync = () => setDecorationWidth(node.offsetWidth);
+		sync();
+		const observer = new ResizeObserver(sync);
 		observer.observe(node);
 		return () => {
 			observer.disconnect();

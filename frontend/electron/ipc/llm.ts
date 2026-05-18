@@ -21,6 +21,7 @@ import { buildOllamaApiUrl, normalizeOllamaEndpoint } from "../../src/shared/lib
 import { parseModelSelection } from "../../src/shared/lib/openrouter-model-selection";
 import { dbg } from "../lib/debug-log";
 import { getStoreValue, store } from "../lib/store";
+import { getPostProcessingVocab } from "../lib/text-processing";
 
 const execFileAsync = promisify(execFile);
 const NEWLINE_RE = /\r?\n/;
@@ -52,14 +53,32 @@ const ollamaTagsResponseSchema = z.object({
 	models: z.array(ollamaTagsModelSchema).optional(),
 });
 
-const ollamaChatResponseSchema = z.object({
-	model: z.string(),
-	created_at: z.string(),
-	message: z.object({
-		role: z.string(),
-		content: z.string(),
-	}),
-	done: z.boolean(),
+// `/api/show` returns a verbose model dump; we only care about the
+// capabilities array (`["completion", "tools", "thinking", …]`). Every
+// other field is opaque to us so we keep the schema permissive.
+const ollamaShowResponseSchema = z.object({
+	capabilities: z.array(z.string()).optional(),
+});
+
+// Streaming /api/chat emits one JSON object per chunk. `message.thinking`
+// is present only for reasoning models that have been started with
+// `think: true` (Qwen3, deepseek-r1, …); `message.content` carries the
+// final answer. Either may be empty in any given chunk — Ollama splits
+// reasoning and answer across separate chunks but does not guarantee
+// which one arrives first. The terminal chunk has `done: true`.
+const ollamaChatStreamChunkSchema = z.object({
+	model: z.string().optional(),
+	created_at: z.string().optional(),
+	message: z
+		.object({
+			role: z.string().optional(),
+			content: z.string().optional(),
+			thinking: z.string().optional(),
+		})
+		.optional(),
+	done: z.boolean().optional(),
+	done_reason: z.string().optional(),
+	error: z.string().optional(),
 });
 
 interface OllamaModelDetails {
@@ -71,6 +90,14 @@ interface OllamaModelDetails {
 }
 
 interface OllamaModel {
+	/**
+	 * Capabilities reported by `/api/show` for this model. Mirrors
+	 * Ollama's own capability strings (`thinking`, `tools`, `completion`,
+	 * `vision`, `insert`). Undefined when the catalog wasn't enriched
+	 * (older Ollama, the `/api/show` request failed, or the renderer is
+	 * working with a stale cached list).
+	 */
+	capabilities?: readonly string[];
 	details?: OllamaModelDetails;
 	modifiedAt: string;
 	name: string;
@@ -234,6 +261,70 @@ function withContextPrefix(systemPrompt: string, context: string): string {
 	return `${preamble}${systemPrompt}`;
 }
 
+/**
+ * Prepend the user's dictionary terms and snippet shortcuts to the system
+ * prompt. The dictionary tells the LLM which canonical spellings to snap
+ * mis-transcribed words to; snippets tell it which spoken phrases to expand.
+ * Both lists are folded in here when the dictation LLM is enabled, replacing
+ * the algorithmic post-processor — see relay.ts handleFullSentence flow.
+ */
+function withVocabPrefix(
+	systemPrompt: string,
+	vocab: {
+		dictionary: readonly string[];
+		snippets: readonly { trigger: string; expansion: string }[];
+	}
+): string {
+	const blocks: string[] = [];
+	if (vocab.dictionary.length > 0) {
+		blocks.push(
+			[
+				"The user has the following preferred spellings for names, jargon, and",
+				"technical terms. When the dictated text contains a word that is",
+				"phonetically close to one of these terms (a near-miss spelling, a",
+				"homophone, or a transcription that drops/adds letters), replace it with",
+				"the exact canonical form below. Do NOT introduce these terms into the",
+				"output when they are not actually present in the dictated speech.",
+				"",
+				"<preferred-terms>",
+				...vocab.dictionary.map((t) => `- ${t}`),
+				"</preferred-terms>",
+				"",
+			].join("\n")
+		);
+	}
+	if (vocab.snippets.length > 0) {
+		blocks.push(
+			[
+				"The user has the following snippet shortcuts. When the dictated text",
+				"contains a phrase that matches a trigger (allow minor phonetic /",
+				"spelling variation — e.g. a missing letter, a homophone), replace the",
+				"ENTIRE matched phrase with the corresponding expansion verbatim.",
+				"Preserve any punctuation that immediately surrounds the matched phrase.",
+				"",
+				"<snippets>",
+				...vocab.snippets.map((s) => `- "${s.trigger}" -> ${s.expansion.replaceAll("\n", "\\n")}`),
+				"</snippets>",
+				"",
+			].join("\n")
+		);
+	}
+	if (blocks.length === 0) {
+		return systemPrompt;
+	}
+	return `${blocks.join("\n")}${systemPrompt}`;
+}
+
+/**
+ * Build the dictation system prompt with context + vocab folded in. The
+ * vocab is read from the runtime post-processor cache so settings changes
+ * are picked up live without re-plumbing the call chain.
+ */
+function buildDictationSystemPrompt(presets: readonly PresetEntry[], context: string): string {
+	const vocab = getPostProcessingVocab();
+	return withVocabPrefix(withContextPrefix(buildSystemPrompt(presets), context), vocab);
+}
+
 // Stryker disable next-line ObjectLiteral,StringLiteral: equivalent — emptying
 // the schema definition or the `.describe()` annotation has no effect on parse
 // behaviour for the test fixtures (the `text` field is always present and a
@@ -338,18 +429,404 @@ function parseOllamaTagsOrFail(json: unknown): OllamaScanResult {
 	return { models: mapOllamaTagsModels(parsed.data.models ?? []), reachable: true };
 }
 
-function parseOllamaChatOrFallback(json: unknown, fallback: string): string {
-	const parsed = ollamaChatResponseSchema.safeParse(json);
-	if (!parsed.success) {
-		dbg("llm", "Ollama /api/chat response did not match expected schema:", parsed.error.message);
-		return fallback;
+// ── /api/chat streaming + reasoning broadcast ────────────────────────
+//
+// Reasoning-capable models (Qwen3, deepseek-r1, gpt-oss, …) split their
+// output into `message.thinking` (chain-of-thought) and `message.content`
+// (final answer). Older Ollama versions left `<think>…</think>` inline in
+// `content`; newer versions route it to the dedicated `thinking` field
+// only when the request opts in via `think: true` (see buildOllamaChatBody).
+// We support both shapes here so the same code path works whether the
+// installed Ollama is recent or stale.
+
+const THINK_TAG_RE = /<think>[\s\S]*?<\/think>/gi;
+const THINKING_TAG_RE = /<thinking>[\s\S]*?<\/thinking>/gi;
+const OPEN_THINK_TAG_RE = /<\/?think(?:ing)?>/gi;
+// Partial-JSON extractor for the structured-output `text` field. Matches
+// `"text": "..."` up to the first unescaped closing quote or the end of
+// input (whichever comes first). Used to stream natural-prose chunks to
+// the pill while the model is still emitting JSON characters.
+const PARTIAL_STRUCTURED_TEXT_RE = /"text"\s*:\s*"((?:[^"\\]|\\.)*)/;
+// Match a balanced `\boxed{…}` allowing one level of nested braces (covers
+// the math-output convention used by Qwen-Math / DeepSeek-Math when the
+// model leaks chain-of-thought into `content` instead of `thinking`. The
+// non-greedy character class handles the common one-pair-of-braces case;
+// the optional nested group covers `\boxed{\frac{a}{b}}` and similar. We
+// don't try to fully recursively match nested braces — TypeScript regex
+// can't, and a two-level match covers every real-world case we've seen.
+const BOXED_RE = /\\boxed\{((?:[^{}]|\{[^{}]*\})*)\}/g;
+// Harmony channel markers — gpt-oss family emits these inline when the
+// runtime doesn't strip them server-side. Only the text under the `final`
+// channel is the intended answer; everything in `analysis` is reasoning.
+const HARMONY_FINAL_RE =
+	/<\|channel\|>\s*final\s*<\|message\|>([\s\S]*?)(?:<\|end\|>|<\|return\|>|<\|start\|>|$)/i;
+const HARMONY_ANALYSIS_RE =
+	/<\|channel\|>\s*analysis\s*<\|message\|>([\s\S]*?)(?:<\|end\|>|<\|start\|>|<\|channel\|>)/gi;
+
+interface OllamaChatStreamState {
+	buffer: { value: string };
+	content: string;
+	/**
+	 * Cursor into the structured-output `text` field — characters at or
+	 * before this index have already been broadcast to the pill via
+	 * `LLM_REASONING_DELTA`. Used by `applyChatStreamChunk` to compute
+	 * the new portion to broadcast on every chunk, so the pill streams
+	 * natural prose instead of raw JSON characters.
+	 */
+	contentStreamCursor: number;
+	done: boolean;
+	doneReason?: string;
+	error?: string;
+	thinking: string;
+}
+
+function isLiveBrowserWindowForChat(bw: BrowserWindow): boolean {
+	return !bw.isDestroyed();
+}
+
+// ── Active chat AbortControllers ──────────────────────────────────────
+//
+// `processWithOllama` and `processWithOllamaCustom` register their
+// AbortController here for the duration of the call. When the user
+// switches Ollama models (detected by the warmup store-listener) we
+// abort every active chat so Ollama's per-model serializer releases
+// immediately instead of forcing the new warmup to queue behind a
+// previous (possibly slow / hung) reasoning stream. Without this,
+// switching from a Qwen3 reasoning model that's still emitting tokens
+// will block the next model's warmup until the original stream drains.
+const activeChatControllers = new Set<AbortController>();
+
+function registerChatController(controller: AbortController): void {
+	activeChatControllers.add(controller);
+}
+
+function unregisterChatController(controller: AbortController): void {
+	activeChatControllers.delete(controller);
+}
+
+export function abortActiveOllamaChats(reason: string): void {
+	if (activeChatControllers.size === 0) {
+		return;
 	}
-	const generated = parsed.data.message.content.trim();
-	if (!generated) {
-		dbg("llm", "Empty response from Ollama, using original text");
-		return fallback;
+	dbg("llm", `Aborting ${activeChatControllers.size} active Ollama chat(s): ${reason}`);
+	for (const controller of activeChatControllers) {
+		try {
+			controller.abort(reason);
+		} catch (err) {
+			dbg("llm", "AbortController abort failed:", getErrorMessage(err));
+		}
 	}
-	return generated;
+	activeChatControllers.clear();
+}
+
+function broadcastReasoningDelta(delta: string): void {
+	if (!delta) {
+		return;
+	}
+	const live = BrowserWindow.getAllWindows().filter(isLiveBrowserWindowForChat);
+	for (const bw of live) {
+		bw.webContents.send(IPC.LLM_REASONING_DELTA, { delta });
+	}
+}
+
+function parseChatStreamLine(line: string): z.infer<typeof ollamaChatStreamChunkSchema> | null {
+	try {
+		const json = JSON.parse(line) as unknown;
+		const parsed = ollamaChatStreamChunkSchema.safeParse(json);
+		if (!parsed.success) {
+			dbg("llm", "Ollama /api/chat stream chunk did not match schema:", parsed.error.message);
+			return null;
+		}
+		return parsed.data;
+	} catch (err) {
+		dbg("llm", "Ollama /api/chat stream line was not JSON:", getErrorMessage(err));
+		return null;
+	}
+}
+
+/**
+ * Best-effort progressive decode of the structured-output `text` field
+ * from a (possibly incomplete) JSON content buffer. Returns the
+ * characters that have arrived so far inside the `text` value, with
+ * common JSON escape sequences resolved. When the buffer doesn't yet
+ * contain a recognisable `"text": "...` opening we return null and the
+ * caller treats this chunk's content as raw (no streaming to the pill
+ * until the field opens). Once the field opens we can stream char-by-
+ * char even though the JSON isn't terminated.
+ */
+function extractPartialStructuredText(content: string): string | null {
+	const match = content.match(PARTIAL_STRUCTURED_TEXT_RE);
+	if (!match) {
+		return null;
+	}
+	// Resolve the minimum set of escapes a model will emit through Ollama's
+	// schema-guided JSON output (newline, tab, quote, backslash, unicode).
+	// Anything more exotic falls through to JSON.parse at finalize time.
+	return (match[1] ?? "")
+		.replace(/\\n/g, "\n")
+		.replace(/\\t/g, "\t")
+		.replace(/\\r/g, "\r")
+		.replace(/\\"/g, '"')
+		.replace(/\\\\/g, "\\");
+}
+
+function applyChatStreamChunk(
+	state: OllamaChatStreamState,
+	chunk: z.infer<typeof ollamaChatStreamChunkSchema>
+): void {
+	const message = chunk.message;
+	if (message?.thinking) {
+		state.thinking += message.thinking;
+		broadcastReasoningDelta(message.thinking);
+	}
+	if (message?.content) {
+		state.content += message.content;
+		// Try to stream the natural-prose `text` portion of the JSON to the
+		// pill. We accept partial extractions — once the `text` field opens
+		// every additional character becomes a delta the user can see live.
+		// When Ollama's structured-outputs path isn't in play (older Ollama,
+		// or a model that emits raw text instead of JSON) the partial-extract
+		// returns null and we fall back to broadcasting the raw content so
+		// the pill still streams something useful.
+		const partial = extractPartialStructuredText(state.content);
+		const visible = partial ?? state.content;
+		if (visible.length > state.contentStreamCursor) {
+			const delta = visible.slice(state.contentStreamCursor);
+			state.contentStreamCursor = visible.length;
+			broadcastReasoningDelta(delta);
+		}
+	}
+	if (chunk.error) {
+		state.error = chunk.error;
+	}
+	if (chunk.done) {
+		state.done = true;
+		if (chunk.done_reason) {
+			state.doneReason = chunk.done_reason;
+		}
+	}
+}
+
+function consumeChatStreamLines(state: OllamaChatStreamState): void {
+	for (const line of iterateNdjsonChunks(state.buffer)) {
+		const chunk = parseChatStreamLine(line);
+		if (chunk) {
+			applyChatStreamChunk(state, chunk);
+		}
+	}
+}
+
+async function drainChatReaderInto(
+	reader: ReadableStreamDefaultReader<Uint8Array>,
+	decoder: TextDecoder,
+	state: OllamaChatStreamState
+): Promise<void> {
+	while (true) {
+		// react-doctor-disable-next-line async-await-in-loop
+		const { value, done } = await reader.read();
+		if (done) {
+			return;
+		}
+		state.buffer.value += decoder.decode(value, { stream: true });
+		consumeChatStreamLines(state);
+	}
+}
+
+function flushChatStreamBuffer(state: OllamaChatStreamState, decoder: TextDecoder): void {
+	state.buffer.value += decoder.decode();
+	if (state.buffer.value.trim()) {
+		consumeChatStreamLines(state);
+	}
+}
+
+async function readOllamaChatStream(
+	body: ReadableStream<Uint8Array>
+): Promise<OllamaChatStreamState> {
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	const state: OllamaChatStreamState = {
+		buffer: { value: "" },
+		content: "",
+		contentStreamCursor: 0,
+		thinking: "",
+		done: false,
+	};
+	try {
+		await drainChatReaderInto(reader, decoder, state);
+		flushChatStreamBuffer(state, decoder);
+	} finally {
+		reader.releaseLock();
+	}
+	return state;
+}
+
+/**
+ * Split inline `<think>…</think>` from an Ollama chat content string,
+ * broadcasting any reasoning found inside the tags. This is the legacy
+ * shape — newer Ollama puts the same text into `message.thinking` instead
+ * and never emits the tags inline. We still scan for them so the feature
+ * works on older Ollama installs without forcing an upgrade.
+ */
+function splitInlineThinking(content: string): { thinking: string; answer: string } {
+	let thinking = "";
+	let answer = content.replace(THINK_TAG_RE, (match) => {
+		thinking += match.replace(OPEN_THINK_TAG_RE, "");
+		return "";
+	});
+	answer = answer.replace(THINKING_TAG_RE, (match) => {
+		thinking += match.replace(OPEN_THINK_TAG_RE, "");
+		return "";
+	});
+	return { thinking, answer: answer.trim() };
+}
+
+/**
+ * Pull the LAST `\boxed{…}` payload out of a chain-of-thought-leakage
+ * content string. Returns `null` when no boxed answer is found.
+ *
+ * Why: math-reasoning Qwen variants (Qwen-Math, DeepSeek-Math, some
+ * Qwen3 thinking checkpoints) emit their entire chain-of-thought into
+ * `message.content` and mark the final answer with `\boxed{…}`. Ollama
+ * has no parser for that convention, so we do it here. Everything
+ * preceding the boxed answer is treated as reasoning — the user has
+ * already seen most of it in the pill via `message.thinking`, but
+ * surfacing the rest as a reasoning delta closes the gap.
+ */
+function extractBoxedAnswer(content: string): { thinking: string; answer: string } | null {
+	const matches = Array.from(content.matchAll(BOXED_RE));
+	if (matches.length === 0) {
+		return null;
+	}
+	const last = matches.at(-1);
+	if (!last || last.index === undefined) {
+		return null;
+	}
+	const answer = (last[1] ?? "").trim();
+	if (!answer) {
+		return null;
+	}
+	const before = content.slice(0, last.index).trim();
+	const after = content.slice(last.index + last[0].length).trim();
+	// Anything after the boxed answer (typical Qwen-Math epilogue:
+	// "This has N words…") is also chain-of-thought — fold it into the
+	// reasoning trace rather than emitting it as part of the answer.
+	const thinking = [before, after].filter(Boolean).join("\n\n");
+	return { thinking, answer };
+}
+
+/**
+ * Pull the `final` channel out of an OpenAI-harmony stream that leaked
+ * into `message.content`. Same situation as `\boxed{}` — when Ollama
+ * doesn't recognize a gpt-oss-family model it falls through to raw
+ * passthrough and we get `<|channel|>analysis<|message|>…<|channel|>
+ * final<|message|>…<|end|>` in `content`. Returns `null` when no
+ * harmony delimiters are present.
+ */
+function extractHarmonyAnswer(content: string): { thinking: string; answer: string } | null {
+	const finalMatch = content.match(HARMONY_FINAL_RE);
+	if (!finalMatch) {
+		return null;
+	}
+	const answer = (finalMatch[1] ?? "").trim();
+	if (!answer) {
+		return null;
+	}
+	const analysisChunks: string[] = [];
+	for (const m of content.matchAll(HARMONY_ANALYSIS_RE)) {
+		const text = (m[1] ?? "").trim();
+		if (text) {
+			analysisChunks.push(text);
+		}
+	}
+	return { thinking: analysisChunks.join("\n\n"), answer };
+}
+
+/**
+ * Try to parse the chat content as the structured-output JSON envelope
+ * `{ "text": "..." }`. Returns the inner text on success, `null` when
+ * the content isn't JSON (model didn't honor `format`) or doesn't have
+ * the expected shape — in which case we fall through to the legacy
+ * extractors below.
+ */
+function extractStructuredFinalText(content: string): string | null {
+	const trimmed = content.trim();
+	if (!trimmed.startsWith("{")) {
+		return null;
+	}
+	try {
+		const parsed = JSON.parse(trimmed) as unknown;
+		if (
+			parsed &&
+			typeof parsed === "object" &&
+			"text" in parsed &&
+			typeof (parsed as { text: unknown }).text === "string"
+		) {
+			return (parsed as { text: string }).text;
+		}
+	} catch {
+		// Truncated or malformed JSON — fall through.
+	}
+	return null;
+}
+
+function finalizeChatAnswer(state: OllamaChatStreamState, fallback: string): string {
+	// Preferred path: Ollama's structured-outputs guidance forced the model
+	// to emit `{ "text": "..." }`. Parsing the envelope is the cheapest,
+	// most reliable extraction — no regex, no heuristics, no per-model
+	// special-casing required.
+	const structured = extractStructuredFinalText(state.content);
+	if (structured !== null) {
+		const trimmedStructured = structured.trim();
+		if (trimmedStructured) {
+			return trimmedStructured;
+		}
+	}
+	const { thinking: inlineThinking, answer } = splitInlineThinking(state.content);
+	if (inlineThinking) {
+		broadcastReasoningDelta(inlineThinking);
+	}
+	// Chain-of-thought leakage paths: Ollama recognizes the model as
+	// supporting thinking and we set `think: true`, but the runtime parser
+	// for this specific checkpoint doesn't strip the reasoning — it all
+	// lands in `content`. Apply known final-answer conventions here so
+	// Qwen-Math / DeepSeek-Math / unrecognized gpt-oss outputs paste the
+	// final answer instead of the whole reasoning trace.
+	const harmony = extractHarmonyAnswer(answer);
+	if (harmony) {
+		if (harmony.thinking) {
+			broadcastReasoningDelta(harmony.thinking);
+		}
+		return harmony.answer;
+	}
+	const boxed = extractBoxedAnswer(answer);
+	if (boxed) {
+		if (boxed.thinking) {
+			broadcastReasoningDelta(boxed.thinking);
+		}
+		return boxed.answer;
+	}
+	if (answer) {
+		if (state.doneReason && state.doneReason !== "stop") {
+			dbg("llm", `Ollama chat answer ok but done_reason=${state.doneReason} (possible truncation)`);
+		}
+		return answer;
+	}
+	// Most common cause of an empty-content terminal state for reasoning
+	// models: the chain-of-thought exhausted num_predict before the model
+	// emitted a `content` token. done_reason === "length" confirms it; the
+	// fix is to raise num_predict in buildOllamaChatBody.
+	if (state.doneReason === "length") {
+		dbg(
+			"llm",
+			`Ollama chat exhausted num_predict before producing content (thinking=${state.thinking.length} chars). Raise the num_predict floor.`
+		);
+	} else {
+		dbg(
+			"llm",
+			`Empty content from Ollama chat stream (done_reason=${state.doneReason ?? "unknown"}), using original text`
+		);
+	}
+	return fallback;
 }
 
 async function assertOllamaResponseOk(
@@ -376,20 +853,94 @@ async function assertOllamaResponseOk(
 // successful call resets the timer.
 const OLLAMA_KEEP_ALIVE = "30m";
 
+/**
+ * Effort level for thinking-capable Ollama models. Maps directly onto
+ * Ollama's `ThinkValue` (boolean or string). `"off"` disables thinking
+ * entirely (`think: false`); the three string levels are passed through
+ * verbatim and respected by reasoning models that honor them. Older
+ * thinking models without an effort knob treat any truthy `think` as
+ * "on" and ignore the level.
+ */
+export type ThinkingEffort = "off" | "low" | "medium" | "high";
+
+function thinkingFlagFor(effort: ThinkingEffort, supportsThinking: boolean): unknown {
+	if (!supportsThinking || effort === "off") {
+		return false;
+	}
+	// Ollama accepts a plain boolean for "default effort" or a string
+	// for explicit budget level. Sending the string for "high" lets
+	// reasoning models like gpt-oss honor the requested depth.
+	return effort;
+}
+
+/**
+ * Structured-output schema enforced via Ollama's `format` field. The model
+ * is guided AT THE TOKEN LEVEL to emit `{"text": "<answer>"}` JSON — no
+ * reasoning prose, no preambles, no `\boxed{}` math-mode artifacts. This
+ * is the same constraint we already apply to OpenRouter via Vercel AI
+ * SDK's `generateObject`, ported to Ollama's native structured-outputs
+ * API (Ollama ≥ 0.5; the field is a JSON Schema object per their docs).
+ *
+ * Even for reasoning models, the schema only constrains `message.content` —
+ * `message.thinking` remains free-form, so the model can still reason
+ * before committing to its answer. The schema just prevents the final
+ * content channel from leaking that reasoning.
+ */
+const OLLAMA_STRUCTURED_OUTPUT_SCHEMA = {
+	type: "object",
+	properties: {
+		text: {
+			type: "string",
+			description:
+				"The transformed text only. No reasoning, no steps, no preambles, no commentary.",
+		},
+	},
+	required: ["text"],
+	additionalProperties: false,
+} as const;
+
 function buildOllamaChatBody(
 	model: string,
 	messages: OllamaChatMessage[],
-	textLength: number
+	textLength: number,
+	options?: { supportsThinking?: boolean; effort?: ThinkingEffort }
 ): string {
+	const supportsThinking = options?.supportsThinking ?? true;
+	const effort = options?.effort ?? "medium";
 	return JSON.stringify({
 		model,
 		messages,
-		stream: false,
+		// Stream so reasoning models (Qwen3, deepseek-r1, gpt-oss, …) can
+		// surface `message.thinking` chunks to the pill as they're produced.
+		// Non-reasoning models stream their `message.content` the same way;
+		// the consumer reassembles it server-side before returning to relay.
+		stream: true,
+		// Opt into separated thinking content per the per-model capability
+		// reported by `/api/show`. Sending `think: true` to a model that
+		// doesn't advertise the capability is an HTTP 400 in modern Ollama,
+		// so we gate this carefully. The `effort` string is honored by
+		// reasoning models that support tiered budgets; older thinking
+		// models treat any truthy value as a plain "on".
+		think: thinkingFlagFor(effort, supportsThinking),
+		// Structured outputs — the JSON schema is enforced at the token
+		// generation level, so the model literally cannot emit anything
+		// outside the schema. This replaces the prompt-engineering arms
+		// race for "stop emitting chain-of-thought into content."
+		format: OLLAMA_STRUCTURED_OUTPUT_SCHEMA,
 		keep_alive: OLLAMA_KEEP_ALIVE,
 		options: {
 			temperature: 0.3,
 			top_p: 0.9,
-			num_predict: Math.max(textLength * 2, 100),
+			// Headroom for thinking models: Qwen3 / deepseek-r1 / gpt-oss
+			// regularly burn 2-4k tokens on the reasoning trace before
+			// emitting a single `content` token. A 512-token floor lets
+			// thinking exhaust the budget (`done_reason: "length"`) before
+			// the final answer is produced — observable as "the pill shows
+			// streaming reasoning then pastes the input verbatim." An 8k
+			// floor covers every reasoning model we've tested; non-reasoning
+			// models stop emitting at their natural endpoint long before
+			// the cap so the larger budget is free.
+			num_predict: Math.max(textLength * 4, 8192),
 		},
 	});
 }
@@ -605,7 +1156,7 @@ async function mapWithConcurrency<T, R>(
  */
 const OPENROUTER_ENRICHMENT_CONCURRENCY = 10;
 
-async function enrichOpenRouterModelsWithEndpoints(
+function enrichOpenRouterModelsWithEndpoints(
 	models: readonly OpenRouterScanModel[],
 	apiKey: string
 ): Promise<OpenRouterScanModel[]> {
@@ -639,6 +1190,90 @@ function parseOpenRouterModelsOrFail(json: unknown): OpenRouterScanResult {
 	};
 }
 
+// ── Ollama: /api/show capability fetcher ──────────────────────────────
+//
+// Ollama's `/api/show` reports a `capabilities` array per model:
+//   ["completion", "tools", "thinking", "vision", "insert"]
+// We use it for two things:
+//   1. Conditionally setting `think: true` on chat bodies — sending it
+//      to a model Ollama doesn't recognize as thinking-capable triggers
+//      an HTTP 400 ("thinking is not supported by this model").
+//   2. Surfacing the `thinking` flag to the renderer's model picker so
+//      the user gets a "reasoning" badge next to qualifying models.
+//
+// The endpoint is per-model so we cache aggressively — capabilities only
+// change when the user pulls a different blob for the same tag, which
+// is rare. A 5-minute soft TTL is plenty.
+
+interface CachedCapabilities {
+	at: number;
+	caps: readonly string[];
+}
+
+const CAPABILITIES_TTL_MS = 5 * 60 * 1000;
+const capabilitiesCache = new Map<string, CachedCapabilities>();
+
+function capabilitiesCacheKey(endpoint: string, model: string): string {
+	return `${endpoint}::${model}`;
+}
+
+function getCachedCapabilities(endpoint: string, model: string): readonly string[] | null {
+	const cached = capabilitiesCache.get(capabilitiesCacheKey(endpoint, model));
+	if (!cached) {
+		return null;
+	}
+	if (Date.now() - cached.at > CAPABILITIES_TTL_MS) {
+		return null;
+	}
+	return cached.caps;
+}
+
+async function fetchOllamaCapabilities(
+	endpoint: string,
+	model: string
+): Promise<readonly string[]> {
+	const cached = getCachedCapabilities(endpoint, model);
+	if (cached) {
+		return cached;
+	}
+	const normalizedEndpoint = normalizeOllamaEndpoint(endpoint);
+	if (!normalizedEndpoint) {
+		return [];
+	}
+	try {
+		const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/show"), {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model }),
+			signal: AbortSignal.timeout(5000),
+		});
+		if (!response.ok) {
+			dbg("llm", `Ollama /api/show ${model} → HTTP ${response.status}`);
+			return [];
+		}
+		const json: unknown = await response.json();
+		const parsed = ollamaShowResponseSchema.safeParse(json);
+		if (!parsed.success) {
+			dbg("llm", `Ollama /api/show ${model} schema mismatch`);
+			return [];
+		}
+		const caps = Object.freeze(parsed.data.capabilities ?? []);
+		capabilitiesCache.set(capabilitiesCacheKey(endpoint, model), {
+			at: Date.now(),
+			caps,
+		});
+		return caps;
+	} catch (err) {
+		dbg("llm", `Ollama /api/show ${model} failed:`, getErrorMessage(err));
+		return [];
+	}
+}
+
+async function modelSupportsThinking(endpoint: string, model: string): Promise<boolean> {
+	const caps = await fetchOllamaCapabilities(endpoint, model);
+	return caps.includes("thinking");
+}
+
 // ── Ollama: scan + process ────────────────────────────────────────────
 
 export async function scanOllamaModels(endpoint: string): Promise<OllamaScanResult> {
@@ -664,7 +1299,19 @@ export async function scanOllamaModels(endpoint: string): Promise<OllamaScanResu
 	}
 
 	const json: unknown = await response.json();
-	return parseOllamaTagsOrFail(json);
+	const result = parseOllamaTagsOrFail(json);
+	// Enrich each model with its `/api/show` capability set so the renderer
+	// can render reasoning badges and the chat-body builder can suppress
+	// `think: true` for non-thinking models. Concurrent — each /api/show
+	// is a small, fast call that the local Ollama answers from its
+	// metadata cache. Failures fall back to undefined capabilities.
+	const enriched = await Promise.all(
+		result.models.map(async (m) => {
+			const caps = await fetchOllamaCapabilities(normalizedEndpoint, m.name);
+			return caps.length > 0 ? { ...m, capabilities: caps } : m;
+		})
+	);
+	return { ...result, models: enriched };
 }
 
 async function processWithOllama(
@@ -678,7 +1325,7 @@ async function processWithOllama(
 	assertNonEmptyString(model, "Ollama model is required", "model");
 	const normalizedEndpoint = assertValidEndpoint(endpoint);
 
-	const systemPrompt = withContextPrefix(buildSystemPrompt(presets), context);
+	const systemPrompt = buildDictationSystemPrompt(presets, context);
 	const userPrompt = `Transform the following text according to the style guide above. Return ONLY the transformed text with no additional commentary, explanations, or JSON formatting. Just the plain transformed text.\n\nText to transform:\n${text}`;
 
 	const messages: OllamaChatMessage[] = [
@@ -690,21 +1337,43 @@ async function processWithOllama(
 	// 30s on cold start, and a silent abort + original-text paste is
 	// misleading. The pill stays visible until the model completes. The
 	// `_timeout` parameter is preserved for wiring/settings compatibility
-	// but ignored at the network layer.
-	const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/chat"), {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: buildOllamaChatBody(model, messages, text.length),
-	});
+	// but ignored at the network layer. Cancellation IS supported via
+	// `abortActiveOllamaChats()` so a model swap can release Ollama's
+	// per-model serializer instead of queueing behind a slow stream.
+	const controller = new AbortController();
+	registerChatController(controller);
+	const supportsThinking = await modelSupportsThinking(normalizedEndpoint, model);
+	const effort =
+		(getStoreValue("llm.dictation.thinkingEffort") as ThinkingEffort | undefined) ?? "medium";
+	try {
+		const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/chat"), {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: buildOllamaChatBody(model, messages, text.length, { supportsThinking, effort }),
+			signal: controller.signal,
+		});
 
-	await assertOllamaResponseOk(response, {
-		endpoint: normalizedEndpoint,
-		model,
-		presets: describePresets(presets),
-	});
+		await assertOllamaResponseOk(response, {
+			endpoint: normalizedEndpoint,
+			model,
+			presets: describePresets(presets),
+		});
 
-	const chatJson: unknown = await response.json();
-	return parseOllamaChatOrFallback(chatJson, text);
+		if (!response.body) {
+			dbg("llm", "Ollama chat response had no body; falling back to original text");
+			return text;
+		}
+		const state = await readOllamaChatStream(response.body);
+		return finalizeChatAnswer(state, text);
+	} catch (err) {
+		if (controller.signal.aborted) {
+			dbg("llm", `Ollama chat aborted: ${String(controller.signal.reason ?? "")}`);
+			return text;
+		}
+		throw err;
+	} finally {
+		unregisterChatController(controller);
+	}
 }
 
 // ── OpenRouter: scan + process via AI SDK ─────────────────────────────
@@ -804,7 +1473,7 @@ async function processWithOpenRouter(
 	const { modelId, providerSlug } = parseModelSelection(modelSelection);
 	const effectiveModelId = resolveOpenRouterModelId(modelId);
 
-	const systemPrompt = withContextPrefix(buildSystemPrompt(presets), context);
+	const systemPrompt = buildDictationSystemPrompt(presets, context);
 	const userPrompt = `Transform the following text according to the style guide above. ${STRUCTURED_OUTPUT_DESCRIPTION}\n\nText to transform:\n${text}`;
 
 	const openrouter = createOpenRouter({
@@ -1019,20 +1688,41 @@ async function processWithOllamaCustom(
 
 	// Client-side timeout DISABLED (see processWithOllama for rationale).
 	// `_timeout` is wired through for settings/test compatibility.
-	const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/chat"), {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: buildOllamaChatBody(model, messages, text.length),
-	});
+	// Cancellation IS supported — see processWithOllama for context.
+	const controller = new AbortController();
+	registerChatController(controller);
+	const supportsThinking = await modelSupportsThinking(normalizedEndpoint, model);
+	const effort =
+		(getStoreValue("llm.transforms.thinkingEffort") as ThinkingEffort | undefined) ?? "medium";
+	try {
+		const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/chat"), {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: buildOllamaChatBody(model, messages, text.length, { supportsThinking, effort }),
+			signal: controller.signal,
+		});
 
-	await assertOllamaResponseOk(response, {
-		endpoint: normalizedEndpoint,
-		model,
-		presets: "custom",
-	});
+		await assertOllamaResponseOk(response, {
+			endpoint: normalizedEndpoint,
+			model,
+			presets: "custom",
+		});
 
-	const chatJson: unknown = await response.json();
-	return parseOllamaChatOrFallback(chatJson, text);
+		if (!response.body) {
+			dbg("llm", "Ollama custom chat response had no body; falling back to original text");
+			return text;
+		}
+		const state = await readOllamaChatStream(response.body);
+		return finalizeChatAnswer(state, text);
+	} catch (err) {
+		if (controller.signal.aborted) {
+			dbg("llm", `Ollama custom chat aborted: ${String(controller.signal.reason ?? "")}`);
+			return text;
+		}
+		throw err;
+	} finally {
+		unregisterChatController(controller);
+	}
 }
 
 async function processWithOpenRouterCustom(
@@ -1894,8 +2584,20 @@ async function ensureOllamaReachable(endpoint: string): Promise<boolean> {
  * cases (model isn't installed → pull it; model load blew up → reinstall
  * or pick a different one) from generic transport failures so logs are
  * useful when something goes wrong.
+ *
+ * `"loading"` is a transient marker broadcast at the START of a warmup
+ * pass so the renderer's swap-tracker UI can stay visible until a
+ * terminal outcome arrives (a real swap on a single GPU can legitimately
+ * take 60+ seconds for big reasoning models, exceeding the renderer's
+ * safety timeout if it only sees a single end-of-pass broadcast).
  */
-type WarmupOutcome = "ok" | "unreachable" | "model-not-found" | "load-failed" | "skipped";
+type WarmupOutcome =
+	| "ok"
+	| "unreachable"
+	| "model-not-found"
+	| "load-failed"
+	| "skipped"
+	| "loading";
 
 /**
  * Ollama returns HTTP 404 with a body like:
@@ -1997,8 +2699,17 @@ function collectEnabledOllamaModels(): string[] {
 // The renderer uses this to drive UI banners — "Ollama not running",
 // "Model not installed", "Model failed to load" — so the user has
 // concrete information instead of a silently-stuck dictation toggle.
+//
+// `inProgress` is true on the leading broadcast (when warmup work
+// begins for a non-empty model set). It flips false on the trailing
+// broadcast that carries terminal outcomes. The renderer's swap
+// tracker keys its spinner off this flag rather than waiting for a
+// model to appear in `models[]` so slow loads (reasoning models on a
+// single GPU evicting a previously-pinned model) don't pre-empt the
+// 60-second safety timeout.
 interface WarmupStatusPayload {
 	endpoint: string;
+	inProgress: boolean;
 	models: WarmupModelResult[];
 	ollamaInstalled: boolean;
 	// `null` when no Ollama-backed feature is enabled (no work to do).
@@ -2026,14 +2737,55 @@ function getLastWarmupStatus(): WarmupStatusPayload | null {
 	return lastWarmupStatus;
 }
 
+// Models warmed on the previous pass. We diff this against the new
+// enabled set to find models that should be unloaded — sending a
+// `keep_alive: 0` POST to Ollama immediately frees their VRAM instead
+// of waiting for the 30 m keep-alive lease to expire on its own. Critical
+// for swap UX on single-GPU setups: without explicit eviction, swapping
+// from a 14B reasoning model to a 4B chat model forces Ollama to
+// serialize the new load behind the old model's keep-alive, blowing
+// past the renderer's 60-second safety timeout.
+let lastWarmedModels = new Set<string>();
+
+async function unloadOllamaModel(endpoint: string, model: string): Promise<void> {
+	const normalizedEndpoint = normalizeOllamaEndpoint(endpoint);
+	if (!normalizedEndpoint) {
+		return;
+	}
+	try {
+		// Ollama interprets `keep_alive: 0` as "evict immediately" — the
+		// model is unloaded the moment this request completes. We don't
+		// need to wait for a real response, but await so we can log
+		// failures. AbortSignal caps the wait at 5s in case Ollama is
+		// hung; eviction is best-effort either way.
+		await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/generate"), {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model, prompt: "", keep_alive: 0, stream: false }),
+			signal: AbortSignal.timeout(5000),
+		});
+		dbg("llm", `Ollama evict OK: ${model}`);
+	} catch (err) {
+		dbg("llm", `Ollama evict failed for ${model}:`, getErrorMessage(err));
+	}
+}
+
 async function warmupEnabledModels(): Promise<void> {
 	const models = collectEnabledOllamaModels();
 	const endpoint = getStoreValue("llm.endpoint");
+	// Abort any in-flight chat from a previous (potentially different)
+	// model so the new warmup doesn't queue behind a slow reasoning
+	// stream on Ollama's per-model serializer.
+	abortActiveOllamaChats("model-set changed");
 	if (models.length === 0) {
-		// Nothing to warm — but still publish so the renderer can clear
-		// any stale banners when the user disables every Ollama feature.
+		// Evict whatever we previously warmed — the user disabled every
+		// Ollama-backed feature; don't leave VRAM pinned.
+		const toEvict = Array.from(lastWarmedModels);
+		lastWarmedModels = new Set();
+		await Promise.all(toEvict.map((m) => unloadOllamaModel(endpoint, m)));
 		broadcastWarmupStatus({
 			endpoint,
+			inProgress: false,
 			reachable: null,
 			ollamaInstalled: false,
 			models: [],
@@ -2049,6 +2801,7 @@ async function warmupEnabledModels(): Promise<void> {
 	if (!reachable) {
 		broadcastWarmupStatus({
 			endpoint,
+			inProgress: false,
 			reachable: false,
 			ollamaInstalled: detected.installed === true,
 			// Mark every enabled model as unreachable so the UI can show
@@ -2058,9 +2811,29 @@ async function warmupEnabledModels(): Promise<void> {
 		});
 		return;
 	}
-	const results = await Promise.all(models.map((m) => warmupOllamaModel(endpoint, m)));
+	// Unload stale models (previously warmed but no longer enabled)
+	// in parallel with the leading in-progress broadcast so the new
+	// warmup gets a fresh VRAM slate without forcing the renderer to
+	// wait for eviction before showing progress.
+	const toEvict = Array.from(lastWarmedModels).filter((m) => !models.includes(m));
+	const evictionPromise = Promise.all(toEvict.map((m) => unloadOllamaModel(endpoint, m)));
+	// Leading broadcast — renderer's swap tracker treats "loading"
+	// outcomes as "still working, keep spinner up" so a slow load no
+	// longer trips the safety timeout.
 	broadcastWarmupStatus({
 		endpoint,
+		inProgress: true,
+		reachable: true,
+		ollamaInstalled: detected.installed === true,
+		models: models.map((m) => ({ model: m, outcome: "loading" as const })),
+		timestamp: Date.now(),
+	});
+	await evictionPromise;
+	const results = await Promise.all(models.map((m) => warmupOllamaModel(endpoint, m)));
+	lastWarmedModels = new Set(results.filter((r) => r.outcome === "ok").map((r) => r.model));
+	broadcastWarmupStatus({
+		endpoint,
+		inProgress: false,
 		reachable: true,
 		ollamaInstalled: detected.installed === true,
 		models: results,
@@ -2175,7 +2948,16 @@ export const __llm_test_helpers__ = {
 	assertValidEndpoint,
 	describePresets,
 	parseOllamaTagsOrFail,
-	parseOllamaChatOrFallback,
+	parseChatStreamLine,
+	applyChatStreamChunk,
+	consumeChatStreamLines,
+	readOllamaChatStream,
+	splitInlineThinking,
+	extractBoxedAnswer,
+	extractHarmonyAnswer,
+	extractPartialStructuredText,
+	extractStructuredFinalText,
+	finalizeChatAnswer,
 	parseOpenRouterModelsOrFail,
 	enrichOpenRouterModel,
 	buildAuthHeaders,

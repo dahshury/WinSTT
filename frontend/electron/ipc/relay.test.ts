@@ -71,6 +71,17 @@ mock.module("../lib/store", () => {
 			storeKeyAccesses.push(key);
 			return storeValues[key];
 		},
+		// Keep getStoreRaw coherent with getStoreValue/store.get/store.set —
+		// all four must read/write the same `storeValues` map so a test can
+		// seed a value and have reconcilePersistedModel see it.
+		getStoreRaw: (key: string) => {
+			storeKeyAccesses.push(key);
+			const value = storeValues[key];
+			if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+				return value;
+			}
+			return;
+		},
 		store: {
 			...base.store,
 			get: (k: string) => {
@@ -332,8 +343,11 @@ describe("tryLlmProcess and maybeRunLlm", () => {
 		storeValues["llm.endpoint"] = "http://localhost:1";
 		storeValues["llm.dictation.model"] = "mistral";
 		const result = await helpers.tryLlmProcess("hello world", "");
-		// Either it returns the original text (error caught) or a processed version
-		expect(typeof result).toBe("string");
+		// LLM call against a closed port fails → tryLlmProcess returns
+		// { ok: false, text }. The new return type carries the soft-fail flag
+		// so the relay can fall back to the algorithmic post-processor.
+		expect(typeof result.text).toBe("string");
+		expect(result.ok).toBe(false);
 	});
 
 	test("maybeRunLlm calls tryLlmProcess when LLM is configured", async () => {
@@ -344,9 +358,10 @@ describe("tryLlmProcess and maybeRunLlm", () => {
 		storeValues["llm.endpoint"] = "http://localhost:1";
 		storeValues["llm.dictation.presets"] = [{ key: "neutral" }];
 		// When LLM is configured, maybeRunLlm delegates to tryLlmProcess which
-		// catches the connection error and returns the original text.
+		// catches the connection error and returns { ok: false, text }.
 		const result = await helpers.maybeRunLlm("test input", "");
-		expect(typeof result).toBe("string");
+		expect(typeof result.text).toBe("string");
+		expect(result.ok).toBe(false);
 	});
 });
 
@@ -1539,14 +1554,16 @@ describe("maybeRunLlm short-circuits when LLM disabled (kills L49 conditional/bo
 		resetState();
 		const sentinel = "UNIQUE_SENTINEL_PASSTHROUGH_42";
 		const result = await helpers.maybeRunLlm(sentinel, "");
-		expect(result).toBe(sentinel);
+		expect(result.ok).toBe(false);
+		expect(result.text).toBe(sentinel);
 	});
 
 	test("returns input text when LLM disabled even if model is set", async () => {
 		resetState();
 		storeValues["llm.dictation.model"] = "mistral";
 		const result = await helpers.maybeRunLlm("hello world", "");
-		expect(result).toBe("hello world");
+		expect(result.ok).toBe(false);
+		expect(result.text).toBe("hello world");
 	});
 
 	test("does NOT invoke processText when LLM is disabled (no llm.dictation.presets store access)", async () => {
@@ -2271,5 +2288,39 @@ describe("setupRelay history capture flow exercises computeRecordingDurationMs +
 		cleanup();
 		const sawHistory = win.sent.some((s) => s.channel === "history:added");
 		expect(sawHistory).toBe(true);
+	});
+});
+
+describe("reconcilePersistedModel — persists the server's actually-loaded model", () => {
+	const { reconcilePersistedModel } = helpers;
+
+	test("writes runtime model to electron-store when it differs from the persisted value", () => {
+		// User picked a model that the server couldn't load; it fell back to
+		// tiny. electron-store still has the broken pick, so --model would
+		// re-request it on every boot unless we correct it here.
+		storeValues["model.model"] = "nemo-canary-1b-v2";
+		reconcilePersistedModel({ model: "tiny" });
+		expect(storeValues["model.model"]).toBe("tiny");
+	});
+
+	test("no-op when the persisted value already matches the loaded model", () => {
+		storeValues["model.model"] = "tiny";
+		reconcilePersistedModel({ model: "tiny" });
+		expect(storeValues["model.model"]).toBe("tiny");
+	});
+
+	test("ignores a non-record runtime_info payload", () => {
+		storeValues["model.model"] = "large-v2";
+		reconcilePersistedModel(null);
+		reconcilePersistedModel("tiny");
+		expect(storeValues["model.model"]).toBe("large-v2");
+	});
+
+	test("ignores a missing / empty / non-string model field", () => {
+		storeValues["model.model"] = "large-v2";
+		reconcilePersistedModel({ is_gpu: true });
+		reconcilePersistedModel({ model: "" });
+		reconcilePersistedModel({ model: 42 });
+		expect(storeValues["model.model"]).toBe("large-v2");
 	});
 });

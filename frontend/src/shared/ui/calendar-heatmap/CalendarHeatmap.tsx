@@ -71,7 +71,7 @@ function categorizeDatesPerVariant(weighted: WeightedDateEntry[], noOfVariants: 
 	if (weighted.length === 0 || noOfVariants === 0) {
 		return buckets;
 	}
-	const sorted = [...weighted].sort((a, b) => a.weight - b.weight);
+	const sorted = weighted.toSorted((a, b) => a.weight - b.weight);
 	const first = sorted[0];
 	const last = sorted.at(-1);
 	if (!(first && last)) {
@@ -234,6 +234,18 @@ interface MonthGridProps {
 	weightMap: Map<number, number>;
 }
 
+function DayBadge({
+	cellDate,
+	render,
+	weight,
+}: {
+	cellDate: Date;
+	render: (date: Date, weight?: number) => ReactNode;
+	weight?: number;
+}) {
+	return <span className="text-[10px] opacity-70">{render(cellDate, weight)}</span>;
+}
+
 function DayCell({
 	cellDate,
 	monthDate,
@@ -292,7 +304,7 @@ function DayCell({
 		<>
 			<span>{system.dayNumber(cellDate)}</span>
 			{renderDayBadge ? (
-				<span className="text-[10px] opacity-70">{renderDayBadge(cellDate, weight)}</span>
+				<DayBadge cellDate={cellDate} render={renderDayBadge} weight={weight} />
 			) : null}
 		</>
 	);
@@ -510,7 +522,7 @@ function TimeField({
 	value: Date | null;
 	onChange: (next: Date) => void;
 }) {
-	const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
+	const commitTime = (e: ChangeEvent<HTMLInputElement>) => {
 		if (!value) {
 			return;
 		}
@@ -527,7 +539,7 @@ function TimeField({
 				className="rounded-md border border-border bg-surface-tertiary px-2 py-1 font-mono text-foreground text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
 				disabled={!value}
 				id={id}
-				onChange={handleChange}
+				onChange={commitTime}
 				type="time"
 				value={formatTimeInput(value)}
 			/>

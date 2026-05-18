@@ -9,7 +9,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useShallow } from "zustand/react/shallow";
-import type { ModelInfo } from "@/entities/model-catalog";
+import { isUncomfortable, type ModelInfo } from "@/entities/model-catalog";
 import { useDownloadStore } from "@/features/model-download";
 import type { ModelCacheInfo, ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
@@ -19,10 +19,9 @@ import { ButtonGroup } from "@/shared/ui/button-group";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { resolveQuantCache } from "../lib/cache-helpers";
 import { getFamilyConfig } from "../lib/family-helpers";
-import { isUncomfortable } from "../lib/hardware-fit";
 import { getQuantizationOptions } from "../lib/quantization-helpers";
 import { variantMeta } from "../lib/variant-helpers";
-import { type DownloadPhase, DownloadActions, DownloadProgressBar } from "./download-pane";
+import { DownloadActions, type DownloadPhase, DownloadProgressBar } from "./download-pane";
 import { QuantCacheDot, QuantCachePercent, quantCacheStatus } from "./pills";
 
 // Prefixes we strip from displayName before rendering inside a family

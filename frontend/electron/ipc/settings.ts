@@ -45,11 +45,13 @@ const STARTUP_ONLY_KEYS = new Set([
  * Wake-word-mode-specific restart predicate.
  *
  * The wake-word detector is built at server bootstrap from CLI args
- * (`--wakeword_backend` / `--wake_words`). Anything that changes those
- * args needs a full restart:
+ * (`--wakeword_backend` / `--wake_words` / `--openwakeword_model_paths`).
+ * Anything that changes those args needs a full restart:
  *   - switching INTO wakeword mode (no detector → need one)
  *   - switching OUT OF wakeword mode (detector exists → tear it down)
  *   - changing the wake word while in wakeword mode (rebuild with new keyword)
+ *   - changing the backend while in wakeword mode (tear down Porcupine,
+ *     spin up openWakeWord — or vice versa)
  *
  * Plain ptt↔toggle↔listen swaps do NOT touch any CLI flag and must NOT
  * trigger a restart (would kill the loaded ASR model for no gain).
@@ -59,15 +61,31 @@ function modeCrossesWakeword(oldMode: unknown, newMode: unknown): boolean {
 	return (oldMode === "wakeword") !== (newMode === "wakeword");
 }
 
-/** Did the wake word change while staying in wakeword mode on both sides? */
-function wordChangedWhileInWakeword(
+// Wake-word config fields that travel as CLI args at server bootstrap. Any
+// change to one of these while staying in wakeword mode requires a restart
+// because the detector is built once from these values — there's no live-
+// reconfigure path on the server side.
+const WAKEWORD_CONFIG_FIELDS = ["wakeWord", "wakeWordSensitivity", "wakeWordTimeout"] as const;
+
+/** Did any wake-word CLI param change while staying in wakeword mode? */
+function wakeConfigChangedWhileInWakeword(
 	oldMode: unknown,
 	newMode: unknown,
-	oldWord: unknown,
-	newWord: unknown
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
 ): boolean {
 	const staysInWakeword = oldMode === "wakeword" && newMode === "wakeword";
-	return staysInWakeword && oldWord !== newWord;
+	if (!staysInWakeword) {
+		return false;
+	}
+	for (const field of WAKEWORD_CONFIG_FIELDS) {
+		const oldVal = readNestedValue(oldSettings, "general", field);
+		const newVal = readNestedValue(newSettings, "general", field);
+		if (oldVal !== newVal) {
+			return true;
+		}
+	}
+	return false;
 }
 
 function wakeWordRestartNeeded(
@@ -76,11 +94,9 @@ function wakeWordRestartNeeded(
 ): boolean {
 	const oldMode = readNestedValue(oldSettings, "general", "recordingMode");
 	const newMode = readNestedValue(newSettings, "general", "recordingMode");
-	const oldWord = readNestedValue(oldSettings, "general", "wakeWord");
-	const newWord = readNestedValue(newSettings, "general", "wakeWord");
 	return (
 		modeCrossesWakeword(oldMode, newMode) ||
-		wordChangedWhileInWakeword(oldMode, newMode, oldWord, newWord)
+		wakeConfigChangedWhileInWakeword(oldMode, newMode, oldSettings, newSettings)
 	);
 }
 
@@ -306,6 +322,35 @@ function broadcastSettingsToOtherWindows(
 	for (const win of BrowserWindow.getAllWindows()) {
 		if (win.webContents.id !== senderId) {
 			win.webContents.send("settings:changed", { settings });
+		}
+	}
+}
+
+/**
+ * Apply a dot-pathed settings patch from the main process (e.g. from a global
+ * hotkey combo) and broadcast the resulting full snapshot to every renderer
+ * so all open windows re-hydrate their Zustand store.
+ *
+ *   applyMainProcessSettingsPatch({ "general.recordingMode": "ptt" });
+ *
+ * The store treats dot paths as nested writes, so `general.recordingMode`
+ * updates the nested key without clobbering the rest of the section. The
+ * broadcast goes to *every* window (no sender to exclude — this update did
+ * not originate from a renderer) so the settings panel, status bar, and
+ * tray-menu refresh in lock-step. Also triggers the same restart-needed
+ * check as the save path so e.g. a hotkey switch into wakeword mode kicks
+ * the server restart that brings the wake-word detector online.
+ */
+export function applyMainProcessSettingsPatch(patch: Record<string, unknown>): void {
+	const oldSnapshot = snapshotSettings();
+	for (const [dotPath, value] of Object.entries(patch)) {
+		store.set(dotPath, value);
+	}
+	const newSnapshot = snapshotSettings();
+	checkForRestartNeeded(oldSnapshot, newSnapshot);
+	for (const win of BrowserWindow.getAllWindows()) {
+		if (!win.isDestroyed()) {
+			win.webContents.send("settings:changed", { settings: newSnapshot });
 		}
 	}
 }

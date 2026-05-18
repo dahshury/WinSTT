@@ -26,9 +26,6 @@ export function DictionarySettingsPanel() {
 					onRemove={(id) => {
 						updateDictionary(dictionary.filter((e) => e.id !== id));
 					}}
-					onUpdate={(id, patch) => {
-						updateDictionary(dictionary.map((e) => (e.id === id ? { ...e, ...patch } : e)));
-					}}
 				/>
 			</div>
 		</SettingSection>

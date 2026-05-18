@@ -1,6 +1,44 @@
 import { describe, expect, test } from "bun:test";
 import { renderHook } from "@testing-library/react";
-import { useRadialAnimator } from "./use-radial-animator";
+import { __test_findGcdLessThan, __test_gcd, useRadialAnimator } from "./use-radial-animator";
+
+describe("gcd", () => {
+	test("returns the greater operand when the other is zero", () => {
+		expect(__test_gcd(12, 0)).toBe(12);
+	});
+
+	test("computes the greatest common divisor via the Euclidean loop", () => {
+		expect(__test_gcd(12, 8)).toBe(4);
+		expect(__test_gcd(7, 13)).toBe(1);
+		expect(__test_gcd(100, 35)).toBe(5);
+	});
+});
+
+describe("findGcdLessThan", () => {
+	test("returns max immediately when max divides columns (early-return branch)", () => {
+		// gcd(12, 12) === 12 → the `if (gcd === i)` true-branch returns on i=max.
+		expect(__test_findGcdLessThan(12)).toBe(12);
+		// gcd(12, 4) === 4 → first iteration with explicit max also early-returns.
+		expect(__test_findGcdLessThan(12, 4)).toBe(4);
+	});
+
+	test("walks the loop down to a divisor below max", () => {
+		// max=5: gcd(12,5)=1≠5, gcd(12,4)=4=4 → returns 4 after one walk step.
+		expect(__test_findGcdLessThan(12, 5)).toBe(4);
+		// max=3: gcd(12,3)=3 → returns 3.
+		expect(__test_findGcdLessThan(12, 3)).toBe(3);
+	});
+
+	test("falls back to 1 for a prime column count (no proper divisor in range)", () => {
+		// 7 is prime: gcd(7,2)=1≠2, then gcd(7,1)=1=1 → returns 1 from the loop.
+		expect(__test_findGcdLessThan(7, 2)).toBe(1);
+	});
+
+	test("returns 1 when the search range is empty (final fallthrough return)", () => {
+		// max=0 makes the for-loop body never execute, hitting `return 1`.
+		expect(__test_findGcdLessThan(12, 0)).toBe(1);
+	});
+});
 
 describe("useRadialAnimator", () => {
 	test("'disconnected' returns an empty array", () => {

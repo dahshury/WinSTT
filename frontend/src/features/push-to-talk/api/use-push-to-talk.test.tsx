@@ -206,7 +206,7 @@ describe("usePushToTalk", () => {
 		expect(invokes.filter((c) => c === IPC.HOTKEY_REGISTER).length).toBeGreaterThanOrEqual(2);
 	});
 
-	test("enables silence endpoint when smartEndpoint is on (even in PTT mode)", () => {
+	test("disables silence endpoint in PTT mode even when smartEndpoint is on", () => {
 		useSettingsStore.setState({
 			settings: {
 				...useSettingsStore.getState().settings,
@@ -226,7 +226,7 @@ describe("usePushToTalk", () => {
 			.map((c) => c.args[0] as { parameter: string; value: unknown });
 		const silenceCall = setParamCalls.find((p) => p.parameter === "silence_endpoint_enabled");
 		expect(silenceCall).toBeDefined();
-		expect(silenceCall?.value).toBe(true);
+		expect(silenceCall?.value).toBe(false);
 	});
 
 	test("disables silence endpoint for PTT mode with smartEndpoint off", () => {
@@ -250,6 +250,45 @@ describe("usePushToTalk", () => {
 			.find((p) => p.parameter === "silence_endpoint_enabled");
 		expect(silenceCall).toBeDefined();
 		expect(silenceCall?.value).toBe(false);
+	});
+
+	test("disables silence endpoint in toggle mode when manualToggleStop is on", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "toggle",
+					manualToggleStop: true,
+				},
+			},
+		});
+		renderHook(() => usePushToTalk());
+		const silenceCalls = sentChannels
+			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
+			.map((c) => c.args[0] as { parameter: string; value: unknown })
+			.filter((p) => p.parameter === "silence_endpoint_enabled");
+		// Last value sent reflects the final effective state.
+		expect(silenceCalls.at(-1)?.value).toBe(false);
+	});
+
+	test("enables silence endpoint in toggle mode when manualToggleStop is off", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "toggle",
+					manualToggleStop: false,
+				},
+			},
+		});
+		renderHook(() => usePushToTalk());
+		const silenceCalls = sentChannels
+			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
+			.map((c) => c.args[0] as { parameter: string; value: unknown })
+			.filter((p) => p.parameter === "silence_endpoint_enabled");
+		expect(silenceCalls.at(-1)?.value).toBe(true);
 	});
 
 	test("subscribes to recording-stop and tears the listener down on unmount", () => {

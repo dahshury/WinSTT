@@ -55,12 +55,10 @@ export function usePushToTalk(): void {
 	const accelerator = useHotkeyStore((s) => s.accelerator);
 	const pushToTalkKey = useSettingsStore((s) => s.settings.hotkey?.pushToTalkKey);
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
-	const smartEndpoint = useSettingsStore((s) => s.settings.quality?.smartEndpoint ?? false);
+	const manualToggleStop = useSettingsStore((s) => s.settings.general?.manualToggleStop ?? false);
 	const isActiveRef = useRef(false);
 	const recordingModeRef = useRef(recordingMode);
-	const smartEndpointRef = useRef(smartEndpoint);
 	recordingModeRef.current = recordingMode;
-	smartEndpointRef.current = smartEndpoint;
 
 	// Mirror pushToTalkKey from the settings store into the hotkey store using
 	// React's render-time adjustment pattern instead of useEffect — there's no
@@ -81,14 +79,15 @@ export function usePushToTalk(): void {
 		};
 	}, [accelerator]);
 
-	// Sync silence endpoint based on recording mode — set once, not per keypress
+	// Sync silence endpoint based on recording mode — set once, not per keypress.
+	// PTT mode never uses the silence endpoint (Smart Endpoint doesn't apply
+	// here — the key release defines the boundary). Manual-toggle mode also
+	// disables it so the recording runs press-to-press without VAD stopping
+	// the user mid-pause.
 	useEffect(() => {
-		if (recordingMode === "ptt" && !smartEndpoint) {
-			sttSetParameter("silence_endpoint_enabled", false);
-		} else {
-			sttSetParameter("silence_endpoint_enabled", true);
-		}
-	}, [recordingMode, smartEndpoint]);
+		const enabled = recordingMode !== "ptt" && !(recordingMode === "toggle" && manualToggleStop);
+		sttSetParameter("silence_endpoint_enabled", enabled);
+	}, [recordingMode, manualToggleStop]);
 
 	// Press handler — refs let us avoid re-subscribing when mode changes.
 	useEffect(

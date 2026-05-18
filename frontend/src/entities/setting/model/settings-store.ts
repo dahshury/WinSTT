@@ -26,6 +26,7 @@ interface SettingsState {
 	updateModelSettings: (patch: Partial<AppSettingsOutput["model"]>) => void;
 	updateQualitySettings: (patch: Partial<AppSettingsOutput["quality"]>) => void;
 	updateSnippets: (snippets: AppSettingsOutput["snippets"]) => void;
+	updateTtsSettings: (patch: Partial<AppSettingsOutput["tts"]>) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -106,6 +107,13 @@ export const useSettingsStore = create<SettingsState>()(
 			updateSnippets: (snippets) =>
 				set((state) => ({
 					settings: { ...state.settings, snippets },
+				})),
+			updateTtsSettings: (patch) =>
+				set((state) => ({
+					settings: {
+						...state.settings,
+						tts: { ...state.settings.tts, ...patch },
+					},
 				})),
 			resetSettings: () =>
 				set((state) => ({

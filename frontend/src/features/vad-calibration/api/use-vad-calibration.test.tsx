@@ -96,6 +96,7 @@ async function waitForDeviceListLoaded(name: string) {
 		const { devices } =
 			(window.electronAPI as unknown as {
 				invoke: () => Promise<unknown[]>;
+				devices?: unknown;
 			}) ?? {};
 		if (!devices) {
 			// fallback: just yield a tick

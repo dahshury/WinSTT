@@ -6,6 +6,7 @@ import {
 	ArrowDown01Icon,
 	Atom01Icon,
 	BinaryCodeIcon,
+	Brain01Icon,
 	Delete02Icon,
 	StarIcon,
 } from "@hugeicons/core-free-icons";
@@ -29,10 +30,17 @@ import type {
 } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
-import { DownloadActions, DownloadProgressBar } from "@/shared/ui/download";
+import { DownloadActions, type DownloadPhase, DownloadProgressBar } from "@/shared/ui/download";
 import { Spinner } from "@/shared/ui/spinner";
+import {
+	buildSwitchingClassName,
+	SwapSweepBar,
+	SwitchingFromToRow,
+	SwitchingPill,
+} from "@/shared/ui/switching-trigger";
 import { GroupRail, type GroupRailItem } from "../../core/GroupRail";
 import { ModelPicker } from "../../core/ModelPicker";
+import { useRailScrollSpy } from "../../core/use-rail-scroll-spy";
 import { getProviderIconWithFallback } from "../../lib/provider-icons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/Tooltip";
 import { TruncatedText } from "../../ui/TruncatedText";
@@ -117,6 +125,13 @@ export interface OllamaModelSelectorProps {
 	 *  callbacks, the popup grows a "Recommended" section with inline
 	 *  install actions; omitting it falls back to installed-only mode. */
 	recommendedModels?: readonly RecommendedOllamaModel[];
+	/** In-flight model swap (caller-driven; the picker has no IPC subscription
+	 *  for Ollama swaps the way the STT picker does). When set, the trigger
+	 *  renders the same `from → ◌ → to` view + accent sweep used by the STT
+	 *  selector. `fromName` is the previously-loaded model id; `toName` the
+	 *  one the user just picked. Both are resolved against `models` to render
+	 *  publisher chips. Omit (or pass `null`) when no swap is in flight. */
+	swap?: { fromName?: string | null; toName: string } | null;
 	/** Optional fit-assessment lookup. Called per recommended model to
 	 *  render a "Won't fit" badge when the host system can't run it. */
 	systemFit?: (sizeBytes: number) => OllamaFitInfo;
@@ -210,6 +225,39 @@ function SizeChip({ size }: { size: number | undefined }) {
 	);
 }
 
+/**
+ * Reasoning-capability marker. Renders when the model's `capabilities`
+ * array (fetched from Ollama's `/api/show`) advertises `thinking`. The
+ * purple Brain icon mirrors the OpenRouter "reasoning" badge in
+ * `EndpointFeatureIcons.tsx` so the visual vocabulary stays consistent
+ * across providers — a user who knows what the purple brain means for
+ * OpenRouter immediately reads it the same way for Ollama.
+ */
+function ThinkingChip({ capabilities }: { capabilities: readonly string[] | undefined }) {
+	if (!capabilities?.includes("thinking")) {
+		return null;
+	}
+	return (
+		<Tooltip>
+			<TooltipTrigger
+				render={(props) => (
+					<span
+						{...(props as ComponentPropsWithoutRef<"span">)}
+						className="inline-flex shrink-0 items-center gap-1 rounded-full border border-purple-500/20 bg-purple-500/10 px-1.5 py-px font-medium text-[9.5px] text-purple-600 leading-none dark:text-purple-400"
+					>
+						<HugeiconsIcon className="size-2.5" icon={Brain01Icon} />
+						Reasoning
+					</span>
+				)}
+			/>
+			<TooltipContent>
+				Supports thinking output. The model can show its step-by-step reasoning before producing the
+				final answer.
+			</TooltipContent>
+		</Tooltip>
+	);
+}
+
 function WontFitChip({ fit }: { fit: OllamaFitInfo | undefined }) {
 	if (!fit || fit.fits) {
 		return null;
@@ -247,9 +295,6 @@ function SelectedTriggerContent({ model }: { model: OllamaModel }) {
 				className="font-medium text-foreground"
 				text={formatOllamaDisplayName(model.name)}
 			/>
-			<SizeChip size={model.size} />
-			<ParameterSizeChip value={model.details?.parameterSize} />
-			<QuantizationChip value={model.details?.quantizationLevel} />
 		</div>
 	);
 }
@@ -279,54 +324,167 @@ function pickPrimaryPull(
 	return best;
 }
 
-function OllamaTrigger({
-	disabled,
-	isLoading,
-	placeholder,
-	selected,
-	activePull,
-}: {
+/** Ollama-flavored chip+name pair used as a slot inside `SwitchingFromToRow`.
+ *  Mirrors the STT picker's `SttModelLabel` so both switching views read the
+ *  same way: family chip + name, dim/struck-through on the "from" leg and
+ *  accent-emphasized on the "to" leg. */
+function OllamaModelLabel({ model, side }: { model: OllamaModel; side: "from" | "to" }) {
+	const family = getOllamaFamily(model);
+	const displayName = formatOllamaDisplayName(model.name);
+	if (side === "from") {
+		return (
+			<>
+				<PublisherChip family={family} />
+				<span className="min-w-0 max-w-[8rem] truncate font-medium text-body text-foreground-dim leading-tight tracking-tight line-through decoration-foreground-dim/40">
+					{displayName}
+				</span>
+			</>
+		);
+	}
+	return (
+		<>
+			<PublisherChip family={family} />
+			<span className="min-w-0 truncate font-semibold text-accent text-body leading-tight tracking-tight">
+				{displayName}
+			</span>
+		</>
+	);
+}
+
+/** Fallback label when the user picked a model that isn't (yet) in the
+ *  installed catalog — happens when the swap is "to" an Ollama-library hit
+ *  that's still pulling. We can't render a publisher chip without the model
+ *  metadata, so just render the bare display name with the same emphasis. */
+function OllamaTextLabel({ name, side }: { name: string; side: "from" | "to" }) {
+	const displayName = formatOllamaDisplayName(name);
+	const tone =
+		side === "from"
+			? "text-foreground-dim line-through decoration-foreground-dim/40"
+			: "font-semibold text-accent";
+	return (
+		<span
+			className={`min-w-0 max-w-[8rem] truncate font-medium text-body leading-tight tracking-tight ${tone}`}
+		>
+			{displayName}
+		</span>
+	);
+}
+
+interface OllamaTriggerProps {
+	activePull: TriggerPullSummary | null;
 	disabled: boolean;
+	fromModel: OllamaModel | undefined;
+	fromName: string | undefined;
 	isLoading: boolean;
+	isSwitching: boolean;
 	placeholder: string;
 	selected: OllamaModel | undefined;
-	activePull: TriggerPullSummary | null;
-}) {
+	toModel: OllamaModel | undefined;
+	toName: string | undefined;
+}
+
+/** Pick the right label component for one side of the switching row. Prefers
+ *  the resolved `OllamaModel` (publisher chip + name); falls back to the bare
+ *  text label when the picked model isn't installed yet (typed pull target). */
+function SwitchingSlot({
+	model,
+	name,
+	side,
+}: {
+	model: OllamaModel | undefined;
+	name: string | undefined;
+	side: "from" | "to";
+}): ReactNode {
+	if (model) {
+		return <OllamaModelLabel model={model} side={side} />;
+	}
+	if (name) {
+		return <OllamaTextLabel name={name} side={side} />;
+	}
+	return null;
+}
+
+function OllamaBody({
+	props,
+	ariaLabel,
+}: {
+	props: OllamaTriggerProps;
+	ariaLabel: string | undefined;
+}): ReactNode {
+	if (props.isSwitching) {
+		return (
+			<SwitchingFromToRow
+				ariaLabel={ariaLabel}
+				from={<SwitchingSlot model={props.fromModel} name={props.fromName} side="from" />}
+				to={<SwitchingSlot model={props.toModel} name={props.toName} side="to" />}
+			/>
+		);
+	}
+	if (props.isLoading) {
+		return (
+			<div className="flex flex-1 items-center gap-2">
+				<Spinner className="size-4" />
+				<span className="font-medium text-body text-foreground-muted italic tracking-tight">
+					{props.placeholder}
+				</span>
+			</div>
+		);
+	}
+	if (props.selected) {
+		return <SelectedTriggerContent model={props.selected} />;
+	}
+	return (
+		<span className="font-medium text-body text-foreground-muted italic tracking-tight">
+			{props.placeholder}
+		</span>
+	);
+}
+
+function buildSwitchingAriaLabel(props: OllamaTriggerProps): string | undefined {
+	if (!props.isSwitching) {
+		return;
+	}
+	const toName = props.toModel?.name ?? props.toName;
+	if (!toName) {
+		return;
+	}
+	const fromName = props.fromModel?.name ?? props.fromName;
+	const fromClause = fromName ? ` from ${formatOllamaDisplayName(fromName)}` : "";
+	return `Switching${fromClause} to ${formatOllamaDisplayName(toName)}`;
+}
+
+function OllamaTrigger(props: OllamaTriggerProps) {
+	const { disabled, isLoading, isSwitching, activePull } = props;
+	const ariaLabel = buildSwitchingAriaLabel(props);
 	return (
 		<Combobox.Trigger
 			nativeButton
-			render={(props) => (
+			render={(triggerProps) => (
 				<Button
-					{...(props as ComponentPropsWithoutRef<"button">)}
-					className={OLLAMA_TRIGGER_GLASS_CLASSES}
+					{...(triggerProps as ComponentPropsWithoutRef<"button">)}
+					aria-label={ariaLabel}
+					className={`${OLLAMA_TRIGGER_GLASS_CLASSES} ${buildSwitchingClassName(isSwitching)}`}
 					data-loading={isLoading || undefined}
 					data-slot="ollama-model-selector-trigger"
-					disabled={disabled || isLoading}
+					data-switching={isSwitching}
+					disabled={disabled || isLoading || isSwitching}
 					type="button"
 				>
 					<span
 						aria-hidden="true"
-						className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-accent/55 to-transparent opacity-0 transition-opacity duration-200 group-data-[state=open]:opacity-100"
+						className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-accent/55 to-transparent opacity-0 transition-opacity duration-200 group-data-[state=open]:opacity-100 group-data-[switching=true]:opacity-100"
 					/>
-					{isLoading ? (
-						<div className="flex flex-1 items-center gap-2">
-							<Spinner className="size-4" />
-							<span className="font-medium text-body text-foreground-muted italic tracking-tight">
-								{placeholder}
-							</span>
-						</div>
-					) : selected ? (
-						<SelectedTriggerContent model={selected} />
+					<OllamaBody ariaLabel={ariaLabel} props={props} />
+					{isSwitching ? (
+						<SwitchingPill />
 					) : (
-						<span className="font-medium text-body text-foreground-muted italic tracking-tight">
-							{placeholder}
-						</span>
+						<HugeiconsIcon
+							className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"
+							icon={ArrowDown01Icon}
+						/>
 					)}
-					<HugeiconsIcon
-						className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"
-						icon={ArrowDown01Icon}
-					/>
-					{activePull ? <TriggerPullProgressOverlay summary={activePull} /> : null}
+					{isSwitching ? <SwapSweepBar /> : null}
+					{activePull && !isSwitching ? <TriggerPullProgressOverlay summary={activePull} /> : null}
 				</Button>
 			)}
 		/>
@@ -389,6 +547,7 @@ function OllamaModelRow({
 				text={formatOllamaDisplayName(model.name)}
 			/>
 			<div className="ms-auto flex shrink-0 items-center gap-1.5">
+				<ThinkingChip capabilities={model.capabilities} />
 				<SizeChip size={model.size} />
 				<ParameterSizeChip value={model.details?.parameterSize} />
 				<QuantizationChip value={model.details?.quantizationLevel} />
@@ -590,6 +749,20 @@ function libraryRowProgressPercent(status: LibraryRowStatus): number | null {
 	return null;
 }
 
+/** Maps the current pull/paused snapshot onto the tri-state download phase. */
+function derivePullPhase(
+	pull: OllamaPullProgress | undefined,
+	paused: PausedPullState | undefined
+): DownloadPhase {
+	if (pull) {
+		return "active";
+	}
+	if (paused) {
+		return "paused";
+	}
+	return "idle";
+}
+
 function LibraryTagChip({
 	tag,
 	fit,
@@ -611,7 +784,7 @@ function LibraryTagChip({
 	onResume: (name: string) => void;
 	onStop: (name: string) => void;
 }) {
-	const phase = pull ? "active" : paused ? "paused" : "idle";
+	const phase = derivePullPhase(pull, paused);
 	const displayName = formatOllamaDisplayName(tag.name);
 	return (
 		<div className="flex items-center gap-2 rounded-md border border-border/60 bg-surface-2/40 px-2 py-1.5">
@@ -654,6 +827,169 @@ function LibraryTagChip({
 	);
 }
 
+function LibraryRowBadges({
+	status,
+	progressPercent,
+}: {
+	status: LibraryRowStatus;
+	progressPercent: number | null;
+}) {
+	return (
+		<>
+			{status.installedCount > 0 ? (
+				<span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-px font-medium text-[10px] text-emerald-500">
+					✓ {status.installedCount}{" "}
+					{status.installedCount === 1 ? "installed" : "installed variants"}
+				</span>
+			) : null}
+			{status.activePull ? (
+				<span className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-1.5 py-px font-medium text-[10px] text-accent">
+					<Spinner className="size-2.5" />
+					Downloading {progressPercent ?? 0}%
+				</span>
+			) : null}
+			{!status.activePull && status.pausedPull ? (
+				<span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px font-medium text-[10px] text-amber-500">
+					Paused at {progressPercent ?? 0}%
+				</span>
+			) : null}
+		</>
+	);
+}
+
+function LibraryRowProgress({
+	hit,
+	status,
+	progressPercent,
+}: {
+	hit: OllamaLibraryHit;
+	status: LibraryRowStatus;
+	progressPercent: number | null;
+}) {
+	if (progressPercent === null) {
+		return null;
+	}
+	const label = status.activePull
+		? `${status.activePull.name} · ${progressPercent}%`
+		: `${status.pausedPull?.name ?? hit.name} · paused at ${progressPercent}%`;
+	return (
+		<div className="mt-2">
+			<DownloadProgressBar
+				label={label}
+				percent={progressPercent}
+				variant={status.activePull ? "active" : "paused"}
+			/>
+		</div>
+	);
+}
+
+function LibraryRowHeader({
+	hit,
+	expanded,
+	status,
+	progressPercent,
+	onClick,
+}: {
+	hit: OllamaLibraryHit;
+	expanded: boolean;
+	status: LibraryRowStatus;
+	progressPercent: number | null;
+	onClick: (e: React.MouseEvent) => void;
+}) {
+	const hitDisplayName = formatOllamaDisplayName(hit.name);
+	const hitPublisher = getOllamaPublisher(familySlugFromName(hit.name));
+	const hitIconSrc = getProviderIconWithFallback(hitPublisher.slug);
+	return (
+		<button className="flex w-full items-start gap-2 text-left" onClick={onClick} type="button">
+			<div className="min-w-0 flex-1">
+				<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+					{/* biome-ignore lint/performance/noImgElement: static local maker logo */}
+					<img
+						alt=""
+						className="size-4 rounded-[2px] object-cover"
+						height={16}
+						src={hitIconSrc}
+						width={16}
+					/>
+					<span className="font-medium text-body text-foreground">{hitDisplayName}</span>
+					<span className="text-[10px] text-foreground-muted">by {hitPublisher.label}</span>
+					<LibraryRowBadges progressPercent={progressPercent} status={status} />
+					{(hit.capabilities ?? []).map((cap) => (
+						<span
+							className="rounded-full border border-border/60 px-1.5 py-px text-[9px] text-foreground-muted"
+							key={cap}
+						>
+							{cap}
+						</span>
+					))}
+				</div>
+				{hit.description ? (
+					<p className="mt-1 line-clamp-2 text-foreground-secondary text-xs leading-snug">
+						{hit.description}
+					</p>
+				) : null}
+				<div className="mt-1 flex items-center gap-2 text-[10px] text-foreground-muted">
+					{hit.pulls ? <span>{hit.pulls} pulls</span> : null}
+					{hit.updated ? <span>· Updated {hit.updated}</span> : null}
+				</div>
+				<LibraryRowProgress hit={hit} progressPercent={progressPercent} status={status} />
+			</div>
+			<span className="shrink-0 text-foreground-muted text-xs">{expanded ? "▾" : "▸"}</span>
+		</button>
+	);
+}
+
+function LibraryRowTags({
+	tagsState,
+	installedNames,
+	getFit,
+	pulls,
+	pausedPulls,
+	onPull,
+	onStop,
+	onResume,
+	onDiscard,
+}: Pick<
+	LibraryRowProps,
+	| "tagsState"
+	| "installedNames"
+	| "getFit"
+	| "pulls"
+	| "pausedPulls"
+	| "onPull"
+	| "onStop"
+	| "onResume"
+	| "onDiscard"
+>) {
+	return (
+		<div className="mt-2 flex flex-col gap-1.5 border-border/40 border-t pt-2">
+			{tagsState?.isLoading && tagsState.tags.length === 0 ? (
+				<div className="flex items-center gap-2 px-1 py-1 text-foreground-muted text-xs">
+					<Spinner className="size-3" />
+					Loading tags…
+				</div>
+			) : null}
+			{tagsState?.error ? (
+				<div className="rounded bg-error/10 p-2 text-error text-xs">{tagsState.error}</div>
+			) : null}
+			{tagsState?.tags.map((tag) => (
+				<LibraryTagChip
+					fit={tag.sizeBytes ? getFit?.(tag.sizeBytes) : undefined}
+					installed={installedNames.has(tag.name)}
+					key={tag.name}
+					onDiscard={onDiscard}
+					onPull={onPull}
+					onResume={onResume}
+					onStop={onStop}
+					paused={pausedPulls[tag.name]}
+					pull={pulls[tag.name]}
+					tag={tag}
+				/>
+			))}
+		</div>
+	);
+}
+
 function LibraryRow({
 	hit,
 	tagsState,
@@ -673,107 +1009,29 @@ function LibraryRow({
 		e.stopPropagation();
 		onExpand(hit.name);
 	};
-	const hitDisplayName = formatOllamaDisplayName(hit.name);
-	const hitPublisher = getOllamaPublisher(familySlugFromName(hit.name));
-	const hitIconSrc = getProviderIconWithFallback(hitPublisher.slug);
 	const status = deriveLibraryRowStatus(hit, installedNames, pulls, pausedPulls);
 	const progressPercent = libraryRowProgressPercent(status);
 	return (
 		<div className="rounded-md border border-border/60 bg-surface-secondary/40 px-3 py-2.5 transition-colors hover:border-border">
-			<button
-				className="flex w-full items-start gap-2 text-left"
+			<LibraryRowHeader
+				expanded={expanded}
+				hit={hit}
 				onClick={handleClick}
-				type="button"
-			>
-				<div className="min-w-0 flex-1">
-					<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-						{/* biome-ignore lint/performance/noImgElement: static local maker logo */}
-						<img
-							alt=""
-							className="size-4 rounded-[2px] object-cover"
-							height={16}
-							src={hitIconSrc}
-							width={16}
-						/>
-						<span className="font-medium text-body text-foreground">{hitDisplayName}</span>
-						<span className="text-[10px] text-foreground-muted">by {hitPublisher.label}</span>
-						{status.installedCount > 0 ? (
-							<span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-px font-medium text-[10px] text-emerald-500">
-								✓ {status.installedCount}{" "}
-								{status.installedCount === 1 ? "installed" : "installed variants"}
-							</span>
-						) : null}
-						{status.activePull ? (
-							<span className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-1.5 py-px font-medium text-[10px] text-accent">
-								<Spinner className="size-2.5" />
-								Downloading {progressPercent ?? 0}%
-							</span>
-						) : null}
-						{!status.activePull && status.pausedPull ? (
-							<span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px font-medium text-[10px] text-amber-500">
-								Paused at {progressPercent ?? 0}%
-							</span>
-						) : null}
-						{(hit.capabilities ?? []).map((cap) => (
-							<span
-								className="rounded-full border border-border/60 px-1.5 py-px text-[9px] text-foreground-muted"
-								key={cap}
-							>
-								{cap}
-							</span>
-						))}
-					</div>
-					{hit.description ? (
-						<p className="mt-1 line-clamp-2 text-foreground-secondary text-xs leading-snug">
-							{hit.description}
-						</p>
-					) : null}
-					<div className="mt-1 flex items-center gap-2 text-[10px] text-foreground-muted">
-						{hit.pulls ? <span>{hit.pulls} pulls</span> : null}
-						{hit.updated ? <span>· Updated {hit.updated}</span> : null}
-					</div>
-					{progressPercent !== null ? (
-						<div className="mt-2">
-							<DownloadProgressBar
-								label={
-									status.activePull
-										? `${status.activePull.name} · ${progressPercent}%`
-										: `${status.pausedPull?.name ?? hit.name} · paused at ${progressPercent}%`
-								}
-								percent={progressPercent}
-								variant={status.activePull ? "active" : "paused"}
-							/>
-						</div>
-					) : null}
-				</div>
-				<span className="shrink-0 text-foreground-muted text-xs">{expanded ? "▾" : "▸"}</span>
-			</button>
+				progressPercent={progressPercent}
+				status={status}
+			/>
 			{expanded ? (
-				<div className="mt-2 flex flex-col gap-1.5 border-border/40 border-t pt-2">
-					{tagsState?.isLoading && tagsState.tags.length === 0 ? (
-						<div className="flex items-center gap-2 px-1 py-1 text-foreground-muted text-xs">
-							<Spinner className="size-3" />
-							Loading tags…
-						</div>
-					) : null}
-					{tagsState?.error ? (
-						<div className="rounded bg-error/10 p-2 text-error text-xs">{tagsState.error}</div>
-					) : null}
-					{tagsState?.tags.map((tag) => (
-						<LibraryTagChip
-							fit={tag.sizeBytes ? getFit?.(tag.sizeBytes) : undefined}
-							installed={installedNames.has(tag.name)}
-							key={tag.name}
-							onDiscard={onDiscard}
-							onPull={onPull}
-							onResume={onResume}
-							onStop={onStop}
-							paused={pausedPulls[tag.name]}
-							pull={pulls[tag.name]}
-							tag={tag}
-						/>
-					))}
-				</div>
+				<LibraryRowTags
+					getFit={getFit}
+					installedNames={installedNames}
+					onDiscard={onDiscard}
+					onPull={onPull}
+					onResume={onResume}
+					onStop={onStop}
+					pausedPulls={pausedPulls}
+					pulls={pulls}
+					tagsState={tagsState}
+				/>
 			) : null}
 		</div>
 	);
@@ -865,7 +1123,7 @@ function RecommendedRow({
 	onResume,
 	onDiscard,
 }: RecommendedRowProps) {
-	const phase = pull ? "active" : paused ? "paused" : "idle";
+	const phase = derivePullPhase(pull, paused);
 	const sizeLabel = formatOllamaSize(model.sizeBytes);
 	const recPublisher = getOllamaPublisher((model.family ?? "").toLowerCase());
 	const recIconSrc = getProviderIconWithFallback(recPublisher.slug);
@@ -937,7 +1195,7 @@ function CustomPullRow({
 	if (!(trimmed && VALID_MODEL_NAME_RE.test(trimmed))) {
 		return null;
 	}
-	const phase = pull ? "active" : paused ? "paused" : "idle";
+	const phase = derivePullPhase(pull, paused);
 	return (
 		<div className="rounded-md border border-accent/30 border-dashed bg-surface-secondary/30 px-3 py-2.5">
 			<div className="flex items-start gap-3">
@@ -1106,7 +1364,7 @@ function filterLibraryHits(
  *  sort by publisher label so the rail tile order is stable. */
 function groupLibraryHitsByPublisher(
 	hits: readonly OllamaLibraryHit[]
-): Array<[string, OllamaLibraryHit[]]> {
+): [string, OllamaLibraryHit[]][] {
 	const groups = new Map<string, OllamaLibraryHit[]>();
 	for (const hit of hits) {
 		const family = familySlugFromName(hit.name);
@@ -1129,7 +1387,7 @@ interface LibrarySectionState {
 	error: string | null;
 	expandedHit: string | null;
 	/** Catalog filtered by the search query, grouped by publisher slug. */
-	groupedByPublisher: Array<[string, OllamaLibraryHit[]]>;
+	groupedByPublisher: [string, OllamaLibraryHit[]][];
 	/** True when the user has typed something — drives the "no matches" vs
 	 *  "library is empty" empty state copy. */
 	hasQuery: boolean;
@@ -1165,7 +1423,7 @@ interface ListBodyProps {
 	customPullPaused: PausedPullState | undefined;
 	customPullProgress: OllamaPullProgress | undefined;
 	getFit: ((sizeBytes: number) => OllamaFitInfo) | undefined;
-	grouped: Array<[string, OllamaModel[]]>;
+	grouped: [string, OllamaModel[]][];
 	hasQuery: boolean;
 	installedNames: ReadonlySet<string>;
 	library: LibrarySectionState | undefined;
@@ -1220,7 +1478,7 @@ function ListBody(props: ListBodyProps) {
 	}
 
 	return (
-		<Combobox.List className="min-h-0 flex-1 overflow-y-auto p-0">
+		<Combobox.List className="min-h-0 flex-1 overflow-y-auto p-0" data-slot="ollama-model-list">
 			{grouped.map(([publisherSlug, items]) => (
 				<div key={publisherSlug}>
 					<PublisherGroupHeader count={items.length} publisherSlug={publisherSlug} />
@@ -1376,6 +1634,7 @@ export function OllamaModelSelector({
 	placeholder = DEFAULT_PLACEHOLDER,
 	pulls = EMPTY_PULLS,
 	recommendedModels,
+	swap,
 	systemFit,
 	value,
 }: OllamaModelSelectorProps) {
@@ -1387,7 +1646,7 @@ export function OllamaModelSelector({
 	// be displayed under a different model's name.
 	useEffect(() => {
 		setExpandedHit(null);
-	}, [query]);
+	}, []);
 
 	// Kick off the catalog scrape as soon as we have a `librarySearch` prop.
 	// The store dedupes via `isLoaded`/`isLoading`, so this is a no-op after
@@ -1520,7 +1779,14 @@ export function OllamaModelSelector({
 	}, [selectedPublisher]);
 
 	const popupRef = useRef<HTMLElement | null>(null);
+	const [popupNode, setPopupNode] = useState<HTMLElement | null>(null);
+	const railSpy = useRailScrollSpy({
+		popupNode,
+		scrollContainerSelector: '[data-slot="ollama-model-list"]',
+		onActiveChange: (id) => setActiveRailId(id),
+	});
 	const handleRailClick = (id: string) => {
+		railSpy.suppress();
 		setActiveRailId(id);
 		const root: ParentNode = popupRef.current ?? document;
 		const target = root.querySelector<HTMLElement>(`[data-rail-section="${CSS.escape(id)}"]`);
@@ -1596,13 +1862,22 @@ export function OllamaModelSelector({
 				librarySearch?.loadCatalog();
 			}}
 			onValueChange={(next) => {
-				if (next) {
+				// Base UI Combobox fires `onValueChange` twice when an item is
+				// clicked: once with the selected model object, and once with
+				// a synthetic value derived from the input filter (where the
+				// `.name` property is undefined). The looser `if (next)` guard
+				// let the second call through and wrote `setModel(undefined)`
+				// to the store, which then triggered the model-replacement
+				// effect and silently reverted the swap. Require a non-empty
+				// string `name` so only real selections propagate.
+				if (next && typeof next.name === "string" && next.name.length > 0) {
 					onChange(next.name);
 				}
 			}}
 			popupHeightClass="h-[min(620px,var(--available-height))]"
 			popupRef={(node) => {
 				popupRef.current = node;
+				setPopupNode(node);
 			}}
 			popupWidthClass="w-[max(620px,var(--anchor-width))]"
 			searchPlaceholder="Search the Ollama library"
@@ -1615,9 +1890,14 @@ export function OllamaModelSelector({
 				<OllamaTrigger
 					activePull={pickPrimaryPull(pulls)}
 					disabled={disabled}
+					fromModel={swap?.fromName ? models.find((m) => m.name === swap.fromName) : undefined}
+					fromName={swap?.fromName ?? undefined}
 					isLoading={isLoading}
+					isSwitching={!!swap?.toName}
 					placeholder={placeholder}
 					selected={selected}
+					toModel={swap?.toName ? models.find((m) => m.name === swap.toName) : undefined}
+					toName={swap?.toName ?? undefined}
 				/>
 			}
 			value={selected ?? null}

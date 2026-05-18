@@ -175,11 +175,9 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 			setInternalOpen(next);
 			if (next) {
 				onOpen?.();
-			} else {
+			} else if (!isSearchControlled) {
 				// Clear search on close so the next open starts fresh.
-				if (!isSearchControlled) {
-					setInternalSearch("");
-				}
+				setInternalSearch("");
 			}
 		}
 		onOpenChange?.(next, eventDetails);

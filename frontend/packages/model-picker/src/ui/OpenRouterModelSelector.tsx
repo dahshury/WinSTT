@@ -377,7 +377,6 @@ export function OpenRouterModelSelector({
 
 	const { modelId: parsedModelId, providerSlug: parsedProviderSlug } = parseModelSelection(value);
 	const selectedModel = filteredModels.find((m) => m.id === parsedModelId);
-	const selectedEndpoint = findEndpointForProviderSlug(selectedModel, parsedProviderSlug);
 
 	const clearFilters = () => {
 		setSelectedMakers([]);
@@ -496,7 +495,13 @@ export function OpenRouterModelSelector({
 			badge: groupedModelsAll.find(([m]) => m === maker)?.[1].length,
 			icon: iconSrc ? (
 				// biome-ignore lint/performance/noImgElement: static local maker logo
-				<img alt="" className="size-5 rounded-[3px] object-cover" src={iconSrc} />
+				<img
+					alt=""
+					className="size-5 rounded-[3px] object-cover"
+					height={20}
+					src={iconSrc}
+					width={20}
+				/>
 			) : undefined,
 		};
 	});
@@ -579,7 +584,6 @@ export function OpenRouterModelSelector({
 						open={open}
 						parsedModelId={parsedModelId}
 						placeholder={placeholder}
-						selectedEndpoint={selectedEndpoint}
 						selectedModel={selectedModel}
 					/>
 				}

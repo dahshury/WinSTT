@@ -79,14 +79,21 @@ class SwapBenchmark:
             return
         self._memory_bytes[label] = self._proc.memory_info().rss
 
+    def _cpu_pct_str(self) -> str:
+        if self._proc is None:
+            return "n/a"
+        return f"{self._proc.cpu_percent(interval=None):.1f}"
+
+    def _phases_str(self) -> str:
+        return " ".join(f"{k}={v:.0f}ms" for k, v in self._phases.items())
+
     def log(self, outcome: str) -> None:
         """Emit the structured benchmark line. ``outcome`` is a free-form
         tag (``"completed"`` / ``"failed_restored"`` / ``"failed_no_transcriber"`` / ``"cancelled"``)."""
         total_ms = (time.perf_counter() - self._total_start) * 1000.0
-        cpu_pct = self._proc.cpu_percent(interval=None) if self._proc is not None else None
-        phases_str = " ".join(f"{k}={v:.0f}ms" for k, v in self._phases.items())
+        phases_str = self._phases_str()
         rss_str = self._format_rss_deltas()
-        cpu_str = f"{cpu_pct:.1f}" if cpu_pct is not None else "n/a"
+        cpu_str = self._cpu_pct_str()
         logger.info(
             "[swap-benchmark] kind=%s name=%s outcome=%s total=%.0fms phases=[%s] rss_delta=[%s] cpu_pct=%s",
             self._kind,
@@ -106,10 +113,13 @@ class SwapBenchmark:
         baseline = self._memory_bytes.get("before")
         if baseline is None:
             return "n/a"
-        parts: list[str] = []
-        for label, rss in self._memory_bytes.items():
-            if label == "before":
-                continue
-            delta_mb = (rss - baseline) / (1024.0 * 1024.0)
-            parts.append(f"{label}={delta_mb:+.0f}MB")
+        parts = self._rss_delta_parts(baseline)
         return " ".join(parts) if parts else "n/a"
+
+    def _rss_delta_parts(self, baseline: int) -> list[str]:
+        """Signed-MB delta strings for every checkpoint other than ``before``."""
+        return [
+            f"{label}={(rss - baseline) / (1024.0 * 1024.0):+.0f}MB"
+            for label, rss in self._memory_bytes.items()
+            if label != "before"
+        ]

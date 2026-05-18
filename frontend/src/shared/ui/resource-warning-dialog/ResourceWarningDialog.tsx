@@ -79,9 +79,13 @@ export function ResourceWarningDialog(props: ResourceWarningDialogProps) {
 	}
 	const required = formatBytes(assessment.required_bytes, { minUnit: "MB" }) ?? "?";
 	const available = formatBytes(assessment.available_bytes, { minUnit: "MB" }) ?? "?";
-	const lines = assessment.reasons
-		.map((r) => reasonLine(r, available, required, t))
-		.filter((s): s is string => s !== null);
+	const lines = assessment.reasons.reduce<string[]>((acc, r) => {
+		const line = reasonLine(r, available, required, t);
+		if (line !== null) {
+			acc.push(line);
+		}
+		return acc;
+	}, []);
 	const title = kind === "ollama" ? t("warningTitleOllama") : t("warningTitleDictation");
 	const intro =
 		assessment.severity === "critical"
@@ -92,9 +96,8 @@ export function ResourceWarningDialog(props: ResourceWarningDialogProps) {
 		<div className="flex flex-col gap-3">
 			<p data-testid="resource-warning-intro">{intro}</p>
 			<ul className="ml-1 flex list-disc flex-col gap-1 pl-4 text-foreground-muted">
-				{lines.map((line, idx) => (
-					// biome-ignore lint/suspicious/noArrayIndexKey: line text is stable per render and order is meaningful (severity reason ordering matches server payload)
-					<li key={idx}>{line}</li>
+				{lines.map((line) => (
+					<li key={line}>{line}</li>
 				))}
 			</ul>
 			<p className="text-foreground-secondary text-xs">

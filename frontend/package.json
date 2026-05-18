@@ -57,6 +57,7 @@
     "archiver": "^7.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "double-metaphone": "^2.0.0",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.3",
     "fuse.js": "^7.3.0",

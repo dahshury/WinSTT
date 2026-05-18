@@ -83,7 +83,7 @@ class OnnxAsrDiarizer(IDiarizer):
         try:
             session = self._ensure_session()
             segments = session.diarize(waveform, sample_rate=16_000)
-        except Exception:  # noqa: BLE001 — diarization must never crash the recorder
+        except Exception:  # diarization must never crash the recorder
             logger.exception("[diarizer] diarize() failed; returning empty segments")
             return ()
         return tuple(SpeakerSegment(start=s.start, end=s.end, speaker=s.speaker) for s in segments)
@@ -101,6 +101,6 @@ class OnnxAsrDiarizer(IDiarizer):
             if self._session is not None:
                 try:
                     self._session.close()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     logger.exception("[diarizer] shutdown failed; ignoring")
                 self._session = None

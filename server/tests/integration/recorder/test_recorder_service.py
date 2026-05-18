@@ -13,10 +13,16 @@ from src.building_blocks.clock import Clock
 from src.building_blocks.event_bus import EventBus
 from src.recorder.application.recorder_service import RecorderService
 from src.recorder.domain.config import RecorderConfig
-from src.recorder.domain.events import DownloadProgress, NoAudioDetected
+from src.recorder.domain.events import (
+    DownloadProgress,
+    NoAudioDetected,
+    SpeakerSegment,
+    SpeakerSegmentsDetected,
+)
 from src.recorder.domain.ports.transcriber import ITranscriber, TranscriptionResult
 from src.recorder.domain.state_machine import RecorderState
 from tests.fakes.fake_audio_source import FakeAudioSource
+from tests.fakes.fake_diarizer import FakeDiarizer
 from tests.fakes.fake_transcriber import FakeTranscriber
 from tests.fakes.fake_vad import FakeVAD
 from tests.fakes.fake_wake_word import FakeWakeWordDetector
@@ -30,6 +36,7 @@ class TestRecorderService:
         use_microphone: bool = False,
         realtime_transcriber: FakeTranscriber | None = None,
         wake_word_detector: FakeWakeWordDetector | None = None,
+        diarizer: FakeDiarizer | None = None,
         ensure_sentence_starting_uppercase: bool = True,
         ensure_sentence_ends_with_period: bool = True,
     ) -> tuple[RecorderService, FakeTranscriber, EventBus, FakeAudioSource]:
@@ -56,6 +63,7 @@ class TestRecorderService:
             transcriber=transcriber,
             wake_word_detector=wake_word_detector,
             realtime_transcriber=realtime_transcriber,
+            diarizer=diarizer,
             config=config,
             event_bus=event_bus,
             clock=Clock.system_clock(),
@@ -120,6 +128,76 @@ class TestRecorderService:
         t.join()
         service.shutdown()
         assert result == "Hello world."
+
+    @staticmethod
+    def _run_text_with_audio(service: RecorderService) -> str:
+        """Drive ``text()`` end-to-end by feeding synthetic PCM from a thread."""
+        chunk = struct.pack("<512h", *([100] * 512))
+        chunks = [chunk for _ in range(22)]
+
+        def feed_audio() -> None:
+            time.sleep(0.05)
+            for c in chunks:
+                service.feed_audio(c)
+                time.sleep(0.01)
+
+        t = threading.Thread(target=feed_audio)
+        t.start()
+        try:
+            return service.text()
+        finally:
+            t.join()
+            service.shutdown()
+
+    def test_text_emits_speaker_segments_when_diarizer_present(self) -> None:
+        """Diarizer success path: segments are published after the transcript."""
+        diarizer = FakeDiarizer(segments=(SpeakerSegment(start=0.0, end=1.0, speaker=0),))
+        service, _t, event_bus, _ = self._make_service(
+            transcription_text="hello world",
+            diarizer=diarizer,
+        )
+        received: list[SpeakerSegmentsDetected] = []
+        event_bus.subscribe(SpeakerSegmentsDetected, received.append)
+
+        result = self._run_text_with_audio(service)
+
+        assert result == "Hello world."
+        assert diarizer.diarize_calls == 1
+        assert len(received) == 1
+        assert received[0].segments == (SpeakerSegment(start=0.0, end=1.0, speaker=0),)
+
+    def test_text_diarizer_failure_is_swallowed(self) -> None:
+        """A diarizer that raises must not crash text(); empty segments emit."""
+        diarizer = FakeDiarizer(raises=RuntimeError("diarize boom"))
+        service, _t, event_bus, _ = self._make_service(
+            transcription_text="hello world",
+            diarizer=diarizer,
+        )
+        received: list[SpeakerSegmentsDetected] = []
+        event_bus.subscribe(SpeakerSegmentsDetected, received.append)
+
+        result = self._run_text_with_audio(service)
+
+        assert result == "Hello world."
+        assert diarizer.diarize_calls == 1
+        assert len(received) == 1
+        assert received[0].segments == ()
+
+    def test_text_no_speaker_segments_without_diarizer(self) -> None:
+        """No diarizer wired → no SpeakerSegmentsDetected ever published."""
+        service, _t, event_bus, _ = self._make_service(transcription_text="hello world")
+        received: list[SpeakerSegmentsDetected] = []
+        event_bus.subscribe(SpeakerSegmentsDetected, received.append)
+
+        result = self._run_text_with_audio(service)
+
+        assert result == "Hello world."
+        assert received == []
+
+    def test_safe_diarize_returns_empty_when_diarizer_none(self) -> None:
+        """Direct unit cover of the ``_safe_diarize`` None guard branch."""
+        service, _t, _e, _ = self._make_service()
+        assert service._safe_diarize(np.zeros(16000, dtype=np.float32)) == ()
 
     def test_text_not_in_transcribing_state(self) -> None:
         """Cover the branch at lines 82-83 where state != TRANSCRIBING so
@@ -1102,6 +1180,83 @@ class TestRecorderService:
         assert service._realtime_transcriber is loaded[0]
         assert rt.shutdown_called
         assert service._config.realtime.realtime_model_type == "onnx-community/whisper-tiny"
+        service.shutdown()
+
+    def test_model_swap_main_relinks_realtime_when_slaved(self) -> None:
+        """Regression: when ``use_main_model_for_realtime`` is on, the
+        realtime slot must follow the main slot through a swap. Pre-fix,
+        the realtime slot kept pointing at the now-shut-down old main
+        instance, so the pill went dead while the final paste came from
+        the new model (e.g. v3-turbo pasting Arabic correctly while
+        the pill stayed blank).
+        """
+        from src.recorder.domain.events import ModelSwapCompleted
+
+        service, old_transcriber, event_bus, loaded = self._swap_service()
+        # Mirror what bootstrap does when the toggle is on: both slots
+        # hold the SAME instance and share a single lock.
+        service._realtime_transcriber = old_transcriber
+        service._realtime_transcriber_lock = service._main_transcriber_lock
+        service._config.realtime.enable_realtime_transcription = True
+        service._config.realtime.use_main_model_for_realtime = True
+
+        completed: list[ModelSwapCompleted] = []
+        event_bus.subscribe(ModelSwapCompleted, completed.append)
+
+        service.request_model_swap("main", "onnx-community/whisper-base")
+        self._wait_for(lambda: len(completed) == 1)
+
+        # Both slots now point at the freshly loaded transcriber and the
+        # config name was mirrored so ``_reuse_realtime_text_if_eligible``
+        # still recognises the slaving via its identity check.
+        assert service._transcriber is loaded[0]
+        assert service._realtime_transcriber is loaded[0]
+        assert service._realtime_transcriber is service._transcriber
+        assert service._realtime_transcriber_lock is service._main_transcriber_lock
+        assert service._config.realtime.realtime_model_type == "onnx-community/whisper-base"
+        # And ``_realtime_reuse_enabled`` flips back to True so the
+        # end-of-recording duplicate transcribe is short-circuited again.
+        assert service._realtime_reuse_enabled() is True
+        service.shutdown()
+
+    def test_model_swap_main_leaves_unslaved_realtime_alone(self) -> None:
+        """When the toggle is off, a main swap must not touch the
+        independently-managed realtime slot."""
+        from src.recorder.domain.events import ModelSwapCompleted
+
+        rt = FakeTranscriber()
+        service, _, event_bus, loaded = self._swap_service()
+        service._realtime_transcriber = rt
+        service._config.realtime.enable_realtime_transcription = True
+        service._config.realtime.use_main_model_for_realtime = False
+
+        completed: list[ModelSwapCompleted] = []
+        event_bus.subscribe(ModelSwapCompleted, completed.append)
+
+        service.request_model_swap("main", "onnx-community/whisper-base")
+        self._wait_for(lambda: len(completed) == 1)
+
+        assert service._transcriber is loaded[0]
+        assert service._realtime_transcriber is rt
+        assert not rt.shutdown_called
+        service.shutdown()
+
+    def test_request_realtime_swap_rejected_when_slaved_to_main(self) -> None:
+        """A direct ``reload_realtime_model`` while slaved would silently
+        un-slave the worker — reject it cleanly instead."""
+        from src.recorder.domain.events import ModelSwapFailed
+
+        service, _, event_bus, _ = self._make_service()
+        service._config.realtime.enable_realtime_transcription = True
+        service._config.realtime.use_main_model_for_realtime = True
+        failures: list[ModelSwapFailed] = []
+        event_bus.subscribe(ModelSwapFailed, failures.append)
+
+        service.request_model_swap("realtime", "some/model")
+        assert len(failures) == 1
+        assert failures[0].kind == "realtime"
+        assert "use main model" in failures[0].reason.lower()
+        assert failures[0].detail == "use_main_model_for_realtime is on"
         service.shutdown()
 
     def test_model_swap_load_failure_emits_failed_and_restores(self) -> None:

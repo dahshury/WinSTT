@@ -4,7 +4,7 @@ import logging
 import platform
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 INIT_HANDLE_BUFFER_OVERFLOW = platform.system() != "Darwin"
 
@@ -80,6 +80,16 @@ class RealtimeConfig(StrictMutableModel):
     initial_prompt_realtime: str | list[int] | None = None
 
 
+# Sentinel values that mean "no wake-word backend". The server CLI defaults
+# `--wakeword_backend` to the literal string "none" (argparse can't express
+# "absent"), and historically "default"/"" have also meant off. Normalising
+# them all to "" in one place keeps every downstream check honest —
+# crucially `bool(config.wake_word.wakeword_backend)` in the pipeline, which
+# would otherwise treat the 4-char string "none" as True and wrongly arm
+# wake-word mode for PTT/toggle/listen.
+_WAKEWORD_OFF_SENTINELS = frozenset({"", "none", "default"})
+
+
 class WakeWordConfig(StrictMutableModel):
     wakeword_backend: str = ""
     openwakeword_model_paths: str | None = None
@@ -89,6 +99,26 @@ class WakeWordConfig(StrictMutableModel):
     wake_word_activation_delay: float = 0.0
     wake_word_timeout: float = 5.0
     wake_word_buffer_duration: float = 0.1
+
+    @field_validator("wakeword_backend", mode="before")
+    @classmethod
+    def _normalise_wakeword_backend(cls, raw: object) -> str:
+        """Collapse all "off" sentinels to ``""``.
+
+        The CLI defaults ``--wakeword_backend`` to the literal string
+        ``"none"``; ``bool("none")`` is ``True``, so a naive truthiness
+        check would wrongly arm wake-word mode for every PTT/toggle/listen
+        session. ``None``, ``""``, ``"none"`` and ``"default"`` (any case,
+        surrounding whitespace ignored) all mean "no wake-word backend".
+        Real backend names are trimmed but **not** lowercased — the facade
+        matches them against the registry's exact keys.
+        """
+        if raw is None:
+            return ""
+        text = str(raw).strip()
+        if text.lower() in {"", "none", "default"}:
+            return ""
+        return text
 
 
 class EndpointConfig(StrictMutableModel):

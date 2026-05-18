@@ -10,13 +10,27 @@ dependencies = [
     "pydantic>=2.0",
     "PyAudio>=0.2.14",
     "PyAudioWPatch>=0.2.12",
-    "pvporcupine>=1.9.5",
+    # Pinned to the last access-key-free 1.x line. Picovoice introduced a
+    # mandatory `access_key` argument to `pvporcupine.create()` in 2.0, and
+    # bundling a hard-coded empty string (or asking every user to sign up
+    # at console.picovoice.ai) is friction we don't want for a free desktop
+    # app. The reference monolith at examples/RealtimeSTT pins the same
+    # version for the same reason.
+    "pvporcupine>=1.9.5,<2.0.0",
     "webrtcvad-wheels>=2.0.14",
     "scipy>=1.15.2",
     "openwakeword>=0.4.0",
     "numpy",
     "soundfile>=0.13.1",
     "psutil>=5.9",
+    # NVML Python bindings — used by ``recorder.infrastructure.live_resources``
+    # to probe per-GPU memory directly instead of shelling out to ``nvidia-smi``.
+    # Pure-Python wrapper around libnvidia-ml; lets us apply the per-process
+    # sum workaround for Windows WDDM mode (where NVML's aggregate ``used``
+    # over-reports by the OS scheduler's reserved chunk). On hosts without
+    # an NVIDIA driver, ``nvmlInit()`` fails cleanly and the probe falls
+    # back to an empty GPU tuple, so this is safe to ship in CPU builds.
+    "nvidia-ml-py>=12.0",
     "websockets>=16.0",
     "onnx-asr[hub]",
     # ``onnx`` is needed by ``recorder.infrastructure.onnx_patch`` to repair
@@ -68,6 +82,15 @@ gpu = [
 # Fail-soft: the adapter falls back to ``is_available() == False`` if these
 # aren't installed.
 sentence-classifier = ["torch>=2.0", "transformers>=4.30,<5"]
+
+# Text-to-speech (Kokoro-82M ONNX). Bundled into the standalone exe but
+# disabled by default at runtime — the TTS feature is opt-in from the
+# Settings UI. Confirmed torch-free: kokoro-onnx pulls only onnxruntime
+# (shared with the STT path), espeakng-loader (bundles the espeak-ng DLL
+# inside the wheel — no separate Windows install needed), phonemizer-fork,
+# and numpy. See ``examples/kokoro-onnx/pyproject.toml`` for the upstream
+# dep declaration.
+tts = ["kokoro-onnx>=0.5.0"]
 
 [dependency-groups]
 dev = [
@@ -163,7 +186,7 @@ warn_no_return = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","soundfile.*","websocket.*","websockets.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnx.*","onnxruntime.*","torch.*","transformers.*","psutil.*","nvidia.*"]
+module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","soundfile.*","websocket.*","websockets.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnx.*","onnxruntime.*","torch.*","transformers.*","psutil.*","nvidia.*","pynvml.*","kokoro_onnx.*","phonemizer.*","espeakng_loader.*","misaki.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -179,6 +202,12 @@ omit = [
     "src/recorder/bootstrap.py",
     "src/recorder/client.py",
     "src/stt_server/*",
+    # TTS subsystem — infrastructure (Kokoro adapter, asset downloader)
+    # and bootstrap are I/O-bound integration code; the domain port and
+    # config models remain in scope for the coverage gate.
+    "src/synthesizer/infrastructure/*",
+    "src/synthesizer/bootstrap.py",
+    "src/synthesizer/__init__.py",
 ]
 
 [tool.coverage.report]

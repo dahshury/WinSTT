@@ -76,10 +76,16 @@ def parse_arguments() -> argparse.Namespace:
         "--lang",
         "--language",
         type=str,
-        default="en",
+        # Empty default = auto-detect — matches the rest of the codebase
+        # (OnnxAsrTranscriber treats falsy language as None → Whisper picks
+        # the language from the audio itself). The Electron frontend stores
+        # the "Auto-detect" picker option as "" and skips passing --lang
+        # when empty, so a non-empty default here would silently override
+        # the user's explicit auto-detect choice.
+        default="",
         help=(
             "Language code for the STT model to transcribe in a specific language. "
-            "Leave this empty for auto-detection based on input audio. Default is en. "
+            "Leave this empty (the default) for auto-detection based on input audio. "
             "List of supported language codes: "
             "https://github.com/openai/whisper/blob/main/whisper/tokenizer.py#L11-L110"
         ),
@@ -575,10 +581,13 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--detection_speed",
         type=float,
-        default=1.5,
+        default=2.0,
         help=(
-            "Detection speed multiplier for smart endpoint. Higher values make "
-            "silence detection faster (shorter pauses). Default is 1.5."
+            "Smart-endpoint pause multiplier: pause = (model_pause + "
+            "whisper_pause) * detection_speed. HIGHER values mean a LONGER "
+            "wait before finalizing (more patient — tolerates pauses); "
+            "lower values commit faster. Default is 2.0 (matches the "
+            "RealtimeSTT reference)."
         ),
     )
 
@@ -591,6 +600,46 @@ def parse_arguments() -> argparse.Namespace:
             "Directory to write the rotating server log file (stt-server.log) into. "
             "Falls back to the WINSTT_LOG_DIR environment variable. When neither is "
             "set, the server logs only to stdout. The directory is created if missing."
+        ),
+    )
+
+    # ─── TTS ────────────────────────────────────────────────────────────
+    parser.add_argument(
+        "--tts-voice",
+        "--tts_voice",
+        type=str,
+        default="af_heart",
+        help="Default Kokoro voice ID (e.g. af_heart, af_nicole, am_michael).",
+    )
+    parser.add_argument(
+        "--tts-lang",
+        "--tts_lang",
+        type=str,
+        default="en-us",
+        help="Default Kokoro language code (en-us, en-gb, ja, cmn, es, fr, hi, it, pt-br).",
+    )
+    parser.add_argument(
+        "--tts-speed",
+        "--tts_speed",
+        type=float,
+        default=1.0,
+        help="Default playback speed multiplier (0.5..2.0).",
+    )
+    parser.add_argument(
+        "--tts-device",
+        "--tts_device",
+        type=str,
+        default="auto",
+        help="TTS execution device: auto (default), cuda, cpu. 'auto' falls back to cpu when CUDA isn't viable.",
+    )
+    parser.add_argument(
+        "--tts-cache-dir",
+        "--tts_cache_dir",
+        type=str,
+        default=None,
+        help=(
+            "Override the directory where Kokoro model + voicepacks are cached. "
+            "Defaults to %%LOCALAPPDATA%%/winstt/tts/kokoro."
         ),
     )
 

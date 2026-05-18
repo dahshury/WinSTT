@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from src.recorder.domain.config import (
     AudioConfig,
+    DiarizationConfig,
     EndpointConfig,
     RealtimeConfig,
     RecorderConfig,
@@ -35,6 +36,32 @@ class TestRecorderConfig:
     def test_wake_words_sensitivity_validation(self) -> None:
         with pytest.raises(ValidationError):
             WakeWordConfig(wake_words_sensitivity=-0.1)
+
+    @pytest.mark.parametrize(
+        "raw",
+        ["none", "NONE", "  none  ", "default", "", None],
+    )
+    def test_wakeword_backend_off_sentinels_normalise_to_empty(self, raw: object) -> None:
+        # The CLI defaults --wakeword_backend to the literal "none"; bool("none")
+        # is True, which would wrongly arm wake-word mode in the pipeline for
+        # every PTT/toggle/listen session. All off-sentinels must collapse to "".
+        cfg = WakeWordConfig(wakeword_backend=raw)  # type: ignore[arg-type]
+        assert cfg.wakeword_backend == ""
+        assert bool(cfg.wakeword_backend) is False
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("pvporcupine", "pvporcupine"),
+            ("openwakeword", "openwakeword"),
+            ("composite", "composite"),
+            ("  composite  ", "composite"),
+        ],
+    )
+    def test_wakeword_backend_real_values_pass_through(self, raw: str, expected: str) -> None:
+        # Real backend names survive normalisation (trimmed but not lowered —
+        # the facade matches against the registry's exact keys).
+        assert WakeWordConfig(wakeword_backend=raw).wakeword_backend == expected
 
     def test_from_kwargs(self) -> None:
         config = RecorderConfig.from_kwargs(
@@ -81,6 +108,7 @@ class TestRecorderConfig:
             WakeWordConfig,
             UIConfig,
             EndpointConfig,
+            DiarizationConfig,
         ) == RecorderConfig._SUBCONFIGS
 
 

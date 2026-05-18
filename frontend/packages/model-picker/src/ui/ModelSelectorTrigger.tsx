@@ -1,18 +1,16 @@
 "use client";
 
 import { Combobox } from "@base-ui/react/combobox";
-import { ArrowDown01Icon, ServerStack01Icon } from "@hugeicons/core-free-icons";
+import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef } from "react";
-import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
+import type { OpenRouterModel } from "@/shared/api/models";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Spinner } from "@/shared/ui/spinner";
-import { formatPricing } from "../lib/model-selector-display-utils";
 import { formatMaker, formatModelName } from "../lib/model-selector-utils";
 import { getProviderIconWithFallback } from "../lib/provider-icons";
 import { TruncatedText } from "./TruncatedText";
-import { VariantBadgeIcon } from "./VariantBadgeIcon";
 
 // Glass-card trigger — shares the exact material vocabulary with the
 // pill, STT picker, and settings titlebar: theme-token vertical gradient,
@@ -28,7 +26,6 @@ export interface ModelSelectorTriggerProps {
 	open: boolean;
 	parsedModelId: string | undefined;
 	placeholder: string;
-	selectedEndpoint: OpenRouterEndpoint | null;
 	selectedModel: OpenRouterModel | undefined;
 }
 
@@ -61,61 +58,29 @@ function MakerBadge({ maker }: { maker: string | undefined }) {
 	);
 }
 
-function EndpointRow({ selectedEndpoint }: { selectedEndpoint: OpenRouterEndpoint | null }) {
-	if (!selectedEndpoint) {
-		return null;
-	}
+function SelectedModelContent({ selectedModel }: { selectedModel: OpenRouterModel }) {
 	return (
-		<div className="flex items-center gap-2 text-foreground-muted text-xs-tight">
-			<HugeiconsIcon className="size-3" icon={ServerStack01Icon} />
-			<span>via {selectedEndpoint.provider_name}</span>
-			<span className="opacity-60">({formatPricing(selectedEndpoint.pricing)})</span>
-		</div>
-	);
-}
-
-function SelectedModelContent({
-	selectedModel,
-	selectedEndpoint,
-}: {
-	selectedModel: OpenRouterModel;
-	selectedEndpoint: OpenRouterEndpoint | null;
-}) {
-	return (
-		<div className="flex min-w-0 flex-1 items-center gap-3">
+		<div className="flex min-w-0 flex-1 items-center gap-2">
 			<MakerBadge maker={selectedModel.maker} />
-			<div className="flex min-w-0 flex-1 flex-col items-start gap-1">
-				<div className="flex w-full min-w-0 items-center gap-1.5">
-					{selectedModel.variant ? <VariantBadgeIcon variant={selectedModel.variant} /> : null}
-					<TruncatedText
-						className="font-medium text-body text-foreground leading-tight tracking-tight"
-						text={formatModelName(
-							selectedModel.model_name ?? selectedModel.name,
-							selectedModel.maker
-						)}
-					/>
-				</div>
-				<EndpointRow selectedEndpoint={selectedEndpoint} />
-			</div>
+			<TruncatedText
+				className="font-medium text-body text-foreground leading-tight tracking-tight"
+				text={formatModelName(selectedModel.model_name ?? selectedModel.name, selectedModel.maker)}
+			/>
 		</div>
 	);
 }
 
 function renderSelectedContent({
 	selectedModel,
-	selectedEndpoint,
 	parsedModelId,
 	placeholder,
 }: {
 	selectedModel: OpenRouterModel | undefined;
-	selectedEndpoint: OpenRouterEndpoint | null;
 	parsedModelId: string | undefined;
 	placeholder: string;
 }) {
 	if (selectedModel) {
-		return (
-			<SelectedModelContent selectedEndpoint={selectedEndpoint} selectedModel={selectedModel} />
-		);
+		return <SelectedModelContent selectedModel={selectedModel} />;
 	}
 
 	if (isMissingModelId(parsedModelId)) {
@@ -150,7 +115,6 @@ export function TriggerButton({
 	disabled,
 	isLoading,
 	selectedModel,
-	selectedEndpoint,
 	parsedModelId,
 	placeholder,
 }: TriggerButtonProps) {
@@ -183,7 +147,6 @@ export function TriggerButton({
 			) : (
 				renderSelectedContent({
 					selectedModel,
-					selectedEndpoint,
 					parsedModelId,
 					placeholder,
 				})
@@ -198,7 +161,6 @@ export function TriggerButton({
 
 export function ModelSelectorTrigger({
 	selectedModel,
-	selectedEndpoint,
 	parsedModelId,
 	placeholder,
 	open,
@@ -216,7 +178,6 @@ export function ModelSelectorTrigger({
 					open={open}
 					parsedModelId={parsedModelId}
 					placeholder={placeholder}
-					selectedEndpoint={selectedEndpoint}
 					selectedModel={selectedModel}
 				/>
 			)}

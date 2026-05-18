@@ -31,7 +31,6 @@ export interface DictionaryTableProps {
 	onAdd: (entry: Omit<DictionaryEntry, "id">) => void;
 	onClearAll?: () => void;
 	onRemove: (id: string) => void;
-	onUpdate: (id: string, entry: Partial<DictionaryEntry>) => void;
 }
 
 export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: DictionaryTableProps) {
@@ -46,46 +45,31 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 		formState: { errors },
 	} = useForm<AddDictionaryEntry>({
 		resolver: zodResolver(addDictionaryEntrySchema),
-		defaultValues: { find: "", replace: "", caseSensitive: false, wholeWord: false },
+		defaultValues: { term: "" },
 	});
 
-	const findValue = watch("find");
-	const replaceValue = watch("replace");
+	const termValue = watch("term");
 
 	const onSubmit = (data: AddDictionaryEntry) => {
-		// Zod schema applies .trim() during validation, no manual trimming needed
 		onAdd(data);
 		reset();
 	};
 
-	const findReg = register("find");
-	const replaceReg = register("replace");
-	const isAddDisabled = !(findValue?.trim() && replaceValue?.trim());
+	const termReg = register("term");
+	const isAddDisabled = !termValue?.trim();
 
 	return (
 		<div className="flex flex-col gap-3">
 			<Form className="flex items-end gap-2" onSubmit={handleSubmit(onSubmit)}>
 				<div className="flex-1">
-					<FormControl error={errors.find?.message} label={t("find")}>
+					<FormControl error={errors.term?.message} label={t("term")}>
 						<TextField
-							error={!!errors.find}
-							name={findReg.name}
-							onBlur={findReg.onBlur}
-							onChange={findReg.onChange}
-							placeholder={t("findPlaceholder")}
-							ref={findReg.ref}
-						/>
-					</FormControl>
-				</div>
-				<div className="flex-1">
-					<FormControl error={errors.replace?.message} label={t("replace")}>
-						<TextField
-							error={!!errors.replace}
-							name={replaceReg.name}
-							onBlur={replaceReg.onBlur}
-							onChange={replaceReg.onChange}
-							placeholder={t("replacePlaceholder")}
-							ref={replaceReg.ref}
+							error={!!errors.term}
+							name={termReg.name}
+							onBlur={termReg.onBlur}
+							onChange={termReg.onChange}
+							placeholder={t("termPlaceholder")}
+							ref={termReg.ref}
 						/>
 					</FormControl>
 				</div>
@@ -100,23 +84,21 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 			<Table containerClassName="rounded border border-border bg-surface-tertiary overflow-hidden">
 				<TableHeader>
 					<TableRow>
-						<TableHead>{t("find")}</TableHead>
-						<TableHead>{t("replace")}</TableHead>
+						<TableHead>{t("term")}</TableHead>
 						<TableHead className="w-10" />
 					</TableRow>
 				</TableHeader>
 				<TableBody>
 					{entries.length === 0 ? (
-						<TableEmpty colSpan={3}>{t("emptyState")}</TableEmpty>
+						<TableEmpty colSpan={2}>{t("emptyState")}</TableEmpty>
 					) : (
 						entries.map((entry, idx) => (
 							<TableRow index={idx} key={entry.id}>
-								<TableCell className="text-foreground-secondary">{entry.find}</TableCell>
-								<TableCell className="text-foreground">{entry.replace}</TableCell>
+								<TableCell className="text-foreground">{entry.term}</TableCell>
 								<TableCell className="w-10 text-right">
 									<Tooltip content={tc("delete")}>
 										<Button
-											aria-label={`${tc("delete")} "${entry.find}"`}
+											aria-label={`${tc("delete")} "${entry.term}"`}
 											className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
 											onClick={() => onRemove(entry.id)}
 										>

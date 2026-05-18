@@ -3,32 +3,32 @@ title: Hotkey Settings
 description: Configure the global push-to-talk hotkey
 ---
 
-WinSTT uses a global hotkey that works even when the application window is not focused. The hotkey triggers recording in both push-to-talk and toggle modes.
+WinSTT uses a global hotkey that works even when the application window is not focused. The hotkey triggers recording according to the active recording mode.
 
 ## Settings Reference
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `pushToTalkKey` | string | `"Space"` | The global hotkey, specified as an Electron accelerator string |
+| `pushToTalkKey` | string | `"LCtrl+LMeta"` | The global hotkey, specified as a uiohook-style combo string |
 
-## Accelerator Format
+## Combo Format
 
-The hotkey uses Electron's accelerator format. Combine modifier keys with `+` signs.
+The hotkey uses a uiohook-style combo string — **not** an Electron accelerator. Tokens are physical keys joined with `+`.
 
-**Modifiers:** `Ctrl`, `Alt`, `Shift`, `Meta` (Windows key)
+**Modifiers (left/right specific):** `LCtrl`, `RCtrl`, `LShift`, `RShift`, `LAlt`, `RAlt`, `LMeta`
 
-**Common keys:** `Space`, `A`-`Z`, `0`-`9`, `F1`-`F24`, `Tab`, `Backspace`, `Enter`, `Escape`
+**Other keys:** letters, digits, `F1`–`F24`
 
 ### Examples
 
-| Accelerator | Description |
-|-------------|-------------|
-| `Space` | Spacebar alone (default) |
-| `Ctrl+Space` | Ctrl and Spacebar |
-| `Alt+Shift+A` | Alt, Shift, and A |
+| Combo | Description |
+|-------|-------------|
+| `LCtrl+LMeta` | Left Ctrl and Left Windows key (default) |
+| `LCtrl+Space` | Left Ctrl and Spacebar |
+| `LAlt+LShift+A` | Left Alt, Left Shift, and A |
 | `F13` | Function key 13 (useful for dedicated macro keys) |
-| `Ctrl+Shift+F9` | Ctrl, Shift, and F9 |
+| `LCtrl+LShift+F9` | Left Ctrl, Left Shift, and F9 |
 
 <Callout title="Choosing a hotkey" type="info">
-  Pick a combination that does not conflict with other applications. Keys like F13-F24 are rarely used by other software and make excellent dedicated hotkeys. If you use Space alone, it will be captured globally and may interfere with typing in other applications.
+  Pick a combination that does not conflict with other applications. Left/right-specific modifiers (e.g. `LMeta` rather than a generic `Meta`) reduce conflicts. Keys like F13–F24 are rarely used by other software and make excellent dedicated hotkeys.
 </Callout>

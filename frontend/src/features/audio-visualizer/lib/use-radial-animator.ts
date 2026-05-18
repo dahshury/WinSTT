@@ -63,6 +63,10 @@ function pickFrame(sequence: number[][], index: number): number[] {
 	return sequence[index % sequence.length] ?? [];
 }
 
+/** Test-only re-exports of internal helpers (kept out of the public barrel). */
+export const __test_gcd = gcd;
+export const __test_findGcdLessThan = findGcdLessThan;
+
 function inputsChanged(
 	prev: { state: AgentState; barCount: number },
 	state: AgentState,

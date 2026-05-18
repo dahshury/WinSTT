@@ -289,12 +289,12 @@ describe("settings:save listener", () => {
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
 			settings: {
-				dictionary: [{ id: "1", find: "a", replace: "b" }],
+				dictionary: [{ id: "1", term: "Kubernetes" }],
 				snippets: [{ id: "2", trigger: "/x", expansion: "X" }],
 				llm: { enabled: true },
 			},
 		});
-		expect(storeData.dictionary).toEqual([{ id: "1", find: "a", replace: "b" }]);
+		expect(storeData.dictionary).toEqual([{ id: "1", term: "Kubernetes" }]);
 		expect(storeData.snippets).toEqual([{ id: "2", trigger: "/x", expansion: "X" }]);
 		expect((storeData.llm as Record<string, unknown>).enabled).toBe(true);
 	});

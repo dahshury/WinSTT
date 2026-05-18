@@ -23,6 +23,11 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		label: "Whisper",
 		chip: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
 	},
+	"lite-whisper": {
+		icon: AudioWave02Icon,
+		label: "Lite-Whisper",
+		chip: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+	},
 	nemo: {
 		icon: AiChipIcon,
 		label: "NeMo",
@@ -52,6 +57,7 @@ export function getFamilyConfig(family: FamilyKey): FamilyConfig {
 /** The org/maker behind each model family — drives the group header. */
 const FAMILY_AUTHOR: Record<FamilyKey, string> = {
 	whisper: "OpenAI",
+	"lite-whisper": "OpenAI",
 	nemo: "NVIDIA",
 	gigaam: "Sber Salute",
 	kaldi: "Alpha Cephei",
@@ -62,7 +68,7 @@ export function getAuthorLabel(family: FamilyKey): string {
 	return FAMILY_AUTHOR[family];
 }
 
-const FAMILY_ORDER: FamilyKey[] = ["whisper", "nemo", "gigaam", "kaldi", "t-one"];
+const FAMILY_ORDER: FamilyKey[] = ["whisper", "lite-whisper", "nemo", "gigaam", "kaldi", "t-one"];
 
 function bucketByFamily(models: readonly ModelInfo[]): Map<FamilyKey, ModelInfo[]> {
 	const grouped = new Map<FamilyKey, ModelInfo[]>();

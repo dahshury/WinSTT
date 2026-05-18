@@ -117,6 +117,9 @@ export const IPC = {
 	// Sound (renderer → main invoke, main → renderer push)
 	SOUND_GET_DATA: "sound:get-data",
 	SOUND_PLAY: "sound:play",
+	SOUND_LIBRARY_ADD: "sound:library-add",
+	SOUND_LIBRARY_REMOVE: "sound:library-remove",
+	SOUND_LIBRARY_READ_FILE: "sound:library-read-file",
 
 	// LLM (renderer → main)
 	LLM_SCAN_MODELS: "llm:scan-models",
@@ -140,11 +143,33 @@ export const IPC = {
 	TRANSFORMS_APPLIED: "transforms:applied",
 	TRANSFORMS_FAILED: "transforms:failed",
 
+	// TTS commands (renderer → main)
+	TTS_SPEAK: "tts:speak",
+	TTS_SPEAK_SELECTION: "tts:speak-selection",
+	TTS_CANCEL: "tts:cancel",
+	TTS_INIT: "tts:init",
+	TTS_LIST_VOICES: "tts:list-voices",
+
+	// TTS events (main → renderer)
+	TTS_STARTED: "tts:started",
+	TTS_CHUNK: "tts:chunk",
+	TTS_COMPLETED: "tts:completed",
+	TTS_FAILED: "tts:failed",
+	TTS_MODEL_DOWNLOAD_START: "tts:model-download-start",
+	TTS_MODEL_DOWNLOAD_PROGRESS: "tts:model-download-progress",
+	TTS_MODEL_DOWNLOAD_COMPLETE: "tts:model-download-complete",
+
 	// LLM events (main → renderer)
 	LLM_CATALOG: "llm:catalog",
 	LLM_PULL_PROGRESS: "llm:pull-progress",
 	LLM_PROCESSING_START: "llm:processing-start",
 	LLM_PROCESSING_END: "llm:processing-end",
+	// Streamed reasoning chunks from /api/chat. Emitted only for models that
+	// support a `thinking` field (Qwen3, deepseek-r1, etc.); silent otherwise.
+	// The pill renders these behind the spinner so users can watch the model
+	// reason; the final answer streams in via the same chat call but is
+	// surfaced separately as `STT_FULL_SENTENCE` when the call completes.
+	LLM_REASONING_DELTA: "llm:reasoning-delta",
 	// Warmup status — invoke pulls the last snapshot on mount, broadcast
 	// fires whenever the periodic probe in main runs. Main-side wiring is
 	// still WIP; until it lands, the invoke handler is missing and the
@@ -301,6 +326,9 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	// Sound
 	[IPC.SOUND_GET_DATA]: ["invoke"],
 	[IPC.SOUND_PLAY]: ["on"],
+	[IPC.SOUND_LIBRARY_ADD]: ["invoke"],
+	[IPC.SOUND_LIBRARY_REMOVE]: ["invoke"],
+	[IPC.SOUND_LIBRARY_READ_FILE]: ["invoke"],
 
 	// LLM (renderer → main)
 	[IPC.LLM_SCAN_MODELS]: ["invoke"],
@@ -322,11 +350,28 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TRANSFORMS_APPLIED]: ["on"],
 	[IPC.TRANSFORMS_FAILED]: ["on"],
 
+	// TTS (renderer → main)
+	[IPC.TTS_SPEAK]: ["invoke"],
+	[IPC.TTS_SPEAK_SELECTION]: ["invoke"],
+	[IPC.TTS_CANCEL]: ["send"],
+	[IPC.TTS_INIT]: ["invoke"],
+	[IPC.TTS_LIST_VOICES]: ["invoke"],
+
+	// TTS events (main → renderer)
+	[IPC.TTS_STARTED]: ["on"],
+	[IPC.TTS_CHUNK]: ["on"],
+	[IPC.TTS_COMPLETED]: ["on"],
+	[IPC.TTS_FAILED]: ["on"],
+	[IPC.TTS_MODEL_DOWNLOAD_START]: ["on"],
+	[IPC.TTS_MODEL_DOWNLOAD_PROGRESS]: ["on"],
+	[IPC.TTS_MODEL_DOWNLOAD_COMPLETE]: ["on"],
+
 	// LLM events (main → renderer)
 	[IPC.LLM_CATALOG]: ["on"],
 	[IPC.LLM_PULL_PROGRESS]: ["on"],
 	[IPC.LLM_PROCESSING_START]: ["on"],
 	[IPC.LLM_PROCESSING_END]: ["on"],
+	[IPC.LLM_REASONING_DELTA]: ["on"],
 
 	// Updater
 	[IPC.UPDATER_GET_STATUS_HISTORY]: ["invoke", "secure"],

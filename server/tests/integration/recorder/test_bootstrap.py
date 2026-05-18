@@ -86,10 +86,16 @@ class TestResolveQuantization:
     boundaries dominates the small attention layers) and has no CPU EP
     acceleration at all."""
 
-    def _resolve(self, requested: str, device: str, params: int) -> str | None:
+    def _resolve(
+        self,
+        requested: str,
+        device: str,
+        params: int,
+        available: list[str] | None = None,
+    ) -> str | None:
         from src.recorder.bootstrap import _resolve_quantization
 
-        return _resolve_quantization(requested, device, params)
+        return _resolve_quantization(requested, device, params, available)
 
     def test_auto_cpu_returns_fp32_even_for_large_models(self) -> None:
         # CPU EP has no fp16 kernels — fp16 there just round-trips through fp32.
@@ -105,13 +111,58 @@ class TestResolveQuantization:
             assert self._resolve("auto", "cuda", params) is None, f"unexpected fp16 at {params} params"
 
     def test_concrete_quant_passes_through(self) -> None:
-        # Explicit user selection is honoured verbatim; the load-time path in
-        # OnnxAsrTranscriber wraps fp16 with the patch+EXTENDED workaround.
+        # Explicit user selection is honoured verbatim on CPU; the load-time
+        # path in OnnxAsrTranscriber wraps fp16 with the patch+EXTENDED
+        # workaround. Sub-fp16 quants (q4, bnb4, int8 ...) are valid on the
+        # CPU EP and pass through there.
         assert self._resolve("fp16", "cpu", 39_000_000) == "fp16"
         assert self._resolve("q4", "cpu", 39_000_000) == "q4"
-        assert self._resolve("bnb4", "cuda", 1_500_000_000) == "bnb4"
+        assert self._resolve("bnb4", "cpu", 39_000_000) == "bnb4"
+        # fp16 is the one concrete quant that is GPU-compatible
+        # (_GPU_COMPATIBLE_QUANTIZATIONS = {"", "fp16"}), so it passes
+        # through on CUDA too.
+        assert self._resolve("fp16", "cuda", 39_000_000) == "fp16"
+
+    def test_concrete_unsupported_quant_on_cuda_falls_back_to_fp32(self) -> None:
+        # bnb4 (and every other sub-fp16 quant) is deliberately blocked on
+        # CUDA: ORT's CUDAExecutionProvider can't fuse Q/DQ nodes and
+        # per-channel int8 has a Whisper-encoder hallucination bug. The
+        # documented fallback is fp32 (None) with a warning — honoring the
+        # request would be actively harmful. bnb4 is broken upstream for
+        # ONNX Whisper regardless; this must NOT be re-enabled.
+        assert self._resolve("bnb4", "cuda", 1_500_000_000) is None
+        assert self._resolve("q4", "cuda", 1_500_000_000) is None
+        assert self._resolve("int8", "cuda", 1_500_000_000) is None
 
     def test_unknown_model_with_no_param_count_stays_fp32_on_auto(self) -> None:
         # An off-catalog repo (param_count defaults to 0) must not trigger
         # auto-fp16 — we can't vouch for its size.
         assert self._resolve("auto", "cuda", 0) is None
+
+    def test_auto_does_not_pick_fp16_when_model_lacks_fp16_export(self) -> None:
+        # The canary regression: NeMo Canary is 978M (≥500M) but the
+        # istupakov repo only publishes ``["", "int8"]``. Auto must NOT
+        # resolve to fp16 — that asks onnx-asr for a ``*?fp16.onnx`` that
+        # doesn't exist, which previously triggered a full fallback to tiny
+        # on every startup. Deterministic regardless of local CUDA: the
+        # availability gate short-circuits before the device check.
+        assert self._resolve("auto", "cuda", 978_000_000, ["", "int8"]) is None
+        assert self._resolve("", "cuda", 978_000_000, ["", "int8"]) is None
+
+    def test_concrete_quant_not_published_falls_back_to_fp32(self) -> None:
+        # Explicitly requesting a precision the model doesn't ship resolves
+        # to fp32 instead of failing with ModelFileNotFoundError.
+        assert self._resolve("fp16", "cpu", 978_000_000, ["", "int8"]) is None
+        assert self._resolve("q4", "cpu", 39_000_000, [""]) is None
+
+    def test_published_quant_still_honored(self) -> None:
+        # When the model DOES publish the requested variant, behaviour is
+        # unchanged (concrete pass-through on CPU; auto-fp16 gate still
+        # subject to the existing device/param checks).
+        assert self._resolve("fp16", "cpu", 39_000_000, ["", "fp16"]) == "fp16"
+        assert self._resolve("int8", "cpu", 39_000_000, ["", "int8"]) == "int8"
+
+    def test_available_none_stays_permissive_for_off_catalog_repos(self) -> None:
+        # Off-catalog HF repos (available=None) keep the historical
+        # assume-it-exists behaviour — we can't enumerate their variants.
+        assert self._resolve("fp16", "cpu", 39_000_000, None) == "fp16"

@@ -11,6 +11,8 @@ import soundfile as sf
 
 sys.path.insert(0, r"E:\DL\Projects\WinSTT\server")
 
+import contextlib
+
 from src.recorder.domain.model_registry import ModelCatalog
 from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
@@ -52,7 +54,5 @@ for model_id in ("medium.en", "large-v3"):
             print(f"    infer: {time.perf_counter() - t1:.1f}s   text[:100]: {res.text[:100]!r}")
         except Exception as e:
             print(f"    INFER FAIL: {str(e).splitlines()[0][:160]}")
-        try:
+        with contextlib.suppress(Exception):
             t.shutdown()
-        except Exception:
-            pass

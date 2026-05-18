@@ -73,7 +73,7 @@ describe("useSettingsStore mutators", () => {
 	});
 
 	test("updateDictionary replaces the dictionary list wholesale", () => {
-		const dict = [{ id: "1", find: "ur", replace: "your", caseSensitive: false, wholeWord: true }];
+		const dict = [{ id: "1", term: "Kubernetes" }];
 		useSettingsStore.getState().updateDictionary(dict);
 		expect(useSettingsStore.getState().settings.dictionary).toEqual(dict);
 	});
@@ -103,11 +103,7 @@ describe("useSettingsStore mutators", () => {
 
 	test("resetSettings restores defaults but PRESERVES dictionary and snippets", () => {
 		useSettingsStore.getState().updateGeneralSettings({ recordingMode: "toggle" });
-		useSettingsStore
-			.getState()
-			.updateDictionary([
-				{ id: "1", find: "ur", replace: "your", caseSensitive: false, wholeWord: true },
-			]);
+		useSettingsStore.getState().updateDictionary([{ id: "1", term: "Kubernetes" }]);
 
 		useSettingsStore.getState().resetSettings();
 		const settings = useSettingsStore.getState().settings;

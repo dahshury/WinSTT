@@ -14,7 +14,23 @@ export interface TranscriptionHistoryEntry {
 export interface TranscriptionHistoryStore {
 	clear(): void;
 	getHistory(): TranscriptionHistoryEntry[];
-	record(text: string, durationMs: number, originalText?: string): TranscriptionHistoryEntry | null;
+	/**
+	 * Persist a new history entry.
+	 *
+	 * `originalText` is the pre-LLM text (post-dictionary substitution).
+	 * `llmRan` distinguishes "LLM was invoked" (even if it returned the
+	 * input unchanged — e.g. a reasoning model exhausting its budget on
+	 * thought tokens) from "LLM wasn't invoked at all" (dictation cleanup
+	 * disabled). When LLM ran, `originalText` is always preserved so the
+	 * history UI can offer "Copy Original" as a deterministic affordance
+	 * tied to LLM invocation, not to text-equality.
+	 */
+	record(
+		text: string,
+		durationMs: number,
+		originalText?: string,
+		llmRan?: boolean
+	): TranscriptionHistoryEntry | null;
 }
 
 /**
@@ -101,7 +117,7 @@ export function createTranscriptionHistoryStore(options: CreateOptions): Transcr
 	}
 
 	return {
-		record(text, durationMs, originalText) {
+		record(text, durationMs, originalText, llmRan) {
 			const trimmed = text.trim();
 			if (trimmed.length === 0) {
 				return null;
@@ -114,10 +130,19 @@ export function createTranscriptionHistoryStore(options: CreateOptions): Transcr
 				wordCount: countWords(trimmed),
 				durationMs: Math.max(0, Math.floor(durationMs)),
 			};
-			// Only attach originalText when it actually differs — saves storage
-			// space and lets the UI cleanly hide "Copy Original" for entries
-			// that never went through the LLM.
-			if (trimmedOriginal && trimmedOriginal.length > 0 && trimmedOriginal !== trimmed) {
+			// "Copy Original" is meaningful whenever the LLM was actually
+			// invoked — even when the model returned the input unchanged
+			// (e.g. a reasoning model exhausted its budget on thought
+			// tokens, or the user picked a preset that happened to be a
+			// no-op for this input). Without the `llmRan` signal we'd hide
+			// the affordance for any LLM run that didn't strictly transform
+			// the text, which the user reads as "the LLM never ran."
+			// When LLM didn't run, fall back to the legacy diff gate so
+			// dictionary-only entries don't carry a redundant originalText.
+			const shouldKeepOriginal = trimmedOriginal
+				? llmRan === true || trimmedOriginal !== trimmed
+				: false;
+			if (trimmedOriginal && shouldKeepOriginal) {
 				entry.originalText = trimmedOriginal;
 			}
 			entries.push(entry);

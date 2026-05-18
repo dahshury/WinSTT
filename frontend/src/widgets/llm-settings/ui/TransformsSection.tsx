@@ -11,7 +11,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { components } from "@spec/schema";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useReducer, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import { previewTransform } from "@/shared/api/ipc-client";
 import { BUILTIN_TRANSFORMS } from "@/shared/config/settings-schema";
@@ -163,27 +163,56 @@ interface PlaygroundProps {
 	initialPrompt: string;
 }
 
+interface PlaygroundState {
+	error: string | null;
+	output: string;
+	prompt: string;
+	running: boolean;
+	sample: string;
+}
+
+type PlaygroundAction =
+	| { type: "set-prompt"; value: string }
+	| { type: "set-sample"; value: string }
+	| { type: "run-start" }
+	| { type: "run-success"; output: string }
+	| { type: "run-error"; error: string };
+
+function initPlaygroundState(initialPrompt: string): PlaygroundState {
+	return { prompt: initialPrompt, sample: "", output: "", error: null, running: false };
+}
+
+function playgroundReducer(state: PlaygroundState, action: PlaygroundAction): PlaygroundState {
+	switch (action.type) {
+		case "set-prompt":
+			return { ...state, prompt: action.value };
+		case "set-sample":
+			return { ...state, sample: action.value };
+		case "run-start":
+			return { ...state, error: null, output: "", running: true };
+		case "run-success":
+			return { ...state, output: action.output, running: false };
+		case "run-error":
+			return { ...state, error: action.error, running: false };
+		default:
+			return state;
+	}
+}
+
 function TransformPlayground({ initialPrompt }: PlaygroundProps) {
 	const t = useTranslations("llm");
-	const [prompt, setPrompt] = useState(initialPrompt);
-	const [sample, setSample] = useState("");
-	const [output, setOutput] = useState("");
-	const [error, setError] = useState<string | null>(null);
-	const [running, setRunning] = useState(false);
+	const [state, dispatch] = useReducer(playgroundReducer, initialPrompt, initPlaygroundState);
+	const { prompt, sample, output, error, running } = state;
 
 	const canRun = !running && prompt.trim().length > 0 && sample.trim().length > 0;
 
 	const handleRun = async () => {
-		setError(null);
-		setOutput("");
-		setRunning(true);
+		dispatch({ type: "run-start" });
 		try {
 			const result = await previewTransform(sample, prompt);
-			setOutput(result);
+			dispatch({ type: "run-success", output: result });
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setRunning(false);
+			dispatch({ type: "run-error", error: err instanceof Error ? err.message : String(err) });
 		}
 	};
 
@@ -206,7 +235,7 @@ function TransformPlayground({ initialPrompt }: PlaygroundProps) {
 					</span>
 					<textarea
 						className={`min-h-[140px] w-full resize-y rounded ${surfaceClasses(inputLevel)} p-2 font-mono text-body text-foreground outline-none transition-colors focus:border-accent`}
-						onChange={(e) => setPrompt(e.target.value)}
+						onChange={(e) => dispatch({ type: "set-prompt", value: e.target.value })}
 						placeholder={t("transformPlaygroundPromptPlaceholder")}
 						value={prompt}
 					/>
@@ -217,7 +246,7 @@ function TransformPlayground({ initialPrompt }: PlaygroundProps) {
 					</span>
 					<textarea
 						className={`min-h-[140px] w-full resize-y rounded ${surfaceClasses(inputLevel)} p-2 text-body text-foreground outline-none transition-colors focus:border-accent`}
-						onChange={(e) => setSample(e.target.value)}
+						onChange={(e) => dispatch({ type: "set-sample", value: e.target.value })}
 						placeholder={t("transformPlaygroundSamplePlaceholder")}
 						value={sample}
 					/>

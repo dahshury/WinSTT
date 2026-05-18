@@ -221,12 +221,12 @@ describe("store module", () => {
 });
 
 describe("store migration block (module-load side effects)", () => {
-	itIfClean("migration sets _schemaVersion to the SCHEMA_VERSION (9) at load time", () => {
+	itIfClean("migration sets _schemaVersion to the SCHEMA_VERSION (10) at load time", () => {
 		// The migration block runs once when ./store is imported. With a fresh
 		// MockStore (empty `_schemaVersion`), `getStoreValue` returns undefined,
-		// `?? 1` makes currentVersion=1, `1 < 9` triggers migration which
-		// writes _schemaVersion=9.
-		expect((store.get as (k: string) => unknown)("_schemaVersion")).toBe(9);
+		// `?? 1` makes currentVersion=1, `1 < 10` triggers migration which
+		// writes _schemaVersion=10.
+		expect((store.get as (k: string) => unknown)("_schemaVersion")).toBe(10);
 	});
 
 	itIfClean("migration v4 path resets audio.inputDeviceIndex to null", () => {
@@ -300,7 +300,7 @@ describe("applyStoreMigration (pure)", () => {
 
 	itIfMigrationLoaded("does nothing when current >= SCHEMA_VERSION (boundary equal)", () => {
 		const writes: Write[] = [];
-		applyStoreMigration(9, fakeRead({}), fakeWrite(writes), () => undefined);
+		applyStoreMigration(10, fakeRead({}), fakeWrite(writes), () => undefined);
 		expect(writes).toEqual([]);
 	});
 
@@ -331,7 +331,9 @@ describe("applyStoreMigration (pure)", () => {
 		expect(map.get("llm.dictation.presets")).toEqual([{ key: "neutral" }]);
 		expect(map.get("general.liveTranscriptionDisplay")).toBe("both");
 		expect(map.get("general.systemAudioReductionWhileDictating")).toBe(0);
-		expect(map.get("_schemaVersion")).toBe(9);
+		// v10: dictionary gets wiped on migration.
+		expect(map.get("dictionary")).toEqual([]);
+		expect(map.get("_schemaVersion")).toBe(10);
 	});
 
 	itIfMigrationLoaded(
@@ -462,14 +464,14 @@ describe("applyStoreMigration (pure)", () => {
 		);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.from).toBe(2);
-		expect(calls[0]?.to).toBe(9);
+		expect(calls[0]?.to).toBe(10);
 		expect(calls[0]?.msg).toMatch(/_schemaVersion/);
 	});
 
 	itIfMigrationLoaded("does not log when no migration runs", () => {
 		const writes: Write[] = [];
 		const { log, calls } = fakeLog();
-		applyStoreMigration(9, fakeRead({}), fakeWrite(writes), log);
+		applyStoreMigration(10, fakeRead({}), fakeWrite(writes), log);
 		expect(calls).toEqual([]);
 	});
 
@@ -487,7 +489,7 @@ describe("applyStoreMigration (pure)", () => {
 		);
 		const last = writes.at(-1);
 		expect(last?.key).toBe("_schemaVersion");
-		expect(last?.value).toBe(9);
+		expect(last?.value).toBe(10);
 	});
 
 	itIfMigrationLoaded(

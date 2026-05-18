@@ -1,12 +1,13 @@
 "use client";
 
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { GroupRail, type GroupRailItem } from "../../core/GroupRail";
 import { ModelPicker } from "../../core/ModelPicker";
+import { useRailScrollSpy } from "../../core/use-rail-scroll-spy";
 import {
 	buildModelSearchCorpus,
 	type FamilyKey,
@@ -31,6 +32,10 @@ export interface SttModelSelectorProps {
 	currentQuantization: OnnxQuantization;
 	disabled?: boolean;
 	isLoading?: boolean;
+	/** Which swap-store slot this picker is bound to. Drives the trigger's
+	 *  in-flight `from → to` indicator so the main picker and the realtime
+	 *  picker each only react to their own swap. Defaults to `"main"`. */
+	kind?: "main" | "realtime";
 	models: readonly ModelInfo[];
 	onChange: SttModelChange;
 	placeholder?: string;
@@ -80,6 +85,7 @@ export function SttModelSelector({
 	isLoading = false,
 	placeholder = "Select a model",
 	prefilter,
+	kind = "main",
 }: SttModelSelectorProps) {
 	const [filters, setFilters] = useState<SttFilterState>(EMPTY_FILTER_STATE);
 
@@ -95,7 +101,6 @@ export function SttModelSelector({
 	});
 	const groups = groupModelsByAuthor(menuFilteredModels);
 	const selectedModel = baseModels.find((m) => m.id === value) ?? null;
-	const selectedState = statesById[value];
 	const filtersActive = hasActiveFilters(filters);
 	const availableLanguages = collectFilterableLanguages(baseModels);
 
@@ -135,9 +140,16 @@ export function SttModelSelector({
 	// currently-loaded model's family by default.
 	const selectedFamily: FamilyKey | null = selectedModel?.family ?? null;
 	const [activeRailId, setActiveRailId] = useState<FamilyKey | string | null>(selectedFamily);
-	useEffect(() => {
+	// Re-sync to the selection's family during render whenever it changes,
+	// while still letting a user rail click override it until the selection
+	// moves again. The prev-value tracker is a ref (never read in JSX) so the
+	// resync doesn't schedule an extra render — see
+	// https://react.dev/learn/you-might-not-need-an-effect
+	const prevSelectedFamilyRef = useRef(selectedFamily);
+	if (prevSelectedFamilyRef.current !== selectedFamily) {
+		prevSelectedFamilyRef.current = selectedFamily;
 		setActiveRailId(selectedFamily);
-	}, [selectedFamily]);
+	}
 
 	// Variant-bundle expansion (collapsible card mirroring the OpenRouter
 	// selector's pattern). One ``Set<string>`` of base ids — pre-seeded with
@@ -169,7 +181,14 @@ export function SttModelSelector({
 	// in the same window (e.g. main + realtime model in ModelSettingsPanel)
 	// can't fight for the same DOM matches.
 	const popupRef = useRef<HTMLElement | null>(null);
+	const [popupNode, setPopupNode] = useState<HTMLElement | null>(null);
+	const railSpy = useRailScrollSpy({
+		popupNode,
+		scrollContainerSelector: '[data-slot="stt-model-list"]',
+		onActiveChange: (id) => setActiveRailId(id),
+	});
 	const handleRailClick = (id: string) => {
+		railSpy.suppress();
 		setActiveRailId(id);
 		const root: ParentNode = popupRef.current ?? document;
 		const target = root.querySelector<HTMLElement>(`[data-rail-section="${CSS.escape(id)}"]`);
@@ -219,6 +238,7 @@ export function SttModelSelector({
 			popupHeightClass="h-[min(620px,var(--available-height))]"
 			popupRef={(node) => {
 				popupRef.current = node;
+				setPopupNode(node);
 			}}
 			popupWidthClass="w-[max(580px,var(--anchor-width))]"
 			searchPlaceholder="Search transcription models"
@@ -229,12 +249,12 @@ export function SttModelSelector({
 			}
 			trigger={
 				<SttModelSelectorTrigger
-					currentQuantization={currentQuantization}
+					catalog={baseModels}
 					disabled={disabled || isLoading}
+					kind={kind}
 					open={false /* shell owns open state; trigger uses Combobox.Trigger internally */}
 					placeholder={placeholder}
 					selectedModel={selectedModel ?? undefined}
-					state={selectedState}
 				/>
 			}
 			value={selectedModel}

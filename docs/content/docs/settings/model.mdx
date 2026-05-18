@@ -5,35 +5,43 @@ description: Configure transcription models and inference parameters
 
 Model settings control which speech recognition models WinSTT uses and how they run. WinSTT uses two models simultaneously: a main model for accurate final transcription, and a realtime model for fast live preview.
 
+The transcription stack is ONNX-only. There is effectively one engine — the `backend` value `faster_whisper` is a legacy alias that bootstrap routes to ONNX.
+
 ## Settings Reference
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `model` | string | `"large-v2"` | Main transcription model used for final output |
-| `realtimeModel` | string | `"tiny"` | Model used for live preview while you speak |
+| `realtimeModel` | string | `"tiny"` | Fast model used for live preview while you speak |
 | `language` | string | `"en"` | Transcription language code |
-| `computeType` | string | `"default"` | Quantization level for inference |
-| `device` | enum | `"auto"` | `"auto"` selects GPU if available, or `"cpu"` to force CPU |
-| `backend` | enum | `"faster_whisper"` | `"faster_whisper"` for Whisper models, `"onnx_asr"` for NeMo/GigaAM |
-| `beamSize` | integer | `5` | Beam search width for main model (1-20) |
-| `beamSizeRealtime` | integer | `3` | Beam search width for realtime model (1-20) |
-| `initialPrompt` | string | `""` | Text prompt to bias main model transcription |
-| `initialPromptRealtime` | string | `""` | Text prompt to bias realtime model transcription |
+| `onnxQuantization` | string | `""` | Precision selector for the ONNX path. `""` = the model's default precision |
+| `computeType` | enum | `"default"` | Legacy CTranslate2-era knob. No effect on the ONNX path; kept for settings/IPC stability |
+| `device` | enum | `"auto"` | `"auto"` uses the GPU when the GPU build + a working CUDA stack are present, otherwise CPU. `"cpu"` forces CPU |
+| `backend` | enum | `"faster_whisper"` | `"faster_whisper"` or `"onnx_asr"`. Both resolve to the ONNX engine; effectively vestigial |
+| `beamSize` | integer | `5` | Beam search width for the main model (min 1) |
+| `beamSizeRealtime` | integer | `3` | Beam search width for the realtime model (min 1) |
+| `initialPrompt` | string | `""` | Text prompt to bias main model vocabulary; not emitted in output |
+| `initialPromptRealtime` | string | `""` | Text prompt to bias realtime model vocabulary; not emitted in output |
 
-## Compute Type
+## ONNX Quantization
 
-The `computeType` setting controls model quantization. Available options:
+`onnxQuantization` is the actual precision lever. `""` keeps the model's default precision. Availability is per-model — the model picker only shows the quantizations the selected model supports:
 
-`default`, `auto`, `int8`, `int8_float16`, `int8_float32`, `int8_bfloat16`, `int16`, `float16`, `float32`, `bfloat16`
+- Most Whisper models: `""`, `fp16`, `q4`, `bnb4`
+- lite-whisper: `""`, `fp16`
+- NeMo / GigaAM / Vosk: `""`, `int8`
+- `large-v3` and `t-tech/t-one`: only `""`
 
-See [Compute Types](/docs/models/compute-types) for a detailed comparison.
+<Callout title="computeType is legacy" type="warn">
+  `computeType` is a CTranslate2-era setting with no effect on the ONNX path. It is persisted only for settings/IPC stability. Use `onnxQuantization` to change precision.
+</Callout>
 
 ## Beam Size
 
 Beam search explores multiple transcription hypotheses in parallel. Higher values produce more accurate results but take longer.
 
 <Callout title="Beam size tuning" type="info">
-  Use a low beam size (1-3) for the realtime model to keep live preview responsive. Use a higher beam size (5-10) for the main model where accuracy matters more than latency.
+  Use a low beam size (1-3) for the realtime model to keep live preview responsive. Use a higher beam size for the main model where accuracy matters more than latency.
 </Callout>
 
 ## Initial Prompt
@@ -46,51 +54,6 @@ The `initialPrompt` field accepts free-form text that biases the model toward sp
 
 The prompt does not appear in the output. It only influences how the model interprets ambiguous audio.
 
-## LLM Post-Processing
-
-WinSTT can enhance transcribed text using local AI models via [Ollama](https://ollama.com). This feature applies intelligent text transformations before pasting, making your transcriptions more polished and contextually appropriate.
-
-### Prerequisites
-
-LLM post-processing requires Ollama to be installed and running on your machine:
-
-1. Download and install [Ollama](https://ollama.com)
-2. Pull a model (e.g., `ollama pull llama2`)
-3. Ensure Ollama is running (it starts automatically on system startup by default)
-
-### Configuration
-
-Enable LLM post-processing in **Settings → Model → LLM Post-Processing**:
-
-| Setting | Description |
-|---------|-------------|
-| **Enable** | Toggle to activate/deactivate LLM processing |
-| **Ollama Endpoint** | URL where Ollama is running (default: `http://localhost:11434`) |
-| **Model** | Select which Ollama model to use (larger models = better quality but slower) |
-| **Style Preset** | Choose how the LLM transforms your text |
-
-### Style Presets
-
-Six presets are available to match different use cases:
-
-- **Neutral** — Grammar and punctuation fixes only
-- **Formal** — Professional, business-appropriate language
-- **Friendly** — Warm, conversational tone
-- **Technical** — Precise, domain-specific phrasing
-- **Casual** — Relaxed, informal style
-- **Concise** — Shortened, direct communication
-
-### How It Works
-
-1. You dictate using push-to-talk or toggle mode
-2. WinSTT transcribes your speech to text
-3. If LLM post-processing is enabled, the transcription is sent to Ollama for enhancement
-4. The enhanced text is pasted into your active application
-
-<Callout title="Privacy-first design" type="info">
-All LLM processing happens locally on your machine via Ollama. No text is sent to external servers. If Ollama is unavailable, WinSTT gracefully falls back to pasting the original transcription.
-</Callout>
-
-<Callout title="Performance note" type="warn">
-LLM processing adds a small delay (typically 1-3 seconds depending on text length and model size). Disable this feature if you need instant transcription results.
+<Callout title="Text enhancement moved" type="info">
+  LLM post-processing and hotkey text transforms now live on their own page. See [LLM Text Enhancement](/docs/settings/llm).
 </Callout>

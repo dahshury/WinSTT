@@ -3,7 +3,7 @@ title: Quality & Transcription
 description: Fine-tune transcription quality and behavior
 ---
 
-Quality settings control the realtime preview system, transcription timing, and text formatting rules.
+Quality settings control the realtime preview system, transcription timing, endpoint detection, and text formatting rules.
 
 ## Realtime Preview
 
@@ -12,15 +12,15 @@ WinSTT can display a live transcription preview while you speak. The realtime mo
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `enableRealtimeTranscription` | boolean | `true` | Show live preview text while speaking |
-| `useMainModelForRealtime` | boolean | `false` | Use the main model for realtime preview instead of the dedicated realtime model. More accurate but slower |
-| `realtimeProcessingPause` | number | `0.02` | Pause in seconds between realtime transcription updates |
-| `initRealtimeAfterSeconds` | number | `0.2` | Delay in seconds before starting realtime transcription after speech begins |
+| `useMainModelForRealtime` | boolean | `false` | Use the main model for live preview instead of the realtime model. More accurate but slower |
+| `realtimeProcessingPause` | number | `0.02` | Seconds between realtime transcription updates |
+| `initRealtimeAfterSeconds` | number | `0.2` | Delay in seconds before realtime starts after speech onset |
 
 ## Transcription Timing
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `earlyTranscriptionOnSilence` | number | `0.2` | Seconds of silence that trigger an early full transcription before the post-speech timeout completes |
+| `earlyTranscriptionOnSilence` | number | `0.2` | Seconds of silence that trigger an early full transcription |
 
 ## Batch Size
 
@@ -28,6 +28,20 @@ WinSTT can display a live transcription preview while you speak. The realtime mo
 |---------|------|---------|-------------|
 | `batchSize` | integer | `16` | Batch size for main model transcription |
 | `realtimeBatchSize` | integer | `16` | Batch size for realtime model transcription |
+
+## Endpoint Detection
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `smartEndpoint` | boolean | `false` | Use a DistilBERT classifier for intelligent speech-endpoint detection |
+| `smartEndpointSpeed` | number | `1.5` | Higher = faster finalization (range 0.5–3.0) |
+| `endOfSentenceDetectionPause` | number | — | Seconds of silence after a sentence terminator (`.`/`!`/`?`) before recording ends. Used by the toggle-mode silence branch when Smart Endpoint is off (range 0.1–5.0) |
+| `midSentenceDetectionPause` | number | — | Seconds of silence after a trailing ellipsis (`...`) before ending; gives the speaker time to continue (range 0.1–10.0) |
+| `unknownSentenceDetectionPause` | number | — | Fallback silence threshold after speech with no clear terminator (range 0.1–5.0) |
+
+<Callout title="Smart Endpoint requires a server extra" type="warn">
+  `smartEndpoint` needs the server `sentence-classifier` extra — the only component that pulls PyTorch. It fails soft (falls back to silence-based detection) if not installed.
+</Callout>
 
 ## Text Formatting
 

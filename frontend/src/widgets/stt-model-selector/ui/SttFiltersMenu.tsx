@@ -39,7 +39,7 @@ interface FilterRowProps {
 
 function FilterRow({ icon, label, description, checked, onChange }: FilterRowProps) {
 	return (
-		<div className="flex items-start gap-3 rounded-sm px-2 py-2 hover:bg-surface-hover">
+		<div className="flex items-start gap-3 rounded-sm p-2 hover:bg-surface-hover">
 			<HugeiconsIcon className="mt-0.5 size-4 shrink-0 text-foreground-muted" icon={icon} />
 			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 				<span className="font-medium text-body-sm text-foreground">{label}</span>
@@ -70,7 +70,7 @@ function LanguageFilterSection({
 		return null;
 	}
 	return (
-		<div className="flex flex-col gap-1.5 px-2 py-2">
+		<div className="flex flex-col gap-1.5 p-2">
 			<div className="flex items-center gap-1.5">
 				<HugeiconsIcon className="size-4 shrink-0 text-foreground-muted" icon={LanguageSkillIcon} />
 				<span className="font-medium text-body-sm text-foreground">Language</span>

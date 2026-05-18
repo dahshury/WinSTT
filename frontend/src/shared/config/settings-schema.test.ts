@@ -163,32 +163,17 @@ describe("hotkeySettingsSchema", () => {
 });
 
 describe("dictionary & snippet schemas", () => {
-	test("dictionaryEntrySchema requires id, find, replace", () => {
-		const ok = dictionaryEntrySchema.parse({ id: "1", find: "a", replace: "b" });
-		expect(ok.caseSensitive).toBe(false);
-		expect(ok.wholeWord).toBe(false);
-		expect(() => dictionaryEntrySchema.parse({ id: "", find: "a", replace: "b" })).toThrow();
-		expect(() => dictionaryEntrySchema.parse({ id: "1", find: "", replace: "b" })).toThrow();
-		expect(() => dictionaryEntrySchema.parse({ id: "1", find: "a", replace: "" })).toThrow();
+	test("dictionaryEntrySchema requires id and term", () => {
+		const ok = dictionaryEntrySchema.parse({ id: "1", term: "Kubernetes" });
+		expect(ok).toEqual({ id: "1", term: "Kubernetes" });
+		expect(() => dictionaryEntrySchema.parse({ id: "", term: "Kubernetes" })).toThrow();
+		expect(() => dictionaryEntrySchema.parse({ id: "1", term: "" })).toThrow();
 	});
 
 	test("addDictionaryEntrySchema trims whitespace and rejects blank input", () => {
-		const ok = addDictionaryEntrySchema.parse({
-			find: "  hello  ",
-			replace: "  world  ",
-			caseSensitive: true,
-			wholeWord: false,
-		});
-		expect(ok.find).toBe("hello");
-		expect(ok.replace).toBe("world");
-		expect(() =>
-			addDictionaryEntrySchema.parse({
-				find: "   ",
-				replace: "world",
-				caseSensitive: false,
-				wholeWord: false,
-			})
-		).toThrow();
+		const ok = addDictionaryEntrySchema.parse({ term: "  Kubernetes  " });
+		expect(ok.term).toBe("Kubernetes");
+		expect(() => addDictionaryEntrySchema.parse({ term: "   " })).toThrow();
 	});
 
 	test("snippet schemas behave similarly", () => {
@@ -256,8 +241,8 @@ describe("qualitySettingsSchema defaults (lock-down)", () => {
 		expect(out.realtimeBatchSize).toBe(16);
 	});
 
-	test("smartEndpointSpeed defaults to 1.5", () => {
-		expect(qualitySettingsSchema.parse({}).smartEndpointSpeed).toBe(1.5);
+	test("smartEndpointSpeed defaults to 2.0 (matches RealtimeSTT reference)", () => {
+		expect(qualitySettingsSchema.parse({}).smartEndpointSpeed).toBe(2.0);
 	});
 });
 
@@ -429,42 +414,23 @@ describe("hotkeySettingsSchema (lock-down)", () => {
 });
 
 describe("dictionaryEntrySchema enforces min(1)", () => {
-	test("rejects empty id (kills L79 min(1) -> max(1) mutation)", () => {
-		expect(() => dictionaryEntrySchema.parse({ id: "", find: "a", replace: "b" })).toThrow();
+	test("rejects empty id", () => {
+		expect(() => dictionaryEntrySchema.parse({ id: "", term: "a" })).toThrow();
 	});
 
-	test("rejects empty find (kills L80 min(1) mutation)", () => {
-		expect(() => dictionaryEntrySchema.parse({ id: "1", find: "", replace: "b" })).toThrow();
-	});
-
-	test("rejects empty replace (kills L81 min(1) mutation)", () => {
-		expect(() => dictionaryEntrySchema.parse({ id: "1", find: "a", replace: "" })).toThrow();
+	test("rejects empty term", () => {
+		expect(() => dictionaryEntrySchema.parse({ id: "1", term: "" })).toThrow();
 	});
 
 	test("accepts a single character for each min(1) field", () => {
-		// Locks the boundary — min(1) allows length=1, max(1) would fail
-		// here for any length>=2 we test elsewhere.
-		const out = dictionaryEntrySchema.parse({ id: "x", find: "a", replace: "b" });
+		const out = dictionaryEntrySchema.parse({ id: "x", term: "K" });
 		expect(out.id).toBe("x");
-		expect(out.find).toBe("a");
-		expect(out.replace).toBe("b");
+		expect(out.term).toBe("K");
 	});
 
-	test("error message for empty find reads 'Required' (kills L80 string mutation)", () => {
-		// Locks the literal "Required" used as the min(1) custom error message.
-		// Mutating to "" would surface a blank validation error to the UI.
+	test("error message for empty term reads 'Required'", () => {
 		try {
-			dictionaryEntrySchema.parse({ id: "1", find: "", replace: "b" });
-			throw new Error("expected to throw");
-		} catch (e: unknown) {
-			const issues = (e as { issues?: Array<{ message: string }> }).issues ?? [];
-			expect(issues.some((i) => i.message === "Required")).toBe(true);
-		}
-	});
-
-	test("error message for empty replace reads 'Required' (kills L81 string mutation)", () => {
-		try {
-			dictionaryEntrySchema.parse({ id: "1", find: "a", replace: "" });
+			dictionaryEntrySchema.parse({ id: "1", term: "" });
 			throw new Error("expected to throw");
 		} catch (e: unknown) {
 			const issues = (e as { issues?: Array<{ message: string }> }).issues ?? [];
@@ -474,43 +440,19 @@ describe("dictionaryEntrySchema enforces min(1)", () => {
 });
 
 describe("addDictionaryEntrySchema enforces min(1) on trim()'d input", () => {
-	test("rejects empty find after trim", () => {
-		expect(() =>
-			addDictionaryEntrySchema.parse({
-				find: "",
-				replace: "x",
-				caseSensitive: false,
-				wholeWord: false,
-			})
-		).toThrow();
+	test("rejects empty term after trim", () => {
+		expect(() => addDictionaryEntrySchema.parse({ term: "" })).toThrow();
+		expect(() => addDictionaryEntrySchema.parse({ term: "   " })).toThrow();
 	});
 
-	test("rejects empty replace after trim", () => {
-		expect(() =>
-			addDictionaryEntrySchema.parse({
-				find: "x",
-				replace: "",
-				caseSensitive: false,
-				wholeWord: false,
-			})
-		).toThrow();
-	});
-
-	test("error message for empty find/replace reads 'Required' (locks L87/L88 strings)", () => {
+	test("error message for empty term reads 'Required'", () => {
 		try {
-			addDictionaryEntrySchema.parse({
-				find: "  ",
-				replace: "  ",
-				caseSensitive: false,
-				wholeWord: false,
-			});
+			addDictionaryEntrySchema.parse({ term: "  " });
 			throw new Error("expected to throw");
 		} catch (e: unknown) {
 			const issues = (e as { issues?: Array<{ message: string; path: unknown[] }> }).issues ?? [];
-			const findIssue = issues.find((i) => i.path[0] === "find");
-			const replaceIssue = issues.find((i) => i.path[0] === "replace");
-			expect(findIssue?.message).toBe("Required");
-			expect(replaceIssue?.message).toBe("Required");
+			const termIssue = issues.find((i) => i.path[0] === "term");
+			expect(termIssue?.message).toBe("Required");
 		}
 	});
 });

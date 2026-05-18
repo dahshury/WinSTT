@@ -31,7 +31,7 @@ sub-fp16 quants either run slow via QDQ scatter or hallucinate (see
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from src.recorder.domain.model_registry import ModelCatalog, ModelInfo
 from src.recorder.infrastructure.live_resources import LiveResources, get_live_resources
@@ -50,7 +50,7 @@ _GPU_COMPATIBLE_QUANTIZATIONS: frozenset[str] = frozenset({"", "fp32", "fp16"})
 # ─── Public enums ────────────────────────────────────────────────────────
 
 
-class FitSeverity(str, Enum):
+class FitSeverity(StrEnum):
     """Render-side severity for a fitness verdict.
 
     ``ok`` — render no badge.
@@ -64,7 +64,7 @@ class FitSeverity(str, Enum):
     CRITICAL = "critical"
 
 
-class FitTarget(str, Enum):
+class FitTarget(StrEnum):
     """Which device the candidate would run on (if it fits)."""
 
     GPU = "gpu"
@@ -72,7 +72,7 @@ class FitTarget(str, Enum):
     NEITHER = "neither"
 
 
-class FitReason(str, Enum):
+class FitReason(StrEnum):
     """Stable i18n keys for why a verdict was reached.
 
     Multiple reasons can apply per assessment (e.g. a candidate that's
@@ -126,7 +126,7 @@ _RAM_USABLE_FRACTION = 0.7
 _DICTATION_OVERHEAD_BYTES = 500_000_000  # 500 MB
 
 #: Padding for Ollama (KV cache grows with context; 1 GB is a realistic
-#: floor for typical 4k–8k context defaults).
+#: floor for typical 4k-8k context defaults).
 _OLLAMA_OVERHEAD_BYTES = 1_000_000_000  # 1 GB
 
 #: GGUF on-disk size doesn't exactly equal runtime weight footprint; bump
@@ -317,10 +317,12 @@ def assess_dictation_fit(
 
     if target == FitTarget.GPU:
         total_vram, free_vram = _largest_gpu(snap)
-        # The "loaded other" models on a GPU host are also resident in VRAM,
-        # but free_vram_bytes already accounts for that (driver reports the
-        # actual free amount). We do NOT subtract loaded_other from free_vram
-        # because doing so would double-count.
+        # The "loaded other" models on a GPU host are resident in VRAM and
+        # already reflected in free_vram_bytes. On Linux that's NVML's free
+        # field; on Windows it's NVML v2 free+reserved (live_resources.py
+        # adds the WDDM scheduler's releasable reservation back so the
+        # number tracks Task Manager and DXGI Budget). Either way we must
+        # NOT subtract loaded_other again here — doing so would double-count.
         available = free_vram
         if loaded_other > 0:
             reasons.append(FitReason.STT_ALREADY_USES_GPU)

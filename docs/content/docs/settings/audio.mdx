@@ -19,9 +19,13 @@ Silero is a neural-network-based voice activity detector. It is more accurate th
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `sileroSensitivity` | number | `0.05` | Detection threshold (0-1). Lower values are more sensitive |
+| `sileroSensitivity` | number | `0.4` | Detection threshold (0–1). Lower values are more sensitive |
 | `sileroUseOnnx` | boolean | `false` | Use ONNX runtime for Silero inference |
 | `sileroDeactivityDetection` | boolean | `true` | Use Silero to detect when speech ends |
+
+<Callout title="sileroSensitivity default corrected" type="info">
+  Older builds wrongly used `0.05`. A store migration corrects `0.05` → `0.4` on upgrade.
+</Callout>
 
 ## WebRTC VAD
 

@@ -1,7 +1,10 @@
 import { ipcMain } from "electron";
+import { markSessionAborted } from "../lib/abort-state";
 import { dbg, dbgVerbose } from "../lib/debug-log";
 import { isRecord } from "../lib/ipc-helpers";
 import type { SttClient } from "../ws/stt-client";
+import { abortActiveOllamaChats } from "./llm";
+import { hideOverlay } from "./overlay";
 
 /**
  * Allowlists for STT parameters and methods that the renderer may invoke.
@@ -25,6 +28,9 @@ const ALLOWED_PARAMETERS = new Set([
 	"smart_endpoint_enabled",
 	"detection_speed",
 	"input_device_index",
+	"end_of_sentence_detection_pause",
+	"mid_sentence_detection_pause",
+	"unknown_sentence_detection_pause",
 ]);
 
 const ALLOWED_METHODS = new Set([
@@ -385,6 +391,54 @@ async function handleAssessDictationFit(sttClient: SttClient, payload: unknown):
 	}
 }
 
+/**
+ * Cancel the user's in-flight dictation pass. Triggered by the
+ * `hotkey + Backspace` combo (detected in `hotkey.ts`) while the pill is
+ * showing realtime captions or the LLM thinking indicator.
+ *
+ * Five things happen, in this order:
+ *
+ *   1. `markSessionAborted()` flips the relay's gate so EVERY downstream
+ *      event for the current session is silently dropped — no realtime
+ *      caption, no fullSentence broadcast, no paste, no history entry,
+ *      no LLM cleanup. The gate covers the two leak paths that the
+ *      individual aborts below cannot close on their own (see
+ *      `abort-state.ts` for the full rationale).
+ *   2. Active Ollama chats are aborted via `AbortController.abort()`.
+ *      The streaming `/api/chat` request bails so the model stops
+ *      generating and Ollama's per-model serializer releases.
+ *   3. The server-side recorder is told to `abort` AND `clear_audio_queue`.
+ *      `abort` flips the state machine to INACTIVE and stops accepting
+ *      new audio; `clear_audio_queue` drops any frames already buffered
+ *      so they don't get transcribed after we return.
+ *   4. The overlay BrowserWindow hides so the user gets instant visual
+ *      feedback even before the server side has finished cleaning up.
+ *   5. (Implicit) The relay's `clearSessionAborted()` will run on the
+ *      next `recording_start`, so a fresh dictation begins clean.
+ *
+ * Safe to call when nothing is in flight — every step short-circuits
+ * silently if there's nothing to cancel.
+ */
+export function handleAbortOperation(sttClient: SttClient): void {
+	dbg("stt-cmd", "abort-operation: user-triggered cancel");
+	// Mark first — even if the awaits below take time to land, any
+	// fullSentence / realtime event arriving in the meantime is dropped.
+	markSessionAborted();
+	abortActiveOllamaChats("user-cancelled-from-hotkey");
+	if (sttClient.isConnected) {
+		// `abort` stops the state machine; `clear_audio_queue` drops any
+		// already-buffered frames so the next text() call doesn't churn
+		// through audio the user just discarded.
+		sttClient.callMethod("abort");
+		sttClient.callMethod("clear_audio_queue");
+	}
+	try {
+		hideOverlay();
+	} catch (err) {
+		dbg("stt-cmd", "hideOverlay during abort failed:", String(err));
+	}
+}
+
 async function handleAssessOllamaFit(sttClient: SttClient, payload: unknown): Promise<unknown> {
 	if (!isRecord(payload)) {
 		return null;
@@ -471,4 +525,5 @@ export const __stt_commands_test_helpers__ = {
 	handleAssessDictationFit,
 	handleAssessOllamaFit,
 	parseAssessDictationFitPayload,
+	handleAbortOperation,
 };

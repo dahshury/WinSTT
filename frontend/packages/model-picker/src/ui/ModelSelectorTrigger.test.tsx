@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Combobox } from "@base-ui/react/combobox";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "@testing-library/react";
-import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
+import type { OpenRouterModel } from "@/shared/api/models";
 import { isMissingModelId, ModelSelectorTrigger, TriggerButton } from "./ModelSelectorTrigger";
 
 const sampleModel: OpenRouterModel = {
@@ -37,7 +37,6 @@ describe("ModelSelectorTrigger", () => {
 						open={false}
 						parsedModelId={undefined}
 						placeholder="Pick a model"
-						selectedEndpoint={null}
 						selectedModel={undefined}
 					/>
 				</Combobox.Root>
@@ -58,7 +57,6 @@ describe("ModelSelectorTrigger", () => {
 						open={false}
 						parsedModelId={sampleModel.id}
 						placeholder="Pick a model"
-						selectedEndpoint={null}
 						selectedModel={sampleModel}
 					/>
 				</Combobox.Root>
@@ -78,7 +76,6 @@ describe("ModelSelectorTrigger", () => {
 						open={false}
 						parsedModelId="some/unknown-model"
 						placeholder="Pick a model"
-						selectedEndpoint={null}
 						selectedModel={undefined}
 					/>
 				</Combobox.Root>
@@ -97,64 +94,12 @@ describe("ModelSelectorTrigger", () => {
 						open={false}
 						parsedModelId={undefined}
 						placeholder="Loading..."
-						selectedEndpoint={null}
 						selectedModel={undefined}
 					/>
 				</Combobox.Root>
 			</TooltipProvider.Provider>
 		);
 		expect(container.textContent).toContain("Loading...");
-	});
-
-	test("renders with a selected endpoint provider", () => {
-		const selectedEndpoint: OpenRouterEndpoint = {
-			provider_name: "DeepInfra",
-			pricing: { prompt: "0.000001", completion: "0.000002" },
-		} as unknown as OpenRouterEndpoint;
-
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<Combobox.Root>
-					<ModelSelectorTrigger
-						disabled={false}
-						isLoading={false}
-						open={false}
-						parsedModelId={sampleModel.id}
-						placeholder="Pick a model"
-						selectedEndpoint={selectedEndpoint}
-						selectedModel={sampleModel}
-					/>
-				</Combobox.Root>
-			</TooltipProvider.Provider>
-		);
-		expect(container.textContent).toContain("via DeepInfra");
-	});
-
-	test("renders model with variant badge", () => {
-		const modelWithVariant: OpenRouterModel = {
-			...sampleModel,
-			variant: "nitro",
-		} as OpenRouterModel;
-
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<Combobox.Root>
-					<ModelSelectorTrigger
-						disabled={false}
-						isLoading={false}
-						open={false}
-						parsedModelId={modelWithVariant.id}
-						placeholder="Pick a model"
-						selectedEndpoint={null}
-						selectedModel={modelWithVariant}
-					/>
-				</Combobox.Root>
-			</TooltipProvider.Provider>
-		);
-		// VariantBadgeIcon renders an icon-only badge whose label lives on
-		// the `aria-label` attribute and inside a tooltip popup. The visible
-		// text no longer contains the variant name.
-		expect(container.querySelector('[aria-label="Nitro"]')).not.toBeNull();
 	});
 });
 
@@ -166,7 +111,6 @@ describe("TriggerButton", () => {
 		isLoading: false,
 		parsedModelId: undefined as string | undefined,
 		placeholder: "Pick a model",
-		selectedEndpoint: null,
 		selectedModel: undefined as OpenRouterModel | undefined,
 	};
 

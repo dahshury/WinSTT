@@ -28,43 +28,43 @@ import { useSettingsStore } from "@/entities/setting";
  *     where this one ended up (matching the server-side persist),
  *   - keeps the in-window UI in sync between restarts.
  *
- * **Triggers only on a fresh ``runtime_info`` push from the server** —
- * crucially NOT on local ``settings.model`` changes. If the user picks a
- * new model in the picker, that changes ``settings.model`` first and the
- * stored ``runtime_info`` lags until the swap completes (server-pushed via
- * the renderer-side ``model_swap_completed`` → fetchRuntimeInfo refresh).
- * Re-running the reconciler on local settings change would revert the
- * user's brand-new selection back to the lagging ``runtime_info.model`` —
- * exactly the regression we hit when the deps array first included
- * ``settingsModel``. Reading settings via ref keeps the comparison live
- * without making it a re-fire trigger.
+ * Fires on a fresh ``runtime_info`` push from the server **and** on
+ * ``settings.model`` changes — the latter so that an async
+ * ``settingsLoad()`` in ``useSyncSettings`` (which replaces the whole
+ * settings object from electron-store after the renderer mounts) can't
+ * silently revert a reconciliation that already happened. Without
+ * ``settingsModel`` in deps, the race is: runtime_info arrives → we write
+ * "tiny" → settingsLoad resolves later → setSettings overwrites with the
+ * stored "nemo-canary-1b-v2" → nothing in our deps changed → picker stays
+ * on canary even though the server is running tiny.
+ *
+ * Regression guard: when the user picks a new model in the picker, the
+ * picker first writes ``settings.model`` and then ``beginSwap`` sets
+ * ``activeMain``. Both are synchronous, so by the time this effect
+ * runs both stores have already committed and the ``activeMain !== null``
+ * check below short-circuits — preventing the revert-to-lagging-runtime
+ * regression that earlier versions of this hook hit. ``activeMain`` is
+ * intentionally read via ``getState()`` (not subscribed) so its
+ * ``true → false`` transition on ``model_swap_completed`` does NOT
+ * re-fire the effect against still-stale ``runtimeModel``.
  */
 export function useSyncActiveModel(): void {
 	const serverStatus = useConnectionStore((s) => s.serverStatus);
 	const runtimeModel = useConnectionStore((s) => s.runtimeInfo?.model ?? null);
 	const isLoaded = useSettingsStore((s) => s.isLoaded);
+	const settingsModel = useSettingsStore((s) => s.settings.model?.model ?? null);
 	const updateModelSettings = useSettingsStore((s) => s.updateModelSettings);
 
 	useEffect(() => {
 		if (!isLoaded || serverStatus !== "running" || !runtimeModel) {
 			return;
 		}
-		// Defensive: skip while a main-model swap is mid-flight. The server's
-		// runtime_info push lands AFTER swap_completed, so during the window
-		// between ``swap_started`` and that push, ``runtimeModel`` lags. The
-		// store is read via ``getState()`` (not a hook subscription) on
-		// purpose: subscribing would put ``mainSwapping`` in the dep array,
-		// and a transition from ``true`` → ``false`` would re-fire the effect
-		// against the still-stale ``runtimeModel`` and revert the user's
-		// pick. The effect must fire ONLY when ``runtimeModel`` itself
-		// changes — that's when we know we have a fresh server snapshot.
 		if (useModelSwapStore.getState().activeMain !== null) {
 			return;
 		}
-		const settingsModel = useSettingsStore.getState().settings.model?.model;
 		if (runtimeModel === settingsModel) {
 			return;
 		}
 		updateModelSettings({ model: runtimeModel });
-	}, [isLoaded, serverStatus, runtimeModel, updateModelSettings]);
+	}, [isLoaded, serverStatus, runtimeModel, settingsModel, updateModelSettings]);
 }

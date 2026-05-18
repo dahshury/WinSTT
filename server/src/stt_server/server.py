@@ -57,6 +57,11 @@ import websockets
 from src.building_blocks.terminal import TerminalColors as bcolors
 from src.building_blocks.terminal import enable_ansi_on_windows, force_utf8_stdio, format_now_hms_ms
 from src.recorder import AudioToTextRecorder
+
+# Import for side effects: registers TTS commands on the control-handler
+# registry via the ``@register_command`` decorator. Must precede the
+# WebSocket server starting up.
+from src.stt_server import tts_handler as _tts_handler  # noqa: F401
 from src.stt_server.callbacks import build_recorder_callbacks
 from src.stt_server.cli import parse_arguments
 from src.stt_server.control_handler import control_handler

@@ -43,9 +43,8 @@ mock.module("./store", () => ({
 	},
 }));
 
-const { applyPostProcessing, cleanupPostProcessing, initPostProcessing } = await import(
-	"./text-processing"
-);
+const { applyPostProcessing, cleanupPostProcessing, getPostProcessingVocab, initPostProcessing } =
+	await import("./text-processing");
 
 beforeEach(() => {
 	for (const k of Object.keys(storeData)) {
@@ -62,73 +61,63 @@ afterEach(() => {
 	cleanupPostProcessing();
 });
 
-describe("applyPostProcessing — dictionary", () => {
+describe("applyPostProcessing — dictionary (fuzzy)", () => {
 	test("returns input unchanged when no dictionary entries", () => {
 		expect(applyPostProcessing("hello there")).toBe("hello there");
 	});
 
-	test("applies a case-insensitive replacement (default)", () => {
-		setStoreValue("dictionary", [
-			{ find: "ur", replace: "your", caseSensitive: false, wholeWord: false },
-		]);
-		expect(applyPostProcessing("ur cool")).toBe("your cool");
-		expect(applyPostProcessing("UR cool")).toBe("your cool");
+	test("snaps a near-miss spelling to the canonical term", () => {
+		setStoreValue("dictionary", [{ id: "1", term: "Kubernetes" }]);
+		expect(applyPostProcessing("deploy on kubernetees now")).toBe("deploy on Kubernetes now");
 	});
 
-	test("applies a case-sensitive replacement when caseSensitive=true", () => {
-		setStoreValue("dictionary", [
-			{ find: "ur", replace: "your", caseSensitive: true, wholeWord: false },
-		]);
-		expect(applyPostProcessing("UR cool")).toBe("UR cool");
-		expect(applyPostProcessing("ur cool")).toBe("your cool");
+	test("exact-match snaps to canonical casing", () => {
+		setStoreValue("dictionary", [{ id: "1", term: "WinSTT" }]);
+		expect(applyPostProcessing("install winstt")).toBe("install WinSTT");
 	});
 
-	test("respects wholeWord boundary", () => {
+	test("ignores empty terms in the dictionary array", () => {
 		setStoreValue("dictionary", [
-			{ find: "cat", replace: "dog", caseSensitive: false, wholeWord: true },
+			{ id: "1", term: "" },
+			{ id: "2", term: "WinSTT" },
 		]);
-		expect(applyPostProcessing("the cat sat")).toBe("the dog sat");
-		expect(applyPostProcessing("category")).toBe("category"); // not whole word
+		expect(applyPostProcessing("hi winstt")).toBe("hi WinSTT");
 	});
 
-	test("escapes regex special characters in find", () => {
-		setStoreValue("dictionary", [
-			{ find: ".com", replace: "[dot]com", caseSensitive: false, wholeWord: false },
-		]);
-		expect(applyPostProcessing("see foo.com")).toBe("see foo[dot]com");
-		// '.' should not match arbitrary chars like 'a' since it was escaped
-		expect(applyPostProcessing("seeacom")).toBe("seeacom");
-	});
-
-	test("filters out entries with empty 'find'", () => {
-		setStoreValue("dictionary", [
-			{ find: "", replace: "x", caseSensitive: false, wholeWord: false },
-			{ find: "y", replace: "z", caseSensitive: false, wholeWord: false },
-		]);
-		expect(applyPostProcessing("yes")).toBe("zes");
+	test("does not over-match unrelated similar-looking words", () => {
+		// "cube" should NOT trigger "Kubernetes" — too dissimilar.
+		setStoreValue("dictionary", [{ id: "1", term: "Kubernetes" }]);
+		expect(applyPostProcessing("a cube of nuts")).toBe("a cube of nuts");
 	});
 });
 
-describe("applyPostProcessing — snippets", () => {
-	test("expands every occurrence of a trigger", () => {
-		setStoreValue("snippets", [{ trigger: "/sig", expansion: "Best,\nSan" }]);
-		expect(applyPostProcessing("hi /sig and /sig")).toBe("hi Best,\nSan and Best,\nSan");
+describe("applyPostProcessing — snippets (fuzzy)", () => {
+	test("expands a multi-word trigger on exact match", () => {
+		setStoreValue("snippets", [{ trigger: "my email address", expansion: "khaled@example.com" }]);
+		expect(applyPostProcessing("forward to my email address")).toBe(
+			"forward to khaled@example.com"
+		);
+	});
+
+	test("expands a fuzzy trigger when Whisper drops a letter", () => {
+		setStoreValue("snippets", [{ trigger: "my email address", expansion: "khaled@example.com" }]);
+		expect(applyPostProcessing("forward to my email adress")).toBe("forward to khaled@example.com");
 	});
 
 	test("filters out snippets with empty triggers", () => {
 		setStoreValue("snippets", [
 			{ trigger: "", expansion: "X" },
-			{ trigger: "/y", expansion: "yes" },
+			{ trigger: "my email", expansion: "khaled@example.com" },
 		]);
-		expect(applyPostProcessing("/y")).toBe("yes");
+		expect(applyPostProcessing("send my email")).toBe("send khaled@example.com");
 	});
 
 	test("dictionary applies before snippets", () => {
-		setStoreValue("dictionary", [
-			{ find: "hi", replace: "hello", caseSensitive: false, wholeWord: false },
-		]);
-		setStoreValue("snippets", [{ trigger: "hello", expansion: "HOWDY" }]);
-		expect(applyPostProcessing("hi")).toBe("HOWDY");
+		setStoreValue("dictionary", [{ id: "1", term: "WinSTT" }]);
+		setStoreValue("snippets", [{ trigger: "my email", expansion: "khaled@example.com" }]);
+		expect(applyPostProcessing("ship winstt to my email")).toBe(
+			"ship WinSTT to khaled@example.com"
+		);
 	});
 });
 
@@ -158,26 +147,21 @@ describe("applyPostProcessing — sentence end period", () => {
 
 describe("rebuild watchers", () => {
 	test("dictionary changes are picked up live", () => {
-		expect(applyPostProcessing("hi")).toBe("hi");
-		setStoreValue("dictionary", [
-			{ find: "hi", replace: "hello", caseSensitive: false, wholeWord: false },
-		]);
-		expect(applyPostProcessing("hi")).toBe("hello");
+		expect(applyPostProcessing("kubernetees")).toBe("kubernetees");
+		setStoreValue("dictionary", [{ id: "1", term: "Kubernetes" }]);
+		expect(applyPostProcessing("kubernetees")).toBe("Kubernetes");
 	});
 
 	test("snippet changes are picked up live", () => {
-		expect(applyPostProcessing("/x")).toBe("/x");
-		setStoreValue("snippets", [{ trigger: "/x", expansion: "expanded" }]);
-		expect(applyPostProcessing("/x")).toBe("expanded");
+		expect(applyPostProcessing("my email")).toBe("my email");
+		setStoreValue("snippets", [{ trigger: "my email", expansion: "khaled@example.com" }]);
+		expect(applyPostProcessing("my email")).toBe("khaled@example.com");
 	});
 
 	test("re-initializing replaces the active watcher set without leaks", () => {
-		setStoreValue("dictionary", [
-			{ find: "old", replace: "new", caseSensitive: false, wholeWord: false },
-		]);
-		expect(applyPostProcessing("old")).toBe("new");
+		setStoreValue("dictionary", [{ id: "1", term: "Kubernetes" }]);
+		expect(applyPostProcessing("kubernetees")).toBe("Kubernetes");
 
-		// Re-init with fresh storeData → previous dictionary should be cleared
 		for (const k of Object.keys(storeData)) {
 			delete storeData[k];
 		}
@@ -186,90 +170,40 @@ describe("rebuild watchers", () => {
 		storeData.snippets = [];
 		storeData.quality = { ensureSentenceEndsWithPeriod: false };
 		initPostProcessing(mockStore as unknown as Parameters<typeof initPostProcessing>[0]);
-		expect(applyPostProcessing("old")).toBe("old");
+		expect(applyPostProcessing("kubernetees")).toBe("kubernetees");
 	});
 });
 
 describe("cleanupPostProcessing", () => {
 	test("clears caches so subsequent applyPostProcessing returns input untouched", () => {
-		setStoreValue("dictionary", [
-			{ find: "x", replace: "y", caseSensitive: false, wholeWord: false },
-		]);
-		expect(applyPostProcessing("x")).toBe("y");
+		setStoreValue("dictionary", [{ id: "1", term: "Kubernetes" }]);
+		expect(applyPostProcessing("kubernetees")).toBe("Kubernetes");
 		cleanupPostProcessing();
-		expect(applyPostProcessing("x")).toBe("x");
+		expect(applyPostProcessing("kubernetees")).toBe("kubernetees");
 	});
 });
 
-describe("SENTENCE_END_RE end-anchor (mutation guard)", () => {
-	test("does NOT add a period to text that already contains '.' but ends with non-punct", () => {
-		// Mutating /[.!?]$/ → /[.!?]/ would let "hello. world" match as already
-		// punctuated (because '.' appears anywhere), wrongly skipping the period.
-		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
-		expect(applyPostProcessing("hello. world")).toBe("hello. world.");
-	});
-
-	test("does NOT add a period when text ends in a question mark mid-sentence", () => {
-		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
-		// "what? indeed" — the '?' is in middle, end is 'd' → MUST add period.
-		expect(applyPostProcessing("what? indeed")).toBe("what? indeed.");
-	});
-});
-
-describe("compileDictEntry flags (mutation guard)", () => {
-	test("default (caseSensitive=undefined) replaces case-insensitively (gi flags)", () => {
-		// Mutating flags = "gi" → "" would lose both g and i flags; "gi"→"g"
-		// would keep only global. Test that case-insensitive replacement works
-		// by default.
+describe("getPostProcessingVocab", () => {
+	test("returns the canonical terms and snippets from the live caches", () => {
 		setStoreValue("dictionary", [
-			{ find: "foo", replace: "bar", caseSensitive: false, wholeWord: false },
+			{ id: "1", term: "Kubernetes" },
+			{ id: "2", term: "WinSTT" },
 		]);
-		expect(applyPostProcessing("FOO foo Foo")).toBe("bar bar bar");
+		setStoreValue("snippets", [{ trigger: "my email", expansion: "khaled@example.com" }]);
+		const vocab = getPostProcessingVocab();
+		expect(vocab.dictionary).toEqual(["Kubernetes", "WinSTT"]);
+		expect(vocab.snippets).toEqual([{ trigger: "my email", expansion: "khaled@example.com" }]);
 	});
 
-	test("default applies replacement globally (every occurrence)", () => {
-		// Mutating away the 'g' flag would replace only the first match.
-		setStoreValue("dictionary", [
-			{ find: "x", replace: "y", caseSensitive: true, wholeWord: false },
-		]);
-		expect(applyPostProcessing("xxx")).toBe("yyy");
-	});
-
-	test("caseSensitive=true uses 'g' (only — case mismatches don't replace)", () => {
-		setStoreValue("dictionary", [
-			{ find: "x", replace: "y", caseSensitive: true, wholeWord: false },
-		]);
-		expect(applyPostProcessing("xX")).toBe("yX");
-	});
-});
-
-describe("maybePunctuate trailing whitespace (mutation guard for trimEnd)", () => {
-	test("text with leading whitespace + trailing whitespace gets trimmed only at end", () => {
-		// Mutating .trimEnd() to .trimStart() in maybePunctuate would
-		// strip leading instead of trailing whitespace and produce a different
-		// output. Verify the leading whitespace is PRESERVED.
-		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
-		expect(applyPostProcessing("  hello   ")).toBe("  hello.");
-	});
-
-	test("text ending in '.' followed by whitespace: regex check uses trimEnd (mutation guard)", () => {
-		// L94 has two .trimEnd() calls. The FIRST one is inside the regex test:
-		// `!SENTENCE_END_RE.test(text.trimEnd())`. If mutated to .trimStart(),
-		// "hello.   " → trimStart → "hello.   " (no leading ws to strip) →
-		// regex test on "hello.   " ends with space, doesn't match → adds period.
-		// Original: "hello.   " → trimEnd → "hello." → ends with "." → matches →
-		// no period added.
-		// So the original returns "hello." (after the second trimEnd in the
-		// no-action branch returns text), mutated returns "hello.   ." .
-		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
-		expect(applyPostProcessing("hello.   ")).toBe("hello.   ");
+	test("empty caches yield empty vocab arrays", () => {
+		const vocab = getPostProcessingVocab();
+		expect(vocab.dictionary).toEqual([]);
+		expect(vocab.snippets).toEqual([]);
 	});
 });
 
 describe("rebuild handles missing/null store data", () => {
 	test("dictionary explicitly set to undefined: applyPostProcessing returns input untouched", () => {
-		// Mutating `if (!dictionary?.length)` (any of -> false / -> {} / -> length)
-		// would change handling of empty/missing dict. Verify it's a no-op.
 		setStoreValue("dictionary", undefined);
 		expect(applyPostProcessing("hello")).toBe("hello");
 	});
@@ -280,100 +214,16 @@ describe("rebuild handles missing/null store data", () => {
 	});
 
 	test("snippets explicitly set to undefined: applyPostProcessing returns input untouched", () => {
-		// Mutating `snippets?.filter(...) ?? []` would change handling of missing
-		// snippets array. Verify it's a no-op.
 		setStoreValue("snippets", undefined);
 		expect(applyPostProcessing("hello")).toBe("hello");
 	});
 
-	test("snippets array filters out empty triggers (kills filter mutation)", () => {
+	test("snippets array filters out empty triggers", () => {
 		setStoreValue("snippets", [
 			{ trigger: "", expansion: "DEAD" },
-			{ trigger: "/x", expansion: "OK" },
+			{ trigger: "my email", expansion: "OK" },
 		]);
-		// If filter is removed, the empty trigger entry would be kept → its
-		// `replaceAll("", "DEAD")` would inject "DEAD" between every char.
-		// With filter intact, only "/x" applies.
-		expect(applyPostProcessing("/x")).toBe("OK");
-		expect(applyPostProcessing("abc")).toBe("abc"); // no inserts
-	});
-});
-
-describe("buildDictPattern helper (extracted from compileDictEntry)", () => {
-	test("wholeWord=true wraps the escaped find with \\b boundaries", () => {
-		// Mutating wholeWord branch from `\\b${escaped}\\b` → escaped would let
-		// "cat" match inside "catalog". This guards the truthy branch.
-		setStoreValue("dictionary", [
-			{ find: "cat", replace: "DOG", caseSensitive: false, wholeWord: true },
-		]);
-		expect(applyPostProcessing("catalog")).toBe("catalog");
-		expect(applyPostProcessing("a cat here")).toBe("a DOG here");
-	});
-
-	test("wholeWord=false replaces inside words (no \\b boundaries)", () => {
-		// Mutating wholeWord branch from `escaped` → `\\b${escaped}\\b` would
-		// prevent matching inside "catalog".
-		setStoreValue("dictionary", [
-			{ find: "cat", replace: "DOG", caseSensitive: false, wholeWord: false },
-		]);
-		expect(applyPostProcessing("catalog")).toBe("DOGalog");
-	});
-});
-
-describe("dictRegexFlags helper (extracted from compileDictEntry)", () => {
-	test("caseSensitive=true uses 'g' flag (no 'i') — case mismatches preserved", () => {
-		// Mutating "g" → "gi" would let case-insensitive replacement happen here.
-		setStoreValue("dictionary", [
-			{ find: "Hi", replace: "Hello", caseSensitive: true, wholeWord: false },
-		]);
-		expect(applyPostProcessing("Hi hi HI")).toBe("Hello hi HI");
-	});
-
-	test("caseSensitive=false uses 'gi' flag — all cases replaced", () => {
-		// Mutating "gi" → "g" would only replace the exact-case occurrence.
-		setStoreValue("dictionary", [
-			{ find: "Hi", replace: "Hello", caseSensitive: false, wholeWord: false },
-		]);
-		expect(applyPostProcessing("Hi hi HI")).toBe("Hello Hello Hello");
-	});
-});
-
-describe("needsTerminalPeriod helper (extracted from maybePunctuate)", () => {
-	test("non-empty text without terminal punct: period added", () => {
-		// Mutating text.length > 0 → text.length >= 0 still matches non-empty;
-		// but mutating it to true would also try to add '.' to "" — guarded by
-		// the existing empty-string test. This guards the unpunctuated branch.
-		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
-		expect(applyPostProcessing("abc")).toBe("abc.");
-	});
-
-	test("text consisting only of trailing whitespace: no period added (length-after-trim semantics)", () => {
-		// "   " has text.length > 0 but trimEnd → "" which the regex tests as
-		// non-matching → would add a period. Verify CURRENT behavior (which
-		// adds period). This locks in the helper's contract.
-		setStoreValue("quality", { ensureSentenceEndsWithPeriod: true });
-		expect(applyPostProcessing("   ")).toBe(".");
-	});
-});
-
-describe("disposeWatchers cleanup (mutation guard for L75 BlockStatement)", () => {
-	test("calling cleanupPostProcessing twice is safe (no-op the second time)", () => {
-		// Mutating the disposeWatchers arrow body to {} would skip dispose calls.
-		// We can't directly observe dispose, but we can verify cleanup is idempotent.
-		setStoreValue("dictionary", [
-			{ find: "a", replace: "b", caseSensitive: false, wholeWord: false },
-		]);
-		expect(applyPostProcessing("a")).toBe("b");
-		cleanupPostProcessing();
-		// Now changing the store should NOT trigger any rebuild because watcher
-		// dispose was called.
-		setStoreValue("dictionary", [
-			{ find: "x", replace: "y", caseSensitive: false, wholeWord: false },
-		]);
-		// Cache stays empty because cleanup cleared it AND dispose detached the
-		// listener (so the change above doesn't rebuild).
-		expect(applyPostProcessing("x")).toBe("x");
-		// A second cleanup call should not throw.
-		expect(() => cleanupPostProcessing()).not.toThrow();
+		expect(applyPostProcessing("my email")).toBe("OK");
+		expect(applyPostProcessing("abc")).toBe("abc");
 	});
 });

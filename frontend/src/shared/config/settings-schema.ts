@@ -28,7 +28,18 @@ export const qualitySettingsSchema = z.object({
 	ensureSentenceStartingUppercase: z.boolean().default(true),
 	ensureSentenceEndsWithPeriod: z.boolean().default(true),
 	smartEndpoint: z.boolean().default(false),
-	smartEndpointSpeed: z.number().min(0.5).max(3.0).default(1.5),
+	// Pause multiplier: pause = (model + whisper) * smartEndpointSpeed.
+	// HIGHER = longer wait = more patient. Default 2.0 matches the
+	// RealtimeSTT reference (its binary-classified smart-endpoint example
+	// ships 2.0); the old 1.5 committed ~25% sooner everywhere and read
+	// as "pastes too eagerly" in toggle dictation.
+	smartEndpointSpeed: z.number().min(0.5).max(3.0).default(2.0),
+	// Sentence-pause durations driving the toggle-mode silence-timing heuristic.
+	// Defaults match the server's CLI argument defaults so a fresh install
+	// behaves identically to the pre-slider baseline.
+	endOfSentenceDetectionPause: z.number().min(0.1).max(5.0).default(0.45),
+	midSentenceDetectionPause: z.number().min(0.1).max(10.0).default(2.0),
+	unknownSentenceDetectionPause: z.number().min(0.1).max(5.0).default(0.7),
 });
 
 export const audioSettingsSchema = z.object({
@@ -56,6 +67,17 @@ export const audioSettingsSchema = z.object({
 		.catch({}),
 });
 
+// One entry in the recording-sound library. The default sound is implicit
+// (never persisted); every entry here is a user-uploaded clip stored under
+// `userData/sounds/`. `path` is the absolute path on disk; `name` is the
+// display label (renamable independently of the on-disk filename).
+export const soundLibraryEntrySchema = z.object({
+	id: z.string().min(1),
+	name: z.string().min(1),
+	path: z.string().min(1),
+});
+export type SoundLibraryEntry = z.output<typeof soundLibraryEntrySchema>;
+
 export const generalSettingsSchema = z.object({
 	autoStart: z.boolean().default(false),
 	minimizeToTray: z.boolean().default(true),
@@ -67,15 +89,43 @@ export const generalSettingsSchema = z.object({
 	// legacy boolean (migrated in electron/lib/store.ts).
 	systemAudioReductionWhileDictating: z.number().int().min(0).max(100).default(0).catch(0),
 	recordingSound: z.boolean().default(true),
+	// Active recording sound. Empty string = built-in default. Otherwise the
+	// absolute path of an entry in `recordingSoundLibrary`.
 	recordingSoundPath: z.string().default(""),
+	// User-uploaded clips, copied into `userData/sounds/` by the main process
+	// on add so the library survives the user moving/renaming the source file.
+	// `.catch([])` keeps older builds (no key) from wiping the whole general
+	// section on first read.
+	recordingSoundLibrary: z.array(soundLibraryEntrySchema).default([]).catch([]),
 	fileTranscriptionFormat: z.enum(["txt", "srt"]).default("txt"),
 	fileTranscriptionSaveLocation: z.enum(["auto", "ask"]).default("auto"),
 	recordingMode: z.enum(["ptt", "toggle", "listen", "wakeword"]).default("ptt"),
+	// True manual toggle: in `toggle` mode, recording runs continuously from
+	// first hotkey press to second press — silence-VAD stop and silence-timing
+	// punctuation tuning are both disabled. Ignored in other modes. Off by
+	// default so the documented "stops on silence, restarts on speech"
+	// behaviour stays the baseline for users who haven't opted in.
+	manualToggleStop: z.boolean().default(false),
 	loopbackDeviceIndex: z.number().int().nullable().default(null),
-	// Wake word used when recordingMode is "wakeword". Only Porcupine's
-	// free built-in keywords work without an access key, so the UI
-	// constrains the picker to that list. Empty when no word selected.
-	wakeWord: z.string().default(""),
+	// Wake word used when recordingMode is "wakeword". The renderer auto-
+	// selects the right detector backend from this value alone (see
+	// `wakeWordBackendFor` in electron/ipc/stt-process.ts): keywords supported
+	// by both engines run as a composite that requires cross-engine agreement;
+	// engine-specific keywords run on the single engine that knows them.
+	// Defaults to "alexa" so a first switch into wakeword mode boots the
+	// highest-accuracy composite detector without further configuration.
+	wakeWord: z.string().default("alexa"),
+	// Detection sensitivity passed to both Porcupine and openWakeWord. Lower
+	// = stricter (fewer false positives, may miss soft pronunciations);
+	// higher = more permissive. 0.6 is the monolith default and a sensible
+	// compromise for most voices.
+	wakeWordSensitivity: z.number().min(0).max(1).default(0.6),
+	// Seconds the wake-word gate stays armed after a detection before
+	// auto-clearing. If the user says the wake word but doesn't follow up
+	// within this window, the engine returns to listening for the trigger
+	// again — protects against accidental long-tail recordings triggered by
+	// stray noise minutes after the user actually said the wake word.
+	wakeWordTimeout: z.number().min(1).max(30).default(5),
 	showRecordingOverlay: z.boolean().default(true),
 	// `.catch` covers older builds that persisted an integer pixel value;
 	// without it an integer here fails the whole settings parse and the codec
@@ -108,19 +158,17 @@ export const hotkeySettingsSchema = z.object({
 	pushToTalkKey: z.string().min(1).default("LCtrl+LMeta"),
 });
 
+// Dictionary is a list of canonical terms (names, jargon, proper nouns) that
+// the fuzzy post-processor uses to correct mis-transcribed words. Single
+// column — no manual find/replace pair, no case/word-boundary toggles.
+// Replacement logic lives in electron/lib/text-processing.ts.
 export const dictionaryEntrySchema = z.object({
 	id: z.string().min(1),
-	find: z.string().min(1, "Required"),
-	replace: z.string().min(1, "Required"),
-	caseSensitive: z.boolean().default(false),
-	wholeWord: z.boolean().default(false),
+	term: z.string().min(1, "Required"),
 });
 
 export const addDictionaryEntrySchema = z.object({
-	find: z.string().trim().min(1, "Required"),
-	replace: z.string().trim().min(1, "Required"),
-	caseSensitive: z.boolean(),
-	wholeWord: z.boolean(),
+	term: z.string().trim().min(1, "Required"),
 });
 export type AddDictionaryEntry = z.infer<typeof addDictionaryEntrySchema>;
 
@@ -236,6 +284,13 @@ const llmFeatureBaseShape = {
 	reasoningEffort: z.enum(["low", "medium", "high"]).default("medium"),
 	verbosity: z.enum(["low", "medium", "high"]).default("medium"),
 	maxOutputTokens: z.number().int().min(1).nullable().default(null),
+	// Thinking budget for Ollama models that advertise the `thinking`
+	// capability via `/api/show`. Mirrors Ollama's `ThinkValue`:
+	//   - `"off"` → `think: false` (force-disable for thinking models)
+	//   - `"low" | "medium" | "high"` → passed verbatim as the request field
+	// Non-thinking models always send `think: false` regardless of this
+	// setting; the chat-body builder gates on the capability check.
+	thinkingEffort: z.enum(["off", "low", "medium", "high"]).default("medium"),
 };
 
 export const llmDictationSchema = z.object({
@@ -269,15 +324,36 @@ export const llmSettingsSchema = z.object({
 	timeout: z.number().int().min(1000).max(30_000).default(5000),
 });
 
+// Kokoro-82M ONNX text-to-speech. Opt-in feature — `enabled` defaults to
+// false; the engine only loads on first synthesis request. `voice` and
+// `lang` mirror the Kokoro voice catalog (see
+// ``server/src/synthesizer/infrastructure/voice_catalog.py``); `speed` is
+// a multiplier clamped 0.5..2.0. `hotkey` is the global combo that
+// captures the active selection and reads it aloud; empty = bound from
+// the in-app UI only. `device` mirrors the STT side's "auto / cuda / cpu".
+export const ttsSettingsSchema = z.object({
+	enabled: z.boolean().default(false),
+	voice: z.string().default("af_heart"),
+	lang: z.string().default("en-us"),
+	speed: z.number().min(0.5).max(2.0).default(1.0),
+	hotkey: z.string().default(""),
+	device: z.enum(["auto", "cuda", "cpu"]).default("auto"),
+});
+
 export const appSettingsSchema = z.object({
 	model: modelSettingsSchema.prefault({}),
 	quality: qualitySettingsSchema.prefault({}),
 	audio: audioSettingsSchema.prefault({}),
 	general: generalSettingsSchema.prefault({}),
 	hotkey: hotkeySettingsSchema.prefault({}),
-	dictionary: z.array(dictionaryEntrySchema).default([]),
+	// `.catch([])` is the migration safety net: any persisted entry from the
+	// pre-v10 shape (find/replace/caseSensitive/wholeWord) will fail the new
+	// `term`-only parser and bring the whole array with it. The catch maps
+	// the failure to an empty array, matching the agreed-upon wipe semantics.
+	dictionary: z.array(dictionaryEntrySchema).default([]).catch([]),
 	snippets: z.array(snippetEntrySchema).default([]),
 	llm: llmSettingsSchema.prefault({}),
+	tts: ttsSettingsSchema.prefault({}),
 });
 
 export type AppSettingsInput = z.input<typeof appSettingsSchema>;

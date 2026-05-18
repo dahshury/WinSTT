@@ -10,35 +10,63 @@ and — crucially — the dictation model that's currently in memory).
 Two design choices worth flagging:
 
 1. **TTL cache, not lifetime cache.** ``get_live_resources()`` is cached
-   for ~1 s so a picker that re-renders 40 rows doesn't fire 40
-   ``nvidia-smi`` subprocesses. Anything older than the TTL is rebuilt
-   from scratch. The picker also exposes a refresh button that bypasses
-   the cache.
-2. **Best-effort everywhere.** Missing psutil, missing nvidia-smi,
+   for ~1 s so a picker that re-renders 40 rows doesn't fire 40 NVML
+   probes. Anything older than the TTL is rebuilt from scratch. The
+   picker also exposes a refresh button that bypasses the cache.
+2. **Best-effort everywhere.** Missing psutil, missing NVIDIA driver,
    malformed output, timeouts — every probe falls back to a sensible
    "I don't know" sentinel rather than raising. The renderer treats
    missing fields as "no warning possible" and renders neutral.
+
+GPU probe strategy (cross-platform):
+
+* **Linux + NVIDIA** — call NVML via ``pynvml`` and trust
+  ``nvmlDeviceGetMemoryInfo().free``. Accurate; no driver-model
+  quirks to work around.
+* **Windows + NVIDIA** — same NVML calls, but use the **v2** memory
+  API so the OS-reserved chunk surfaces separately. In WDDM mode (the
+  default for consumer GeForce cards) the Windows GPU scheduler
+  reserves working-set VRAM that NVML's v1 ``used`` field includes —
+  yet Windows releases that reservation under pressure, so it's
+  effectively allocatable. We report ``free_vram_bytes = v2.free +
+  v2.reserved`` to match Task Manager and DXGI's
+  ``QueryVideoMemoryInfo`` Budget, which is what the user actually
+  sees and what determines whether a fresh CUDA allocation will
+  succeed. On Linux ``reserved`` is typically near-zero, so the
+  same expression collapses to NVML's plain ``free``.
+* **macOS** — no NVIDIA driver has shipped since macOS 10.14 (2019).
+  ``nvmlInit()`` raises immediately, we return an empty tuple, and
+  the fit-assessor routes the candidate through the RAM-based CPU
+  budget — which is the correct verdict on Apple Silicon's unified
+  memory model anyway.
+* **AMD / Intel** — no probe yet; falls through the same empty-tuple
+  path as macOS. Can be layered on later (``rocm-smi`` on Linux,
+  Windows PDH counters on Win) without touching the NVIDIA path.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
-import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
+from types import ModuleType
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class LiveGpuInfo:
-    """Per-GPU live snapshot from ``nvidia-smi --query-gpu``.
+    """Per-GPU live snapshot from NVML.
 
-    ``total_vram_bytes`` is re-reported here (not just in ``system_info``)
-    so the renderer can compute free / used percentages from a single
-    payload — saves an extra round trip and keeps the two values
-    consistent with each other.
+    ``free_vram_bytes`` is the "effectively allocatable" headroom — on
+    Windows that's NVML v2 ``free + reserved`` (the reserved chunk is
+    released on demand by the GPU scheduler); on Linux it collapses to
+    NVML's plain ``free`` since the v2 reserved field is near-zero
+    there. ``used_vram_bytes`` is always ``total - free`` so the
+    invariant ``total == used + free`` holds for renderers.
     """
 
     name: str
@@ -60,12 +88,6 @@ class LiveResources:
     gpus: tuple[LiveGpuInfo, ...]
 
 
-# ─── psutil priming ──────────────────────────────────────────────────────
-# ``psutil.cpu_percent(interval=None)`` returns 0.0 on its first call (no
-# prior sample to compare against). Prime once at import so subsequent
-# ``interval=None`` calls report something meaningful. Failure to prime
-# is non-fatal — the first real call just returns 0.0.
-
 _psutil_primed = False
 _psutil_prime_lock = threading.Lock()
 
@@ -85,10 +107,6 @@ def _prime_cpu_percent() -> None:
             logger.debug("psutil cpu_percent prime failed", exc_info=True)
         _psutil_primed = True
 
-
-# ─── TTL cache ───────────────────────────────────────────────────────────
-# Module-level single-slot cache. Multiple callers hitting the same picker
-# render get the same snapshot without re-querying nvidia-smi.
 
 _CACHE_TTL_SECONDS = 1.0
 _cache_lock = threading.Lock()
@@ -137,59 +155,118 @@ def _cpu_percent() -> float:
     return float(value)
 
 
-def _gpu_snapshot() -> tuple[LiveGpuInfo, ...]:
-    """Probe nvidia-smi for live per-GPU memory + utilization.
+def _is_windows() -> bool:
+    """Indirected so tests can patch the platform check without touching ``sys.platform``."""
+    return sys.platform == "win32"
 
-    Returns an empty tuple if nvidia-smi is absent, times out, or fails.
-    Each successfully parsed row becomes a ``LiveGpuInfo``; malformed rows
-    are skipped (we never raise from this module).
+
+def _gpu_snapshot() -> tuple[LiveGpuInfo, ...]:
+    """Probe each NVIDIA GPU for live memory + utilization via NVML.
+
+    Returns an empty tuple when ``pynvml`` is missing, NVML init fails
+    (no NVIDIA driver), or the device count is zero. Per-device errors
+    skip just that device — we never raise from this module.
     """
     try:
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            timeout=5,
-            check=True,
-            text=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        logger.debug("nvidia-smi live probe failed: %s", e)
+        import pynvml
+    except ImportError:
+        logger.debug("pynvml not installed — GPU live snapshot skipped")
         return ()
+
+    try:
+        pynvml.nvmlInit()
+    except Exception as e:
+        logger.debug("nvmlInit() failed (no NVIDIA driver?): %s", e)
+        return ()
+
+    try:
+        return _probe_gpus_locked(pynvml)
+    finally:
+        with contextlib.suppress(Exception):
+            pynvml.nvmlShutdown()
+
+
+def _probe_gpus_locked(pynvml: ModuleType) -> tuple[LiveGpuInfo, ...]:
+    """Inner probe loop. Assumes ``nvmlInit()`` already succeeded."""
+    try:
+        count = int(pynvml.nvmlDeviceGetCount())
+    except Exception:
+        logger.debug("nvmlDeviceGetCount() raised", exc_info=True)
+        return ()
+
+    treat_reserved_as_free = _is_windows()
     gpus: list[LiveGpuInfo] = []
-    for line in result.stdout.strip().splitlines():
-        parsed = _parse_gpu_row(line)
-        if parsed is not None:
-            gpus.append(parsed)
+    for index in range(count):
+        gpu = _probe_one_gpu(index, pynvml, treat_reserved_as_free=treat_reserved_as_free)
+        if gpu is not None:
+            gpus.append(gpu)
     return tuple(gpus)
 
 
-def _parse_gpu_row(line: str) -> LiveGpuInfo | None:
-    """Parse one CSV row from nvidia-smi. Returns ``None`` on malformed input."""
-    parts = [p.strip() for p in line.split(",")]
-    if len(parts) < 5:
-        return None
-    name = parts[0]
+def _probe_one_gpu(index: int, pynvml: ModuleType, *, treat_reserved_as_free: bool) -> LiveGpuInfo | None:
+    """Probe a single GPU. Returns ``None`` on per-device errors.
+
+    Uses NVML's v2 memory API when available (driver >= R510, ~2022)
+    to separate the OS-reserved chunk from user-allocated bytes. The
+    v1 API lumps them together as ``used`` which is exactly the
+    over-count we're trying to undo on Windows WDDM.
+    """
     try:
-        total_mib = int(parts[1])
-        used_mib = int(parts[2])
-        free_mib = int(parts[3])
-    except ValueError:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+        name = _decode_name(pynvml.nvmlDeviceGetName(handle))
+        total, _user_used, unallocated, reserved = _read_memory_info(handle, pynvml)
+    except Exception:
+        logger.debug("Failed to probe GPU %d", index, exc_info=True)
         return None
-    try:
-        utilization = int(parts[4])
-    except ValueError:
-        utilization = -1
+
+    free = unallocated + reserved if treat_reserved_as_free else unallocated
+    used = max(0, total - free)
+
+    utilization = _safe_utilization(handle, pynvml)
     return LiveGpuInfo(
         name=name,
-        total_vram_bytes=total_mib * 1024 * 1024,
-        used_vram_bytes=used_mib * 1024 * 1024,
-        free_vram_bytes=free_mib * 1024 * 1024,
+        total_vram_bytes=total,
+        used_vram_bytes=used,
+        free_vram_bytes=free,
         utilization_percent=utilization,
     )
+
+
+def _read_memory_info(handle: object, pynvml: ModuleType) -> tuple[int, int, int, int]:
+    """Return ``(total, user_used, free, reserved)`` in bytes.
+
+    Tries the v2 NVML API first (separates ``reserved`` from ``used``);
+    falls back to v1 if the driver / pynvml is too old to support v2.
+    On v1, ``reserved`` is reported as 0 and ``user_used`` collapses to
+    ``v1.used`` (which includes any kernel reservation chunk).
+    """
+    v2_struct = getattr(pynvml, "nvmlMemory_v2", None)
+    if v2_struct is not None:
+        try:
+            mem = pynvml.nvmlDeviceGetMemoryInfo(handle, v2_struct)
+            return (int(mem.total), int(mem.used), int(mem.free), int(getattr(mem, "reserved", 0)))
+        except (TypeError, AttributeError):
+            logger.debug("nvmlDeviceGetMemoryInfo v2 unavailable (bindings)", exc_info=True)
+        except Exception:
+            logger.debug("nvmlDeviceGetMemoryInfo v2 raised", exc_info=True)
+    mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+    return (int(mem.total), int(mem.used), int(mem.free), 0)
+
+
+def _decode_name(raw: object) -> str:
+    """Driver versions before NVML 12 return bytes; newer ones return str."""
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors="replace")
+    return str(raw)
+
+
+def _safe_utilization(handle: object, pynvml: ModuleType) -> int:
+    """Return GPU utilization percent, or -1 if unsupported."""
+    try:
+        rates = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        return int(rates.gpu)
+    except Exception:
+        return -1
 
 
 def get_live_resources(*, force_refresh: bool = False) -> LiveResources:
@@ -197,7 +274,7 @@ def get_live_resources(*, force_refresh: bool = False) -> LiveResources:
 
     Pass ``force_refresh=True`` from a manual "refresh" button to bypass
     the cache. Concurrent callers share the same snapshot — the lock
-    ensures we don't fan out N nvidia-smi processes for one batch render.
+    ensures we don't fan out N NVML probes for one batch render.
     """
     global _cached_snapshot, _cached_at
     now = time.monotonic()

@@ -29,7 +29,17 @@ export type OpenRouterScanResult = components["schemas"]["OpenRouterScanResult"]
 // because the main-process broadcaster isn't wired yet — see
 // `frontend/src/features/llm-warmup-status/`. When OpenAPI gains a schema
 // for this payload, move it under `components["schemas"]` like the others.
-export type LlmWarmupOutcome = "ok" | "model-not-found" | "load-failed";
+// `"loading"` is a transient outcome broadcast at the start of a warmup
+// pass (paired with `LlmWarmupStatus.inProgress === true`). Other outcomes
+// are terminal. `"unreachable"` and `"skipped"` mirror the main-process
+// shape exactly so a narrow type guard works on either side.
+export type LlmWarmupOutcome =
+	| "ok"
+	| "model-not-found"
+	| "load-failed"
+	| "unreachable"
+	| "skipped"
+	| "loading";
 
 export interface LlmWarmupModelStatus {
 	errorBody?: string;
@@ -39,6 +49,13 @@ export interface LlmWarmupModelStatus {
 
 export interface LlmWarmupStatus {
 	endpoint: string;
+	/**
+	 * True on the leading broadcast that fires when a warmup pass kicks
+	 * off; false on the trailing broadcast that carries terminal outcomes.
+	 * The renderer's swap tracker uses this to keep the spinner up during
+	 * slow model loads instead of pre-empting them with a safety timeout.
+	 */
+	inProgress: boolean;
 	models: LlmWarmupModelStatus[];
 	ollamaInstalled: boolean;
 	reachable: boolean;

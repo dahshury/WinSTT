@@ -57,7 +57,7 @@ function ExpandTrigger({
 	primaryName: string;
 	siblingCount: number;
 }) {
-	const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+	const toggleVariantExpansion = (e: React.MouseEvent<HTMLButtonElement>) => {
 		// Lives visually inside the primary card; intercept so the
 		// Combobox.Item doesn't also fire its "select" action.
 		e.preventDefault();
@@ -83,7 +83,7 @@ function ExpandTrigger({
 						? "bg-accent/15 text-accent ring-1 ring-accent/30"
 						: "bg-surface-elevated/80 text-foreground-muted ring-1 ring-border hover:bg-surface-hover hover:text-foreground-secondary"
 				)}
-				onClick={handleClick}
+				onClick={toggleVariantExpansion}
 				type="button"
 			>
 				<span className="tabular-nums">{chipLabel}</span>

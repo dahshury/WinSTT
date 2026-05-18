@@ -382,16 +382,19 @@ export function Slider({
 					className="pointer-events-none absolute inset-0"
 					data-slot="elastic-slider-hash-marks"
 				>
-					{Array.from({ length: hashMarkCount }, (_, i) => (
-						<div
-							className={cn(
-								"absolute top-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors duration-200",
-								"bg-transparent group-data-[active=true]/elastic-slider:bg-foreground/40"
-							)}
-							key={i}
-							style={{ left: `${hashMarkPct(i)}%` }}
-						/>
-					))}
+					{Array.from({ length: hashMarkCount }, (_, i) => {
+						const pct = hashMarkPct(i);
+						return (
+							<div
+								className={cn(
+									"absolute top-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors duration-200",
+									"bg-transparent group-data-[active=true]/elastic-slider:bg-foreground/40"
+								)}
+								key={`hash-${pct}`}
+								style={{ left: `${pct}%` }}
+							/>
+						);
+					})}
 				</div>
 
 				<motion.div

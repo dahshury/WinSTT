@@ -101,13 +101,74 @@ function applySileroDeactivityFlag(args: string[]): void {
 	}
 }
 
+// Keywords each engine knows. Keyed lookups beat hardcoded if-chains and
+// make the "what does this keyword need?" decision testable. Strings must
+// match exactly what the engines accept (Porcupine keyword names / openWake
+// model short names).
+const PORCUPINE_KEYWORDS: ReadonlySet<string> = new Set([
+	"alexa",
+	"americano",
+	"blueberry",
+	"bumblebee",
+	"computer",
+	"grapefruit",
+	"grasshopper",
+	"hey google",
+	"hey siri",
+	"jarvis",
+	"ok google",
+	"picovoice",
+	"porcupine",
+	"terminator",
+]);
+const OPENWAKEWORD_KEYWORDS: ReadonlySet<string> = new Set([
+	"alexa",
+	"hey_jarvis",
+	"hey_mycroft",
+	"hey_rhasspy",
+	"timer",
+	"weather",
+]);
+
 /**
- * Wire wake-word args when recordingMode is "wakeword". We use pvporcupine
- * with the user-selected free-tier keyword — mirrors the RealtimeSTT
- * monolith's wake-word configuration so the server's existing pipeline
- * picks the trigger up without further changes. In any other mode the
- * recorder runs with no wake-word backend, so the pipeline behaves as
- * before (PTT/toggle/listen).
+ * Pick the right server-side wake-word backend for the given keyword:
+ *   - Both engines know it → "composite" (Porcupine AND openWakeWord must
+ *     both fire within a short window — highest accuracy)
+ *   - Only Porcupine knows it → "pvporcupine"
+ *   - Only openWakeWord knows it → "openwakeword"
+ *
+ * Exported as a test seam; the renderer never asks the user to pick a
+ * backend directly. Returns null when the keyword belongs to neither
+ * engine (corrupt store value) so the caller can skip emitting flags.
+ */
+export function wakeWordBackendFor(
+	keyword: string
+): "composite" | "pvporcupine" | "openwakeword" | null {
+	const inPorc = PORCUPINE_KEYWORDS.has(keyword);
+	const inOww = OPENWAKEWORD_KEYWORDS.has(keyword);
+	if (inPorc && inOww) {
+		return "composite";
+	}
+	if (inPorc) {
+		return "pvporcupine";
+	}
+	if (inOww) {
+		return "openwakeword";
+	}
+	return null;
+}
+
+/**
+ * Wire wake-word CLI args when `recordingMode === "wakeword"`. The backend
+ * is picked from the keyword via `wakeWordBackendFor`, so the user never
+ * has to choose an engine — the renderer routes shared keywords through the
+ * composite detector for cross-engine confirmation, and single-engine
+ * keywords through whichever detector knows them.
+ *
+ * Sensitivity (0–1) and timeout (seconds) are forwarded verbatim — both
+ * engines clamp internally to their valid ranges. `--openwakeword_model_paths`
+ * is set for composite and openwakeword backends so detection is scoped to
+ * the chosen keyword (otherwise openWakeWord would load all default models).
  */
 function applyWakeWordFlags(args: string[]): void {
 	const mode = getStoreValue("general.recordingMode");
@@ -118,8 +179,19 @@ function applyWakeWordFlags(args: string[]): void {
 	if (!word) {
 		return;
 	}
-	args.push("--wakeword_backend", "pvporcupine");
+	const backend = wakeWordBackendFor(word);
+	if (backend === null) {
+		return;
+	}
+	args.push("--wakeword_backend", backend);
 	args.push("--wake_words", word);
+	if (backend === "composite" || backend === "openwakeword") {
+		args.push("--openwakeword_model_paths", word);
+	}
+	const sensitivity = getStoreValue("general.wakeWordSensitivity");
+	args.push("--wake_words_sensitivity", String(sensitivity));
+	const timeout = getStoreValue("general.wakeWordTimeout");
+	args.push("--wake_word_timeout", String(timeout));
 }
 
 /**

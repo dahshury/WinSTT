@@ -1,0 +1,82 @@
+---
+title: LLM Text Enhancement
+description: Clean up dictated text and run hotkey-driven transforms via local or cloud LLMs
+---
+
+WinSTT can post-process text with an LLM in two independent ways: **Dictation** cleanup (applied to transcribed speech) and **Transforms** (hotkey-triggered rewrites of the currently-selected text).
+
+There is **no master LLM switch**. Each feature has its own config (`llm.dictation.*` and `llm.transforms.*`) and is active only when its `enabled` is true **and** a model is configured for its chosen provider. The two features pick their provider independently — e.g. dictation can run locally while transforms run on the cloud.
+
+## Shared Infrastructure
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `llm.endpoint` | string | `"http://localhost:11434"` | Ollama URL, shared by both features |
+| `llm.openrouterApiKey` | string | `""` | OpenRouter API key, shared; stored encrypted at rest |
+| `llm.timeout` | integer | `5000` | Timeout in ms, persisted and wired through IPC |
+
+<Callout title="Timeout is not enforced" type="warn">
+  `llm.timeout` is persisted and passed through IPC but **not enforced at the network layer**. Local LLM cold starts routinely exceed any finite cap, and aborting would paste un-processed text. It is kept only for settings stability.
+</Callout>
+
+## Per-Feature Fields
+
+Both Dictation and Transforms share these fields (each prefixed with `llm.dictation.` or `llm.transforms.`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Activate this feature |
+| `provider` | enum | `"ollama"` | `ollama` or `openrouter` |
+| `model` | string | `""` | Ollama model name (used when `provider=ollama`) |
+| `openrouterModel` | string | `""` | Encoded `modelId` or `modelId@providerSlug`; `""` = OpenRouter Auto |
+| `openrouterFallbackModel` | string | `""` | Retried if the primary errors/times out; `""` disables |
+| `thinkingEffort` | enum | `"medium"` | `off`, `low`, `medium`, `high` — reasoning budget for Ollama models advertising the `thinking` capability; non-thinking models ignore it |
+
+### OpenRouter Optional Params
+
+Sent only when the selected model advertises support:
+
+| Param | Values | Default | Description |
+|-------|--------|---------|-------------|
+| `reasoningEffort` | low / medium / high | `medium` | Reasoning budget |
+| `verbosity` | low / medium / high | `medium` | Output verbosity |
+| `maxOutputTokens` | integer or null | `null` | `null` lets the model decide |
+
+## Dictation
+
+Dictation cleanup applies ordered presets to dictated text after transcription.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `presets` | array | `[{ key: "neutral" }]` | Ordered cleanup presets applied to dictated text |
+
+Preset keys: `neutral`, `formal`, `friendly`, `technical`, `casual`, `concise`, `summarize`, `reorder`, `restructure`, `rewordForClarity`.
+
+| Rule | Detail |
+|------|--------|
+| Tone presets | At most ONE of `neutral`, `formal`, `friendly`, `technical`, `casual` may appear |
+| `level` field | `light`, `medium`, or `high` — valid ONLY for `summarize` and `concise` |
+
+## Transforms
+
+Transforms are user-configurable text rewrites triggered by a hotkey on the currently-selected text.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `prompts` | array | `[]` | User-configurable text transforms |
+
+Each prompt entry:
+
+| Field | Description |
+|-------|-------------|
+| `id` | Kebab-case slug (for built-ins) |
+| `name` | Display name |
+| `prompt` | Full system prompt; selected text is passed as the user turn; the model returns only the transformed text |
+| `hotkey` | uiohook combo, e.g. `LCtrl+LShift+P`; empty = reachable only via the Transforms UI/IPC |
+| `builtin` | App-seeded entries (e.g. Polish, Prompt Engineer) show **Reset** instead of **Delete** |
+
+## Privacy
+
+<Callout title="Local-first, cloud opt-in" type="info">
+  Ollama runs locally. OpenRouter is cloud and only used if you supply an API key and select it per feature. Both providers can run concurrently for different features (e.g. local dictation, cloud transforms).
+</Callout>

@@ -28,9 +28,7 @@ describe("DictionarySettingsPanel", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initial,
-				dictionary: [
-					{ id: "1", find: "ur", replace: "your", caseSensitive: false, wholeWord: false },
-				],
+				dictionary: [{ id: "1", term: "Kubernetes" }],
 			},
 		});
 		const { container } = render(
@@ -38,7 +36,6 @@ describe("DictionarySettingsPanel", () => {
 				<DictionarySettingsPanel />
 			</IntlProvider>
 		);
-		expect(container.textContent).toContain("ur");
-		expect(container.textContent).toContain("your");
+		expect(container.textContent).toContain("Kubernetes");
 	});
 });

@@ -21,7 +21,13 @@ Key files:
 
 - `electron/main.ts` -- Entry point, window creation, process lifecycle
 - `electron/ws/stt-client.ts` -- Dual-channel WebSocket client
-- `electron/ipc/*.ts` -- Modular IPC handlers (settings, hotkey, audio-mute, stt-process, tray, file-transcribe, relay)
+- `electron/ipc/*.ts` -- Modular IPC handlers, grouped by concern:
+  - **Server / relay** -- `relay.ts` (dual-channel WebSocket relay), `stt-process.ts` (Python subprocess lifecycle), `stt-commands.ts` (parameter get/set, model reload)
+  - **Hotkeys** -- `hotkey.ts` (push-to-talk uiohook listener), `transform-hotkeys.ts` (custom-transform hotkeys), `tts-hotkey.ts` (speak-selection hotkey)
+  - **LLM / transforms / TTS** -- `llm.ts` (Ollama scan, OpenRouter, dictation/transform text processing, warm-up), `transforms.ts` (custom LLM transforms on selected text), `tts.ts` (Kokoro TTS synthesis)
+  - **Files & overlay** -- `file-transcribe.ts` (file picker, upload, progress, txt/srt), `overlay.ts` (floating recording overlay window)
+  - **Persistence & diagnostics** -- `transcription-history.ts` (history persist + clear), `diag-bundle.ts` (logs/config/system info bundle), `settings.ts` (schema, startup migration, secret encryption)
+- `electron/lib/context-reader.ts` -- Reads focused-window text via Windows UI Automation for the opt-in Context Awareness feature
 
 ### Preload Bridge
 

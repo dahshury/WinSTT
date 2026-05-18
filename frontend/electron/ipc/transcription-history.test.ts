@@ -197,6 +197,39 @@ describe("createTranscriptionHistoryStore.record", () => {
 		const entry = history.record("hello", 1000, "");
 		expect(entry?.originalText).toBeUndefined();
 	});
+
+	test("preserves originalText when LLM ran even if it matches the final text", () => {
+		// Reasoning model can return the input unchanged (e.g. it exhausted
+		// its budget on thinking tokens, or the cleanup preset was a no-op
+		// for this input). The user still expects "Copy Original" to be
+		// available because the LLM was actually invoked.
+		const store = makeStore();
+		const history = createTranscriptionHistoryStore({
+			maxEntries: 5,
+			now: () => 1,
+			makeId,
+			store,
+			storeKey: "history",
+		});
+		const entry = history.record("hello world", 1000, "hello world", true);
+		expect(entry?.originalText).toBe("hello world");
+	});
+
+	test("omits originalText when LLM did NOT run, even if originalText was passed", () => {
+		// Dictionary-only path: relay passes the post-dictionary text as
+		// originalText for consistency with the LLM path, but since the LLM
+		// gate is closed there's no semantic value in surfacing it.
+		const store = makeStore();
+		const history = createTranscriptionHistoryStore({
+			maxEntries: 5,
+			now: () => 1,
+			makeId,
+			store,
+			storeKey: "history",
+		});
+		const entry = history.record("hello world", 1000, "hello world", false);
+		expect(entry?.originalText).toBeUndefined();
+	});
 });
 
 describe("createTranscriptionHistoryStore.getHistory", () => {

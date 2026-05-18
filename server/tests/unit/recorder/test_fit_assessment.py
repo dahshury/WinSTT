@@ -80,7 +80,7 @@ class TestEstimateRuntimeBytes:
     def test_fp32_default(self, catalog: ModelCatalog) -> None:
         tiny = catalog.get("tiny")
         assert tiny is not None
-        # 37.8M params × 4 = ~151 MB + 500 MB overhead
+        # 37.8M params x 4 = ~151 MB + 500 MB overhead
         bytes_ = estimate_runtime_bytes(tiny, "")
         assert bytes_ == int(tiny.param_count * 4.0) + _DICTATION_OVERHEAD_BYTES
 
@@ -314,8 +314,8 @@ class TestAssessOllamaFit:
             loaded_main_quant="",
             live=live,
         )
-        # large-v3 is 1.55B params × 4 bytes = ~6.2 GB + overhead
-        # 16 GB × 0.7 = 11.2 GB budget; minus loaded ≈ 4.5 GB
+        # large-v3 is 1.55B params x 4 bytes = ~6.2 GB + overhead
+        # 16 GB x 0.7 = 11.2 GB budget; minus loaded ≈ 4.5 GB
         # Required (5 GB → 1.2*5+1 = 7 GB) likely exceeds available
         assert FitReason.STT_ALREADY_USES_RAM in a.reasons
         assert a.severity in (FitSeverity.WARNING, FitSeverity.CRITICAL)

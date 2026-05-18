@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -136,6 +137,15 @@ def on_transcription_start(
 
 
 def on_audio_level(level: float, state: ServerState, loop: asyncio.AbstractEventLoop) -> None:
+    # Append + trim so the noise-break audio-variance gate in text_processing
+    # has a bounded window of recent samples to analyse. Trim cadence is per
+    # event (cheap) rather than time-based so a quiet stretch can't leave a
+    # stale entry sitting in the deque past the window.
+    now = time.time()
+    state.recent_audio_levels.append((now, level))
+    cutoff = now - state.hard_break_even_on_background_noise
+    while state.recent_audio_levels and state.recent_audio_levels[0][0] < cutoff:
+        state.recent_audio_levels.popleft()
     message = json.dumps({"type": "audio_level", "level": round(level, 4)})
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
 

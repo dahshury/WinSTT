@@ -96,7 +96,6 @@ export function SttModelSelector({
 	// and pick the one whose top is closest to (but not past) the scroller's
 	// top edge. ``open`` is in the deps so the effect re-runs when the
 	// popup mounts and the ref becomes live.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: groups is intentionally not in deps — re-installing the listener on every keystroke would steal focus from the search input.
 	useEffect(() => {
 		if (!open) {
 			return;

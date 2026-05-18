@@ -304,6 +304,7 @@ def build_transcriber(
         config.transcription.onnx_quantization,
         config.transcription.device,
         info.param_count if info else 0,
+        info.available_quantizations if info else None,
     )
     from src.recorder.infrastructure.device import providers_for_device
 
@@ -334,22 +335,40 @@ def build_transcriber(
 _FP16_AUTO_PARAM_THRESHOLD: int = 500_000_000
 
 
-def _resolve_quantization(requested: str, device: str, param_count: int = 0) -> str | None:
+def _resolve_quantization(
+    requested: str,
+    device: str,
+    param_count: int = 0,
+    available: list[str] | None = None,
+) -> str | None:
     """Resolve ``onnx_quantization`` to what onnx-asr should load.
+
+    ``available`` is the model's published quantization set (the catalog's
+    ``available_quantizations``; ``None`` for off-catalog HF repos whose
+    variants we can't enumerate). Every branch is gated on it: we never
+    resolve to a precision the repo doesn't actually ship, because
+    onnx-asr would then fail with ``ModelFileNotFoundError`` and the
+    server would fall back all the way to ``tiny``. The auto-fp16
+    heuristic below was benchmarked on Whisper, where onnx-community
+    publishes fp16 for every size; other families (NeMo Canary, GigaAM)
+    ship only ``["", "int8"]`` — applying the Whisper rule blindly there
+    asks for a ``*?fp16.onnx`` that does not exist.
 
     Behaviour:
 
     * **``"auto"`` / ``""``** — picks fp16 on CUDA only for models at or
-      above :data:`_FP16_AUTO_PARAM_THRESHOLD` (500M params). Smaller
-      models stay on fp32 because cast overhead at the encoder/decoder
-      I/O boundaries dominates their compute (benchmark: tiny 718x rtf
-      fp32 vs 434x rtf fp16; small ties; large-v3-turbo 73x rtf fp32 vs
-      245x rtf fp16). On CPU, auto is *always* fp32: ORT's
-      CPUExecutionProvider has no fp16 kernels, so fp16 there casts to
-      fp32 internally then back, paying double overhead (tiny.en CPU 158x
-      vs 56x rtf). Empty string is treated as auto for backward compat
-      with configs persisted before the default flipped from ``""``
-      (fp32-explicit) to ``"auto"``.
+      above :data:`_FP16_AUTO_PARAM_THRESHOLD` (500M params) **and only if
+      the model publishes an fp16 export**. Smaller models stay on fp32
+      because cast overhead at the encoder/decoder I/O boundaries
+      dominates their compute (benchmark: tiny 718x rtf fp32 vs 434x rtf
+      fp16; small ties; large-v3-turbo 73x rtf fp32 vs 245x rtf fp16).
+      On CPU, auto is *always* fp32: ORT's CPUExecutionProvider has no
+      fp16 kernels, so fp16 there casts to fp32 internally then back,
+      paying double overhead (tiny.en CPU 158x vs 56x rtf). Empty string
+      is treated as auto for backward compat with configs persisted before
+      the default flipped from ``""`` (fp32-explicit) to ``"auto"``.
+    * **Concrete quant the model doesn't publish** — fall back to fp32
+      with a warning instead of asking onnx-asr for a non-existent file.
     * **Concrete fp16** — pass through. Users who explicitly select fp16
       hit the patch-on-load path in
       :class:`~src.recorder.infrastructure.onnxasr_transcriber.OnnxAsrTranscriber`
@@ -370,10 +389,25 @@ def _resolve_quantization(requested: str, device: str, param_count: int = 0) -> 
 
     resolved_dev = resolve_device(device)
     quant = (requested or "").strip()
+    # Permissive when ``available`` is unknown (off-catalog repo): we can't
+    # enumerate its variants, so preserve the historical assume-it-exists
+    # behaviour rather than refusing a quant the repo might well ship.
+
+    def _publishes(q: str) -> bool:
+        return available is None or q in available
 
     if quant in {"auto", ""}:
-        if resolved_dev == "cuda" and param_count >= _FP16_AUTO_PARAM_THRESHOLD:
+        if resolved_dev == "cuda" and param_count >= _FP16_AUTO_PARAM_THRESHOLD and _publishes("fp16"):
             return "fp16"
+        return None
+
+    if not _publishes(quant):
+        logger.warning(
+            "onnx_quantization=%r requested but this model does not publish "
+            "that variant (available=%s). Loading fp32 instead.",
+            quant,
+            available,
+        )
         return None
 
     if resolved_dev == "cuda" and quant not in _GPU_COMPATIBLE_QUANTIZATIONS:
@@ -406,6 +440,7 @@ def build_realtime_transcriber(
         config.transcription.onnx_quantization,
         config.transcription.device,
         info.param_count if info else 0,
+        info.available_quantizations if info else None,
     )
     from src.recorder.infrastructure.device import providers_for_device
 
@@ -428,12 +463,16 @@ def build_realtime_transcriber(
 
 
 def _build_porcupine_detector(config: RecorderConfig) -> IWakeWordDetector:
-    """Construct a Porcupine-backed wake-word detector from ``config``."""
+    """Construct a Porcupine-backed wake-word detector from ``config``.
+
+    The 1.9.x line is pinned (see server/pyproject.toml) precisely so this
+    builder works without a Picovoice access key — the 14 built-in keywords
+    (alexa, computer, jarvis, etc.) are usable directly.
+    """
     from src.recorder.infrastructure.porcupine_detector import PorcupineDetector
 
     words = [w.strip() for w in config.wake_word.wake_words.split(",") if w.strip()]
     return PorcupineDetector(
-        access_key="",  # Must be provided by user
         wake_words=words,
         sensitivities=[config.wake_word.wake_words_sensitivity] * len(words),
         buffer_size=config.audio.buffer_size,
@@ -456,6 +495,27 @@ def _build_oww_detector(config: RecorderConfig) -> IWakeWordDetector:
     )
 
 
+def _build_composite_detector(config: RecorderConfig) -> IWakeWordDetector:
+    """Construct a Porcupine+openWakeWord composite detector from ``config``.
+
+    Only valid for keywords supported by both engines (currently only
+    ``alexa``). The composite reads the keyword from ``wake_words`` — the
+    first comma-separated entry — and constructs both engines internally so
+    detection requires cross-engine agreement.
+    """
+    from src.recorder.infrastructure.composite_wake_word import CompositeWakeWordDetector
+
+    words = [w.strip() for w in config.wake_word.wake_words.split(",") if w.strip()]
+    if not words:
+        msg = "composite wake-word backend requires --wake_words to be set"
+        raise ValueError(msg)
+    return CompositeWakeWordDetector(
+        wake_word=words[0],
+        sensitivity=config.wake_word.wake_words_sensitivity,
+        buffer_size=config.audio.buffer_size,
+    )
+
+
 # Registry of supported wake-word backends keyed by canonical name AND every
 # historical alias clients have ever sent. Adding a new backend means defining
 # a builder above and adding one or more entries here — there is no second
@@ -466,6 +526,7 @@ WAKE_WORD_BACKENDS: dict[str, Callable[[RecorderConfig], IWakeWordDetector]] = {
     "oww": _build_oww_detector,
     "openwakeword": _build_oww_detector,
     "openwakewords": _build_oww_detector,
+    "composite": _build_composite_detector,
 }
 
 

@@ -26,7 +26,15 @@ import {
 interface ModelSwapStore {
 	activeMain: string | null;
 	activeRealtime: string | null;
+	beginSwap: (kind: ModelSwapKind, from: string, to: string) => void;
 	clear: (kind: ModelSwapKind) => void;
+	// Previous model id captured at the moment the swap is initiated. Surfaces
+	// the "from" leg of the transition in the picker trigger (and anywhere
+	// else that wants to render `from → to`). Stays null when the server
+	// initiates a swap on its own (cold load) — UI degrades to a "to-only"
+	// indicator in that case.
+	fromMain: string | null;
+	fromRealtime: string | null;
 	isSwapping: (kind: ModelSwapKind) => boolean;
 	setActive: (kind: ModelSwapKind, name: string) => void;
 }
@@ -34,8 +42,21 @@ interface ModelSwapStore {
 export const useModelSwapStore = create<ModelSwapStore>()((set, get) => ({
 	activeMain: null,
 	activeRealtime: null,
+	fromMain: null,
+	fromRealtime: null,
+	beginSwap: (kind, from, to) =>
+		set(
+			kind === "main"
+				? { activeMain: to, fromMain: from }
+				: { activeRealtime: to, fromRealtime: from }
+		),
 	setActive: (kind, name) => set(kind === "main" ? { activeMain: name } : { activeRealtime: name }),
-	clear: (kind) => set(kind === "main" ? { activeMain: null } : { activeRealtime: null }),
+	clear: (kind) =>
+		set(
+			kind === "main"
+				? { activeMain: null, fromMain: null }
+				: { activeRealtime: null, fromRealtime: null }
+		),
 	isSwapping: (kind) =>
 		kind === "main" ? get().activeMain !== null : get().activeRealtime !== null,
 }));

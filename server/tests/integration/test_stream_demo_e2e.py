@@ -22,6 +22,14 @@ from types import ModuleType
 import numpy as np
 import pytest
 
+# ``examples/onnx_asr_stream_demo.py`` imports the optional ``keyboard``
+# package at module top-level (it wires global hotkeys for the live demo).
+# ``keyboard`` is not a server dependency, so when it is absent the demo
+# module can't be exec'd — skip the whole e2e module cleanly rather than
+# erroring. These are demo-driven e2e tests; skipping on a missing optional
+# dep is correct, not a reason to add a heavy global dep to the venv.
+pytest.importorskip("keyboard", reason="optional 'keyboard' dep not installed")
+
 DEMO_PATH = Path(__file__).resolve().parents[2] / "examples" / "onnx_asr_stream_demo.py"
 
 

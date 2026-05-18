@@ -1,9 +1,9 @@
 ---
 title: NeMo Models
-description: NVIDIA NeMo ASR models via ONNX backend
+description: NVIDIA NeMo ASR models on the ONNX engine
 ---
 
-NVIDIA NeMo provides high-accuracy speech recognition models built on the FastConformer architecture. WinSTT runs these through the `onnx_asr` backend using ONNX Runtime.
+NVIDIA NeMo provides high-accuracy speech recognition models built on the FastConformer architecture. WinSTT runs these on the same `onnx-asr` ONNX engine as every other family.
 
 All NeMo models support realtime transcription.
 
@@ -14,19 +14,23 @@ All NeMo models support realtime transcription.
 | `nemo-parakeet-ctc-0.6b` | 600M | English | CTC | Connectionist Temporal Classification |
 | `nemo-parakeet-rnnt-0.6b` | 600M | English | RNN-T | Recurrent Neural Network Transducer |
 | `nemo-parakeet-tdt-0.6b-v2` | 600M | English | TDT v2 | Token-and-Duration Transducer |
-| `nemo-parakeet-tdt-0.6b-v3` | 600M | Multilingual | TDT v3 | Multilingual variant |
+| `nemo-parakeet-tdt-0.6b-v3` | 600M | Multilingual | TDT v3 | Multilingual variant with language detection |
 | `nemo-canary-1b-v2` | 1B | Multilingual | Canary | Supports automatic language detection |
 | `nemo-fastconformer-ru-ctc` | -- | Russian | CTC | Russian-specific model |
 | `nemo-fastconformer-ru-rnnt` | -- | Russian | RNN-T | Russian-specific model |
 
 ## Architecture Comparison
 
-**CTC (Connectionist Temporal Classification)** -- Simpler decoding, faster inference. Each audio frame is classified independently.
+**CTC (Connectionist Temporal Classification)** -- Each audio frame is classified independently. Simplest decoding, fastest inference.
 
 **RNN-T (Recurrent Neural Network Transducer)** -- Autoregressive decoding that considers previously emitted tokens. Generally more accurate than CTC.
 
-**TDT (Token-and-Duration Transducer)** -- Extension of RNN-T that jointly predicts tokens and their durations. NVIDIA's latest architecture.
+**TDT (Token-and-Duration Transducer)** -- Extension of RNN-T that jointly predicts tokens and their durations. NVIDIA's newest architecture.
 
-<Callout title="Backend requirement" type="info">
-  NeMo models require the `onnx_asr` backend. Set `backend` to `"onnx_asr"` in Model Settings before selecting a NeMo model.
+## Precision
+
+NeMo models support `""` (default) and `int8` via `onnxQuantization`. `int8` is the recommended choice on CPU. See [Compute Types](/docs/models/compute-types).
+
+<Callout title="No backend switch" type="info">
+  All models — including NeMo — run on the single ONNX engine. There is no backend to set; just pick a NeMo model in [Model Settings](/docs/settings/model).
 </Callout>

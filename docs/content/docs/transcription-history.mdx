@@ -1,0 +1,53 @@
+---
+title: Transcription History
+description: A local dashboard of everything you've transcribed — stats, activity heatmap, and a searchable log
+---
+
+WinSTT keeps a running log of every completed transcription and surfaces it as a dashboard in the **Settings window → Transcription History** tab. It updates live as you dictate and is stored entirely on your machine.
+
+## What gets recorded
+
+Each completed transcription is saved as one entry:
+
+| Field | Description |
+|-------|-------------|
+| `text` | The final text (after LLM cleanup, if a Dictation feature ran) |
+| `originalText` | The pre-LLM text. Present only when an LLM transformed the result; omitted otherwise |
+| `timestamp` | When the transcription completed |
+| `durationMs` | How long the spoken audio was |
+| `wordCount` | Number of words in the final text |
+| `id` | Stable identifier (used to de-duplicate) |
+
+Entries are appended in real time — finishing a dictation immediately adds a row.
+
+## The dashboard
+
+The panel has three sections:
+
+### Summary
+
+Aggregate statistics across all recorded entries:
+
+- **Count** — total number of transcriptions
+- **Total words** and **total duration**
+- **Words per minute (WPM)** — your overall dictation speed (computed from total words ÷ total spoken time)
+
+### Activity heatmap
+
+A calendar heatmap showing how much you transcribed per day. Days are bucketed in **local time**, so a late-night session stays on the day you actually spoke it rather than splitting across a UTC midnight.
+
+### History table
+
+A searchable, time-stamped list of every entry. Each row can:
+
+- **Copy** the final text
+- **Copy original** — the pre-LLM text, when an LLM transformed that entry (lets you compare raw vs. cleaned-up output)
+
+## Clearing history
+
+A **Clear** action wipes all stored entries. It prompts for confirmation first, since the log cannot be recovered afterward.
+
+<Callout title="Where transcripts live" type="info">
+  Transcription history is the one place WinSTT persists transcribed text to disk. It is stored locally and never uploaded. Audio is still discarded after transcription — only the resulting text (and its pre-LLM version, when applicable) is kept. Clear the history at any time to remove it.
+</Callout>
+</content>

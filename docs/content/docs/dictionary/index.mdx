@@ -1,40 +1,45 @@
 ---
 title: Dictionary & Snippets
-description: Custom text replacements and text expansion
+description: Fuzzy term correction and text expansion
 ---
 
-WinSTT provides two text transformation features that run on every transcription output: dictionary replacements and snippet expansions.
+WinSTT provides two text transformation features that run on every transcription output: dictionary corrections and snippet expansions.
 
 ## Dictionary
 
-Dictionary entries are find-and-replace rules applied to all transcriptions. Use them to correct common misrecognitions or normalize informal speech.
+A dictionary entry is a single canonical word, name, or phrase you want WinSTT to get right. There is no find/replace, no case-sensitive or whole-word toggle — just the canonical `term`.
 
-### Entry Fields
+At post-process time the server fuzzy-matches every transcribed token against each dictionary term using **Jaro-Winkler + Double Metaphone** similarity, and replaces the closest near-miss with the canonical `term`. Use it for proper nouns, product names, and jargon the model tends to mishear.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `find` | string | (required) | Text pattern to search for in transcription output |
-| `replace` | string | (required) | Replacement text |
-| `caseSensitive` | boolean | `false` | Match exact case only |
-| `wholeWord` | boolean | `false` | Match whole words only, not substrings |
-
-### Examples
-
-| Find | Replace | Case Sensitive | Whole Word | Effect |
-|------|---------|---------------|------------|--------|
-| `gonna` | `going to` | false | true | "I'm gonna leave" becomes "I'm going to leave" |
-| `wanna` | `want to` | false | true | "I wanna go" becomes "I want to go" |
-| `acme` | `ACME` | false | true | Corrects capitalization of a company name |
-| `k8s` | `Kubernetes` | true | true | Expands an abbreviation |
-
-## Snippets
-
-Snippets are text expansion triggers. Type a short keyword and WinSTT replaces it with longer text. Unlike dictionary entries, snippets are intended for inserting predefined blocks of text.
+<Callout title="Migration" type="warn">
+  Dictionary entries are now `{ id, term }`. The old find/replace/caseSensitive/wholeWord model has been removed and a store migration clears any pre-existing dictionary entries.
+</Callout>
 
 ### Entry Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `id` | string | Stable identifier (assigned automatically) |
+| `term` | string | The canonical word, name, or phrase |
+
+### Examples
+
+| Term | Effect |
+|------|--------|
+| `Kubernetes` | "cooper netties" / "kubernets" is corrected to `Kubernetes` |
+| `PyTorch` | "pie torch" is corrected to `PyTorch` |
+| `Anthropic` | "anthropik" is corrected to `Anthropic` |
+| `Khaled` | A name the model mishears is normalized to `Khaled` |
+
+## Snippets
+
+Snippets are literal text expansions. The `trigger` string is replaced verbatim with `expansion` in the output. Use them for inserting predefined blocks of text.
+
+### Entry Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Stable identifier (assigned automatically) |
 | `trigger` | string | Short text that activates the expansion |
 | `expansion` | string | Full text inserted in place of the trigger |
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AudioDevice } from "@/entities/audio-device";
-import { nextSensitivityForDevice, resolveCurrentDeviceName } from "./helpers";
+import { nextSensitivityForDevice, resolveCurrentDeviceName } from "./vad-calibration-sensitivity";
 
 function dev(index: number, name: string, isDefault = false): AudioDevice {
 	return { index, name, isDefault } as AudioDevice;

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, type ReactNode, useContext } from "react";
+import { createContext, type ReactNode, use } from "react";
 
 export interface Shape {
 	bg: string;
@@ -19,5 +19,5 @@ export function ShapeProvider({ children, value }: { children: ReactNode; value:
 }
 
 export function useShape(): Shape {
-	return useContext(ShapeContext);
+	return use(ShapeContext);
 }

@@ -190,16 +190,44 @@ describe("llm pure helpers", () => {
 		});
 	});
 
-	test("buildOllamaChatBody uses min num_predict of 100", () => {
+	test("buildOllamaChatBody uses min num_predict of 8192 and enables streaming + think", () => {
 		const body = JSON.parse(helpers.buildOllamaChatBody("m", [], 10));
-		expect(body.options.num_predict).toBe(100);
-		expect(body.stream).toBe(false);
+		expect(body.options.num_predict).toBe(8192);
+		expect(body.stream).toBe(true);
+		// Default-effort "medium" is passed through as the Ollama ThinkValue.
+		expect(body.think).toBe("medium");
 		expect(body.model).toBe("m");
 	});
 
-	test("buildOllamaChatBody scales num_predict for long input", () => {
-		const body = JSON.parse(helpers.buildOllamaChatBody("m", [], 200));
-		expect(body.options.num_predict).toBe(400);
+	test("buildOllamaChatBody scales num_predict for very long input above the floor", () => {
+		// 3000 chars * 4 = 12 000, above the 8192 floor — scaling kicks in.
+		const body = JSON.parse(helpers.buildOllamaChatBody("m", [], 3000));
+		expect(body.options.num_predict).toBe(12_000);
+	});
+
+	test("buildOllamaChatBody respects effort levels for thinking models", () => {
+		const high = JSON.parse(
+			helpers.buildOllamaChatBody("m", [], 10, { supportsThinking: true, effort: "high" })
+		);
+		expect(high.think).toBe("high");
+		const low = JSON.parse(
+			helpers.buildOllamaChatBody("m", [], 10, { supportsThinking: true, effort: "low" })
+		);
+		expect(low.think).toBe("low");
+	});
+
+	test("buildOllamaChatBody disables think for non-thinking models", () => {
+		const body = JSON.parse(
+			helpers.buildOllamaChatBody("m", [], 10, { supportsThinking: false, effort: "high" })
+		);
+		expect(body.think).toBe(false);
+	});
+
+	test("buildOllamaChatBody disables think when effort is off", () => {
+		const body = JSON.parse(
+			helpers.buildOllamaChatBody("m", [], 10, { supportsThinking: true, effort: "off" })
+		);
+		expect(body.think).toBe(false);
 	});
 
 	test("stripTildePrefix strips a leading tilde only", () => {
@@ -344,28 +372,159 @@ describe("llm pure helpers", () => {
 		expect(result.models).toEqual([]);
 	});
 
-	test("parseOllamaChatOrFallback returns trimmed content", () => {
-		const json = {
-			model: "m",
-			created_at: "now",
-			message: { role: "assistant", content: "  hi  " },
+	test("finalizeChatAnswer returns trimmed assembled content", () => {
+		const state = {
+			buffer: { value: "" },
+			content: "  hello world  ",
+			contentStreamCursor: 0,
+			thinking: "",
 			done: true,
 		};
-		expect(helpers.parseOllamaChatOrFallback(json, "fallback")).toBe("hi");
+		expect(helpers.finalizeChatAnswer(state, "fallback")).toBe("hello world");
 	});
 
-	test("parseOllamaChatOrFallback returns fallback for invalid response", () => {
-		expect(helpers.parseOllamaChatOrFallback({ wrong: "shape" }, "fallback")).toBe("fallback");
-	});
-
-	test("parseOllamaChatOrFallback returns fallback for empty content", () => {
-		const json = {
-			model: "m",
-			created_at: "now",
-			message: { role: "assistant", content: "   " },
+	test("finalizeChatAnswer returns fallback for empty assembled content", () => {
+		const state = {
+			buffer: { value: "" },
+			content: "   ",
+			contentStreamCursor: 0,
+			thinking: "",
 			done: true,
 		};
-		expect(helpers.parseOllamaChatOrFallback(json, "fallback")).toBe("fallback");
+		expect(helpers.finalizeChatAnswer(state, "fallback")).toBe("fallback");
+	});
+
+	test("splitInlineThinking strips <think> blocks but keeps the answer", () => {
+		const { thinking, answer } = helpers.splitInlineThinking(
+			"<think>let me consider</think>\nfinal answer here"
+		);
+		expect(answer).toBe("final answer here");
+		expect(thinking).toContain("let me consider");
+	});
+
+	test("extractBoxedAnswer returns the last \\boxed payload as the answer", () => {
+		// Real Qwen-Math leakage shape: long reasoning preamble, optional
+		// epilogue, with the final answer in \boxed{}. The bug we're fixing
+		// is that the entire content gets pasted verbatim — extractBoxedAnswer
+		// should hand us only the boxed payload and route the rest to thinking.
+		const content =
+			"After applying the constraints I removed several words. " +
+			"The minimized version is: \\boxed{Will Ulama model summarize my text concisely?} " +
+			"This has 10 words.";
+		const result = helpers.extractBoxedAnswer(content);
+		expect(result).not.toBeNull();
+		expect(result?.answer).toBe("Will Ulama model summarize my text concisely?");
+		expect(result?.thinking).toContain("After applying the constraints");
+		expect(result?.thinking).toContain("This has 10 words.");
+	});
+
+	test("extractBoxedAnswer prefers the last boxed when multiple exist", () => {
+		const result = helpers.extractBoxedAnswer(
+			"\\boxed{first attempt} ... no wait, \\boxed{final answer}"
+		);
+		expect(result?.answer).toBe("final answer");
+	});
+
+	test("extractBoxedAnswer handles one level of nested braces", () => {
+		const result = helpers.extractBoxedAnswer("...\\boxed{x = \\frac{1}{2}}");
+		expect(result?.answer).toBe("x = \\frac{1}{2}");
+	});
+
+	test("extractBoxedAnswer returns null when there is no boxed payload", () => {
+		expect(helpers.extractBoxedAnswer("just a regular answer")).toBeNull();
+	});
+
+	test("extractHarmonyAnswer pulls the final channel out of leaked harmony content", () => {
+		const content =
+			"<|channel|>analysis<|message|>thinking about this<|end|>" +
+			"<|start|>assistant<|channel|>final<|message|>The real answer<|end|>";
+		const result = helpers.extractHarmonyAnswer(content);
+		expect(result?.answer).toBe("The real answer");
+		expect(result?.thinking).toBe("thinking about this");
+	});
+
+	test("extractHarmonyAnswer returns null when no harmony markers are present", () => {
+		expect(helpers.extractHarmonyAnswer("just a regular answer")).toBeNull();
+	});
+
+	test("extractStructuredFinalText parses the structured-output JSON envelope", () => {
+		// Ollama's `format` schema forces the model to emit `{"text": "..."}`;
+		// the finalizer parses that envelope first, before any heuristic
+		// extractor runs. This is the happy path we expect for every modern
+		// (Ollama 0.5+) installation.
+		expect(helpers.extractStructuredFinalText('{"text": "transformed answer"}')).toBe(
+			"transformed answer"
+		);
+	});
+
+	test("extractStructuredFinalText returns null for malformed or unrelated content", () => {
+		expect(helpers.extractStructuredFinalText("not json")).toBeNull();
+		expect(helpers.extractStructuredFinalText('{"other": "field"}')).toBeNull();
+		expect(helpers.extractStructuredFinalText("{")).toBeNull();
+	});
+
+	test("extractPartialStructuredText pulls out the text-so-far for streaming", () => {
+		// Simulate the chunks the pill sees while Ollama is still mid-JSON:
+		// the field is open but not yet closed. We want to surface the natural
+		// prose as it arrives, not the JSON characters.
+		expect(helpers.extractPartialStructuredText('{"text": "hello wor')).toBe("hello wor");
+		expect(helpers.extractPartialStructuredText('{"text": "hello world"}')).toBe("hello world");
+	});
+
+	test("extractPartialStructuredText resolves common JSON escapes inline", () => {
+		expect(helpers.extractPartialStructuredText('{"text": "line one\\nline two')).toBe(
+			"line one\nline two"
+		);
+		expect(helpers.extractPartialStructuredText('{"text": "She said \\"hi\\"')).toBe(
+			'She said "hi"'
+		);
+	});
+
+	test("extractPartialStructuredText returns null before the field opens", () => {
+		// First few chunks arrive as just `{` or `{"text` — too soon to extract.
+		expect(helpers.extractPartialStructuredText("{")).toBeNull();
+		expect(helpers.extractPartialStructuredText('{"tex')).toBeNull();
+	});
+
+	test("finalizeChatAnswer prefers structured JSON over heuristic extractors", () => {
+		// Structured output should win even if the raw content happens to also
+		// look like it contains a \\boxed{} payload — the schema is the source
+		// of truth, and the heuristic extractors are only fallbacks.
+		const state = {
+			buffer: { value: "" },
+			content: '{"text": "the right answer"}',
+			contentStreamCursor: 0,
+			thinking: "",
+			done: true,
+		};
+		expect(helpers.finalizeChatAnswer(state, "fallback")).toBe("the right answer");
+	});
+
+	test("applyChatStreamChunk accumulates thinking and content separately", () => {
+		const state = {
+			buffer: { value: "" },
+			content: "",
+			contentStreamCursor: 0,
+			thinking: "",
+			done: false,
+		};
+		helpers.applyChatStreamChunk(state, {
+			message: { role: "assistant", thinking: "step one. " },
+		});
+		helpers.applyChatStreamChunk(state, {
+			message: { role: "assistant", content: "hello " },
+		});
+		helpers.applyChatStreamChunk(state, {
+			message: { role: "assistant", thinking: "step two.", content: "world" },
+			done: true,
+		});
+		expect(state.thinking).toBe("step one. step two.");
+		expect(state.content).toBe("hello world");
+		expect(state.done).toBe(true);
+	});
+
+	test("parseChatStreamLine returns null for malformed JSON", () => {
+		expect(helpers.parseChatStreamLine("{not json")).toBeNull();
 	});
 
 	test("parseOpenRouterModelsOrFail returns enriched models", () => {
@@ -1546,7 +1705,11 @@ describe("warmupOllamaModel", () => {
 	});
 
 	type WarmupOutcome = "ok" | "unreachable" | "model-not-found" | "load-failed" | "skipped";
-	type WarmupResult = { model: string; outcome: WarmupOutcome; errorBody?: string };
+	interface WarmupResult {
+		errorBody?: string;
+		model: string;
+		outcome: WarmupOutcome;
+	}
 	type WarmupFn = (endpoint: string, model: string) => Promise<WarmupResult>;
 
 	const warmup = (helpers as unknown as { warmupOllamaModel: WarmupFn }).warmupOllamaModel;
@@ -1693,13 +1856,14 @@ describe("buildOllamaChatBody includes keep_alive", () => {
 });
 
 describe("warmup status broadcast", () => {
-	type WarmupStatus = {
+	interface WarmupStatus {
 		endpoint: string;
-		reachable: boolean | null;
-		ollamaInstalled: boolean;
+		inProgress: boolean;
 		models: Array<{ model: string; outcome: string; errorBody?: string }>;
+		ollamaInstalled: boolean;
+		reachable: boolean | null;
 		timestamp: number;
-	};
+	}
 	const broadcast = (helpers as unknown as { broadcastWarmupStatus: (s: WarmupStatus) => void })
 		.broadcastWarmupStatus;
 	const getLast = (helpers as unknown as { getLastWarmupStatus: () => WarmupStatus | null })
@@ -1708,6 +1872,7 @@ describe("warmup status broadcast", () => {
 	test("broadcastWarmupStatus stores the last payload so settings-window can pull it on mount", () => {
 		const payload: WarmupStatus = {
 			endpoint: ENDPOINT,
+			inProgress: false,
 			reachable: true,
 			ollamaInstalled: true,
 			models: [{ model: "gemma3:4b", outcome: "ok" }],
@@ -1720,6 +1885,7 @@ describe("warmup status broadcast", () => {
 	test("subsequent broadcast overwrites the cached snapshot", () => {
 		broadcast({
 			endpoint: ENDPOINT,
+			inProgress: false,
 			reachable: true,
 			ollamaInstalled: true,
 			models: [],
@@ -1727,6 +1893,7 @@ describe("warmup status broadcast", () => {
 		});
 		const next: WarmupStatus = {
 			endpoint: ENDPOINT,
+			inProgress: false,
 			reachable: false,
 			ollamaInstalled: false,
 			models: [{ model: "x", outcome: "unreachable" }],

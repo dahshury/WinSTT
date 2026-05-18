@@ -182,6 +182,11 @@
 	--animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
 	--animate-recording-pulse: recording-pulse 1s ease-in-out infinite;
 	--animate-recording-pulse-slow: recording-pulse 2s ease-in-out infinite;
+	/* Indeterminate accent bar that sweeps left → right across a container.
+	   Used by the STT model picker trigger to mark an in-flight model swap
+	   along the card's bottom edge — same accent vocabulary as the open-state
+	   hairline at the top edge, just put in motion. */
+	--animate-swap-sweep: swap-sweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 
 	/* z-index scale — keep in sync with shared/config/z-index.ts.
 	   `--z-index-*` isn't a built-in Tailwind v4 namespace, so the matching
@@ -316,6 +321,19 @@
 	}
 	100% {
 		background-position: 100% 0;
+	}
+}
+
+/* Drives the in-flight accent bar on the STT model picker trigger. The bar
+   itself is half-width with a linear-gradient body (transparent → accent →
+   transparent); translating it from -100% to 200% gives an asymmetric
+   left-→-right sweep that never sits still at either edge. */
+@keyframes swap-sweep {
+	0% {
+		transform: translateX(-100%);
+	}
+	100% {
+		transform: translateX(200%);
 	}
 }
 

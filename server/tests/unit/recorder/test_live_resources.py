@@ -1,9 +1,10 @@
-"""Unit tests for live_resources — psutil + nvidia-smi probes with mocks."""
+"""Unit tests for live_resources — psutil + NVML probes with mocks."""
 
 from __future__ import annotations
 
-import subprocess
+from collections.abc import Generator
 from dataclasses import dataclass
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,7 +13,7 @@ from src.recorder.infrastructure import live_resources as lr
 
 
 @pytest.fixture(autouse=True)
-def _reset_cache() -> None:
+def _reset_cache() -> Generator[None, None, None]:
     """Ensure each test starts with a clean cache + primed flag."""
     lr.reset_cache()
     yield
@@ -27,69 +28,74 @@ class FakeVm:
     available: int
 
 
-def _make_psutil(
+@dataclass
+class FakeMemV1:
+    """Stand-in for v1 ``nvmlDeviceGetMemoryInfo()`` (no ``reserved``)."""
+
+    total: int
+    used: int
+    free: int
+
+
+@dataclass
+class FakeMemV2:
+    """Stand-in for v2 ``nvmlDeviceGetMemoryInfo()`` (with ``reserved``)."""
+
+    total: int
+    used: int
+    free: int
+    reserved: int
+
+
+@dataclass
+class FakeUtil:
+    """Stand-in for ``nvmlDeviceGetUtilizationRates()``."""
+
+    gpu: int
+    memory: int = 0
+
+
+def _make_fake_pynvml(
     *,
-    total: int = 32 * 1024**3,
-    available: int = 16 * 1024**3,
-    logical: int = 8,
-    physical: int = 4,
-    cpu_pct: float = 12.5,
+    devices: list[dict[str, Any]] | None = None,
+    init_error: type[Exception] | None = None,
+    v2_supported: bool = True,
 ) -> MagicMock:
-    mock = MagicMock()
-    mock.virtual_memory.return_value = FakeVm(total=total, available=available)
-    mock.cpu_count.side_effect = lambda logical=True: (logical and 8) or 4
+    """Build a stand-in ``pynvml`` module for sys.modules injection.
 
-    def _cpu_count(logical: bool = True) -> int:
-        # The MagicMock side_effect signature trick above is brittle —
-        # use a real function instead.
-        return (logical and 8) or 4
+    Each device dict supports: ``name`` (str|bytes), ``total``, ``used``,
+    ``free``, ``reserved`` (defaults to 0), ``util`` (defaults to 0).
+    """
+    fake = MagicMock(name="pynvml")
 
-    mock.cpu_count = MagicMock(side_effect=_cpu_count)
-    # Override after to keep test parameters honest:
-    mock.cpu_count.side_effect = lambda logical=True: (8 if logical else 4) if (logical_default := True) else 0
-    mock.cpu_count.side_effect = lambda logical=True: 8 if logical else 4
-    mock.cpu_percent.return_value = cpu_pct
-    return mock
+    class FakeNVMLError(Exception):
+        pass
 
+    fake.NVMLError = FakeNVMLError
+    fake.nvmlMemory_v2 = "nvmlMemory_v2_sentinel" if v2_supported else None
 
-def _stub_nvidia_smi(stdout: str = "", *, raises: type[Exception] | None = None) -> MagicMock:
-    """Build a ``subprocess.run`` stand-in that returns canned nvidia-smi output."""
-    if raises is not None:
-        return MagicMock(side_effect=raises("simulated"))
-    result = MagicMock()
-    result.stdout = stdout
-    return MagicMock(return_value=result)
+    if init_error is not None:
+        fake.nvmlInit.side_effect = init_error("simulated init failure")
+    else:
+        fake.nvmlInit.return_value = None
+    fake.nvmlShutdown.return_value = None
 
+    devs = devices or []
+    fake.nvmlDeviceGetCount.return_value = len(devs)
+    fake.nvmlDeviceGetHandleByIndex.side_effect = lambda i: ("handle", i)
+    fake.nvmlDeviceGetName.side_effect = lambda h: devs[h[1]]["name"]
 
-# ─── _parse_gpu_row ─────────────────────────────────────────────────────
+    def _get_mem(handle: tuple[str, int], version: object = None) -> FakeMemV1 | FakeMemV2:
+        dev = devs[handle[1]]
+        if version == "nvmlMemory_v2_sentinel" and v2_supported:
+            return FakeMemV2(total=dev["total"], used=dev["used"], free=dev["free"], reserved=dev.get("reserved", 0))
+        if version is not None and not v2_supported:
+            raise TypeError("nvmlDeviceGetMemoryInfo() takes 1 positional argument")
+        return FakeMemV1(total=dev["total"], used=dev["used"] + dev.get("reserved", 0), free=dev["free"])
 
-
-class TestParseGpuRow:
-    def test_valid_row(self) -> None:
-        row = "NVIDIA GeForce RTX 4090, 24564, 8000, 16564, 42"
-        gpu = lr._parse_gpu_row(row)
-        assert gpu is not None
-        assert gpu.name == "NVIDIA GeForce RTX 4090"
-        assert gpu.total_vram_bytes == 24564 * 1024 * 1024
-        assert gpu.used_vram_bytes == 8000 * 1024 * 1024
-        assert gpu.free_vram_bytes == 16564 * 1024 * 1024
-        assert gpu.utilization_percent == 42
-
-    def test_too_few_columns(self) -> None:
-        # Only 4 columns instead of 5 → reject
-        assert lr._parse_gpu_row("GPU, 1024, 512, 512") is None
-
-    def test_malformed_total(self) -> None:
-        assert lr._parse_gpu_row("GPU, NaN, 512, 512, 10") is None
-
-    def test_malformed_utilization_kept_as_unknown(self) -> None:
-        """A bad utilization column should not invalidate the whole row."""
-        gpu = lr._parse_gpu_row("GPU, 1024, 512, 512, --")
-        assert gpu is not None
-        assert gpu.utilization_percent == -1
-
-
-# ─── _ram_snapshot ──────────────────────────────────────────────────────
+    fake.nvmlDeviceGetMemoryInfo.side_effect = _get_mem
+    fake.nvmlDeviceGetUtilizationRates.side_effect = lambda h: FakeUtil(gpu=devs[h[1]].get("util", 0))
+    return fake
 
 
 class TestRamSnapshot:
@@ -116,9 +122,6 @@ class TestRamSnapshot:
             assert avail == 0
 
 
-# ─── _cpu_counts ────────────────────────────────────────────────────────
-
-
 class TestCpuCounts:
     def test_returns_zeros_when_psutil_missing(self) -> None:
         with patch.dict("sys.modules", {"psutil": None}):
@@ -135,9 +138,6 @@ class TestCpuCounts:
         fake.cpu_count.return_value = None
         with patch.dict("sys.modules", {"psutil": fake}):
             assert lr._cpu_counts() == (0, 0)
-
-
-# ─── _cpu_percent ───────────────────────────────────────────────────────
 
 
 class TestCpuPercent:
@@ -158,58 +158,153 @@ class TestCpuPercent:
             assert lr._cpu_percent() == 0.0
 
 
-# ─── _gpu_snapshot ──────────────────────────────────────────────────────
-
-
 class TestGpuSnapshot:
-    def test_no_nvidia_smi(self) -> None:
-        with patch(
-            "subprocess.run",
-            _stub_nvidia_smi(raises=FileNotFoundError),
-        ):
+    def test_no_pynvml(self) -> None:
+        with patch.dict("sys.modules", {"pynvml": None}):
             assert lr._gpu_snapshot() == ()
 
-    def test_nvidia_smi_timeout(self) -> None:
-        with patch(
-            "subprocess.run",
-            MagicMock(side_effect=subprocess.TimeoutExpired(cmd="nvidia-smi", timeout=5)),
-        ):
+    def test_nvml_init_fails(self) -> None:
+        fake = _make_fake_pynvml(init_error=RuntimeError)
+        with patch.dict("sys.modules", {"pynvml": fake}):
             assert lr._gpu_snapshot() == ()
+        fake.nvmlInit.assert_called_once()
+        fake.nvmlDeviceGetCount.assert_not_called()
 
-    def test_nvidia_smi_nonzero_exit(self) -> None:
-        with patch(
-            "subprocess.run",
-            MagicMock(side_effect=subprocess.CalledProcessError(1, "nvidia-smi")),
-        ):
+    def test_device_count_zero(self) -> None:
+        fake = _make_fake_pynvml(devices=[])
+        with patch.dict("sys.modules", {"pynvml": fake}):
             assert lr._gpu_snapshot() == ()
+        fake.nvmlShutdown.assert_called_once()
 
-    def test_single_gpu(self) -> None:
-        stdout = "NVIDIA GeForce RTX 3090, 24576, 4096, 20480, 10\n"
-        with patch("subprocess.run", _stub_nvidia_smi(stdout)):
+    def test_linux_path_uses_nvml_free_directly(self) -> None:
+        """On Linux ``reserved`` is folded into ``used`` so the wire invariant holds."""
+        fake = _make_fake_pynvml(
+            devices=[
+                {
+                    "name": "RTX 4090",
+                    "total": 24 * 1024**3,
+                    "used": 4 * 1024**3,
+                    "free": 20 * 1024**3,
+                    "reserved": 50 * 1024**2,
+                    "util": 17,
+                }
+            ]
+        )
+        with patch.dict("sys.modules", {"pynvml": fake}), patch.object(lr, "_is_windows", return_value=False):
             gpus = lr._gpu_snapshot()
         assert len(gpus) == 1
-        assert gpus[0].name == "NVIDIA GeForce RTX 3090"
-        assert gpus[0].total_vram_bytes == 24576 * 1024 * 1024
-        assert gpus[0].used_vram_bytes == 4096 * 1024 * 1024
-        assert gpus[0].free_vram_bytes == 20480 * 1024 * 1024
-        assert gpus[0].utilization_percent == 10
+        g = gpus[0]
+        assert g.name == "RTX 4090"
+        assert g.total_vram_bytes == 24 * 1024**3
+        assert g.free_vram_bytes == 20 * 1024**3
+        assert g.used_vram_bytes == g.total_vram_bytes - g.free_vram_bytes
+        assert g.utilization_percent == 17
 
-    def test_multi_gpu(self) -> None:
-        stdout = "NVIDIA A100, 81920, 40960, 40960, 75\nNVIDIA A100, 81920, 0, 81920, 0\n"
-        with patch("subprocess.run", _stub_nvidia_smi(stdout)):
+    def test_windows_path_adds_reserved_back_to_free(self) -> None:
+        """Windows: reserved chunk is released on pressure → treat as free."""
+        total = 12 * 1024**3
+        fake = _make_fake_pynvml(
+            devices=[
+                {
+                    "name": "RTX 3080 Ti",
+                    "total": total,
+                    "used": 5 * 1024**3,
+                    "free": 3 * 1024**3,
+                    "reserved": 4 * 1024**3,
+                }
+            ]
+        )
+        with patch.dict("sys.modules", {"pynvml": fake}), patch.object(lr, "_is_windows", return_value=True):
             gpus = lr._gpu_snapshot()
-        assert len(gpus) == 2
+        assert len(gpus) == 1
+        g = gpus[0]
+        assert g.total_vram_bytes == total
+        assert g.free_vram_bytes == 7 * 1024**3
+        assert g.used_vram_bytes == 5 * 1024**3
 
-    def test_skips_malformed_rows(self) -> None:
-        stdout = "good gpu, 1024, 256, 768, 10\nbroken row\nanother good, 2048, 1024, 1024, 50\n"
-        with patch("subprocess.run", _stub_nvidia_smi(stdout)):
+    def test_v2_unsupported_falls_back_to_v1(self) -> None:
+        """Older drivers without v2 API → use v1 (reserved=0, used includes reservation)."""
+        fake = _make_fake_pynvml(
+            devices=[
+                {
+                    "name": "GTX 1080",
+                    "total": 8 * 1024**3,
+                    "used": 3 * 1024**3,
+                    "free": 5 * 1024**3,
+                    "reserved": 0,
+                }
+            ],
+            v2_supported=False,
+        )
+        with patch.dict("sys.modules", {"pynvml": fake}), patch.object(lr, "_is_windows", return_value=True):
             gpus = lr._gpu_snapshot()
-        assert len(gpus) == 2
-        assert gpus[0].name == "good gpu"
-        assert gpus[1].name == "another good"
+        assert gpus[0].free_vram_bytes == 5 * 1024**3
+        assert gpus[0].used_vram_bytes == 3 * 1024**3
 
+    def test_per_device_error_skips_only_that_device(self) -> None:
+        """One broken GPU shouldn't drop the rest of a multi-GPU host."""
+        fake = _make_fake_pynvml(
+            devices=[
+                {"name": "GPU 0", "total": 1024, "used": 256, "free": 768},
+                {"name": "BROKEN", "total": 1024, "used": 256, "free": 768},
+                {"name": "GPU 2", "total": 2048, "used": 1024, "free": 1024},
+            ]
+        )
+        original_get_mem = fake.nvmlDeviceGetMemoryInfo.side_effect
 
-# ─── TTL cache ──────────────────────────────────────────────────────────
+        def _selective_mem(handle: tuple[str, int], version: object = None) -> FakeMemV1 | FakeMemV2:
+            if handle[1] == 1:
+                raise fake.NVMLError("device fell off the bus")
+            return cast("FakeMemV1 | FakeMemV2", original_get_mem(handle, version))
+
+        fake.nvmlDeviceGetMemoryInfo.side_effect = _selective_mem
+        with patch.dict("sys.modules", {"pynvml": fake}), patch.object(lr, "_is_windows", return_value=False):
+            gpus = lr._gpu_snapshot()
+        assert [g.name for g in gpus] == ["GPU 0", "GPU 2"]
+
+    def test_name_decoded_when_bytes(self) -> None:
+        """Older NVML returns bytes; we decode to str."""
+        fake = _make_fake_pynvml(
+            devices=[{"name": b"NVIDIA GeForce RTX 3060", "total": 12 * 1024**3, "used": 0, "free": 12 * 1024**3}]
+        )
+        with patch.dict("sys.modules", {"pynvml": fake}), patch.object(lr, "_is_windows", return_value=False):
+            gpus = lr._gpu_snapshot()
+        assert gpus[0].name == "NVIDIA GeForce RTX 3060"
+
+    def test_utilization_unknown_becomes_negative_one(self) -> None:
+        fake = _make_fake_pynvml(devices=[{"name": "GPU", "total": 1024, "used": 0, "free": 1024}])
+        fake.nvmlDeviceGetUtilizationRates.side_effect = fake.NVMLError("not supported")
+        with patch.dict("sys.modules", {"pynvml": fake}), patch.object(lr, "_is_windows", return_value=False):
+            gpus = lr._gpu_snapshot()
+        assert gpus[0].utilization_percent == -1
+
+    def test_shutdown_runs_even_when_device_count_raises(self) -> None:
+        fake = _make_fake_pynvml(devices=[{"name": "x", "total": 1, "used": 0, "free": 1}])
+        fake.nvmlDeviceGetCount.side_effect = RuntimeError("driver borked")
+        with patch.dict("sys.modules", {"pynvml": fake}), patch.object(lr, "_is_windows", return_value=False):
+            gpus = lr._gpu_snapshot()
+        assert gpus == ()
+        fake.nvmlShutdown.assert_called_once()
+
+    def test_wire_invariant_total_equals_used_plus_free(self) -> None:
+        """The renderer relies on total == used + free; check both platform paths."""
+        for is_windows in (True, False):
+            fake = _make_fake_pynvml(
+                devices=[
+                    {
+                        "name": "GPU",
+                        "total": 16 * 1024**3,
+                        "used": 6 * 1024**3,
+                        "free": 8 * 1024**3,
+                        "reserved": 2 * 1024**3,
+                    }
+                ]
+            )
+            with patch.dict("sys.modules", {"pynvml": fake}), patch.object(lr, "_is_windows", return_value=is_windows):
+                gpus = lr._gpu_snapshot()
+            g = gpus[0]
+            msg = f"invariant broken (windows={is_windows})"
+            assert g.total_vram_bytes == g.used_vram_bytes + g.free_vram_bytes, msg
 
 
 class TestTtlCache:
@@ -218,24 +313,29 @@ class TestTtlCache:
         fake_psutil.virtual_memory.return_value = FakeVm(total=8 * 1024**3, available=4 * 1024**3)
         fake_psutil.cpu_count.side_effect = lambda logical=True: 4 if logical else 2
         fake_psutil.cpu_percent.return_value = 25.0
-        run_mock = _stub_nvidia_smi("")
-        with patch.dict("sys.modules", {"psutil": fake_psutil}), patch("subprocess.run", run_mock):
+        fake_pynvml = _make_fake_pynvml(devices=[])
+        with (
+            patch.dict("sys.modules", {"psutil": fake_psutil, "pynvml": fake_pynvml}),
+            patch.object(lr, "_is_windows", return_value=False),
+        ):
             first = lr.get_live_resources()
             second = lr.get_live_resources()
-            assert first is second  # same object → cache hit
-            # nvidia-smi probed once total
-            assert run_mock.call_count == 1
+            assert first is second
+            assert fake_pynvml.nvmlInit.call_count == 1
 
     def test_force_refresh_bypasses_cache(self) -> None:
         fake_psutil = MagicMock()
         fake_psutil.virtual_memory.return_value = FakeVm(total=8 * 1024**3, available=4 * 1024**3)
         fake_psutil.cpu_count.side_effect = lambda logical=True: 4 if logical else 2
         fake_psutil.cpu_percent.return_value = 25.0
-        run_mock = _stub_nvidia_smi("")
-        with patch.dict("sys.modules", {"psutil": fake_psutil}), patch("subprocess.run", run_mock):
+        fake_pynvml = _make_fake_pynvml(devices=[])
+        with (
+            patch.dict("sys.modules", {"psutil": fake_psutil, "pynvml": fake_pynvml}),
+            patch.object(lr, "_is_windows", return_value=False),
+        ):
             lr.get_live_resources()
             lr.get_live_resources(force_refresh=True)
-            assert run_mock.call_count == 2
+            assert fake_pynvml.nvmlInit.call_count == 2
 
     def test_serialiser_emits_expected_keys(self) -> None:
         snapshot = lr.LiveResources(
@@ -268,13 +368,14 @@ class TestTtlCache:
         fake_psutil.virtual_memory.return_value = FakeVm(total=1, available=1)
         fake_psutil.cpu_count.side_effect = lambda logical=True: 1
         fake_psutil.cpu_percent.return_value = 0.0
-        with patch.dict("sys.modules", {"psutil": fake_psutil}), patch("subprocess.run", _stub_nvidia_smi("")):
+        fake_pynvml = _make_fake_pynvml(devices=[])
+        with (
+            patch.dict("sys.modules", {"psutil": fake_psutil, "pynvml": fake_pynvml}),
+            patch.object(lr, "_is_windows", return_value=False),
+        ):
             wire = lr.live_resources_dict()
         assert "ram_total_bytes" in wire
         assert wire["gpus"] == []
-
-
-# ─── psutil priming ─────────────────────────────────────────────────────
 
 
 class TestPsutilPriming:
@@ -282,9 +383,7 @@ class TestPsutilPriming:
         fake = MagicMock()
         fake.cpu_percent.side_effect = RuntimeError("boom on prime")
         with patch.dict("sys.modules", {"psutil": fake}):
-            # _prime_cpu_percent should not raise
             lr._prime_cpu_percent()
-            # And mark as primed so a second call is a no-op
             lr._prime_cpu_percent()
             assert lr._psutil_primed is True
 

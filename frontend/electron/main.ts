@@ -28,7 +28,7 @@ import {
 import { setupDiagBundleHandler } from "./ipc/diag-bundle";
 import { setupDialogHandlers } from "./ipc/dialog";
 import { setupFileTranscribeHandlers } from "./ipc/file-transcribe";
-import { setupHotkeyHandlers } from "./ipc/hotkey";
+import { type HotkeyComboAction, setupHotkeyHandlers } from "./ipc/hotkey";
 import {
 	decryptIpcPayload,
 	type EncryptedIpcPayload,
@@ -40,14 +40,20 @@ import { setupLoopbackHandlers } from "./ipc/loopback";
 import { setupOllamaRegistry } from "./ipc/ollama-registry";
 import { hideOverlay, setOverlayWindow, setupOverlayHandlers, showOverlay } from "./ipc/overlay";
 import { setupRelay } from "./ipc/relay";
-import { cleanupSettingsHandlers, setupSettingsHandlers } from "./ipc/settings";
-import { setupSttCommandHandlers } from "./ipc/stt-commands";
+import {
+	applyMainProcessSettingsPatch,
+	cleanupSettingsHandlers,
+	setupSettingsHandlers,
+} from "./ipc/settings";
+import { handleAbortOperation, setupSttCommandHandlers } from "./ipc/stt-commands";
 import { killSttProcess, setupSttProcessHandlers, tryAutoSpawnServer } from "./ipc/stt-process";
 import { setupSystemLocaleHandler } from "./ipc/system-locale";
 import { setupTransformHotkeys } from "./ipc/transform-hotkeys";
 import { setupTransforms } from "./ipc/transforms";
 import { setupTray } from "./ipc/tray";
 import { setupTrayMenuHandlers } from "./ipc/tray-menu-window";
+import { setupTts } from "./ipc/tts";
+import { setupTtsHotkey } from "./ipc/tts-hotkey";
 import {
 	createUpdaterStatusHistory,
 	type UpdaterStatusEntry,
@@ -59,6 +65,7 @@ import { shutdownPsHost } from "./lib/ps-host";
 import { cleanupRecordingIndicator, initRecordingIndicator } from "./lib/recording-indicator";
 import { captureMainException, initSentryMain } from "./lib/sentry-main";
 import { cleanupSound, initSound } from "./lib/sound";
+import { initSoundLibrary } from "./lib/sound-library";
 import { getStoreValue, migrateSecretsAtRest, store } from "./lib/store";
 import { SttClient } from "./ws/stt-client";
 
@@ -83,6 +90,8 @@ let cleanupLlmWarmup: (() => void) | null = null;
 let cleanupOllamaRegistry: (() => void) | null = null;
 let cleanupTransforms: (() => void) | null = null;
 let cleanupTransformHotkeys: (() => void) | null = null;
+let cleanupTts: (() => void) | null = null;
+let cleanupTtsHotkey: (() => void) | null = null;
 let cleanupTrayMenu: (() => void) | null = null;
 let cleanupAppMenu: (() => void) | null = null;
 let cleanupContextMenu: (() => void) | null = null;
@@ -94,6 +103,7 @@ let cleanupWindowControls: (() => void) | null = null;
 let cleanupOverlay: (() => void) | null = null;
 let cleanupSystemLocale: (() => void) | null = null;
 let cleanupDiagBundle: (() => void) | null = null;
+let cleanupSoundLibrary: (() => void) | null = null;
 let autoUpdateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let rendererServerProcess: ChildProcess | null = null;
 let rendererBaseUrl = process.env.WINSTT_RENDERER_BASE_URL ?? "http://localhost:3000";
@@ -122,6 +132,51 @@ function toErrorMessage(error: unknown): string {
 		return error.message;
 	}
 	return String(error);
+}
+
+/**
+ * Cycle order for the `hotkey + ArrowUp` mode-cycling combo. Matches the
+ * order of the recording-mode switcher in Settings → General so users see
+ * the same sequence in both places.
+ */
+const MODE_CYCLE = ["ptt", "toggle", "listen", "wakeword"] as const;
+type RecordingMode = (typeof MODE_CYCLE)[number];
+
+function nextRecordingMode(current: RecordingMode): RecordingMode {
+	const idx = MODE_CYCLE.indexOf(current);
+	// Falls through to MODE_CYCLE[0] when current isn't in the list (corrupt
+	// store value — defensive). `% length` wraps the end back to the start.
+	return MODE_CYCLE[(Math.max(idx, 0) + 1) % MODE_CYCLE.length] ?? MODE_CYCLE[0];
+}
+
+/**
+ * Dispatch for the second-key combos detected in `hotkey.ts` while the
+ * global hotkey is held.
+ *
+ *   - cancel        → abort the in-flight transcription + LLM pass
+ *   - cycle-mode    → advance to the next recording mode AND abort, since
+ *                     the recording that the press just kicked off would
+ *                     otherwise paste into the user's window under the new
+ *                     mode's semantics
+ *
+ * Mode switches are persisted via `applyMainProcessSettingsPatch` which
+ * mirrors the renderer-side save path: it updates the store, fires the
+ * restart-needed check (entering / leaving wakeword), and broadcasts a
+ * fresh full snapshot to every renderer so the settings panel, tray
+ * indicator, and visualizer accent color all flip in lock-step.
+ */
+function handleHotkeyCombo(action: HotkeyComboAction, sttClient: SttClient): void {
+	if (action === "cancel") {
+		handleAbortOperation(sttClient);
+		return;
+	}
+	// action === "cycle-mode"
+	const current = getStoreValue("general.recordingMode") as RecordingMode;
+	const next = nextRecordingMode(current);
+	// Drop the in-flight recording first — the user's intent is "I want to
+	// change mode", not "transcribe this audio into the new mode's flow".
+	handleAbortOperation(sttClient);
+	applyMainProcessSettingsPatch({ "general.recordingMode": next });
 }
 
 type SecureInvokeChannel =
@@ -573,6 +628,10 @@ if (gotTheLock) {
 		cleanupTransforms = null;
 		cleanupTransformHotkeys?.();
 		cleanupTransformHotkeys = null;
+		cleanupTts?.();
+		cleanupTts = null;
+		cleanupTtsHotkey?.();
+		cleanupTtsHotkey = null;
 		cleanupAppMenu?.();
 		cleanupAppMenu = null;
 		cleanupContextMenu?.();
@@ -593,6 +652,8 @@ if (gotTheLock) {
 		cleanupSystemLocale = null;
 		cleanupDiagBundle?.();
 		cleanupDiagBundle = null;
+		cleanupSoundLibrary?.();
+		cleanupSoundLibrary = null;
 		disposeGeneralSettingsWatcher?.();
 		disposeGeneralSettingsWatcher = null;
 		cleanupSettingsHandlers();
@@ -639,6 +700,8 @@ function setupGlobalIpcHandlers() {
 	cleanupOllamaRegistry = setupOllamaRegistry();
 	cleanupTransforms = setupTransforms();
 	cleanupTransformHotkeys = setupTransformHotkeys().dispose;
+	cleanupTts = setupTts(sttClient);
+	cleanupTtsHotkey = setupTtsHotkey(sttClient).dispose;
 	cleanupAppMenu = setupAppMenuHandlers();
 	cleanupContextMenu = setupContextMenuHandlers();
 	cleanupClipboard = setupClipboardHandlers();
@@ -646,6 +709,7 @@ function setupGlobalIpcHandlers() {
 	cleanupSecureInvoke = setupSecureInvokeHandlers();
 	cleanupSystemLocale = setupSystemLocaleHandler();
 	cleanupDiagBundle = setupDiagBundleHandler();
+	cleanupSoundLibrary = initSoundLibrary();
 }
 
 function setupAppMenuHandlers(): () => void {
@@ -1008,7 +1072,9 @@ function createWindow() {
 		mainWindow?.webContents.send(IPC.WINDOW_TELEMETRY, payload);
 	});
 
-	cleanupHotkeys = setupHotkeyHandlers(mainWindow, sttClient);
+	cleanupHotkeys = setupHotkeyHandlers(mainWindow, sttClient, {
+		onCombo: (action) => handleHotkeyCombo(action, sttClient),
+	});
 
 	// Setup file transcription
 	const { cleanup: fileTranscribeCleanup } = setupFileTranscribeHandlers(mainWindow, sttClient);

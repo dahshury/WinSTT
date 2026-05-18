@@ -469,6 +469,41 @@ export const dialogOpenFile = (
 	title?: string
 ) => invokeOrDefault<string | null>(IPC.DIALOG_OPEN_FILE, null, { filters, title });
 
+// Sound library — custom recording-sound files persisted under userData/sounds/.
+export interface SoundLibraryEntryDTO {
+	id: string;
+	name: string;
+	path: string;
+}
+
+export interface SoundLibraryAddResult {
+	entry?: SoundLibraryEntryDTO;
+	error?: string;
+	ok: boolean;
+}
+
+export interface SoundLibraryRemoveResult {
+	error?: string;
+	ok: boolean;
+}
+
+export const soundLibraryAdd = (sourcePath: string, name?: string) =>
+	invokeOrDefault<SoundLibraryAddResult>(
+		IPC.SOUND_LIBRARY_ADD,
+		{ ok: false, error: "IPC unavailable" },
+		{ sourcePath, name }
+	);
+
+export const soundLibraryRemove = (filePath: string) =>
+	invokeOrDefault<SoundLibraryRemoveResult>(
+		IPC.SOUND_LIBRARY_REMOVE,
+		{ ok: false, error: "IPC unavailable" },
+		{ path: filePath }
+	);
+
+export const soundLibraryReadFile = (filePath: string) =>
+	invokeOrDefault<Uint8Array | null>(IPC.SOUND_LIBRARY_READ_FILE, null, { path: filePath });
+
 export type AppMenuTemplateItem =
 	| { type: "separator" }
 	| {
@@ -723,6 +758,138 @@ export const onTransformFailed = (
 	callback: (payload: TransformFailedPayload) => void
 ): (() => void) => onCast<TransformFailedPayload>(IPC.TRANSFORMS_FAILED, callback);
 
+// ─── TTS ──────────────────────────────────────────────────────────────
+
+export interface TtsVoice {
+	gender: string;
+	id: string;
+	label: string;
+	language: string;
+}
+
+export interface TtsLanguage {
+	code: string;
+	label: string;
+}
+
+export interface TtsVoiceCatalog {
+	languages: TtsLanguage[];
+	voices: TtsVoice[];
+}
+
+export interface TtsSpeakResult {
+	requestId: string;
+}
+
+export interface TtsSpeakSelectionResult {
+	requestId: string;
+	source: "uia" | "clipboard" | "empty";
+	text: string;
+}
+
+export interface TtsChunkPayload {
+	channels: number;
+	format: string;
+	isFinal: boolean;
+	/** Raw PCM bytes (transferred from main as ArrayBuffer). Interpret per ``format``. */
+	pcm: ArrayBuffer;
+	requestId: string;
+	sampleRate: number;
+	seq: number;
+}
+
+export interface TtsStartedPayload {
+	requestId: string;
+}
+
+export interface TtsCompletedPayload {
+	cancelled: boolean;
+	elapsedMs: number | null;
+	requestId: string;
+}
+
+export interface TtsFailedPayload {
+	reason: string;
+	requestId: string;
+}
+
+export interface TtsModelDownloadProgressPayload {
+	downloadedBytes: number;
+	progress: number;
+	totalBytes: number;
+}
+
+const TTS_VOICE_FALLBACK: TtsVoiceCatalog = { voices: [], languages: [] };
+
+/**
+ * Fetch the static Kokoro voice catalog from the server. Result is
+ * cached on the main side, so repeat calls are cheap.
+ */
+export const listTtsVoices = (): Promise<TtsVoiceCatalog> =>
+	invokeOrDefault<TtsVoiceCatalog>(IPC.TTS_LIST_VOICES, TTS_VOICE_FALLBACK);
+
+/**
+ * Force eager construction of the synthesizer (which on first call also
+ * downloads the model + voicepacks). Used by the Settings UI's "Initialize
+ * now" button so users can pre-stage the download.
+ */
+export const initTts = (): Promise<{ ready: boolean }> =>
+	invokeOrDefault<{ ready: boolean }>(IPC.TTS_INIT, { ready: false });
+
+/**
+ * Speak an arbitrary string. Returns the server-correlated ``requestId``;
+ * subscribe to {@link onTtsChunk} / {@link onTtsCompleted} for output.
+ */
+export const ttsSpeak = (payload: {
+	text: string;
+	voice?: string;
+	lang?: string;
+	speed?: number;
+}): Promise<TtsSpeakResult> =>
+	invokeOrDefault<TtsSpeakResult>(IPC.TTS_SPEAK, { requestId: "" }, payload);
+
+/**
+ * Capture the active text selection in the focused window and speak it.
+ * Mirrors the transforms "speak the highlight" flow but for TTS instead
+ * of LLM rewrite. Empty selection broadcasts {@link onTtsFailed} with
+ * reason "No text selected".
+ */
+export const ttsSpeakSelection = (): Promise<TtsSpeakSelectionResult> =>
+	invokeOrDefault<TtsSpeakSelectionResult>(IPC.TTS_SPEAK_SELECTION, {
+		requestId: "",
+		text: "",
+		source: "empty",
+	});
+
+/** Cancel one or every active TTS request. */
+export const ttsCancel = (requestId?: string): void => {
+	send(IPC.TTS_CANCEL, { requestId });
+};
+
+export const onTtsStarted = (callback: (payload: TtsStartedPayload) => void): (() => void) =>
+	onCast<TtsStartedPayload>(IPC.TTS_STARTED, callback);
+
+export const onTtsChunk = (callback: (payload: TtsChunkPayload) => void): (() => void) =>
+	onCast<TtsChunkPayload>(IPC.TTS_CHUNK, callback);
+
+export const onTtsCompleted = (callback: (payload: TtsCompletedPayload) => void): (() => void) =>
+	onCast<TtsCompletedPayload>(IPC.TTS_COMPLETED, callback);
+
+export const onTtsFailed = (callback: (payload: TtsFailedPayload) => void): (() => void) =>
+	onCast<TtsFailedPayload>(IPC.TTS_FAILED, callback);
+
+export const onTtsModelDownloadStart = (callback: () => void): (() => void) =>
+	onCast<Record<string, never>>(IPC.TTS_MODEL_DOWNLOAD_START, () => callback());
+
+export const onTtsModelDownloadProgress = (
+	callback: (payload: TtsModelDownloadProgressPayload) => void
+): (() => void) =>
+	onCast<TtsModelDownloadProgressPayload>(IPC.TTS_MODEL_DOWNLOAD_PROGRESS, callback);
+
+export const onTtsModelDownloadComplete = (
+	callback: (payload: { cancelled: boolean }) => void
+): (() => void) => onCast<{ cancelled: boolean }>(IPC.TTS_MODEL_DOWNLOAD_COMPLETE, callback);
+
 export const onLlmCatalog = (callback: (models: OllamaModel[]) => void): (() => void) => {
 	if (!isElectron()) {
 		return noop;
@@ -794,6 +961,8 @@ export const onOllamaPullProgress = (cb: (progress: OllamaPullProgress) => void)
 
 export const onLlmProcessingStart = (cb: () => void) => on(IPC.LLM_PROCESSING_START, cb);
 export const onLlmProcessingEnd = (cb: () => void) => on(IPC.LLM_PROCESSING_END, cb);
+export const onLlmReasoningDelta = (cb: (payload: { delta: string }) => void): (() => void) =>
+	onCast(IPC.LLM_REASONING_DELTA, cb);
 
 // Warmup status — main-process broadcaster is still WIP. Until it lands,
 // the invoke handler is missing in main, so `invokeOrDefault` falls back

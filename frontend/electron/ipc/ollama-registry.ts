@@ -97,6 +97,31 @@ function stripTags(s: string): string {
 	return decodeEntities(s.replace(/<[^>]+>/g, "")).trim();
 }
 
+function parseCapabilities(block: string): string[] | undefined {
+	const capabilities: string[] = [];
+	for (const capMatch of block.matchAll(CAPABILITY_RE)) {
+		const cap = stripTags(capMatch[1] ?? "");
+		if (cap) {
+			capabilities.push(cap);
+		}
+	}
+	return capabilities.length > 0 ? capabilities : undefined;
+}
+
+function parseSearchHit(block: string, slug: string): OllamaLibraryHit {
+	const titleMatch = block.match(TITLE_ATTR_RE);
+	const descMatch = block.match(DESCRIPTION_RE);
+	const pullsMatch = block.match(PULLS_RE);
+	const updatedMatch = block.match(UPDATED_RE);
+	return {
+		name: titleMatch?.[1] ?? slug,
+		description: descMatch ? stripTags(descMatch[1] ?? "") : undefined,
+		pulls: pullsMatch ? stripTags(pullsMatch[1] ?? "") : undefined,
+		updated: updatedMatch ? stripTags(updatedMatch[1] ?? "") : undefined,
+		capabilities: parseCapabilities(block),
+	};
+}
+
 function parseSearchPage(html: string): OllamaLibraryHit[] {
 	const hits: OllamaLibraryHit[] = [];
 	const anchors = [...html.matchAll(SEARCH_HIT_RE)];
@@ -112,24 +137,7 @@ function parseSearchPage(html: string): OllamaLibraryHit[] {
 		const start = match.index ?? 0;
 		const end = anchors[i + 1]?.index ?? html.length;
 		const block = html.slice(start, end);
-		const titleMatch = block.match(TITLE_ATTR_RE);
-		const descMatch = block.match(DESCRIPTION_RE);
-		const pullsMatch = block.match(PULLS_RE);
-		const updatedMatch = block.match(UPDATED_RE);
-		const capabilities: string[] = [];
-		for (const capMatch of block.matchAll(CAPABILITY_RE)) {
-			const cap = stripTags(capMatch[1] ?? "");
-			if (cap) {
-				capabilities.push(cap);
-			}
-		}
-		hits.push({
-			name: titleMatch?.[1] ?? slug,
-			description: descMatch ? stripTags(descMatch[1] ?? "") : undefined,
-			pulls: pullsMatch ? stripTags(pullsMatch[1] ?? "") : undefined,
-			updated: updatedMatch ? stripTags(updatedMatch[1] ?? "") : undefined,
-			capabilities: capabilities.length > 0 ? capabilities : undefined,
-		});
+		hits.push(parseSearchHit(block, slug));
 	}
 	return hits;
 }
@@ -148,6 +156,7 @@ const SIZE_RE = /([\d.]+)\s*(KB|MB|GB|TB)/i;
 const CONTEXT_RE = /([\d.]+[KMB])\s*context\s*window/i;
 const QUANT_TOKEN_RE = /(?:^|[-:_])(q\d[a-z0-9_]*|fp\d+|int\d+|bf\d+)(?=$|[-:_])/i;
 const PARAM_TOKEN_RE = /(?:^|[-:_])(\d+(?:\.\d+)?[mMbB])(?=$|[-:_])/;
+const LATEST_TAG_RE = /text-blue-600[^>]*>latest</i;
 
 function parseSize(raw: string): { bytes: number; label: string } | null {
 	const match = raw.match(SIZE_RE);
@@ -187,7 +196,7 @@ function parseParameterSize(tag: string): string | undefined {
 	return match[1]?.toUpperCase();
 }
 
-function parseTagsPage(model: string, html: string): OllamaLibraryTag[] {
+function parseTagsPage(_model: string, html: string): OllamaLibraryTag[] {
 	const tags: OllamaLibraryTag[] = [];
 	const seen = new Set<string>();
 	// Each tag block starts at the matching anchor; we grab the surrounding
@@ -208,7 +217,7 @@ function parseTagsPage(model: string, html: string): OllamaLibraryTag[] {
 		const block = html.slice(start, end);
 		const sizeInfo = parseSize(block);
 		const ctxMatch = block.match(CONTEXT_RE);
-		const isLatest = /text-blue-600[^>]*>latest</i.test(block);
+		const isLatest = LATEST_TAG_RE.test(block);
 		tags.push({
 			name,
 			sizeBytes: sizeInfo?.bytes,

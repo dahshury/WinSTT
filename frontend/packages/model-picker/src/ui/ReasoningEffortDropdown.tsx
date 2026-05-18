@@ -35,6 +35,7 @@ export function ReasoningEffortDropdown({
 			{REASONING_EFFORT_OPTIONS.map((option) => {
 				const isSelected = value === option.value;
 				return (
+					// biome-ignore lint/a11y/useSemanticElements: radiogroup-of-buttons pattern; parent has role="radiogroup", a native input breaks the styled segmented control
 					<button
 						aria-checked={isSelected}
 						className={cn(

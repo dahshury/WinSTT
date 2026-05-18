@@ -3,7 +3,10 @@ import {
 	advanceSkipRefs,
 	autoStartChanged,
 	clearIfSet,
+	computeSilenceEndpointEnabled,
 	computeSilenceTiming,
+	getManualToggleStop,
+	getPrevManualToggleStop,
 	getPrevSmartEndpoint,
 	getRecordingMode,
 	getSmartEndpoint,
@@ -12,6 +15,7 @@ import {
 	shouldSendInitial,
 	shouldSendOnChange,
 	shouldSyncOnConnect,
+	silenceEndpointNeedsUpdate,
 	silenceTimingNeedsUpdate,
 } from "./sync-helpers";
 
@@ -49,10 +53,6 @@ describe("shouldSendOnChange", () => {
 });
 
 describe("computeSilenceTiming", () => {
-	test("returns true when smartEndpoint is on", () => {
-		expect(computeSilenceTiming(true, "ptt")).toBe(true);
-	});
-
 	test("returns true for 'toggle' mode regardless of smartEndpoint", () => {
 		expect(computeSilenceTiming(false, "toggle")).toBe(true);
 	});
@@ -65,12 +65,50 @@ describe("computeSilenceTiming", () => {
 		expect(computeSilenceTiming(false, "ptt")).toBe(false);
 	});
 
-	test("returns true when smartEndpoint is on even in ptt mode", () => {
-		expect(computeSilenceTiming(true, "ptt")).toBe(true);
+	test("returns false for ptt mode even when smartEndpoint is on", () => {
+		expect(computeSilenceTiming(true, "ptt")).toBe(false);
 	});
 
 	test("returns true when smartEndpoint and mode both active", () => {
 		expect(computeSilenceTiming(true, "toggle")).toBe(true);
+	});
+
+	test("returns false for toggle + manualToggleStop", () => {
+		expect(computeSilenceTiming(false, "toggle", true)).toBe(false);
+	});
+
+	test("manualToggleStop overrides smartEndpoint in toggle mode", () => {
+		expect(computeSilenceTiming(true, "toggle", true)).toBe(false);
+	});
+
+	test("manualToggleStop has no effect on listen mode", () => {
+		expect(computeSilenceTiming(false, "listen", true)).toBe(true);
+	});
+});
+
+describe("computeSilenceEndpointEnabled", () => {
+	test("returns false for ptt mode", () => {
+		expect(computeSilenceEndpointEnabled("ptt")).toBe(false);
+	});
+
+	test("returns true for toggle mode by default", () => {
+		expect(computeSilenceEndpointEnabled("toggle")).toBe(true);
+	});
+
+	test("returns true for listen mode by default", () => {
+		expect(computeSilenceEndpointEnabled("listen")).toBe(true);
+	});
+
+	test("returns false for toggle + manualToggleStop", () => {
+		expect(computeSilenceEndpointEnabled("toggle", true)).toBe(false);
+	});
+
+	test("manualToggleStop has no effect on listen mode", () => {
+		expect(computeSilenceEndpointEnabled("listen", true)).toBe(true);
+	});
+
+	test("manualToggleStop has no effect on ptt mode", () => {
+		expect(computeSilenceEndpointEnabled("ptt", true)).toBe(false);
 	});
 });
 
@@ -93,6 +131,59 @@ describe("silenceTimingNeedsUpdate", () => {
 
 	test("returns true when both mode and smartEndpoint changed", () => {
 		expect(silenceTimingNeedsUpdate(true, false, "listen", "ptt", false)).toBe(true);
+	});
+
+	test("returns true when manualToggleStop flipped", () => {
+		expect(silenceTimingNeedsUpdate(false, false, "toggle", "toggle", false, true, false)).toBe(
+			true
+		);
+	});
+
+	test("returns false when manualToggleStop is unchanged and everything else stable", () => {
+		expect(silenceTimingNeedsUpdate(false, false, "toggle", "toggle", false, true, true)).toBe(
+			false
+		);
+	});
+});
+
+describe("silenceEndpointNeedsUpdate", () => {
+	test("returns true on initial connect", () => {
+		expect(silenceEndpointNeedsUpdate("toggle", "toggle", true)).toBe(true);
+	});
+
+	test("returns true when recording mode changed", () => {
+		expect(silenceEndpointNeedsUpdate("toggle", "ptt", false)).toBe(true);
+	});
+
+	test("returns true when manualToggleStop flipped", () => {
+		expect(silenceEndpointNeedsUpdate("toggle", "toggle", false, true, false)).toBe(true);
+	});
+
+	test("returns false when nothing relevant changed", () => {
+		expect(silenceEndpointNeedsUpdate("toggle", "toggle", false, false, false)).toBe(false);
+	});
+});
+
+describe("getManualToggleStop / getPrevManualToggleStop", () => {
+	test("getManualToggleStop reads the flag when present", () => {
+		expect(getManualToggleStop({ general: { manualToggleStop: true } } as never)).toBe(true);
+		expect(getManualToggleStop({ general: { manualToggleStop: false } } as never)).toBe(false);
+	});
+
+	test("getManualToggleStop returns false when general is absent", () => {
+		expect(getManualToggleStop({} as never)).toBe(false);
+	});
+
+	test("getPrevManualToggleStop returns false when prev is undefined", () => {
+		expect(getPrevManualToggleStop(undefined)).toBe(false);
+	});
+
+	test("getPrevManualToggleStop returns false when prev has no general", () => {
+		expect(getPrevManualToggleStop({} as never)).toBe(false);
+	});
+
+	test("getPrevManualToggleStop returns the flag when present", () => {
+		expect(getPrevManualToggleStop({ general: { manualToggleStop: true } } as never)).toBe(true);
 	});
 });
 

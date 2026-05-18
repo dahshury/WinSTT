@@ -13,11 +13,22 @@ import {
 const storeValueSchemas = {
 	// general
 	"general.recordingMode": z.enum(["ptt", "toggle", "listen", "wakeword"]).catch("ptt"),
-	"general.wakeWord": z.string().catch(""),
+	"general.wakeWord": z.string().catch("alexa"),
+	"general.wakeWordSensitivity": z.number().min(0).max(1).catch(0.6),
+	"general.wakeWordTimeout": z.number().min(1).max(30).catch(5),
 	"general.minimizeToTray": z.boolean().catch(true),
 	"general.startMinimized": z.boolean().catch(false),
 	"general.recordingSound": z.boolean().catch(true),
 	"general.recordingSoundPath": z.string().catch(""),
+	"general.recordingSoundLibrary": z
+		.array(
+			z.object({
+				id: z.string().min(1),
+				name: z.string().min(1),
+				path: z.string().min(1),
+			})
+		)
+		.catch([]),
 	"general.fileTranscriptionFormat": z.enum(["txt", "srt"]).catch("txt"),
 	"general.fileTranscriptionSaveLocation": z.enum(["auto", "ask"]).catch("auto"),
 	"general.showRecordingOverlay": z.boolean().catch(true),
@@ -69,12 +80,17 @@ const storeValueSchemas = {
 			})
 		)
 		.catch([{ key: "neutral" as const }]),
+	// Per-feature thinking budget for Ollama models that advertise the
+	// `thinking` capability. Falls back to "medium" so reasoning models
+	// behave sensibly on first run; non-thinking models ignore the value.
+	"llm.dictation.thinkingEffort": z.enum(["off", "low", "medium", "high"]).catch("medium"),
 	// llm.transforms — per-feature config for custom-prompt transforms
 	"llm.transforms.enabled": z.boolean().catch(false),
 	"llm.transforms.provider": z.enum(["ollama", "openrouter"]).catch("ollama"),
 	"llm.transforms.model": z.string().catch(""),
 	"llm.transforms.openrouterModel": z.string().catch(""),
 	"llm.transforms.openrouterFallbackModel": z.string().catch(""),
+	"llm.transforms.thinkingEffort": z.enum(["off", "low", "medium", "high"]).catch("medium"),
 	"llm.transforms.prompts": z
 		.array(
 			z.object({
@@ -86,6 +102,13 @@ const storeValueSchemas = {
 			})
 		)
 		.catch([]),
+	// tts — Kokoro-82M ONNX text-to-speech
+	"tts.enabled": z.boolean().catch(false),
+	"tts.voice": z.string().catch("af_heart"),
+	"tts.lang": z.string().catch("en-us"),
+	"tts.speed": z.number().min(0.5).max(2.0).catch(1.0),
+	"tts.hotkey": z.string().catch(""),
+	"tts.device": z.enum(["auto", "cuda", "cpu"]).catch("auto"),
 	// schema version (internal)
 	_schemaVersion: z.number().optional().catch(undefined),
 } as const;
@@ -199,11 +222,14 @@ export const store = new Store({
 			systemAudioReductionWhileDictating: 0,
 			recordingSound: true,
 			recordingSoundPath: "",
+			recordingSoundLibrary: [] as Array<{ id: string; name: string; path: string }>,
 			fileTranscriptionFormat: "txt",
 			fileTranscriptionSaveLocation: "auto" as const,
 			recordingMode: "ptt",
 			loopbackDeviceIndex: null,
-			wakeWord: "",
+			wakeWord: "alexa",
+			wakeWordSensitivity: 0.6,
+			wakeWordTimeout: 5,
 			showRecordingOverlay: true,
 			visualizerSize: "xs" as const,
 			liveTranscriptionDisplay: "both" as const,
@@ -248,6 +274,14 @@ export const store = new Store({
 				}>,
 			},
 		},
+		tts: {
+			enabled: false,
+			voice: "af_heart",
+			lang: "en-us",
+			speed: 1.0,
+			hotkey: "",
+			device: "auto" as const,
+		},
 		windowBounds: null as { x: number; y: number; width: number; height: number } | null,
 	},
 });
@@ -255,7 +289,7 @@ export const store = new Store({
 // ── One-time migration for stale persisted values ────────────────────
 // electron-store defaults only apply when a key is missing. If old defaults
 // were persisted via settings:save, they override new defaults silently.
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 type LiveTranscriptionDisplay = "none" | "in-app" | "in-pill" | "both";
 
@@ -423,7 +457,17 @@ function migrateLlmPerFeatureConfig(write: StoreWrite): void {
 	write("llm.transforms.prompts", transformsPrompts);
 }
 
-type StoreRead = <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreValueSchemas[K]>;
+/**
+ * v10: dictionary entries dropped the find/replace/caseSensitive/wholeWord
+ * shape in favor of a single `term` column. The new post-processor is
+ * fuzzy-match-based (Jaro-Winkler + Double Metaphone), so the old find→replace
+ * pairs no longer carry useful signal. Per the agreed migration, we wipe the
+ * dictionary to an empty array; users rebuild from scratch. Snippets keep
+ * their trigger/expansion shape — only their matching semantics change.
+ */
+function migrateDictionaryToFuzzy(write: StoreWrite): void {
+	write("dictionary", []);
+}
 
 /**
  * Pure migration step: given a current schema version and accessors, mutates
@@ -431,6 +475,7 @@ type StoreRead = <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreVa
  * branchy version-gated logic can be exhaustively unit-tested without
  * re-importing the module under multiple mock states.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: the migration cascade grows by one branch per SCHEMA_VERSION bump — the structure is a deliberate dispatch table; refactoring to a registry would add indirection without test or correctness wins.
 export function applyStoreMigration(
 	current: number,
 	read: <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreValueSchemas[K]>,
@@ -474,6 +519,9 @@ export function applyStoreMigration(
 		}
 		if (current < 9) {
 			migrateLlmPerFeatureConfig(write);
+		}
+		if (current < 10) {
+			migrateDictionaryToFuzzy(write);
 		}
 		log("[store] Migration applied: _schemaVersion", current, SCHEMA_VERSION);
 		write("_schemaVersion", SCHEMA_VERSION);

@@ -36,8 +36,8 @@ const features = [
 				<path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z" />
 			</svg>
 		),
-		title: "Push-to-Talk & Toggle",
-		description: "Hold a global hotkey to dictate, or toggle hands-free mode with automatic silence detection.",
+		title: "Four Recording Modes",
+		description: "Push-to-talk, toggle, passive listen mode (loopback capture), and wake-word activation.",
 		href: "/docs/recording-modes",
 	},
 	{
@@ -51,8 +51,8 @@ const features = [
 				<path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3" />
 			</svg>
 		),
-		title: "GPU Accelerated",
-		description: "CUDA-powered inference with configurable quantization. int8, float16, bfloat16 — pick your speed/quality tradeoff.",
+		title: "CPU or GPU",
+		description: "Ships as two installers. The GPU build bundles the full CUDA stack and falls back to CPU automatically if it's unavailable.",
 		href: "/docs/models/compute-types",
 	},
 	{
@@ -76,9 +76,58 @@ const features = [
 				<path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
 			</svg>
 		),
-		title: "Custom Dictionary",
-		description: "Auto-correct transcription output with find-and-replace rules. Expand snippets with keyboard triggers.",
+		title: "Dictionary & Snippets",
+		description: "Fuzzy-match correction nudges misheard names to the right spelling. Trigger words expand into full text.",
 		href: "/docs/dictionary",
+	},
+	{
+		icon: (
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+				<path d="M3 3v18h18" />
+				<rect x="7" y="12" width="3" height="6" rx="0.5" />
+				<rect x="12" y="8" width="3" height="10" rx="0.5" />
+				<rect x="17" y="5" width="3" height="13" rx="0.5" />
+			</svg>
+		),
+		title: "Transcription History",
+		description: "A local dashboard of everything you've dictated — word stats, an activity heatmap, and a searchable log.",
+		href: "/docs/transcription-history",
+	},
+	{
+		icon: (
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+				<path d="M12 8V4H8" />
+				<rect width="16" height="12" x="4" y="8" rx="2" />
+				<path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
+			</svg>
+		),
+		title: "LLM Text Enhancement",
+		description: "Clean up dictation or run custom hotkey-triggered transforms — local Ollama or, opt-in, OpenRouter.",
+		href: "/docs/settings/llm",
+	},
+	{
+		icon: (
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+				<path d="M11 4.7 7.6 8H4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h3.6L11 19.3a1 1 0 0 0 1.7-.7V5.4a1 1 0 0 0-1.7-.7Z" />
+				<path d="M16 9a5 5 0 0 1 0 6" />
+				<path d="M19.4 6a10 10 0 0 1 0 12" />
+			</svg>
+		),
+		title: "Text-to-Speech",
+		description: "Read selected text aloud with the bundled Kokoro-82M ONNX voice model. Multiple voices and speeds.",
+		href: "/docs/settings/tts",
+	},
+	{
+		icon: (
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+				<circle cx="12" cy="12" r="10" />
+				<path d="M2 12h20" />
+				<path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+			</svg>
+		),
+		title: "Localized UI",
+		description: "Interface available in English, Spanish, French, Chinese, Hindi, and Arabic.",
+		href: "/docs",
 	},
 ];
 
@@ -223,7 +272,7 @@ export default function HomePage() {
 						</svg>
 					</Link>
 					<a
-						href="https://github.com/your-username/WinSTT"
+						href="https://github.com/dahshury/winstt2"
 						target="_blank"
 						rel="noopener noreferrer"
 						className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-125"
@@ -290,7 +339,7 @@ export default function HomePage() {
 								Your voice stays on your machine
 							</h3>
 							<p className="text-sm leading-relaxed" style={{ color: "hsla(0, 0%, 100%, 0.45)" }}>
-								WinSTT runs entirely on your local hardware. No cloud APIs, no internet connection required, no telemetry. Audio is processed in-memory by on-device AI models and never written to disk or sent anywhere. You own your data.
+								Transcription runs entirely on your local hardware. Audio is processed in-memory by on-device AI models and never written to disk or sent anywhere — no usage analytics. Optional LLM cleanup is local (Ollama) unless you opt into OpenRouter. Anonymized crash reports are opt-out. You own your data.
 							</p>
 						</div>
 					</div>

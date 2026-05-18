@@ -6,6 +6,7 @@ const { findModelStatus } = __warmup_banner_test_helpers__;
 
 const SAMPLE: LlmWarmupStatus = {
 	endpoint: "http://localhost:11434",
+	inProgress: false,
 	reachable: true,
 	ollamaInstalled: true,
 	models: [

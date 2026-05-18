@@ -7,7 +7,7 @@ import {
 	type HTMLAttributes,
 	type ReactNode,
 	type Ref,
-	useContext,
+	use,
 	useEffect,
 	useRef,
 	useState,
@@ -25,7 +25,7 @@ interface CheckboxGroupContextValue {
 const CheckboxGroupContext = createContext<CheckboxGroupContextValue | null>(null);
 
 function useCheckboxGroupCtx(): CheckboxGroupContextValue {
-	const ctx = useContext(CheckboxGroupContext);
+	const ctx = use(CheckboxGroupContext);
 	if (!ctx) {
 		throw new Error("CheckboxItem must be rendered within a CheckboxGroup");
 	}
@@ -50,7 +50,7 @@ function groupContiguous(
 	prevGroupMap: Map<number, number>,
 	nextId: () => number
 ): { groups: CheckedRun[]; nextGroupMap: Map<number, number> } {
-	const sorted = [...checkedIndices].sort((a, b) => a - b);
+	const sorted = [...checkedIndices].toSorted((a, b) => a - b);
 	const runs: Array<{ end: number; start: number }> = [];
 	for (const idx of sorted) {
 		const last = runs.at(-1);
@@ -317,6 +317,20 @@ export function CheckboxItem({
 		onToggle();
 	};
 
+	// Stop click/keydown from bubbling to the row so the inner control
+	// (e.g. level switcher) owns its own interaction without re-triggering
+	// onToggle. Wired via native listeners on the wrapper element so the
+	// wrapper stays a non-interactive presentational node.
+	const setTrailingRef = (node: HTMLSpanElement) => {
+		const stop = (e: Event) => e.stopPropagation();
+		node.addEventListener("click", stop);
+		node.addEventListener("keydown", stop);
+		return () => {
+			node.removeEventListener("click", stop);
+			node.removeEventListener("keydown", stop);
+		};
+	};
+
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: native <input type="checkbox"> can't host the proximity-hover row layout; aria-checked + role lives here, Checkbox.Root provides the form-bound hidden input
 		<div
@@ -425,13 +439,7 @@ export function CheckboxItem({
 			</span>
 
 			{trailing ? (
-				// biome-ignore lint/a11y/noStaticElementInteractions: wrapper only stops bubbling so the inner control (e.g. level switcher) owns its own click/keydown without re-triggering the row's onToggle
-				// biome-ignore lint/a11y/noNoninteractiveElementInteractions: same stopPropagation wrapper — wrapping in role="presentation" would still trip both rules
-				<span
-					className="shrink-0"
-					onClick={(e) => e.stopPropagation()}
-					onKeyDown={(e) => e.stopPropagation()}
-				>
+				<span className="shrink-0" ref={setTrailingRef}>
 					{trailing}
 				</span>
 			) : null}

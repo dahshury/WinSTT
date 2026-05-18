@@ -237,7 +237,7 @@ export interface components {
             message: string;
         };
         /** @enum {string} */
-        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "silence_endpoint_enabled" | "smart_endpoint_enabled" | "detection_speed" | "input_device_index";
+        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "silence_endpoint_enabled" | "smart_endpoint_enabled" | "detection_speed" | "input_device_index" | "end_of_sentence_detection_pause" | "mid_sentence_detection_pause" | "unknown_sentence_detection_pause";
         /** @enum {string} */
         AllowedMethod: "set_microphone" | "abort" | "stop" | "clear_audio_queue" | "wakeup" | "shutdown" | "text";
         /** @enum {string} */
@@ -336,6 +336,25 @@ export interface components {
             smartEndpoint?: boolean;
             /** @description Detection speed multiplier (higher = faster finalization) */
             smartEndpointSpeed?: number;
+            /**
+             * @description Seconds of silence after a sentence-terminator (`.`, `!`, `?`) before
+             *     the recording ends. Used by the toggle-mode silence-timing branch
+             *     when Smart Endpoint is off. Lower values commit short utterances
+             *     faster but cut off pauses; higher values tolerate slower speech.
+             */
+            endOfSentenceDetectionPause?: number;
+            /**
+             * @description Seconds of silence after a trailing ellipsis (`...`) before the
+             *     recording ends. The ellipsis is Whisper's "I'm not sure this is
+             *     complete" hint; this pause gives the speaker time to continue.
+             */
+            midSentenceDetectionPause?: number;
+            /**
+             * @description Seconds of silence after speech without a clear terminator before
+             *     the recording ends. The fallback when neither sentence-end nor
+             *     mid-sentence heuristics match.
+             */
+            unknownSentenceDetectionPause?: number;
         };
         AudioSettings: {
             inputDeviceIndex?: number | null;
@@ -381,6 +400,15 @@ export interface components {
              * @enum {string}
              */
             recordingMode?: "ptt" | "toggle" | "listen" | "wakeword";
+            /**
+             * @description When `true` and `recordingMode` is `toggle`, the recording runs
+             *     continuously from first hotkey press to second hotkey press —
+             *     silence-based VAD stop and silence-timing punctuation tuning are
+             *     both disabled. One press starts, one press stops, one final
+             *     transcription. Useful for long-form dictation where natural
+             *     pauses are common. Ignored in other modes.
+             */
+            manualToggleStop?: boolean;
             loopbackDeviceIndex?: number | null;
             /**
              * @description Wake word used when `recordingMode` is `wakeword`. Must be one of
@@ -420,14 +448,11 @@ export interface components {
             /** @description Electron accelerator string */
             pushToTalkKey?: string;
         };
+        /** @description A canonical word/name/phrase the user wants Whisper to land on. At post-process time we fuzzy-match each transcribed token against every dictionary term (Jaro-Winkler + Double Metaphone) and replace the closest near-miss with the canonical form. Single column — no manual `find`/`replace`/case/word-boundary controls. */
         DictionaryEntry: {
             id: string;
-            find: string;
-            replace: string;
-            /** @default false */
-            caseSensitive: boolean;
-            /** @default false */
-            wholeWord: boolean;
+            /** @description The canonical spelling/casing of the term. */
+            term: string;
         };
         SnippetEntry: {
             id: string;
@@ -563,6 +588,14 @@ export interface components {
             /** Format: date-time */
             modifiedAt?: string;
             details?: components["schemas"]["OllamaModelDetails"];
+            /**
+             * @description Capability strings reported by Ollama's `/api/show` for this
+             *     model: `completion`, `tools`, `thinking`, `vision`, `insert`.
+             *     Used by the renderer to badge reasoning-capable models and by
+             *     the chat-body builder to gate `think: true`. Omitted when the
+             *     catalog couldn't be enriched (older Ollama, /api/show failed).
+             */
+            capabilities?: string[];
         };
         /**
          * @description A single search hit scraped from ollama.com/search. Represents a model

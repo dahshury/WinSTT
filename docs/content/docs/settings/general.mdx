@@ -3,7 +3,7 @@ title: General Settings
 description: Application behavior and system integration
 ---
 
-General settings control how WinSTT integrates with the Windows operating system and how the application behaves during recording sessions.
+General settings control how WinSTT integrates with Windows and how the application behaves during recording sessions.
 
 ## Application Behavior
 
@@ -13,19 +13,58 @@ General settings control how WinSTT integrates with the Windows operating system
 | `minimizeToTray` | boolean | `true` | Keep WinSTT running in the system tray when the window is closed |
 | `startMinimized` | boolean | `false` | Start the application minimized to the system tray |
 
-## Recording Behavior
+## Recording Mode & Wake Word
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `recordingMode` | enum | `"ptt"` | `"ptt"` for push-to-talk (hold hotkey), `"toggle"` for toggle mode (press to start/stop) |
-| `systemAudioReductionWhileDictating` | integer | `0` | Percent reduction applied to system speaker volume while dictating (multiples of 20). `0` = off, `100` = full mute; intermediate values duck to `(100 - value)%` of the previous volume. Restored on stop; ignored in Listen mode |
-| `recordingSound` | boolean | `true` | Play an audio cue when the hotkey is pressed or released |
-| `recordingSoundPath` | string | `""` | Path to a custom sound file (.wav or .mp3, max 3 seconds). Empty uses the built-in sound |
+| `recordingMode` | enum | `"ptt"` | `"ptt"`, `"toggle"`, `"listen"`, or `"wakeword"` |
+| `manualToggleStop` | boolean | — | When true and mode is `toggle`, recording runs continuously from the first hotkey press to the second. Silence-based VAD stop and silence-timing punctuation tuning are disabled. Ignored in other modes |
+| `loopbackDeviceIndex` | integer or null | `null` | The loopback/system-audio device used by `listen` mode |
+| `wakeWord` | string | `"alexa"` | A Porcupine free built-in keyword (e.g. `alexa`, `computer`, `jarvis`, `hey google`). Used only in `wakeword` mode |
+| `wakeWordSensitivity` | number | `0.6` | Wake word detection sensitivity (0–1) |
+| `wakeWordTimeout` | number | `5` | Seconds to keep recording after wake word detection (1–30) |
 
-See [Recording Modes](/docs/recording-modes) for a detailed explanation of push-to-talk vs toggle mode.
+See [Recording Modes](/docs/recording-modes) for a detailed explanation of each mode.
+
+## Audio Feedback & Ducking
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `systemAudioReductionWhileDictating` | integer | `0` | Percent reduction applied to system speaker volume while dictating (multiples of 20). `0` = off, `100` = full mute; intermediate values duck to `(100 - value)%` of the previous volume. Restored on stop; ignored in `listen` mode |
+| `recordingSound` | boolean | `true` | Play an audio cue when recording starts/stops |
+| `recordingSoundPath` | string | `""` | Path to a custom sound file (.wav or .mp3, ≤3s). Empty uses the built-in sound |
+| `recordingSoundLibrary` | array | `[]` | Saved custom sounds (`{id,name,path}`) |
 
 ## File Transcription
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `fileTranscriptionFormat` | enum | `"txt"` | Output format for file transcription: `"txt"` for plain text, `"srt"` for SubRip subtitles with timestamps |
+| `fileTranscriptionFormat` | enum | `"txt"` | Output format: `"txt"` for plain text, `"srt"` for SubRip subtitles with timestamps |
+| `fileTranscriptionSaveLocation` | enum | `"auto"` | `"auto"` saves alongside the source file; `"ask"` prompts a save dialog each time |
+
+## Overlay & Visualizer
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `showRecordingOverlay` | boolean | `true` | Show the floating recording overlay |
+| `visualizerSize` | enum | `"xs"` | Overlay visualizer height: `xs`, `sm`, `md`, `lg`, `xl` |
+| `visualizerType` | enum | `"bar"` | Visualizer style: `bar`, `grid`, `radial`, `wave`, `aura` |
+| `visualizerBarCount` | integer | `9` | Number of bars (3–21) |
+| `visualizerColor` | string | `"#58a6ff"` | Visualizer color (hex `#RRGGBB`) |
+
+## Live Transcription Display
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `liveTranscriptionDisplay` | enum | `"both"` | Where the live preview renders: `none`, `in-app` (main-window subtitle/feed), `in-pill` (floating pill overlay), or `both` |
+
+## Privacy & Crash Reports
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `contextAwareness` | boolean | `false` | When on, the client reads text from the focused window via Windows UI Automation right before each dictation and feeds it to the LLM cleanup step so names/jargon are spelled correctly |
+| `sendCrashReports` | boolean | `true` | Opt-out anonymized crash/error reporting (Sentry). Takes effect on next launch |
+
+<Callout title="Context awareness is opt-in" type="warn">
+  `contextAwareness` reads any focused app's content, so it requires explicit confirmation via a dialog before it activates.
+</Callout>

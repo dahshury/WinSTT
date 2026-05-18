@@ -1,14 +1,15 @@
 import { BrowserWindow, ipcMain } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
+import { clearSessionAborted, isSessionAborted } from "../lib/abort-state";
 import { readWindowContext } from "../lib/context-reader";
 import { dbg, dbgVerbose } from "../lib/debug-log";
-import { createSafeSender, type SafeSend } from "../lib/ipc-helpers";
+import { createSafeSender, isRecord, type SafeSend } from "../lib/ipc-helpers";
 import { pasteText } from "../lib/paste";
 import { onAudioLevel, onRecordingStart, onRecordingStop } from "../lib/recording-indicator";
 import { consumeRecordingStart, notifyRecordingStop } from "../lib/recording-state";
 import { breadcrumb } from "../lib/sentry-main";
 import { createSerialQueue } from "../lib/serial-queue";
-import { getStoreValue, store } from "../lib/store";
+import { getStoreRaw, getStoreValue, store } from "../lib/store";
 import {
 	applyPostProcessing,
 	cleanupPostProcessing,
@@ -57,23 +58,36 @@ function shouldRunDictationLlm(): boolean {
 	return isLlmConfigured() && !isListenMode();
 }
 
-async function tryLlmProcess(text: string, context: string): Promise<string> {
+interface LlmAttempt {
+	ok: boolean;
+	text: string;
+}
+
+async function tryLlmProcess(text: string, context: string): Promise<LlmAttempt> {
 	try {
 		const out = await processText(text, context);
 		// Stryker disable next-line MethodExpression,StringLiteral: dbg() preview is informational only
 		dbg("relay", `LLM processed: ${out.slice(0, 80)}`);
-		return out;
+		// `processText` swallows unexpected errors and returns the original text.
+		// We treat an unchanged result as a soft-fail so the algorithmic fallback
+		// runs — that way the user's dictionary/snippets still apply when the
+		// LLM silently no-ops (network blip, malformed response, etc.).
+		return { ok: out !== text, text: out };
 	} catch (err) {
 		// Stryker disable next-line StringLiteral: dbg() message is informational only
 		dbg("relay", "LLM processing failed, using original:", String(err));
-		return text;
+		return { ok: false, text };
 	}
 }
 
-async function maybeRunLlm(text: string, context: string, safeSend?: SafeSend): Promise<string> {
+async function maybeRunLlm(
+	text: string,
+	context: string,
+	safeSend?: SafeSend
+): Promise<LlmAttempt> {
 	// Stryker disable next-line ConditionalExpression,BooleanLiteral,BlockStatement: equivalent — when the gate is bypassed, tryLlmProcess catches the resulting LLM error and returns the original text, yielding identical observable behavior to the early-return path
 	if (!isLlmConfigured()) {
-		return text;
+		return { ok: false, text };
 	}
 	// Keep the recording pill visible while the LLM is thinking so the
 	// renderer can layer a thinking-indicator on top of it. recording_stop
@@ -81,10 +95,10 @@ async function maybeRunLlm(text: string, context: string, safeSend?: SafeSend): 
 	// so this re-shows it for the duration of the LLM call.
 	showOverlay();
 	safeSend?.(IPC.LLM_PROCESSING_START);
-	const out = await tryLlmProcess(text, context);
+	const attempt = await tryLlmProcess(text, context);
 	safeSend?.(IPC.LLM_PROCESSING_END);
 	hideOverlay();
-	return out;
+	return attempt;
 }
 
 function notifyEmptyResult(mode: unknown, safeSend: SafeSend): void {
@@ -104,9 +118,25 @@ function pasteIfDictating(mode: unknown, text: string): void {
 }
 
 interface HistoryCapture {
-	capture(text: string, originalText?: string): TranscriptionHistoryEntry | null;
+	capture(text: string, originalText?: string, llmRan?: boolean): TranscriptionHistoryEntry | null;
 	notifyStarted(): void;
 	notifyStopped(): void;
+}
+
+/**
+ * Drop everything for a cancelled session — context, overlay, in-progress
+ * thinking indicator — without firing any visible event. Extracted from the
+ * abort guards in `handleFullSentence` so the cleanup is identical whether
+ * the cancel landed before or after the LLM call returned.
+ */
+function discardCancelledSession(contextCapture?: ContextCapture): void {
+	contextCapture?.clear();
+	try {
+		hideOverlay();
+	} catch (err) {
+		dbg("relay", "hideOverlay during cancel-discard failed:", String(err));
+	}
+	dbg("relay", "fullSentence: dropped because session was cancelled by user");
 }
 
 async function handleFullSentence(
@@ -115,6 +145,17 @@ async function handleFullSentence(
 	history?: HistoryCapture,
 	contextCapture?: ContextCapture
 ): Promise<void> {
+	// HARD GATE: user pressed `hotkey + Backspace` to cancel this session.
+	// Drop ALL downstream work — no paste, no history, no caption, no LLM.
+	// The server may still have a transcribe() in flight that produced
+	// this event after the recorder transitioned to INACTIVE; that's fine,
+	// the gate makes the renderer ignore it. The flag is reset on the
+	// next `recording_start` so a fresh session begins clean.
+	if (isSessionAborted()) {
+		discardCancelledSession(contextCapture);
+		return;
+	}
+
 	const rawText = extractEventText(event);
 	const mode = getStoreValue("general.recordingMode");
 
@@ -148,14 +189,33 @@ async function handleFullSentence(
 	}
 
 	const context = contextCapture ? await contextCapture.consume() : "";
-	const postProcessed = applyPostProcessing(rawText);
-	const processed = await maybeRunLlm(postProcessed, context, safeSend);
+	// When dictation LLM is on, fold the user's dictionary + snippets into its
+	// system prompt (see buildDictationSystemPrompt in llm.ts) and skip the
+	// algorithmic post-processor — the LLM applies vocab + cleanup in one pass.
+	// On LLM error or no-op return, silently fall back to applyPostProcessing
+	// so the user's explicit dictionary/snippet entries still take effect.
+	const attempt = await maybeRunLlm(rawText, context, safeSend);
+
+	// SECOND GATE: the LLM await above can take seconds. If the user
+	// pressed `hotkey + Backspace` during the LLM call, the abort fires
+	// and `processWithOllama` falls back to returning the ORIGINAL text
+	// (which keeps the fallback contract working for model-swap aborts).
+	// Without this gate, that "fallback" would get pasted into the user's
+	// window despite their explicit cancel. Check again before any side
+	// effect lands.
+	if (isSessionAborted()) {
+		discardCancelledSession(contextCapture);
+		return;
+	}
+
+	const processed = attempt.ok ? attempt.text : applyPostProcessing(rawText);
+	const originalForHistory = attempt.ok ? rawText : applyPostProcessing(rawText);
 
 	breadcrumb("recording", "transcription completed", { text_length: processed.length }, "info");
 	// Stryker disable next-line StringLiteral: dbg() message is informational only
 	dbg("relay", `fullSentence: text=${JSON.stringify(processed)} mode=${mode}`);
 	safeSend(IPC.STT_FULL_SENTENCE, { text: processed });
-	history?.capture(processed, postProcessed);
+	history?.capture(processed, originalForHistory, isLlmConfigured());
 	pasteIfDictating(mode, processed);
 }
 
@@ -188,6 +248,12 @@ function handleRecordingStart(
 		dbg("relay", "ignoring recording_start — no pending hotkey press (stale/duplicate)");
 		return { muted: false, attempted: false };
 	}
+	// A real new session is beginning — lift the abort gate set by any
+	// previous `hotkey + Backspace` cancel so this session's events flow
+	// normally. Without this, a user who cancels, then immediately starts
+	// a fresh recording, would see nothing pasted (the gate would still
+	// drop the new session's fullSentence too).
+	clearSessionAborted();
 	const listen = isListenMode();
 	// Listen mode is a passive monitor — skip sentry breadcrumb (metric),
 	// history bookkeeping (no entries get captured anyway), and the LLM
@@ -283,6 +349,13 @@ function handleAudioLevel(event: Record<string, unknown>, safeSend: SafeSend): v
 
 function handleRealtimeEvent(event: Record<string, unknown>, safeSend: SafeSend): void {
 	if (!event.text) {
+		return;
+	}
+	// Same gate as handleFullSentence — once the user has cancelled, no
+	// further captions from the in-flight session should reach the renderer
+	// (otherwise the pill would keep updating with realtime text from
+	// audio the user explicitly discarded).
+	if (isSessionAborted()) {
 		return;
 	}
 	// Stryker disable next-line MethodExpression,StringLiteral: dbgVerbose() preview is informational only
@@ -407,12 +480,12 @@ interface DispatchContext {
 	getMuted: () => boolean;
 	history?: HistoryCapture;
 	mainSend: SafeSend;
-	setMuted: (value: boolean) => void;
 	// Writes the server's latest catalog payload into the closure-scoped
 	// `cachedModelCatalog` so windows opened after a runtime refresh see
 	// the new languages immediately via STT_GET_MODEL_CATALOG. Optional
 	// because most data-event handlers don't touch the catalog cache.
 	setCatalogCache?: (models: unknown[]) => void;
+	setMuted: (value: boolean) => void;
 }
 
 interface SerialQueueLike {
@@ -635,6 +708,52 @@ function broadcastHistoryEntry(entry: TranscriptionHistoryEntry | null): void {
 	}
 }
 
+/**
+ * Reconcile electron-store's persisted `model.model` with the model the
+ * server actually loaded.
+ *
+ * The server is spawned with `--model` sourced from electron-store
+ * (see SETTINGS_TO_CLI in stt-process.ts). When the requested model can't
+ * load (missing fp16 variant, corrupt cache, …), the server falls back to
+ * `tiny` and reports the real model in `runtime_info.model`. If we don't
+ * write that back to electron-store, the NEXT spawn re-requests the broken
+ * model and the fallback repeats on every boot.
+ *
+ * Doing this in the main process — not the renderer — is what makes it
+ * reliable: there's no dependency on a renderer being mounted, on the
+ * settings-store hydration order, on the debounced save in
+ * `useSyncSettings`, or on a `beforeunload` flush. We only write the
+ * store here (not broadcast): the live in-window picker is already kept
+ * honest by the existing `STT_RUNTIME_INFO` broadcast →
+ * `useSyncActiveModel` path. This write's sole job is to fix the value
+ * `--model` is sourced from on the NEXT spawn. `model.model` is NOT a
+ * startup-only key, so persisting it never triggers a restart loop.
+ *
+ * Mismatch cases this correctly handles:
+ *   - startup fallback (broken user pick → tiny)
+ *   - a failed live swap (server keeps old model; store had the optimistic
+ *     new pick) — store reverts to what's actually loaded, matching the
+ *     picker's own swap-failed revert.
+ * A successful live swap pushes `runtime_info` only AFTER
+ * `model_swap_completed`, so the model reported here is the new model and
+ * the write is a correct no-op (or a benign catch-up if the renderer's
+ * debounced save hadn't flushed yet).
+ */
+function reconcilePersistedModel(info: unknown): void {
+	if (!isRecord(info)) {
+		return;
+	}
+	const loaded = info.model;
+	if (typeof loaded !== "string" || loaded.length === 0) {
+		return;
+	}
+	if (getStoreRaw("model.model") === loaded) {
+		return;
+	}
+	dbg("relay", `persisting server-loaded model to electron-store: ${loaded}`);
+	store.set("model.model", loaded);
+}
+
 export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 	/** Last known model catalog — cached so any window can fetch it on demand. */
 	// Stryker disable next-line ArrayDeclaration: closure init — onModelCatalog overwrites this before any consumer can read the cached value
@@ -687,13 +806,13 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		notifyStopped: () => {
 			lastRecordingStopMs = Date.now();
 		},
-		capture: (text, originalText) => {
+		capture: (text, originalText, llmRan) => {
 			const duration = computeRecordingDurationMs(
 				lastRecordingStartMs,
 				lastRecordingStopMs,
 				Date.now()
 			);
-			const entry = historyStore.record(text, duration, originalText);
+			const entry = historyStore.record(text, duration, originalText, llmRan);
 			broadcastHistoryEntry(entry);
 			lastRecordingStartMs = 0;
 			lastRecordingStopMs = 0;
@@ -811,6 +930,7 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		// Broadcast so every renderer (main + overlay + settings) can light the
 		// GPU/CPU chip honestly without polling.
 		broadcastToAll(IPC.STT_RUNTIME_INFO, info);
+		reconcilePersistedModel(info);
 	};
 
 	const onServerReady = () => {
@@ -867,6 +987,7 @@ export const __relay_test_helpers__ = {
 	handleRealtimeEvent,
 	handleRecordingStart,
 	handleRecordingStop,
+	reconcilePersistedModel,
 	handleSimpleRelayEvent,
 	hasDictationModel,
 	isLlmConfigured,

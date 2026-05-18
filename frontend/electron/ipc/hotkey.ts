@@ -12,6 +12,38 @@ import type { SttClient } from "../ws/stt-client";
 
 const MAX_COMBO_KEYS = 3;
 
+/**
+ * Power-user shortcuts triggered while the global hotkey is actively held.
+ *
+ *   - hotkey + Backspace   → cancel the in-flight transcription / LLM pass
+ *   - hotkey + ArrowUp     → cycle to the next recording mode
+ *                            (ptt → toggle → listen → wakeword → ptt)
+ *
+ * The legend in Settings → Audio mirrors this contract verbatim. If you
+ * add or rename an action here, update the legend in
+ * `src/widgets/audio-settings/ui/HotkeyShortcutsLegend.tsx` too.
+ */
+export type HotkeyComboAction = "cancel" | "cycle-mode";
+
+const COMBO_KEYCODES: Record<number, HotkeyComboAction> = {
+	[UiohookKey.Backspace]: "cancel",
+	[UiohookKey.ArrowUp]: "cycle-mode",
+};
+
+function lookupComboAction(code: number): HotkeyComboAction | null {
+	return COMBO_KEYCODES[code] ?? null;
+}
+
+export interface HotkeyComboOptions {
+	/**
+	 * Called when the user presses a recognised second-key combo while the
+	 * global hotkey is actively held. Fires once per keydown (autoreceived
+	 * key-repeat keydowns also count — the renderer is expected to make the
+	 * action idempotent).
+	 */
+	onCombo?: (action: HotkeyComboAction) => void;
+}
+
 // Stryker disable next-line BooleanLiteral: module-level guard initial value — first setupHotkeyHandlers() call observes false then writes true; the inverted value is overwritten before any observer can read it
 let hotkeyStarted = false;
 
@@ -85,7 +117,11 @@ export function isPasteGuardActive(): boolean {
 	return pasteGuard;
 }
 
-export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): () => void {
+export function setupHotkeyHandlers(
+	win: BrowserWindow,
+	sttClient: SttClient,
+	options: HotkeyComboOptions = {}
+): () => void {
 	let targetKeyCodes: Set<number> | null = null;
 	let targetAccelerator = "";
 	const pressedKeys = new Set<number>();
@@ -292,6 +328,20 @@ export function setupHotkeyHandlers(win: BrowserWindow, sttClient: SttClient): (
 		if (pasteGuard) {
 			onPasteGuardLifted = evalOnLift;
 			return;
+		}
+		// Second-key combos while the hotkey is actively held — cancel
+		// the in-flight transcription, or switch recording mode without
+		// releasing the hotkey. The arrow / backspace keypress is
+		// consumed by the callback; we do NOT fall through to
+		// `tryActivateCombo()` because the combo is already active.
+		if (isActive && options.onCombo) {
+			const action = lookupComboAction(code);
+			if (action) {
+				// Stryker disable next-line StringLiteral: dbg() message is informational only
+				dbg("hotkey", `combo action: ${action}`);
+				options.onCombo(action);
+				return;
+			}
 		}
 		tryActivateCombo();
 	};

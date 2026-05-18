@@ -253,7 +253,20 @@ export class SttClient extends EventEmitter {
 				dataReady = true;
 				checkReady();
 			};
-			this.dataWs.onmessage = (event) => this.handleDataMessage(event.data as string);
+			this.dataWs.onmessage = (event) => {
+				// The data channel now carries both JSON text frames (legacy STT
+				// events) and binary frames (TTS audio chunks: u32 meta_len ||
+				// JSON || PCM). Dispatch by type — the `ws` library hands us a
+				// Buffer for binary and a string for text.
+				const data = event.data;
+				if (Buffer.isBuffer(data)) {
+					this.handleBinaryDataMessage(data);
+				} else if (data instanceof ArrayBuffer) {
+					this.handleBinaryDataMessage(Buffer.from(data));
+				} else if (typeof data === "string") {
+					this.handleDataMessage(data);
+				}
+			};
 			this.dataWs.onerror = (err) => fail(err);
 			this.dataWs.onclose = () => {
 				if (gen === this._gen) {
@@ -494,6 +507,73 @@ export class SttClient extends EventEmitter {
 		}
 
 		this.emit("data-event", parsed.data);
+	}
+
+	/**
+	 * Decode a server-sent binary frame. Currently the only producer is the
+	 * TTS streamer in ``server/src/stt_server/tts_handler.py``; layout:
+	 *
+	 *   [ uint32 LE metadata_length ][ JSON UTF-8 metadata ][ PCM payload ]
+	 *
+	 * On success emits a structured event so the IPC relay can ship the
+	 * PCM straight to the renderer's playback queue.
+	 */
+	private handleBinaryDataMessage(buf: Buffer) {
+		if (buf.length < 4) {
+			return;
+		}
+		const metaLen = buf.readUInt32LE(0);
+		if (metaLen <= 0 || 4 + metaLen > buf.length) {
+			return;
+		}
+		let header: Record<string, unknown>;
+		try {
+			header = JSON.parse(buf.toString("utf8", 4, 4 + metaLen)) as Record<string, unknown>;
+		} catch {
+			return;
+		}
+		const pcm = buf.subarray(4 + metaLen);
+		this.emit("data-binary", { header, pcm });
+	}
+
+	// ─── TTS commands ────────────────────────────────────────────────────
+
+	/** Trigger eager construction of the TTS engine (downloads the model on first call). */
+	initTts(): void {
+		this.sendControl({ command: "init_tts" });
+	}
+
+	/** Tear down the TTS engine (releases the ORT session and voicepack memory). */
+	shutdownTts(): void {
+		this.sendControl({ command: "shutdown_tts" });
+	}
+
+	/** Fetch the static Kokoro voice catalog. */
+	listTtsVoices(): Promise<unknown> {
+		return this.sendRequest({ command: "list_tts_voices" }, "listTtsVoices");
+	}
+
+	/** Begin synthesis. PCM chunks stream back on the data channel as binary frames. */
+	ttsSynthesize(payload: {
+		requestId: string;
+		text: string;
+		voice?: string;
+		lang?: string;
+		speed?: number;
+	}): void {
+		this.sendControl({
+			command: "tts_synthesize",
+			request_id: payload.requestId,
+			text: payload.text,
+			voice: payload.voice ?? "",
+			lang: payload.lang ?? "",
+			speed: payload.speed ?? 1.0,
+		});
+	}
+
+	/** Cancel the active TTS request (cooperative — server stops on next yield). */
+	ttsCancel(requestId?: string): void {
+		this.sendControl({ command: "tts_cancel", request_id: requestId ?? "" });
 	}
 }
 

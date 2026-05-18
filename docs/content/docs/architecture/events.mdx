@@ -63,3 +63,18 @@ Legacy callbacks (e.g., `on_recording_start`) are bridged to these events in `bo
 | `ModelDownloadStarted` | `timestamp`, `model` | Model download began. `model` is the model identifier |
 | `ModelDownloadProgress` | `timestamp`, `model`, `progress` | Download progress updated. `progress` is a float from 0.0 to 1.0 |
 | `ModelDownloadCompleted` | `timestamp`, `model` | Model download finished successfully |
+
+### Speaker Diarization
+
+Emitted by the ONNX diarizer (`onnxasr_diarizer.py`) when speaker
+attribution is enabled. These events carry the `timestamp` field plus a
+diarization payload describing the detected speaker segments (a list of
+segments, each with timing and a speaker label). Field names beyond
+`timestamp` are payload-dependent.
+
+### VAD Adaptation
+
+The server automatically adapts the Silero VAD sensitivity to the current
+background-noise level. When it adjusts, it publishes a VAD-adaptation event
+carrying `timestamp` plus the new sensitivity value, so consumers can reflect
+the change in diagnostics or UI.

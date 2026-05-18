@@ -23,27 +23,92 @@ export function shouldSendOnChange<V>(
 
 /**
  * Whether the STT "silence_timing" flag should be active.
- * True when smart endpoint is on, or when the recording mode implies
- * continuous listening (toggle / listen).
+ * PTT defines the boundary with the key release, so Smart Endpoint never
+ * applies there. Otherwise: on when smart endpoint is enabled or when the
+ * recording mode implies continuous listening (toggle / listen).
+ *
+ * Manual-toggle mode explicitly opts out: the user wants press-to-press
+ * with no silence-driven endpoint detection, so silence_timing must be
+ * off even though the mode is `toggle`.
  */
-export function computeSilenceTiming(smartEndpoint: boolean, mode: string): boolean {
+export function computeSilenceTiming(
+	smartEndpoint: boolean,
+	mode: string,
+	manualToggleStop = false
+): boolean {
+	if (mode === "ptt") {
+		return false;
+	}
+	if (mode === "toggle" && manualToggleStop) {
+		return false;
+	}
 	return smartEndpoint || mode === "toggle" || mode === "listen";
 }
 
 /**
+ * Whether the STT "silence_endpoint_enabled" flag should be active.
+ * Mirrors the silence-VAD stop policy:
+ *   - PTT: off (the key release defines the boundary).
+ *   - Toggle with manualToggleStop: off (the second press defines the boundary).
+ *   - Otherwise: on (VAD silence ends the utterance).
+ */
+export function computeSilenceEndpointEnabled(mode: string, manualToggleStop = false): boolean {
+	if (mode === "ptt") {
+		return false;
+	}
+	if (mode === "toggle" && manualToggleStop) {
+		return false;
+	}
+	return true;
+}
+
+/**
  * Whether the silence_timing parameter needs to be re-sent after a settings
- * change.  True on initial connect, when the recording mode changed, or when
- * the smart-endpoint toggle flipped.
+ * change.  True on initial connect, when the recording mode changed, when
+ * the smart-endpoint toggle flipped, or when the manual-toggle-stop flag
+ * flipped (since it gates silence_timing on/off in toggle mode).
  */
 export function silenceTimingNeedsUpdate(
 	smartEndpoint: boolean,
 	prevSmartEndpoint: boolean,
 	recordingMode: string | undefined,
 	prevRecordingMode: string | undefined,
-	isInitial: boolean
+	isInitial: boolean,
+	manualToggleStop = false,
+	prevManualToggleStop = false
 ): boolean {
 	const modeChanged = isInitial || recordingMode !== prevRecordingMode;
-	return modeChanged || smartEndpoint !== prevSmartEndpoint;
+	return (
+		modeChanged || smartEndpoint !== prevSmartEndpoint || manualToggleStop !== prevManualToggleStop
+	);
+}
+
+/**
+ * Whether the silence_endpoint_enabled parameter needs to be re-sent.
+ * True on initial connect, on recording-mode change, or when the
+ * manual-toggle-stop flag flipped (toggle-mode behaviour pivots on it).
+ */
+export function silenceEndpointNeedsUpdate(
+	recordingMode: string | undefined,
+	prevRecordingMode: string | undefined,
+	isInitial: boolean,
+	manualToggleStop = false,
+	prevManualToggleStop = false
+): boolean {
+	if (isInitial) {
+		return true;
+	}
+	return recordingMode !== prevRecordingMode || manualToggleStop !== prevManualToggleStop;
+}
+
+/** Extract the manualToggleStop flag, defaulting to false. */
+export function getManualToggleStop(settings: AppSettings): boolean {
+	return settings.general?.manualToggleStop ?? false;
+}
+
+/** Extract the previous manualToggleStop flag, defaulting to false when prev is absent. */
+export function getPrevManualToggleStop(prev: AppSettings | undefined): boolean {
+	return prev?.general?.manualToggleStop ?? false;
 }
 
 /**

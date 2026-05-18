@@ -56,6 +56,7 @@ function sizeLabel(bytes: number | null | undefined): string {
 
 export interface ModelSettingsPanelProps {
 	llmSlot?: ReactNode;
+	ttsSlot?: ReactNode;
 }
 
 type TFn = ReturnType<typeof useTranslations>;
@@ -305,89 +306,66 @@ function buildDeviceOpts(t: TFn, gpuAvailable: boolean): SwitcherOption<DeviceVa
 	return [{ value: "auto", label: t("deviceAutoLabel"), icon: AiSettingIcon }, cpu];
 }
 
-export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
-	const settings = useSettingsStore((s) => s.settings.model);
-	const update = useSettingsStore((s) => s.updateModelSettings);
-	const quality = useSettingsStore((s) => s.settings.quality);
-	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
-	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
-	const isListenMode = recordingMode === "listen";
-	const realtimeEnabled = quality?.enableRealtimeTranscription ?? true;
-	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
-	const gpuAvailable = gpuInfo?.available ?? true;
-	const t = useTranslations("model");
-	const deviceOpts = useMemo(() => buildDeviceOpts(t, gpuAvailable), [t, gpuAvailable]);
-	const deviceValue: DeviceValue = gpuAvailable ? (settings?.device ?? "auto") : "cpu";
+/** Fire-and-forget guard for the model-swap gate. The gate already surfaces
+ *  user-facing failures via the resource/download dialogs; this only keeps an
+ *  unexpected rejection from becoming an unhandled promise. */
+function reportSwapGateError(err: unknown): void {
+	console.error("model swap gate failed", err);
+}
 
-	const catalogModels = useCatalogStore((s) => s.models);
-	const catalogLoaded = useCatalogStore((s) => s.isLoaded);
-	const getModel = useCatalogStore((s) => s.getModel);
+// Pending-download confirmation dialog state. Holds the model id that
+// the user picked when it wasn't already cached. Cleared on confirm or
+// cancel; cancel also reverts the picker (mirror of swap-failed path).
+interface PendingDownload {
+	kind: "main" | "realtime";
+	modelId: string;
+	previousModelId: string;
+	quantization?: OnnxQuantization;
+}
 
-	// Model-state store — drives the inline cache badges and the ⚠ icon
-	// in the dropdown labels. Refresh on mount so the server gets re-probed
-	// each time the settings panel opens; live updates come through the
-	// store's IPC subscriptions (model_cache_changed / swap_completed).
-	const statesById = useModelStateStore((s) => s.statesById);
-	const systemInfo = useModelStateStore((s) => s.systemInfo);
-	const refreshModelState = useModelStateStore((s) => s.refresh);
-	const mainSwapping = useModelSwapStore((s) => s.activeMain !== null);
-	const realtimeSwapping = useModelSwapStore((s) => s.activeRealtime !== null);
+// Pending resource-warning dialog state. When the server's fit assessment
+// returns ``critical`` (definitely won't fit), we hold the user's choice
+// here and require an explicit "Proceed anyway" before either kicking off
+// the download or issuing the swap. Cancel reverts the picker silently.
+interface PendingFitWarning {
+	assessment: FitAssessmentEntry;
+	candidateName: string;
+	// next: what to do after the user confirms. Either open the download
+	// dialog or issue the swap directly, depending on cache state at
+	// decision time.
+	next: () => void;
+}
 
-	// Live host resource snapshot (RAM available, free VRAM, CPU%) for the
-	// resource-aware warning modal. Refreshed when the panel mounts; the
-	// modal call hits the server directly for an authoritative verdict.
-	const refreshLive = useSystemResourcesStore((s) => s.refresh);
+interface SwapController {
+	cancelPendingDownload: () => void;
+	confirmPendingDownload: () => void;
+	handleModelChange: (v: string, quantization?: OnnxQuantization) => void;
+	handleRealtimeModelChange: (v: string, quantization?: OnnxQuantization) => void;
+	pendingDownload: PendingDownload | null;
+	pendingFitWarning: PendingFitWarning | null;
+	setPendingFitWarning: (value: PendingFitWarning | null) => void;
+}
+
+/** Owns the resource-gate → download-confirm → hot-swap pipeline plus its
+ *  rollback effects. Extracted from the panel so the widget body stays a
+ *  thin composition shell. */
+function useModelSwapController(
+	settings: ModelSettings | undefined,
+	selectedModel: string,
+	currentQuantization: OnnxQuantization,
+	deviceValue: DeviceValue,
+	getModel: ReturnType<typeof useCatalogStore.getState>["getModel"],
+	statesById: StatesById,
+	update: UpdateModelFn
+): SwapController {
 	const assessDictationFitOnServer = useSystemResourcesStore((s) => s.assessDictationFitOnServer);
 
-	useEffect(() => {
-		refreshModelState();
-		refreshLive();
-	}, [refreshModelState, refreshLive]);
-
-	const selectedModel = settings?.model ?? "large-v2";
-	const selectedInfo = getModel(selectedModel);
-	const isWhisperBackend = !selectedInfo || selectedInfo.backend === "faster_whisper";
-	const currentQuantization = (settings?.onnxQuantization ?? "") as OnnxQuantization;
-
-	const langOpts = useMemo(() => {
-		const supported = selectedInfo?.languages;
-		if (!supported || supported.length === 0) {
-			return ALL_LANG_OPTS;
-		}
-		return ALL_LANG_OPTS.filter((l) => l.id === "" || supported.includes(l.id));
-	}, [selectedInfo?.languages]);
-
 	// Track the previous model id for each picker so a server-side swap
-	// failure can revert the setting back to what was actually loaded. The
-	// store is the source of truth; we just need to remember what was
-	// there *before* the user's selection so we can roll back.
+	// failure can revert the setting back to what was actually loaded.
 	const prevMainModelRef = useRef<string | null>(null);
 	const prevRealtimeModelRef = useRef<string | null>(null);
 
-	// Pending-download confirmation dialog state. Holds the model id that
-	// the user picked when it wasn't already cached. Cleared on confirm or
-	// cancel; cancel also reverts the picker (mirror of swap-failed path).
-	interface PendingDownload {
-		kind: "main" | "realtime";
-		modelId: string;
-		previousModelId: string;
-		quantization?: OnnxQuantization;
-	}
 	const [pendingDownload, setPendingDownload] = useState<PendingDownload | null>(null);
-
-	// Pending resource-warning dialog state. When the server's fit
-	// assessment returns ``critical`` (definitely won't fit), we hold the
-	// user's choice here and require an explicit "Proceed anyway" before
-	// either kicking off the download or issuing the swap. Cancel reverts
-	// the picker silently.
-	interface PendingFitWarning {
-		assessment: FitAssessmentEntry;
-		candidateName: string;
-		// next: what to do after the user confirms. Either open the
-		// download dialog or issue the swap directly, depending on cache
-		// state at decision time.
-		next: () => void;
-	}
 	const [pendingFitWarning, setPendingFitWarning] = useState<PendingFitWarning | null>(null);
 
 	const issueSwap = useCallback(
@@ -444,12 +422,7 @@ export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
 			const targetQuant = quantization ?? currentQuantization;
 			const targetCache = resolveQuantCache(state, targetQuant);
 			if (state && targetCache?.state !== "cached") {
-				setPendingDownload({
-					kind,
-					modelId: v,
-					previousModelId: previous,
-					quantization,
-				});
+				setPendingDownload({ kind, modelId: v, previousModelId: previous, quantization });
 				return;
 			}
 			issueSwap(kind, v, previous, quantization);
@@ -471,8 +444,7 @@ export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
 			const candidate = getModel(v);
 			const candidateName = candidate?.displayName ?? v;
 			const targetQuant = quantization ?? currentQuantization;
-			const requestedDevice = deviceValue;
-			const assessment = await assessDictationFitOnServer(v, targetQuant, requestedDevice);
+			const assessment = await assessDictationFitOnServer(v, targetQuant, deviceValue);
 			if (assessment && assessment.severity === "critical") {
 				setPendingFitWarning({
 					assessment,
@@ -499,7 +471,7 @@ export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
 				}
 				return;
 			}
-			void gateWithAssessment("main", v, currentModel, quantization);
+			gateWithAssessment("main", v, currentModel, quantization).catch(reportSwapGateError);
 		},
 		[gateWithAssessment, settings?.model, selectedModel, currentQuantization, update]
 	);
@@ -515,7 +487,7 @@ export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
 				}
 				return;
 			}
-			void gateWithAssessment("realtime", v, current, quantization);
+			gateWithAssessment("realtime", v, current, quantization).catch(reportSwapGateError);
 		},
 		[gateWithAssessment, settings?.realtimeModel, currentQuantization, update]
 	);
@@ -575,55 +547,39 @@ export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
 		[update]
 	);
 
-	const handleRealtimeToggle = useCallback(
-		(v: boolean) => updateQuality({ enableRealtimeTranscription: v }),
-		[updateQuality]
-	);
+	return {
+		pendingDownload,
+		pendingFitWarning,
+		setPendingFitWarning,
+		handleModelChange,
+		handleRealtimeModelChange,
+		confirmPendingDownload,
+		cancelPendingDownload,
+	};
+}
 
+interface SwapDialogsProps {
+	controller: SwapController;
+	getModel: ReturnType<typeof useCatalogStore.getState>["getModel"];
+	statesById: StatesById;
+	systemInfo: SystemInfo;
+	t: TFn;
+}
+
+function SwapDialogs({
+	controller,
+	getModel,
+	statesById,
+	systemInfo,
+	t,
+}: SwapDialogsProps): ReactNode {
+	const { pendingDownload, pendingFitWarning, setPendingFitWarning } = controller;
 	return (
-		<div className="flex flex-col gap-2">
-			{isListenMode ? null : (
-				<MainModelSection
-					catalogLoaded={catalogLoaded}
-					catalogModels={catalogModels}
-					currentQuantization={currentQuantization}
-					deviceOpts={deviceOpts}
-					deviceValue={deviceValue}
-					gpuAvailable={gpuAvailable}
-					handleModelChange={handleModelChange}
-					isSwapping={mainSwapping}
-					isWhisperBackend={isWhisperBackend}
-					langOpts={langOpts}
-					selectedModel={selectedModel}
-					settings={settings}
-					statesById={statesById}
-					systemInfo={systemInfo}
-					t={t}
-					update={update}
-				/>
-			)}
-			<RealtimeModelSection
-				catalogLoaded={catalogLoaded}
-				catalogModels={catalogModels}
-				currentQuantization={currentQuantization}
-				handleRealtimeModelChange={handleRealtimeModelChange}
-				isSwapping={realtimeSwapping}
-				isWhisperBackend={isWhisperBackend}
-				onToggle={handleRealtimeToggle}
-				quality={quality}
-				realtimeEnabled={realtimeEnabled}
-				settings={settings}
-				statesById={statesById}
-				systemInfo={systemInfo}
-				t={t}
-				update={update}
-				updateQuality={updateQuality}
-			/>
-			{llmSlot}
+		<>
 			<DownloadConfirmationDialog
 				getModel={getModel}
-				onCancel={cancelPendingDownload}
-				onConfirm={confirmPendingDownload}
+				onCancel={controller.cancelPendingDownload}
+				onConfirm={controller.confirmPendingDownload}
 				pending={pendingDownload}
 				statesById={statesById}
 				systemInfo={systemInfo}
@@ -649,6 +605,123 @@ export function ModelSettingsPanel({ llmSlot }: ModelSettingsPanelProps = {}) {
 				}}
 				open={pendingFitWarning !== null}
 				t={(key, vars) => t(`resourceWarning.${key}` as Parameters<typeof t>[0], vars)}
+			/>
+		</>
+	);
+}
+
+export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps = {}) {
+	const settings = useSettingsStore((s) => s.settings.model);
+	const update = useSettingsStore((s) => s.updateModelSettings);
+	const quality = useSettingsStore((s) => s.settings.quality);
+	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
+	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
+	const isListenMode = recordingMode === "listen";
+	const realtimeEnabled = quality?.enableRealtimeTranscription ?? true;
+	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
+	const gpuAvailable = gpuInfo?.available ?? true;
+	const t = useTranslations("model");
+	const deviceOpts = useMemo(() => buildDeviceOpts(t, gpuAvailable), [t, gpuAvailable]);
+	const deviceValue: DeviceValue = gpuAvailable ? (settings?.device ?? "auto") : "cpu";
+
+	const catalogModels = useCatalogStore((s) => s.models);
+	const catalogLoaded = useCatalogStore((s) => s.isLoaded);
+	const getModel = useCatalogStore((s) => s.getModel);
+
+	// Model-state store — drives the inline cache badges and the ⚠ icon
+	// in the dropdown labels. Refresh on mount so the server gets re-probed
+	// each time the settings panel opens; live updates come through the
+	// store's IPC subscriptions (model_cache_changed / swap_completed).
+	const statesById = useModelStateStore((s) => s.statesById);
+	const systemInfo = useModelStateStore((s) => s.systemInfo);
+	const refreshModelState = useModelStateStore((s) => s.refresh);
+	const mainSwapping = useModelSwapStore((s) => s.activeMain !== null);
+	const realtimeSwapping = useModelSwapStore((s) => s.activeRealtime !== null);
+
+	// Live host resource snapshot (RAM available, free VRAM, CPU%) for the
+	// resource-aware warning modal. Refreshed when the panel mounts.
+	const refreshLive = useSystemResourcesStore((s) => s.refresh);
+
+	useEffect(() => {
+		refreshModelState();
+		refreshLive();
+	}, [refreshModelState, refreshLive]);
+
+	const selectedModel = settings?.model ?? "large-v2";
+	const selectedInfo = getModel(selectedModel);
+	const isWhisperBackend = !selectedInfo || selectedInfo.backend === "faster_whisper";
+	const currentQuantization = (settings?.onnxQuantization ?? "") as OnnxQuantization;
+
+	const langOpts = useMemo(() => {
+		const supported = selectedInfo?.languages;
+		if (!supported || supported.length === 0) {
+			return ALL_LANG_OPTS;
+		}
+		return ALL_LANG_OPTS.filter((l) => l.id === "" || supported.includes(l.id));
+	}, [selectedInfo?.languages]);
+
+	const controller = useModelSwapController(
+		settings,
+		selectedModel,
+		currentQuantization,
+		deviceValue,
+		getModel,
+		statesById,
+		update
+	);
+
+	const handleRealtimeToggle = useCallback(
+		(v: boolean) => updateQuality({ enableRealtimeTranscription: v }),
+		[updateQuality]
+	);
+
+	return (
+		<div className="flex flex-col gap-2">
+			{isListenMode ? null : (
+				<MainModelSection
+					catalogLoaded={catalogLoaded}
+					catalogModels={catalogModels}
+					currentQuantization={currentQuantization}
+					deviceOpts={deviceOpts}
+					deviceValue={deviceValue}
+					gpuAvailable={gpuAvailable}
+					handleModelChange={controller.handleModelChange}
+					isSwapping={mainSwapping}
+					isWhisperBackend={isWhisperBackend}
+					langOpts={langOpts}
+					selectedModel={selectedModel}
+					settings={settings}
+					statesById={statesById}
+					systemInfo={systemInfo}
+					t={t}
+					update={update}
+				/>
+			)}
+			<RealtimeModelSection
+				catalogLoaded={catalogLoaded}
+				catalogModels={catalogModels}
+				currentQuantization={currentQuantization}
+				handleRealtimeModelChange={controller.handleRealtimeModelChange}
+				isSwapping={realtimeSwapping}
+				isWhisperBackend={isWhisperBackend}
+				onToggle={handleRealtimeToggle}
+				quality={quality}
+				realtimeEnabled={realtimeEnabled}
+				settings={settings}
+				statesById={statesById}
+				systemInfo={systemInfo}
+				t={t}
+				update={update}
+				updateQuality={updateQuality}
+			/>
+			{llmSlot}
+			{ttsSlot}
+			<SwapDialogs
+				controller={controller}
+				getModel={getModel}
+				statesById={statesById}
+				systemInfo={systemInfo}
+				t={t}
 			/>
 		</div>
 	);
@@ -755,6 +828,112 @@ function dismissLabel(phase: DownloadPhase): string {
 	return "Cancel";
 }
 
+function resolveDownloadPhase(isDownloading: boolean, partialOnDisk: boolean): DownloadPhase {
+	if (isDownloading) {
+		return "active";
+	}
+	if (partialOnDisk) {
+		return "paused";
+	}
+	return "idle";
+}
+
+type TargetCache = ReturnType<typeof resolveQuantCache>;
+type ModelState = StatesById[string] | undefined;
+
+interface DownloadFitness {
+	availableLabel: string;
+	estimatedLabel: string;
+	isUncomfortable: boolean;
+}
+
+/** Hardware fitness — surface the same heuristic the picker uses, plus
+ *  concrete numbers so the user can decide. We don't refuse — the user
+ *  can always proceed at their own risk. */
+function computeFitness(state: ModelState, systemInfo: SystemInfo): DownloadFitness {
+	const hasGpu = !!systemInfo && systemInfo.gpus.length > 0;
+	const isUncomfortable =
+		!!state &&
+		state.estimated_bytes > 0 &&
+		(hasGpu ? !state.comfortable_on_gpu : !state.comfortable_on_cpu);
+	const estimatedLabel =
+		state && state.estimated_bytes > 0 ? sizeLabel(state.estimated_bytes) : "unknown";
+	const availableLabel = hasGpu
+		? `GPU VRAM: ${sizeLabel(systemInfo?.gpus[0]?.total_vram_bytes ?? 0)}`
+		: `RAM: ${sizeLabel(systemInfo?.total_ram_bytes ?? 0)}`;
+	return { isUncomfortable, estimatedLabel, availableLabel };
+}
+
+interface LiveDownload {
+	downloadedBytes: number;
+	progress: number | null;
+	speedBps: number;
+	totalBytes: number;
+}
+
+function ActiveProgress({ live }: { live: LiveDownload }): ReactNode {
+	return (
+		<DownloadProgressBar
+			label={live.progress == null ? "Starting..." : `${live.progress}%`}
+			percent={live.progress}
+			statsLabel={formatStatsLine(live.downloadedBytes, live.totalBytes, live.speedBps)}
+			variant="active"
+		/>
+	);
+}
+
+function PausedProgress({ targetCache }: { targetCache: TargetCache }): ReactNode {
+	const pausedPercent =
+		targetCache && targetCache.total_bytes > 0
+			? Math.round((targetCache.progress ?? 0) * 100)
+			: null;
+	return (
+		<DownloadProgressBar
+			label={pausedPercent == null ? "Paused" : `Paused at ${pausedPercent}%`}
+			percent={pausedPercent}
+			statsLabel={formatStatsLine(
+				targetCache?.downloaded_bytes ?? 0,
+				targetCache?.total_bytes ?? 0,
+				0
+			)}
+			variant="paused"
+		/>
+	);
+}
+
+function IdleInfoCard({
+	infoLevel,
+	targetCache,
+	fitness,
+}: {
+	infoLevel: number;
+	targetCache: TargetCache;
+	fitness: DownloadFitness;
+}): ReactNode {
+	const pausedDownloaded = targetCache?.downloaded_bytes ?? 0;
+	const pausedTotal = targetCache?.total_bytes ?? 0;
+	return (
+		<div
+			className={`flex flex-col gap-1 rounded-md p-3 text-foreground-secondary text-xs ${surfaceClasses(infoLevel)}`}
+		>
+			<div>
+				<span className="text-foreground">Status:</span> Not downloaded
+			</div>
+			<div>
+				<span className="text-foreground">
+					{pausedTotal > pausedDownloaded
+						? `Need to download: ${sizeLabel(pausedTotal - pausedDownloaded)}`
+						: "Size: unknown until headers fetched"}
+				</span>
+			</div>
+			<div>
+				<span className="text-foreground">Estimated memory:</span> {fitness.estimatedLabel} ·{" "}
+				{fitness.availableLabel}
+			</div>
+		</div>
+	);
+}
+
 function DownloadConfirmationContent({
 	pending,
 	getModel,
@@ -792,35 +971,11 @@ function DownloadConfirmationContent({
 
 	const isThisDownloading = live.isDownloading && live.modelName === pending?.modelId;
 	const partialOnDisk = targetCache?.state === "partial";
-	const phase: DownloadPhase = isThisDownloading ? "active" : partialOnDisk ? "paused" : "idle";
+	const phase: DownloadPhase = resolveDownloadPhase(isThisDownloading, partialOnDisk);
 
-	// Hardware fitness — surface the same heuristic the picker uses, plus
-	// concrete numbers so the user can decide. We don't refuse — the user
-	// can always proceed at their own risk.
-	const hasGpu = !!systemInfo && systemInfo.gpus.length > 0;
-	const isUncomfortable =
-		!!state &&
-		state.estimated_bytes > 0 &&
-		(hasGpu ? !state.comfortable_on_gpu : !state.comfortable_on_cpu);
-	const estimatedLabel =
-		state && state.estimated_bytes > 0 ? sizeLabel(state.estimated_bytes) : "unknown";
-	const availableLabel = hasGpu
-		? `GPU VRAM: ${sizeLabel(systemInfo?.gpus[0]?.total_vram_bytes ?? 0)}`
-		: `RAM: ${sizeLabel(systemInfo?.total_ram_bytes ?? 0)}`;
-
+	const fitness = computeFitness(state, systemInfo);
 	const displayName = info?.displayName ?? pending?.modelId ?? "";
 	const sizeSuffix = info?.sizeLabel ? ` (${info.sizeLabel})` : "";
-
-	// Pick progress bar source for the right phase. Active reads from the
-	// live store; paused freezes at the on-disk partial percentage so the
-	// user sees how much progress they'd be discarding.
-	const activePercent = live.progress;
-	const pausedPercent =
-		targetCache && targetCache.total_bytes > 0
-			? Math.round((targetCache.progress ?? 0) * 100)
-			: null;
-	const pausedDownloaded = targetCache?.downloaded_bytes ?? 0;
-	const pausedTotal = targetCache?.total_bytes ?? 0;
 
 	const handleStop = useCallback(() => {
 		live.cancelDownload();
@@ -841,43 +996,12 @@ function DownloadConfirmationContent({
 			<p className="text-foreground-secondary text-sm">
 				{dialogSubtitle(phase, displayName, sizeSuffix, quantLabel)}
 			</p>
-			{phase === "active" && (
-				<DownloadProgressBar
-					label={activePercent == null ? "Starting..." : `${activePercent}%`}
-					percent={activePercent}
-					statsLabel={formatStatsLine(live.downloadedBytes, live.totalBytes, live.speedBps)}
-					variant="active"
-				/>
-			)}
-			{phase === "paused" && (
-				<DownloadProgressBar
-					label={pausedPercent == null ? "Paused" : `Paused at ${pausedPercent}%`}
-					percent={pausedPercent}
-					statsLabel={formatStatsLine(pausedDownloaded, pausedTotal, 0)}
-					variant="paused"
-				/>
-			)}
+			{phase === "active" && <ActiveProgress live={live} />}
+			{phase === "paused" && <PausedProgress targetCache={targetCache} />}
 			{phase === "idle" && (
-				<div
-					className={`flex flex-col gap-1 rounded-md p-3 text-foreground-secondary text-xs ${surfaceClasses(infoLevel)}`}
-				>
-					<div>
-						<span className="text-foreground">Status:</span> Not downloaded
-					</div>
-					<div>
-						<span className="text-foreground">
-							{pausedTotal > pausedDownloaded
-								? `Need to download: ${sizeLabel(pausedTotal - pausedDownloaded)}`
-								: "Size: unknown until headers fetched"}
-						</span>
-					</div>
-					<div>
-						<span className="text-foreground">Estimated memory:</span> {estimatedLabel} ·{" "}
-						{availableLabel}
-					</div>
-				</div>
+				<IdleInfoCard fitness={fitness} infoLevel={infoLevel} targetCache={targetCache} />
 			)}
-			{isUncomfortable && phase !== "active" && (
+			{fitness.isUncomfortable && phase !== "active" && (
 				<div className="rounded-md border border-error/40 bg-error/10 p-3 text-error text-xs">
 					⚠ This model may not run comfortably on your hardware. Loading may fail or transcription
 					may be slow. You can continue at your own risk.

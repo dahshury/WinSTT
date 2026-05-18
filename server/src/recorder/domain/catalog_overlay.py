@@ -23,12 +23,45 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 #: Per-user overlay path. Mirrors the convention in ``stt_server/cli.py`` which
 #: persists ``server-settings.json`` to the same directory.
 OVERLAY_DIR: Path = Path.home() / ".winstt"
 OVERLAY_PATH: Path = OVERLAY_DIR / "catalog-overlay.json"
+
+
+def _read_overlay_payload() -> object | None:
+    """Parse the overlay file, returning ``None`` on absence / corruption."""
+    if not OVERLAY_PATH.exists():
+        return None
+    try:
+        parsed: object = json.loads(OVERLAY_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return parsed
+
+
+def _is_str_dict_pair(pair: tuple[object, object]) -> bool:
+    model_id, fields = pair
+    return isinstance(model_id, str) and isinstance(fields, dict)
+
+
+def _str_dict_pairs(payload: dict[object, object]) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Yield only the ``(str, dict)`` entries of a parsed overlay payload."""
+    for pair in payload.items():
+        if _is_str_dict_pair(pair):
+            yield cast("tuple[str, dict[str, Any]]", pair)
+
+
+def _coerce_overlay(payload: object | None) -> dict[str, dict[str, Any]]:
+    """Keep only ``{str: dict}`` entries from a parsed overlay payload."""
+    if not isinstance(payload, dict):
+        return {}
+    return {model_id: dict(fields) for model_id, fields in _str_dict_pairs(payload)}
 
 
 def load_overlay() -> dict[str, dict[str, Any]]:
@@ -38,19 +71,7 @@ def load_overlay() -> dict[str, dict[str, Any]]:
     catalog is always a valid fallback, so a corrupt overlay must never
     propagate as an exception to the startup path.
     """
-    if not OVERLAY_PATH.exists():
-        return {}
-    try:
-        payload = json.loads(OVERLAY_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    overlay: dict[str, dict[str, Any]] = {}
-    for model_id, fields in payload.items():
-        if isinstance(model_id, str) and isinstance(fields, dict):
-            overlay[model_id] = dict(fields)
-    return overlay
+    return _coerce_overlay(_read_overlay_payload())
 
 
 def save_overlay(overlay: dict[str, dict[str, Any]]) -> bool:

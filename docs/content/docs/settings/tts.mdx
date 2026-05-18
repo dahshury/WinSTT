@@ -1,0 +1,27 @@
+---
+title: Text-to-Speech
+description: Read selected text aloud with the bundled Kokoro-82M ONNX voice
+---
+
+WinSTT can read the currently-selected text aloud using the bundled Kokoro-82M ONNX text-to-speech model. Trigger it with a hotkey to hear whatever text is selected.
+
+The engine emits 24 kHz PCM audio.
+
+## Settings Reference
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `tts.enabled` | boolean | `false` | Enable text-to-speech |
+| `tts.voice` | string | `"af_heart"` | Voice identifier |
+| `tts.lang` | string | `"en-us"` | Language code |
+| `tts.speed` | number | `1.0` | Playback speed (range 0.5–2.0) |
+| `tts.hotkey` | string | `""` | uiohook combo to speak the current selection |
+| `tts.device` | enum | `"auto"` | `auto`, `cuda`, or `cpu` |
+
+<Callout title="Requires the tts server extra" type="warn">
+  Text-to-speech requires the server `tts` extra (`kokoro-onnx`). Without it, the feature is unavailable.
+</Callout>
+
+<Callout title="GPU acceleration" type="info">
+  The GPU build can run Kokoro on CUDA when `tts.device` is `auto` or `cuda` and a working CUDA stack is present; otherwise it runs on CPU.
+</Callout>

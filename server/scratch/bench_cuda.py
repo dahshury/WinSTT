@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import json
 
@@ -13,7 +14,7 @@ from pathlib import Path
 import soundfile as sf
 
 
-def _inject_cuda_dlls():
+def _inject_cuda_dlls() -> None:
     try:
         import nvidia
     except ImportError:
@@ -23,20 +24,16 @@ def _inject_cuda_dlls():
         for pkg in pkgs:
             bin_dir = nv_root / pkg / "bin"
             if bin_dir.is_dir():
-                try:
+                with contextlib.suppress(OSError):
                     os.add_dll_directory(str(bin_dir))
-                except OSError:
-                    pass
                 for dll in bin_dir.glob("*.dll"):
-                    try:
+                    with contextlib.suppress(OSError):
                         ctypes.WinDLL(str(dll))
-                    except OSError:
-                        pass
 
 
 _inject_cuda_dlls()
 
-import onnxruntime as rt
+import onnxruntime as rt  # noqa: E402  # import after CUDA DLL injection
 
 print("providers:", rt.get_available_providers())
 PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -71,10 +68,8 @@ def bench_onnxasr(quant: str | None) -> None:
     load_s = time.perf_counter() - t0
 
     # warmup
-    try:
+    with contextlib.suppress(Exception):
         m.recognize(audio[: 16000 * 5], sample_rate=sr)
-    except Exception:
-        pass
 
     # timed runs
     times = []

@@ -3,21 +3,28 @@ title: Available Models
 description: Overview of all supported speech recognition models
 ---
 
-WinSTT supports a wide range of speech recognition models across two inference backends.
+WinSTT supports 30+ speech recognition models across six families: **whisper**, **lite-whisper**, **nemo**, **gigaam**, **kaldi**, and **t-one**.
 
-## Backends
+## One ONNX Engine
 
-**faster_whisper** -- Runs OpenAI Whisper models using CTranslate2. Supports all Whisper model sizes with configurable quantization. This is the default backend.
+All models — including Whisper — run on a single inference engine: ONNX Runtime via the `onnx-asr` library. There is no separate backend to choose. The legacy `backend` setting (`faster_whisper` / `onnx_asr`) is vestigial: `faster_whisper` is now an alias that routes to the same ONNX engine.
 
-**onnx_asr** -- Runs NVIDIA NeMo, GigaAM, Kaldi/Vosk, and T-One models via ONNX Runtime. Provides access to non-Whisper architectures including CTC, RNN-T, and TDT decoders.
+CPU vs GPU is decided **at install time**, not in settings:
 
-Set the backend in [Model Settings](/docs/settings/model) using the `backend` field.
+- **CPU build** — bundles `onnxruntime`. Runs on any machine.
+- **GPU build** — bundles `onnxruntime-gpu` plus the NVIDIA CUDA wheels. Uses the GPU when a working CUDA stack is present, and automatically falls back to CPU otherwise.
+
+The `device` setting accepts `auto` or `cpu` only. `auto` picks the GPU when the GPU build is installed with working CUDA.
+
+## Precision
+
+Numerical precision is controlled by the `onnxQuantization` setting. An empty string (`""`) uses the model's default precision; other values (`fp16`, `q4`, `bnb4`, `int8`) are available per-model and surfaced by the model picker. See [Compute Types](/docs/models/compute-types).
 
 ## Model Families
 
 <Cards>
   <Card title="Whisper Models" href="/docs/models/whisper">
-    OpenAI Whisper: 12 models from 39M to 1.5B parameters. Multilingual and English-only variants.
+    OpenAI Whisper and the compressed Lite-Whisper variants. Multilingual and English-only.
   </Card>
   <Card title="NeMo Models" href="/docs/models/nemo">
     NVIDIA NeMo Parakeet and Canary: high-accuracy models for English, multilingual, and Russian.
@@ -26,6 +33,6 @@ Set the backend in [Model Settings](/docs/settings/model) using the `backend` fi
     GigaAM (Russian), Kaldi/Vosk (Russian), and T-One (Russian) models.
   </Card>
   <Card title="Compute Types" href="/docs/models/compute-types">
-    Quantization options that trade quality for speed and memory savings.
+    ONNX quantization options that trade quality for speed and memory savings.
   </Card>
 </Cards>

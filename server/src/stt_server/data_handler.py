@@ -108,18 +108,30 @@ async def data_handler(websocket: ServerConnection, state: ServerState) -> None:
 
 
 async def broadcast_audio_messages(state: ServerState) -> None:
-    """Continuously read from audio_queue and broadcast to all data clients."""
+    """Continuously read from audio_queue and broadcast to all data clients.
+
+    ``audio_queue`` now carries ``str | bytes``; the ``websockets`` library
+    auto-routes by type (text frame for ``str``, binary frame for ``bytes``).
+    Binary frames are TTS chunks framed as ``[u32 meta_len][json][pcm]``.
+    """
     while True:
         message = await state.audio_queue.get()
         for conn in list(state.data_connections):
             try:
-                timestamp = format_now_hms_ms()
                 if state.extended_logging:
-                    print(
-                        f"  [{timestamp}] Sending message: {bcolors.OKBLUE}{message}{bcolors.ENDC}\n",
-                        flush=True,
-                        end="",
-                    )
+                    timestamp = format_now_hms_ms()
+                    if isinstance(message, bytes):
+                        print(
+                            f"  [{timestamp}] Sending binary frame ({len(message)} bytes)\n",
+                            flush=True,
+                            end="",
+                        )
+                    else:
+                        print(
+                            f"  [{timestamp}] Sending message: {bcolors.OKBLUE}{message}{bcolors.ENDC}\n",
+                            flush=True,
+                            end="",
+                        )
                 await conn.send(message)
             except websockets.exceptions.ConnectionClosed:
                 state.data_connections.discard(conn)

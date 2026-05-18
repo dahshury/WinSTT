@@ -3,11 +3,11 @@ title: Other Models
 description: GigaAM, Vosk/Kaldi, and T-One models
 ---
 
-WinSTT supports several additional model families through the `onnx_asr` backend. These are primarily focused on Russian language support.
+WinSTT supports several additional model families on the ONNX engine. These are primarily focused on Russian language support. All support realtime transcription.
 
 ## GigaAM Models
 
-GigaAM is a family of Russian-language ASR models. All GigaAM models support realtime transcription and use the `onnx_asr` backend.
+GigaAM is a family of Russian-language ASR models.
 
 | Model | Architecture | Notes |
 |-------|-------------|-------|
@@ -18,6 +18,8 @@ GigaAM is a family of Russian-language ASR models. All GigaAM models support rea
 | `gigaam-v3-e2e-ctc` | End-to-End CTC | Version 3, end-to-end CTC |
 | `gigaam-v3-e2e-rnnt` | End-to-End RNN-T | Version 3, end-to-end transducer |
 
+GigaAM models support `""` (default) and `int8` via `onnxQuantization`.
+
 ## Kaldi/Vosk Models
 
 Vosk provides offline speech recognition models based on the Kaldi toolkit. These are lightweight and run well on CPU.
@@ -27,13 +29,15 @@ Vosk provides offline speech recognition models based on the Kaldi toolkit. Thes
 | `alphacep/vosk-model-ru` | Full Russian model. Higher accuracy, larger download |
 | `alphacep/vosk-model-small-ru` | Lightweight Russian model. Faster loading, smaller footprint |
 
+Vosk/Kaldi models support `""` (default) and `int8` via `onnxQuantization`.
+
 ## T-One Models
 
 T-One is a Russian ASR model from T-Tech.
 
 | Model | Description |
 |-------|-------------|
-| `t-tech/t-one` | Russian speech recognition |
+| `t-tech/t-one` | Russian speech recognition. Default precision only (`""`) |
 
 <Callout title="Language support" type="info">
   All models on this page are Russian-language only. For English or multilingual transcription, use Whisper or NeMo models.

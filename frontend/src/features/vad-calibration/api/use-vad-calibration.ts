@@ -4,7 +4,10 @@ import { useEffect, useRef } from "react";
 import { useInputDevices } from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";
 import { onVadSensitivityAdapted, settingsSave } from "@/shared/api/ipc-client";
-import { nextSensitivityForDevice, resolveCurrentDeviceName } from "../lib/helpers";
+import {
+	nextSensitivityForDevice,
+	resolveCurrentDeviceName,
+} from "../lib/vad-calibration-sensitivity";
 
 /**
  * Wires up cross-utterance adaptive Silero VAD sensitivity persistence.

@@ -65,6 +65,13 @@ def gpu_filter_quantizations(quants: list[str]) -> list[str]:
     return [q for q in quants if q in _GPU_COMPATIBLE_QUANTIZATIONS]
 
 
+def _billions_label(params: int) -> str:
+    b = params / 1_000_000_000
+    if b == int(b):
+        return f"{int(b)}B"
+    return f"{round(b, 2):g}B"
+
+
 def _size_label(params: int) -> str:
     """Human-readable label derived from an exact param count.
 
@@ -74,9 +81,7 @@ def _size_label(params: int) -> str:
     if params <= 0:
         return ""
     if params >= 1_000_000_000:
-        b = params / 1_000_000_000
-        s = f"{int(b)}" if b == int(b) else f"{round(b, 2):g}"
-        return f"{s}B"
+        return _billions_label(params)
     return f"{round(params / 1_000_000)}M"
 
 
@@ -86,18 +91,26 @@ def _size_label(params: int) -> str:
 _CATALOG_JSON: Path = Path(__file__).parent / "catalog.json"
 
 
+#: Lookup from JSON ``backend`` slug to enum member. Built once from the
+#: enum so new members are picked up automatically. Anything not in here
+#: (including ``None`` / empty / unknown) coerces to ``ONNX_ASR``.
+_BACKEND_BY_VALUE: dict[str, TranscriberBackend] = {m.value: m for m in TranscriberBackend}
+
+
 def _backend_from_str(value: str | None) -> TranscriberBackend:
     """Coerce a backend slug from the JSON catalog into the enum.
 
     JSON entries may omit ``backend`` (everything is onnx-asr after the
     torch-drop) — fall back to ``ONNX_ASR`` so the data file stays terse.
     """
-    if not value:
-        return TranscriberBackend.ONNX_ASR
-    for member in TranscriberBackend:
-        if member.value == value:
-            return member
-    return TranscriberBackend.ONNX_ASR
+    return _BACKEND_BY_VALUE.get(value or "", TranscriberBackend.ONNX_ASR)
+
+
+def _str_list(raw: object, *, default: list[str]) -> list[str]:
+    """Coerce a JSON value into a ``list[str]``, falling back to ``default``."""
+    if not isinstance(raw, list):
+        return list(default)
+    return [str(item) for item in raw]
 
 
 def _model_from_json(entry: dict[str, Any]) -> ModelInfo:
@@ -108,10 +121,8 @@ def _model_from_json(entry: dict[str, Any]) -> ModelInfo:
     script can verify against HuggingFace.
     """
     params = int(entry.get("param_count", 0))
-    quants_raw = entry.get("available_quantizations", [""])
-    quants: list[str] = [str(q) for q in quants_raw] if isinstance(quants_raw, list) else [""]
-    languages_raw = entry.get("languages", [])
-    languages: list[str] = [str(loc) for loc in languages_raw] if isinstance(languages_raw, list) else []
+    quants = _str_list(entry.get("available_quantizations", [""]), default=[""])
+    languages = _str_list(entry.get("languages", []), default=[])
     return ModelInfo(
         id=str(entry["id"]),
         display_name=str(entry.get("display_name", entry["id"])),
@@ -150,6 +161,24 @@ def _load_catalog_entries() -> list[ModelInfo]:
     return [_apply_overlay(_model_from_json(entry), overlay) for entry in raw_models]
 
 
+def _str_only(values: list[Any]) -> list[str]:
+    return [str(v) for v in values if isinstance(v, str)]
+
+
+def _overlay_languages(patch: dict[str, Any] | None) -> list[str]:
+    """Extract a normalized ``languages`` list from an overlay patch.
+
+    Empty list means "no usable override" — the caller keeps the bundled
+    value. Guards every shape the on-disk overlay could carry.
+    """
+    if not patch:
+        return []
+    languages = patch.get("languages")
+    if not isinstance(languages, list):
+        return []
+    return _str_only(languages)
+
+
 def _apply_overlay(info: ModelInfo, overlay: dict[str, dict[str, Any]]) -> ModelInfo:
     """Return ``info`` with any matching overlay fields swapped in.
 
@@ -157,13 +186,7 @@ def _apply_overlay(info: ModelInfo, overlay: dict[str, dict[str, Any]]) -> Model
     verbatim — a runtime refresh that successfully fetched HF metadata is
     by definition more authoritative than the bundled snapshot.
     """
-    patch = overlay.get(info.id)
-    if not patch:
-        return info
-    languages = patch.get("languages")
-    if not isinstance(languages, list):
-        return info
-    normalized = [str(loc) for loc in languages if isinstance(loc, str)]
+    normalized = _overlay_languages(overlay.get(info.id))
     if not normalized:
         return info
     return ModelInfo(

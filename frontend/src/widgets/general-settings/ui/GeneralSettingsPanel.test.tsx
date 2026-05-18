@@ -269,26 +269,6 @@ describe("GeneralSettingsPanel helpers — isBarVisualizer", () => {
 	});
 });
 
-describe("GeneralSettingsPanel helpers — dropZoneClass", () => {
-	test("includes accent classes when dragOver", () => {
-		expect(helpers.dropZoneClass(true)).toContain("border-accent");
-	});
-
-	test("uses the divider border at rest", () => {
-		expect(helpers.dropZoneClass(false)).toContain("border-divider-strong");
-	});
-});
-
-describe("GeneralSettingsPanel helpers — displaySoundPath", () => {
-	test("returns the path when present", () => {
-		expect(helpers.displaySoundPath("/tmp/a.mp3", tStub)).toBe("/tmp/a.mp3");
-	});
-
-	test("returns the default translation when empty", () => {
-		expect(helpers.displaySoundPath("", tStub)).toBe("soundFileDefault");
-	});
-});
-
 describe("GeneralSettingsPanel helpers — readBoolFlag", () => {
 	const cases: [boolean | undefined, boolean, boolean][] = [
 		[true, false, true],

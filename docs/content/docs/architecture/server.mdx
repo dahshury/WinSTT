@@ -31,9 +31,20 @@ Ports are abstract base classes that define the contracts infrastructure must fu
 | Port | Key Methods | Adapters |
 |------|------------|----------|
 | `IAudioSource` | `setup()`, `read_chunk()`, `cleanup()` | PyAudioSource, FileAudioSource |
-| `ITranscriber` | `transcribe(audio, lang)`, `is_ready()`, `shutdown()` | WhisperTranscriber, RealtimeTranscriber, OnnxAsrTranscriber |
+| `ITranscriber` | `transcribe(audio, lang)`, `is_ready()`, `shutdown()` | OnnxAsrTranscriber (+ OnnxAsrDiarizer for speaker diarization) |
 | `IVoiceActivityDetector` | `detect(chunk)`, `reset()` | WebRTCVAD, SileroVAD, CompositeVAD |
-| `IWakeWordDetector` | `detect(chunk)`, `cleanup()` | PorcupineDetector, OWWDetector |
+| `IWakeWordDetector` | `detect(chunk)`, `cleanup()` | PorcupineDetector, OWWDetector, CompositeWakeWord |
+
+The transcription stack is **ONNX-only**. `OnnxAsrTranscriber` is the single
+transcriber adapter — Whisper, NeMo, GigaAM, Vosk, and T-One models all run
+through the same ONNX engine (the old CTranslate2 `WhisperTranscriber` /
+`RealtimeTranscriber` adapters have been removed). `bootstrap.py` aliases the
+legacy `faster_whisper` backend value to ONNX so existing configs keep working.
+
+The optional **Smart Endpoint** uses a DistilBERT sentence classifier
+(`distilbert_classifier.py`, requires the `sentence-classifier` extra; fails
+soft if absent). A separate top-level `synthesizer/` package provides Kokoro
+text-to-speech, independent of the recorder hexagon.
 
 ## Application Layer
 

@@ -44,7 +44,7 @@ export function DownloadProgressBar({
 	const width = indeterminate ? 100 : Math.max(0, Math.min(100, percent));
 	return (
 		<div className={cn("flex flex-col gap-1", className)}>
-			<div className="flex items-center justify-between gap-2 font-medium text-[10.5px] text-foreground-secondary leading-none tabular-nums">
+			<div className="flex items-center justify-between gap-2 font-medium text-[10.5px] text-foreground-secondary tabular-nums leading-none">
 				<span className="truncate">{label}</span>
 			</div>
 			<div className={cn("relative h-1 overflow-hidden rounded-full", trackClass)}>
@@ -76,7 +76,8 @@ const ACTION_BUTTON_BASE = cn(
 );
 
 const PRIMARY = "border-accent/40 bg-accent/15 text-accent hover:bg-accent/25";
-const NEUTRAL = "border-border bg-surface-secondary/60 text-foreground-secondary hover:bg-surface-hover";
+const NEUTRAL =
+	"border-border bg-surface-secondary/60 text-foreground-secondary hover:bg-surface-hover";
 const DANGER = "border-error/40 bg-error/10 text-error hover:bg-error/20";
 
 /**

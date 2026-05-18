@@ -146,7 +146,7 @@ export function getUniqueEndpoints(endpoints: OpenRouterEndpoint[]): OpenRouterE
 
 const REASONING_PARAM_KEYS: ReadonlySet<string> = new Set(["reasoning", "include_reasoning"]);
 
-const REASONING_ID_PATTERNS: ReadonlyArray<RegExp> = [
+const REASONING_ID_PATTERNS: readonly RegExp[] = [
 	/(?:^|\/)o[134](?:-|$)/i, // openai/o1*, o3*, o4*
 	/[-/]reasoning(?:[-/]|$)/i,
 	/[-/]think(?:ing)?(?:[-/]|$)/i,

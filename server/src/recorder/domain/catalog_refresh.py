@@ -31,12 +31,23 @@ _FAMILY_LANGUAGE_REFERENCE: dict[str, str] = {
 }
 
 
+def _ends_with_en(*values: str | None) -> bool:
+    return any((v or "").endswith(".en") for v in values)
+
+
 def _is_english_only_whisper(info: ModelInfo) -> bool:
     """Whether ``info`` is a Whisper ``.en`` checkpoint (English-only head)."""
     if info.family not in {"whisper", "lite-whisper"}:
         return False
-    onnx = info.onnx_model_name or ""
-    return info.id.endswith(".en") or onnx.endswith(".en")
+    return _ends_with_en(info.id, info.onnx_model_name)
+
+
+def _model_repos_lookup(onnx_model_name: str) -> str | None:
+    try:
+        from onnx_asr.resolver import model_repos
+    except ImportError:  # pragma: no cover - onnx_asr is always installed at runtime
+        return None
+    return model_repos.get(onnx_model_name)
 
 
 def _resolve_hf_repo(onnx_model_name: str | None) -> str | None:
@@ -45,35 +56,45 @@ def _resolve_hf_repo(onnx_model_name: str | None) -> str | None:
         return None
     if "/" in onnx_model_name:
         return onnx_model_name
-    try:
-        from onnx_asr.resolver import model_repos
-    except ImportError:  # pragma: no cover - onnx_asr is always installed at runtime
-        return None
-    return model_repos.get(onnx_model_name)
+    return _model_repos_lookup(onnx_model_name)
 
 
-def _fetch_card_languages(repo_id: str) -> list[str] | None:
-    """Return the ``card_data.language`` list for a HF repo, or ``None``."""
+def _hf_model_info(repo_id: str) -> object | None:
+    """Fetch HF ``model_info`` defensively; ``None`` on import/network failure."""
     try:
         from huggingface_hub import HfApi
     except ImportError:  # pragma: no cover - huggingface_hub is always installed at runtime
         return None
     try:
-        info = HfApi().model_info(repo_id)
+        return HfApi().model_info(repo_id)
     except Exception as exc:
         logger.debug("model_info(%r) failed: %s: %s", repo_id, type(exc).__name__, exc)
         return None
-    card = info.card_data
-    if card is None:
-        return None
-    raw = getattr(card, "language", None)
-    if raw is None:
-        return None
+
+
+def _model_card_language(repo_id: str) -> object | None:
+    """Return the raw ``card_data.language`` value for a HF repo, or ``None``."""
+    info = _hf_model_info(repo_id)
+    card = getattr(info, "card_data", None)
+    return getattr(card, "language", None)
+
+
+def _str_items(values: list[object]) -> list[str]:
+    return [str(x) for x in values if isinstance(x, str)]
+
+
+def _normalize_language(raw: object | None) -> list[str] | None:
+    """Coerce a model card ``language`` field into a ``list[str]`` or ``None``."""
     if isinstance(raw, str):
         return [raw]
     if isinstance(raw, list):
-        return [str(x) for x in raw if isinstance(x, str)]
+        return _str_items(raw)
     return None
+
+
+def _fetch_card_languages(repo_id: str) -> list[str] | None:
+    """Return the ``card_data.language`` list for a HF repo, or ``None``."""
+    return _normalize_language(_model_card_language(repo_id))
 
 
 def _languages_for(info: ModelInfo) -> list[str] | None:
@@ -87,13 +108,18 @@ def _languages_for(info: ModelInfo) -> list[str] | None:
     """
     if _is_english_only_whisper(info):
         return ["en"]
-    fallback_repo = _FAMILY_LANGUAGE_REFERENCE.get(info.family)
-    if fallback_repo is not None:
-        return _fetch_card_languages(fallback_repo)
-    repo = _resolve_hf_repo(info.onnx_model_name)
+    repo = _reference_repo_for(info)
     if repo is None:
         return None
     return _fetch_card_languages(repo)
+
+
+def _reference_repo_for(info: ModelInfo) -> str | None:
+    """Pick the HF repo whose model card carries ``info``'s languages."""
+    fallback = _FAMILY_LANGUAGE_REFERENCE.get(info.family)
+    if fallback is not None:
+        return fallback
+    return _resolve_hf_repo(info.onnx_model_name)
 
 
 def fetch_language_overlay(models: list[ModelInfo]) -> dict[str, dict[str, list[str]]]:

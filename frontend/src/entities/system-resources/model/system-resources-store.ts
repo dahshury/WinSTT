@@ -60,11 +60,11 @@ export const useSystemResourcesStore = create<SystemResourcesStore>((set) => ({
 	},
 
 	async assessDictationFitOnServer(modelId, quantization = "", device = null) {
-		return assessDictationFitIpc(modelId, quantization, device);
+		return await assessDictationFitIpc(modelId, quantization, device);
 	},
 
 	async assessOllamaFitOnServer(sizeBytes) {
-		return assessOllamaFitOnServer(sizeBytes);
+		return await assessOllamaFitOnServer(sizeBytes);
 	},
 
 	reset() {

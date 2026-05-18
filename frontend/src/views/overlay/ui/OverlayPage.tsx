@@ -71,11 +71,11 @@ function useTransparentBody(): void {
 	useEffect(() => {
 		const prevBody = document.body.style.background;
 		const prevHtml = document.documentElement.style.background;
-		document.body.style.background = "transparent";
-		document.documentElement.style.background = "transparent";
+		Object.assign(document.body.style, { background: "transparent" });
+		Object.assign(document.documentElement.style, { background: "transparent" });
 		return () => {
-			document.body.style.background = prevBody;
-			document.documentElement.style.background = prevHtml;
+			Object.assign(document.body.style, { background: prevBody });
+			Object.assign(document.documentElement.style, { background: prevHtml });
 		};
 	}, []);
 }
@@ -182,6 +182,8 @@ export function OverlayPage() {
 	const ephemeral = useTranscriptionStore((s) => s.ephemeral);
 	const isRecordingActive = useTranscriptionStore((s) => s.isRecordingActive);
 	const isThinking = useLlmProcessingStore((s) => s.isThinking);
+	const thinkingText = useLlmProcessingStore((s) => s.thinkingText);
+	const thinkingStartedAt = useLlmProcessingStore((s) => s.thinkingStartedAt);
 	// `isSpeaking` (VAD) is still read for the breathing overlay, but it
 	// deliberately no longer gates pill mount — that fired hundreds of ms
 	// before the first transcribed word, making the pill appear "early".
@@ -245,7 +247,6 @@ export function OverlayPage() {
 								initial="initial"
 								key="text-bubble"
 								layout
-								style={{ willChange: "transform, opacity" }}
 								variants={bubbleVariants}
 							>
 								{/* Brand-accent hairline — single Docker-blue
@@ -263,7 +264,7 @@ export function OverlayPage() {
 											key="thinking"
 											variants={contentVariants}
 										>
-											<ThinkingIndicator />
+											<ThinkingIndicator reasoning={thinkingText} startedAt={thinkingStartedAt} />
 										</m.div>
 									) : (
 										<m.div
@@ -299,7 +300,6 @@ export function OverlayPage() {
 								exit="exit"
 								initial="initial"
 								key="visualizer-chip"
-								style={{ willChange: "transform, opacity" }}
 								variants={chipVariants}
 							>
 								{/* Glass refraction hairline at the very top
@@ -310,7 +310,8 @@ export function OverlayPage() {
 								/>
 								{/* Breathing inset glow while user is
 								    actively speaking. Opacity-only — chip
-								    dimensions stay pixel-identical. */}
+								    dimensions stay pixel-identical to its
+								    resting state. */}
 								<AnimatePresence>
 									{isSpeaking && !isThinking && (
 										<m.div

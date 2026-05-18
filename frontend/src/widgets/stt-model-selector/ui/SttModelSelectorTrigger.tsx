@@ -9,6 +9,7 @@ import type { ModelInfo } from "@/entities/model-catalog";
 import { useDownloadStore } from "@/features/model-download";
 import type { ModelStateEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { getCachePillConfig, resolveQuantCache } from "../lib/cache-helpers";
 import { getFamilyConfig } from "../lib/family-helpers";
@@ -101,7 +102,7 @@ function SelectedContent({
 	);
 }
 
-function renderContent(props: SttModelSelectorTriggerProps) {
+function TriggerContent(props: SttModelSelectorTriggerProps) {
 	if (props.selectedModel) {
 		return (
 			<SelectedContent
@@ -125,12 +126,10 @@ interface TriggerButtonProps extends SttModelSelectorTriggerProps {
  * ``pointer-events-none`` so clicks still reach the underlying button.
  */
 function TriggerPullProgressOverlay({
-	modelName,
 	displayName,
 	percent,
 }: {
 	displayName: string;
-	modelName: string;
 	percent: number | null;
 }) {
 	const width = percent ?? 0;
@@ -138,7 +137,6 @@ function TriggerPullProgressOverlay({
 	return (
 		<span
 			aria-hidden="true"
-			aria-label={`Downloading ${modelName}`}
 			className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 px-3 pb-1 text-[9px] text-accent leading-none"
 		>
 			<span className="truncate font-medium uppercase tracking-wide">
@@ -146,9 +144,10 @@ function TriggerPullProgressOverlay({
 			</span>
 			<span className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-accent/20">
 				<span
-					className={`block h-full bg-accent transition-[width] duration-300 ease-out${
-						indeterminate ? " animate-pulse" : ""
-					}`}
+					className={cn(
+						"block h-full bg-accent transition-[width] duration-300 ease-out",
+						indeterminate && "animate-pulse"
+					)}
 					style={{ width: `${width}%` }}
 				/>
 			</span>
@@ -182,17 +181,13 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 			disabled={rest.disabled}
 			type="button"
 		>
-			{renderContent(rest)}
+			<TriggerContent {...rest} />
 			<HugeiconsIcon
 				className="ms-2 size-4 shrink-0 text-foreground-muted"
 				icon={ArrowUpDownIcon}
 			/>
 			{pull.isDownloading && pull.modelName ? (
-				<TriggerPullProgressOverlay
-					displayName={activeName}
-					modelName={pull.modelName}
-					percent={pull.progress}
-				/>
+				<TriggerPullProgressOverlay displayName={activeName} percent={pull.progress} />
 			) : null}
 		</Button>
 	);

@@ -141,6 +141,25 @@ describe("LlmSettingsPanel helpers — pickReplacementOllamaModel", () => {
 	test("returns null when models list is empty", () => {
 		expect(helpers.pickReplacementOllamaModel([], "anything")).toBeNull();
 	});
+
+	test("returns null when current model is empty (user mid-selection)", () => {
+		// Regression test for the Ollama swap-wipe bug: a duplicate Combobox
+		// callback transiently set the model to undefined; this function used
+		// to interpret that as "find any replacement" and pick the first
+		// model, which happened to match the previously-selected value,
+		// silently reverting the user's swap. We now skip replacement when
+		// `current` is empty so the user's deliberate pick takes priority.
+		expect(helpers.pickReplacementOllamaModel([{ name: "a" }, { name: "b" }], "")).toBeNull();
+	});
+
+	test("returns null when current model is undefined (loose runtime input)", () => {
+		// TypeScript narrows `current` to `string`, but at runtime a transient
+		// undefined can still pass through (Zustand patches model: undefined).
+		// The implementation guards on falsy-current to cover both cases.
+		expect(
+			helpers.pickReplacementOllamaModel([{ name: "a" }], undefined as unknown as string)
+		).toBeNull();
+	});
 });
 
 describe("LlmSettingsPanel helpers — shouldSyncOllamaModel", () => {
@@ -302,6 +321,7 @@ describe("LlmSettingsPanel helpers — DEFAULT_LLM / DEFAULT_FEATURE", () => {
 			openrouterModel: "",
 			openrouterFallbackModel: "",
 			reasoningEffort: "medium",
+			thinkingEffort: "medium",
 			verbosity: "medium",
 			maxOutputTokens: null,
 		});

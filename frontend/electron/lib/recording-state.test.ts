@@ -101,6 +101,76 @@ describe("recording-state gate (toggle mode)", () => {
 		notifyRecordingStop();
 		expect(consumeRecordingStart()).toBe(false);
 	});
+
+	// ─── Continuous-session behaviour (the pill-not-showing fix) ──────
+	// Toggle mode is ONE press → many silence-bounded utterances until
+	// the user presses again. The session must keep authorising
+	// `recording_start` across every stop/restart so the overlay pill
+	// shows for every utterance, not just the first.
+	test("subsequent utterances in the SAME toggle session are authorised", () => {
+		setMode("toggle");
+		notifyHotkeyPressed(); // toggle ON — session opens
+		// Utterance 1
+		expect(consumeRecordingStart()).toBe(true);
+		notifyRecordingStop(); // server auto-stopped on silence
+		// Utterance 2 — NO new press; the session is still open.
+		// Old single-shot model rejected this (pill never reappeared).
+		expect(consumeRecordingStart()).toBe(true);
+		notifyRecordingStop();
+		// Utterance 3 — still authorised.
+		expect(consumeRecordingStart()).toBe(true);
+	});
+
+	test("toggle OFF press closes the session; later stray starts rejected", () => {
+		setMode("toggle");
+		notifyHotkeyPressed(); // ON
+		expect(consumeRecordingStart()).toBe(true);
+		notifyRecordingStop();
+		expect(consumeRecordingStart()).toBe(true); // still in session
+		notifyRecordingStop();
+		notifyHotkeyPressed(); // OFF — session closes
+		expect(debugRecordingState().toggleSession).toBe(false);
+		// A stray/duplicate start arriving after the user toggled off
+		// must NOT re-show the pill.
+		expect(consumeRecordingStart()).toBe(false);
+	});
+
+	test("a fresh toggle session re-authorises after a previous one closed", () => {
+		setMode("toggle");
+		notifyHotkeyPressed(); // session 1 ON
+		expect(consumeRecordingStart()).toBe(true);
+		notifyHotkeyPressed(); // session 1 OFF
+		expect(consumeRecordingStart()).toBe(false);
+		notifyHotkeyPressed(); // session 2 ON
+		expect(consumeRecordingStart()).toBe(true);
+	});
+
+	test("toggle session does not leak into PTT mode after a mode switch", () => {
+		setMode("toggle");
+		notifyHotkeyPressed(); // session open
+		expect(debugRecordingState().toggleSession).toBe(true);
+		// User switches to PTT without pressing toggle-off. A server
+		// start must NOT be authorised by the stale toggle session.
+		setMode("ptt");
+		expect(consumeRecordingStart()).toBe(false);
+	});
+
+	test("consume does NOT clear the toggle session (locks in continuous semantics)", () => {
+		setMode("toggle");
+		notifyHotkeyPressed();
+		expect(consumeRecordingStart()).toBe(true);
+		// The session flag must survive the consume so the next
+		// utterance is still authorised.
+		expect(debugRecordingState().toggleSession).toBe(true);
+	});
+
+	test("notifyRecordingStop does NOT close an open toggle session", () => {
+		setMode("toggle");
+		notifyHotkeyPressed();
+		consumeRecordingStart();
+		notifyRecordingStop();
+		expect(debugRecordingState().toggleSession).toBe(true);
+	});
 });
 
 describe("recording-state gate (listen mode)", () => {
@@ -253,11 +323,15 @@ describe("shouldSignalIntent predicate (via notifyHotkeyPressed)", () => {
 		expect(debugRecordingState().pendingIntent).toBe(true);
 	});
 
-	test("toggle + recording=false: signals intent (RHS of `||`, both clauses true)", () => {
+	test("toggle + recording=false: opens a session (not single-shot intent)", () => {
 		setMode("toggle");
-		// recordingActive is false from beforeEach reset.
+		// recordingActive is false from beforeEach reset. The toggle press
+		// opens a continuous session instead of arming the single-shot
+		// PTT intent flag — that's what keeps the pill showing across
+		// every utterance in the session.
 		notifyHotkeyPressed();
-		expect(debugRecordingState().pendingIntent).toBe(true);
+		expect(debugRecordingState().toggleSession).toBe(true);
+		expect(debugRecordingState().pendingIntent).toBe(false);
 	});
 
 	test("toggle + recording=true: does NOT signal intent (RHS short-circuits via `!recording`)", () => {

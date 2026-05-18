@@ -24,7 +24,6 @@ import type {
 
 const WARNING_THRESHOLD = 0.8;
 const RAM_USABLE_FRACTION = 0.7;
-const DICTATION_OVERHEAD_BYTES = 500_000_000;
 const OLLAMA_OVERHEAD_BYTES = 1_000_000_000;
 const OLLAMA_SIZE_HEADROOM_FACTOR = 1.2;
 
@@ -145,6 +144,63 @@ interface AssessContext {
 	statesById: Record<string, ModelStateEntry>;
 }
 
+function vramReasonFor(severity: FitSeverity): FitReason {
+	if (severity === "critical") {
+		return "exceeds_vram";
+	}
+	if (severity === "warning") {
+		return "tight_vram";
+	}
+	return "ok";
+}
+
+function ramReasonFor(severity: FitSeverity): FitReason {
+	if (severity === "critical") {
+		return "exceeds_ram";
+	}
+	if (severity === "warning") {
+		return "tight_ram";
+	}
+	return "ok";
+}
+
+function assessGpuFit(
+	required: number,
+	loadedOther: number,
+	live: LiveResourcesEntry,
+	reasons: FitReason[]
+): FitAssessmentEntry {
+	const { total, free } = largestGpu(live);
+	let available = free;
+	if (loadedOther > 0) {
+		reasons.push("stt_already_uses_gpu");
+	}
+	if (available <= 0 && total > 0) {
+		available = total;
+	}
+	const severity = severityFor(required, available);
+	reasons.push(vramReasonFor(severity));
+	return { severity, target: "gpu", required_bytes: required, available_bytes: available, reasons };
+}
+
+function assessCpuFit(
+	required: number,
+	loadedOther: number,
+	live: LiveResourcesEntry,
+	reasons: FitReason[]
+): FitAssessmentEntry {
+	const usableTotal = Math.floor(live.ram_total_bytes * RAM_USABLE_FRACTION);
+	const liveAvail = live.ram_available_bytes;
+	const budget = liveAvail > 0 ? Math.min(liveAvail, usableTotal) : usableTotal;
+	const available = Math.max(0, budget - loadedOther);
+	if (loadedOther > 0) {
+		reasons.push("stt_already_uses_ram");
+	}
+	const severity = severityFor(required, available);
+	reasons.push(ramReasonFor(severity));
+	return { severity, target: "cpu", required_bytes: required, available_bytes: available, reasons };
+}
+
 /** Pure client-side mirror of ``assess_dictation_fit`` for instant
  * per-row badges. Returns the same shape the server sends so the
  * renderer treats both sources identically. */
@@ -176,34 +232,11 @@ export function assessDictationFitClient(
 	const loadedOther = loadedDictationFootprint(ctx.statesById, ctx.loaded, candidateId);
 
 	if (target === "gpu") {
-		const { total, free } = largestGpu(ctx.live);
-		let available = free;
-		if (loadedOther > 0) {
-			reasons.push("stt_already_uses_gpu");
-		}
-		if (available <= 0 && total > 0) {
-			available = total;
-		}
-		const severity = severityFor(required, available);
-		reasons.push(
-			severity === "critical" ? "exceeds_vram" : severity === "warning" ? "tight_vram" : "ok"
-		);
-		return { severity, target, required_bytes: required, available_bytes: available, reasons };
+		return assessGpuFit(required, loadedOther, ctx.live, reasons);
 	}
 
 	if (target === "cpu") {
-		const usableTotal = Math.floor(ctx.live.ram_total_bytes * RAM_USABLE_FRACTION);
-		const liveAvail = ctx.live.ram_available_bytes;
-		const budget = liveAvail > 0 ? Math.min(liveAvail, usableTotal) : usableTotal;
-		const available = Math.max(0, budget - loadedOther);
-		if (loadedOther > 0) {
-			reasons.push("stt_already_uses_ram");
-		}
-		const severity = severityFor(required, available);
-		reasons.push(
-			severity === "critical" ? "exceeds_ram" : severity === "warning" ? "tight_ram" : "ok"
-		);
-		return { severity, target, required_bytes: required, available_bytes: available, reasons };
+		return assessCpuFit(required, loadedOther, ctx.live, reasons);
 	}
 
 	return {

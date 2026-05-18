@@ -102,7 +102,21 @@ ALLOWED_PARAMETERS: list[str] = [
     "smart_endpoint_enabled",
     "detection_speed",
     "input_device_index",
+    # Server-state-owned (not on recorder) — frontend Quality panel sliders.
+    "end_of_sentence_detection_pause",
+    "mid_sentence_detection_pause",
+    "unknown_sentence_detection_pause",
 ]
+
+# Sentence-pause parameters that live on ``ServerState`` rather than the
+# recorder facade. Routed through the server-local branch in
+# ``_handle_set_parameter`` so set/get bypass the ``setattr(state.recorder, ...)``
+# path that requires a recorder attribute. Tuple of (parameter name → state attr).
+_STATE_FLOAT_PARAMETERS: tuple[str, ...] = (
+    "end_of_sentence_detection_pause",
+    "mid_sentence_detection_pause",
+    "unknown_sentence_detection_pause",
+)
 
 
 def _active_device(state: ServerState) -> str | None:
@@ -284,6 +298,16 @@ async def _handle_set_parameter(ws: ServerConnection, state: ServerState, data: 
         await ws.send(json.dumps({"status": "success", "message": msg}))
         return
 
+    if parameter in _STATE_FLOAT_PARAMETERS:
+        new_pause = float(value) if value is not None else 0.0
+        if getattr(state, parameter) == new_pause:
+            await ws.send(json.dumps({"status": "success", "message": f"Parameter {parameter} unchanged"}))
+            return
+        setattr(state, parameter, new_pause)
+        _log_set(parameter, new_pause)
+        await ws.send(json.dumps({"status": "success", "message": f"Parameter {parameter} set to {new_pause}"}))
+        return
+
     # Recorder parameters
     if parameter in ALLOWED_PARAMETERS and hasattr(state.recorder, parameter):
         try:
@@ -331,7 +355,19 @@ async def _handle_set_parameter(ws: ServerConnection, state: ServerState, data: 
                 )
                 return
         setattr(state.recorder, parameter, value)
-        persist_setting(parameter, value)
+        # ``model`` is special: its setter kicks off an *async* background
+        # swap that may still fail (e.g. the requested model has no export
+        # for the resolved quantization). Persisting the requested name here
+        # — before the swap resolves — is what poisoned
+        # ``~/.winstt/server-settings.json`` with a model that never loaded,
+        # so every subsequent startup re-requested it and fell back. The
+        # authoritative persist for ``model`` is ``on_model_swap_completed``
+        # (callbacks.py), which records the model that *actually* loaded;
+        # ``on_model_swap_failed`` correctly leaves the prior value intact.
+        # Synchronous params (input_device_index, sensitivities, …) are safe
+        # to persist eagerly — they have no deferred failure mode.
+        if parameter != "model":
+            persist_setting(parameter, value)
         _log_set(f"recorder.{parameter}", value)
         await ws.send(json.dumps({"status": "success", "message": f"Parameter {parameter} set to {value}"}))
     elif parameter not in ALLOWED_PARAMETERS:

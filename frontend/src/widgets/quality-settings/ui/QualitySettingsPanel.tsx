@@ -1,7 +1,6 @@
 "use client";
 
 import {
-	Clock01Icon,
 	EyeIcon,
 	FileScriptIcon,
 	SparklesIcon,
@@ -26,6 +25,115 @@ const TRANSCRIPTION_FORMAT_OPTIONS: readonly SwitcherOption<"txt" | "srt">[] = [
 	{ value: "srt", label: "SRT", icon: SubtitleIcon },
 ] as const;
 
+type QualityT = ReturnType<typeof useTranslations<"quality">>;
+type QualitySettings = NonNullable<
+	ReturnType<typeof useSettingsStore.getState>["settings"]["quality"]
+>;
+type UpdateQualityFn = (patch: Partial<QualitySettings>) => void;
+
+interface SmartEndpointSectionProps {
+	onToggle: (next: boolean) => void;
+	q: QualitySettings | undefined;
+	t: QualityT;
+	update: UpdateQualityFn;
+}
+
+function SmartEndpointSection({ q, t, update, onToggle }: SmartEndpointSectionProps) {
+	const enabled = q?.smartEndpoint ?? false;
+	return (
+		<SettingSection icon={SparklesIcon} title={t("smartEndpoint")}>
+			<div className="flex flex-col divide-y divide-surface-1">
+				<FormControl
+					caption={t("smartEndpointCaption")}
+					label={t("smartEndpointLabel")}
+					labelAddon={<Toggle checked={enabled} onCheckedChange={onToggle} />}
+					tooltip={t("smartEndpointTooltip")}
+				/>
+				{enabled && (
+					<FormControl
+						caption={t("detectionSpeedCaption")}
+						label={t("detectionSpeed")}
+						tooltip={t("detectionSpeedTooltip")}
+					>
+						<ElevatedSurface inline>
+							<NumberStepper
+								max={3.0}
+								min={0.5}
+								onChange={(v) => update({ smartEndpointSpeed: v })}
+								step={0.1}
+								value={q?.smartEndpointSpeed ?? 2.0}
+							/>
+						</ElevatedSurface>
+					</FormControl>
+				)}
+			</div>
+		</SettingSection>
+	);
+}
+
+interface SentencePauseSectionProps {
+	q: QualitySettings | undefined;
+	t: QualityT;
+	update: UpdateQualityFn;
+}
+
+// Sliders that drive the toggle-mode silence-timing heuristic. Surface them
+// here (not in Audio) so users discover them next to Smart Endpoint — they
+// are the manual alternative to it.
+function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
+	return (
+		<SettingSection icon={SparklesIcon} title={t("sentencePauses")}>
+			<div className="flex flex-col divide-y divide-surface-1">
+				<FormControl
+					caption={t("endOfSentencePauseCaption")}
+					label={t("endOfSentencePause")}
+					tooltip={t("endOfSentencePauseTooltip")}
+				>
+					<ElevatedSurface inline>
+						<NumberStepper
+							max={5.0}
+							min={0.1}
+							onChange={(v) => update({ endOfSentenceDetectionPause: v })}
+							step={0.05}
+							value={q?.endOfSentenceDetectionPause ?? 0.45}
+						/>
+					</ElevatedSurface>
+				</FormControl>
+				<FormControl
+					caption={t("unknownSentencePauseCaption")}
+					label={t("unknownSentencePause")}
+					tooltip={t("unknownSentencePauseTooltip")}
+				>
+					<ElevatedSurface inline>
+						<NumberStepper
+							max={5.0}
+							min={0.1}
+							onChange={(v) => update({ unknownSentenceDetectionPause: v })}
+							step={0.05}
+							value={q?.unknownSentenceDetectionPause ?? 0.7}
+						/>
+					</ElevatedSurface>
+				</FormControl>
+				<FormControl
+					caption={t("midSentencePauseCaption")}
+					label={t("midSentencePause")}
+					tooltip={t("midSentencePauseTooltip")}
+				>
+					<ElevatedSurface inline>
+						<NumberStepper
+							max={10.0}
+							min={0.1}
+							onChange={(v) => update({ midSentenceDetectionPause: v })}
+							step={0.1}
+							value={q?.midSentenceDetectionPause ?? 2.0}
+						/>
+					</ElevatedSurface>
+				</FormControl>
+			</div>
+		</SettingSection>
+	);
+}
+
 export function QualitySettingsPanel() {
 	const q = useSettingsStore((s) => s.settings.quality);
 	const update = useSettingsStore((s) => s.updateQualitySettings);
@@ -33,10 +141,34 @@ export function QualitySettingsPanel() {
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
 	const audio = useSettingsStore((s) => s.settings.audio);
 	const updateAudio = useSettingsStore((s) => s.updateAudioSettings);
+	const updateLlmDictation = useSettingsStore((s) => s.updateLlmDictation);
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
+	const llmDictationEnabled = useSettingsStore((s) => s.settings.llm?.dictation?.enabled ?? false);
 	const t = useTranslations("quality");
 	const tg = useTranslations("general");
 	const ta = useTranslations("audio");
+
+	// Smart Endpoint and LLM dictation cleanup make conflicting decisions about
+	// when to finalise speech — enabling either auto-disables the other.
+	const handleSmartEndpointToggle = (next: boolean): void => {
+		update({ smartEndpoint: next });
+		if (next && llmDictationEnabled) {
+			updateLlmDictation({ enabled: false });
+		}
+	};
+
+	// Smart Endpoint only makes sense in modes where silence ends the utterance.
+	// PTT defines the boundary via key release; Listen runs continuous loopback
+	// capture where endpoint tuning is more noise than signal.
+	const smartEndpointApplicable = recordingMode === "toggle" || recordingMode === "wakeword";
+
+	// Sentence-pause sliders are only relevant when silence_timing is driving
+	// post_speech_silence_duration — that's toggle mode with manual-stop off
+	// (or wakeword which never opts out). PTT, Listen, and toggle+manualStop
+	// all bypass the heuristic so the sliders would have no effect.
+	const manualToggleStop = general?.manualToggleStop ?? false;
+	const sentencePausesApplicable =
+		(recordingMode === "toggle" && !manualToggleStop) || recordingMode === "wakeword";
 
 	const transcriptionFormat = general?.fileTranscriptionFormat ?? "txt";
 	const contextAwarenessEnabled = general?.contextAwareness ?? false;
@@ -69,7 +201,7 @@ export function QualitySettingsPanel() {
 							label={ta("sileroSensitivity")}
 							tooltip={ta("sileroSensitivityTooltip")}
 						>
-							<ElevatedSurface className="px-3 py-3">
+							<ElevatedSurface className="p-3">
 								<Slider
 									aria-label={ta("sileroSensitivity")}
 									formatValue={(v) => v.toFixed(2)}
@@ -86,7 +218,7 @@ export function QualitySettingsPanel() {
 							label={ta("webrtcSensitivity")}
 							tooltip={ta("webrtcSensitivityTooltip")}
 						>
-							<ElevatedSurface className="px-3 py-3">
+							<ElevatedSurface className="p-3">
 								<Slider
 									aria-label={ta("webrtcSensitivity")}
 									max={3}
@@ -129,61 +261,16 @@ export function QualitySettingsPanel() {
 				</SettingSection>
 			)}
 
-			{/* ── Smart Endpoint (visible only when realtime is enabled in Model tab) */}
-			{(q?.enableRealtimeTranscription ?? true) && (
-				<SettingSection icon={SparklesIcon} title={t("smartEndpoint")}>
-					<div className="flex flex-col divide-y divide-surface-1">
-						<FormControl
-							caption={t("smartEndpointCaption")}
-							label={t("smartEndpointLabel")}
-							labelAddon={
-								<Toggle
-									checked={q?.smartEndpoint ?? false}
-									onCheckedChange={(v) => update({ smartEndpoint: v })}
-								/>
-							}
-							tooltip={t("smartEndpointTooltip")}
-						/>
-						{(q?.smartEndpoint ?? false) && (
-							<FormControl
-								caption={t("detectionSpeedCaption")}
-								label={t("detectionSpeed")}
-								tooltip={t("detectionSpeedTooltip")}
-							>
-								<ElevatedSurface inline>
-									<NumberStepper
-										max={3.0}
-										min={0.5}
-										onChange={(v) => update({ smartEndpointSpeed: v })}
-										step={0.1}
-										value={q?.smartEndpointSpeed ?? 1.5}
-									/>
-								</ElevatedSurface>
-							</FormControl>
-						)}
-					</div>
-				</SettingSection>
+			{/* ── Smart Endpoint (Toggle / Wake Word only, realtime required) */}
+			{(q?.enableRealtimeTranscription ?? true) && smartEndpointApplicable && (
+				<SmartEndpointSection onToggle={handleSmartEndpointToggle} q={q} t={t} update={update} />
 			)}
 
-			{/* ── Timing ─────────────────────────────────────── */}
-			<SettingSection icon={Clock01Icon} title={t("timing")}>
-				<div className="flex flex-col divide-y divide-surface-1">
-					<FormControl
-						caption={t("earlyTranscriptionCaption")}
-						label={t("earlyTranscription")}
-						tooltip={t("earlyTranscriptionTooltip")}
-					>
-						<ElevatedSurface inline>
-							<NumberStepper
-								min={0}
-								onChange={(v) => update({ earlyTranscriptionOnSilence: v })}
-								step={0.1}
-								value={q?.earlyTranscriptionOnSilence ?? 0.2}
-							/>
-						</ElevatedSurface>
-					</FormControl>
-				</div>
-			</SettingSection>
+			{/* ── Sentence pauses (toggle/wakeword only, hidden when smart endpoint
+				   handles them automatically or manual-toggle bypasses silence detection) */}
+			{sentencePausesApplicable && !(q?.smartEndpoint ?? false) && (
+				<SentencePauseSection q={q} t={t} update={update} />
+			)}
 
 			{/* ── Formatting ─────────────────────────────────── */}
 			<SettingSection icon={TextSquareIcon} title={t("formatting")}>

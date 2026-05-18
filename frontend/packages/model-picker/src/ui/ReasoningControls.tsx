@@ -27,7 +27,7 @@ const REASONING_TIP =
 const VERBOSITY_TIP =
 	"Control how concise or expansive the model's reply should be. Verbose responses include more detail and reasoning summary.";
 
-const MAX_TOKENS_TIP =
+const RESPONSE_LENGTH_TIP =
 	"Cap the response length. Leave blank to let the model decide based on the request.";
 
 function FieldLabel({ children, tip }: { children: React.ReactNode; tip: string }) {
@@ -109,7 +109,7 @@ export function ReasoningControls({
 			) : null}
 			{showMaxTokens ? (
 				<div className="min-w-0 space-y-1">
-					<FieldLabel tip={MAX_TOKENS_TIP}>Max output tokens</FieldLabel>
+					<FieldLabel tip={RESPONSE_LENGTH_TIP}>Max output tokens</FieldLabel>
 					<div className="flex h-9 items-center gap-1 rounded-sm border border-border bg-surface-secondary/60 px-2">
 						<HugeiconsIcon
 							aria-hidden="true"

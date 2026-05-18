@@ -37,6 +37,12 @@ components:
           model_download_complete: "#/components/schemas/ModelDownloadCompleteEvent"
           audio_level: "#/components/schemas/AudioLevelEvent"
           speaker_segments: "#/components/schemas/SpeakerSegmentsEvent"
+          tts_chunk: "#/components/schemas/TtsChunkEvent"
+          tts_complete: "#/components/schemas/TtsCompleteEvent"
+          tts_failed: "#/components/schemas/TtsFailedEvent"
+          tts_model_download_start: "#/components/schemas/TtsModelDownloadStartEvent"
+          tts_model_download_progress: "#/components/schemas/TtsModelDownloadProgressEvent"
+          tts_model_download_complete: "#/components/schemas/TtsModelDownloadCompleteEvent"
       oneOf:
         - $ref: "#/components/schemas/RealtimeTextEvent"
         - $ref: "#/components/schemas/FullSentenceEvent"
@@ -59,6 +65,12 @@ components:
         - $ref: "#/components/schemas/ModelDownloadCompleteEvent"
         - $ref: "#/components/schemas/AudioLevelEvent"
         - $ref: "#/components/schemas/SpeakerSegmentsEvent"
+        - $ref: "#/components/schemas/TtsChunkEvent"
+        - $ref: "#/components/schemas/TtsCompleteEvent"
+        - $ref: "#/components/schemas/TtsFailedEvent"
+        - $ref: "#/components/schemas/TtsModelDownloadStartEvent"
+        - $ref: "#/components/schemas/TtsModelDownloadProgressEvent"
+        - $ref: "#/components/schemas/TtsModelDownloadCompleteEvent"
 
     SpeakerSegment:
       type: object
@@ -309,6 +321,106 @@ components:
           maximum: 1
           description: Normalized RMS audio level (0.0 to 1.0)
 
+    # ─── TTS events ────────────────────────────────────────────────────
+    # Note: ``tts_chunk`` is also emitted as a binary frame with the JSON
+    # metadata in this shape preceded by a uint32 little-endian length and
+    # followed by the raw float32 PCM payload. Renderer must accept both
+    # binary frames (carries PCM) and JSON frames (carries metadata only,
+    # used when tooling logs the stream).
+
+    TtsChunkEvent:
+      type: object
+      description: >
+        One chunk of synthesized audio. When delivered as a JSON message
+        only, ``samples`` is omitted — the actual PCM rides on a binary
+        WebSocket frame whose JSON header matches this schema.
+      required: [type, request_id, sample_rate, seq, is_final]
+      properties:
+        type:
+          type: string
+          const: tts_chunk
+        request_id:
+          type: string
+          description: Per-synthesis correlation id chosen by the client.
+        sample_rate:
+          type: integer
+          description: Sample rate of the PCM payload (Hz). Kokoro emits 24000.
+        seq:
+          type: integer
+          description: Monotonic sequence number within this request_id, starting at 0.
+        is_final:
+          type: boolean
+          description: True for the last chunk of the request.
+        format:
+          type: string
+          description: Sample format. Currently always "f32le".
+        channels:
+          type: integer
+          description: Channel count. Currently always 1 (mono).
+
+    TtsCompleteEvent:
+      type: object
+      description: Fires once after the final ``tts_chunk`` has been emitted.
+      required: [type, request_id]
+      properties:
+        type:
+          type: string
+          const: tts_complete
+        request_id:
+          type: string
+        cancelled:
+          type: boolean
+          description: True when the run was stopped via ``tts_cancel``.
+        elapsed_ms:
+          type: integer
+          description: Total wall-clock synthesis time in milliseconds.
+
+    TtsFailedEvent:
+      type: object
+      required: [type, request_id, reason]
+      properties:
+        type:
+          type: string
+          const: tts_failed
+        request_id:
+          type: string
+        reason:
+          type: string
+
+    TtsModelDownloadStartEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: tts_model_download_start
+
+    TtsModelDownloadProgressEvent:
+      type: object
+      required: [type, progress]
+      properties:
+        type:
+          type: string
+          const: tts_model_download_progress
+        progress:
+          type: number
+          minimum: 0
+          maximum: 1
+        downloaded_bytes:
+          type: integer
+        total_bytes:
+          type: integer
+
+    TtsModelDownloadCompleteEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: tts_model_download_complete
+        cancelled:
+          type: boolean
+
     # ─── Control Channel Commands (Client → Server) ───────────────────
 
     SetParameterCommand:
@@ -407,6 +519,9 @@ components:
         - smart_endpoint_enabled
         - detection_speed
         - input_device_index
+        - end_of_sentence_detection_pause
+        - mid_sentence_detection_pause
+        - unknown_sentence_detection_pause
 
     AllowedMethod:
       type: string
@@ -661,7 +776,37 @@ components:
           type: number
           minimum: 0.5
           maximum: 3.0
-          description: Detection speed multiplier (higher = faster finalization)
+          description: |
+            Multiplier applied to the smart-endpoint silence pause:
+            `pause = (model_pause + whisper_pause) * smartEndpointSpeed`.
+            HIGHER values mean a LONGER wait before finalizing (more
+            patient — tolerates pauses); lower values commit faster.
+            Default 2.0 matches the RealtimeSTT reference.
+        endOfSentenceDetectionPause:
+          type: number
+          minimum: 0.1
+          maximum: 5.0
+          description: |
+            Seconds of silence after a sentence-terminator (`.`, `!`, `?`) before
+            the recording ends. Used by the toggle-mode silence-timing branch
+            when Smart Endpoint is off. Lower values commit short utterances
+            faster but cut off pauses; higher values tolerate slower speech.
+        midSentenceDetectionPause:
+          type: number
+          minimum: 0.1
+          maximum: 10.0
+          description: |
+            Seconds of silence after a trailing ellipsis (`...`) before the
+            recording ends. The ellipsis is Whisper's "I'm not sure this is
+            complete" hint; this pause gives the speaker time to continue.
+        unknownSentenceDetectionPause:
+          type: number
+          minimum: 0.1
+          maximum: 5.0
+          description: |
+            Seconds of silence after speech without a clear terminator before
+            the recording ends. The fallback when neither sentence-end nor
+            mid-sentence heuristics match.
 
     AudioSettings:
       type: object
@@ -735,6 +880,15 @@ components:
             wake word is heard. After a wake-word trigger the recording ends
             via VAD-based silence detection (same as toggle), then the
             detector resumes waiting for the next utterance.
+        manualToggleStop:
+          type: boolean
+          description: |
+            When `true` and `recordingMode` is `toggle`, the recording runs
+            continuously from first hotkey press to second hotkey press —
+            silence-based VAD stop and silence-timing punctuation tuning are
+            both disabled. One press starts, one press stops, one final
+            transcription. Useful for long-form dictation where natural
+            pauses are common. Ignored in other modes.
         loopbackDeviceIndex:
           type: integer
           nullable: true
@@ -787,20 +941,19 @@ components:
 
     DictionaryEntry:
       type: object
-      required: [id, find, replace]
+      required: [id, term]
+      description: >-
+        A canonical word/name/phrase the user wants Whisper to land on. At
+        post-process time we fuzzy-match each transcribed token against every
+        dictionary term (Jaro-Winkler + Double Metaphone) and replace the
+        closest near-miss with the canonical form. Single column — no manual
+        `find`/`replace`/case/word-boundary controls.
       properties:
         id:
           type: string
-        find:
+        term:
           type: string
-        replace:
-          type: string
-        caseSensitive:
-          type: boolean
-          default: false
-        wholeWord:
-          type: boolean
-          default: false
+          description: The canonical spelling/casing of the term.
 
     SnippetEntry:
       type: object
@@ -1025,6 +1178,16 @@ components:
           format: date-time
         details:
           $ref: "#/components/schemas/OllamaModelDetails"
+        capabilities:
+          type: array
+          description: |
+            Capability strings reported by Ollama's `/api/show` for this
+            model: `completion`, `tools`, `thinking`, `vision`, `insert`.
+            Used by the renderer to badge reasoning-capable models and by
+            the chat-body builder to gate `think: true`. Omitted when the
+            catalog couldn't be enriched (older Ollama, /api/show failed).
+          items:
+            type: string
 
     OllamaLibraryHit:
       type: object

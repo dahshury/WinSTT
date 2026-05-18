@@ -18,13 +18,13 @@ translation key.
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
-from enum import Enum
 
 from src.recorder.domain.errors import DownloadCancelledError
 
 
-class SwapErrorCategory(str, Enum):
+class SwapErrorCategory(enum.StrEnum):
     """Stable codes shared between server and renderer.
 
     The string value is what gets sent over the wire; the renderer
@@ -54,86 +54,104 @@ class SwapErrorInfo:
     technical_detail: str
 
 
-def _network_info(name: str, exc: BaseException) -> SwapErrorInfo:
-    return SwapErrorInfo(
+_NETWORK_MESSAGE = "Couldn't reach the model server. Check your internet connection and try again."
+
+# Message-substring matchers. Each tuple is (needles, category, user_message);
+# the first tuple whose any-needle is a substring of the (lowercased) exception
+# text wins. Driven by a table so the matcher itself stays branch-flat.
+_MESSAGE_RULES: tuple[tuple[tuple[str, ...], SwapErrorCategory, str], ...] = (
+    (
+        ("out of memory", "cuda_out_of_memory", "oom"),
+        SwapErrorCategory.OUT_OF_MEMORY,
+        "Not enough memory to load the model. Try a smaller model, switch to CPU, or close other apps.",
+    ),
+    (
+        ("no space", "enospc", "disk full"),
+        SwapErrorCategory.DISK_FULL,
+        "Not enough disk space to download the model. Free up space and try again.",
+    ),
+    (
+        ("invalidprotobuf", "invalid_protobuf", "protobuf parsing failed"),
+        SwapErrorCategory.MODEL_CORRUPT,
+        "The model file appears corrupted. Delete it from the cache and re-download.",
+    ),
+)
+
+# Exact exception-class-name matchers. Maps a frozenset of class names to the
+# (category, user_message) they classify as.
+_TYPE_NAME_RULES: tuple[tuple[frozenset[str], SwapErrorCategory, str], ...] = (
+    (
+        frozenset(
+            {
+                "ConnectionError",
+                "ConnectTimeout",
+                "ReadTimeout",
+                "Timeout",
+                "NewConnectionError",
+                "MaxRetryError",
+                "SSLError",
+                "HfHubHTTPError",
+            }
+        ),
         SwapErrorCategory.NETWORK,
-        "Couldn't reach the model server. Check your internet connection and try again.",
-        f"{name}: {exc}",
-    )
+        _NETWORK_MESSAGE,
+    ),
+    (
+        frozenset({"LocalEntryNotFoundError"}),
+        SwapErrorCategory.NETWORK,
+        "The model isn't downloaded yet and the server can't be reached. Connect to the internet and try again.",
+    ),
+    (
+        frozenset({"RepositoryNotFoundError", "GatedRepoError", "RevisionNotFoundError"}),
+        SwapErrorCategory.MODEL_NOT_FOUND,
+        "The selected model couldn't be found on Hugging Face. It may have been removed or renamed.",
+    ),
+    (
+        frozenset({"EntryNotFoundError"}),
+        SwapErrorCategory.INCOMPATIBLE_QUANTIZATION,
+        "The requested precision isn't available for this model. Switch quantization to Auto and try again.",
+    ),
+    (
+        frozenset({"PermissionError"}),
+        SwapErrorCategory.PERMISSION_DENIED,
+        "Permission denied while writing the model cache. Check the cache folder's permissions.",
+    ),
+)
+
+
+def _text_matches(text: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in text for needle in needles)
 
 
 def _classify_by_message(name: str, text: str, exc: BaseException) -> SwapErrorInfo | None:
     """Second-pass matcher: inspects the exception *message* for tells
     that the type name alone can't reveal (CUDA OOM, ENOSPC, etc.)."""
-    # CUDA / generic OOM. The torch-free build hands these through ORT,
-    # whose error text includes "out of memory" verbatim.
-    if "out of memory" in text or "cuda_out_of_memory" in text or "oom" in text:
-        return SwapErrorInfo(
-            SwapErrorCategory.OUT_OF_MEMORY,
-            "Not enough memory to load the model. Try a smaller model, switch to CPU, or close other apps.",
-            f"{name}: {exc}",
-        )
-    # ENOSPC may come through as OSError on Windows or PermissionError
-    # depending on the cache path's owner.
-    if "no space" in text or "enospc" in text or "disk full" in text:
-        return SwapErrorInfo(
-            SwapErrorCategory.DISK_FULL,
-            "Not enough disk space to download the model. Free up space and try again.",
-            f"{name}: {exc}",
-        )
-    # ORT's own complaint about a malformed graph.
-    if "invalidprotobuf" in text or "invalid_protobuf" in text or "protobuf parsing failed" in text:
-        return SwapErrorInfo(
-            SwapErrorCategory.MODEL_CORRUPT,
-            "The model file appears corrupted. Delete it from the cache and re-download.",
-            f"{name}: {exc}",
-        )
+    for needles, category, message in _MESSAGE_RULES:
+        if _text_matches(text, needles):
+            return SwapErrorInfo(category, message, f"{name}: {exc}")
     return None
 
 
 def _classify_by_type_name(name: str, exc: BaseException) -> SwapErrorInfo | None:
     """First-pass matcher: exception class name is enough to bucket
     most huggingface_hub / onnxruntime / requests failures."""
-    # Network connectivity / HTTP.
-    if name in {
-        "ConnectionError",
-        "ConnectTimeout",
-        "ReadTimeout",
-        "Timeout",
-        "NewConnectionError",
-        "MaxRetryError",
-        "SSLError",
-    }:
-        return _network_info(name, exc)
-    if name == "LocalEntryNotFoundError":
-        return SwapErrorInfo(
-            SwapErrorCategory.NETWORK,
-            "The model isn't downloaded yet and the server can't be reached. Connect to the internet and try again.",
-            f"{name}: {exc}",
-        )
-    if name == "HfHubHTTPError":
-        return _network_info(name, exc)
-    # Repo / file lookups on Hugging Face.
-    if name in {"RepositoryNotFoundError", "GatedRepoError", "RevisionNotFoundError"}:
-        return SwapErrorInfo(
-            SwapErrorCategory.MODEL_NOT_FOUND,
-            "The selected model couldn't be found on Hugging Face. It may have been removed or renamed.",
-            f"{name}: {exc}",
-        )
-    if name == "EntryNotFoundError":
-        # A *file* within an existing repo isn't there — almost always a
-        # quantization variant the upstream hasn't published.
-        return SwapErrorInfo(
-            SwapErrorCategory.INCOMPATIBLE_QUANTIZATION,
-            "The requested precision isn't available for this model. Switch quantization to Auto and try again.",
-            f"{name}: {exc}",
-        )
-    if name == "PermissionError":
-        return SwapErrorInfo(
-            SwapErrorCategory.PERMISSION_DENIED,
-            "Permission denied while writing the model cache. Check the cache folder's permissions.",
-            f"{name}: {exc}",
-        )
+    for names, category, message in _TYPE_NAME_RULES:
+        if name in names:
+            return SwapErrorInfo(category, message, f"{name}: {exc}")
+    return None
+
+
+def _classify_cancelled(exc: BaseException) -> SwapErrorInfo | None:
+    if isinstance(exc, DownloadCancelledError):
+        return SwapErrorInfo(SwapErrorCategory.CANCELLED, "Model download was cancelled.", str(exc))
+    return None
+
+
+def _first_match(candidates: tuple[SwapErrorInfo | None, ...]) -> SwapErrorInfo | None:
+    """First non-``None`` classification, or ``None`` if none matched."""
+    for info in candidates:
+        if info is not None:
+            return info
     return None
 
 
@@ -145,23 +163,17 @@ def classify_swap_error(exc: BaseException) -> SwapErrorInfo:
     exceptions are matched by stable class name so this stays usable
     even when the underlying library version bumps.
     """
-    if isinstance(exc, DownloadCancelledError):
-        return SwapErrorInfo(
-            SwapErrorCategory.CANCELLED,
-            "Model download was cancelled.",
-            str(exc),
-        )
-
     name = type(exc).__name__
     text = str(exc).lower()
-
-    info = _classify_by_type_name(name, exc)
-    if info is not None:
-        return info
-    info = _classify_by_message(name, text, exc)
-    if info is not None:
-        return info
-
+    matched = _first_match(
+        (
+            _classify_cancelled(exc),
+            _classify_by_type_name(name, exc),
+            _classify_by_message(name, text, exc),
+        )
+    )
+    if matched is not None:
+        return matched
     return SwapErrorInfo(
         SwapErrorCategory.UNKNOWN,
         f"Model load failed ({name}). See the server log for details.",

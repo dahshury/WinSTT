@@ -2,30 +2,31 @@
 
 import {
 	AiBeautifyIcon,
+	ArrowTurnBackwardIcon,
 	AudioWave02Icon,
 	BarChartIcon,
 	DashboardCircleIcon,
 	EarIcon,
-	FileMusicIcon,
 	GridIcon,
 	Mic01Icon,
 	PowerSocket01Icon,
 	RadialIcon,
-	RefreshIcon,
 	ToggleOnIcon,
 	TouchInteraction01Icon,
 	VoiceIcon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import type { IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { isVisualizerType } from "@/features/audio-visualizer";
 import { useLoopbackDevices } from "@/features/listen-mode";
+import { SoundLibrary } from "@/features/recording-sound";
 import { RECORDING_MODE_COLOR_HEX } from "@/shared/config/recording-mode-color";
 import { isLocale, LOCALE_NAMES, LOCALES, type Locale, useLocaleStore } from "@/shared/i18n";
 import { Button } from "@/shared/ui/button";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
+import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
@@ -33,10 +34,6 @@ import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
-import { Tooltip } from "@/shared/ui/tooltip";
-import { useSoundFileDrop } from "../lib/use-sound-file-drop";
-
-const MAX_DURATION_SECONDS = 3;
 
 const LOCALE_BADGE: Record<Locale, string> = {
 	en: "EN",
@@ -123,9 +120,10 @@ function buildRecordingModeOptions(t: GeneralT): readonly {
 	] as const;
 }
 
-// Porcupine's free built-in keywords — the only words usable without a
-// picovoice access key. The wake-word picker is constrained to this list
-// because anything else fails at server boot.
+// Porcupine's free built-in keywords — usable without an access key on the
+// 1.9.x line we pin in server/pyproject.toml. The 2.0+ Porcupine line
+// requires a Picovoice signup for every user including free tier, which is
+// why we don't upgrade.
 const PORCUPINE_FREE_KEYWORDS = [
 	"alexa",
 	"americano",
@@ -143,8 +141,106 @@ const PORCUPINE_FREE_KEYWORDS = [
 	"terminator",
 ] as const;
 
+// openWakeWord's bundled pre-trained models (downloaded on first server
+// start to ~/.cache/openwakeword/). The strings match the model short
+// names openWakeWord's `Model(wakeword_models=[...])` accepts and what
+// the server's `--openwakeword_model_paths` flag forwards verbatim.
+const OPENWAKEWORD_KEYWORDS = [
+	"alexa",
+	"hey_jarvis",
+	"hey_mycroft",
+	"hey_rhasspy",
+	"timer",
+	"weather",
+] as const;
+
+type WakeWordEngine = "porcupine" | "openwakeword" | "composite";
+
+// Single source of truth for which engine handles each keyword. Keywords
+// supported by both engines run as a composite (both must agree → highest
+// accuracy); single-engine keywords route to whichever engine knows them.
+// This mirrors the renderer-side decision in electron/ipc/stt-process.ts
+// `wakeWordBackendFor` — keep the two lists in sync.
+function engineForKeyword(word: string): WakeWordEngine {
+	const inPorc = (PORCUPINE_FREE_KEYWORDS as readonly string[]).includes(word);
+	const inOww = (OPENWAKEWORD_KEYWORDS as readonly string[]).includes(word);
+	if (inPorc && inOww) {
+		return "composite";
+	}
+	if (inOww) {
+		return "openwakeword";
+	}
+	return "porcupine";
+}
+
+// Pretty label for openWakeWord's underscore-separated model names. The
+// stored value stays underscored so the CLI flag matches openWakeWord's
+// expected model identifiers; only the dropdown label spaces it out.
+function formatWakeWordLabel(word: string): string {
+	return word.replace(/_/g, " ");
+}
+
+// Union of all engines' keywords, deduplicated, "alexa" once. Sorted so the
+// shared-keywords (composite mode, highest accuracy) come first under a
+// visual divider implemented via the badge — those are the recommended picks.
+function buildUnifiedWakeWordList(): readonly string[] {
+	const all = new Set<string>([...PORCUPINE_FREE_KEYWORDS, ...OPENWAKEWORD_KEYWORDS]);
+	const sortKey = (w: string): number => {
+		const engine = engineForKeyword(w);
+		if (engine === "composite") {
+			return 0;
+		}
+		if (engine === "porcupine") {
+			return 1;
+		}
+		return 2;
+	};
+	return [...all].toSorted((a, b) => sortKey(a) - sortKey(b) || a.localeCompare(b));
+}
+
+const ALL_WAKE_WORDS = buildUnifiedWakeWordList();
+const DEFAULT_WAKE_WORD = "alexa";
+
+function engineBadge(engine: WakeWordEngine): string {
+	if (engine === "composite") {
+		return "2x";
+	}
+	if (engine === "openwakeword") {
+		return "OWW";
+	}
+	return "PVP";
+}
+
 function buildWakeWordOptions(): SelectOption[] {
-	return PORCUPINE_FREE_KEYWORDS.map((word) => ({ id: word, label: word }));
+	return ALL_WAKE_WORDS.map((word) => ({
+		id: word,
+		label: formatWakeWordLabel(word),
+		badge: engineBadge(engineForKeyword(word)),
+	}));
+}
+
+// Snap the stored value to a valid keyword when entering wakeword mode for
+// the first time (or after a settings migration left it dangling). Anything
+// already in the unified list stays as-is so users keep their pick.
+function reconcileWakeWord(currentWord: string | undefined): string {
+	if (currentWord && ALL_WAKE_WORDS.includes(currentWord)) {
+		return currentWord;
+	}
+	return DEFAULT_WAKE_WORD;
+}
+
+function recordingModePatch(
+	value: "ptt" | "toggle" | "listen" | "wakeword",
+	currentWakeWord: string | undefined
+): Partial<GeneralSettings> {
+	if (value !== "wakeword") {
+		return { recordingMode: value };
+	}
+	const reconciled = reconcileWakeWord(currentWakeWord);
+	if (reconciled === currentWakeWord) {
+		return { recordingMode: value };
+	}
+	return { recordingMode: value, wakeWord: reconciled };
 }
 
 function pickLocale(value: string, setLocale: (locale: Locale) => void): void {
@@ -249,7 +345,7 @@ function MuteSystemAudioControl({
 			tooltip={t("muteSystemAudioTooltip")}
 		>
 			{enabled ? (
-				<ElevatedSurface className="px-3 py-3">
+				<ElevatedSurface className="p-3">
 					<Slider
 						aria-label={t("muteSystemAudio")}
 						formatValue={(v) => reductionStepLabel(indexToReduction(v), t)}
@@ -294,18 +390,12 @@ function SpeakerDiarizationControl({
 
 interface RecordingSectionProps {
 	currentLoopbackId: string;
-	dragOver: boolean;
-	dropError: string | null;
 	general: GeneralSettings | undefined;
-	handleBrowse: () => void;
 	handleLoopbackChange: (value: string) => void;
-	handleReset: () => void;
-	handlers: ReturnType<typeof useSoundFileDrop>["handlers"];
 	isListenMode: boolean;
 	loopbackOpts: SelectOption[];
 	recordingMode: "ptt" | "toggle" | "listen" | "wakeword";
 	recordingSoundEnabled: boolean;
-	recordingSoundPath: string;
 	t: GeneralT;
 	tc: CommonT;
 	update: UpdateFn;
@@ -315,6 +405,45 @@ interface WakeWordControlProps {
 	t: GeneralT;
 	update: UpdateFn;
 	value: string;
+}
+
+interface WakeWordSensitivityControlProps {
+	t: GeneralT;
+	update: UpdateFn;
+	value: number;
+}
+
+interface WakeWordTimeoutControlProps {
+	t: GeneralT;
+	update: UpdateFn;
+	value: number;
+}
+
+interface ManualToggleStopControlProps {
+	enabled: boolean;
+	t: GeneralT;
+	update: UpdateFn;
+}
+
+// "Stop only on hotkey press" — surfaces under the toggle-mode option only.
+// Flips silence_endpoint_enabled and silence_timing off on the server so a
+// toggle-mode session runs continuously from first press to second press,
+// fixing the mid-speech cutoff users hit when their voice goes soft.
+function ManualToggleStopControl({ enabled, t, update }: ManualToggleStopControlProps): ReactNode {
+	return (
+		<FormControl
+			caption={t("manualToggleStopCaption")}
+			label={t("manualToggleStop")}
+			labelAddon={
+				<Toggle
+					aria-label={t("manualToggleStop")}
+					checked={enabled}
+					onCheckedChange={(v) => update({ manualToggleStop: v })}
+				/>
+			}
+			tooltip={t("manualToggleStopTooltip")}
+		/>
+	);
 }
 
 function WakeWordControl({ t, value, update }: WakeWordControlProps): ReactNode {
@@ -337,6 +466,65 @@ function WakeWordControl({ t, value, update }: WakeWordControlProps): ReactNode 
 	);
 }
 
+// Sensitivity slider — 0 to 1 in 0.05 steps. The slider works in integer
+// step-index space so its `onChange` lands on exact tenths/twentieths
+// (avoids floating-point drift like 0.30000004 reaching the server).
+const SENSITIVITY_STEPS = 20;
+function sensitivityFromIndex(idx: number): number {
+	return Math.round((idx / SENSITIVITY_STEPS) * 100) / 100;
+}
+function sensitivityToIndex(value: number): number {
+	return Math.round(value * SENSITIVITY_STEPS);
+}
+
+function WakeWordSensitivityControl({
+	t,
+	value,
+	update,
+}: WakeWordSensitivityControlProps): ReactNode {
+	return (
+		<FormControl
+			caption={t("wakeWordSensitivityCaption")}
+			label={t("wakeWordSensitivity")}
+			tooltip={t("wakeWordSensitivityTooltip")}
+		>
+			<ElevatedSurface className="p-3">
+				<Slider
+					aria-label={t("wakeWordSensitivity")}
+					formatValue={(idx) => sensitivityFromIndex(idx).toFixed(2)}
+					max={SENSITIVITY_STEPS}
+					min={0}
+					onChange={(idx) => update({ wakeWordSensitivity: sensitivityFromIndex(idx) })}
+					step={1}
+					value={sensitivityToIndex(value)}
+				/>
+			</ElevatedSurface>
+		</FormControl>
+	);
+}
+
+function WakeWordTimeoutControl({ t, value, update }: WakeWordTimeoutControlProps): ReactNode {
+	return (
+		<FormControl
+			caption={t("wakeWordTimeoutCaption")}
+			label={t("wakeWordTimeout")}
+			tooltip={t("wakeWordTimeoutTooltip")}
+		>
+			<ElevatedSurface className="p-3">
+				<Slider
+					aria-label={t("wakeWordTimeout")}
+					formatValue={(v) => `${v}s`}
+					max={30}
+					min={1}
+					onChange={(v) => update({ wakeWordTimeout: v })}
+					step={1}
+					value={value}
+				/>
+			</ElevatedSurface>
+		</FormControl>
+	);
+}
+
 function RecordingSection({
 	t,
 	tc,
@@ -348,12 +536,6 @@ function RecordingSection({
 	currentLoopbackId,
 	handleLoopbackChange,
 	recordingSoundEnabled,
-	recordingSoundPath,
-	dragOver,
-	dropError,
-	handlers,
-	handleBrowse,
-	handleReset,
 }: RecordingSectionProps): ReactNode {
 	const recordingModeOptions = buildRecordingModeOptions(t);
 	return (
@@ -370,12 +552,19 @@ function RecordingSection({
 					<ElevatedSurface>
 						<Switcher
 							fullWidth
-							onChange={(v) => update({ recordingMode: v })}
+							onChange={(v) => update(recordingModePatch(v, general?.wakeWord))}
 							options={recordingModeOptions}
 							value={recordingMode}
 						/>
 					</ElevatedSurface>
 				</FormControl>
+				{recordingMode === "toggle" ? (
+					<ManualToggleStopControl
+						enabled={general?.manualToggleStop ?? false}
+						t={t}
+						update={update}
+					/>
+				) : null}
 				{recordingMode === "listen" ? (
 					<LoopbackControl
 						currentLoopbackId={currentLoopbackId}
@@ -385,9 +574,17 @@ function RecordingSection({
 					/>
 				) : null}
 				{recordingMode === "wakeword" ? (
-					<WakeWordControl t={t} update={update} value={general?.wakeWord ?? ""} />
+					<>
+						<WakeWordControl t={t} update={update} value={general?.wakeWord ?? ""} />
+						<WakeWordSensitivityControl
+							t={t}
+							update={update}
+							value={general?.wakeWordSensitivity ?? 0.6}
+						/>
+						<WakeWordTimeoutControl t={t} update={update} value={general?.wakeWordTimeout ?? 5} />
+					</>
 				) : null}
-				{recordingMode === "toggle" ? (
+				{recordingMode === "listen" ? (
 					<SpeakerDiarizationControl
 						enabled={general?.speakerDiarization ?? false}
 						t={t}
@@ -413,127 +610,18 @@ function RecordingSection({
 							}
 						/>
 						{recordingSoundEnabled ? (
-							<SoundFileControl
-								dragOver={dragOver}
-								dropError={dropError}
-								handleBrowse={handleBrowse}
-								handleReset={handleReset}
-								handlers={handlers}
-								recordingSoundPath={recordingSoundPath}
-								t={t}
-								tc={tc}
-							/>
+							<FormControl
+								caption={t("soundLibraryCaption")}
+								label={t("soundLibrary")}
+								tooltip={t("soundLibraryTooltip")}
+							>
+								<SoundLibrary t={t} tCommon={tc} />
+							</FormControl>
 						) : null}
 					</>
 				)}
 			</div>
 		</SettingSection>
-	);
-}
-
-interface SoundFileControlProps {
-	dragOver: boolean;
-	dropError: string | null;
-	handleBrowse: () => void;
-	handleReset: () => void;
-	handlers: ReturnType<typeof useSoundFileDrop>["handlers"];
-	recordingSoundPath: string;
-	t: GeneralT;
-	tc: CommonT;
-}
-
-function dropZoneClass(dragOver: boolean): string {
-	// Shares the ElevatedSurface vocabulary (surface-3 tint, hairline ring,
-	// shadow-elevated) with the rest of the General tab — but keeps a dashed
-	// border because the zone has to *read* as droppable. Drag-over lights up
-	// the accent ring + a subtle scale.
-	const stateful = dragOver
-		? "border-accent/70 bg-accent/8 ring-2 ring-accent/40 scale-[1.01]"
-		: "border-divider-strong bg-surface-3 ring-1 ring-divider shadow-elevated hover:border-accent/40";
-	return `relative flex flex-col items-center gap-3 rounded-lg border-2 border-dashed px-4 py-5 text-center transition-[transform,background-color,border-color,box-shadow] duration-200 ease-out ${stateful}`;
-}
-
-function displaySoundPath(recordingSoundPath: string, t: GeneralT): string {
-	return recordingSoundPath || t("soundFileDefault");
-}
-
-interface DropErrorMessageProps {
-	dropError: string | null;
-}
-
-function DropErrorMessage({ dropError }: DropErrorMessageProps): ReactNode {
-	if (!dropError) {
-		return null;
-	}
-	return <p className="mt-2 text-center text-error text-xs-tight">{dropError}</p>;
-}
-
-function SoundFileControl({
-	t,
-	tc,
-	dragOver,
-	dropError,
-	recordingSoundPath,
-	handlers,
-	handleBrowse,
-	handleReset,
-}: SoundFileControlProps): ReactNode {
-	const hasCustomSound = recordingSoundPath.length > 0;
-	const pathLabel = displaySoundPath(recordingSoundPath, t);
-	return (
-		<FormControl
-			caption={t("soundFileCaption", { max: MAX_DURATION_SECONDS })}
-			label={t("soundFile")}
-			tooltip={t("soundFileTooltip")}
-		>
-			{/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: drop zone surface needs drag events */}
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: drop zone surface needs drag events */}
-			<div
-				className={dropZoneClass(dragOver)}
-				onDragLeave={handlers.onDragLeave}
-				onDragOver={handlers.onDragOver}
-				onDrop={handlers.onDrop}
-			>
-				<div className="flex size-10 items-center justify-center rounded-full bg-surface-3 text-accent ring-1 ring-divider">
-					<HugeiconsIcon icon={FileMusicIcon} size={18} />
-				</div>
-				<div className="flex min-w-0 flex-col items-center gap-0.5">
-					<span
-						className="max-w-full truncate font-medium text-body text-foreground"
-						title={pathLabel}
-					>
-						{pathLabel}
-					</span>
-					<span className="text-foreground-dim text-xs-tight">
-						{t("soundFileCaption", { max: MAX_DURATION_SECONDS })}
-					</span>
-				</div>
-				<div className="mt-1 flex items-center gap-2">
-					<Tooltip content={tc("browse")}>
-						<Button
-							aria-label={tc("browse")}
-							className="rounded-md border border-divider bg-surface-3 px-3 py-1.5 font-medium text-body-sm text-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-surface-4 active:scale-[0.98]"
-							onClick={handleBrowse}
-						>
-							{tc("browse")}
-						</Button>
-					</Tooltip>
-					{hasCustomSound ? (
-						<Tooltip content={tc("reset")}>
-							<Button
-								aria-label={tc("reset")}
-								className="inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-1.5 text-body-sm text-foreground-muted transition-[background-color,color,transform] duration-150 ease-out hover:bg-surface-3 hover:text-foreground active:scale-[0.98]"
-								onClick={handleReset}
-							>
-								<HugeiconsIcon icon={RefreshIcon} size={13} />
-								{tc("reset")}
-							</Button>
-						</Tooltip>
-					) : null}
-				</div>
-			</div>
-			<DropErrorMessage dropError={dropError} />
-		</FormControl>
 	);
 }
 
@@ -617,6 +705,38 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 	);
 }
 
+function ResetSection(): ReactNode {
+	const resetSettings = useSettingsStore((s) => s.resetSettings);
+	const ts = useTranslations("settings");
+	const tc = useTranslations("common");
+	const [confirmOpen, setConfirmOpen] = useState(false);
+
+	return (
+		<SettingSection
+			description={ts("resetDescription")}
+			icon={ArrowTurnBackwardIcon}
+			title={ts("resetDefaults")}
+		>
+			<ConfirmDialog
+				confirmLabel={ts("resetConfirm")}
+				description={ts("resetDescription")}
+				onConfirm={resetSettings}
+				onOpenChange={setConfirmOpen}
+				open={confirmOpen}
+				title={ts("resetTitle")}
+			/>
+			<div className="flex justify-end">
+				<Button
+					className="h-8 rounded-md border border-error/40 bg-error/10 px-4 font-medium text-body text-error transition-colors duration-150 hover:bg-error/20"
+					onClick={() => setConfirmOpen(true)}
+				>
+					{tc("reset")}
+				</Button>
+			</div>
+		</SettingSection>
+	);
+}
+
 export function GeneralSettingsPanel() {
 	const general = useSettingsStore((s) => s.settings.general);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
@@ -635,13 +755,7 @@ export function GeneralSettingsPanel() {
 		handleChange: handleLoopbackChange,
 	} = useLoopbackDevices();
 
-	const { dragOver, dropError, handlers, handleBrowse, handleReset } = useSoundFileDrop({
-		update,
-		t,
-	});
-
 	const recordingSoundEnabled = general?.recordingSound ?? true;
-	const recordingSoundPath = general?.recordingSoundPath ?? "";
 
 	return (
 		<div className="flex flex-col gap-2">
@@ -654,23 +768,18 @@ export function GeneralSettingsPanel() {
 			/>
 			<RecordingSection
 				currentLoopbackId={currentLoopbackId}
-				dragOver={dragOver}
-				dropError={dropError}
 				general={general}
-				handleBrowse={handleBrowse}
 				handleLoopbackChange={handleLoopbackChange}
-				handleReset={handleReset}
-				handlers={handlers}
 				isListenMode={isListenMode}
 				loopbackOpts={loopbackOpts}
 				recordingMode={recordingMode}
 				recordingSoundEnabled={recordingSoundEnabled}
-				recordingSoundPath={recordingSoundPath}
 				t={t}
 				tc={tc}
 				update={update}
 			/>
 			<StartupSection general={general} t={t} update={update} />
+			<ResetSection />
 		</div>
 	);
 }
@@ -968,7 +1077,7 @@ function VisualizerBarCountControl({
 			label={t("visualizerBarCount")}
 			tooltip={t("visualizerBarCountTooltip")}
 		>
-			<ElevatedSurface className="px-3 py-3">
+			<ElevatedSurface className="p-3">
 				<Slider
 					aria-label={t("visualizerBarCount")}
 					max={21}
@@ -1037,8 +1146,19 @@ export const __general_settings_panel_test_helpers__ = {
 	checkedOrFalseIfDisabled,
 	pickVisualizerType,
 	isBarVisualizer,
-	dropZoneClass,
-	displaySoundPath,
 	readBoolFlag,
 	readStartupFlags,
+	recordingModePatch,
+	reconcileWakeWord,
+	engineForKeyword,
+	engineBadge,
+	formatWakeWordLabel,
+	buildWakeWordOptions,
+	buildUnifiedWakeWordList,
+	sensitivityFromIndex,
+	sensitivityToIndex,
+	DEFAULT_WAKE_WORD,
+	PORCUPINE_FREE_KEYWORDS,
+	OPENWAKEWORD_KEYWORDS,
+	ALL_WAKE_WORDS,
 };

@@ -26,6 +26,13 @@ interface DayStat {
 	words: number;
 }
 
+function formatEntryTime(timestamp: number): string {
+	return new Date(timestamp).toLocaleTimeString(undefined, {
+		hour: "2-digit",
+		minute: "2-digit",
+	});
+}
+
 const EMPTY_CLASS = "bg-surface-elevated";
 const VARIANT_CLASSES: string[] = [
 	"bg-teal/20 hover:bg-teal/20 text-foreground",
@@ -218,10 +225,7 @@ export function ActivityHeatmap({ entries }: ActivityHeatmapProps) {
 								key={entry.id}
 							>
 								<span className="shrink-0 font-mono text-foreground-muted">
-									{new Date(entry.timestamp).toLocaleTimeString(undefined, {
-										hour: "2-digit",
-										minute: "2-digit",
-									})}
+									{formatEntryTime(entry.timestamp)}
 								</span>
 								<span className="min-w-0 flex-1 truncate text-foreground-secondary">
 									{entry.text}

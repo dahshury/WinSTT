@@ -40,8 +40,14 @@ export function rowHint(
 	const reqLabel = formatBytes(assessment.required_bytes, { minUnit: "MB" }) ?? "?";
 	const availLabel = formatBytes(assessment.available_bytes, { minUnit: "MB" }) ?? "?";
 	const target = assessment.target;
-	const targetLabel =
-		target === "gpu" ? t("targetGpu") : target === "cpu" ? t("targetCpu") : t("targetNeither");
+	let targetLabel: string;
+	if (target === "gpu") {
+		targetLabel = t("targetGpu");
+	} else if (target === "cpu") {
+		targetLabel = t("targetCpu");
+	} else {
+		targetLabel = t("targetNeither");
+	}
 	if (assessment.severity === "ok") {
 		return t("rowHintOk", { req: reqLabel, target: targetLabel });
 	}

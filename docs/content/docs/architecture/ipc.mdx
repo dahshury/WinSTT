@@ -93,6 +93,57 @@ Arrows indicate direction: **main -> renderer** for events pushed to the UI, **r
 | `file:transcription-complete` | main -> renderer | File transcription finished |
 | `file:transcription-error` | main -> renderer | File transcription failed |
 
+## LLM (handled by `llm.ts`)
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `llm:process-text` | renderer -> main | Run LLM text processing for dictation or a custom transform |
+| `llm:ollama-scan` | renderer -> main | Scan the local Ollama model catalog |
+| `llm:ollama-pull` | renderer -> main | Pull an Ollama model |
+| `llm:ollama-delete` | renderer -> main | Delete an Ollama model |
+| `llm:openrouter-models` | renderer -> main | List available OpenRouter (cloud) models |
+| `llm:warmup-status` | main -> renderer | LLM warm-up progress / readiness |
+
+## Transforms (handled by `transforms.ts`, `transform-hotkeys.ts`)
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `transform:apply` | renderer -> main | Apply a custom LLM transform to the current selection |
+| `transform:preview` | renderer -> main | Preview a transform without replacing text |
+| `transform-hotkey:register` | renderer -> main | Register a custom-transform hotkey |
+| `transform-hotkey:triggered` | main -> renderer | A registered transform hotkey fired |
+
+## TTS (handled by `tts.ts`, `tts-hotkey.ts`)
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `tts:synthesize` | renderer -> main | Synthesize speech from text (Kokoro) |
+| `tts:audio-chunk` | main -> renderer | Streamed synthesized audio chunk |
+| `tts:speak-selection` | renderer -> main | Speak the current text selection |
+| `tts-hotkey:register` | renderer -> main | Register the speak-selection hotkey |
+
+## Transcription History (handled by `transcription-history.ts`)
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `history:append` | renderer -> main | Append a transcription entry to history |
+| `history:list` | renderer -> main | List stored history entries |
+| `history:clear` | renderer -> main | Clear all history |
+
+## Overlay (handled by `overlay.ts`)
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `overlay:create` | renderer -> main | Create / position the floating recording overlay window |
+| `overlay:sync-state` | main -> renderer | Sync recorder state into the overlay |
+
+## Diagnostics (handled by `diag-bundle.ts`)
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `diag:generate-bundle` | renderer -> main | Generate a diagnostics bundle (logs, config, system info) |
+| `diag:save-bundle` | renderer -> main | Save the bundle via a native save dialog |
+
 ## Dialog
 
 | Channel | Direction | Description |

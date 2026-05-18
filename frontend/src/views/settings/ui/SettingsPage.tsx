@@ -32,12 +32,13 @@ import { ModelSettingsPanel } from "@/widgets/model-settings";
 import { QualitySettingsPanel } from "@/widgets/quality-settings";
 import { SnippetsSettingsPanel } from "@/widgets/snippets-settings";
 import { TranscriptionHistoryPanel } from "@/widgets/transcription-history-settings";
+import { TtsModelSection } from "@/widgets/tts-settings";
 import { SettingsSidebar, type SidebarLink } from "./SettingsSidebar";
 
 const llmSettingsSlot = <LlmSettingsPanel />;
+const ttsSettingsSlot = <TtsModelSection />;
 
 export function SettingsPage() {
-	const resetSettings = useSettingsStore((s) => s.resetSettings);
 	const isLoaded = useSettingsStore((s) => s.isLoaded);
 	useSyncSettings();
 	// Mount the model-download IPC listener here so the dictation model
@@ -151,7 +152,7 @@ export function SettingsPage() {
 						defaultValue="general"
 						orientation="vertical"
 					>
-						<SettingsSidebar links={links} onReset={resetSettings} />
+						<SettingsSidebar links={links} />
 						{/* Content viewport — lifts to surface-2 so section cards (offset 2) read at surface-4 */}
 						<Elevated className="flex-1 overflow-hidden" offset={1} shadowLevel={1}>
 							<ScrollArea className="h-full w-full" viewportClassName="p-4">
@@ -159,7 +160,7 @@ export function SettingsPage() {
 									<GeneralSettingsPanel />
 								</Tabs.Panel>
 								<Tabs.Panel value="model">
-									<ModelSettingsPanel llmSlot={llmSettingsSlot} />
+									<ModelSettingsPanel llmSlot={llmSettingsSlot} ttsSlot={ttsSettingsSlot} />
 								</Tabs.Panel>
 								<Tabs.Panel value="audio">
 									<AudioSettingsPanel />

@@ -131,6 +131,12 @@ function ModelModalityIconsImpl({
 	}
 
 	const isSmall = size === "sm";
+	const sizeClass = (() => {
+		if (flat) {
+			return isSmall ? "size-4" : "size-5";
+		}
+		return isSmall ? "size-4 p-0.5" : "size-5 p-0.5";
+	})();
 	return (
 		<div className={cn("flex items-center gap-0.5", className)}>
 			{chips.map(({ key, config }) => (
@@ -149,7 +155,7 @@ function ModelModalityIconsImpl({
 												config.textClass,
 												config.borderClass
 											),
-									flat ? (isSmall ? "size-4" : "size-5") : isSmall ? "size-4 p-0.5" : "size-5 p-0.5"
+									sizeClass
 								)}
 							>
 								{isSmall ? config.iconSm : config.icon}

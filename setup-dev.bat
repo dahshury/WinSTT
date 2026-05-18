@@ -65,11 +65,12 @@ if not exist "%~dp0examples\onnx-asr\pyproject.toml" (
 )
 
 :: ── Install server deps ────────────────────────
-echo  [4/5] Installing server dependencies (Python 3.11 + packages)...
-echo  This may take several minutes on first run (downloads PyTorch ~2.4 GB).
+echo  [4/5] Installing server dependencies (Python 3.11 + ONNX packages)...
+echo  Installing the CPU runtime by default. For NVIDIA GPU acceleration,
+echo  re-run later with: cd server ^&^& uv sync --extra gpu
 echo.
 pushd "%~dp0server"
-uv sync
+uv sync --extra cpu
 if %errorlevel% neq 0 (
     echo  [ERROR] Server dependency installation failed.
     popd

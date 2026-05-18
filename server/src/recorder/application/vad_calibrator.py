@@ -94,10 +94,16 @@ class VADCalibrator:
         self._collecting = True
         self._pending_stats = None
 
+    @staticmethod
+    def _chunk_bytes(event: RecorderEvent) -> bytes:
+        if isinstance(event, AudioChunkRecorded):
+            return event.chunk
+        return b""
+
     def _on_chunk(self, event: RecorderEvent) -> None:
         if not self._collecting:
             return
-        chunk = event.chunk if isinstance(event, AudioChunkRecorded) else b""
+        chunk = self._chunk_bytes(event)
         if not chunk:
             return
         samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
@@ -113,15 +119,23 @@ class VADCalibrator:
         peak = float(np.percentile(self._rms_samples, self.SPEECH_PEAK_PCT))
         self._pending_stats = (noise, peak)
 
+    @staticmethod
+    def _transcribed_text(event: RecorderEvent) -> str:
+        if isinstance(event, TranscriptionCompleted):
+            return event.text
+        return ""
+
     def _on_transcription_completed(self, event: RecorderEvent) -> None:
         stats = self._pending_stats
         self._pending_stats = None
         if stats is None:
             return
-        text = event.text if isinstance(event, TranscriptionCompleted) else ""
-        if not text.strip():
+        if not self._transcribed_text(event).strip():
             return
-        noise, peak = stats
+        self._adapt_from_stats(*stats)
+
+    def _adapt_from_stats(self, noise: float, peak: float) -> None:
+        """Blend a fresh SNR-derived target into the live sensitivity."""
         target = self._target_from_snr(noise, peak)
         current = self._get()
         blended = self.EMA_ALPHA * target + (1.0 - self.EMA_ALPHA) * current
@@ -147,9 +161,17 @@ class VADCalibrator:
         (quiet room) maps to the permissive end so quieter speech still
         trips the gate.
         """
-        if noise <= 0.0 or peak <= 0.0 or peak <= noise:
+        if not cls._has_usable_snr(noise, peak):
             return cls.MIN_SENSITIVITY
         snr_db = 20.0 * math.log10(peak / noise)
+        return cls._sensitivity_for_snr_db(snr_db)
+
+    @staticmethod
+    def _has_usable_snr(noise: float, peak: float) -> bool:
+        return noise > 0.0 and peak > 0.0 and peak > noise
+
+    @classmethod
+    def _sensitivity_for_snr_db(cls, snr_db: float) -> float:
         if snr_db <= cls.LOW_SNR_DB:
             return cls.MIN_SENSITIVITY
         if snr_db >= cls.HIGH_SNR_DB:

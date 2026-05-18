@@ -1,11 +1,11 @@
 ---
 title: Whisper Models
-description: OpenAI Whisper models via faster-whisper backend
+description: OpenAI Whisper and Lite-Whisper via the ONNX engine
 ---
 
-Whisper is OpenAI's general-purpose speech recognition model. WinSTT runs Whisper through the faster-whisper backend (CTranslate2), which provides significant speed improvements over the original PyTorch implementation.
+Whisper is OpenAI's general-purpose speech recognition model. WinSTT runs Whisper through the `onnx-asr` ONNX engine — **not** CTranslate2/faster-whisper. The old faster-whisper backend has been removed; every Whisper model now runs on the same ONNX Runtime engine as all other families.
 
-All Whisper models support realtime transcription and use the `faster_whisper` backend.
+All Whisper models support realtime transcription.
 
 ## Multilingual Models
 
@@ -17,9 +17,7 @@ These models support automatic language detection and transcription in dozens of
 | `base` | 74M | Slightly more accurate than tiny |
 | `small` | 244M | Balanced speed and accuracy |
 | `medium` | 769M | High accuracy for most use cases |
-| `large-v1` | 1.5B | First large model release |
-| `large-v2` | 1.5B | Default model. Best quality/speed balance |
-| `large-v3` | 1.5B | Latest architecture revision |
+| `large-v3` | 1.5B | Latest full-size model. Highest accuracy |
 | `large-v3-turbo` | 809M | Faster large model with fewer parameters |
 
 ## English-Only Models
@@ -33,6 +31,24 @@ English-only models skip the language detection step and are slightly more accur
 | `small.en` | 244M |
 | `medium.en` | 769M |
 
+## Lite-Whisper
+
+Lite-Whisper models are compressed derivatives of `large-v3-turbo`. They are multilingual and support realtime transcription.
+
+| Model | Notes |
+|-------|-------|
+| `lite-whisper-large-v3-turbo` | Balanced compression |
+| `lite-whisper-large-v3-turbo-fast` | Faster, smaller |
+| `lite-whisper-large-v3-turbo-acc` | The `-acc` suffix means **accelerated**, not "accurate" |
+
+## Precision
+
+Whisper precision is set per-model via `onnxQuantization` (see [Compute Types](/docs/models/compute-types)):
+
+- Most Whisper models (`tiny`, `base`, `small`, `medium`, `large-v3-turbo`, and the `.en` variants): `""` (default), `fp16`, `q4`, `bnb4`
+- `large-v3`: default precision only (`""`)
+- Lite-Whisper variants: `""` (default), `fp16`
+
 <Callout title="Recommended configuration" type="info">
-  Use `large-v2` as your main model for the best balance of accuracy and speed. Pair it with `tiny` or `base` as the realtime model for responsive live preview. If you only transcribe English, the `.en` variants offer a small accuracy boost for the realtime model.
+  Use `large-v3-turbo` (or another large-class model) as your main model for the best balance of accuracy and speed. Pair it with `tiny` or `base` as the realtime model for responsive live preview. If you only transcribe English, the `.en` variants offer a small accuracy boost for the realtime model.
 </Callout>

@@ -96,7 +96,7 @@ function OverlayLineText({ item }: { item: TranscriptionItem }) {
 		<>
 			{chunks.map((chunk, i) => (
 				<span
-					key={`${item.id}-${chunk.speaker}-${i}`}
+					key={`${item.id}-${chunk.speaker}-${chunk.text.slice(0, 16)}-${i}`}
 					style={{ color: colorForSpeaker(chunk.speaker) }}
 				>
 					{i > 0 ? " " : ""}

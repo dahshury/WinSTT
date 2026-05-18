@@ -74,26 +74,37 @@ describe("preset-prompts", () => {
 		}
 	});
 
-	test("buildSystemPrompt returns neutral fallback for empty array", () => {
-		expect(buildSystemPrompt([])).toBe(getPresetPrompt("neutral"));
+	test("buildSystemPrompt includes the neutral preset body for empty array", () => {
+		// The system prompt now wraps every preset body with a trailing
+		// reminder that the model should output ONLY the transformed text.
+		// The structural guarantee comes from Ollama's `format` schema; the
+		// reminder just keeps the model from putting reasoning INSIDE the
+		// `text` field.
+		const out = buildSystemPrompt([]);
+		expect(out).toContain(getPresetPrompt("neutral"));
+		expect(out.toLowerCase()).toContain("output only the transformed text");
 	});
 
-	test("buildSystemPrompt returns single prompt verbatim for one entry", () => {
-		expect(buildSystemPrompt([{ key: "formal" }])).toBe(getPresetPrompt("formal"));
-		expect(buildSystemPrompt([{ key: "summarize", level: "high" }])).toBe(
-			getPresetPrompt("summarize", "high")
-		);
+	test("buildSystemPrompt includes the single preset body verbatim", () => {
+		const out = buildSystemPrompt([{ key: "formal" }]);
+		expect(out).toContain(getPresetPrompt("formal"));
 	});
 
-	test("buildSystemPrompt numbers multiple entries", () => {
+	test("buildSystemPrompt combines multiple presets as bullets, NOT numbered steps", () => {
+		// Numbered lists invite chain-of-thought ("I'll go through each in
+		// turn") from reasoning models trained on instruction-following
+		// data. Bullets phrase the same constraints as a unified style guide
+		// the model applies in one pass.
 		const out = buildSystemPrompt([
 			{ key: "formal" },
 			{ key: "summarize", level: "light" },
 			{ key: "reorder" },
 		]);
-		expect(out.startsWith("Apply the following transformations")).toBe(true);
-		expect(out).toContain(`1. ${getPresetPrompt("formal")}`);
-		expect(out).toContain(`2. ${getPresetPrompt("summarize", "light")}`);
-		expect(out).toContain(`3. ${getPresetPrompt("reorder")}`);
+		expect(out).toContain("simultaneously");
+		expect(out).toContain(`- ${getPresetPrompt("formal")}`);
+		expect(out).toContain(`- ${getPresetPrompt("summarize", "light")}`);
+		expect(out).toContain(`- ${getPresetPrompt("reorder")}`);
+		// Explicit anti-numbered-list check: no "1." / "2." / "3." prefixes.
+		expect(out).not.toMatch(/^\s*1\./m);
 	});
 });

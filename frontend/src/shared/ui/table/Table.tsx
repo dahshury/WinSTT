@@ -7,7 +7,7 @@ import {
 	type ReactNode,
 	type Ref,
 	type RefObject,
-	useContext,
+	use,
 	useEffect,
 	useRef,
 } from "react";
@@ -109,7 +109,7 @@ export interface TableRowProps extends ComponentPropsWithoutRef<"tr"> {
 
 export function TableRow({ className, index, ref, style, ...props }: TableRowProps) {
 	const internalRef = useRef<HTMLTableRowElement | null>(null);
-	const ctx = useContext(TableContext);
+	const ctx = use(TableContext);
 
 	useEffect(() => {
 		if (index === undefined || !ctx) {

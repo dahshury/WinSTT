@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from src.building_blocks.types import TextCallback
     from src.recorder.application.swap_benchmark import SwapBenchmark
+    from src.recorder.domain.events import SpeakerSegment
     from src.recorder.domain.model_registry import ModelInfo
     from src.recorder.domain.ports.transcriber import TranscriptionResult
 from src.recorder.application.pipeline import RecordingPipeline
@@ -177,10 +178,8 @@ class RecorderService:
         # (so the ORT session — which isn't reentrant-safe — is still
         # serialised against itself).
         self._main_transcriber_lock = threading.Lock()
-        self._realtime_transcriber_lock: threading.Lock = (
-            self._main_transcriber_lock
-            if realtime_transcriber is not None and realtime_transcriber is transcriber
-            else threading.Lock()
+        self._realtime_transcriber_lock: threading.Lock = self._pick_realtime_lock(
+            transcriber, realtime_transcriber
         )
         # Realtime stable-text accumulator state — owned and reset by the
         # realtime worker thread.
@@ -203,6 +202,21 @@ class RecorderService:
         # available; ``None`` means progress events are dropped (still
         # safe — the swap completes either way).
         self._swap_progress_sink: Any = None
+
+    def _pick_realtime_lock(
+        self,
+        transcriber: ITranscriber,
+        realtime_transcriber: ITranscriber | None,
+    ) -> threading.Lock:
+        """Share the main lock when both slots hold the same transcriber.
+
+        A shared ORT session isn't reentrant-safe, so the same instance in
+        both slots must serialise against itself; distinct instances get
+        independent locks so main + realtime don't block each other.
+        """
+        if realtime_transcriber is not None and realtime_transcriber is transcriber:
+            return self._main_transcriber_lock
+        return threading.Lock()
 
     def text(self, on_transcription_finished: TextCallback | None = None) -> str:
         self.listen()
@@ -236,24 +250,34 @@ class RecorderService:
             text = self._run_full_transcription(audio, frame_count, audio_seconds)
 
         self._event_bus.publish(TranscriptionCompleted(timestamp=self._clock.get_current_time(), text=text))
-
-        # Diarization runs *after* the transcript event so a slow diarizer
-        # never delays text delivery to the renderer; the speaker_segments
-        # event reaches the client a beat later and is applied to the
-        # already-rendered text.
-        if self._diarizer is not None and text:
-            try:
-                segments = self._diarizer.diarize(audio)
-            except Exception:  # noqa: BLE001 — never let diarization crash text()
-                logger.exception("[diarizer] diarize failed; skipping speaker_segments emission")
-                segments = ()
-            self._event_bus.publish(
-                SpeakerSegmentsDetected(timestamp=self._clock.get_current_time(), segments=segments)
-            )
-
+        self._maybe_emit_speaker_segments(audio, text)
         self._finalize_transcription_state()
         self._dispatch_transcription_callback(on_transcription_finished, text)
         return text
+
+    def _maybe_emit_speaker_segments(self, audio: np.ndarray[Any, Any], text: str) -> None:
+        """Diarize and publish speaker segments after the transcript event.
+
+        Runs *after* :class:`TranscriptionCompleted` so a slow diarizer
+        never delays text delivery — the segments reach the client a beat
+        later and are applied to the already-rendered text. No-op when no
+        diarizer is wired or the transcript is empty.
+        """
+        if self._diarizer is None or not text:
+            return
+        segments = self._safe_diarize(audio)
+        self._event_bus.publish(SpeakerSegmentsDetected(timestamp=self._clock.get_current_time(), segments=segments))
+
+    def _safe_diarize(self, audio: np.ndarray[Any, Any]) -> tuple[SpeakerSegment, ...]:
+        """Diarize, swallowing any failure (never crash ``text()``)."""
+        diarizer = self._diarizer
+        if diarizer is None:  # pragma: no cover - guarded by caller
+            return ()
+        try:
+            return diarizer.diarize(audio)
+        except Exception:
+            logger.exception("[diarizer] diarize failed; skipping speaker_segments emission")
+            return ()
 
     @staticmethod
     def _audio_stats(audio: np.ndarray[Any, Any]) -> tuple[float, float, float]:
@@ -289,9 +313,15 @@ class RecorderService:
         if lock is None:
             lock = self._main_transcriber_lock
         with lock:
-            if transcriber is None or not transcriber.is_ready():
+            if not self._transcriber_ready(transcriber):
                 return None
+            assert transcriber is not None  # narrowed by _transcriber_ready
             return transcriber.transcribe(audio, language)
+
+    @staticmethod
+    def _transcriber_ready(transcriber: ITranscriber | None) -> bool:
+        """Whether ``transcriber`` is wired and past its readiness check."""
+        return transcriber is not None and transcriber.is_ready()
 
     def _run_full_transcription(
         self,
@@ -536,9 +566,15 @@ class RecorderService:
         # model swap that just detached the old transcriber.
         if self._transcriber is not None:
             self._safe_step("shutting down transcriber", self._transcriber.shutdown)
-        rt = self._realtime_transcriber
-        if rt is not None and rt is not self._transcriber:
+        if self._has_distinct_realtime_transcriber():
+            rt = self._realtime_transcriber
+            assert rt is not None  # narrowed by _has_distinct_realtime_transcriber
             self._safe_step("shutting down realtime transcriber", rt.shutdown)
+
+    def _has_distinct_realtime_transcriber(self) -> bool:
+        """Whether a separate realtime transcriber instance needs shutdown."""
+        rt = self._realtime_transcriber
+        return rt is not None and rt is not self._transcriber
 
     def _shutdown_wake_word_detector(self) -> None:
         if self._wake_word_detector is not None:
@@ -726,24 +762,52 @@ class RecorderService:
         if kind not in {"main", "realtime"}:
             msg = f"Unknown model swap kind: {kind!r}"
             raise ValueError(msg)
-        if self._realtime_swap_disabled(kind):
-            self._publish_swap_failed(
-                kind,
-                name,
-                SwapErrorInfo(
-                    category=SwapErrorCategory.UNKNOWN,
-                    user_message=(
-                        "Realtime transcription is disabled — enable it in "
-                        "Settings → Model to swap the realtime model."
-                    ),
-                    technical_detail="realtime transcription is disabled",
-                ),
-            )
-            return False
-        return True
+        rejection = self._swap_rejection(kind)
+        if rejection is None:
+            return True
+        self._publish_swap_failed(kind, name, rejection)
+        return False
+
+    _DISABLED_INFO = SwapErrorInfo(
+        category=SwapErrorCategory.UNKNOWN,
+        user_message=(
+            "Realtime transcription is disabled — enable it in Settings → Model to swap the realtime model."
+        ),
+        technical_detail="realtime transcription is disabled",
+    )
+    _SLAVED_INFO = SwapErrorInfo(
+        category=SwapErrorCategory.UNKNOWN,
+        user_message=(
+            "The realtime worker is slaved to the main model — "
+            "turn off 'Use main model for realtime' before "
+            "picking a separate realtime model."
+        ),
+        technical_detail="use_main_model_for_realtime is on",
+    )
+
+    def _swap_rejection(self, kind: str) -> SwapErrorInfo | None:
+        """First applicable rejection reason for a realtime swap, or ``None``."""
+        for predicate, info in (
+            (self._realtime_swap_disabled, self._DISABLED_INFO),
+            (self._realtime_swap_slaved, self._SLAVED_INFO),
+        ):
+            if predicate(kind):
+                return info
+        return None
 
     def _realtime_swap_disabled(self, kind: str) -> bool:
         return kind == "realtime" and not self._config.realtime.enable_realtime_transcription
+
+    def _realtime_swap_slaved(self, kind: str) -> bool:
+        """A realtime swap while slaved would silently un-slave the worker.
+
+        The UI disables the realtime picker when the toggle is on, but a
+        direct WebSocket caller (or a stale renderer state) could still
+        send the command — rejecting it here keeps the slot invariant
+        intact instead of letting the new instance overwrite the shared
+        main pointer.
+        """
+        return kind == "realtime" and self._config.realtime.use_main_model_for_realtime
 
     def _cancel_inflight_swap(self, kind: str) -> None:
         prior_cancel = self._swap_cancel_events.get(kind)
@@ -811,24 +875,46 @@ class RecorderService:
         new_transcriber, load_outcome = self._load_new_for_swap(kind, name, cancel_event, bench)
         bench.sample_memory("after_load")
 
-        if new_transcriber is None or cancel_event.is_set():
-            # Drop the (now-orphan) half-built new transcriber if a
-            # newer swap superseded us between load and commit. The
-            # newer swap's worker will handle the next install.
-            if new_transcriber is not None and cancel_event.is_set():
-                self._shutdown_transcriber_safely(kind, new_transcriber)
-                self._publish_swap_failed(kind, name, superseded_info(name))
-                load_outcome = "superseded"
+        if self._swap_aborted(new_transcriber, cancel_event):
+            load_outcome = self._handle_aborted_swap(
+                kind, name, new_transcriber, cancel_event, load_outcome
+            )
             restore_outcome = self._attempt_restore(kind, previous_name, bench)
             bench.log(f"{load_outcome}_{restore_outcome}")
             return
 
         # ── Phase 3: commit ────────────────────────────────────────
+        assert new_transcriber is not None  # narrowed by _swap_aborted guard above
         with bench.phase("commit"):
             self._install_transcriber(kind, name, new_transcriber)
 
         self._event_bus.publish(ModelSwapCompleted(timestamp=self._clock.get_current_time(), kind=kind, name=name))
         bench.log("completed")
+
+    @staticmethod
+    def _swap_aborted(new_transcriber: ITranscriber | None, cancel_event: threading.Event) -> bool:
+        """Whether the load produced nothing or was superseded mid-flight."""
+        return new_transcriber is None or cancel_event.is_set()
+
+    def _handle_aborted_swap(
+        self,
+        kind: str,
+        name: str,
+        new_transcriber: ITranscriber | None,
+        cancel_event: threading.Event,
+        load_outcome: str,
+    ) -> str:
+        """Tear down an orphaned half-built transcriber, return the outcome tag.
+
+        Drops the now-orphan new transcriber when a newer swap superseded us
+        between load and commit; the newer swap's worker handles the next
+        install. Returns the (possibly updated) load-outcome tag.
+        """
+        if new_transcriber is not None and cancel_event.is_set():
+            self._shutdown_transcriber_safely(kind, new_transcriber)
+            self._publish_swap_failed(kind, name, superseded_info(name))
+            return "superseded"
+        return load_outcome
 
     def _previous_model_name(self, kind: str) -> str:
         """Return the model name currently recorded in config for ``kind``.
@@ -966,15 +1052,64 @@ class RecorderService:
         return name
 
     def _install_transcriber(self, kind: str, name: str, new_transcriber: ITranscriber) -> None:
-        """Commit ``new_transcriber`` into the kind's slot and update config."""
-        lock = self._main_transcriber_lock if kind == "main" else self._realtime_transcriber_lock
+        """Commit ``new_transcriber`` into the kind's slot and update config.
+
+        When ``use_main_model_for_realtime`` is on and we just committed a
+        new main model, also re-point the realtime slot at the new
+        instance. The two slots are wired to the same object at bootstrap
+        (see ``__init__.py`` / ``bootstrap.py``), but a ``main`` swap
+        detaches and shuts down that shared object — leaving the realtime
+        slot pointing at a now-shut-down transcriber whose ``is_ready()``
+        returns ``False``. The realtime worker would then emit nothing
+        for the rest of the session even though the main slot pastes
+        correctly. Re-linking restores the slaving invariant and lets
+        ``_reuse_realtime_text_if_eligible`` continue to short-circuit
+        the duplicate end-of-recording pass.
+        """
+        is_main = kind == "main"
+        lock = self._main_transcriber_lock if is_main else self._realtime_transcriber_lock
         with lock:
-            if kind == "main":
-                self._transcriber = new_transcriber
-                self._config.transcription.model = name
-            else:
-                self._realtime_transcriber = new_transcriber
-                self._config.realtime.realtime_model_type = name
+            self._assign_transcriber_slot(is_main, name, new_transcriber)
+        self._maybe_relink_realtime(is_main, new_transcriber, name)
+
+    def _maybe_relink_realtime(self, is_main: bool, new_main: ITranscriber, name: str) -> None:
+        """Re-slave the realtime slot to a freshly-committed main model."""
+        if is_main and self._realtime_slaved_to_main():
+            self._relink_realtime_to_main(new_main, name)
+
+    def _assign_transcriber_slot(self, is_main: bool, name: str, new_transcriber: ITranscriber) -> None:
+        """Point the chosen slot at ``new_transcriber`` and persist its name."""
+        if is_main:
+            self._transcriber = new_transcriber
+            self._config.transcription.model = name
+            return
+        self._realtime_transcriber = new_transcriber
+        self._config.realtime.realtime_model_type = name
+
+    def _realtime_slaved_to_main(self) -> bool:
+        """True iff configuration says the realtime slot must mirror main."""
+        rt = self._config.realtime
+        return rt.enable_realtime_transcription and rt.use_main_model_for_realtime
+
+    def _relink_realtime_to_main(self, new_main: ITranscriber, name: str) -> None:
+        """Bring the realtime slot back in sync with the main slot.
+
+        Called after a main swap commits while
+        ``use_main_model_for_realtime`` is on. Both slots must share the
+        same instance — and the same lock — so the ORT session isn't
+        called reentrantly and ``_reuse_realtime_text_if_eligible`` keeps
+        recognising the slaving via its identity check.
+        """
+        with self._realtime_transcriber_lock:
+            self._realtime_transcriber = new_main
+            self._config.realtime.realtime_model_type = name
+        # When slaved, both slots share one lock so the ORT session is
+        # serialised against itself across main+realtime callers. Re-pin
+        # in case construction left them on separate locks (e.g. the
+        # facade wired a separate realtime instance first and the user
+        # later set ``use_main_model_for_realtime`` via a restart that
+        # somehow lost the identity guarantee).
+        self._realtime_transcriber_lock = self._main_transcriber_lock
 
     @property
     def state(self) -> RecorderState:
@@ -1210,19 +1345,26 @@ class RecorderService:
         )
         if len(commit_audio) == 0:
             return
-        # Realtime preview must not block when the realtime transcriber
-        # is mid-swap — better to skip a tick than to stall the worker.
-        commit_result = self._safe_transcribe(
+        commit_text = self._transcribe_realtime_window(commit_audio)
+        if commit_text:
+            self._append_committed_text(commit_text)
+
+    def _transcribe_realtime_window(self, audio: np.ndarray[Any, Any]) -> str | None:
+        """Transcribe a realtime audio slice; ``None`` when the slot is mid-swap.
+
+        Realtime preview must not block when the realtime transcriber is
+        mid-swap — returning ``None`` (vs ``""``) lets callers skip the tick
+        entirely instead of publishing a stale/empty preview.
+        """
+        result = self._safe_transcribe(
             self._realtime_transcriber,
-            commit_audio,
+            audio,
             self._config.transcription.language,
             lock=self._realtime_transcriber_lock,
         )
-        if commit_result is None:
-            return
-        commit_text = self._preprocess_output(commit_result.text)
-        if commit_text:
-            self._append_committed_text(commit_text)
+        if result is None:
+            return None
+        return self._preprocess_output(result.text)
 
     def _append_committed_text(self, commit_text: str) -> None:
         if self._realtime_committed_text:
@@ -1238,24 +1380,39 @@ class RecorderService:
         # already entered this method. Bailing here saves an entire fresh
         # whisper-base pass that main is about to do anyway — measured as
         # ~390 ms of saved end-of-dictation latency on a JFK-length clip.
-        if not self._state_machine.is_recording:
+        audio_array = self._fresh_realtime_slice(committed_frames)
+        if audio_array is None:
             return
+        fresh_text = self._transcribe_realtime_window(audio_array)
+        if fresh_text is None:
+            return
+        text = self._assemble_realtime_text(fresh_text)
+        self._publish_realtime_update(text)
+
+    def _fresh_realtime_slice(self, committed_frames: int) -> np.ndarray[Any, Any] | None:
+        """Audio past the watermark, or ``None`` to skip this realtime tick.
+
+        ``is_recording`` is re-checked here: when the user releases PTT the
+        state machine has already flipped to TRANSCRIBING but the realtime
+        worker may have already entered ``_realtime_publish_fresh``. Bailing
+        saves a full fresh whisper-base pass main is about to do anyway
+        (~390 ms on a JFK-length clip).
+        """
+        if not self._state_machine.is_recording:
+            return None
         audio_array = self._audio_buffer.get_audio_array_slice(committed_frames, None)
         if len(audio_array) == 0:  # pragma: no cover
-            return
-        result = self._safe_transcribe(
-            self._realtime_transcriber,
-            audio_array,
-            self._config.transcription.language,
-            lock=self._realtime_transcriber_lock,
-        )
-        if result is None:
-            return
-        fresh_text = self._preprocess_output(result.text)
-        text = self._assemble_realtime_text(fresh_text)
+            return None
+        return audio_array
+
+    def _publish_realtime_update(self, text: str) -> None:
+        """Emit a live-preview update, retaining the text for reuse by ``text()``.
+
+        ``is_recording`` is re-checked because the user may have released PTT
+        during the (potentially long) transcribe — the state machine flips to
+        TRANSCRIBING and main is about to run its own pass.
+        """
         if self._state_machine.is_recording:  # pragma: no branch
-            # Preserve the latest realtime text so text() can adopt it as the
-            # final result when use_main_model_for_realtime is on.
             self._last_realtime_text = text
             self._event_bus.publish(RealtimeTranscriptionUpdate(timestamp=self._clock.get_current_time(), text=text))
 

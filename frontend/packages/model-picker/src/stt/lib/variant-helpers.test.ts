@@ -40,15 +40,13 @@ describe("isMultilingual", () => {
 		// whitelist (~25-99 codes). The badge follows the detection flag so
 		// the picker shows "Multilingual" instead of dumping the whitelist.
 		expect(
-			isMultilingual(
-				model({ languages: ["en", "de", "fr"], supportsLanguageDetection: true })
-			)
+			isMultilingual(model({ languages: ["en", "de", "fr"], supportsLanguageDetection: true }))
 		).toBe(true);
 	});
 	test("false when supportsLanguageDetection is off (constrained-language model)", () => {
-		expect(
-			isMultilingual(model({ languages: ["ru"], supportsLanguageDetection: false }))
-		).toBe(false);
+		expect(isMultilingual(model({ languages: ["ru"], supportsLanguageDetection: false }))).toBe(
+			false
+		);
 	});
 });
 

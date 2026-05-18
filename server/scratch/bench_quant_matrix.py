@@ -14,6 +14,7 @@ Output drives per-model quant policy.
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import gc
 import json
@@ -38,21 +39,19 @@ def _inject_cuda_dlls() -> None:
         for pkg in pkgs:
             bin_dir = nv_root / pkg / "bin"
             if bin_dir.is_dir():
-                try:
+                with contextlib.suppress(OSError):
                     os.add_dll_directory(str(bin_dir))
-                except OSError:
-                    pass
                 for dll in bin_dir.glob("*.dll"):
-                    try:
+                    with contextlib.suppress(OSError):
                         ctypes.WinDLL(str(dll))
-                    except OSError:
-                        pass
 
 
 _inject_cuda_dlls()
 sys.path.insert(0, r"E:\DL\Projects\WinSTT\server")
 
-from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
+from src.recorder.infrastructure.onnxasr_transcriber import (  # noqa: E402  # import after CUDA DLL injection and sys.path setup
+    OnnxAsrTranscriber,
+)
 
 AUDIO_PATH = Path(r"E:\DL\Projects\WinSTT\examples\faster-whisper\tests\data\physicsworks.wav")
 audio, sr = sf.read(str(AUDIO_PATH), dtype="float32")
@@ -109,10 +108,8 @@ def bench_one(model_id: str, repo: str, quant: str | None, baseline: str) -> dic
         infer_s = time.perf_counter() - t1
     except Exception as e:
         print(f"INFER_FAIL  {str(e).splitlines()[0][:90]}", flush=True)
-        try:
+        with contextlib.suppress(Exception):
             t.shutdown()
-        except Exception:
-            pass
         return {"label": label, "quant": quant or "fp32", "status": "INFER_FAIL", "err": str(e)[:300], "load_s": load_s}
 
     text = res.text.strip()
@@ -127,10 +124,8 @@ def bench_one(model_id: str, repo: str, quant: str | None, baseline: str) -> dic
         status = "DIVERGENT"
 
     print(f"{status:10s} sim={similarity:.2f}  load={load_s:.1f}s infer={infer_s:.1f}s  text={text[:60]!r}", flush=True)
-    try:
+    with contextlib.suppress(Exception):
         t.shutdown()
-    except Exception:
-        pass
     gc.collect()
     return {
         "label": label,

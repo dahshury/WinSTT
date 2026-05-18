@@ -144,6 +144,43 @@ describe("useSyncActiveModel", () => {
 		);
 	});
 
+	test("re-reconciles when async settingsLoad reverts the synced model (regression #3)", async () => {
+		// Race observed in production: the server falls back from a broken
+		// user pick (canary) to tiny and pushes runtime_info=tiny. The
+		// reconciler writes "tiny" into settings. Then useSyncSettings's
+		// async settingsLoad() resolves with electron-store's stored value
+		// (still canary, since electron-store wasn't refreshed yet) and
+		// setSettings(...) replaces the whole settings object — silently
+		// reverting model.model back to canary. With settingsModel out of
+		// deps, the reconciler doesn't re-fire and the picker stays on
+		// canary while the server runs tiny. Locks in: the reconciler
+		// must re-fire when settings drift away from runtime.
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				model: { ...DEFAULT_SETTINGS.model, model: "nemo-canary-1b-v2" },
+			},
+			isLoaded: true,
+		});
+		renderHook(() => useSyncActiveModel());
+		useConnectionStore.setState({ runtimeInfo: withModel("tiny") });
+		await waitFor(() => {
+			expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
+		});
+		// Simulate the late-resolving settingsLoad replacing the whole
+		// settings object with electron-store's stale canary value.
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				model: { ...DEFAULT_SETTINGS.model, model: "nemo-canary-1b-v2" },
+			},
+			isLoaded: true,
+		});
+		await waitFor(() => {
+			expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
+		});
+	});
+
 	test("reconciles after swap completes when runtime_info refreshes to the new model", async () => {
 		// Full lifecycle: user picks new model, server swaps, runtime_info
 		// refreshes, swap clears — reconciler sees match and no-ops.

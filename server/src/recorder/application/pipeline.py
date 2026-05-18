@@ -62,12 +62,21 @@ class RecordingPipeline(Worker):
 
         self._post_speech_silence_duration: float = config.vad.post_speech_silence_duration
         self._wake_word_activation_delay: float = config.wake_word.wake_word_activation_delay
+        # How long after a wake-word fires the recorder stays armed for the
+        # follow-up utterance. If the user doesn't speak within this window
+        # the gate clears and they must say the wake word again. Mirrors the
+        # monolith's `wake_word_timeout`.
+        self._wake_word_timeout: float = config.wake_word.wake_word_timeout
 
         self._audio_queue: queue.Queue[AudioChunk] = queue.Queue()
         self._recording_start_time: float = 0.0
         self._speech_end_silence_start: float = 0.0
         self._listen_start: float = 0.0
         self._wakeword_detected: bool = False
+        # Timestamp of the most recent wake-word fire (or 0.0 when not armed).
+        # Read by `_maybe_expire_wake_word` to clear the gate after the
+        # follow-up window elapses without speech.
+        self._wakeword_detected_at: float = 0.0
         self._start_recording_on_voice_activity: bool = False
         self._stop_recording_on_voice_deactivity: bool = False
         self._silence_endpoint_enabled: bool = True
@@ -82,7 +91,15 @@ class RecordingPipeline(Worker):
         self._listen_start = self._clock.get_current_time()
         if self._sm.state == RecorderState.INACTIVE:
             self._sm.transition(RecorderState.LISTENING)
-        self._start_recording_on_voice_activity = True
+        # When a wake-word backend is configured, VAD onset MUST stay disarmed
+        # until the detector fires (`_wakeword_detected = True`). Otherwise the
+        # very first speech chunk would trigger `_try_start_on_voice_activity`
+        # and the wake word would never matter — the recorder would behave like
+        # plain listen-on-speech. The wake-word detector arms VAD onset itself
+        # via `_vad_onset_armed()` once it sees the trigger word; we just stop
+        # forcing the gate open here.
+        if not self._use_wake_words:
+            self._start_recording_on_voice_activity = True
         self._event_bus.publish(VADDetectStarted(timestamp=self._clock.get_current_time()))
 
     def _enter_recording_state(self) -> None:
@@ -142,6 +159,12 @@ class RecordingPipeline(Worker):
         self._sm.transition(RecorderState.TRANSCRIBING)
         self._stop_recording_on_voice_deactivity = False
         self._speech_end_silence_start = 0.0
+        # Re-arm the wake-word gate for the next session. Without this reset,
+        # a one-time wake-word detection would unlock VAD onset *forever* —
+        # every subsequent utterance would auto-record without the user saying
+        # the trigger word again. Mirrors the monolith's per-cycle reset.
+        self._wakeword_detected = False
+        self._wakeword_detected_at = 0.0
         self._event_bus.publish(RecordingStopped(timestamp=self._clock.get_current_time()))
         self._transcription_queue.put((True, backdate_seconds))
 
@@ -152,6 +175,7 @@ class RecordingPipeline(Worker):
         self._speech_end_silence_start = 0.0
         self._speech_detected_in_recording = False
         self._wakeword_detected = False
+        self._wakeword_detected_at = 0.0
 
     @property
     def post_speech_silence_duration(self) -> float:
@@ -217,7 +241,27 @@ class RecordingPipeline(Worker):
                 continue
             self._handle_chunk(chunk)
 
+    def _maybe_expire_wake_word(self) -> None:
+        """Clear the wake-word gate if the follow-up window has elapsed.
+
+        Without this, a wake-word fire stays armed indefinitely — the user
+        could trigger detection at 9am and have any speech at 3pm start a
+        recording. The timeout matches `wake_word_timeout` from config and
+        mirrors the monolith's behaviour.
+        """
+        if self._wake_word_gate_expired():
+            self._wakeword_detected = False
+            self._wakeword_detected_at = 0.0
+
+    def _wake_word_gate_expired(self) -> bool:
+        """Whether an armed wake-word gate has outlived its follow-up window."""
+        if not self._wakeword_detected or self._wake_word_timeout <= 0:
+            return False
+        elapsed = self._clock.get_current_time() - self._wakeword_detected_at
+        return elapsed >= self._wake_word_timeout
+
     def _maybe_detect_wake_word(self, chunk: AudioChunk) -> None:
+        self._maybe_expire_wake_word()
         if self._use_wake_words and not self._wakeword_detected:
             self._process_wake_word(chunk)
 
@@ -294,6 +338,7 @@ class RecordingPipeline(Worker):
         result = self._wake_word_detector.detect(chunk)
         if result.detected:
             self._wakeword_detected = True
+            self._wakeword_detected_at = self._clock.get_current_time()
             self._event_bus.publish(
                 WakeWordDetected(
                     timestamp=self._clock.get_current_time(),

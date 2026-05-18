@@ -16,6 +16,8 @@ import {
 	advanceSkipRefs,
 	autoStartChanged,
 	computeSilenceTiming,
+	getManualToggleStop,
+	getPrevManualToggleStop,
 	getPrevSmartEndpoint,
 	getRecordingMode,
 	getSmartEndpoint,
@@ -78,6 +80,8 @@ function syncQualityParams(settings: AppSettings, prev: AppSettings | undefined)
 	const smartEndpoint = getSmartEndpoint(settings);
 	const prevSmartEndpoint = getPrevSmartEndpoint(prev);
 	const mode = getRecordingMode(settings);
+	const manualToggleStop = getManualToggleStop(settings);
+	const prevManualToggleStop = getPrevManualToggleStop(prev);
 	const isInitial = !prev;
 
 	if (
@@ -86,10 +90,12 @@ function syncQualityParams(settings: AppSettings, prev: AppSettings | undefined)
 			prevSmartEndpoint,
 			settings.general?.recordingMode,
 			prev?.general?.recordingMode,
-			isInitial
+			isInitial,
+			manualToggleStop,
+			prevManualToggleStop
 		)
 	) {
-		sttSetParameter("silence_timing", computeSilenceTiming(smartEndpoint, mode));
+		sttSetParameter("silence_timing", computeSilenceTiming(smartEndpoint, mode, manualToggleStop));
 	}
 
 	const quality = settings.quality;
@@ -104,6 +110,24 @@ function syncQualityParams(settings: AppSettings, prev: AppSettings | undefined)
 		quality?.smartEndpointSpeed,
 		prevQuality?.smartEndpointSpeed,
 		"detection_speed",
+		isInitial
+	);
+	sendIfChanged(
+		quality?.endOfSentenceDetectionPause,
+		prevQuality?.endOfSentenceDetectionPause,
+		"end_of_sentence_detection_pause",
+		isInitial
+	);
+	sendIfChanged(
+		quality?.midSentenceDetectionPause,
+		prevQuality?.midSentenceDetectionPause,
+		"mid_sentence_detection_pause",
+		isInitial
+	);
+	sendIfChanged(
+		quality?.unknownSentenceDetectionPause,
+		prevQuality?.unknownSentenceDetectionPause,
+		"unknown_sentence_detection_pause",
 		isInitial
 	);
 }

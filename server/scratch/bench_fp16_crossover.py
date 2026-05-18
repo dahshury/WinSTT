@@ -10,6 +10,7 @@ covered elsewhere.
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import gc
 import json
@@ -34,21 +35,17 @@ def _inject_cuda_dlls() -> None:
         for pkg in pkgs:
             bin_dir = nv_root / pkg / "bin"
             if bin_dir.is_dir():
-                try:
+                with contextlib.suppress(OSError):
                     os.add_dll_directory(str(bin_dir))
-                except OSError:
-                    pass
                 for dll in bin_dir.glob("*.dll"):
-                    try:
+                    with contextlib.suppress(OSError):
                         ctypes.WinDLL(str(dll))
-                    except OSError:
-                        pass
 
 
 _inject_cuda_dlls()
 
-import onnx_asr
-import onnxruntime as rt
+import onnx_asr  # noqa: E402  # import after CUDA DLL injection
+import onnxruntime as rt  # noqa: E402  # import after CUDA DLL injection
 
 AUDIO = Path(r"E:\DL\Projects\WinSTT\examples\faster-whisper\tests\data\physicsworks.wav")
 audio, sr = sf.read(str(AUDIO), dtype="float32")
@@ -95,10 +92,8 @@ def bench(model_repo: str, device: str, quant: str | None) -> dict:
     after_load_mem = gpu_mem_mb() if device != "cpu" else -1
 
     # Warm-up
-    try:
+    with contextlib.suppress(Exception):
         m.recognize(audio[: 16000 * 5], sample_rate=sr)
-    except Exception:
-        pass
     after_warmup_mem = gpu_mem_mb() if device != "cpu" else -1
 
     # Two timed runs

@@ -287,7 +287,7 @@ export function getOllamaPublisher(family: string): OllamaPublisher {
 /** Group models by family, sorted alphabetically by display name. */
 export function groupOllamaModelsByFamily(
 	models: readonly OllamaModel[]
-): Array<[string, OllamaModel[]]> {
+): [string, OllamaModel[]][] {
 	const groups = new Map<string, OllamaModel[]>();
 	for (const model of models) {
 		const family = getOllamaFamily(model);
@@ -315,7 +315,7 @@ export function groupOllamaModelsByFamily(
  */
 export function groupOllamaModelsByPublisher(
 	models: readonly OllamaModel[]
-): Array<[string, OllamaModel[]]> {
+): [string, OllamaModel[]][] {
 	const groups = new Map<string, OllamaModel[]>();
 	for (const model of models) {
 		const family = getOllamaFamily(model);
@@ -366,6 +366,8 @@ const QUANT_TOKEN_RE = /^(?:q\d[a-z0-9_]*|fp\d+|int\d+|bf\d+)$/i;
 // (`q8_0`, `q4_K_M`) from a variant string before we split on `-_`. Doing
 // this in one shot avoids producing leftover trailing `0` / `M` tokens.
 const QUANT_STRIP_RE = /(?:^|[-_])(?:q\d[a-z0-9]*(?:_[a-z0-9]+)*|fp\d+|int\d+|bf\d+)/gi;
+const LEADING_DIGIT_RE = /^\d/;
+const VARIANT_SPLIT_RE = /[-_]/;
 
 /** Token-by-token capitalization preserving known multi-cap brand spellings. */
 const TOKEN_CASING: Record<string, string> = {
@@ -385,7 +387,7 @@ function formatToken(token: string): string {
 	if (TOKEN_CASING[lower]) {
 		return TOKEN_CASING[lower] as string;
 	}
-	if (/^\d/.test(lower)) {
+	if (LEADING_DIGIT_RE.test(lower)) {
 		return lower;
 	}
 	return lower.charAt(0).toUpperCase() + lower.slice(1);
@@ -427,7 +429,7 @@ export function formatOllamaDisplayName(name: string): string {
 
 	const variantWithoutQuant = variant.replace(QUANT_STRIP_RE, "");
 	const variantParts = variantWithoutQuant
-		.split(/[-_]/)
+		.split(VARIANT_SPLIT_RE)
 		.map((t) => t.trim())
 		.filter((t) => t.length > 0 && !PARAM_TOKEN_RE.test(t) && !QUANT_TOKEN_RE.test(t))
 		.map(formatToken);
