@@ -48,6 +48,13 @@ export interface ModelPickerProps<TItem, TValue> {
 	/** Optional menu rendered inside the search input row (right-aligned). */
 	filtersMenuSlot?: ReactNode;
 	/**
+	 * Inline/panel mode. Renders the search row + sidebar + list directly
+	 * (no trigger, no Portal/Positioner/Popup) with the combobox forced
+	 * open, so the picker can fill a dedicated host (e.g. the detached
+	 * model-picker window) instead of floating off a trigger.
+	 */
+	inline?: boolean;
+	/**
 	 * Controlled search-input value. When supplied, `onInputValueChange`
 	 * must also be supplied; the shell stops managing search state.
 	 */
@@ -143,6 +150,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 	belowListSlot,
 	filter,
 	filtersMenuSlot,
+	inline = false,
 	inputValue,
 	isItemEqualToValue,
 	isLoading = false,
@@ -167,10 +175,19 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 
 	const isOpenControlled = controlledOpen !== undefined;
 	const isSearchControlled = inputValue !== undefined;
-	const effectiveOpen = isOpenControlled ? controlledOpen : internalOpen;
+	// Inline mode pins the combobox open — there is no trigger to toggle it,
+	// the picker IS the surface.
+	const controlledOrInternalOpen = isOpenControlled ? controlledOpen : internalOpen;
+	const effectiveOpen = inline ? true : controlledOrInternalOpen;
 	const effectiveSearch = isSearchControlled ? inputValue : internalSearch;
 
 	const handleOpenChange = (next: boolean, eventDetails?: unknown) => {
+		// Inline mode never actually closes the combobox; it just forwards
+		// the intent (e.g. Esc) so the host can dismiss its window.
+		if (inline) {
+			onOpenChange?.(next, eventDetails);
+			return;
+		}
 		if (!isOpenControlled) {
 			setInternalOpen(next);
 			if (next) {
@@ -190,6 +207,62 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 		onInputValueChange?.(next);
 	};
 
+	const handleValueChange = (next: TValue, eventDetails?: unknown) => {
+		onValueChange?.(next, eventDetails);
+		// Selecting an item makes Base UI write that item's label into the
+		// search input. A normal popup hides this (it closes, then clears on
+		// close), but an always-open inline panel would stay filtered down to
+		// just the picked model. Clear the query after Base UI's synchronous
+		// input write so the full list comes back.
+		if (inline && !isSearchControlled) {
+			queueMicrotask(() => setInternalSearch(""));
+		}
+	};
+
+	const panelBody = (
+		<>
+			<span
+				aria-hidden="true"
+				className="pointer-events-none absolute inset-x-5 top-0 z-raised h-px bg-gradient-to-r from-transparent via-accent/55 to-transparent"
+			/>
+			<div className="flex flex-col gap-2 border-divider border-b p-2.5">
+				{/* Input group: the filter button sits INSIDE the search
+				    input on the right edge, sharing the same surface so
+				    they read as one control instead of "input + button".
+				    Same pattern across all three pickers. Input gets
+				    end-padding when either the loading spinner or the
+				    filters menu is present to leave room. */}
+				<div className="relative flex w-full items-center">
+					<Combobox.Input
+						className={cn(
+							SEARCH_INPUT_CLASSES,
+							filtersMenuSlot && "pe-12",
+							!filtersMenuSlot && isLoading && "pe-9"
+						)}
+						dir="ltr"
+						placeholder={searchPlaceholder}
+					/>
+					{isLoading ? (
+						<Spinner
+							className={cn(
+								"pointer-events-none absolute top-1/2 size-4 -translate-y-1/2 text-foreground-muted",
+								filtersMenuSlot ? "end-11" : "end-3"
+							)}
+						/>
+					) : null}
+					{filtersMenuSlot ? (
+						<div className="absolute end-1.5 top-1/2 -translate-y-1/2">{filtersMenuSlot}</div>
+					) : null}
+				</div>
+				{activeFiltersSlot}
+			</div>
+			<div className="flex min-h-0 flex-1">
+				{sidebarSlot}
+				<div className="flex min-h-0 flex-1 flex-col">{list}</div>
+			</div>
+		</>
+	);
+
 	return (
 		<div className="flex flex-col gap-2" data-slot="model-picker">
 			<Combobox.Root
@@ -201,61 +274,33 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 				modal={false}
 				onInputValueChange={handleInputValueChange}
 				onOpenChange={handleOpenChange}
-				onValueChange={onValueChange as never}
+				onValueChange={handleValueChange as never}
 				open={effectiveOpen}
 				value={value as never}
 			>
-				{trigger}
-				<Combobox.Portal>
-					<Combobox.Positioner align="start" className="z-popover outline-none" sideOffset={6}>
-						<Combobox.Popup
-							className={cn(POPUP_BASE_CLASSES, popupHeightClass, popupWidthClass)}
-							ref={popupRef}
-						>
-							<span
-								aria-hidden="true"
-								className="pointer-events-none absolute inset-x-5 top-0 z-raised h-px bg-gradient-to-r from-transparent via-accent/55 to-transparent"
-							/>
-							<div className="flex flex-col gap-2 border-divider border-b p-2.5">
-								{/* Input group: the filter button sits INSIDE the search
-								    input on the right edge, sharing the same surface so
-								    they read as one control instead of "input + button".
-								    Same pattern across all three pickers. Input gets
-								    end-padding when either the loading spinner or the
-								    filters menu is present to leave room. */}
-								<div className="relative flex w-full items-center">
-									<Combobox.Input
-										className={cn(
-											SEARCH_INPUT_CLASSES,
-											filtersMenuSlot && "pe-12",
-											!filtersMenuSlot && isLoading && "pe-9"
-										)}
-										dir="ltr"
-										placeholder={searchPlaceholder}
-									/>
-									{isLoading ? (
-										<Spinner
-											className={cn(
-												"pointer-events-none absolute top-1/2 size-4 -translate-y-1/2 text-foreground-muted",
-												filtersMenuSlot ? "end-11" : "end-3"
-											)}
-										/>
-									) : null}
-									{filtersMenuSlot ? (
-										<div className="absolute end-1.5 top-1/2 -translate-y-1/2">
-											{filtersMenuSlot}
-										</div>
-									) : null}
-								</div>
-								{activeFiltersSlot}
-							</div>
-							<div className="flex min-h-0 flex-1">
-								{sidebarSlot}
-								<div className="flex min-h-0 flex-1 flex-col">{list}</div>
-							</div>
-						</Combobox.Popup>
-					</Combobox.Positioner>
-				</Combobox.Portal>
+				{inline ? (
+					<div
+						className={cn(POPUP_BASE_CLASSES, popupHeightClass, popupWidthClass)}
+						data-slot="model-picker-inline"
+						ref={popupRef}
+					>
+						{panelBody}
+					</div>
+				) : (
+					<>
+						{trigger}
+						<Combobox.Portal>
+							<Combobox.Positioner align="start" className="z-popover outline-none" sideOffset={6}>
+								<Combobox.Popup
+									className={cn(POPUP_BASE_CLASSES, popupHeightClass, popupWidthClass)}
+									ref={popupRef}
+								>
+									{panelBody}
+								</Combobox.Popup>
+							</Combobox.Positioner>
+						</Combobox.Portal>
+					</>
+				)}
 			</Combobox.Root>
 			{belowListSlot}
 		</div>

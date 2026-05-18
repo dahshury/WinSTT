@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import { type DragEvent, useCallback, useRef, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
+import { useTranscriptionStore } from "@/entities/transcription";
 import { AudioVisualizer } from "@/features/audio-visualizer";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
 import { fileTranscribe, getFilePath } from "@/shared/api/ipc-client";
@@ -88,6 +89,15 @@ async function runTranscription(
 	}
 }
 
+/**
+ * Opacity applied to the main-window visualizer while dictation text is on
+ * screen. The bright bars otherwise wash out the subtitle text rendered on top
+ * of them; dropping to a faint background keeps the visualizer present but
+ * well out of the way of text. (The pill is a separate overlay window and is
+ * unaffected.)
+ */
+const VISUALIZER_DIMMED_OPACITY = 0.2;
+
 function getContainerClassName(isListenMode: boolean): string {
 	const base = "relative flex flex-1 flex-col items-center justify-center overflow-hidden";
 	const border = isListenMode ? "" : "rounded-lg";
@@ -114,6 +124,15 @@ export function AudioDisplay() {
 	const setError = useFileTranscriptionStore((s) => s.setError);
 	const t = useTranslations("audioDisplay");
 	const tf = useTranslations("fileOverlay");
+
+	// Dim the visualizer whenever dictation text is being shown in the main
+	// window: live realtime text being written, or finalized sentences from the
+	// active recording session. Once the session ends and the text clears, the
+	// visualizer returns to full brightness (its idle "hero" state).
+	const liveText = useTranscriptionStore((s) => s.currentRealtime);
+	const isRecordingActive = useTranscriptionStore((s) => s.isRecordingActive);
+	const hasFinalText = useTranscriptionStore((s) => s.items.length > 0);
+	const dimVisualizer = liveText.length > 0 || (isRecordingActive && hasFinalText);
 
 	const [isDragOver, setIsDragOver] = useState(false);
 	const dragCounter = useRef(0);
@@ -178,7 +197,13 @@ export function AudioDisplay() {
 			onDrop={handleDrop}
 			role="region"
 		>
-			<div className="absolute inset-0 flex items-center justify-center">
+			<div
+				className="absolute inset-0 flex items-center justify-center"
+				style={{
+					opacity: dimVisualizer ? VISUALIZER_DIMMED_OPACITY : 1,
+					transition: "opacity 300ms ease-out",
+				}}
+			>
 				<AudioVisualizer size="auto" />
 			</div>
 

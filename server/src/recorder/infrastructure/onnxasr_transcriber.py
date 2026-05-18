@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from typing_extensions import override
 
 from src.building_blocks.types import AudioArray
@@ -220,6 +221,35 @@ def _make_progress_adapter(model_name: str, sink: Callable[[DownloadProgress], N
     return _on_progress
 
 
+#: Peak target for :func:`_peak_normalize`. Matches the RealtimeSTT
+#: monolith's ``(audio / peak) * 0.95`` (audio_recorder.py:2392-2397 main
+#: path / :185-188 realtime path). 0.95 (not 1.0) keeps a hair of headroom
+#: so downstream float→mel math never rides the rail.
+_NORMALIZE_TARGET_PEAK = 0.95
+
+
+def _peak_normalize(audio: AudioArray) -> AudioArray:
+    """Scale ``audio`` so its loudest sample sits at ~0.95 full-scale.
+
+    Restores the behaviour the ``TranscriptionConfig.normalize_audio`` flag
+    has documented and defaulted to ``True`` for all along — the actual
+    implementation was lost in the hexagonal rewrite, leaving the flag
+    dead. Quiet mics (peak ~0.1-0.2) otherwise fall under Silero VAD's
+    confidence threshold and the *entire* utterance is discarded before it
+    ever reaches Whisper. Pure scalar gain: no spectral artifacts, no
+    train/test mismatch for the ASR model, and a strict no-op on silent
+    (``peak == 0``) or empty buffers (the warmup dummy + swap-in-flight
+    paths feed zeros). Mirrors examples/RealtimeSTT verbatim — the
+    reference monolith is authoritative when behaviour diverges.
+    """
+    if audio.size == 0:
+        return audio
+    peak = float(np.max(np.abs(audio)))
+    if peak <= 0.0:
+        return audio
+    return ((audio / peak) * _NORMALIZE_TARGET_PEAK).astype(np.float32)
+
+
 def _snapshot_providers(model: Any) -> list[str]:  # noqa: ANN401 — walks loosely-typed onnx_asr internals
     """Find the ORT providers attached to ``model``'s primary InferenceSession.
 
@@ -313,6 +343,7 @@ class OnnxAsrTranscriber(ITranscriber):
         providers: list[str | tuple[str, dict[str, str]]] | None = None,
         on_download_progress: Callable[[DownloadProgress], None] | None = None,
         segment_with_vad: bool = True,
+        normalize_audio: bool = True,
     ) -> None:
         if onnx_asr is None:
             msg = "onnx_asr is not installed"
@@ -356,6 +387,12 @@ class OnnxAsrTranscriber(ITranscriber):
         # provider tuple — see ``_get_or_load_silero_vad``. We hold a
         # reference but the cache owns the lifetime; shutdown() drops our
         # reference but doesn't close the shared instance.
+        # Peak-normalize the assembled waveform right before recognition
+        # (and before the internal Silero segmentation VAD on the long-audio
+        # path) — see ``_peak_normalize``. Honors
+        # ``TranscriptionConfig.normalize_audio``; default True matches the
+        # config default and the documented intent.
+        self._normalize_audio = normalize_audio
         self._segment_with_vad = segment_with_vad
         self._vad: Any = None
         if segment_with_vad:
@@ -539,7 +576,16 @@ class OnnxAsrTranscriber(ITranscriber):
 
         ``merge`` is forwarded to the VAD path (ignored on the direct path,
         which has no VAD to merge).
+
+        Peak-normalization (when enabled) happens here, the single
+        chokepoint shared by :meth:`transcribe`, :meth:`transcribe_segments`,
+        the realtime windows, and file transcription (which reuses this
+        instance) — so every path gets the same conditioning, and the
+        long-audio path's internal Silero segmentation VAD sees the
+        normalized signal too.
         """
+        if self._normalize_audio:
+            audio = _peak_normalize(audio)
         if self._segment_with_vad:
             return self._recognize_vad_segments(audio, lang_arg, merge=merge)
         return self._recognize_direct(audio, lang_arg)

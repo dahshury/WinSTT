@@ -310,12 +310,12 @@ describe("getSmartEndpoint", () => {
 		expect(getSmartEndpoint({ quality: { smartEndpoint: false } } as never)).toBe(false);
 	});
 
-	test("returns false when quality is absent", () => {
-		expect(getSmartEndpoint({} as never)).toBe(false);
+	test("defaults to true when quality is absent", () => {
+		expect(getSmartEndpoint({} as never)).toBe(true);
 	});
 
-	test("returns false when smartEndpoint is undefined", () => {
-		expect(getSmartEndpoint({ quality: {} } as never)).toBe(false);
+	test("defaults to true when smartEndpoint is undefined", () => {
+		expect(getSmartEndpoint({ quality: {} } as never)).toBe(true);
 	});
 });
 
@@ -324,12 +324,12 @@ describe("getPrevSmartEndpoint", () => {
 		expect(getPrevSmartEndpoint({ quality: { smartEndpoint: true } } as never)).toBe(true);
 	});
 
-	test("returns false when prev is undefined", () => {
-		expect(getPrevSmartEndpoint(undefined)).toBe(false);
+	test("defaults to true when prev is undefined", () => {
+		expect(getPrevSmartEndpoint(undefined)).toBe(true);
 	});
 
-	test("returns false when prev has no quality", () => {
-		expect(getPrevSmartEndpoint({} as never)).toBe(false);
+	test("defaults to true when prev has no quality", () => {
+		expect(getPrevSmartEndpoint({} as never)).toBe(true);
 	});
 });
 

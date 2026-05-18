@@ -11,6 +11,8 @@ import {
 	type TtsFailedPayload,
 	type TtsStartedPayload,
 	ttsCancel,
+	ttsReportPlaybackEnded,
+	ttsReportPlaybackStarted,
 } from "@/shared/api/ipc-client";
 import { TtsPlaybackQueue } from "../lib/playback-queue";
 
@@ -24,15 +26,21 @@ export interface TtsPlaybackState {
 
 /**
  * Globally-mounted hook that owns the Web Audio playback queue and the
- * subscriptions to the IPC chunk / complete / failed streams. Renderer
- * components read state via {@link useTtsPlaybackState} and trigger
- * cancellation via {@link stopTts}; this hook only mounts the
- * subscriptions and routes payloads into the queue.
+ * IPC chunk / complete / failed subscriptions. It routes payloads into
+ * the queue and — crucially — reports back to the main process when the
+ * audio truly finishes playing (the queue's `onEnd`, which fires after
+ * the last buffered source stops, not when the server's much-earlier
+ * `tts_complete` arrives). Main re-broadcasts that as `tts:playback-ended`
+ * so a play/stop control in a window without a queue (the settings
+ * window) can stay in sync.
  *
  * Mount once at the renderer root (RootLayout).
  */
 export function useTtsPlayback(): TtsPlaybackState {
 	const queueRef = useRef<TtsPlaybackQueue | null>(null);
+	// The id whose audio is currently scheduled — needed so `onEnd` (which
+	// carries no id) can tell main *which* request finished.
+	const activeIdRef = useRef<string | null>(null);
 	const [state, setState] = useState<TtsPlaybackState>({
 		status: "idle",
 		error: null,
@@ -50,10 +58,14 @@ export function useTtsPlayback(): TtsPlaybackState {
 		const queue = ensureQueue();
 
 		const onStarted = (payload: TtsStartedPayload) => {
+			activeIdRef.current = payload.requestId;
 			setState({ status: "speaking", error: null, requestId: payload.requestId });
 		};
 
 		const onChunk = (payload: TtsChunkPayload) => {
+			if (payload.requestId) {
+				activeIdRef.current = payload.requestId;
+			}
 			queue.enqueue({
 				requestId: payload.requestId,
 				sampleRate: payload.sampleRate,
@@ -64,6 +76,9 @@ export function useTtsPlayback(): TtsPlaybackState {
 		};
 
 		const onCompleted = (payload: TtsCompletedPayload) => {
+			// `tts_complete` only means generation finished — buffered audio
+			// is usually still playing. Let the queue play out; `onEnd`
+			// fires once the last scheduled source actually stops.
 			queue.markComplete(payload.requestId);
 			if (payload.cancelled) {
 				queue.stop();
@@ -72,13 +87,23 @@ export function useTtsPlayback(): TtsPlaybackState {
 
 		const onFailed = (payload: TtsFailedPayload) => {
 			queue.stop();
+			activeIdRef.current = null;
 			setState({ status: "error", error: payload.reason, requestId: null });
 		};
 
+		const unStart = queue.onStart(() => {
+			ttsReportPlaybackStarted(activeIdRef.current ?? "");
+		});
+
 		const unEnd = queue.onEnd(() => {
+			const endedId = activeIdRef.current;
+			activeIdRef.current = null;
 			setState((prev) =>
 				prev.status === "speaking" ? { status: "idle", error: null, requestId: null } : prev
 			);
+			// Tell every window that audio truly stopped. Always emit (even
+			// with an empty id) so a wildcard listener can reset.
+			ttsReportPlaybackEnded(endedId ?? "");
 		});
 
 		const unStarted = onTtsStarted(onStarted);
@@ -91,6 +116,7 @@ export function useTtsPlayback(): TtsPlaybackState {
 			unChunk();
 			unCompleted();
 			unFailed();
+			unStart();
 			unEnd();
 		};
 	}, [ensureQueue]);

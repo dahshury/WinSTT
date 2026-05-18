@@ -24,7 +24,7 @@ import { getErrorMessage, ValidationError } from "../../src/shared/lib/errors";
 import { dbg } from "../lib/debug-log";
 import { isPlainObject } from "../lib/ipc-helpers";
 import { captureSelection } from "../lib/selection-capture";
-import { getStoreValue } from "../lib/store";
+import { getStoreValue, store } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
 
 interface SpeakSelectionPayload {
@@ -190,6 +190,42 @@ function setupTtsImpl(sttClient: SttClient) {
 	sttClient.on("data-binary", onDataBinary);
 	sttClient.on("data-event", onDataEvent);
 
+	// ─── Eager warm-up ────────────────────────────────────────────────
+	// Kokoro is lazy-loaded on the first `tts_synthesize`, so the first
+	// preview/read otherwise pays a multi-second model-construct (and a
+	// one-time download). STT models are warmed at launch; do the same
+	// for TTS whenever it's enabled. `init_tts` is idempotent and
+	// `pre_ready=True` server-side, so it's safe the moment the control
+	// channel is up — no need to wait for the STT recorder.
+	let lastTtsEnabled = isTtsEnabled();
+
+	const maybeWarmup = (): void => {
+		if (!(isTtsEnabled() && sttClient.isConnected)) {
+			return;
+		}
+		try {
+			sttClient.initTts();
+			dbg("tts", "warm-up: init_tts dispatched");
+		} catch (err) {
+			dbg("tts", `warm-up init_tts failed: ${getErrorMessage(err)}`);
+		}
+	};
+
+	// Fire now (covers the already-connected case) and on every
+	// (re)connect so a server restart re-warms the engine.
+	maybeWarmup();
+	sttClient.on("connected", maybeWarmup);
+
+	// Re-warm when the user flips TTS on (off→on edge only — voice/speed
+	// edits don't need a re-init, and `init_tts` while disabled is wasted).
+	const ttsStoreUnsub = store.onDidChange("tts", () => {
+		const nowEnabled = isTtsEnabled();
+		if (nowEnabled && !lastTtsEnabled) {
+			maybeWarmup();
+		}
+		lastTtsEnabled = nowEnabled;
+	});
+
 	// ─── Renderer-facing IPC handlers ─────────────────────────────────
 
 	const handleSpeak = (
@@ -292,6 +328,20 @@ function setupTtsImpl(sttClient: SttClient) {
 		}
 	};
 
+	// The window that owns the Web Audio queue (the main app window — the
+	// settings window has none) tells us when audio actually finished.
+	// Fan it out to every window so a play/stop button in any window can
+	// track real playback rather than the far-earlier synthesis-complete.
+	const handleReportPlaybackStarted = (_event: Electron.IpcMainEvent, payload: unknown): void => {
+		const obj = isPlainObject(payload) ? (payload as { requestId?: string }) : {};
+		broadcastAll(IPC.TTS_PLAYBACK_STARTED, { requestId: obj.requestId ?? "" });
+	};
+
+	const handleReportPlaybackEnded = (_event: Electron.IpcMainEvent, payload: unknown): void => {
+		const obj = isPlainObject(payload) ? (payload as { requestId?: string }) : {};
+		broadcastAll(IPC.TTS_PLAYBACK_ENDED, { requestId: obj.requestId ?? "" });
+	};
+
 	const handleListVoices = async (): Promise<ListVoicesResult> => {
 		if (voiceCatalog) {
 			return voiceCatalog;
@@ -315,6 +365,8 @@ function setupTtsImpl(sttClient: SttClient) {
 	ipcMain.handle(IPC.TTS_SPEAK, handleSpeak);
 	ipcMain.handle(IPC.TTS_SPEAK_SELECTION, handleSpeakSelection);
 	ipcMain.on(IPC.TTS_CANCEL, handleCancel);
+	ipcMain.on(IPC.TTS_REPORT_PLAYBACK_STARTED, handleReportPlaybackStarted);
+	ipcMain.on(IPC.TTS_REPORT_PLAYBACK_ENDED, handleReportPlaybackEnded);
 	ipcMain.handle(IPC.TTS_INIT, handleInit);
 	ipcMain.handle(IPC.TTS_LIST_VOICES, handleListVoices);
 
@@ -322,10 +374,14 @@ function setupTtsImpl(sttClient: SttClient) {
 		ipcMain.removeHandler(IPC.TTS_SPEAK);
 		ipcMain.removeHandler(IPC.TTS_SPEAK_SELECTION);
 		ipcMain.removeAllListeners(IPC.TTS_CANCEL);
+		ipcMain.removeAllListeners(IPC.TTS_REPORT_PLAYBACK_STARTED);
+		ipcMain.removeAllListeners(IPC.TTS_REPORT_PLAYBACK_ENDED);
 		ipcMain.removeHandler(IPC.TTS_INIT);
 		ipcMain.removeHandler(IPC.TTS_LIST_VOICES);
 		sttClient.off("data-binary", onDataBinary);
 		sttClient.off("data-event", onDataEvent);
+		sttClient.off("connected", maybeWarmup);
+		ttsStoreUnsub();
 		activeIds.clear();
 		activeCancelAll = null;
 	};

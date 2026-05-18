@@ -1,7 +1,7 @@
 "use client";
 
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useMemo, useRef, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
@@ -31,6 +31,9 @@ export type SttModelChange = (modelId: string, quantization?: OnnxQuantization) 
 export interface SttModelSelectorProps {
 	currentQuantization: OnnxQuantization;
 	disabled?: boolean;
+	/** Render as an inline panel (no trigger/popup) that fills its host —
+	 *  used by the detached model-picker window. */
+	inline?: boolean;
 	isLoading?: boolean;
 	/** Which swap-store slot this picker is bound to. Drives the trigger's
 	 *  in-flight `from → to` indicator so the main picker and the realtime
@@ -39,12 +42,24 @@ export interface SttModelSelectorProps {
 	models: readonly ModelInfo[];
 	onChange: SttModelChange;
 	placeholder?: string;
+	/** Popup height class. Defaults to the roomy settings-panel height; the
+	 *  footer chip overrides this with a compact one to fit the status bar. */
+	popupHeightClass?: string;
+	/** Popup width class. Defaults to the settings-panel width. */
+	popupWidthClass?: string;
 	/** Optional pre-filter applied before any user filter (e.g., realtime-only picker). */
 	prefilter?: (model: ModelInfo) => boolean;
 	statesById: Record<string, ModelStateEntry>;
 	systemInfo: SystemInfoEntry | null;
+	/** Replaces the default glass-card trigger. The footer passes a compact
+	 *  chip here so the bar keeps its small footprint while the popup stays
+	 *  the full picker. Must render a `Combobox.Trigger` internally. */
+	trigger?: ReactNode;
 	value: string;
 }
+
+const DEFAULT_STT_POPUP_HEIGHT = "h-[min(620px,var(--available-height))]";
+const DEFAULT_STT_POPUP_WIDTH = "w-[max(580px,var(--anchor-width))]";
 
 function applyPrefilter(
 	models: readonly ModelInfo[],
@@ -86,6 +101,10 @@ export function SttModelSelector({
 	placeholder = "Select a model",
 	prefilter,
 	kind = "main",
+	popupHeightClass = DEFAULT_STT_POPUP_HEIGHT,
+	popupWidthClass = DEFAULT_STT_POPUP_WIDTH,
+	trigger,
+	inline = false,
 }: SttModelSelectorProps) {
 	const [filters, setFilters] = useState<SttFilterState>(EMPTY_FILTER_STATE);
 
@@ -213,6 +232,7 @@ export function SttModelSelector({
 					onFiltersChange={setFilters}
 				/>
 			}
+			inline={inline}
 			isItemEqualToValue={(a, b) => a?.id === b?.id}
 			isLoading={isLoading}
 			items={groups as never /* Base UI accepts the grouped {items,value} shape */}
@@ -235,12 +255,12 @@ export function SttModelSelector({
 					handleSelect(next.id);
 				}
 			}}
-			popupHeightClass="h-[min(620px,var(--available-height))]"
+			popupHeightClass={popupHeightClass}
 			popupRef={(node) => {
 				popupRef.current = node;
 				setPopupNode(node);
 			}}
-			popupWidthClass="w-[max(580px,var(--anchor-width))]"
+			popupWidthClass={popupWidthClass}
 			searchPlaceholder="Search transcription models"
 			sidebarSlot={
 				railItems.length > 1 ? (
@@ -248,14 +268,18 @@ export function SttModelSelector({
 				) : undefined
 			}
 			trigger={
-				<SttModelSelectorTrigger
-					catalog={baseModels}
-					disabled={disabled || isLoading}
-					kind={kind}
-					open={false /* shell owns open state; trigger uses Combobox.Trigger internally */}
-					placeholder={placeholder}
-					selectedModel={selectedModel ?? undefined}
-				/>
+				inline
+					? undefined
+					: (trigger ?? (
+							<SttModelSelectorTrigger
+								catalog={baseModels}
+								disabled={disabled || isLoading}
+								kind={kind}
+								open={false /* shell owns open state; trigger uses Combobox.Trigger internally */}
+								placeholder={placeholder}
+								selectedModel={selectedModel ?? undefined}
+							/>
+						))
 			}
 			value={selectedModel}
 		/>

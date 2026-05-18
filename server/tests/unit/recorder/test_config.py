@@ -22,8 +22,14 @@ class TestRecorderConfig:
         assert config.audio.sample_rate == 16000
         assert config.audio.buffer_size == 512
         assert config.vad.silero_sensitivity == 0.4
+        assert config.vad.speech_onset_consecutive_chunks == 3
         assert config.transcription.model == "tiny"
         assert config.wake_word.wakeword_backend == ""
+
+    def test_speech_onset_consecutive_chunks_validation(self) -> None:
+        # Must be >= 1 (0 would mean "start before any speech chunk").
+        with pytest.raises(ValidationError):
+            VADConfig(speech_onset_consecutive_chunks=0)
 
     def test_silero_sensitivity_validation(self) -> None:
         with pytest.raises(ValidationError):

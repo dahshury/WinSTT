@@ -4,6 +4,7 @@ import { clearSessionAborted, isSessionAborted } from "../lib/abort-state";
 import { readWindowContext } from "../lib/context-reader";
 import { dbg, dbgVerbose } from "../lib/debug-log";
 import { createSafeSender, isRecord, type SafeSend } from "../lib/ipc-helpers";
+import { setLastTranscription } from "../lib/last-transcription";
 import { pasteText } from "../lib/paste";
 import { onAudioLevel, onRecordingStart, onRecordingStop } from "../lib/recording-indicator";
 import { consumeRecordingStart, notifyRecordingStop } from "../lib/recording-state";
@@ -112,6 +113,10 @@ function notifyEmptyResult(mode: unknown, safeSend: SafeSend): void {
 function pasteIfDictating(mode: unknown, text: string): void {
 	// Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement,StringLiteral: pasteText is a fire-and-forget native call — no observable side effect can be asserted in unit tests; covered by Playwright e2e
 	if (mode !== "listen") {
+		// Remember it so the exclusive re-paste shortcut can re-inject this
+		// exact transcript later. Recorded only when we'd auto-paste (not in
+		// listen mode), so the shortcut mirrors what was actually dictated.
+		setLastTranscription(text);
 		// Stryker disable next-line StringLiteral: template literal trailing space is informational; pasteText is unobservable
 		pasteText(`${text} `);
 	}

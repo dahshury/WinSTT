@@ -5,22 +5,20 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
-import { HotkeyRecorder } from "@/features/record-hotkey";
 import {
 	listTtsVoices,
-	onTtsCompleted,
 	onTtsFailed,
 	onTtsModelDownloadComplete,
 	onTtsModelDownloadProgress,
 	onTtsModelDownloadStart,
+	onTtsPlaybackEnded,
+	onTtsPlaybackStarted,
 	onTtsStarted,
 	type TtsVoiceCatalog,
 	ttsCancel,
 	ttsSpeak,
-	ttsSpeakSelection,
 } from "@/shared/api/ipc-client";
 import { formatBytes } from "@/shared/lib/format-bytes";
-import { Button } from "@/shared/ui/button";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
@@ -28,6 +26,7 @@ import { IconButton } from "@/shared/ui/icon-button";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
+import { Spinner } from "@/shared/ui/spinner";
 
 export interface TtsModelSectionProps {
 	/** Reserved for future composition — currently the section pulls all state
@@ -112,15 +111,25 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 	const update = useSettingsStore((s) => s.updateTtsSettings);
 
 	const [catalog, setCatalog] = useState<TtsVoiceCatalog>({ voices: [], languages: [] });
-	const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
 	const [download, setDownload] = useState<DownloadState>(INITIAL_DOWNLOAD);
+
+	// The play/loading/stop affordance tracks *audible* playback via events
+	// the main process broadcasts to every window — so it works even though
+	// the audio queue lives in a different window (the settings window has
+	// none). Lifecycle: `onTtsStarted` → loading (synthesis ~1s);
+	// `onTtsPlaybackStarted` → speaking (audio actually playing);
+	// `onTtsPlaybackEnded` → idle (buffered audio fully played out, not the
+	// much-earlier `tts_complete`).
+	const [playback, setPlayback] = useState<{ requestId: string | null; playing: boolean }>({
+		requestId: null,
+		playing: false,
+	});
 	const [errorReason, setErrorReason] = useState<string | null>(null);
 
 	const enabled = tts?.enabled ?? false;
 	const voice = tts?.voice ?? "af_heart";
 	const lang = tts?.lang ?? "en-us";
 	const speed = tts?.speed ?? 1.0;
-	const hotkey = tts?.hotkey ?? "";
 	const device: DeviceValue = (tts?.device as DeviceValue) ?? "auto";
 
 	// Fetch the voice catalog whenever the section becomes enabled. The IPC
@@ -140,29 +149,39 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		};
 	}, [enabled]);
 
-	// Track in-flight synthesis so the Test button can flip to Stop. Server-
-	// correlated request ids let us cancel the right one if multiple speakers
-	// were ever stacked (today only one runs at a time, but the contract is
-	// per-id and we honor it).
 	useEffect(
 		() =>
 			onTtsStarted(({ requestId }) => {
-				setActiveRequestId(requestId);
+				setPlayback({ requestId, playing: false });
 				setErrorReason(null);
 			}),
 		[]
 	);
 	useEffect(
 		() =>
-			onTtsCompleted(({ requestId }) => {
-				setActiveRequestId((current) => (current === requestId ? null : current));
+			onTtsPlaybackStarted(({ requestId }) => {
+				// Synthesis gap is over, audio is now playing. Exact-match so
+				// a stale start from a superseded preview can't promote the
+				// wrong request.
+				setPlayback((p) => (p.requestId === requestId ? { requestId, playing: true } : p));
+			}),
+		[]
+	);
+	useEffect(
+		() =>
+			onTtsPlaybackEnded(({ requestId }) => {
+				// Exact-match only. `onTtsStarted` always delivers the real id
+				// before audio plays, so we never need a wildcard reset — and
+				// a stale empty-id "ended" (from the cancel that precedes
+				// every preview) must NOT clear the freshly-started request.
+				setPlayback((p) => (p.requestId === requestId ? { requestId: null, playing: false } : p));
 			}),
 		[]
 	);
 	useEffect(
 		() =>
 			onTtsFailed(({ requestId, reason }) => {
-				setActiveRequestId((current) => (current === requestId ? null : current));
+				setPlayback((p) => (p.requestId === requestId ? { requestId: null, playing: false } : p));
 				setErrorReason(reason);
 			}),
 		[]
@@ -242,25 +261,21 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 
 	// Inline play/stop affordance next to the select: replays the current
 	// voice without re-picking it, and doubles as a stop control while a
-	// preview (or any TTS) is playing.
+	// preview (or any TTS) is playing. Disabled (no-op) during the
+	// synthesis-loading window — the button shows a spinner then.
 	const handlePreviewToggle = useCallback(() => {
-		if (activeRequestId) {
-			ttsCancel(activeRequestId);
+		if (playback.requestId !== null) {
+			if (playback.playing) {
+				ttsCancel(playback.requestId);
+			}
 			return;
 		}
 		previewVoice(voice, lang);
-	}, [activeRequestId, previewVoice, voice, lang]);
+	}, [playback.requestId, playback.playing, previewVoice, voice, lang]);
 
 	const handleSpeedChange = useCallback(
 		(next: number) => {
 			update({ speed: next });
-		},
-		[update]
-	);
-
-	const handleHotkeyChange = useCallback(
-		(next: string) => {
-			update({ hotkey: next });
 		},
 		[update]
 	);
@@ -272,10 +287,6 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		[update]
 	);
 
-	const handleSpeakSelection = useCallback(() => {
-		ttsSpeakSelection();
-	}, []);
-
 	const percentLabel =
 		download.totalBytes > 0
 			? t("downloadingProgress", {
@@ -285,7 +296,19 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 				})
 			: t("downloading");
 
-	const isSpeaking = activeRequestId !== null;
+	const isLoading = playback.requestId !== null && !playback.playing;
+	const isSpeaking = playback.requestId !== null && playback.playing;
+	let previewLabel = t("previewVoice");
+	if (isSpeaking) {
+		previewLabel = t("stopSpeaking");
+	} else if (isLoading) {
+		previewLabel = t("loadingVoice");
+	}
+	const previewIcon = isLoading ? (
+		<Spinner className="size-4" />
+	) : (
+		<HugeiconsIcon icon={isSpeaking ? StopIcon : PlayIcon} size={16} />
+	);
 	const voicePlaceholder = voiceOptions.length === 0 ? t("noVoicesYet") : t("voiceCaption");
 
 	return (
@@ -310,10 +333,11 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 							</ElevatedSurface>
 						</div>
 						<IconButton
-							aria-label={isSpeaking ? t("stopSpeaking") : t("previewVoice")}
-							icon={<HugeiconsIcon icon={isSpeaking ? StopIcon : PlayIcon} size={16} />}
+							aria-label={previewLabel}
+							disabled={isLoading}
+							icon={previewIcon}
 							onClick={handlePreviewToggle}
-							tooltip={isSpeaking ? t("stopSpeaking") : t("previewVoice")}
+							tooltip={previewLabel}
 						/>
 					</div>
 				</FormControl>
@@ -330,9 +354,6 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 						/>
 					</ElevatedSurface>
 				</FormControl>
-				<FormControl caption={t("hotkeyHint")} label={t("hotkeyLabel")}>
-					<HotkeyRecorder currentKey={hotkey} onKeyRecorded={handleHotkeyChange} />
-				</FormControl>
 				<FormControl caption={t("deviceCaption")} label={t("device")}>
 					<ElevatedSurface inline>
 						<Select
@@ -344,15 +365,6 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 					</ElevatedSurface>
 				</FormControl>
 				<div className="flex flex-col gap-3 py-3">
-					<div className="flex flex-wrap items-center gap-2">
-						<Button
-							className="h-8 rounded-md bg-surface-2 px-3 text-foreground text-sm ring-1 ring-divider hover:bg-surface-3"
-							disabled={isSpeaking}
-							onClick={handleSpeakSelection}
-						>
-							{t("speakSelection")}
-						</Button>
-					</div>
 					{download.active ? (
 						<DownloadProgressBar
 							label={percentLabel}

@@ -158,9 +158,7 @@ def text_detected(text: str, state: ServerState, loop: asyncio.AbstractEventLoop
                 # recording here truncates real speech mid-utterance, which
                 # was the reported toggle-mode bug. The break still fires
                 # for true stuck-on-noise sessions (flat RMS, no variance).
-                audio_variance = _recent_audio_variance(
-                    state, state.hard_break_even_on_background_noise
-                )
+                audio_variance = _recent_audio_variance(state, state.hard_break_even_on_background_noise)
                 if audio_variance > state.noise_break_audio_variance_threshold:
                     print(
                         f"{bcolors.OKCYAN}[noise-break] SUPPRESSED — repeating text "

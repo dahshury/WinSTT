@@ -317,6 +317,7 @@ def build_transcriber(
         quantization=quantization,
         providers=providers,
         on_download_progress=progress_handler,
+        normalize_audio=config.transcription.normalize_audio,
     )
 
 
@@ -459,6 +460,7 @@ def build_realtime_transcriber(
         providers=providers,
         on_download_progress=progress_handler,
         segment_with_vad=False,
+        normalize_audio=config.transcription.normalize_audio,
     )
 
 

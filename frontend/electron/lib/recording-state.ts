@@ -105,6 +105,17 @@ export function notifyRecordingStop(): void {
 	signaledIntent = false;
 }
 
+/**
+ * True while a toggle-mode session is open — i.e. between the toggle-ON
+ * press and the toggle-OFF press. The hotkey module reads this AFTER
+ * calling `notifyHotkeyPressed()` to tell the opening press (session now
+ * active → play the start cue) apart from the closing press (session now
+ * inactive → stay silent; only the first press should chime).
+ */
+export function isToggleSessionActive(): boolean {
+	return toggleSessionActive;
+}
+
 /** Diagnostic. */
 export function debugRecordingState(): {
 	active: boolean;

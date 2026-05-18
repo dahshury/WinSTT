@@ -151,6 +151,38 @@ describe("send wrappers", () => {
 	});
 });
 
+describe("toCloneableArgs (contextBridge clone guard)", () => {
+	test("passes plain payloads through unchanged (structuredClone fast path)", () => {
+		const api = installMockApi();
+		ipc.ipcSend("settings:save", { settings: { a: 1, nested: { b: [2, 3] } } });
+		expect(api.send).toHaveBeenCalledWith("settings:save", {
+			settings: { a: 1, nested: { b: [2, 3] } },
+		});
+	});
+
+	test("strips a non-cloneable function from a send payload instead of throwing", () => {
+		const api = installMockApi();
+		const poisoned = { settings: { ok: 1, fn: () => "boom" } };
+		expect(() => ipc.ipcSend("settings:save", poisoned)).not.toThrow();
+		expect(api.send).toHaveBeenCalledWith("settings:save", { settings: { ok: 1 } });
+	});
+
+	test("sanitizes a non-cloneable invoke argument and still resolves", async () => {
+		const api = installMockApi({ invokeImpl: (_c, arg) => arg });
+		const result = await ipc.ipcInvoke("history:get-all", { id: "x", fn: () => 0 });
+		expect(result).toEqual({ id: "x" });
+		expect(api.invoke).toHaveBeenCalledWith("history:get-all", { id: "x" });
+	});
+
+	test("drops to no args when the payload is circular (does not crash the renderer)", () => {
+		const api = installMockApi();
+		const circular: Record<string, unknown> = { fn: () => 0 };
+		circular.self = circular;
+		expect(() => ipc.ipcSend("settings:save", circular)).not.toThrow();
+		expect(api.send).toHaveBeenCalledWith("settings:save");
+	});
+});
+
 describe("invokeOrDefault wrappers", () => {
 	test("returns the resolved value when invoke succeeds", async () => {
 		installMockApi({

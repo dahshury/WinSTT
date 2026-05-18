@@ -4,7 +4,7 @@ import { UiohookKey, uIOhook } from "uiohook-napi";
 import { dbg, dbgVerbose } from "../lib/debug-log";
 import { createSafeSender } from "../lib/ipc-helpers";
 import { codesToNames, KEYCODE_TO_NAME, parseAccelerator } from "../lib/keycodes";
-import { notifyHotkeyPressed } from "../lib/recording-state";
+import { isToggleSessionActive, notifyHotkeyPressed } from "../lib/recording-state";
 import { breadcrumb } from "../lib/sentry-main";
 import { playRecordingSound } from "../lib/sound";
 import { getStoreValue } from "../lib/store";
@@ -259,8 +259,20 @@ export function setupHotkeyHandlers(
 		// Stryker restore StringLiteral,LogicalOperator,ArrayDeclaration,ArrowFunction
 	};
 
-	const shouldPlayRecordingSound = (mode: unknown): boolean =>
-		mode !== "listen" && mode !== "wakeword" && sttClient.isConnected;
+	const shouldPlayRecordingSound = (mode: unknown): boolean => {
+		if (mode === "listen" || mode === "wakeword" || !sttClient.isConnected) {
+			return false;
+		}
+		// Toggle mode is one press to start, another to stop. Only the
+		// opening press should chime. notifyHotkeyPressed() has already
+		// flipped the session flag by the time this runs, so an inactive
+		// session here means this press just CLOSED the session — stay
+		// silent. (ptt never opens a session, so this never suppresses it.)
+		if (mode === "toggle" && !isToggleSessionActive()) {
+			return false;
+		}
+		return true;
+	};
 
 	const canActivateCombo = (): boolean => !isActive && comboFullyReleased && checkCombo();
 

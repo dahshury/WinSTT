@@ -63,18 +63,14 @@ class TestCatalogAppliesOverlay:
     def test_canary_languages_overridden_by_overlay(self, isolated_overlay: Path) -> None:
         # Simulate a refresh that produced a corrected Canary whitelist.
         # ModelCatalog must surface that list, not the bundled one.
-        catalog_overlay.save_overlay(
-            {"nemo-canary-1b-v2": {"languages": ["de", "en", "fr"]}}
-        )
+        catalog_overlay.save_overlay({"nemo-canary-1b-v2": {"languages": ["de", "en", "fr"]}})
         catalog = ModelCatalog()
         info = catalog.get("nemo-canary-1b-v2")
         assert info is not None
         assert info.languages == ["de", "en", "fr"]
 
     def test_overlay_for_unknown_model_is_ignored(self, isolated_overlay: Path) -> None:
-        catalog_overlay.save_overlay(
-            {"some-model-that-doesnt-exist": {"languages": ["xx"]}}
-        )
+        catalog_overlay.save_overlay({"some-model-that-doesnt-exist": {"languages": ["xx"]}})
         catalog = ModelCatalog()
         # No crash; existing entries unaffected.
         assert catalog.get("tiny") is not None
@@ -91,9 +87,7 @@ class TestCatalogAppliesOverlay:
         assert "en" in info.languages
         assert "ar" not in info.languages
 
-    def test_overlay_with_non_list_languages_is_ignored(
-        self, isolated_overlay: Path
-    ) -> None:
+    def test_overlay_with_non_list_languages_is_ignored(self, isolated_overlay: Path) -> None:
         catalog_overlay.save_overlay({"tiny": {"languages": "en"}})  # type: ignore[dict-item]
         catalog = ModelCatalog()
         info = catalog.get("tiny")

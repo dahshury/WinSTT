@@ -370,11 +370,13 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--unknown_sentence_detection_pause",
         type=float,
-        default=0.7,
+        default=1.3,
         help=(
-            "The duration of pause (in seconds) that the model should interpret as an "
-            "incomplete or unknown sentence. This is useful for identifying when a "
-            "sentence is trailing off or unfinished. Default is 0.7 seconds."
+            "The duration of pause (in seconds) tolerated after speech with no clear "
+            "terminator before the recording ends. This is the fallback bucket for "
+            "normal mid-sentence speech (live text rarely ends in punctuation), so it "
+            "governs how long a natural breath/think pause can be without cutting the "
+            "speaker off. Default is 1.3 seconds (0.7 cut off thinkers mid-sentence)."
         ),
     )
 

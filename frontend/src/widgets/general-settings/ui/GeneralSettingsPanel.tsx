@@ -598,27 +598,19 @@ function RecordingSection({
 					update={update}
 				/>
 				{isListenMode ? null : (
-					<>
-						<FormControl
-							caption={t("recordingSoundCaption")}
-							label={t("recordingSound")}
-							labelAddon={
-								<Toggle
-									checked={recordingSoundEnabled}
-									onCheckedChange={(v) => update({ recordingSound: v })}
-								/>
-							}
-						/>
-						{recordingSoundEnabled ? (
-							<FormControl
-								caption={t("soundLibraryCaption")}
-								label={t("soundLibrary")}
-								tooltip={t("soundLibraryTooltip")}
-							>
-								<SoundLibrary t={t} tCommon={tc} />
-							</FormControl>
-						) : null}
-					</>
+					<FormControl
+						caption={t("recordingSoundCaption")}
+						label={t("recordingSound")}
+						labelAddon={
+							<Toggle
+								checked={recordingSoundEnabled}
+								onCheckedChange={(v) => update({ recordingSound: v })}
+							/>
+						}
+						tooltip={t("soundLibraryTooltip")}
+					>
+						{recordingSoundEnabled ? <SoundLibrary t={t} tCommon={tc} /> : null}
+					</FormControl>
 				)}
 			</div>
 		</SettingSection>

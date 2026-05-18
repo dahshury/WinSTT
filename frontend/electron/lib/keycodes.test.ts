@@ -14,6 +14,8 @@ const {
 	NAME_TO_KEYCODE,
 	parseAccelerator,
 	sortKeycodes,
+	electronKeyToken,
+	uiohookAcceleratorToElectron,
 } = await import("./keycodes");
 
 describe("KEYCODE_TO_NAME / NAME_TO_KEYCODE", () => {
@@ -127,5 +129,68 @@ describe("codesToNames", () => {
 
 	test("returns empty array for empty input", () => {
 		expect(codesToNames([])).toEqual([]);
+	});
+});
+
+describe("electronKeyToken", () => {
+	test("letters, digits and F-keys map to themselves", () => {
+		expect(electronKeyToken("V")).toBe("V");
+		expect(electronKeyToken("7")).toBe("7");
+		expect(electronKeyToken("F12")).toBe("F12");
+	});
+
+	test("numpad keys map to Electron numN tokens", () => {
+		expect(electronKeyToken("Num0")).toBe("num0");
+		expect(electronKeyToken("Num9")).toBe("num9");
+	});
+
+	test("aliased keys use Electron spelling", () => {
+		expect(electronKeyToken("Enter")).toBe("Return");
+		expect(electronKeyToken("Up")).toBe("Up");
+		expect(electronKeyToken("PageDown")).toBe("PageDown");
+	});
+
+	test("unmappable keys return null", () => {
+		expect(electronKeyToken("F25")).toBeNull();
+		expect(electronKeyToken("CapsLock")).toBeNull();
+		expect(electronKeyToken(";")).toBeNull();
+		expect(electronKeyToken("")).toBeNull();
+	});
+});
+
+describe("uiohookAcceleratorToElectron", () => {
+	test("converts the default re-paste combo", () => {
+		expect(uiohookAcceleratorToElectron("LCtrl+LShift+V")).toBe("Control+Shift+V");
+	});
+
+	test("collapses left/right modifiers and emits a stable order", () => {
+		// Input order is Shift→Meta→Ctrl; output must be the canonical
+		// Control,Alt,Shift,Super order regardless.
+		expect(uiohookAcceleratorToElectron("RShift+RMeta+RCtrl+A")).toBe("Control+Shift+Super+A");
+	});
+
+	test("dedupes the same logical modifier from both sides", () => {
+		expect(uiohookAcceleratorToElectron("LCtrl+RCtrl+S")).toBe("Control+S");
+	});
+
+	test("tolerates surrounding whitespace", () => {
+		expect(uiohookAcceleratorToElectron("  LCtrl + LAlt + Delete ")).toBe("Control+Alt+Delete");
+	});
+
+	test("empty / whitespace-only string returns null (feature disabled)", () => {
+		expect(uiohookAcceleratorToElectron("")).toBeNull();
+		expect(uiohookAcceleratorToElectron("   ")).toBeNull();
+	});
+
+	test("modifiers with no key return null", () => {
+		expect(uiohookAcceleratorToElectron("LCtrl+LShift")).toBeNull();
+	});
+
+	test("more than one non-modifier key returns null", () => {
+		expect(uiohookAcceleratorToElectron("LCtrl+V+A")).toBeNull();
+	});
+
+	test("an unmappable token anywhere returns null", () => {
+		expect(uiohookAcceleratorToElectron("LCtrl+CapsLock")).toBeNull();
 	});
 });

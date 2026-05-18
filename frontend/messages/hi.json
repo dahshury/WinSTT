@@ -571,6 +571,7 @@
     "deviceCpu": "CPU",
     "testVoice": "आवाज़ का परीक्षण करें",
     "previewVoice": "आवाज़ पूर्वावलोकन",
+    "loadingVoice": "लोड हो रहा है…",
     "testVoiceSample": "सूर्य के प्रकाश में सोलह कौवे शोर मचाते हुए उड़े।",
     "stopSpeaking": "रोकें",
     "speakSelection": "चयन पढ़ें",

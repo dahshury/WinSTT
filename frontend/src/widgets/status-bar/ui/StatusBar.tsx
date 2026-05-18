@@ -5,16 +5,17 @@ import { Separator } from "@base-ui/react/separator";
 import { AiAudioIcon, ArrowDown01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useMemo } from "react";
+import { type MouseEvent, type ReactNode, useCallback, useMemo } from "react";
 import { useInputDevices } from "@/entities/audio-device";
 import { useConnectionStore } from "@/entities/connection";
-import { buildModelOpts, useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
+import { useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { ConnectionIndicator } from "@/features/connect-server";
 import { useListenStore } from "@/features/listen-mode";
 import { useDownloadStore } from "@/features/model-download";
 import { HotkeyDisplay } from "@/features/push-to-talk";
-import { WHISPER_MODELS } from "@/shared/config/defaults";
+import { IPC } from "@/shared/api/ipc-channels";
+import { ipcSend } from "@/shared/api/ipc-client";
 import {
 	SurfaceProvider,
 	surfaceClasses,
@@ -28,10 +29,6 @@ import { Tooltip } from "@/shared/ui/tooltip";
 
 const FOOTER_TOOLTIP_DELAY = 1500;
 const MAX_DEVICE_CHARS = 8;
-const FALLBACK_MODEL_OPTS: readonly SelectOption[] = WHISPER_MODELS.map((v) => ({
-	id: v,
-	label: v,
-}));
 
 /** Strip driver/loopback suffixes: "LG TV (NVIDIA …) [Loopback]" → "LG TV" */
 const DEVICE_SUFFIX_RE = /\s*[([].*/;
@@ -128,14 +125,62 @@ function FooterMenuChip({
 	);
 }
 
+interface FooterModelChipProps {
+	ariaLabel: string;
+	label: string;
+	tooltip: string;
+}
+
+/** Same outer shape as the old footer select chip (icon · name · chevron),
+ *  but clicking it opens the detached model-picker window — the only way
+ *  the full picker can be shown without being clipped by the 420×150 main
+ *  window. Sends its own viewport rect so the window anchors above it. */
+function FooterModelChip({ ariaLabel, label, tooltip }: FooterModelChipProps): ReactNode {
+	const substrate = useSurface();
+	const hoverLevel = Math.min(substrate + 2, 8);
+	const handleClick = useCallback((e: MouseEvent<HTMLButtonElement>) => {
+		const r = e.currentTarget.getBoundingClientRect();
+		ipcSend(IPC.MODEL_PICKER_OPEN, {
+			x: r.x,
+			y: r.y,
+			width: r.width,
+			height: r.height,
+		});
+	}, []);
+	return (
+		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
+			<button
+				aria-label={ariaLabel}
+				className={`flex max-w-[140px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
+				data-slot="stt-model-selector-trigger"
+				onClick={handleClick}
+				type="button"
+			>
+				<HugeiconsIcon
+					aria-hidden="true"
+					color="var(--color-foreground-dim)"
+					icon={AiAudioIcon}
+					size={11}
+				/>
+				<span className="min-w-0 truncate">{label}</span>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className="shrink-0 text-foreground-dim/60"
+					icon={ArrowDown01Icon}
+					size={9}
+				/>
+			</button>
+		</Tooltip>
+	);
+}
+
 interface ModelSwapChipProps {
 	label: string;
 	tooltip: string;
 }
 
-/** Read-only chip shown in place of the model picker while a swap is in
- * flight. Mirrors the FooterMenuChip surface treatment so the bar layout
- * doesn't shift, just without the dropdown affordance. */
+/** Read-only chip shown in place of the model chip while a swap is in
+ *  flight. Same compact footprint so the bar doesn't shift. */
 function ModelSwapChip({ label, tooltip }: ModelSwapChipProps): ReactNode {
 	return (
 		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
@@ -154,40 +199,16 @@ export function StatusBar() {
 	const currentModel = useSettingsStore((s) => s.settings.model?.model);
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const inputDeviceIndex = useSettingsStore((s) => s.settings.audio?.inputDeviceIndex);
-	const updateModel = useSettingsStore((s) => s.updateModelSettings);
 	const updateAudio = useSettingsStore((s) => s.updateAudioSettings);
 	const isListening = useListenStore((s) => s.isListening);
 	const listenDeviceName = useListenStore((s) => s.deviceName);
 	const isDownloading = useDownloadStore((s) => s.isDownloading);
 	const connectionStatus = useConnectionStore((s) => s.connectionStatus);
 	const swappingMain = useModelSwapStore((s) => s.activeMain);
+	const mainSwapping = swappingMain !== null;
 	const t = useTranslations("statusBar");
 	const tAudio = useTranslations("audio");
 	const tModel = useTranslations("model");
-
-	const catalogModels = useCatalogStore((s) => s.models);
-	const catalogLoaded = useCatalogStore((s) => s.isLoaded);
-	const getModel = useCatalogStore((s) => s.getModel);
-
-	const modelOpts = useMemo<readonly SelectOption[]>(
-		() =>
-			catalogLoaded && catalogModels.length > 0
-				? buildModelOpts(catalogModels)
-				: FALLBACK_MODEL_OPTS,
-		[catalogLoaded, catalogModels]
-	);
-
-	const handleModelChange = useCallback(
-		(v: string) => {
-			const info = getModel(v);
-			if (info) {
-				updateModel({ model: v, backend: info.backend });
-			} else {
-				updateModel({ model: v });
-			}
-		},
-		[updateModel, getModel]
-	);
 
 	const { devices, defaultDevice } = useInputDevices();
 	const { deviceOptions, deviceNameMap } = useMemo(() => {
@@ -261,20 +282,16 @@ export function StatusBar() {
 				{currentModel && (
 					<>
 						<Separator className="h-3 w-px bg-border" orientation="vertical" />
-						{swappingMain ? (
+						{mainSwapping ? (
 							<ModelSwapChip
 								label={t("switchingModel", { model: swappingMain })}
 								tooltip={t("switchingModelTooltip", { model: swappingMain })}
 							/>
 						) : (
-							<FooterMenuChip
+							<FooterModelChip
 								ariaLabel={tModel("model")}
-								icon={AiAudioIcon}
 								label={currentModel}
-								onChange={handleModelChange}
-								options={modelOpts}
 								tooltip={t("modelTooltip", { model: currentModel })}
-								value={currentModel}
 							/>
 						)}
 					</>

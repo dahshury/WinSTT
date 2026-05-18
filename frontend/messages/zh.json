@@ -571,6 +571,7 @@
     "deviceCpu": "CPU",
     "testVoice": "测试语音",
     "previewVoice": "试听语音",
+    "loadingVoice": "加载中…",
     "testVoiceSample": "敏捷的棕色狐狸跳过了懒狗。",
     "stopSpeaking": "停止",
     "speakSelection": "朗读所选",

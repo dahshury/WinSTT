@@ -571,6 +571,7 @@
     "deviceCpu": "CPU",
     "testVoice": "Probar voz",
     "previewVoice": "Previsualizar voz",
+    "loadingVoice": "Cargando…",
     "testVoiceSample": "El veloz murciélago hindú comía feliz cardillo y kiwi.",
     "stopSpeaking": "Detener",
     "speakSelection": "Leer selección",

@@ -79,6 +79,7 @@ mock.module("../lib/store", () => {
 // UiohookKey which keycodes consumes at module init.
 
 const { setupHotkeyHandlers, setPasteGuard } = await import("./hotkey");
+const { __resetRecordingStateForTesting__ } = await import("../lib/recording-state");
 
 const sentEvents: Array<{ channel: string; args: unknown[] }> = [];
 const winSent: Array<{ channel: string; args: unknown[] }> = [];
@@ -116,6 +117,10 @@ beforeEach(() => {
 	playSoundCalls.length = 0;
 	storeValue = "ptt";
 	sttConnectedState = true;
+	// recording-state is a real (un-mocked) module with module-level
+	// toggle-session state — reset it so a toggle test can't leak an
+	// open session into the next test (or vice-versa).
+	__resetRecordingStateForTesting__();
 	setPasteGuard(false);
 	cleanup = setupHotkeyHandlers(fakeWindow, fakeSttClient as never);
 });
@@ -834,6 +839,44 @@ describe("hotkey store key fidelity (mutation guards)", () => {
 		setPasteGuard(false);
 		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeTruthy();
 		expect(playSoundCalls.length).toBe(0);
+	});
+
+	test("toggle mode: only the OPENING press chimes — the closing (stop) press is silent", async () => {
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		storeValue = "toggle";
+
+		// Press 1 — opens the toggle session → recording cue plays.
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		expect(playSoundCalls.length).toBe(1);
+
+		// Release the combo so the next press can re-activate.
+		fireKey("keyup", 1);
+		fireKey("keyup", 47);
+
+		// Press 2 — closes the session → must NOT replay the cue.
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		expect(playSoundCalls.length).toBe(1);
+
+		// hotkey:pressed still fires on BOTH presses (gate is sound-only).
+		expect(winSent.filter((e) => e.channel === "hotkey:pressed").length).toBe(2);
+	});
+
+	test("ptt mode is unaffected — every press chimes (toggle-session guard never suppresses ptt)", async () => {
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		storeValue = "ptt";
+
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		fireKey("keyup", 1);
+		fireKey("keyup", 47);
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+
+		expect(playSoundCalls.length).toBe(2);
 	});
 });
 

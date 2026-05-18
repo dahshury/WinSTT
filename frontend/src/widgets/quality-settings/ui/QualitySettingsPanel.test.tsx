@@ -68,8 +68,10 @@ describe("QualitySettingsPanel", () => {
 	});
 
 	test("enabling Smart Endpoint auto-disables LLM dictation", () => {
-		// Set up: Toggle mode + LLM dictation already on.
+		// Set up: Toggle mode + LLM dictation already on. Smart Endpoint
+		// now defaults ON, so force it OFF first to test the enable path.
 		useSettingsStore.getState().updateGeneralSettings({ recordingMode: "toggle" });
+		useSettingsStore.getState().updateQualitySettings({ smartEndpoint: false });
 		useSettingsStore.getState().updateLlmDictation({ enabled: true });
 		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(true);
 
@@ -103,7 +105,9 @@ describe("QualitySettingsPanel", () => {
 	});
 
 	test("enabling Smart Endpoint when LLM dictation is already off is a no-op for LLM", () => {
+		// Smart Endpoint defaults ON now — force OFF to exercise enabling.
 		useSettingsStore.getState().updateGeneralSettings({ recordingMode: "wakeword" });
+		useSettingsStore.getState().updateQualitySettings({ smartEndpoint: false });
 		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(false);
 
 		const { getByRole } = render(

@@ -82,6 +82,7 @@ class KokoroSynthesizer(ISpeechSynthesizer):
             return "CPUExecutionProvider"
         try:
             import onnxruntime
+
             providers = onnxruntime.get_available_providers()
         except Exception:
             return "CPUExecutionProvider"
@@ -116,8 +117,7 @@ class KokoroSynthesizer(ISpeechSynthesizer):
             self._kokoro = Kokoro(str(model_path), str(voices_path))
         except ImportError as exc:
             raise RuntimeError(
-                "kokoro-onnx is not installed. Run `uv sync --extra cpu --extra tts` "
-                "(or `--extra gpu --extra tts`)."
+                "kokoro-onnx is not installed. Run `uv sync --extra cpu --extra tts` (or `--extra gpu --extra tts`)."
             ) from exc
         except Exception:
             # CUDA EP can fail to come up (missing CUDA DLLs, driver mismatch).

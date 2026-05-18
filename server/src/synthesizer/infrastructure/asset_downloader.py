@@ -23,12 +23,8 @@ from pathlib import Path
 # Pinned to the v1.0 release. The fp16 ONNX is the recommended variant per
 # the research report (163 MB, near-fp32 quality). Kept as module-level
 # constants so packaging scripts can mirror them into a release bundle.
-KOKORO_FP16_URL = (
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.fp16.onnx"
-)
-KOKORO_VOICES_URL = (
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
-)
+KOKORO_FP16_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.fp16.onnx"
+KOKORO_VOICES_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
 
 ProgressFn = Callable[[float, int, int], None]
 CancelFn = Callable[[], bool]

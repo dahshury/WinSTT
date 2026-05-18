@@ -571,6 +571,7 @@
     "deviceCpu": "المعالج",
     "testVoice": "اختبار الصوت",
     "previewVoice": "معاينة الصوت",
+    "loadingVoice": "جارٍ التحميل…",
     "testVoiceSample": "نص الحكمة: العلم في الصغر كالنقش على الحجر.",
     "stopSpeaking": "إيقاف",
     "speakSelection": "قراءة المحدد",

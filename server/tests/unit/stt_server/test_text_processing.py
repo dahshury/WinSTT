@@ -288,9 +288,7 @@ class TestTextDetectedSmartEndpoint:
 
         assert recorder.post_speech_silence_duration == pytest.approx(0.9)
 
-    def test_smart_endpoint_pause_above_floor_is_unclamped(
-        self, loop_fixture: asyncio.AbstractEventLoop
-    ) -> None:
+    def test_smart_endpoint_pause_above_floor_is_unclamped(self, loop_fixture: asyncio.AbstractEventLoop) -> None:
         # Low confidence keeps the pause well above the floor — the clamp
         # must NOT drag a long, deliberate wait down.
         classifier = FakeSentenceClassifier(fixed_prob=0.2)

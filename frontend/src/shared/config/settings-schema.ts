@@ -27,19 +27,26 @@ export const qualitySettingsSchema = z.object({
 	realtimeBatchSize: z.number().int().default(16),
 	ensureSentenceStartingUppercase: z.boolean().default(true),
 	ensureSentenceEndsWithPeriod: z.boolean().default(true),
-	smartEndpoint: z.boolean().default(false),
+	// ON by default: the DistilBERT sentence-completion classifier extends
+	// the silence pause when the utterance is semantically incomplete, which
+	// is the purpose-built defence against finalizing mid-thought. With it
+	// off, the crude punctuation heuristic (unknownSentenceDetectionPause)
+	// cut speakers off during natural pauses.
+	smartEndpoint: z.boolean().default(true),
 	// Pause multiplier: pause = (model + whisper) * smartEndpointSpeed.
 	// HIGHER = longer wait = more patient. Default 2.0 matches the
 	// RealtimeSTT reference (its binary-classified smart-endpoint example
 	// ships 2.0); the old 1.5 committed ~25% sooner everywhere and read
 	// as "pastes too eagerly" in toggle dictation.
 	smartEndpointSpeed: z.number().min(0.5).max(3.0).default(2.0),
-	// Sentence-pause durations driving the toggle-mode silence-timing heuristic.
-	// Defaults match the server's CLI argument defaults so a fresh install
-	// behaves identically to the pre-slider baseline.
+	// Sentence-pause durations driving the toggle-mode silence-timing heuristic
+	// (the fallback when Smart Endpoint is off). Defaults match the server's
+	// CLI argument defaults. unknownSentenceDetectionPause governs normal
+	// mid-sentence speech; 0.7s cut off natural breath/think pauses, so the
+	// default is 1.3s.
 	endOfSentenceDetectionPause: z.number().min(0.1).max(5.0).default(0.45),
 	midSentenceDetectionPause: z.number().min(0.1).max(10.0).default(2.0),
-	unknownSentenceDetectionPause: z.number().min(0.1).max(5.0).default(0.7),
+	unknownSentenceDetectionPause: z.number().min(0.1).max(5.0).default(1.3),
 });
 
 export const audioSettingsSchema = z.object({
@@ -106,6 +113,15 @@ export const generalSettingsSchema = z.object({
 	// default so the documented "stops on silence, restarts on speech"
 	// behaviour stays the baseline for users who haven't opted in.
 	manualToggleStop: z.boolean().default(false),
+	// Global shortcut that re-pastes the most recent dictation transcription
+	// into the focused window on demand. Registered as an EXCLUSIVE system-
+	// wide shortcut (Electron globalShortcut) — it is swallowed app-wide so
+	// pressing it ONLY triggers our re-paste and never also fires the focused
+	// app's native binding (e.g. paste-without-formatting). Stored in the same
+	// uiohook-style accelerator format the HotkeyRecorder produces; the main
+	// process converts it to an Electron accelerator at registration time.
+	// Empty string = feature disabled (shortcut not registered).
+	repasteHotkey: z.string().default("LCtrl+LShift+V"),
 	loopbackDeviceIndex: z.number().int().nullable().default(null),
 	// Wake word used when recordingMode is "wakeword". The renderer auto-
 	// selects the right detector backend from this value alone (see

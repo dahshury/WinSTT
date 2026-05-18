@@ -7,7 +7,7 @@ export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        DataEvent: components["schemas"]["RealtimeTextEvent"] | components["schemas"]["FullSentenceEvent"] | components["schemas"]["RecordingStartEvent"] | components["schemas"]["RecordingStopEvent"] | components["schemas"]["NoAudioDetectedEvent"] | components["schemas"]["LoopbackStartedEvent"] | components["schemas"]["LoopbackStoppedEvent"] | components["schemas"]["DeviceSwitchFailedEvent"] | components["schemas"]["VadDetectStartEvent"] | components["schemas"]["VadDetectStopEvent"] | components["schemas"]["TranscriptionStartEvent"] | components["schemas"]["WakewordDetectedEvent"] | components["schemas"]["WakewordDetectionStartEvent"] | components["schemas"]["WakewordDetectionEndEvent"] | components["schemas"]["TurnDetectionStartEvent"] | components["schemas"]["TurnDetectionStopEvent"] | components["schemas"]["ModelDownloadStartEvent"] | components["schemas"]["ModelDownloadProgressEvent"] | components["schemas"]["ModelDownloadCompleteEvent"] | components["schemas"]["AudioLevelEvent"] | components["schemas"]["SpeakerSegmentsEvent"];
+        DataEvent: components["schemas"]["RealtimeTextEvent"] | components["schemas"]["FullSentenceEvent"] | components["schemas"]["RecordingStartEvent"] | components["schemas"]["RecordingStopEvent"] | components["schemas"]["NoAudioDetectedEvent"] | components["schemas"]["LoopbackStartedEvent"] | components["schemas"]["LoopbackStoppedEvent"] | components["schemas"]["DeviceSwitchFailedEvent"] | components["schemas"]["VadDetectStartEvent"] | components["schemas"]["VadDetectStopEvent"] | components["schemas"]["TranscriptionStartEvent"] | components["schemas"]["WakewordDetectedEvent"] | components["schemas"]["WakewordDetectionStartEvent"] | components["schemas"]["WakewordDetectionEndEvent"] | components["schemas"]["TurnDetectionStartEvent"] | components["schemas"]["TurnDetectionStopEvent"] | components["schemas"]["ModelDownloadStartEvent"] | components["schemas"]["ModelDownloadProgressEvent"] | components["schemas"]["ModelDownloadCompleteEvent"] | components["schemas"]["AudioLevelEvent"] | components["schemas"]["SpeakerSegmentsEvent"] | components["schemas"]["TtsChunkEvent"] | components["schemas"]["TtsCompleteEvent"] | components["schemas"]["TtsFailedEvent"] | components["schemas"]["TtsModelDownloadStartEvent"] | components["schemas"]["TtsModelDownloadProgressEvent"] | components["schemas"]["TtsModelDownloadCompleteEvent"];
         SpeakerSegment: {
             /**
              * Format: float
@@ -198,6 +198,73 @@ export interface components {
             /** @description Normalized RMS audio level (0.0 to 1.0) */
             level: number;
         };
+        /** @description One chunk of synthesized audio. When delivered as a JSON message only, ``samples`` is omitted — the actual PCM rides on a binary WebSocket frame whose JSON header matches this schema. */
+        TtsChunkEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tts_chunk";
+            /** @description Per-synthesis correlation id chosen by the client. */
+            request_id: string;
+            /** @description Sample rate of the PCM payload (Hz). Kokoro emits 24000. */
+            sample_rate: number;
+            /** @description Monotonic sequence number within this request_id, starting at 0. */
+            seq: number;
+            /** @description True for the last chunk of the request. */
+            is_final: boolean;
+            /** @description Sample format. Currently always "f32le". */
+            format?: string;
+            /** @description Channel count. Currently always 1 (mono). */
+            channels?: number;
+        };
+        /** @description Fires once after the final ``tts_chunk`` has been emitted. */
+        TtsCompleteEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tts_complete";
+            request_id: string;
+            /** @description True when the run was stopped via ``tts_cancel``. */
+            cancelled?: boolean;
+            /** @description Total wall-clock synthesis time in milliseconds. */
+            elapsed_ms?: number;
+        };
+        TtsFailedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tts_failed";
+            request_id: string;
+            reason: string;
+        };
+        TtsModelDownloadStartEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tts_model_download_start";
+        };
+        TtsModelDownloadProgressEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tts_model_download_progress";
+            progress: number;
+            downloaded_bytes?: number;
+            total_bytes?: number;
+        };
+        TtsModelDownloadCompleteEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tts_model_download_complete";
+            cancelled?: boolean;
+        };
         SetParameterCommand: {
             /** @constant */
             command: "set_parameter";
@@ -334,7 +401,13 @@ export interface components {
             ensureSentenceEndsWithPeriod?: boolean;
             /** @description Use DistilBERT classifier for intelligent speech endpoint detection */
             smartEndpoint?: boolean;
-            /** @description Detection speed multiplier (higher = faster finalization) */
+            /**
+             * @description Multiplier applied to the smart-endpoint silence pause:
+             *     `pause = (model_pause + whisper_pause) * smartEndpointSpeed`.
+             *     HIGHER values mean a LONGER wait before finalizing (more
+             *     patient — tolerates pauses); lower values commit faster.
+             *     Default 2.0 matches the RealtimeSTT reference.
+             */
             smartEndpointSpeed?: number;
             /**
              * @description Seconds of silence after a sentence-terminator (`.`, `!`, `?`) before
@@ -409,6 +482,17 @@ export interface components {
              *     pauses are common. Ignored in other modes.
              */
             manualToggleStop?: boolean;
+            /**
+             * @description Global shortcut that re-pastes the most recent dictation
+             *     transcription into the focused window on demand. Registered as an
+             *     EXCLUSIVE system-wide shortcut: pressing it only triggers WinSTT's
+             *     re-paste and is swallowed app-wide so it never also fires the
+             *     focused app's native binding. Stored in the uiohook-style
+             *     accelerator format (e.g. `LCtrl+LShift+V`); the main process
+             *     converts it to an Electron accelerator at registration. Empty
+             *     string disables the feature.
+             */
+            repasteHotkey?: string;
             loopbackDeviceIndex?: number | null;
             /**
              * @description Wake word used when `recordingMode` is `wakeword`. Must be one of

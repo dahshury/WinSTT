@@ -78,6 +78,12 @@ class RecordingPipeline(Worker):
         # follow-up window elapses without speech.
         self._wakeword_detected_at: float = 0.0
         self._start_recording_on_voice_activity: bool = False
+        # Speech-onset debounce: require this many CONSECUTIVE speech chunks
+        # on the VAD-onset path before committing to a recording, so a single
+        # noisy chunk can't pop the overlay or wake Whisper. See
+        # ``VADConfig.speech_onset_consecutive_chunks``.
+        self._speech_onset_required: int = config.vad.speech_onset_consecutive_chunks
+        self._consecutive_speech_chunks: int = 0
         self._stop_recording_on_voice_deactivity: bool = False
         self._silence_endpoint_enabled: bool = True
         self._speech_detected_in_recording: bool = False
@@ -100,6 +106,7 @@ class RecordingPipeline(Worker):
         # forcing the gate open here.
         if not self._use_wake_words:
             self._start_recording_on_voice_activity = True
+        self._consecutive_speech_chunks = 0
         self._event_bus.publish(VADDetectStarted(timestamp=self._clock.get_current_time()))
 
     def _enter_recording_state(self) -> None:
@@ -114,6 +121,7 @@ class RecordingPipeline(Worker):
         self._buffer.start_recording()
         self._stop_recording_on_voice_deactivity = True
         self._speech_detected_in_recording = False
+        self._consecutive_speech_chunks = 0
         self._event_bus.publish(RecordingStarted(timestamp=self._clock.get_current_time()))
 
     def _emit_no_audio(self) -> None:
@@ -174,6 +182,7 @@ class RecordingPipeline(Worker):
         self._stop_recording_on_voice_deactivity = False
         self._speech_end_silence_start = 0.0
         self._speech_detected_in_recording = False
+        self._consecutive_speech_chunks = 0
         self._wakeword_detected = False
         self._wakeword_detected_at = 0.0
 
@@ -272,7 +281,18 @@ class RecordingPipeline(Worker):
         if not self._vad_onset_armed():
             return False
         if not self._vad.detect(chunk).is_speech:
+            # A non-speech chunk breaks the run — onset must be CONSECUTIVE
+            # speech so an isolated noisy frame can't accumulate a start.
+            self._consecutive_speech_chunks = 0
             return False
+        self._consecutive_speech_chunks += 1
+        if self._consecutive_speech_chunks < self._speech_onset_required:
+            # Speech, but not yet sustained. Stay in LISTENING — emit no
+            # RecordingStarted (pill stays hidden, Whisper stays asleep).
+            # The caller still adds this chunk to the pre-roll, so the onset
+            # audio is preserved for when we do commit.
+            return False
+        self._consecutive_speech_chunks = 0
         self._event_bus.publish(VADStarted(timestamp=self._clock.get_current_time()))
         self.request_start()
         self._speech_detected_in_recording = True

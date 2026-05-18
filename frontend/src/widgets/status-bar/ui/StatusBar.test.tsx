@@ -1,14 +1,37 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useConnectionStore } from "@/entities/connection";
-import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
+import {
+	type ModelInfo,
+	useCatalogStore,
+	useModelStateStore,
+	useModelSwapStore,
+} from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useListenStore } from "@/features/listen-mode";
 import { useDownloadStore } from "@/features/model-download";
 import { StatusBar } from "./StatusBar";
 
 const initialSettings = useSettingsStore.getState().settings;
+
+function model(id: string): ModelInfo {
+	return {
+		id,
+		displayName: id,
+		backend: "faster_whisper",
+		family: "whisper",
+		languages: ["en"],
+		supportsLanguageDetection: true,
+		sizeLabel: "75 MB",
+		supportsRealtime: true,
+		onnxModelName: null,
+		description: "",
+		availableQuantizations: [""],
+	};
+}
+
+const CATALOG: ModelInfo[] = [model("tiny"), model("large-v2")];
 
 beforeEach(() => {
 	useSettingsStore.setState({ settings: initialSettings });
@@ -19,14 +42,21 @@ beforeEach(() => {
 	});
 	useListenStore.setState({ isListening: false, deviceName: "", devices: [] });
 	useDownloadStore.setState({ isDownloading: false, modelName: null });
-	// Sibling suites (catalog-store / model-state-store) populate this global
-	// Zustand store and never reset it. Force the empty initial state so the
-	// model menu deterministically falls back to WHISPER_MODELS here.
-	useCatalogStore.setState({ models: [], isLoaded: false });
-	// Likewise reset the swap store — otherwise leftover `activeMain` from
-	// the model-swap-store tests would flip the chip into a Spinner and the
-	// menu role assertions in this suite would fail.
-	useModelSwapStore.setState({ activeMain: null, activeRealtime: null });
+	// The footer model picker is now the full `SttModelSelector`. Seed the
+	// catalog so the trigger can resolve the selected model to a card
+	// instead of falling back to its placeholder.
+	useCatalogStore.setState({ models: CATALOG, isLoaded: true });
+	// Reset the swap store — leftover `activeMain` from the model-swap-store
+	// tests would otherwise flip the trigger into its switching view.
+	useModelSwapStore.setState({
+		activeMain: null,
+		activeRealtime: null,
+		fromMain: null,
+		fromRealtime: null,
+	});
+	// Empty model-state map so the swap gate sees no cached/uncached entry
+	// and hot-swaps directly instead of raising the download dialog.
+	useModelStateStore.setState({ statesById: {} });
 });
 
 afterEach(() => {
@@ -72,80 +102,43 @@ describe("StatusBar", () => {
 		expect((container.firstElementChild as HTMLElement).className).toContain("opacity-50");
 	});
 
-	test("renders the current model name when set in settings", () => {
+	test("renders the STT model picker trigger with the selected model", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
 				model: { ...initialSettings.model, model: "tiny" },
 			},
 		});
-		render(
+		const { container } = render(
 			<IntlProvider>
 				<StatusBar />
 			</IntlProvider>
 		);
+		expect(container.querySelector('[data-slot="stt-model-selector-trigger"]')).not.toBeNull();
+		// The picker's trigger renders the currently-selected model's name.
 		expect(screen.getByText("tiny")).toBeDefined();
 	});
 
-	test("clicking the model chip opens a menu with selectable model options", () => {
+	test("shows the swap transition in the picker trigger while a main-model swap is in flight", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
 				model: { ...initialSettings.model, model: "tiny" },
 			},
 		});
+		useModelSwapStore.setState({
+			activeMain: "large-v2",
+			activeRealtime: null,
+			fromMain: "tiny",
+			fromRealtime: null,
+		});
 		render(
 			<IntlProvider>
 				<StatusBar />
 			</IntlProvider>
 		);
-		const trigger = screen.getByRole("button", { name: /model/i });
-		act(() => {
-			fireEvent.click(trigger);
-		});
-		// Falls back to WHISPER_MODELS when the catalog is empty in tests.
-		// "large-v2" is one of the fallback options and is not the current selection.
-		expect(screen.getByRole("menuitemradio", { name: "large-v2" })).toBeDefined();
-	});
-
-	test("renders a switching-to indicator with spinner while a main-model swap is in flight", () => {
-		useSettingsStore.setState({
-			settings: {
-				...initialSettings,
-				model: { ...initialSettings.model, model: "tiny" },
-			},
-		});
-		useModelSwapStore.setState({ activeMain: "large-v2", activeRealtime: null });
-		render(
-			<IntlProvider>
-				<StatusBar />
-			</IntlProvider>
-		);
+		// Trigger resolves the target id against the catalog and renders the
+		// `from → to` transition for the in-flight swap.
 		expect(document.body.textContent).toContain("large-v2");
-		// While swapping, the picker chip is replaced — no menu trigger button.
-		expect(screen.queryByRole("button", { name: /model/i })).toBeNull();
-	});
-
-	test("clicking a model option in the menu updates the settings store", () => {
-		useSettingsStore.setState({
-			settings: {
-				...initialSettings,
-				model: { ...initialSettings.model, model: "tiny" },
-			},
-		});
-		render(
-			<IntlProvider>
-				<StatusBar />
-			</IntlProvider>
-		);
-		const trigger = screen.getByRole("button", { name: /model/i });
-		act(() => {
-			fireEvent.click(trigger);
-		});
-		const option = screen.getByRole("menuitemradio", { name: "large-v2" });
-		act(() => {
-			fireEvent.click(option);
-		});
-		expect(useSettingsStore.getState().settings.model.model).toBe("large-v2");
 	});
 });

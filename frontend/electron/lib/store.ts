@@ -226,6 +226,7 @@ export const store = new Store({
 			fileTranscriptionFormat: "txt",
 			fileTranscriptionSaveLocation: "auto" as const,
 			recordingMode: "ptt",
+			repasteHotkey: "LCtrl+LShift+V",
 			loopbackDeviceIndex: null,
 			wakeWord: "alexa",
 			wakeWordSensitivity: 0.6,

@@ -34,14 +34,6 @@ interface SoundLibraryRowProps {
 	renameLabel: string;
 }
 
-function fileExtensionLabel(item: SoundLibraryItem): string {
-	if (item.isDefault) {
-		return "";
-	}
-	const ext = item.path.split(".").pop()?.toUpperCase();
-	return ext ?? "";
-}
-
 interface RowRadioProps {
 	active: boolean;
 }
@@ -155,25 +147,19 @@ function RowMetaEditor({ initialName, onCommit, onEditingChange }: RowMetaEditor
 interface RowMetaProps {
 	active: boolean;
 	editing: boolean;
-	extLabel: string;
-	isPlaying: boolean;
 	item: SoundLibraryItem;
 	labels: { active: string; default: string };
 	onCommit: (next: string) => void;
 	onEditingChange: (editing: boolean) => void;
-	playingLabel: string;
 }
 
 function RowMeta({
 	editing,
-	extLabel,
 	active,
-	isPlaying,
 	item,
 	labels,
 	onCommit,
 	onEditingChange,
-	playingLabel,
 }: RowMetaProps): ReactNode {
 	if (editing) {
 		return (
@@ -186,17 +172,12 @@ function RowMeta({
 	}
 
 	return (
-		<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-			<div className="flex min-w-0 items-center gap-2">
-				<span className="truncate font-medium text-body text-foreground" title={item.name}>
-					{item.name}
-				</span>
-				{item.isDefault ? <Chip>{labels.default}</Chip> : null}
-				{active ? <Chip variant="accent">{labels.active}</Chip> : null}
-			</div>
-			<span className="truncate text-[11px] text-foreground-dim leading-none">
-				{isPlaying ? playingLabel : extLabel || (item.isDefault ? "" : "")}
+		<div className="flex min-w-0 flex-1 items-center gap-2">
+			<span className="truncate font-medium text-body text-foreground" title={item.name}>
+				{item.name}
 			</span>
+			{item.isDefault ? <Chip>{labels.default}</Chip> : null}
+			{active ? <Chip variant="accent">{labels.active}</Chip> : null}
 		</div>
 	);
 }
@@ -275,13 +256,10 @@ export function SoundLibraryRow({
 			<RowMeta
 				active={active}
 				editing={editing}
-				extLabel={fileExtensionLabel(item)}
-				isPlaying={isPlaying}
 				item={item}
 				labels={{ active: labels.active, default: labels.default }}
 				onCommit={(next) => onRename?.(item, next)}
 				onEditingChange={setEditing}
-				playingLabel={labels.pause}
 			/>
 			<div
 				className={cn(

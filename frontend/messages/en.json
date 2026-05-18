@@ -571,6 +571,7 @@
     "deviceCpu": "CPU",
     "testVoice": "Test voice",
     "previewVoice": "Preview voice",
+    "loadingVoice": "Loading…",
     "testVoiceSample": "The quick brown fox jumps over the lazy dog.",
     "stopSpeaking": "Stop",
     "speakSelection": "Speak selection",

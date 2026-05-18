@@ -87,6 +87,11 @@ export const IPC = {
 	TRAY_MENU_CLOSE: "tray-menu:close",
 	TRAY_MENU_RESIZE: "tray-menu:resize",
 
+	// Detached model-picker window (renderer → main)
+	MODEL_PICKER_OPEN: "model-picker:open",
+	MODEL_PICKER_CLOSE: "model-picker:close",
+	MODEL_PICKER_RESIZE: "model-picker:resize",
+
 	// Dialog (renderer → main)
 	DIALOG_OPEN_FILE: "dialog:open-file",
 	APP_MENU_SET_TEMPLATE: "app-menu:set-template",
@@ -149,12 +154,22 @@ export const IPC = {
 	TTS_CANCEL: "tts:cancel",
 	TTS_INIT: "tts:init",
 	TTS_LIST_VOICES: "tts:list-voices",
+	// The window that owns the Web Audio queue reports when audio actually
+	// starts / finishes playing (distinct from server-side synthesis
+	// dispatch / completion — there's a ~1s synthesis gap before audio).
+	TTS_REPORT_PLAYBACK_STARTED: "tts:report-playback-started",
+	TTS_REPORT_PLAYBACK_ENDED: "tts:report-playback-ended",
 
 	// TTS events (main → renderer)
 	TTS_STARTED: "tts:started",
 	TTS_CHUNK: "tts:chunk",
 	TTS_COMPLETED: "tts:completed",
 	TTS_FAILED: "tts:failed",
+	// Re-broadcast of the report-* channels to every window so UI in a
+	// window that doesn't own the audio queue (e.g. the settings window)
+	// can track when playback truly starts / stops.
+	TTS_PLAYBACK_STARTED: "tts:playback-started",
+	TTS_PLAYBACK_ENDED: "tts:playback-ended",
 	TTS_MODEL_DOWNLOAD_START: "tts:model-download-start",
 	TTS_MODEL_DOWNLOAD_PROGRESS: "tts:model-download-progress",
 	TTS_MODEL_DOWNLOAD_COMPLETE: "tts:model-download-complete",
@@ -302,6 +317,11 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TRAY_MENU_CLOSE]: ["send"],
 	[IPC.TRAY_MENU_RESIZE]: ["send"],
 
+	// Detached model-picker window
+	[IPC.MODEL_PICKER_OPEN]: ["send"],
+	[IPC.MODEL_PICKER_CLOSE]: ["send"],
+	[IPC.MODEL_PICKER_RESIZE]: ["send"],
+
 	// Dialog & menus
 	[IPC.DIALOG_OPEN_FILE]: ["invoke"],
 	[IPC.APP_MENU_SET_TEMPLATE]: ["invoke"],
@@ -356,12 +376,16 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_CANCEL]: ["send"],
 	[IPC.TTS_INIT]: ["invoke"],
 	[IPC.TTS_LIST_VOICES]: ["invoke"],
+	[IPC.TTS_REPORT_PLAYBACK_STARTED]: ["send"],
+	[IPC.TTS_REPORT_PLAYBACK_ENDED]: ["send"],
 
 	// TTS events (main → renderer)
 	[IPC.TTS_STARTED]: ["on"],
 	[IPC.TTS_CHUNK]: ["on"],
 	[IPC.TTS_COMPLETED]: ["on"],
 	[IPC.TTS_FAILED]: ["on"],
+	[IPC.TTS_PLAYBACK_STARTED]: ["on"],
+	[IPC.TTS_PLAYBACK_ENDED]: ["on"],
 	[IPC.TTS_MODEL_DOWNLOAD_START]: ["on"],
 	[IPC.TTS_MODEL_DOWNLOAD_PROGRESS]: ["on"],
 	[IPC.TTS_MODEL_DOWNLOAD_COMPLETE]: ["on"],

@@ -128,6 +128,14 @@ describe("generalSettingsSchema", () => {
 		expect(() => generalSettingsSchema.parse({ recordingMode: "scream" })).toThrow();
 	});
 
+	test("repasteHotkey defaults to LCtrl+LShift+V", () => {
+		expect(generalSettingsSchema.parse({}).repasteHotkey).toBe("LCtrl+LShift+V");
+	});
+
+	test("repasteHotkey accepts an empty string (feature disabled)", () => {
+		expect(generalSettingsSchema.parse({ repasteHotkey: "" }).repasteHotkey).toBe("");
+	});
+
 	test("visualizerSize falls back to 'xs' for legacy integer values via .catch()", () => {
 		// Old persisted format: a numeric pixel — schema should swallow and emit 'xs'
 		const out = generalSettingsSchema.parse({ visualizerSize: 24 });
@@ -219,8 +227,12 @@ describe("qualitySettingsSchema defaults (lock-down)", () => {
 		expect(qualitySettingsSchema.parse({}).ensureSentenceEndsWithPeriod).toBe(true);
 	});
 
-	test("smartEndpoint defaults to false", () => {
-		expect(qualitySettingsSchema.parse({}).smartEndpoint).toBe(false);
+	test("smartEndpoint defaults to true", () => {
+		expect(qualitySettingsSchema.parse({}).smartEndpoint).toBe(true);
+	});
+
+	test("unknownSentenceDetectionPause defaults to 1.3", () => {
+		expect(qualitySettingsSchema.parse({}).unknownSentenceDetectionPause).toBe(1.3);
 	});
 
 	test("realtimeProcessingPause defaults to 0.02", () => {

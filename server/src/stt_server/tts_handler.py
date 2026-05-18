@@ -161,9 +161,7 @@ async def _handle_shutdown_tts(ws: ServerConnection, state: ServerState, data: d
         except Exception:
             logger.warning("synthesizer.shutdown() raised", exc_info=True)
         state.synthesizer = None
-    await ws.send(
-        json.dumps({"status": "success", "type": "shutdown_tts", "request_id": data.get("request_id")})
-    )
+    await ws.send(json.dumps({"status": "success", "type": "shutdown_tts", "request_id": data.get("request_id")}))
 
 
 @register_command("list_tts_voices", pre_ready=True)
@@ -171,10 +169,7 @@ async def _handle_list_voices(ws: ServerConnection, state: ServerState, data: di
     """Return the static voice catalog. Doesn't require the model to be loaded."""
     from src.synthesizer.infrastructure.voice_catalog import KOKORO_VOICE_CATALOG, SUPPORTED_LANGUAGES
 
-    voices = [
-        {"id": v.id, "label": v.label, "language": v.language, "gender": v.gender}
-        for v in KOKORO_VOICE_CATALOG
-    ]
+    voices = [{"id": v.id, "label": v.label, "language": v.language, "gender": v.gender} for v in KOKORO_VOICE_CATALOG]
     languages = [{"code": code, "label": label} for code, label in SUPPORTED_LANGUAGES]
     request_id = data.get("request_id")
     # Wrap the payload in ``value`` so ``SttClient.sendRequest()`` resolves the
@@ -218,9 +213,7 @@ async def _run_synthesis(
 ) -> None:
     """Background coroutine that streams audio chunks back to the client."""
     if state.synthesizer is None:
-        message = json.dumps(
-            {"type": "tts_failed", "request_id": request_id, "reason": "Synthesizer not initialized"}
-        )
+        message = json.dumps({"type": "tts_failed", "request_id": request_id, "reason": "Synthesizer not initialized"})
         _enqueue(state, loop, message)
         return
 

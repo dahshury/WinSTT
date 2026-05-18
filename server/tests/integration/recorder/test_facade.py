@@ -27,6 +27,9 @@ def _make_facade_with_fakes(
         use_microphone=False,
         post_speech_silence_duration=0.05,
         min_length_of_recording=0.0,
+        # Facade delegation test, not the speech-onset debounce — keep
+        # legacy single-chunk start so the single-True pattern records.
+        speech_onset_consecutive_chunks=1,
     )
     transcriber = FakeTranscriber(
         result=TranscriptionResult(

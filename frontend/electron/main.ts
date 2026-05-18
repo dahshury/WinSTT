@@ -10,6 +10,7 @@ import {
 	ipcMain,
 	Menu,
 	type MenuItemConstructorOptions,
+	screen,
 	session,
 	shell,
 	type Tray,
@@ -37,9 +38,11 @@ import {
 } from "./ipc/ipc-payload-crypto";
 import { setupLlm, setupLlmWarmup } from "./ipc/llm";
 import { setupLoopbackHandlers } from "./ipc/loopback";
+import { setupModelPickerHandlers } from "./ipc/model-picker-window";
 import { setupOllamaRegistry } from "./ipc/ollama-registry";
 import { hideOverlay, setOverlayWindow, setupOverlayHandlers, showOverlay } from "./ipc/overlay";
 import { setupRelay } from "./ipc/relay";
+import { setupRepasteHotkey } from "./ipc/repaste-hotkey";
 import {
 	applyMainProcessSettingsPatch,
 	cleanupSettingsHandlers,
@@ -83,6 +86,7 @@ let settingsWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let cleanupRelay: (() => void) | null = null;
+let cleanupRepasteHotkey: (() => void) | null = null;
 let cleanupHotkeys: (() => void) | null = null;
 let cleanupFileTranscribe: (() => void) | null = null;
 let cleanupLlm: (() => void) | null = null;
@@ -93,6 +97,7 @@ let cleanupTransformHotkeys: (() => void) | null = null;
 let cleanupTts: (() => void) | null = null;
 let cleanupTtsHotkey: (() => void) | null = null;
 let cleanupTrayMenu: (() => void) | null = null;
+let cleanupModelPicker: (() => void) | null = null;
 let cleanupAppMenu: (() => void) | null = null;
 let cleanupContextMenu: (() => void) | null = null;
 let cleanupWindowTelemetry: (() => void) | null = null;
@@ -618,6 +623,8 @@ if (gotTheLock) {
 		cleanupRecordingIndicator();
 		cleanupTrayMenu?.();
 		cleanupTrayMenu = null;
+		cleanupModelPicker?.();
+		cleanupModelPicker = null;
 		cleanupLlm?.();
 		cleanupLlm = null;
 		cleanupLlmWarmup?.();
@@ -632,6 +639,8 @@ if (gotTheLock) {
 		cleanupTts = null;
 		cleanupTtsHotkey?.();
 		cleanupTtsHotkey = null;
+		cleanupRepasteHotkey?.();
+		cleanupRepasteHotkey = null;
 		cleanupAppMenu?.();
 		cleanupAppMenu = null;
 		cleanupContextMenu?.();
@@ -693,6 +702,7 @@ function setupGlobalIpcHandlers() {
 	setupDialogHandlers();
 	cleanupOverlay = setupOverlayHandlers();
 	cleanupTrayMenu = setupTrayMenuHandlers();
+	cleanupModelPicker = setupModelPickerHandlers();
 	cleanupLlm = setupLlm();
 	// Keep Ollama dictation/transforms models hot so the first dictation
 	// after launch doesn't pay the cold-start penalty (~30s for a 7B model).
@@ -702,6 +712,7 @@ function setupGlobalIpcHandlers() {
 	cleanupTransformHotkeys = setupTransformHotkeys().dispose;
 	cleanupTts = setupTts(sttClient);
 	cleanupTtsHotkey = setupTtsHotkey(sttClient).dispose;
+	cleanupRepasteHotkey = setupRepasteHotkey().dispose;
 	cleanupAppMenu = setupAppMenuHandlers();
 	cleanupContextMenu = setupContextMenuHandlers();
 	cleanupClipboard = setupClipboardHandlers();
@@ -880,6 +891,48 @@ function applyListenModeWindow(win: BrowserWindow) {
 	}
 }
 
+// Minimum slice of the (resizable) main window kept on-screen after a
+// drag — enough to grab the 32px titlebar and reach its window buttons.
+const MAIN_WINDOW_MIN_VISIBLE_PX = 120;
+
+// ── Keep a frameless window's draggable header reachable ───────────
+// A frameless window can only be moved by its custom titlebar. If the
+// user drags it so the header leaves the screen (e.g. above the top
+// edge), there is no grab area left and the window is stranded. After
+// each drag we snap it back into the work area of the display it mostly
+// sits on, so the header stays reachable again.
+//
+// `minVisible` controls how aggressive the snap is:
+//  - undefined → clamp the whole window inside the work area (good for
+//    fixed-size modals like Settings).
+//  - a number  → only guarantee that many pixels stay on-screen
+//    horizontally, and that the top edge never goes above the work area
+//    (good for resizable windows the user may want partly off-screen).
+function keepWindowOnScreen(win: BrowserWindow, minVisible?: number): void {
+	if (win.isDestroyed()) {
+		return;
+	}
+	const { x, y, width, height } = win.getBounds();
+	const { workArea } = screen.getDisplayMatching({ x, y, width, height });
+
+	const visibleX = minVisible === undefined ? width : Math.min(minVisible, width);
+	const visibleY = minVisible === undefined ? height : Math.min(minVisible, height);
+
+	const minX = workArea.x - (width - visibleX);
+	const maxX = workArea.x + workArea.width - visibleX;
+	// The titlebar is at the top of the window, so the top edge must never
+	// rise above the work area — that is the case that strands the window.
+	const minY = workArea.y;
+	const maxY = workArea.y + workArea.height - visibleY;
+
+	const clampedX = Math.round(Math.min(Math.max(x, minX), maxX));
+	const clampedY = Math.round(Math.min(Math.max(y, minY), maxY));
+
+	if (clampedX !== x || clampedY !== y) {
+		win.setPosition(clampedX, clampedY);
+	}
+}
+
 // ── Settings window (pre-created hidden for instant open) ───────────
 function createSettingsWindow(): BrowserWindow {
 	const iconPath = getWindowIconPath();
@@ -911,6 +964,14 @@ function createSettingsWindow(): BrowserWindow {
 		if (!isQuitting && settingsWindow) {
 			event.preventDefault();
 			settingsWindow.hide();
+		}
+	});
+
+	// If a drag left the draggable header off-screen, snap it back so the
+	// titlebar (and its close/minimize buttons) stay reachable.
+	settingsWindow.on("moved", () => {
+		if (settingsWindow) {
+			keepWindowOnScreen(settingsWindow);
 		}
 	});
 
@@ -1018,6 +1079,16 @@ function createWindow() {
 				mainWindow?.hide();
 				return;
 			}
+		}
+	});
+
+	// If a drag left the draggable header off-screen, snap it back so the
+	// titlebar (and its close/minimize buttons) stay reachable. The main
+	// window is resizable in listen mode, so keep only a minimum band
+	// on-screen rather than forcing the whole window in.
+	mainWindow.on("moved", () => {
+		if (mainWindow) {
+			keepWindowOnScreen(mainWindow, MAIN_WINDOW_MIN_VISIBLE_PX);
 		}
 	});
 

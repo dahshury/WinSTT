@@ -84,9 +84,7 @@ _KNOWN_BROKEN_QUANTS: dict[str, frozenset[str]] = {
 # load). Keyed by onnx_model_name prefix so id-vs-family classification
 # can change in the picker without re-introducing broken quants.
 _BROKEN_QUANTS_BY_REPO_PREFIX: dict[str, frozenset[str]] = {
-    "onnx-community/lite-whisper-": frozenset(
-        {"int8", "uint8", "q4f16", "q4", "bnb4"}
-    ),
+    "onnx-community/lite-whisper-": frozenset({"int8", "uint8", "q4f16", "q4", "bnb4"}),
 }
 
 
@@ -124,9 +122,7 @@ def _quantization_from_filename(name: str) -> str | None:
 _QUANT_DISPLAY_ORDER: tuple[str, ...] = ("", "fp16", "q4", "bnb4", "int8", "uint8", "q4f16")
 
 
-def _curate_quants(
-    family: str, available: set[str], *, entry: dict[str, Any] | None = None
-) -> list[str]:
+def _curate_quants(family: str, available: set[str], *, entry: dict[str, Any] | None = None) -> list[str]:
     """Apply the broken-quant filter for ``family`` and order the result.
 
     When ``entry`` is provided, per-repo overrides from

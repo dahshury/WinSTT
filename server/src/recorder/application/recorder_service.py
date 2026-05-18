@@ -178,9 +178,7 @@ class RecorderService:
         # (so the ORT session — which isn't reentrant-safe — is still
         # serialised against itself).
         self._main_transcriber_lock = threading.Lock()
-        self._realtime_transcriber_lock: threading.Lock = self._pick_realtime_lock(
-            transcriber, realtime_transcriber
-        )
+        self._realtime_transcriber_lock: threading.Lock = self._pick_realtime_lock(transcriber, realtime_transcriber)
         # Realtime stable-text accumulator state — owned and reset by the
         # realtime worker thread.
         self._realtime_committed_text: str = ""
@@ -770,9 +768,7 @@ class RecorderService:
 
     _DISABLED_INFO = SwapErrorInfo(
         category=SwapErrorCategory.UNKNOWN,
-        user_message=(
-            "Realtime transcription is disabled — enable it in Settings → Model to swap the realtime model."
-        ),
+        user_message=("Realtime transcription is disabled — enable it in Settings → Model to swap the realtime model."),
         technical_detail="realtime transcription is disabled",
     )
     _SLAVED_INFO = SwapErrorInfo(
@@ -876,9 +872,7 @@ class RecorderService:
         bench.sample_memory("after_load")
 
         if self._swap_aborted(new_transcriber, cancel_event):
-            load_outcome = self._handle_aborted_swap(
-                kind, name, new_transcriber, cancel_event, load_outcome
-            )
+            load_outcome = self._handle_aborted_swap(kind, name, new_transcriber, cancel_event, load_outcome)
             restore_outcome = self._attempt_restore(kind, previous_name, bench)
             bench.log(f"{load_outcome}_{restore_outcome}")
             return
@@ -1043,6 +1037,7 @@ class RecorderService:
             quantization=self._config.transcription.onnx_quantization or None,
             providers=providers_for_device(self._config.transcription.device),
             on_download_progress=on_progress,
+            normalize_audio=self._config.transcription.normalize_audio,
         )
 
     @staticmethod

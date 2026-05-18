@@ -41,6 +41,10 @@ class TestRecordingPipeline:
         cfg = config or RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
             min_length_of_recording=0.0,
+            # Preserve the legacy single-chunk onset semantics these tests
+            # were written against; the speech-onset debounce is the new
+            # production default (3) and is covered by its own tests below.
+            speech_onset_consecutive_chunks=1,
         )
         event_bus = EventBus()
         sm = RecorderStateMachine()
@@ -72,6 +76,10 @@ class TestRecordingPipeline:
         cfg = config or RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
             min_length_of_recording=0.0,
+            # Preserve the legacy single-chunk onset semantics these tests
+            # were written against; the speech-onset debounce is the new
+            # production default (3) and is covered by its own tests below.
+            speech_onset_consecutive_chunks=1,
         )
         event_bus = EventBus()
         sm = RecorderStateMachine()
@@ -499,6 +507,9 @@ class TestRecordingPipeline:
             post_speech_silence_duration=0.1,
             min_length_of_recording=0.0,
             wakeword_backend="openwakeword",
+            # This test exercises the wake-word → VAD-onset wiring, not the
+            # speech-onset debounce — keep the legacy single-chunk start.
+            speech_onset_consecutive_chunks=1,
         )
         wake_detector = FakeWakeWordDetector(detect_at_call=1, word="jarvis")
         pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
@@ -896,3 +907,118 @@ class TestRecordingPipeline:
 
         pipeline.request_stop()
         assert sm.state == RecorderState.TRANSCRIBING
+
+    # ------------------------------------------------------------------ #
+    # Speech-onset debounce (noise must not pop the pill / wake Whisper)
+    # ------------------------------------------------------------------ #
+
+    def _onset_pipeline(
+        self, *, required: int, speech_pattern: list[bool]
+    ) -> tuple[RecordingPipeline, list[object], RecorderStateMachine, AudioBuffer]:
+        cfg = RecorderConfig.from_kwargs(
+            post_speech_silence_duration=0.1,
+            min_length_of_recording=0.0,
+            speech_onset_consecutive_chunks=required,
+        )
+        pipeline, event_bus, sm, buf, _vad = self._make_pipeline_with_clock(
+            Clock.fixed_clock(1000.0),
+            speech_pattern=speech_pattern,
+            config=cfg,
+        )
+        started: list[object] = []
+        event_bus.subscribe(RecordingStarted, started.append)
+        pipeline.request_listen()
+        return pipeline, started, sm, buf
+
+    def test_speech_onset_requires_consecutive_chunks(self) -> None:
+        """A single noisy speech chunk must NOT start recording; 3 consecutive must."""
+        pipeline, started, sm, buf = self._onset_pipeline(required=3, speech_pattern=[True, True, True])
+
+        # Chunk 1 & 2: speech, but not yet sustained — no RecordingStarted,
+        # still LISTENING, and the onset audio is preserved in the pre-roll.
+        pipeline._process_not_recording(_make_chunk())
+        pipeline._process_not_recording(_make_chunk())
+        assert started == []
+        assert sm.state == RecorderState.LISTENING
+        assert buf.pre_roll_count == 2
+
+        # Chunk 3: the run reaches the threshold — recording commits.
+        pipeline._process_not_recording(_make_chunk())
+        assert len(started) == 1
+        assert sm.state == RecorderState.RECORDING  # type: ignore[comparison-overlap]
+
+    def test_speech_onset_non_speech_resets_the_run(self) -> None:
+        """A non-speech chunk breaks the run — onset must be CONSECUTIVE."""
+        pipeline, started, sm, _buf = self._onset_pipeline(required=3, speech_pattern=[True, True, False, True, True])
+
+        # 2 speech, then a non-speech chunk zeroes the counter, then 2 more
+        # speech — only 2 consecutive at the end, so still no start.
+        for _ in range(5):
+            pipeline._process_not_recording(_make_chunk())
+        assert started == []
+        assert sm.state == RecorderState.LISTENING
+
+    def test_speech_onset_one_is_legacy_immediate_start(self) -> None:
+        """speech_onset_consecutive_chunks=1 restores start-on-first-chunk."""
+        pipeline, started, sm, _buf = self._onset_pipeline(required=1, speech_pattern=[True])
+
+        pipeline._process_not_recording(_make_chunk())
+        assert len(started) == 1
+        assert sm.state == RecorderState.RECORDING  # type: ignore[comparison-overlap]
+
+    def test_ptt_force_start_bypasses_onset_debounce(self) -> None:
+        """PTT calls request_start() directly — the debounce never applies."""
+        cfg = RecorderConfig.from_kwargs(
+            post_speech_silence_duration=0.1,
+            min_length_of_recording=0.0,
+            speech_onset_consecutive_chunks=3,
+        )
+        pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(Clock.fixed_clock(1000.0), config=cfg)
+        started: list[object] = []
+        event_bus.subscribe(RecordingStarted, started.append)
+
+        pipeline.request_start()
+        assert len(started) == 1
+        assert sm.state == RecorderState.RECORDING  # type: ignore[comparison-overlap]
+
+    def test_request_listen_with_wake_words_does_not_arm_vad_onset(self) -> None:
+        """request_listen() with a wake-word backend must NOT arm VAD onset.
+
+        Covers the wake-words-enabled branch of request_listen (the
+        ``if not self._use_wake_words`` False arm): onset stays disarmed
+        until the detector fires, the debounce counter is reset, and
+        VADDetectStarted is still published.
+        """
+        cfg = RecorderConfig.from_kwargs(
+            post_speech_silence_duration=0.1,
+            min_length_of_recording=0.0,
+            wakeword_backend="openwakeword",
+        )
+        pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(Clock.fixed_clock(1000.0), config=cfg)
+        detect_started: list[object] = []
+        event_bus.subscribe(VADDetectStarted, detect_started.append)
+
+        pipeline.request_listen()
+
+        assert pipeline._use_wake_words is True
+        assert pipeline._start_recording_on_voice_activity is False
+        assert pipeline._consecutive_speech_chunks == 0
+        assert sm.state == RecorderState.LISTENING
+        assert len(detect_started) == 1
+
+    def test_expired_wake_word_gate_is_cleared(self) -> None:
+        """_maybe_expire_wake_word clears an armed gate past its timeout."""
+        cfg = RecorderConfig.from_kwargs(
+            post_speech_silence_duration=0.1,
+            min_length_of_recording=0.0,
+            wakeword_backend="openwakeword",
+        )
+        pipeline, _event_bus, _sm, _buf, _vad = self._make_pipeline_with_clock(Clock.fixed_clock(1000.0), config=cfg)
+        # Arm the gate well in the past (timeout default 5.0; elapsed ~1000s).
+        pipeline._wakeword_detected = True
+        pipeline._wakeword_detected_at = 0.0
+
+        pipeline._maybe_expire_wake_word()
+
+        assert pipeline._wakeword_detected is False
+        assert pipeline._wakeword_detected_at == 0.0

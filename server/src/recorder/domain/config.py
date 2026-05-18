@@ -28,6 +28,19 @@ class VADConfig(StrictMutableModel):
     silero_use_onnx: bool = False
     silero_deactivity_detection: bool = False
     webrtc_sensitivity: int = Field(default=3, ge=0, le=3)
+    # Consecutive speech chunks required before VAD onset starts a recording.
+    # A lone noisy chunk (key click, desk thump, fan transient) that briefly
+    # fools BOTH WebRTC and Silero must not pop the overlay pill or wake the
+    # Whisper model — only sustained speech should. The pre-roll buffer
+    # (``pre_recording_buffer_duration``) backfills the onset audio that
+    # elapses while debouncing, so this costs no transcription quality.
+    # ``1`` restores the legacy behaviour (start on the first speech chunk).
+    # At buffer_size=512 @ 16 kHz a chunk is ~32 ms, so 3 ≈ ~96 ms of
+    # sustained speech — short enough not to clip real onsets, long enough
+    # to reject impulsive non-speech noise. Only affects the server-driven
+    # VAD-onset path (toggle / listen / wakeword); PTT force-starts and is
+    # unaffected.
+    speech_onset_consecutive_chunks: int = Field(default=3, ge=1)
     post_speech_silence_duration: float = 0.6
     min_length_of_recording: float = 0.5
     min_gap_between_recordings: float = 0.0

@@ -17,7 +17,12 @@ const controlMessageSchema = z
 	.object({
 		type: z.string().optional(),
 		command: z.string().optional(),
-		request_id: z.number().optional(),
+		// Numeric for command/response correlation (getParameter et al.);
+		// string for TTS request ids (UUIDs); null when the server echoes
+		// back a command that carried no id (e.g. the `init_tts` ack). All
+		// three ride this channel — rejecting any of them silently dropped
+		// the ack and spammed the console with schema-validation warnings.
+		request_id: z.union([z.number(), z.string()]).nullable().optional(),
 		value: z.unknown().optional(),
 		models: z.array(z.unknown()).optional(),
 	})
@@ -422,8 +427,11 @@ export class SttClient extends EventEmitter {
 		this.pendingRequests.clear();
 	}
 
-	private resolveControlRequest(data: { request_id?: number; value?: unknown }) {
-		if (data.request_id == null) {
+	private resolveControlRequest(data: { request_id?: number | string | null; value?: unknown }) {
+		// Only numeric ids correlate to `sendRequest` promises. String ids
+		// belong to TTS (UUIDs) and are dispatched as events, not resolved
+		// here — bail before the typed Map lookup.
+		if (typeof data.request_id !== "number") {
 			return;
 		}
 		const pending = this.pendingRequests.get(data.request_id);

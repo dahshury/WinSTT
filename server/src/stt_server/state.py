@@ -68,7 +68,7 @@ class ServerState:
     # realtime tick without recreating the recorder.
     mid_sentence_detection_pause: float = 2.0
     end_of_sentence_detection_pause: float = 0.45
-    unknown_sentence_detection_pause: float = 0.7
+    unknown_sentence_detection_pause: float = 1.3
 
     # ─── Recorder lifecycle ──────────────────────────────────────────
     recorder_config: dict[str, Any] = field(default_factory=dict)

@@ -1,0 +1,336 @@
+"use client";
+
+import { resolveQuantCache } from "@picker";
+import { type ReactNode, useCallback } from "react";
+import { useShallow } from "zustand/react/shallow";
+import type { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
+import type { OnnxQuantization } from "@/shared/config/defaults";
+import { formatBytes } from "@/shared/lib/format-bytes";
+import { surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
+import { DownloadActions, type DownloadPhase, DownloadProgressBar } from "@/shared/ui/download";
+import { Modal } from "@/shared/ui/modal";
+import { useDownloadStore } from "../model/download-store";
+
+type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
+type SystemInfo = ReturnType<typeof useModelStateStore.getState>["systemInfo"];
+
+/** "12 MB / 30 MB · 2 MB/s" — drives the right-side caption on the dictation
+ *  progress bar. Hidden when no total has been received yet (early frames). */
+function formatStatsLine(downloaded: number, total: number, speed: number): string {
+	const parts: string[] = [];
+	if (total > 0) {
+		parts.push(`${formatBytes(downloaded) ?? "0 B"} / ${formatBytes(total) ?? "0 B"}`);
+	}
+	if (speed > 0) {
+		if (speed < 1024) {
+			parts.push(`${speed.toFixed(0)} B/s`);
+		} else if (speed < 1024 * 1024) {
+			parts.push(`${(speed / 1024).toFixed(1)} KB/s`);
+		} else {
+			parts.push(`${(speed / (1024 * 1024)).toFixed(1)} MB/s`);
+		}
+	}
+	return parts.join(" · ");
+}
+
+/** Byte size with this widget's legacy `<= 0 → "unknown"` sentinel. */
+function sizeLabel(bytes: number | null | undefined): string {
+	return formatBytes(bytes) ?? "unknown";
+}
+
+export interface DownloadConfirmationDialogProps {
+	getModel: (
+		id: string
+	) => ReturnType<typeof useCatalogStore.getState>["getModel"] extends (id: string) => infer R
+		? R
+		: never;
+	onCancel: () => void;
+	onConfirm: () => void;
+	pending: {
+		kind: "main" | "realtime";
+		modelId: string;
+		previousModelId: string;
+		quantization?: OnnxQuantization;
+	} | null;
+	statesById: StatesById;
+	systemInfo: SystemInfo;
+}
+
+export function DownloadConfirmationDialog({
+	pending,
+	getModel,
+	onConfirm,
+	onCancel,
+	statesById,
+	systemInfo,
+}: DownloadConfirmationDialogProps): ReactNode {
+	return (
+		<Modal isOpen={pending !== null} onClose={onCancel}>
+			<DownloadConfirmationContent
+				getModel={getModel}
+				onCancel={onCancel}
+				onConfirm={onConfirm}
+				pending={pending}
+				statesById={statesById}
+				systemInfo={systemInfo}
+			/>
+		</Modal>
+	);
+}
+
+function dialogTitle(phase: DownloadPhase): string {
+	if (phase === "active") {
+		return "Downloading model";
+	}
+	if (phase === "paused") {
+		return "Resume download?";
+	}
+	return "Download model?";
+}
+
+function dialogSubtitle(
+	phase: DownloadPhase,
+	displayName: string,
+	sizeSuffix: string,
+	quantLabel: string
+): ReactNode {
+	if (phase === "active") {
+		return (
+			<>
+				<span className="font-medium text-foreground">{displayName}</span>
+				{sizeSuffix} is downloading at{" "}
+				<span className="font-medium text-foreground">{quantLabel}</span>.
+			</>
+		);
+	}
+	if (phase === "paused") {
+		return (
+			<>
+				<span className="font-medium text-foreground">{displayName}</span>
+				{sizeSuffix} is partly downloaded at{" "}
+				<span className="font-medium text-foreground">{quantLabel}</span>. Resume to finish, or
+				discard to clear the partial files.
+			</>
+		);
+	}
+	return (
+		<>
+			<span className="font-medium text-foreground">{displayName}</span>
+			{sizeSuffix} isn't downloaded yet at{" "}
+			<span className="font-medium text-foreground">{quantLabel}</span>.
+		</>
+	);
+}
+
+const DIALOG_ACTION_LABELS = {
+	download: "Download",
+	stop: "Stop",
+	discard: "Discard",
+	resume: "Resume",
+} as const;
+
+function dismissLabel(phase: DownloadPhase): string {
+	if (phase === "active") {
+		return "Hide";
+	}
+	if (phase === "paused") {
+		return "Close";
+	}
+	return "Cancel";
+}
+
+function resolveDownloadPhase(isDownloading: boolean, partialOnDisk: boolean): DownloadPhase {
+	if (isDownloading) {
+		return "active";
+	}
+	if (partialOnDisk) {
+		return "paused";
+	}
+	return "idle";
+}
+
+type TargetCache = ReturnType<typeof resolveQuantCache>;
+type ModelState = StatesById[string] | undefined;
+
+interface DownloadFitness {
+	availableLabel: string;
+	estimatedLabel: string;
+	isUncomfortable: boolean;
+}
+
+/** Hardware fitness — surface the same heuristic the picker uses, plus
+ *  concrete numbers so the user can decide. We don't refuse — the user
+ *  can always proceed at their own risk. */
+function computeFitness(state: ModelState, systemInfo: SystemInfo): DownloadFitness {
+	const hasGpu = !!systemInfo && systemInfo.gpus.length > 0;
+	const isUncomfortable =
+		!!state &&
+		state.estimated_bytes > 0 &&
+		(hasGpu ? !state.comfortable_on_gpu : !state.comfortable_on_cpu);
+	const estimatedLabel =
+		state && state.estimated_bytes > 0 ? sizeLabel(state.estimated_bytes) : "unknown";
+	const availableLabel = hasGpu
+		? `GPU VRAM: ${sizeLabel(systemInfo?.gpus[0]?.total_vram_bytes ?? 0)}`
+		: `RAM: ${sizeLabel(systemInfo?.total_ram_bytes ?? 0)}`;
+	return { isUncomfortable, estimatedLabel, availableLabel };
+}
+
+interface LiveDownload {
+	downloadedBytes: number;
+	progress: number | null;
+	speedBps: number;
+	totalBytes: number;
+}
+
+function ActiveProgress({ live }: { live: LiveDownload }): ReactNode {
+	return (
+		<DownloadProgressBar
+			label={live.progress == null ? "Starting..." : `${live.progress}%`}
+			percent={live.progress}
+			statsLabel={formatStatsLine(live.downloadedBytes, live.totalBytes, live.speedBps)}
+			variant="active"
+		/>
+	);
+}
+
+function PausedProgress({ targetCache }: { targetCache: TargetCache }): ReactNode {
+	const pausedPercent =
+		targetCache && targetCache.total_bytes > 0
+			? Math.round((targetCache.progress ?? 0) * 100)
+			: null;
+	return (
+		<DownloadProgressBar
+			label={pausedPercent == null ? "Paused" : `Paused at ${pausedPercent}%`}
+			percent={pausedPercent}
+			statsLabel={formatStatsLine(
+				targetCache?.downloaded_bytes ?? 0,
+				targetCache?.total_bytes ?? 0,
+				0
+			)}
+			variant="paused"
+		/>
+	);
+}
+
+function IdleInfoCard({
+	infoLevel,
+	targetCache,
+	fitness,
+}: {
+	infoLevel: number;
+	targetCache: TargetCache;
+	fitness: DownloadFitness;
+}): ReactNode {
+	const pausedDownloaded = targetCache?.downloaded_bytes ?? 0;
+	const pausedTotal = targetCache?.total_bytes ?? 0;
+	return (
+		<div
+			className={`flex flex-col gap-1 rounded-md p-3 text-foreground-secondary text-xs ${surfaceClasses(infoLevel)}`}
+		>
+			<div>
+				<span className="text-foreground">Status:</span> Not downloaded
+			</div>
+			<div>
+				<span className="text-foreground">
+					{pausedTotal > pausedDownloaded
+						? `Need to download: ${sizeLabel(pausedTotal - pausedDownloaded)}`
+						: "Size: unknown until headers fetched"}
+				</span>
+			</div>
+			<div>
+				<span className="text-foreground">Estimated memory:</span> {fitness.estimatedLabel} ·{" "}
+				{fitness.availableLabel}
+			</div>
+		</div>
+	);
+}
+
+function DownloadConfirmationContent({
+	pending,
+	getModel,
+	onConfirm,
+	onCancel,
+	statesById,
+	systemInfo,
+}: DownloadConfirmationDialogProps): ReactNode {
+	// Modal raised the substrate by +4; inside the modal, info cards lift +1.
+	const substrate = useSurface();
+	const infoLevel = Math.min(substrate + 1, 8);
+	const buttonHover = Math.min(substrate + 2, 8);
+	const state = pending ? statesById[pending.modelId] : undefined;
+	const info = pending ? getModel(pending.modelId) : undefined;
+	const targetQuant = pending?.quantization ?? "";
+	const targetCache = resolveQuantCache(state, targetQuant);
+	const quantLabel = targetQuant === "" ? "default precision" : targetQuant;
+
+	// Live download state from the store — drives the progress bar and the
+	// active/paused/idle branch. The store is fed by the IPC listener
+	// installed in DownloadOverlay's parent; if no download is in flight,
+	// `isDownloading` is false and we fall through to disk-cache state.
+	const live = useDownloadStore(
+		useShallow((s) => ({
+			isDownloading: s.isDownloading,
+			modelName: s.modelName,
+			progress: s.progress,
+			downloadedBytes: s.downloadedBytes,
+			totalBytes: s.totalBytes,
+			speedBps: s.speedBps,
+			cancelDownload: s.cancelDownload,
+			discardCache: s.discardCache,
+		}))
+	);
+
+	const isThisDownloading = live.isDownloading && live.modelName === pending?.modelId;
+	const partialOnDisk = targetCache?.state === "partial";
+	const phase: DownloadPhase = resolveDownloadPhase(isThisDownloading, partialOnDisk);
+
+	const fitness = computeFitness(state, systemInfo);
+	const displayName = info?.displayName ?? pending?.modelId ?? "";
+	const sizeSuffix = info?.sizeLabel ? ` (${info.sizeLabel})` : "";
+
+	const handleStop = useCallback(() => {
+		live.cancelDownload();
+	}, [live]);
+
+	const handleDiscard = useCallback(() => {
+		if (!pending) {
+			return;
+		}
+		live.discardCache(pending.modelId);
+	}, [live, pending]);
+
+	const dismissButtonClass = `inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-foreground text-sm ${surfaceClasses(infoLevel)} ${surfaceHoverBg(buttonHover)}`;
+
+	return (
+		<div className="flex w-[440px] flex-col gap-3 p-4 text-foreground">
+			<h2 className="font-semibold text-base">{dialogTitle(phase)}</h2>
+			<p className="text-foreground-secondary text-sm">
+				{dialogSubtitle(phase, displayName, sizeSuffix, quantLabel)}
+			</p>
+			{phase === "active" && <ActiveProgress live={live} />}
+			{phase === "paused" && <PausedProgress targetCache={targetCache} />}
+			{phase === "idle" && (
+				<IdleInfoCard fitness={fitness} infoLevel={infoLevel} targetCache={targetCache} />
+			)}
+			{fitness.isUncomfortable && phase !== "active" && (
+				<div className="rounded-md border border-error/40 bg-error/10 p-3 text-error text-xs">
+					⚠ This model may not run comfortably on your hardware. Loading may fail or transcription
+					may be slow. You can continue at your own risk.
+				</div>
+			)}
+			<div className="mt-1 flex items-center justify-end gap-2">
+				<button className={dismissButtonClass} onClick={onCancel} type="button">
+					{dismissLabel(phase)}
+				</button>
+				<DownloadActions
+					labels={DIALOG_ACTION_LABELS}
+					onDiscard={handleDiscard}
+					onDownload={onConfirm}
+					onResume={onConfirm}
+					onStop={handleStop}
+					phase={phase}
+				/>
+			</div>
+		</div>
+	);
+}

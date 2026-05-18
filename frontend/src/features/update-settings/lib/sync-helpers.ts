@@ -160,14 +160,18 @@ export function isModeChanged(settings: AppSettings, prev: AppSettings): boolean
 	return settings.general?.recordingMode !== prev.general?.recordingMode;
 }
 
-/** Extract the smartEndpoint flag from settings, defaulting to false. */
+/** Extract the smartEndpoint flag from settings, defaulting to true
+ *  (matches the qualitySettingsSchema default — smart endpoint is ON by
+ *  default to avoid finalizing mid-thought). */
 export function getSmartEndpoint(settings: AppSettings): boolean {
-	return settings.quality?.smartEndpoint ?? false;
+	return settings.quality?.smartEndpoint ?? true;
 }
 
-/** Extract the previous smartEndpoint flag, defaulting to false when prev is absent. */
+/** Extract the previous smartEndpoint flag, defaulting to true when prev
+ *  is absent (same default as getSmartEndpoint, so a first sync with no
+ *  prior value doesn't register a spurious change). */
 export function getPrevSmartEndpoint(prev: AppSettings | undefined): boolean {
-	return prev?.quality?.smartEndpoint ?? false;
+	return prev?.quality?.smartEndpoint ?? true;
 }
 
 /** Extract the recording mode from settings, defaulting to "ptt". */

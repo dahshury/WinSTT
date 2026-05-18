@@ -571,6 +571,7 @@
     "deviceCpu": "CPU",
     "testVoice": "Tester la voix",
     "previewVoice": "Prévisualiser la voix",
+    "loadingVoice": "Chargement…",
     "testVoiceSample": "Portez ce vieux whisky au juge blond qui fume.",
     "stopSpeaking": "Arrêter",
     "speakSelection": "Lire la sélection",

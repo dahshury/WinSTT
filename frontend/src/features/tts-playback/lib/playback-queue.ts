@@ -68,6 +68,9 @@ export class TtsPlaybackQueue {
 	private activeRequestId: string | null = null;
 	private scheduled: AudioBufferSourceNode[] = [];
 	private endCallbacks: Array<() => void> = [];
+	private startCallbacks: Array<() => void> = [];
+	/** Request id we've already fired `onStart` for — once per request. */
+	private startedFor: string | null = null;
 
 	get isPlaying(): boolean {
 		return this.activeRequestId !== null;
@@ -115,6 +118,13 @@ export class TtsPlaybackQueue {
 		source.start(startAt);
 		this.playhead = startAt + buffer.duration;
 		this.scheduled.push(source);
+		// First audible source for this request — synthesis latency is over,
+		// audio is now scheduled to play. Fire once per request so a UI in
+		// another window can flip its "loading" state to "playing".
+		if (this.startedFor !== this.activeRequestId) {
+			this.startedFor = this.activeRequestId;
+			this.fireStart();
+		}
 		source.onended = () => {
 			// Remove from the live list; if this was the last scheduled
 			// source for the active request and a "final" chunk has been
@@ -149,6 +159,7 @@ export class TtsPlaybackQueue {
 		}
 		this.scheduled = [];
 		this.activeRequestId = null;
+		this.startedFor = null;
 		// Reset the playhead so the next request starts at "now" rather
 		// than continuing from the abandoned schedule.
 		if (this.ctx) {
@@ -164,12 +175,38 @@ export class TtsPlaybackQueue {
 			return;
 		}
 		this.activeRequestId = null;
+		this.startedFor = null;
 		this.fireEnd();
 	}
 
+	private fireStart(): void {
+		// Same no-clear snapshot contract as `fireEnd` — the long-lived
+		// `useTtsPlayback` subscriber must be notified for every request.
+		const callbacks = this.startCallbacks.slice();
+		for (const cb of callbacks) {
+			try {
+				cb();
+			} catch {
+				/* ignored */
+			}
+		}
+	}
+
+	/** Fires when the first audible source of a request is scheduled. */
+	onStart(cb: () => void): () => void {
+		this.startCallbacks.push(cb);
+		return () => {
+			this.startCallbacks = this.startCallbacks.filter((c) => c !== cb);
+		};
+	}
+
 	private fireEnd(): void {
+		// Snapshot so an unsubscribe fired from within a callback can't
+		// mutate the list mid-iteration. Crucially we do NOT clear
+		// `endCallbacks` here — a single long-lived subscriber (the global
+		// `useTtsPlayback` hook) must keep being notified for every
+		// playback, not just the first one.
 		const callbacks = this.endCallbacks.slice();
-		this.endCallbacks = [];
 		for (const cb of callbacks) {
 			try {
 				cb();
@@ -195,5 +232,6 @@ export class TtsPlaybackQueue {
 		}
 		this.ctx = null;
 		this.endCallbacks = [];
+		this.startCallbacks = [];
 	}
 }

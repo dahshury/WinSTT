@@ -332,9 +332,7 @@ class TestModelCatalog:
         for lang in ("en", "es", "fr", "zh", "hi", "ar", "ru"):
             assert catalog.is_language_compatible("large-v3", lang) is True
 
-    def test_is_language_compatible_canary_restricted_to_25_european(
-        self, catalog: ModelCatalog
-    ) -> None:
+    def test_is_language_compatible_canary_restricted_to_25_european(self, catalog: ModelCatalog) -> None:
         # Canary 1B v2 supports 25 European languages per its HF model card
         # — Arabic / Chinese / Hindi are NOT in the whitelist even though
         # the model supports language detection (orthogonal capability).
@@ -398,9 +396,7 @@ class TestModelCatalog:
     def test_is_universal_unknown_model(self, catalog: ModelCatalog) -> None:
         assert catalog._is_universal("unknown/model-xyz", "en") is True
 
-    def test_is_universal_whisper_whitelists_explicit_languages(
-        self, catalog: ModelCatalog
-    ) -> None:
+    def test_is_universal_whisper_whitelists_explicit_languages(self, catalog: ModelCatalog) -> None:
         # Post-fix, multilingual Whisper has its 99-language whitelist
         # populated explicitly — `_is_universal` is not what passes the
         # check; the whitelist membership is. Spanish IS in Whisper's

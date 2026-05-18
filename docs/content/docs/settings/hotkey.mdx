@@ -10,6 +10,17 @@ WinSTT uses a global hotkey that works even when the application window is not f
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `pushToTalkKey` | string | `"LCtrl+LMeta"` | The global hotkey, specified as a uiohook-style combo string |
+| `repasteHotkey` | string | `"LCtrl+LShift+V"` | Exclusive global shortcut that re-pastes your most recent transcription. Empty string disables it. |
+
+## Re-paste Last Transcription
+
+Pressing the **re-paste** shortcut injects your most recent dictation transcription into whatever app currently has focus — handy when a paste landed in the wrong window, or you want the same text again without re-dictating.
+
+Unlike the push-to-talk hotkey (which only *observes* keys), this shortcut is registered **exclusively**: while WinSTT is running the combo is captured system-wide and **only** triggers the re-paste. It will *not* also fire the focused app's own binding for that combo (e.g. `Ctrl+Shift+V` = paste-without-formatting / terminal paste). That is what makes the behaviour deterministic — and why the combo loses its native meaning in every other app while WinSTT runs.
+
+Because it's exclusive, it's fully rebindable. In **Settings → Hotkey**, record a different combo, or press **Clear** to disable the feature entirely (the setting becomes an empty string and no shortcut is registered).
+
+The text is delivered through the same path as dictation auto-paste (per-character typing — your clipboard is never touched), so it behaves the same in terminals, editors, and browsers.
 
 ## Combo Format
 

@@ -45,15 +45,56 @@ function isElectron(): boolean {
 	return typeof window !== "undefined" && window.electronAPI != null;
 }
 
+/**
+ * Make IPC arguments safe to cross the Electron `contextBridge`.
+ *
+ * `ipcRenderer.send`/`invoke` run every argument through the HTML
+ * structured-clone algorithm. Anything non-cloneable in the object graph
+ * — a function, a class instance with prototype methods, a Proxy, a Zod
+ * internal, a DOM node accidentally captured in a store slice — makes the
+ * whole call throw `"An object could not be cloned."` and the renderer
+ * crashes mid-flow (it took down `settingsSave` and the post-`fullSentence`
+ * path). The main process already guards the reverse direction with
+ * `structuredClone` in `electron/ipc/settings.ts`; this is the missing
+ * renderer-side equivalent.
+ *
+ * `structuredClone` uses the exact same algorithm the bridge does, so if it
+ * succeeds the bridge will too — fast path, no semantic change. If it
+ * throws, every renderer→main payload in this app is JSON-contract data
+ * (OpenAPI / IPC spec), so a JSON round-trip is lossless for real payloads
+ * and only strips the genuinely non-cloneable junk. The channel is logged
+ * (captured as `renderer:warn` in debug.log) so the offending call site is
+ * pinpointable instead of silently masked.
+ */
+function toCloneableArgs(channel: string, args: unknown[]): unknown[] {
+	try {
+		return structuredClone(args);
+	} catch {
+		try {
+			console.warn(`[ipc] non-cloneable payload on "${channel}" — sanitizing via JSON round-trip`);
+			return args.map((arg) =>
+				arg === undefined || typeof arg !== "object" || arg === null
+					? arg
+					: JSON.parse(JSON.stringify(arg))
+			);
+		} catch {
+			// Circular / wholly unserialisable — drop to empty args rather than
+			// throwing and crashing the renderer.
+			console.warn(`[ipc] payload on "${channel}" unserialisable — sending no args`);
+			return [];
+		}
+	}
+}
+
 function send(channel: string, ...args: unknown[]) {
 	if (isElectron()) {
-		window.electronAPI.send(channel, ...args);
+		window.electronAPI.send(channel, ...toCloneableArgs(channel, args));
 	}
 }
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 	if (isElectron()) {
-		return window.electronAPI.invoke(channel, ...args) as Promise<T>;
+		return window.electronAPI.invoke(channel, ...toCloneableArgs(channel, args)) as Promise<T>;
 	}
 	return Promise.resolve(undefined as T);
 }
@@ -813,6 +854,14 @@ export interface TtsFailedPayload {
 	requestId: string;
 }
 
+export interface TtsPlaybackStartedPayload {
+	requestId: string;
+}
+
+export interface TtsPlaybackEndedPayload {
+	requestId: string;
+}
+
 export interface TtsModelDownloadProgressPayload {
 	downloadedBytes: number;
 	progress: number;
@@ -866,6 +915,27 @@ export const ttsCancel = (requestId?: string): void => {
 	send(IPC.TTS_CANCEL, { requestId });
 };
 
+/**
+ * Report (from the window that owns the Web Audio queue) that audio for
+ * ``requestId`` has actually started playing — i.e. the ~1s synthesis gap
+ * is over. Main re-broadcasts as {@link onTtsPlaybackStarted} so a UI in
+ * another window can flip its "loading" spinner to a stop control.
+ */
+export const ttsReportPlaybackStarted = (requestId: string): void => {
+	send(IPC.TTS_REPORT_PLAYBACK_STARTED, { requestId });
+};
+
+/**
+ * Report (from the window that owns the Web Audio queue) that audio for
+ * ``requestId`` has finished playing. The main process re-broadcasts this
+ * as {@link onTtsPlaybackEnded} so UI in other windows (the settings
+ * window has no playback queue) can track real playback, not the much
+ * earlier server-side synthesis-complete event.
+ */
+export const ttsReportPlaybackEnded = (requestId: string): void => {
+	send(IPC.TTS_REPORT_PLAYBACK_ENDED, { requestId });
+};
+
 export const onTtsStarted = (callback: (payload: TtsStartedPayload) => void): (() => void) =>
 	onCast<TtsStartedPayload>(IPC.TTS_STARTED, callback);
 
@@ -877,6 +947,14 @@ export const onTtsCompleted = (callback: (payload: TtsCompletedPayload) => void)
 
 export const onTtsFailed = (callback: (payload: TtsFailedPayload) => void): (() => void) =>
 	onCast<TtsFailedPayload>(IPC.TTS_FAILED, callback);
+
+export const onTtsPlaybackStarted = (
+	callback: (payload: TtsPlaybackStartedPayload) => void
+): (() => void) => onCast<TtsPlaybackStartedPayload>(IPC.TTS_PLAYBACK_STARTED, callback);
+
+export const onTtsPlaybackEnded = (
+	callback: (payload: TtsPlaybackEndedPayload) => void
+): (() => void) => onCast<TtsPlaybackEndedPayload>(IPC.TTS_PLAYBACK_ENDED, callback);
 
 export const onTtsModelDownloadStart = (callback: () => void): (() => void) =>
 	onCast<Record<string, never>>(IPC.TTS_MODEL_DOWNLOAD_START, () => callback());

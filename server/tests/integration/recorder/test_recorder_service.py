@@ -43,6 +43,9 @@ class TestRecorderService:
         config = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.05,
             min_length_of_recording=0.0,
+            # These tests drive the end-to-end text() flow, not the
+            # speech-onset debounce — keep legacy single-chunk start.
+            speech_onset_consecutive_chunks=1,
             use_microphone=use_microphone,
             ensure_sentence_starting_uppercase=ensure_sentence_starting_uppercase,
             ensure_sentence_ends_with_period=ensure_sentence_ends_with_period,
@@ -660,6 +663,7 @@ class TestRecorderService:
             post_speech_silence_duration=5.0,
             min_length_of_recording=0.0,
             use_microphone=False,
+            speech_onset_consecutive_chunks=1,
             enable_realtime_transcription=True,
             realtime_processing_pause=0.01,
             init_realtime_after_seconds=0.0,
@@ -747,6 +751,7 @@ class TestRecorderService:
             post_speech_silence_duration=5.0,
             min_length_of_recording=0.0,
             use_microphone=False,
+            speech_onset_consecutive_chunks=1,
             enable_realtime_transcription=True,
             realtime_processing_pause=0.01,
             init_realtime_after_seconds=10.0,  # Very long delay
@@ -947,6 +952,7 @@ class TestRecorderService:
             post_speech_silence_duration=0.05,
             min_length_of_recording=0.0,
             use_microphone=False,
+            speech_onset_consecutive_chunks=1,
             enable_realtime_transcription=enable_realtime,
             use_main_model_for_realtime=use_main_model_for_realtime,
         )

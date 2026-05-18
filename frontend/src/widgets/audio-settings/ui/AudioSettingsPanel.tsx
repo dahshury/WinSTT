@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { useInputDevices } from "@/entities/audio-device";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { HotkeyRecorder } from "@/features/record-hotkey";
+import { Button } from "@/shared/ui/button";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Select, type SelectOption } from "@/shared/ui/select";
@@ -17,8 +18,13 @@ export function AudioSettingsPanel() {
 	const update = useSettingsStore((s) => s.updateAudioSettings);
 	const hotkey = useSettingsStore((s) => s.settings.hotkey);
 	const updateHotkey = useSettingsStore((s) => s.updateHotkeySettings);
+	const repasteHotkey = useSettingsStore((s) => s.settings.general?.repasteHotkey ?? "");
+	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
+	const ttsHotkey = useSettingsStore((s) => s.settings.tts?.hotkey ?? "");
+	const updateTts = useSettingsStore((s) => s.updateTtsSettings);
 	const t = useTranslations("audio");
 	const th = useTranslations("hotkey");
+	const tt = useTranslations("tts");
 	const { devices, defaultDevice } = useInputDevices();
 	const deviceOptions = useMemo<SelectOption[]>(() => {
 		const defaultLabel = defaultDevice
@@ -79,6 +85,36 @@ export function AudioSettingsPanel() {
 							<HotkeyRecorder
 								currentKey={hotkey?.pushToTalkKey ?? "LCtrl+LMeta"}
 								onKeyRecorded={(key) => updateHotkey({ pushToTalkKey: key })}
+							/>
+						</FormControl>
+					</div>
+					<div className="py-2">
+						<FormControl
+							caption={th("repasteKeyCaption")}
+							label={th("repasteKey")}
+							tooltip={th("repasteKeyTooltip")}
+						>
+							<div className="flex items-center gap-2">
+								<HotkeyRecorder
+									currentKey={repasteHotkey}
+									onKeyRecorded={(key) => updateGeneral({ repasteHotkey: key })}
+								/>
+								{repasteHotkey !== "" && (
+									<Button
+										className="rounded-md border border-border bg-surface px-3 py-1.5 text-body-sm hover:bg-surface-hover"
+										onClick={() => updateGeneral({ repasteHotkey: "" })}
+									>
+										{th("repasteKeyClear")}
+									</Button>
+								)}
+							</div>
+						</FormControl>
+					</div>
+					<div className="py-2">
+						<FormControl caption={tt("hotkeyHint")} label={tt("hotkeyLabel")}>
+							<HotkeyRecorder
+								currentKey={ttsHotkey}
+								onKeyRecorded={(key) => updateTts({ hotkey: key })}
 							/>
 						</FormControl>
 					</div>

@@ -889,6 +889,17 @@ components:
             both disabled. One press starts, one press stops, one final
             transcription. Useful for long-form dictation where natural
             pauses are common. Ignored in other modes.
+        repasteHotkey:
+          type: string
+          description: |
+            Global shortcut that re-pastes the most recent dictation
+            transcription into the focused window on demand. Registered as an
+            EXCLUSIVE system-wide shortcut: pressing it only triggers WinSTT's
+            re-paste and is swallowed app-wide so it never also fires the
+            focused app's native binding. Stored in the uiohook-style
+            accelerator format (e.g. `LCtrl+LShift+V`); the main process
+            converts it to an Electron accelerator at registration. Empty
+            string disables the feature.
         loopbackDeviceIndex:
           type: integer
           nullable: true

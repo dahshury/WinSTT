@@ -233,3 +233,105 @@ export function codesToNames(codes: readonly number[]): string[] {
 	}
 	return out;
 }
+
+// ── uiohook accelerator → Electron globalShortcut accelerator ───────
+//
+// `globalShortcut.register` speaks Electron's accelerator dialect, not the
+// uiohook-style `LCtrl+LShift+V` strings the HotkeyRecorder produces and the
+// rest of the app persists. Electron doesn't distinguish left/right modifiers,
+// so both LCtrl and RCtrl collapse to "Control", etc.
+//
+// `null` is returned (and the caller skips registration) when the combo
+// contains an unmappable token, no non-modifier key, or more than one
+// non-modifier key — Electron accelerators are "modifiers + exactly one key".
+
+/** uiohook modifier name → Electron modifier token. */
+const ELECTRON_MODIFIER: Record<string, string> = {
+	LCtrl: "Control",
+	RCtrl: "Control",
+	LAlt: "Alt",
+	RAlt: "Alt",
+	LShift: "Shift",
+	RShift: "Shift",
+	LMeta: "Super",
+	RMeta: "Super",
+};
+
+/** Stable emit order so the produced string is deterministic for tests. */
+const MODIFIER_EMIT_ORDER = ["Control", "Alt", "Shift", "Super"];
+
+/**
+ * uiohook non-modifier name → Electron key token. Letters/digits/F-keys map to
+ * themselves; only the keys whose Electron spelling differs (or numpad keys)
+ * need an explicit entry. Anything not a letter/digit/F-key and not listed
+ * here is treated as unmappable (→ null).
+ */
+const ELECTRON_KEY_ALIAS: Record<string, string> = {
+	Enter: "Return",
+	Escape: "Escape",
+	Space: "Space",
+	Tab: "Tab",
+	Backspace: "Backspace",
+	Delete: "Delete",
+	Insert: "Insert",
+	Home: "Home",
+	End: "End",
+	PageUp: "PageUp",
+	PageDown: "PageDown",
+	Up: "Up",
+	Down: "Down",
+	Left: "Left",
+	Right: "Right",
+};
+
+const LETTER_RE = /^[A-Z]$/;
+const DIGIT_RE = /^[0-9]$/;
+const FKEY_RE = /^F([1-9]|1[0-9]|2[0-4])$/;
+const NUMPAD_RE = /^Num([0-9])$/;
+
+/** Resolve a single non-modifier uiohook name to its Electron token, or null. */
+export function electronKeyToken(name: string): string | null {
+	if (LETTER_RE.test(name) || DIGIT_RE.test(name) || FKEY_RE.test(name)) {
+		return name;
+	}
+	const numpad = NUMPAD_RE.exec(name);
+	if (numpad) {
+		return `num${numpad[1]}`;
+	}
+	return ELECTRON_KEY_ALIAS[name] ?? null;
+}
+
+/**
+ * Convert a persisted `LCtrl+LShift+V`-style accelerator into an Electron
+ * `globalShortcut` accelerator (`Control+Shift+V`). Returns null when the
+ * combo can't be expressed as an Electron accelerator so the caller can skip
+ * registration instead of throwing inside Electron.
+ */
+export function uiohookAcceleratorToElectron(accelerator: string): string | null {
+	const trimmed = accelerator.trim();
+	if (trimmed === "") {
+		return null;
+	}
+	const modifiers = new Set<string>();
+	let key: string | null = null;
+	for (const rawPart of trimmed.split("+")) {
+		const part = rawPart.trim();
+		const modifier = ELECTRON_MODIFIER[part];
+		if (modifier) {
+			modifiers.add(modifier);
+			continue;
+		}
+		const token = electronKeyToken(part);
+		if (token === null || key !== null) {
+			// Unmappable token, or a second non-modifier key (Electron
+			// accelerators allow exactly one) — bail.
+			return null;
+		}
+		key = token;
+	}
+	if (key === null) {
+		return null;
+	}
+	const orderedModifiers = MODIFIER_EMIT_ORDER.filter((m) => modifiers.has(m));
+	return [...orderedModifiers, key].join("+");
+}

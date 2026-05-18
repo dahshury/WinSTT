@@ -13,6 +13,7 @@ const {
 	consumeRecordingStart,
 	notifyRecordingStop,
 	debugRecordingState,
+	isToggleSessionActive,
 	__resetRecordingStateForTesting__,
 } = await import("./recording-state");
 
@@ -170,6 +171,24 @@ describe("recording-state gate (toggle mode)", () => {
 		consumeRecordingStart();
 		notifyRecordingStop();
 		expect(debugRecordingState().toggleSession).toBe(true);
+	});
+
+	// isToggleSessionActive() is what the hotkey module reads AFTER
+	// notifyHotkeyPressed() to decide whether to chime — true on the
+	// opening press (start cue), false on the closing press (silent).
+	test("isToggleSessionActive reflects open on press 1, closed on press 2", () => {
+		setMode("toggle");
+		expect(isToggleSessionActive()).toBe(false);
+		notifyHotkeyPressed(); // press 1 — opens
+		expect(isToggleSessionActive()).toBe(true);
+		notifyHotkeyPressed(); // press 2 — closes
+		expect(isToggleSessionActive()).toBe(false);
+	});
+
+	test("isToggleSessionActive stays false in ptt mode (start cue never suppressed there)", () => {
+		setMode("ptt");
+		notifyHotkeyPressed();
+		expect(isToggleSessionActive()).toBe(false);
 	});
 });
 
