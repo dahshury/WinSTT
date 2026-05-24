@@ -144,6 +144,16 @@ _CATALOG_SRC = SERVER_ROOT_SPEC / "src" / "recorder" / "domain" / "catalog.json"
 if _CATALOG_SRC.is_file():
     datas.append((str(_CATALOG_SRC), "src/recorder/domain"))
 
+# Ship the pre-downloaded offline base model (whisper-tiny q4) as a
+# verbatim HF cache tree. ``seed_models.py`` (run by build.ps1) vendors
+# it into ``packaging/seed-cache/`` and
+# ``src/recorder/infrastructure/seed_cache.py`` copies it into the user's
+# real HF cache on first run so STT works with zero network. Absent in a
+# bare checkout — bundle only when a build seeded it.
+_SEED_SRC = SERVER_ROOT_SPEC / "packaging" / "seed-cache"
+if _SEED_SRC.is_dir():
+    datas.append((str(_SEED_SRC), "seed-cache"))
+
 hiddenimports: list[str] = []
 hiddenimports.extend(onnxasr_hidden)
 hiddenimports.extend(ort_hidden)
@@ -195,6 +205,17 @@ a = Analysis(
         # in the code, so excluding here is safe.
         "torch",
         "transformers",
+        # TTS (kokoro) is delivered on demand as a downloadable support
+        # pack — never frozen into the exe. Excluding these guarantees a
+        # TTS-free exe even if a dev venv has the [tts] extra installed.
+        # The synthesizer imports them lazily inside _ensure_loaded()
+        # after the pack is on sys.path, so excluding here is safe.
+        "kokoro_onnx",
+        "espeakng_loader",
+        "phonemizer",
+        "phonemizer_fork",
+        "segments",
+        "csvw",
     ],
     noarchive=False,
     optimize=2,

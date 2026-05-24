@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 const STORAGE_KEY = "winstt:openrouter-favorite-providers";

@@ -159,6 +159,21 @@ describe("llm pure helpers", () => {
 		expect(out.toLowerCase()).toContain("spelling");
 	});
 
+	test("withContextPrefix carries the caret-continuation clause", () => {
+		// Inert when the formatted context has no before/after-caret
+		// sections, but it must be present in the static preamble so the
+		// split read (readWindowContextSplit) actually changes behavior.
+		const out = helpers.withContextPrefix("SYS", "Window: X");
+		const lower = out.toLowerCase();
+		expect(lower).toContain("before the caret");
+		expect(lower).toContain("continue");
+		expect(lower).toContain("after the caret");
+		// Boundary invariants still hold.
+		expect(out).toContain("<context>");
+		expect(out).toContain("</context>");
+		expect(out.endsWith("SYS")).toBe(true);
+	});
+
 	test("describePresets renders a single preset key", () => {
 		expect(helpers.describePresets([{ key: "formal" }])).toBe("formal");
 	});
@@ -463,6 +478,68 @@ describe("llm pure helpers", () => {
 		expect(helpers.extractStructuredFinalText("{")).toBeNull();
 	});
 
+	test("extractStructuredFinalText salvages an envelope closed with a smart quote", () => {
+		// The real-world failure: the model closed the JSON string with a
+		// curly ” instead of ", so JSON.parse throws and (pre-fix) the whole
+		// `{"text":"…\n…”}` leaked verbatim — escapes and all — into the paste.
+		const broken = '{   "text": "Here is line one.\\n\\n1. first\\n2. second error.”}';
+		const out = helpers.extractStructuredFinalText(broken);
+		expect(out).toBe("Here is line one.\n\n1. first\n2. second error.");
+		expect(out).not.toContain('"text"');
+		expect(out).not.toContain("\\n");
+		expect(out?.endsWith("}")).toBe(false);
+	});
+
+	test("extractStructuredFinalText salvages a truncated (unclosed) envelope", () => {
+		const truncated = '{"text": "got cut off mid sen';
+		expect(helpers.extractStructuredFinalText(truncated)).toBe("got cut off mid sen");
+	});
+
+	test("extractStructuredFinalText strips a markdown-fenced envelope", () => {
+		const fenced = '```json\n{"text": "fenced answer"}\n```';
+		expect(helpers.extractStructuredFinalText(fenced)).toBe("fenced answer");
+	});
+
+	test("salvageStructuredText unescapes and peels scaffold; null without a text field", () => {
+		expect(helpers.salvageStructuredText('{"text":"a\\tb\\nc"”}')).toBe("a\tb\nc");
+		expect(helpers.salvageStructuredText("{}")).toBeNull();
+	});
+
+	test("withVocabPrefix carries the strict spelling-only guard", () => {
+		const out = helpers.withVocabPrefix("SYS", {
+			dictionary: ["ollama", "baseui"],
+			replacementPairs: [],
+			snippets: [],
+		});
+		expect(out).toContain("ollama");
+		expect(out).toContain("spelling reference");
+		expect(out).toContain("NEVER insert a listed term");
+		expect(out).toContain("function word");
+		// The exact regression the user reported is named in-prompt.
+		expect(out).toContain("Will Ollama BaseUI");
+		expect(out.endsWith("SYS")).toBe(true);
+	});
+
+	test("withVocabPrefix is a no-op when dictionary, replacements, and snippets are empty", () => {
+		expect(
+			helpers.withVocabPrefix("SYS", {
+				dictionary: [],
+				replacementPairs: [],
+				snippets: [],
+			})
+		).toBe("SYS");
+	});
+
+	test("withVocabPrefix renders replacement pairs as deterministic find→replace rules", () => {
+		const out = helpers.withVocabPrefix("SYS", {
+			dictionary: [],
+			replacementPairs: [{ term: "github", replacement: "GitHub" }],
+			snippets: [],
+		});
+		expect(out).toContain("DETERMINISTIC find-and-replace");
+		expect(out).toContain('find "github" -> "GitHub"');
+	});
+
 	test("extractPartialStructuredText pulls out the text-so-far for streaming", () => {
 		// Simulate the chunks the pill sees while Ollama is still mid-JSON:
 		// the field is open but not yet closed. We want to surface the natural
@@ -521,6 +598,82 @@ describe("llm pure helpers", () => {
 		expect(state.thinking).toBe("step one. step two.");
 		expect(state.content).toBe("hello world");
 		expect(state.done).toBe(true);
+	});
+
+	test("applyChatStreamChunk never streams the structured-output JSON scaffold to the pill", async () => {
+		// Real Ollama structured-output streaming: the model emits the
+		// `{"text":"…"}` envelope a few characters at a time. The user must
+		// only ever see the inner prose — never the literal `{"text": "`
+		// scaffold (which previously leaked as a `text:{…}` prefix in the
+		// reasoning band).
+		const electron = await import("electron");
+		const origGetAll = electron.BrowserWindow.getAllWindows;
+		const deltas: string[] = [];
+		const fakeWindow = {
+			isDestroyed: () => false,
+			webContents: {
+				send: (_channel: string, payload: { delta?: string }) => {
+					if (typeof payload?.delta === "string") {
+						deltas.push(payload.delta);
+					}
+				},
+			},
+		} as unknown as InstanceType<typeof electron.BrowserWindow>;
+		(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
+			() => [fakeWindow];
+		try {
+			const state = {
+				buffer: { value: "" },
+				content: "",
+				contentStreamCursor: 0,
+				thinking: "",
+				done: false,
+			};
+			for (const piece of ['{"', "text", '": "', "Hello ", "world", '"}']) {
+				helpers.applyChatStreamChunk(state, { message: { role: "assistant", content: piece } });
+			}
+			const visible = deltas.join("");
+			expect(visible).toBe("Hello world");
+			expect(visible).not.toContain("{");
+			expect(visible).not.toContain('"text"');
+		} finally {
+			(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
+				origGetAll;
+		}
+	});
+
+	test("applyChatStreamChunk still streams raw prose when the model ignores the JSON format", async () => {
+		const electron = await import("electron");
+		const origGetAll = electron.BrowserWindow.getAllWindows;
+		const deltas: string[] = [];
+		const fakeWindow = {
+			isDestroyed: () => false,
+			webContents: {
+				send: (_channel: string, payload: { delta?: string }) => {
+					if (typeof payload?.delta === "string") {
+						deltas.push(payload.delta);
+					}
+				},
+			},
+		} as unknown as InstanceType<typeof electron.BrowserWindow>;
+		(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
+			() => [fakeWindow];
+		try {
+			const state = {
+				buffer: { value: "" },
+				content: "",
+				contentStreamCursor: 0,
+				thinking: "",
+				done: false,
+			};
+			for (const piece of ["Plain ", "prose ", "answer"]) {
+				helpers.applyChatStreamChunk(state, { message: { role: "assistant", content: piece } });
+			}
+			expect(deltas.join("")).toBe("Plain prose answer");
+		} finally {
+			(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
+				origGetAll;
+		}
 	});
 
 	test("parseChatStreamLine returns null for malformed JSON", () => {
@@ -910,18 +1063,37 @@ describe("runProcessText — provider routing", () => {
 	});
 
 	test("routes to Ollama when provider is 'ollama' (store model='' → ValidationError)", async () => {
-		// The store mock returns "" for "llm.dictation.model", so processWithOllama throws
-		// ValidationError("Ollama model is required"). This proves the ollama path is taken.
+		// The provider/model now live on the per-feature FeatureLlmConfig the
+		// caller passes in. Empty model triggers ValidationError("Ollama model
+		// is required"), proving the ollama branch was taken.
+		const cfg = {
+			customModifiers: [] as const,
+			openrouterFallbackModel: "",
+			openrouterModel: "",
+			model: "",
+			presets: [{ key: "neutral" as const }] as const,
+			provider: "ollama",
+			thinkingEffort: "medium" as const,
+		};
 		await expect(
-			helpers.runProcessText("hello", "ollama", [{ key: "neutral" as const }], 5000, "")
+			helpers.runProcessText("hello", [{ key: "neutral" as const }], 5000, "", cfg)
 		).rejects.toBeInstanceOf(ValidationError);
 	});
 
 	test("routes to openrouter when provider is 'openrouter' — throws ValidationError when no api key", async () => {
 		// getStoreValue("llm.openrouterApiKey") returns undefined from the mock (no api key)
 		const { ValidationError } = await import("../../src/shared/lib/errors");
+		const cfg = {
+			customModifiers: [] as const,
+			openrouterFallbackModel: "",
+			openrouterModel: "",
+			model: "",
+			presets: [{ key: "neutral" as const }] as const,
+			provider: "openrouter",
+			thinkingEffort: "medium" as const,
+		};
 		await expect(
-			helpers.runProcessText("hello", "openrouter", [{ key: "neutral" as const }], 5000, "")
+			helpers.runProcessText("hello", [{ key: "neutral" as const }], 5000, "", cfg)
 		).rejects.toBeInstanceOf(ValidationError);
 	});
 });

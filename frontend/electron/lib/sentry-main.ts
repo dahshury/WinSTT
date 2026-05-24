@@ -1,13 +1,18 @@
 import os from "node:os";
-import {
-	addBreadcrumb,
-	captureException,
-	type ErrorEvent as SentryErrorEvent,
-	init as sentryInit,
-	withScope,
-} from "@sentry/electron/main";
+import type { ErrorEvent as SentryErrorEvent } from "@sentry/electron/main";
 import { app } from "electron";
 import { getLogger } from "./debug-log";
+
+// `@sentry/electron/main` is loaded LAZILY (dynamic import) and only when a
+// DSN is actually configured. Static-importing it cost ~500 KB-1 MB on the
+// main.js bundle even when telemetry was disabled, because Sentry drags in
+// the entire `@opentelemetry/*` instrumentation tree, `@sentry/node`,
+// `@sentry/browser`, `@sentry/core`, `@vercel/oidc`, etc. By gating the
+// import on `getResolvedSentryDsn()` returning a truthy value we keep the
+// telemetry-off binary lean. The type-only import above is erased by
+// tsup, so it carries no runtime cost.
+type SentryMainModule = typeof import("@sentry/electron/main");
+let sentryModule: SentryMainModule | null = null;
 
 const sentryLog = getLogger("sentry");
 
@@ -140,7 +145,13 @@ function beforeSend(event: SentryErrorEvent): SentryErrorEvent | null {
 			event.extra = scrubRecord(event.extra) ?? event.extra;
 		}
 		if (event.contexts) {
-			event.contexts = scrubRecord(event.contexts) as SentryErrorEvent["contexts"];
+			const scrubbed = scrubRecord(event.contexts) as SentryErrorEvent["contexts"];
+			if (scrubbed === undefined) {
+				// biome-ignore lint/performance/noDelete: exact-optional `contexts?: Contexts` requires omission (not undefined) when removing
+				delete event.contexts;
+			} else {
+				event.contexts = scrubbed;
+			}
 		}
 		if (event.breadcrumbs) {
 			event.breadcrumbs = scrubBreadcrumbs(event.breadcrumbs) ?? event.breadcrumbs;
@@ -153,7 +164,12 @@ function beforeSend(event: SentryErrorEvent): SentryErrorEvent | null {
 				}
 				scrubbedUser[key] = value;
 			}
-			event.user = Object.keys(scrubbedUser).length > 0 ? scrubbedUser : undefined;
+			if (Object.keys(scrubbedUser).length > 0) {
+				event.user = scrubbedUser;
+			} else {
+				// biome-ignore lint/performance/noDelete: exact-optional `user?: User` requires omission (not undefined) when clearing
+				delete event.user;
+			}
 		}
 		// Scrub absolute paths in the top-level message.
 		if (typeof event.message === "string") {
@@ -207,6 +223,12 @@ export interface InitSentryMainOptions {
  * don't ship telemetry by accident. When `enabled` is `false`, Sentry is
  * skipped regardless of DSN configuration — used to honour the
  * `general.sendCrashReports` opt-out setting.
+ *
+ * Fire-and-forget: callers do NOT need to `await` this. Breadcrumb /
+ * captureException calls that fire BEFORE the dynamic import resolves are
+ * silently dropped (acceptable — the gap is a few hundred milliseconds on
+ * cold start, and the same calls would have been no-ops if the DSN were
+ * absent anyway).
  */
 export function initSentryMain(options: InitSentryMainOptions = {}): void {
 	if (initialized) {
@@ -224,7 +246,15 @@ export function initSentryMain(options: InitSentryMainOptions = {}): void {
 		initialized = true;
 		return;
 	}
+	// Mark initialized BEFORE the await so a second concurrent call short-
+	// circuits and doesn't trigger a duplicate import.
+	initialized = true;
+	loadAndInitSentry(dsn).catch((error: unknown) => {
+		sentryLog.warn("Sentry init failed:", error);
+	});
+}
 
+async function loadAndInitSentry(dsn: string): Promise<void> {
 	let release: string;
 	try {
 		release = `winstt@${app.getVersion()}`;
@@ -239,7 +269,16 @@ export function initSentryMain(options: InitSentryMainOptions = {}): void {
 		environment = "development";
 	}
 
-	sentryInit({
+	try {
+		sentryModule = await import("@sentry/electron/main");
+	} catch (error) {
+		sentryLog.warn(
+			`Sentry dynamic import failed (${error instanceof Error ? error.message : String(error)}); telemetry disabled this session.`
+		);
+		return;
+	}
+
+	sentryModule.init({
 		dsn,
 		release,
 		environment,
@@ -249,8 +288,6 @@ export function initSentryMain(options: InitSentryMainOptions = {}): void {
 		// (`@sentry/electron` ships with a normalizePathsIntegration by default.)
 		integrations: (defaults) => defaults,
 	});
-
-	initialized = true;
 	sentryLog.info(`Sentry initialized (env=${environment}, release=${release})`);
 }
 
@@ -266,27 +303,43 @@ export function breadcrumb(
 	data?: Record<string, string | number | boolean>,
 	level: "info" | "warning" | "error" = "info"
 ): void {
+	if (!sentryModule) {
+		// Sentry not initialized OR still importing; drop the breadcrumb. This
+		// matches the previous behavior (`addBreadcrumb` was already a no-op
+		// before `sentryInit` ran) and avoids re-implementing Sentry's queue.
+		return;
+	}
 	try {
-		addBreadcrumb({ category, message, data, level });
+		sentryModule.addBreadcrumb(
+			data === undefined ? { category, message, level } : { category, message, data, level }
+		);
 	} catch {
 		// Breadcrumb emission must never crash callers.
 	}
 }
 
 /**
- * Send an error to Sentry from the main process. Safe to call before
- * `initSentryMain` — Sentry's queue handles pre-init events gracefully.
+ * Send an error to Sentry from the main process. Safe to call before / after
+ * `initSentryMain` regardless of telemetry state — when Sentry isn't loaded
+ * (DSN absent OR dynamic import still pending) this is a silent no-op.
  */
 export function captureMainException(error: unknown, context?: Record<string, unknown>): void {
+	if (!sentryModule) {
+		// Sentry not initialized OR still importing. Drop the event — there's
+		// no in-memory queue we can flush later, but the cost of one missed
+		// exception during the ~200 ms dynamic-import window is acceptable
+		// versus carrying ~1 MB of always-loaded telemetry deps.
+		return;
+	}
 	try {
 		if (context) {
-			withScope((scope) => {
+			sentryModule.withScope((scope) => {
 				scope.setExtras(scrubRecord(context) ?? context);
-				captureException(error);
+				sentryModule?.captureException(error);
 			});
 			return;
 		}
-		captureException(error);
+		sentryModule.captureException(error);
 	} catch (captureError) {
 		sentryLog.warn("captureMainException failed:", String(captureError));
 	}

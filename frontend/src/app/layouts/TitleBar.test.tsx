@@ -1,17 +1,8 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { IPC } from "@/shared/api/ipc-channels";
 import { TitleBar } from "./TitleBar";
-
-// next/image fails under happy-dom (Invalid URL on relative src). Stub it.
-mock.module("next/image", () => ({
-	__esModule: true,
-	default: (props: Record<string, unknown>) => {
-		const { alt, ...rest } = props as { alt?: string } & Record<string, unknown>;
-		return <img alt={alt ?? ""} {...rest} />;
-	},
-}));
 
 const originalApi = window.electronAPI;
 let sendCalls: Array<{ channel: string; args: unknown[] }>;

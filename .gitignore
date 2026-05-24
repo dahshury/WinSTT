@@ -37,6 +37,15 @@ stt-server-dist/
 stt-server-dist-cpu/
 stt-server-dist-gpu/
 
+# Vendored offline base model (whisper-tiny q4) — downloaded at build
+# time by server/packaging/seed_models.py, bundled into the exe, never
+# committed (tens of MB, reproducible from the HF hub).
+server/packaging/seed-cache/
+
+# On-demand TTS support pack — produced by server/packaging/build_tts_pack.py
+# and uploaded to the GitHub Release, never committed (~29 MB, reproducible).
+server/packaging/dist-tts/
+
 # Environment
 .env
 .env.local

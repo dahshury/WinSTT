@@ -32,15 +32,32 @@ describe("SettingsSidebar", () => {
 		expect(screen.queryByRole("button", { name: /Reset/i })).toBeNull();
 	});
 
-	test("expands width on focus and contracts on blur", () => {
+	test("expands width on mouse enter and contracts on mouse leave", () => {
 		renderSidebar();
-		// The first child div is the sidebar wrapper carrying inline width style
-		const wrapper = document.body.querySelector("div[style*='width']") as HTMLElement | null;
-		expect(wrapper).not.toBeNull();
-		fireEvent.focus(wrapper!);
-		expect(wrapper!.style.width).toBe("196px");
-		fireEvent.mouseLeave(wrapper!);
-		fireEvent.blur(wrapper!);
-		expect(wrapper!.style.width).toBe("60px");
+		// The rail is split into an outer flow-spacer (fixed 60px) and an
+		// absolutely-positioned inner panel that actually expands on
+		// hover/focus. Both carry an inline `width`, so we target the inner
+		// one by its layout class.
+		const panel = document.body.querySelector("div.absolute[style*='width']") as HTMLElement | null;
+		expect(panel).not.toBeNull();
+		fireEvent.mouseEnter(panel!);
+		expect(panel!.style.width).toBe("196px");
+		fireEvent.mouseLeave(panel!);
+		expect(panel!.style.width).toBe("60px");
+	});
+
+	test("does not expand on non-keyboard focus (e.g. window-focus restoration from taskbar)", () => {
+		// Regression guard: clicking the taskbar icon while settings is open
+		// would restore focus to the last-active Tab inside the rail, and the
+		// onFocus handler used to expand the sidebar unconditionally. We now
+		// gate that on :focus-visible so only keyboard navigation triggers it.
+		renderSidebar();
+		const panel = document.body.querySelector("div.absolute[style*='width']") as HTMLElement | null;
+		expect(panel).not.toBeNull();
+		// Synthetic focus events in jsdom don't match :focus-visible — that's
+		// exactly the case we're guarding against (programmatic / mouse focus).
+		const firstTab = screen.getAllByRole("tab")[0] as HTMLElement;
+		fireEvent.focus(firstTab);
+		expect(panel!.style.width).toBe("60px");
 	});
 });

@@ -3,7 +3,12 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { app, ipcMain } from "electron";
 import { getErrorMessage, NotFoundError, ProcessSpawnError } from "../../src/shared/lib/errors";
+import {
+	isRealtimeEnabled,
+	type LiveTranscriptionDisplay,
+} from "../../src/shared/lib/realtime-enabled";
 import { dbg } from "../lib/debug-log";
+import { readCurrentInitialPrompt } from "../lib/initial-prompt-sync";
 import { breadcrumb, getResolvedSentryDsn } from "../lib/sentry-main";
 import { getStoreRaw, getStoreValue, store } from "../lib/store";
 
@@ -35,8 +40,12 @@ const SETTINGS_TO_CLI: [storePath: string, cliFlag: string][] = [
 	["model.onnxQuantization", "--onnx_quantization"],
 	["model.beamSize", "--beam_size"],
 	["model.beamSizeRealtime", "--beam_size_realtime"],
-	["model.initialPrompt", "--initial_prompt"],
-	["model.initialPromptRealtime", "--initial_prompt_realtime"],
+	// `model.initialPrompt` / `model.initialPromptRealtime` are NOT in this
+	// table — they're composed at spawn time by `applyInitialPromptFlags`
+	// which folds the user's static prefix together with the dictionary's
+	// vocab terms so Whisper biases toward named entities BEFORE the LLM
+	// cleanup pass even runs. Adding them here would prepend the user's
+	// freeform prefix only, dropping the dictionary signal.
 	["audio.inputDeviceIndex", "--input-device"],
 	["audio.sileroSensitivity", "--silero_sensitivity"],
 	["audio.webrtcSensitivity", "--webrtc_sensitivity"],
@@ -47,14 +56,6 @@ const SETTINGS_TO_CLI: [storePath: string, cliFlag: string][] = [
 	["quality.initRealtimeAfterSeconds", "--init_realtime_after_seconds"],
 	["quality.batchSize", "--batch"],
 	["quality.realtimeBatchSize", "--realtime_batch_size"],
-];
-
-/**
- * Boolean flags that use argparse BooleanOptionalAction (default=True on server).
- * These need --no-{flag} when disabled, unlike store_true flags which just omit the flag.
- */
-const BOOLEAN_OPTIONAL_CLI: [storePath: string, cliFlag: string][] = [
-	["quality.enableRealtimeTranscription", "--enable_realtime_transcription"],
 ];
 
 /**
@@ -87,18 +88,35 @@ function applyStoreTrueFlag(args: string[], value: unknown, cliFlag: string): vo
 	args.push(cliFlag, String(value));
 }
 
-function applyBooleanOptionalFlag(args: string[], value: unknown, cliFlag: string): void {
-	if (value === true) {
-		args.push(cliFlag);
-	} else if (value === false) {
-		args.push(cliFlag.replace("--", "--no-"));
-	}
-}
-
 function applySileroDeactivityFlag(args: string[]): void {
 	if (getStoreValue("audio.sileroDeactivityDetection")) {
 		args.push("--silero_deactivity_detection");
 	}
+}
+
+function readLiveTranscriptionDisplay(): LiveTranscriptionDisplay {
+	const raw = getStoreRaw("general.liveTranscriptionDisplay");
+	if (raw === "none" || raw === "in-app" || raw === "in-pill" || raw === "both") {
+		return raw;
+	}
+	return "both";
+}
+
+/**
+ * Decide whether the server should boot with the realtime preview engine.
+ * Fully derived from the user's live-transcription display choice:
+ *   - `none`                       → `--no-enable_realtime_transcription`
+ *   - `in-pill` w/ overlay hidden  → `--no-enable_realtime_transcription`
+ *   - anything else                → `--enable_realtime_transcription`
+ *
+ * There is no separate user-stored "realtime on/off" — the display picker IS
+ * the on/off switch (see realtime-enabled.ts).
+ */
+function applyRealtimeFlag(args: string[]): void {
+	const showRecordingOverlay = getStoreRaw("general.showRecordingOverlay") !== false;
+	const liveTranscriptionDisplay = readLiveTranscriptionDisplay();
+	const enabled = isRealtimeEnabled({ showRecordingOverlay, liveTranscriptionDisplay });
+	args.push(enabled ? "--enable_realtime_transcription" : "--no-enable_realtime_transcription");
 }
 
 // Keywords each engine knows. Keyed lookups beat hardcoded if-chains and
@@ -195,6 +213,23 @@ function applyWakeWordFlags(args: string[]): void {
 }
 
 /**
+ * Compose Whisper `--initial_prompt` / `--initial_prompt_realtime` CLI
+ * args from the user's static prefix setting + the dictionary's vocab.
+ * Skipped when both pieces are empty (CLI default of "no prompt"
+ * applies). See {@link readCurrentInitialPrompt} for the composition
+ * rules and per-prompt char cap.
+ */
+function applyInitialPromptFlags(args: string[]): void {
+	const composed = readCurrentInitialPrompt();
+	if (composed.main) {
+		args.push("--initial_prompt", composed.main);
+	}
+	if (composed.realtime) {
+		args.push("--initial_prompt_realtime", composed.realtime);
+	}
+}
+
+/**
  * Append `--log-dir <userData>` so the Python server writes `stt-server.log`
  * to the same directory as Electron's `debug.log` for unified diagnostics.
  */
@@ -212,16 +247,15 @@ function buildServerArgs(baseArgs: string[]): string[] {
 	for (const [storePath, cliFlag] of SETTINGS_TO_CLI) {
 		applyStoreTrueFlag(args, getStoreRaw(storePath), cliFlag);
 	}
-	for (const [storePath, cliFlag] of BOOLEAN_OPTIONAL_CLI) {
-		applyBooleanOptionalFlag(args, getStoreRaw(storePath), cliFlag);
-	}
 	for (const [storePath, cliFlag] of STORE_TRUE_CLI) {
 		if (getStoreRaw(storePath) === true) {
 			args.push(cliFlag);
 		}
 	}
+	applyRealtimeFlag(args);
 	applySileroDeactivityFlag(args);
 	applyWakeWordFlags(args);
+	applyInitialPromptFlags(args);
 	applyLogDirFlag(args);
 	return args;
 }
@@ -364,8 +398,10 @@ function spawnServer(): void {
 	dbg("stt-spawn", "CLI args:", args.join(" "));
 	dbg(
 		"stt-spawn",
-		"store enableRealtimeTranscription=",
-		store.get("quality.enableRealtimeTranscription"),
+		"derived realtime: liveTranscriptionDisplay=",
+		store.get("general.liveTranscriptionDisplay"),
+		"showRecordingOverlay=",
+		store.get("general.showRecordingOverlay"),
 		"useMainModelForRealtime=",
 		store.get("quality.useMainModelForRealtime")
 	);

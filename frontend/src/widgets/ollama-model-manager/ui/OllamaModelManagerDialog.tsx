@@ -1,5 +1,3 @@
-"use client";
-
 import {
 	Cancel01Icon,
 	CloudDownloadIcon,
@@ -26,6 +24,7 @@ import {
 	formatGigabytes,
 	isCustomModelQuery,
 } from "../lib/filter";
+import { buildTabOptions, createHandlePull } from "../lib/ollama-model-manager-test-helpers";
 
 type TranslateFn = ReturnType<typeof useTranslations>;
 
@@ -40,13 +39,6 @@ export interface OllamaModelManagerDialogProps {
 
 const PULL_EXAMPLE = "qwen3:1.7b";
 const OLLAMA_LIBRARY_URL = "https://ollama.com/library";
-
-function buildTabOptions(t: TranslateFn) {
-	return [
-		{ value: "installed" as Tab, label: t("tabInstalled") },
-		{ value: "recommended" as Tab, label: t("tabRecommended") },
-	] as const;
-}
 
 function localizePullStatus(progress: OllamaPullProgress, t: TranslateFn): string {
 	// pullStatusToI18nKey returns a string key that is always valid in the "llm" namespace.
@@ -529,24 +521,3 @@ export function OllamaModelManagerDialog(props: OllamaModelManagerDialogProps) {
 		</>
 	);
 }
-
-/**
- * Creates a standalone handlePull function bound to the given pullModel and onModelInstalled.
- * Exported for unit testing — avoids relying on Base UI tab-switch in happy-dom.
- */
-export function createHandlePull(
-	pullModel: (name: string) => Promise<{ success: boolean }>,
-	onModelInstalled?: (name: string) => void
-) {
-	return async (name: string) => {
-		const result = await pullModel(name);
-		if (result.success && onModelInstalled) {
-			onModelInstalled(name);
-		}
-	};
-}
-
-export const __ollama_model_manager_test_helpers__ = {
-	buildTabOptions,
-	createHandlePull,
-};

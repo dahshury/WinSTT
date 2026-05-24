@@ -1,5 +1,3 @@
-"use client";
-
 import {
 	AlertCircleIcon,
 	Cancel01Icon,

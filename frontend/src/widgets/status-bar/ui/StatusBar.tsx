@@ -1,12 +1,11 @@
-"use client";
-
 import { Menu } from "@base-ui/react/menu";
 import { Separator } from "@base-ui/react/separator";
-import { AiAudioIcon, ArrowDown01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
+import { AiAudioIcon, AiCloud01Icon, ArrowDown01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { type MouseEvent, type ReactNode, useCallback, useMemo } from "react";
+import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
 import { useInputDevices } from "@/entities/audio-device";
+import { providerDisplayName, providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
 import { useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
@@ -127,6 +126,7 @@ function FooterMenuChip({
 
 interface FooterModelChipProps {
 	ariaLabel: string;
+	icon?: IconSvgElement;
 	label: string;
 	tooltip: string;
 }
@@ -135,10 +135,24 @@ interface FooterModelChipProps {
  *  but clicking it opens the detached model-picker window — the only way
  *  the full picker can be shown without being clipped by the 420×150 main
  *  window. Sends its own viewport rect so the window anchors above it. */
-function FooterModelChip({ ariaLabel, label, tooltip }: FooterModelChipProps): ReactNode {
+const CHIP_SLOT = '[data-slot="stt-model-selector-trigger"]';
+
+function FooterModelChip({
+	ariaLabel,
+	label,
+	tooltip,
+	icon = AiAudioIcon,
+}: FooterModelChipProps): ReactNode {
 	const substrate = useSurface();
 	const hoverLevel = Math.min(substrate + 2, 8);
-	const handleClick = useCallback((e: MouseEvent<HTMLButtonElement>) => {
+	// The picker is a separate always-on-top window; clicking back into THIS
+	// (main) window doesn't reliably blur it, so OS-focus alone can't dismiss
+	// it. Any pointer-down anywhere in the app that isn't the chip itself is
+	// "clicked outside the popup" → tell main to close. Main no-ops the
+	// message when the picker isn't shown, so the open flag is just a cheap
+	// guard to avoid sending on every idle click.
+	const openRef = useRef(false);
+	const handleClick = (e: MouseEvent<HTMLButtonElement>) => {
 		const r = e.currentTarget.getBoundingClientRect();
 		ipcSend(IPC.MODEL_PICKER_OPEN, {
 			x: r.x,
@@ -146,6 +160,21 @@ function FooterModelChip({ ariaLabel, label, tooltip }: FooterModelChipProps): R
 			width: r.width,
 			height: r.height,
 		});
+		openRef.current = true;
+	};
+	useEffect(() => {
+		const onPointerDown = (e: PointerEvent) => {
+			const target = e.target as HTMLElement | null;
+			if (target?.closest(CHIP_SLOT)) {
+				return; // the chip toggles itself via main
+			}
+			if (openRef.current) {
+				openRef.current = false;
+				ipcSend(IPC.MODEL_PICKER_CLOSE);
+			}
+		};
+		window.addEventListener("pointerdown", onPointerDown, true);
+		return () => window.removeEventListener("pointerdown", onPointerDown, true);
 	}, []);
 	return (
 		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
@@ -159,7 +188,7 @@ function FooterModelChip({ ariaLabel, label, tooltip }: FooterModelChipProps): R
 				<HugeiconsIcon
 					aria-hidden="true"
 					color="var(--color-foreground-dim)"
-					icon={AiAudioIcon}
+					icon={icon}
 					size={11}
 				/>
 				<span className="min-w-0 truncate">{label}</span>
@@ -192,6 +221,56 @@ function ModelSwapChip({ label, tooltip }: ModelSwapChipProps): ReactNode {
 				<span className="min-w-0 truncate">{label}</span>
 			</span>
 		</Tooltip>
+	);
+}
+
+interface ActiveModelChipProps {
+	currentModel: string;
+	tIntegrations: ReturnType<typeof useTranslations>;
+	tModel: ReturnType<typeof useTranslations>;
+	tStatus: ReturnType<typeof useTranslations>;
+}
+
+/**
+ * Renders the footer model chip with cloud or local affordances. Pulled
+ * out of `StatusBar` to keep the parent under Biome's cognitive-complexity
+ * cap — the cloud branch reads several store fields and computes a
+ * localized tooltip string, all of which counted against the parent.
+ */
+function ActiveModelChip({
+	currentModel,
+	tModel,
+	tStatus,
+	tIntegrations,
+}: ActiveModelChipProps): ReactNode {
+	const cloudProvider = providerOf(currentModel);
+	const cloudVerified = useSettingsStore((s) =>
+		cloudProvider ? s.settings.integrations[cloudProvider].verified : null
+	);
+	if (cloudProvider) {
+		const status =
+			cloudVerified === true
+				? tIntegrations("providerStatusValid")
+				: tIntegrations("providerStatusNotVerified");
+		return (
+			<FooterModelChip
+				ariaLabel={tModel("model")}
+				icon={AiCloud01Icon}
+				label={currentModel}
+				tooltip={tIntegrations("providerStatus", {
+					provider: providerDisplayName(cloudProvider),
+					status,
+				})}
+			/>
+		);
+	}
+	return (
+		<FooterModelChip
+			ariaLabel={tModel("model")}
+			icon={AiAudioIcon}
+			label={currentModel}
+			tooltip={tStatus("modelTooltip", { model: currentModel })}
+		/>
 	);
 }
 
@@ -235,6 +314,8 @@ export function StatusBar() {
 			}),
 		[updateAudio]
 	);
+
+	const tIntegrations = useTranslations("integrations");
 
 	const substrate = useSurface();
 	const barLevel = Math.min(substrate + 1, 8);
@@ -288,10 +369,11 @@ export function StatusBar() {
 								tooltip={t("switchingModelTooltip", { model: swappingMain })}
 							/>
 						) : (
-							<FooterModelChip
-								ariaLabel={tModel("model")}
-								label={currentModel}
-								tooltip={t("modelTooltip", { model: currentModel })}
+							<ActiveModelChip
+								currentModel={currentModel}
+								tIntegrations={tIntegrations}
+								tModel={tModel}
+								tStatus={t}
 							/>
 						)}
 					</>

@@ -72,7 +72,6 @@ const STORE_DEFAULTS: Record<string, unknown> = {
 		visualizerBarCount: 9,
 	},
 	quality: {
-		enableRealtimeTranscription: true,
 		useMainModelForRealtime: false,
 		ensureSentenceEndsWithPeriod: true,
 		smartEndpoint: false,

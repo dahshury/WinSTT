@@ -6,10 +6,10 @@ import { render, renderHook } from "@testing-library/react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import {
 	__model_list_content_virtualized_test_helpers__ as helpers,
-	ModelListContentVirtualized,
 	useProvidersOpenedFlag,
 	type VirtualizedItem,
-} from "./ModelListContentVirtualized";
+} from "../lib/model-list-content-virtualized-test-helpers";
+import { ModelListContentVirtualized } from "./ModelListContentVirtualized";
 
 describe("ModelListContentVirtualized", () => {
 	test("renders empty state for empty grouped list", () => {
@@ -183,7 +183,7 @@ describe("computeModelEndpoints / getCachedUniqueEndpoints", () => {
 
 describe("computeVariantClasses", () => {
 	test("null when no variant", () => {
-		expect(helpers.computeVariantClasses(makeModel({ variant: undefined }))).toBeNull();
+		expect(helpers.computeVariantClasses(makeModel({}))).toBeNull();
 	});
 
 	test("returns class object when variant set", () => {

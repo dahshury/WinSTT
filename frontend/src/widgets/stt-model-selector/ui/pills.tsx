@@ -1,5 +1,3 @@
-"use client";
-
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import type { ModelCacheInfo } from "@/shared/api/ipc-client";

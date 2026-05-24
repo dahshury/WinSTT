@@ -1,5 +1,3 @@
-"use client";
-
 import { Field } from "@base-ui/react/field";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
@@ -8,16 +6,21 @@ import { InfoTooltip } from "@/shared/ui/info-tooltip";
 export type FormControlLayout = "stacked" | "row";
 
 export interface FormControlProps {
-	caption?: string;
+	caption?: string | undefined;
 	children?: ReactNode;
 	/** Extra classes applied to the root, e.g. to control grid placement */
-	className?: string;
+	className?: string | undefined;
 	/** Visually dim the label, caption, and children */
-	disabled?: boolean;
-	error?: string;
-	label?: string;
+	disabled?: boolean | undefined;
+	error?: string | undefined;
+	label?: string | undefined;
 	/** Element rendered inline next to the label (e.g. a toggle) */
 	labelAddon?: ReactNode;
+	/**
+	 * Element rendered at the trailing edge of the header row, AFTER the info
+	 * tooltip pill (e.g. a per-setting reset button). Always visible.
+	 */
+	labelTrailing?: ReactNode;
 	/**
 	 * "stacked" (default) — label/caption above, control below at full width.
 	 *   Best for wide controls: pickers, multi-row selectors, checkbox groups.
@@ -25,19 +28,21 @@ export interface FormControlProps {
 	 *   Best for tight controls: a single toggle, a small number stepper, a
 	 *   switcher with 2–3 options.
 	 */
-	layout?: FormControlLayout;
+	layout?: FormControlLayout | undefined;
 	/** Help text shown in an info-icon tooltip next to the label */
-	tooltip?: string;
+	tooltip?: string | undefined;
 }
 
 function Header({
 	label,
 	labelAddon,
+	labelTrailing,
 	tooltip,
 }: {
-	label?: string;
+	label?: string | undefined;
 	labelAddon?: ReactNode;
-	tooltip?: string;
+	labelTrailing?: ReactNode;
+	tooltip?: string | undefined;
 }) {
 	if (!label) {
 		return null;
@@ -49,11 +54,12 @@ function Header({
 			</Field.Label>
 			{labelAddon ? <span className="flex items-center">{labelAddon}</span> : null}
 			{tooltip ? <InfoTooltip content={tooltip} /> : null}
+			{labelTrailing ? <span className="flex items-center">{labelTrailing}</span> : null}
 		</div>
 	);
 }
 
-function Caption({ caption }: { caption?: string }) {
+function Caption({ caption }: { caption?: string | undefined }) {
 	if (!caption) {
 		return null;
 	}
@@ -64,7 +70,7 @@ function Caption({ caption }: { caption?: string }) {
 	);
 }
 
-function ErrorMessage({ error }: { error?: string }) {
+function ErrorMessage({ error }: { error?: string | undefined }) {
 	if (!error) {
 		return null;
 	}
@@ -83,6 +89,7 @@ export function FormControl({
 	tooltip,
 	disabled,
 	labelAddon,
+	labelTrailing,
 	layout = "stacked",
 	children,
 }: FormControlProps) {
@@ -101,7 +108,12 @@ export function FormControl({
 				)}
 			>
 				<div className="flex min-w-0 flex-1 flex-col gap-1">
-					<Header label={label} labelAddon={labelAddon} tooltip={tooltip} />
+					<Header
+						label={label}
+						labelAddon={labelAddon}
+						labelTrailing={labelTrailing}
+						tooltip={tooltip}
+					/>
 					<Caption caption={caption} />
 					<ErrorMessage error={error} />
 				</div>
@@ -118,7 +130,12 @@ export function FormControl({
 				className
 			)}
 		>
-			<Header label={label} labelAddon={labelAddon} tooltip={tooltip} />
+			<Header
+				label={label}
+				labelAddon={labelAddon}
+				labelTrailing={labelTrailing}
+				tooltip={tooltip}
+			/>
 			<Caption caption={caption} />
 			{controlBox ? <div className="mt-1">{controlBox}</div> : null}
 			<ErrorMessage error={error} />

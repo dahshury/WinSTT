@@ -1,5 +1,3 @@
-"use client";
-
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import type { ReactNode } from "react";
 import { Button } from "@/shared/ui/button";

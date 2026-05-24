@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useRef } from "react";
 import { useInputDevices } from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";

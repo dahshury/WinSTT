@@ -1,5 +1,3 @@
-"use client";
-
 import { z } from "zod";
 import { create } from "zustand";
 import { fetchModelCatalog, onModelCatalog } from "@/shared/api/ipc-client";

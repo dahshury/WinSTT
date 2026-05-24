@@ -5,115 +5,37 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
+import {
+	computeActiveFilterCount,
+	getActiveFiltersAttr,
+	getOpenStateAttr,
+	MaybeAuthorSubmenu,
+	MaybeEndpointSubmenu,
+} from "../lib/model-filters-menu-test-helpers";
 import { computeModelFiltersMetadata } from "../lib/model-filters-metadata";
 import type { ModelVariant } from "../lib/model-variant-utils";
 import type { FilterableParameter } from "../lib/openrouter-provider-utils";
-import { AuthorFilterSubmenu } from "./AuthorFilterSubmenu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "./DropdownMenu";
-import { EndpointProviderFilterSubmenu } from "./EndpointProviderFilterSubmenu";
 import { ParametersFilterSubmenu } from "./ParametersFilterSubmenu";
 import { VariantFilterSubmenu } from "./VariantFilterSubmenu";
 
 export interface ModelFiltersMenuProps {
-	allProviders?: string[];
-	className?: string;
-	favoriteProviders?: string[];
+	allProviders?: string[] | undefined;
+	className?: string | undefined;
+	favoriteProviders?: string[] | undefined;
 	models: OpenRouterModel[];
 	onEndpointProviderSelect: (provider: string | null) => void;
-	onMakersChange?: (makers: string[]) => void;
+	onMakersChange?: ((makers: string[]) => void) | undefined;
 	onParametersChange: (params: FilterableParameter[]) => void;
-	onToggleFavorite?: (maker: string) => void;
+	onToggleFavorite?: ((maker: string) => void) | undefined;
 	onVariantSelect: (variant: ModelVariant | "none" | null) => void;
 	selectedEndpointProvider: string | null;
-	selectedMakers?: string[];
+	selectedMakers?: string[] | undefined;
 	selectedParameters: FilterableParameter[];
 	selectedVariant: ModelVariant | "none" | null;
 }
 
 const NO_PROVIDERS: readonly string[] = Object.freeze([]);
-
-interface ActiveFilterCountInput {
-	selectedEndpointProvider: string | null;
-	selectedMakers: string[];
-	selectedParameters: FilterableParameter[];
-	selectedVariant: ModelVariant | "none" | null;
-}
-
-function countNonNull(value: unknown): number {
-	return value === null ? 0 : 1;
-}
-
-function computeActiveFilterCount(input: ActiveFilterCountInput): number {
-	return (
-		countNonNull(input.selectedVariant) +
-		countNonNull(input.selectedEndpointProvider) +
-		input.selectedParameters.length +
-		input.selectedMakers.length
-	);
-}
-
-function getActiveFiltersAttr(count: number): number | undefined {
-	return count > 0 ? count : undefined;
-}
-
-function getOpenStateAttr(isOpen: boolean): "open" | "closed" {
-	return isOpen ? "open" : "closed";
-}
-
-interface MaybeAuthorSubmenuProps {
-	allProviders: string[];
-	favoriteProviders: string[];
-	onMakersChange?: (makers: string[]) => void;
-	onToggleFavorite?: (maker: string) => void;
-	providerCounts: Map<string, number>;
-	selectedMakers: string[];
-}
-
-export function shouldRenderAuthorSubmenu(
-	allProviders: string[],
-	onMakersChange: ((makers: string[]) => void) | undefined
-): boolean {
-	return allProviders.length > 0 && !!onMakersChange;
-}
-
-export function shouldRenderEndpointSubmenu(endpointProviders: [string, number][]): boolean {
-	return endpointProviders.length > 0;
-}
-
-function MaybeAuthorSubmenu(props: MaybeAuthorSubmenuProps) {
-	if (!shouldRenderAuthorSubmenu(props.allProviders, props.onMakersChange)) {
-		return null;
-	}
-	return (
-		<AuthorFilterSubmenu
-			allProviders={props.allProviders}
-			favoriteProviders={props.favoriteProviders}
-			onMakersChange={props.onMakersChange!}
-			onToggleFavorite={props.onToggleFavorite}
-			providerCounts={props.providerCounts}
-			selectedMakers={props.selectedMakers}
-		/>
-	);
-}
-
-interface MaybeEndpointSubmenuProps {
-	endpointProviders: [string, number][];
-	onEndpointProviderSelect: (provider: string | null) => void;
-	selectedEndpointProvider: string | null;
-}
-
-function MaybeEndpointSubmenu(props: MaybeEndpointSubmenuProps) {
-	if (!shouldRenderEndpointSubmenu(props.endpointProviders)) {
-		return null;
-	}
-	return (
-		<EndpointProviderFilterSubmenu
-			endpointProviders={props.endpointProviders}
-			onEndpointProviderSelect={props.onEndpointProviderSelect}
-			selectedEndpointProvider={props.selectedEndpointProvider}
-		/>
-	);
-}
 
 const TRIGGER_CLASS_BASE =
 	"inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-none border-0 bg-transparent p-0 text-foreground-secondary outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-accent";
@@ -202,14 +124,3 @@ export function ModelFiltersMenu({
 		</DropdownMenu>
 	);
 }
-
-export const __model_filters_menu_test_helpers__ = {
-	countNonNull,
-	computeActiveFilterCount,
-	getActiveFiltersAttr,
-	getOpenStateAttr,
-	shouldRenderAuthorSubmenu,
-	shouldRenderEndpointSubmenu,
-	MaybeAuthorSubmenu,
-	MaybeEndpointSubmenu,
-};

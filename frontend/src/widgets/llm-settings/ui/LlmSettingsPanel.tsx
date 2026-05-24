@@ -1,17 +1,14 @@
-"use client";
-
 import {
 	AiBrain02Icon,
 	ArrangeIcon,
-	BookOpen01Icon,
 	BrushIcon,
-	HappyIcon,
+	Delete02Icon,
+	LanguageSkillIcon,
 	Layout01Icon,
 	MagicWand01Icon,
 	PencilIcon,
+	PlusSignIcon,
 	StickyNote01Icon,
-	Suit01Icon,
-	WavingHand01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { computeModelExclusionConfig, OllamaModelSelector, OpenRouterModelSelector } from "@picker";
@@ -20,33 +17,69 @@ import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } 
 import { useShallow } from "zustand/react/shallow";
 import {
 	assessOllamaFit,
+	type BuiltinPresetEntry,
+	type CustomModifier,
 	INDEPENDENT_PRESETS,
 	type PausedPullState,
-	PRESET_LEVELS,
 	PRESETS_WITH_LEVELS,
-	type PresetEntry,
-	type PresetKey,
 	type PresetLevel,
 	RECOMMENDED_OLLAMA_MODELS,
-	TONE_GROUP,
+	type TONE_GROUP,
 	useLlmCatalogStore,
 	useOllamaLibraryStore,
 	useOpenRouterCatalogStore,
 } from "@/entities/llm-catalog";
 import { useModelStateStore } from "@/entities/model-catalog";
-import { SettingSection, SettingSubsection, useSettingsStore } from "@/entities/setting";
+import {
+	SettingResetButton,
+	SettingSection,
+	SettingSubsection,
+	useSettingsStore,
+} from "@/entities/setting";
 import { useWarmupStatusFeed, useWarmupStatusStore } from "@/features/llm-warmup-status";
+import { HotkeyRecorder } from "@/features/record-hotkey";
 import { detectOllama, fetchOllamaModels, startOllama } from "@/shared/api/ipc-client";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
+import { findLanguage, LANGUAGES } from "@/shared/lib/languages";
 import { Button } from "@/shared/ui/button";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
+import { IconButton } from "@/shared/ui/icon-button";
 import { Modal } from "@/shared/ui/modal";
+import { ScrollArea } from "@/shared/ui/scroll-area";
+import { SearchableSelect } from "@/shared/ui/searchable-select";
+import type { SelectOption } from "@/shared/ui/select";
 import { Switcher } from "@/shared/ui/switcher";
 import { PasswordField, TextField } from "@/shared/ui/text-field";
+import { Toggle } from "@/shared/ui/toggle";
+import {
+	buildLevelOpts,
+	buildProviderOpts,
+	buildToneOpts,
+	DEFAULT_LEVEL,
+	DEFAULT_OPENROUTER_MODEL,
+	getLevel,
+	getOllamaDialogTexts,
+	getTargetLang,
+	getToneKey,
+	isIndependentEnabled,
+	type LlmFeatureDraft,
+	PRESET_LABEL_KEY,
+	type PresetCarrier,
+	performFeatureToggle,
+	pickSmallestInstalledOllama,
+	readLlmSnapshot,
+	setIndependentLevel,
+	setIndependentTargetLang,
+	setTone,
+	shouldScanOpenRouter,
+	shouldSyncOllamaModel,
+	toggleIndependent,
+} from "../lib/llm-settings-panel-test-helpers";
 import { ContextAwarenessSection } from "./ContextAwarenessSection";
-import { TransformsSection } from "./TransformsSection";
+import { ContextDenyListSection } from "./ContextDenyListSection";
+import { Playground } from "./Playground";
 import { WarmupStatusBanner } from "./WarmupStatusBanner";
 
 export type LlmSettingsPanelProps = Record<string, never>;
@@ -71,61 +104,7 @@ type LlmProvider = LlmDictation["provider"];
 type ReasoningEffort = "low" | "medium" | "high";
 type Verbosity = "low" | "medium" | "high";
 
-interface LlmFeatureDraft {
-	enabled: boolean;
-	maxOutputTokens: number | null;
-	model: string;
-	openrouterFallbackModel: string;
-	openrouterModel: string;
-	provider: LlmProvider;
-	reasoningEffort: ReasoningEffort;
-	/**
-	 * Per-feature thinking budget for Ollama models that advertise the
-	 * `thinking` capability. `"off"` disables thinking; the three levels
-	 * pass through to Ollama's `ThinkValue` (boolean or string). Non-
-	 * thinking models always send `think: false` regardless of this
-	 * value — the chat-body builder gates on the capability check.
-	 */
-	thinkingEffort: OllamaThinkingEffort;
-	verbosity: Verbosity;
-}
-
-interface LlmDraftSnapshot {
-	dictation: LlmFeatureDraft & { presets: readonly PresetEntry[] };
-	endpoint: string;
-	openrouterApiKey: string;
-	transforms: LlmFeatureDraft;
-}
-
-const DEFAULT_FEATURE: LlmFeatureDraft = {
-	enabled: false,
-	provider: "ollama",
-	model: "",
-	openrouterModel: "",
-	openrouterFallbackModel: "",
-	reasoningEffort: "medium",
-	thinkingEffort: "medium",
-	verbosity: "medium",
-	maxOutputTokens: null,
-};
-
-const DEFAULT_LLM: LlmDraftSnapshot = {
-	endpoint: "http://localhost:11434",
-	openrouterApiKey: "",
-	dictation: { ...DEFAULT_FEATURE, presets: [{ key: "neutral" }] },
-	transforms: { ...DEFAULT_FEATURE },
-};
-
-type ToneKey = (typeof TONE_GROUP)[number];
 type IndependentKey = (typeof INDEPENDENT_PRESETS)[number];
-
-const TONE_ICONS: Readonly<Record<ToneKey, IconSvgElement>> = {
-	neutral: PencilIcon,
-	formal: Suit01Icon,
-	friendly: WavingHand01Icon,
-	technical: BookOpen01Icon,
-	casual: HappyIcon,
-};
 
 const INDEPENDENT_PRESET_ICONS: Readonly<Record<IndependentKey, IconSvgElement>> = {
 	summarize: StickyNote01Icon,
@@ -133,239 +112,72 @@ const INDEPENDENT_PRESET_ICONS: Readonly<Record<IndependentKey, IconSvgElement>>
 	reorder: ArrangeIcon,
 	restructure: Layout01Icon,
 	rewordForClarity: MagicWand01Icon,
+	translate: LanguageSkillIcon,
 };
 
-const PRESET_LABEL_KEY = {
-	neutral: "presetNeutral",
-	formal: "presetFormal",
-	friendly: "presetFriendly",
-	technical: "presetTechnical",
-	casual: "presetCasual",
-	concise: "presetConcise",
-	summarize: "presetSummarize",
-	reorder: "presetReorder",
-	restructure: "presetRestructure",
-	rewordForClarity: "presetRewordForClarity",
-} as const satisfies Record<PresetKey, string>;
+/** Combobox options for the translate row. The persisted value is the English
+ *  name (also the option id), so an unknown/legacy `targetLang` still round-
+ *  trips. Code is the badge; native name is appended so speakers recognize
+ *  their language regardless of UI locale. */
+const LANGUAGE_OPTS: readonly SelectOption[] = LANGUAGES.map((l) => ({
+	id: l.englishName,
+	label: l.englishName === l.nativeName ? l.englishName : `${l.englishName} — ${l.nativeName}`,
+	badge: l.code.toUpperCase(),
+}));
 
-const LEVEL_LABEL_KEY = {
-	light: "levelLight",
-	medium: "levelMedium",
-	high: "levelHigh",
-} as const satisfies Record<PresetLevel, string>;
-
-const DEFAULT_LEVEL: PresetLevel = "medium";
-
-function readFeatureSnapshot(
-	incoming: Partial<LlmFeatureDraft> | null | undefined
-): LlmFeatureDraft {
-	return { ...DEFAULT_FEATURE, ...(incoming ?? {}) };
+function languageOptsFor(value: string): readonly SelectOption[] {
+	// A persisted language no longer in the catalog must still be selectable
+	// (and visible) rather than silently snapping to English.
+	if (value && !findLanguage(value)) {
+		return [{ id: value, label: value }, ...LANGUAGE_OPTS];
+	}
+	return LANGUAGE_OPTS;
 }
 
-function readLlmSnapshot(llm: Partial<LlmSettings> | null | undefined): LlmDraftSnapshot {
-	const incoming = llm ?? {};
-	const dictationIn = (incoming.dictation ?? {}) as Partial<LlmDictation>;
-	const transformsIn = (incoming.transforms ?? {}) as Partial<LlmTransforms>;
-	const presets =
-		Array.isArray(dictationIn.presets) && dictationIn.presets.length > 0
-			? (dictationIn.presets as readonly PresetEntry[])
-			: DEFAULT_LLM.dictation.presets;
+// ── Custom-modifier list mutators ─────────────────────────────────────
+// Pure, immutable transforms over `dictation.customModifiers`. The id is
+// client-generated and stable for the row's lifetime so React keys / patches
+// stay anchored while the user edits the name.
+
+/** A blank modifier for the "Add" dialog. Starts unchecked — a modifier
+ *  must not enter the system prompt before the user has written and saved
+ *  it; the checkbox is ticked deliberately afterwards. */
+function makeDraftModifier(): CustomModifier {
 	return {
-		endpoint: incoming.endpoint ?? DEFAULT_LLM.endpoint,
-		openrouterApiKey: incoming.openrouterApiKey ?? DEFAULT_LLM.openrouterApiKey,
-		dictation: { ...readFeatureSnapshot(dictationIn), presets },
-		transforms: readFeatureSnapshot(transformsIn),
+		id: `mod-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+		name: "",
+		prompt: "",
+		enabled: false,
+		levelsEnabled: false,
+		level: DEFAULT_LEVEL,
 	};
 }
 
-function getToneKey(presets: readonly PresetEntry[]): (typeof TONE_GROUP)[number] {
-	const tone = presets.find((p) => (TONE_GROUP as readonly string[]).includes(p.key));
-	return (tone?.key as (typeof TONE_GROUP)[number]) ?? "neutral";
+/** Insert (new id) or replace (existing id) — the dialog Save path. */
+function upsertCustomModifier(
+	list: readonly CustomModifier[],
+	modifier: CustomModifier
+): CustomModifier[] {
+	return list.some((m) => m.id === modifier.id)
+		? list.map((m) => (m.id === modifier.id ? modifier : m))
+		: [...list, modifier];
 }
 
-function isIndependentEnabled(
-	presets: readonly PresetEntry[],
-	key: (typeof INDEPENDENT_PRESETS)[number]
-): boolean {
-	return presets.some((p) => p.key === key);
+function patchCustomModifier(
+	list: readonly CustomModifier[],
+	id: string,
+	patch: Partial<CustomModifier>
+): CustomModifier[] {
+	return list.map((m) => (m.id === id ? { ...m, ...patch } : m));
 }
 
-function getLevel(
-	presets: readonly PresetEntry[],
-	key: (typeof INDEPENDENT_PRESETS)[number]
-): PresetLevel {
-	const entry = presets.find((p) => p.key === key);
-	return entry?.level ?? DEFAULT_LEVEL;
+function removeCustomModifier(list: readonly CustomModifier[], id: string): CustomModifier[] {
+	return list.filter((m) => m.id !== id);
 }
 
-function setTone(
-	presets: readonly PresetEntry[],
-	tone: (typeof TONE_GROUP)[number]
-): PresetEntry[] {
-	const withoutTone = presets.filter((p) => !(TONE_GROUP as readonly string[]).includes(p.key));
-	return [{ key: tone }, ...withoutTone];
-}
-
-function toggleIndependent(
-	presets: readonly PresetEntry[],
-	key: (typeof INDEPENDENT_PRESETS)[number],
-	enabled: boolean,
-	levelOverride?: PresetLevel
-): PresetEntry[] {
-	if (!enabled) {
-		return presets.filter((p) => p.key !== key);
-	}
-	if (presets.some((p) => p.key === key)) {
-		return [...presets];
-	}
-	const entry: PresetEntry = (PRESETS_WITH_LEVELS as readonly string[]).includes(key)
-		? { key, level: levelOverride ?? DEFAULT_LEVEL }
-		: { key };
-	return [...presets, entry];
-}
-
-function setIndependentLevel(
-	presets: readonly PresetEntry[],
-	key: (typeof INDEPENDENT_PRESETS)[number],
-	level: PresetLevel
-): PresetEntry[] {
-	return presets.map((p) => (p.key === key ? { ...p, level } : p));
-}
-
-function buildToneOpts(t: TranslateFn) {
-	return TONE_GROUP.map((key) => ({
-		value: key,
-		label: t(PRESET_LABEL_KEY[key]),
-		icon: TONE_ICONS[key],
-	}));
-}
-
-function buildLevelOpts(t: TranslateFn) {
-	return PRESET_LEVELS.map((lvl) => ({
-		value: lvl,
-		label: t(LEVEL_LABEL_KEY[lvl]),
-	}));
-}
-
-function buildProviderOpts(t: TranslateFn) {
-	return [
-		{ value: "ollama", label: t("providerOllama") },
-		{ value: "openrouter", label: t("providerOpenRouter") },
-	] as const;
-}
-
-function findFirstDifferentModel(models: readonly OllamaModel[], current: string): string | null {
-	const first = models[0]?.name;
-	if (!first) {
-		return null;
-	}
-	return first === current ? null : first;
-}
-
-function pickReplacementOllamaModel(
-	models: readonly OllamaModel[],
-	current: string
-): string | null {
-	// Treat "no current model" as "user is mid-selection / cleared the field
-	// / just hydrated with an empty default" — NOT as "pick something
-	// arbitrary for them." Picking arbitrarily here was the second link in
-	// the swap-wipe chain: a duplicate Combobox callback set the model to
-	// undefined transiently, this effect then chose the first installed
-	// model (qwen3:4b), which happened to match the previously-selected
-	// value, silently reverting the user's swap. The user's deliberate
-	// pick now takes priority.
-	if (!current) {
-		return null;
-	}
-	const stillInstalled = models.some((m) => m.name === current);
-	if (stillInstalled) {
-		return null;
-	}
-	return findFirstDifferentModel(models, current);
-}
-
-function shouldSyncOllamaModel(
-	provider: string,
-	models: readonly OllamaModel[],
-	current: string
-): string | null {
-	if (provider !== "ollama") {
-		return null;
-	}
-	return pickReplacementOllamaModel(models, current);
-}
-
-function shouldScanOpenRouter(provider: string, apiKey: string, loaded: boolean): boolean {
-	const isOpenRouter = provider === "openrouter";
-	const hasKey = apiKey.length > 0;
-	return isOpenRouter && hasKey && !loaded;
-}
-
-/** Picks the single feature responsible for rendering the shared OpenRouter
- *  API key input. Dictation wins when both use OpenRouter; null when neither
- *  does (the field is hidden entirely). */
-function pickApiKeyOwner(
-	dictationProvider: LlmProvider,
-	transformsProvider: LlmProvider
-): "dictation" | "transforms" | null {
-	if (dictationProvider === "openrouter") {
-		return "dictation";
-	}
-	if (transformsProvider === "openrouter") {
-		return "transforms";
-	}
-	return null;
-}
-
-type SetFeatureEnabled = (value: boolean) => void;
-
-interface FeatureToggleDeps {
-	checkOllamaReachable: () => Promise<boolean>;
-	ollamaLoaded: boolean;
-	openrouterApiKey: string;
-	openrouterLoaded: boolean;
-	provider: LlmProvider;
-	scanOllama: () => void;
-	scanOpenRouter: () => void;
-	setEnabled: SetFeatureEnabled;
-	setShowApiKeyDialog: (v: boolean) => void;
-	setShowOllamaDialog: (v: boolean) => void;
-}
-
-async function tryEnableOllamaForFeature(deps: FeatureToggleDeps): Promise<void> {
-	const reachable = await deps.checkOllamaReachable();
-	if (!reachable) {
-		deps.setShowOllamaDialog(true);
-		return;
-	}
-	if (!deps.ollamaLoaded) {
-		deps.scanOllama();
-	}
-	deps.setEnabled(true);
-}
-
-function tryEnableOpenRouterForFeature(deps: FeatureToggleDeps): void {
-	if (!deps.openrouterApiKey) {
-		deps.setShowApiKeyDialog(true);
-		return;
-	}
-	if (!deps.openrouterLoaded) {
-		deps.scanOpenRouter();
-	}
-	deps.setEnabled(true);
-}
-
-async function performFeatureToggle(next: boolean, deps: FeatureToggleDeps): Promise<void> {
-	if (!next) {
-		deps.setEnabled(false);
-		return;
-	}
-	if (deps.provider === "ollama") {
-		await tryEnableOllamaForFeature(deps);
-		return;
-	}
-	tryEnableOpenRouterForFeature(deps);
-}
+// Built-in independent presets + custom rows share one scrollable group;
+// past this many total rows the group scrolls instead of growing the panel.
+const MODIFIER_SCROLL_THRESHOLD = 7;
 
 interface OllamaPullBundle {
 	cancelPull: (name: string) => void;
@@ -387,7 +199,6 @@ type OllamaThinkingEffort = "off" | "low" | "medium" | "high";
 
 interface OllamaSectionProps {
 	enabled: boolean;
-	endpoint: string;
 	librarySearch: import("@picker").OllamaModelSelectorProps["librarySearch"];
 	model: string;
 	ollamaError: string | null;
@@ -396,7 +207,6 @@ interface OllamaSectionProps {
 	ollamaScanning: boolean;
 	pullBundle: OllamaPullBundle;
 	scanOllama: () => void;
-	setEndpoint: (endpoint: string) => void;
 	setModel: (model: string) => void;
 	setThinkingEffort: (value: OllamaThinkingEffort) => void;
 	/** In-flight `from → to` for the trigger's switching view. Captured at
@@ -499,7 +309,6 @@ function OllamaSection(props: OllamaSectionProps) {
 	const {
 		t,
 		tc,
-		endpoint,
 		librarySearch,
 		model,
 		enabled,
@@ -508,7 +317,6 @@ function OllamaSection(props: OllamaSectionProps) {
 		ollamaError,
 		ollamaReachable,
 		scanOllama,
-		setEndpoint,
 		setModel,
 		setThinkingEffort,
 		pullBundle,
@@ -519,21 +327,6 @@ function OllamaSection(props: OllamaSectionProps) {
 	const supportsThinking = selectedModel?.capabilities?.includes("thinking") ?? false;
 	return (
 		<>
-			<div className="col-span-2">
-				<FormControl
-					caption={t("endpointCaption")}
-					label={t("endpoint")}
-					tooltip={t("endpointTooltip")}
-				>
-					<ElevatedSurface inline>
-						<TextField
-							onChange={(e) => setEndpoint(e.target.value)}
-							placeholder="http://localhost:11434"
-							value={endpoint}
-						/>
-					</ElevatedSurface>
-				</FormControl>
-			</div>
 			<FormControl caption={t("modelCaption")} label={t("model")} tooltip={t("modelTooltip")}>
 				<OllamaModelSelector
 					disabled={ollamaScanning}
@@ -580,13 +373,12 @@ function OllamaSection(props: OllamaSectionProps) {
 }
 
 interface OpenRouterSectionProps {
+	apiKeyMissing: boolean;
 	fallbackExclusion: ReturnType<typeof computeModelExclusionConfig>;
 	maxOutputTokens: number | null;
-	onApiKeyChange: (key: string) => void;
 	onMaxOutputTokensChange: (value: number | null) => void;
 	onReasoningEffortChange: (value: ReasoningEffort) => void;
 	onVerbosityChange: (value: Verbosity) => void;
-	openrouterApiKey: string;
 	openrouterError: string | null;
 	openrouterFallbackModel: string;
 	openrouterModel: string;
@@ -596,27 +388,18 @@ interface OpenRouterSectionProps {
 	scanOpenRouter: () => void;
 	setFallbackModel: (model: string) => void;
 	setModel: (model: string) => void;
-	/**
-	 * Whether this OpenRouterSection should render the shared API key input.
-	 * The setting itself is shared between features; only the first feature
-	 * using OpenRouter shows the field to avoid duplicating it.
-	 */
-	showApiKeyField: boolean;
 	t: TranslateFn;
-	tc: TranslateFn;
 	verbosity: Verbosity;
 }
 
 function OpenRouterSection(props: OpenRouterSectionProps) {
 	const {
 		t,
-		tc,
+		apiKeyMissing,
 		maxOutputTokens,
-		onApiKeyChange,
 		onMaxOutputTokensChange,
 		onReasoningEffortChange,
 		onVerbosityChange,
-		openrouterApiKey,
 		openrouterModel,
 		openrouterFallbackModel,
 		openrouterModels,
@@ -627,32 +410,10 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 		scanOpenRouter,
 		setFallbackModel,
 		setModel,
-		showApiKeyField,
 		verbosity,
 	} = props;
-	const apiKeyMissing = !openrouterApiKey;
 	return (
 		<>
-			{showApiKeyField ? (
-				<div className="col-span-2">
-					<FormControl
-						caption={t("openrouterApiKeyCaption")}
-						label={t("openrouterApiKey")}
-						tooltip={t("openrouterApiKeyTooltip")}
-					>
-						<ElevatedSurface inline>
-							<PasswordField
-								hideLabel={tc("hidePassword")}
-								onChange={(e) => onApiKeyChange(e.target.value)}
-								placeholder={t("openrouterApiKeyPlaceholder")}
-								revealLabel={tc("showPassword")}
-								value={openrouterApiKey}
-							/>
-						</ElevatedSurface>
-					</FormControl>
-				</div>
-			) : null}
-
 			<div className="col-span-2">
 				<FormControl
 					caption={t("openrouterModelCaption")}
@@ -702,18 +463,204 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 }
 
 interface IndependentPresetListProps {
+	customModifiers: readonly CustomModifier[];
 	levelOpts: ReadonlyArray<{ value: PresetLevel; label: string }>;
 	onLevelChange: (key: (typeof INDEPENDENT_PRESETS)[number], level: PresetLevel) => void;
-	onToggle: (key: (typeof INDEPENDENT_PRESETS)[number], on: boolean, level?: PresetLevel) => void;
-	presets: readonly PresetEntry[];
+	onModifierLevelChange: (id: string, level: PresetLevel) => void;
+	onModifierRemove: (id: string) => void;
+	onModifierSave: (modifier: CustomModifier) => void;
+	onModifierToggle: (id: string, enabled: boolean) => void;
+	onTargetLangChange: (lang: string) => void;
+	onToggle: (
+		key: (typeof INDEPENDENT_PRESETS)[number],
+		on: boolean,
+		level?: PresetLevel,
+		targetLang?: string
+	) => void;
+	presets: readonly BuiltinPresetEntry[];
 	t: TranslateFn;
+	tc: TranslateFn;
+}
+
+interface CustomModifierRowProps {
+	index: number;
+	levelOpts: ReadonlyArray<{ value: PresetLevel; label: string }>;
+	modifier: CustomModifier;
+	onEdit: (modifier: CustomModifier) => void;
+	onLevelChange: (id: string, level: PresetLevel) => void;
+	onRemove: (id: string) => void;
+	onToggle: (id: string, enabled: boolean) => void;
+	t: TranslateFn;
+}
+
+/** One custom-modifier row, rendered inside the shared CheckboxGroup so it
+ *  inherits the same selection/hover visuals as the built-in preset rows.
+ *  The checkbox is the `enabled` state; the name/prompt/levels are edited in
+ *  the modal opened by the pencil button. The Low/Medium/High switcher only
+ *  appears when the modifier has levels enabled. */
+function CustomModifierRow({
+	index,
+	levelOpts,
+	modifier,
+	onEdit,
+	onLevelChange,
+	onRemove,
+	onToggle,
+	t,
+}: CustomModifierRowProps) {
+	return (
+		<CheckboxItem
+			checked={modifier.enabled}
+			index={index}
+			label={modifier.name || t("modifierUnnamed")}
+			leading={
+				<HugeiconsIcon
+					aria-hidden="true"
+					className="shrink-0 text-foreground-dim"
+					icon={AiBrain02Icon}
+					size={16}
+				/>
+			}
+			onToggle={() => onToggle(modifier.id, !modifier.enabled)}
+			trailing={
+				<div className="flex items-center gap-1">
+					{modifier.levelsEnabled ? (
+						<ElevatedSurface inline>
+							<Switcher
+								onChange={(v) => onLevelChange(modifier.id, v as PresetLevel)}
+								options={levelOpts}
+								value={modifier.level ?? DEFAULT_LEVEL}
+							/>
+						</ElevatedSurface>
+					) : null}
+					<IconButton
+						aria-label={t("modifierEdit")}
+						icon={<HugeiconsIcon icon={PencilIcon} size={15} />}
+						onClick={() => onEdit(modifier)}
+					/>
+					<IconButton
+						aria-label={t("modifierRemove")}
+						icon={<HugeiconsIcon icon={Delete02Icon} size={15} />}
+						onClick={() => onRemove(modifier.id)}
+					/>
+				</div>
+			}
+		/>
+	);
+}
+
+interface ModifierDialogProps {
+	isEdit: boolean;
+	isOpen: boolean;
+	modifier: CustomModifier | null;
+	onClose: () => void;
+	onSave: (modifier: CustomModifier) => void;
+	t: TranslateFn;
+	tc: TranslateFn;
+}
+
+/** Add / edit dialog for a custom modifier: a name, the prompt body, and a
+ *  toggle that enables the Low/Medium/High intensity tier. The tier *value*
+ *  is chosen on the row's switcher, not here — this toggle only decides
+ *  whether the tier exists. `modifier` is a fresh draft (Add) or a copy of an
+ *  existing row (Edit); `id` and the persisted `enabled`/`level` flow
+ *  straight back through on Save. */
+function ModifierDialog({ isEdit, isOpen, modifier, onClose, onSave, t, tc }: ModifierDialogProps) {
+	const [name, setName] = useState(modifier?.name ?? "");
+	const [prompt, setPrompt] = useState(modifier?.prompt ?? "");
+	const [levelsEnabled, setLevelsEnabled] = useState(modifier?.levelsEnabled ?? false);
+
+	// Reseed the form whenever a different modifier is opened (Add vs Edit,
+	// or switching between rows) — the dialog instance is reused.
+	useEffect(() => {
+		if (!(isOpen && modifier)) {
+			return;
+		}
+		setName(modifier.name);
+		setPrompt(modifier.prompt);
+		setLevelsEnabled(modifier.levelsEnabled);
+	}, [isOpen, modifier]);
+
+	// A modifier needs both a name (its row label) and a prompt body before
+	// it can be saved.
+	const canSave = name.trim().length > 0 && prompt.trim().length > 0;
+	const submit = () => {
+		if (!(modifier && canSave)) {
+			return;
+		}
+		// `level` is intentionally preserved from `modifier` (the spread) — the
+		// L/M/H value is owned by the row switcher, never set in this dialog.
+		onSave({
+			...modifier,
+			name: name.trim(),
+			prompt: prompt.trim(),
+			levelsEnabled,
+		});
+	};
+
+	return (
+		<Modal isOpen={isOpen} onClose={onClose}>
+			<div className="flex w-[28rem] max-w-[90vw] flex-col gap-4 p-6">
+				<h2 className="font-semibold text-foreground text-lg">
+					{isEdit ? t("modifierEditTitle") : t("modifierAddTitle")}
+				</h2>
+				<label className="flex flex-col gap-1.5" htmlFor="modifier-name-input">
+					<span className="text-foreground-secondary text-sm">{t("modifierName")}</span>
+					<TextField
+						id="modifier-name-input"
+						onChange={(e) => setName(e.target.value)}
+						placeholder={t("modifierNamePlaceholder")}
+						value={name}
+					/>
+				</label>
+				<label className="flex flex-col gap-1.5" htmlFor="modifier-prompt-input">
+					<span className="text-foreground-secondary text-sm">{t("modifierPrompt")}</span>
+					<textarea
+						className="min-h-[120px] w-full resize-y rounded-sm bg-surface-1 p-2.5 text-body text-foreground caret-accent outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1"
+						id="modifier-prompt-input"
+						onChange={(e) => setPrompt(e.target.value)}
+						placeholder={t("modifierPromptPlaceholder")}
+						value={prompt}
+					/>
+				</label>
+				<div className="flex items-center justify-between gap-3">
+					<div className="flex flex-col">
+						<span className="text-foreground text-sm">{t("modifierLevels")}</span>
+						<span className="text-foreground-muted text-xs">{t("modifierLevelsCaption")}</span>
+					</div>
+					<Toggle
+						aria-label={t("modifierLevels")}
+						checked={levelsEnabled}
+						onCheckedChange={setLevelsEnabled}
+					/>
+				</div>
+				<div className="flex gap-3">
+					<Button
+						className="flex-1 rounded-md border border-accent bg-accent px-4 py-2 font-medium text-white transition-colors duration-150 hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-60"
+						disabled={!canSave}
+						onClick={submit}
+					>
+						{t("modifierSave")}
+					</Button>
+					<Button
+						className="rounded-md border border-border bg-surface-secondary px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover"
+						onClick={onClose}
+					>
+						{tc("cancel")}
+					</Button>
+				</div>
+			</div>
+		</Modal>
+	);
 }
 
 type IndependentKeyT = (typeof INDEPENDENT_PRESETS)[number];
 
 /** Index persisted presets by key once so per-key level lookups are O(1)
  *  instead of an O(n*m) `.find()` inside the preset loop. */
-function indexPresetLevels(presets: readonly PresetEntry[]): Map<string, PresetLevel | undefined> {
+function indexPresetLevels(
+	presets: readonly BuiltinPresetEntry[]
+): Map<string, PresetLevel | undefined> {
 	const byKey = new Map<string, PresetLevel | undefined>();
 	for (const p of presets) {
 		byKey.set(p.key, p.level);
@@ -722,7 +669,9 @@ function indexPresetLevels(presets: readonly PresetEntry[]): Map<string, PresetL
 }
 
 /** Seed the local "last-known level" cache from whatever's persisted. */
-function seedLevelCache(presets: readonly PresetEntry[]): Record<IndependentKeyT, PresetLevel> {
+function seedLevelCache(
+	presets: readonly BuiltinPresetEntry[]
+): Record<IndependentKeyT, PresetLevel> {
 	const levelByKey = indexPresetLevels(presets);
 	const cache: Record<string, PresetLevel> = {};
 	for (const key of INDEPENDENT_PRESETS) {
@@ -732,12 +681,31 @@ function seedLevelCache(presets: readonly PresetEntry[]): Record<IndependentKeyT
 }
 
 function IndependentPresetList({
+	customModifiers,
 	levelOpts,
 	onLevelChange,
+	onModifierLevelChange,
+	onModifierRemove,
+	onModifierSave,
+	onModifierToggle,
+	onTargetLangChange,
 	onToggle,
 	presets,
 	t,
+	tc,
 }: IndependentPresetListProps) {
+	// `null` ⇒ dialog closed. A draft (id not in the list) ⇒ Add mode; a copy
+	// of an existing row ⇒ Edit mode. The instance is reused; the dialog
+	// reseeds its form off `modifier` whenever it (re)opens.
+	const [dialogModifier, setDialogModifier] = useState<CustomModifier | null>(null);
+	const isEditingExisting =
+		dialogModifier !== null && customModifiers.some((m) => m.id === dialogModifier.id);
+
+	const closeDialog = () => setDialogModifier(null);
+	const handleSave = (modifier: CustomModifier) => {
+		onModifierSave(modifier);
+		setDialogModifier(null);
+	};
 	// Remember each preset's last-known level locally so toggling off then on
 	// restores the user's previous choice instead of snapping back to medium.
 	// Initialized from whatever's persisted; updated whenever the user touches
@@ -762,19 +730,39 @@ function IndependentPresetList({
 		});
 	}, [presets]);
 
+	// Same toggle-off-then-on memory as `levelCache`, but for the translate
+	// row's target language (a single value — only one translate entry can
+	// exist). Re-seeds when the persisted choice changes underneath us.
+	const [langCache, setLangCache] = useState<string>(() => getTargetLang(presets));
+	useEffect(() => {
+		const stored = presets.find((p) => p.key === "translate")?.targetLang;
+		if (stored !== undefined) {
+			setLangCache((prev) => (prev === stored ? prev : stored));
+		}
+	}, [presets]);
+
+	const builtinCount = INDEPENDENT_PRESETS.length;
 	const checkedIndices = new Set<number>();
 	INDEPENDENT_PRESETS.forEach((key, i) => {
 		if (isIndependentEnabled(presets, key)) {
 			checkedIndices.add(i);
 		}
 	});
+	customModifiers.forEach((m, i) => {
+		if (m.enabled) {
+			checkedIndices.add(builtinCount + i);
+		}
+	});
 
 	const disabledLevelOpts = levelOpts.map((opt) => ({ ...opt, disabled: true }));
+	const totalRows = builtinCount + customModifiers.length;
+	const scrollable = totalRows > MODIFIER_SCROLL_THRESHOLD;
 
-	return (
+	const group = (
 		<CheckboxGroup checkedIndices={checkedIndices} className="w-full">
 			{INDEPENDENT_PRESETS.map((key, i) => {
 				const checked = isIndependentEnabled(presets, key);
+				const isTranslate = key === "translate";
 				const hasLevel = (PRESETS_WITH_LEVELS as readonly string[]).includes(key);
 				const displayedLevel = checked ? getLevel(presets, key) : levelCache[key];
 				const handleLevel = (lvl: PresetLevel) => {
@@ -783,6 +771,45 @@ function IndependentPresetList({
 						onLevelChange(key, lvl);
 					}
 				};
+				const displayedLang = checked ? getTargetLang(presets) : langCache;
+				const handleLang = (lang: string) => {
+					setLangCache((prev) => (prev === lang ? prev : lang));
+					if (checked) {
+						onTargetLangChange(lang);
+					}
+				};
+				// Translate carries the target language in the same trailing
+				// slot the leveled presets use for the L/M/H switcher — a
+				// searchable combobox over the full language catalog. When the
+				// row is unchecked the picker is disabled (parity with the
+				// greyed-out `disabledLevelOpts` switcher) but still shows the
+				// remembered language so re-enabling restores the choice.
+				let trailing: ReactNode = null;
+				if (isTranslate) {
+					trailing = (
+						<ElevatedSurface inline>
+							<div className="w-44">
+								<SearchableSelect
+									disabled={!checked}
+									onChange={handleLang}
+									options={languageOptsFor(displayedLang)}
+									placeholder={t("translateLanguagePlaceholder")}
+									value={displayedLang}
+								/>
+							</div>
+						</ElevatedSurface>
+					);
+				} else if (hasLevel) {
+					trailing = (
+						<ElevatedSurface inline>
+							<Switcher
+								onChange={(v) => handleLevel(v as PresetLevel)}
+								options={checked ? levelOpts : disabledLevelOpts}
+								value={displayedLevel}
+							/>
+						</ElevatedSurface>
+					);
+				}
 				return (
 					<CheckboxItem
 						checked={checked}
@@ -797,22 +824,49 @@ function IndependentPresetList({
 								size={16}
 							/>
 						}
-						onToggle={() => onToggle(key, !checked, levelCache[key])}
-						trailing={
-							hasLevel ? (
-								<ElevatedSurface inline>
-									<Switcher
-										onChange={(v) => handleLevel(v as PresetLevel)}
-										options={checked ? levelOpts : disabledLevelOpts}
-										value={displayedLevel}
-									/>
-								</ElevatedSurface>
-							) : null
+						onToggle={() =>
+							onToggle(key, !checked, levelCache[key], isTranslate ? langCache : undefined)
 						}
+						trailing={trailing}
 					/>
 				);
 			})}
+			{customModifiers.map((m, i) => (
+				<CustomModifierRow
+					index={builtinCount + i}
+					key={m.id}
+					levelOpts={levelOpts}
+					modifier={m}
+					onEdit={setDialogModifier}
+					onLevelChange={onModifierLevelChange}
+					onRemove={onModifierRemove}
+					onToggle={onModifierToggle}
+					t={t}
+				/>
+			))}
 		</CheckboxGroup>
+	);
+
+	return (
+		<div className="flex w-full flex-col gap-1.5">
+			{scrollable ? <ScrollArea viewportClassName="max-h-[19rem]">{group}</ScrollArea> : group}
+			<Button
+				className="flex items-center gap-1 self-start rounded-md border border-border border-dashed bg-transparent px-3 py-1.5 text-foreground-muted text-sm transition-colors hover:border-accent hover:text-accent"
+				onClick={() => setDialogModifier(makeDraftModifier())}
+			>
+				<HugeiconsIcon icon={PlusSignIcon} size={14} />
+				{t("modifierAdd")}
+			</Button>
+			<ModifierDialog
+				isEdit={isEditingExisting}
+				isOpen={dialogModifier !== null}
+				modifier={dialogModifier}
+				onClose={closeDialog}
+				onSave={handleSave}
+				t={t}
+				tc={tc}
+			/>
+		</div>
 	);
 }
 
@@ -852,12 +906,6 @@ interface FeatureBlockProps {
 	openrouterCatalog: OpenRouterCatalogState;
 	setShowApiKeyDialog: (v: boolean) => void;
 	setShowOllamaDialog: (v: boolean) => void;
-	/**
-	 * True for the first feature whose provider is `openrouter`. That feature
-	 * renders the shared `openrouterApiKey` input inline; the second one (if
-	 * also using OpenRouter) does not, so we don't duplicate the field.
-	 */
-	showApiKeyField: boolean;
 	t: TranslateFn;
 	tc: TranslateFn;
 	update: UpdateDictationFn | UpdateTransformsFn;
@@ -881,13 +929,16 @@ function useFeatureToggleHandler(
 				provider: props.featureSnapshot.provider,
 				openrouterApiKey: props.openrouterApiKey,
 				ollamaLoaded: props.ollamaCatalog.isLoaded,
+				ollamaModels: props.ollamaCatalog.models,
 				openrouterLoaded: props.openrouterCatalog.isLoaded,
+				currentOllamaModel: props.featureSnapshot.model,
+				currentOpenRouterModel: props.featureSnapshot.openrouterModel,
 				checkOllamaReachable,
 				scanOllama: props.ollamaCatalog.scanModels,
 				scanOpenRouter: props.openrouterCatalog.scanModels,
-				setEnabled: (value) => {
-					(props.update as (p: { enabled: boolean }) => void)({ enabled: value });
-					if (value && props.onEnabled) {
+				apply: (patch) => {
+					(props.update as (p: Partial<LlmFeatureDraft>) => void)(patch);
+					if (patch.enabled === true && props.onEnabled) {
 						props.onEnabled();
 					}
 				},
@@ -1099,17 +1150,61 @@ function useLlmSettingsPanel() {
 	// dialog completion handler knows which feature to enable.
 	const [pendingFeature, setPendingFeature] = useState<"dictation" | "transforms" | null>(null);
 
+	// Build the same "enable with a resolved model" patch the toggle uses,
+	// so the post-dialog enable path can't slip past the no-model guard.
+	const resolveOllamaEnablePatch = useCallback(
+		(currentModel: string): Partial<LlmFeatureDraft> => {
+			const currentValid =
+				currentModel.length > 0 && ollamaModels.some((m) => m.name === currentModel);
+			if (currentValid) {
+				return { enabled: true };
+			}
+			const smallest = pickSmallestInstalledOllama(ollamaModels);
+			if (smallest) {
+				return { model: smallest, enabled: true };
+			}
+			// No installed models yet — leave the feature disabled. The user just
+			// closed the Ollama dialog; the install/manage UI will surface the
+			// next step (pull a model) and they can re-toggle once it's there.
+			return {};
+		},
+		[ollamaModels]
+	);
+
+	const resolveOpenRouterEnablePatch = useCallback(
+		(currentOpenRouterModel: string): Partial<LlmFeatureDraft> =>
+			currentOpenRouterModel.length > 0
+				? { enabled: true }
+				: { openrouterModel: DEFAULT_OPENROUTER_MODEL, enabled: true },
+		[]
+	);
+
 	const handleOllamaStarted = useCallback(() => {
 		setShowOllamaDialog(false);
 		scanOllama();
 		if (pendingFeature === "dictation") {
-			updateDictation({ enabled: true });
-			disableSmartEndpoint();
+			const patch = resolveOllamaEnablePatch(dictation.model);
+			if (patch.enabled) {
+				updateDictation(patch);
+				disableSmartEndpoint();
+			}
 		} else if (pendingFeature === "transforms") {
-			updateTransforms({ enabled: true });
+			const patch = resolveOllamaEnablePatch(transforms.model);
+			if (patch.enabled) {
+				updateTransforms(patch);
+			}
 		}
 		setPendingFeature(null);
-	}, [scanOllama, pendingFeature, updateDictation, updateTransforms, disableSmartEndpoint]);
+	}, [
+		scanOllama,
+		pendingFeature,
+		updateDictation,
+		updateTransforms,
+		disableSmartEndpoint,
+		resolveOllamaEnablePatch,
+		dictation.model,
+		transforms.model,
+	]);
 
 	const handleApiKeySaved = useCallback(
 		(key: string) => {
@@ -1117,10 +1212,10 @@ function useLlmSettingsPanel() {
 			setShowApiKeyDialog(false);
 			scanOpenRouter();
 			if (pendingFeature === "dictation") {
-				updateDictation({ enabled: true });
+				updateDictation(resolveOpenRouterEnablePatch(dictation.openrouterModel));
 				disableSmartEndpoint();
 			} else if (pendingFeature === "transforms") {
-				updateTransforms({ enabled: true });
+				updateTransforms(resolveOpenRouterEnablePatch(transforms.openrouterModel));
 			}
 			setPendingFeature(null);
 		},
@@ -1131,6 +1226,9 @@ function useLlmSettingsPanel() {
 			updateDictation,
 			updateTransforms,
 			disableSmartEndpoint,
+			resolveOpenRouterEnablePatch,
+			dictation.openrouterModel,
+			transforms.openrouterModel,
 		]
 	);
 
@@ -1156,7 +1254,6 @@ function useLlmSettingsPanel() {
 	const toneOpts = buildToneOpts(t);
 	const levelOpts = buildLevelOpts(t);
 	const providerOpts = buildProviderOpts(t);
-	const activeTone = getToneKey(dictation.presets);
 
 	const ollamaCatalogState: OllamaCatalogState = {
 		error: ollamaError,
@@ -1172,11 +1269,6 @@ function useLlmSettingsPanel() {
 		models: openrouterModels as readonly unknown[],
 		scanModels: scanOpenRouter,
 	};
-
-	// Pick the single feature that renders the shared API key input. We can't
-	// render it twice (it's one setting) and we don't want to surface it at all
-	// when neither feature uses OpenRouter — that's the whole point of gating.
-	const apiKeyOwner = pickApiKeyOwner(dictation.provider, transforms.provider);
 
 	return {
 		t,
@@ -1194,8 +1286,6 @@ function useLlmSettingsPanel() {
 		providerOpts,
 		toneOpts,
 		levelOpts,
-		activeTone,
-		apiKeyOwner,
 		checkOllamaReachable,
 		disableSmartEndpoint,
 		updateShared,
@@ -1215,18 +1305,34 @@ function useLlmSettingsPanel() {
 
 type LlmSettingsPanelModel = ReturnType<typeof useLlmSettingsPanel>;
 
-/** Tone / modifiers / context-awareness controls for the dictation feature.
- *  Self-contained presentational block lifted out of the panel so the root
- *  component stays a thin composition. */
-function DictationPresetControls({
+/**
+ * Tone / modifiers controls, generic over the feature whose presets+modifiers
+ * are being edited. Dictation gets context-awareness + deny-list appended;
+ * transforms doesn't (the input IS the selected text, so window-capture
+ * context has no role to play).
+ */
+// Mutable variants of the carrier fields — the helpers below return mutable
+// arrays and the underlying updateLlmDictation / updateLlmTransforms expect
+// the same. Read-side `PresetCarrier` keeps `readonly` so consumers don't
+// accidentally mutate store state in place.
+type PresetUpdate = Partial<{
+	customModifiers: CustomModifier[];
+	presets: BuiltinPresetEntry[];
+}>;
+
+function FeaturePresetControls({
+	feature,
 	model,
+	snapshot,
+	update,
 }: {
-	model: Pick<
-		LlmSettingsPanelModel,
-		"t" | "toneOpts" | "levelOpts" | "activeTone" | "dictation" | "updateDictation"
-	>;
+	feature: "dictation" | "transforms";
+	model: Pick<LlmSettingsPanelModel, "t" | "tc" | "toneOpts" | "levelOpts">;
+	snapshot: PresetCarrier;
+	update: (patch: PresetUpdate) => void;
 }) {
-	const { t, toneOpts, levelOpts, activeTone, dictation, updateDictation } = model;
+	const { t, tc, toneOpts, levelOpts } = model;
+	const activeTone = getToneKey(snapshot.presets);
 	return (
 		<div className="flex flex-col divide-y divide-surface-1">
 			<div className="col-span-2">
@@ -1234,8 +1340,8 @@ function DictationPresetControls({
 					<ElevatedSurface>
 						<Switcher
 							onChange={(v) =>
-								updateDictation({
-									presets: setTone(dictation.presets, v as (typeof TONE_GROUP)[number]),
+								update({
+									presets: setTone(snapshot.presets, v as (typeof TONE_GROUP)[number]),
 								})
 							}
 							options={toneOpts}
@@ -1252,26 +1358,92 @@ function DictationPresetControls({
 				>
 					<ElevatedSurface>
 						<IndependentPresetList
+							customModifiers={snapshot.customModifiers}
 							levelOpts={levelOpts}
 							onLevelChange={(key, lvl) =>
-								updateDictation({
-									presets: setIndependentLevel(dictation.presets, key, lvl),
+								update({
+									presets: setIndependentLevel(snapshot.presets, key, lvl),
 								})
 							}
-							onToggle={(key, on, level) =>
-								updateDictation({
-									presets: toggleIndependent(dictation.presets, key, on, level),
+							onModifierLevelChange={(id, level) =>
+								update({
+									customModifiers: patchCustomModifier(snapshot.customModifiers, id, { level }),
 								})
 							}
-							presets={dictation.presets}
+							onModifierRemove={(id) =>
+								update({
+									customModifiers: removeCustomModifier(snapshot.customModifiers, id),
+								})
+							}
+							onModifierSave={(modifier) =>
+								update({
+									customModifiers: upsertCustomModifier(snapshot.customModifiers, modifier),
+								})
+							}
+							onModifierToggle={(id, enabled) =>
+								update({
+									customModifiers: patchCustomModifier(snapshot.customModifiers, id, {
+										enabled,
+									}),
+								})
+							}
+							onTargetLangChange={(lang) =>
+								update({
+									presets: setIndependentTargetLang(snapshot.presets, lang),
+								})
+							}
+							onToggle={(key, on, level, targetLang) =>
+								update({
+									presets: toggleIndependent(snapshot.presets, key, on, level, targetLang),
+								})
+							}
+							presets={snapshot.presets}
 							t={t}
+							tc={tc}
 						/>
 					</ElevatedSurface>
 				</FormControl>
 			</div>
-			<div className="col-span-2">
-				<ContextAwarenessSection />
-			</div>
+			{feature === "dictation" ? (
+				<>
+					<div className="col-span-2">
+						<ContextAwarenessSection />
+					</div>
+					<div className="col-span-2">
+						<ContextDenyListSection />
+					</div>
+				</>
+			) : null}
+		</div>
+	);
+}
+
+/**
+ * Single global hotkey that triggers the transforms pipeline on the current
+ * selection. Empty disables; presence registers a uiohook combo. Dictation
+ * has no equivalent — it fires from the PTT/recording hotkey via the relay.
+ */
+function TransformHotkeyField({
+	hotkey,
+	onChange,
+	t,
+}: {
+	hotkey: string;
+	onChange: (hotkey: string) => void;
+	t: TranslateFn;
+}) {
+	return (
+		<div className="py-2">
+			<FormControl
+				caption={t("transformHotkeyCaption")}
+				label={t("transformHotkey")}
+				labelTrailing={
+					<SettingResetButton isDefault={hotkey === ""} onReset={() => onChange("")} />
+				}
+				tooltip={t("transformHotkeyTooltip")}
+			>
+				<HotkeyRecorder currentKey={hotkey} onKeyRecorded={onChange} />
+			</FormControl>
 		</div>
 	);
 }
@@ -1351,7 +1523,6 @@ export function LlmSettingsPanel() {
 		ollamaCatalogState,
 		openrouterCatalogState,
 		providerOpts,
-		apiKeyOwner,
 		checkOllamaReachable,
 		disableSmartEndpoint,
 		updateShared,
@@ -1364,10 +1535,9 @@ export function LlmSettingsPanel() {
 	return (
 		<>
 			<SettingSection icon={AiBrain02Icon} title={t("title")}>
-				{/* The OpenRouter API key lives inside the OpenRouter section
-				    of whichever feature uses it; the Ollama endpoint URL now
-				    lives inside each feature's OllamaSection (rendered under
-				    the provider Switcher) so it appears in-context. */}
+				{/* Provider connection inputs (Ollama endpoint, OpenRouter API
+				    key) live in the dedicated Integrations settings tab — both
+				    feature subsections read the same shared values. */}
 				<FeatureBlock
 					checkOllamaReachable={checkOllamaReachable}
 					endpoint={endpoint}
@@ -1383,14 +1553,19 @@ export function LlmSettingsPanel() {
 					providerOpts={providerOpts}
 					setShowApiKeyDialog={setShowApiKeyDialogFor("dictation")}
 					setShowOllamaDialog={setShowOllamaDialogFor("dictation")}
-					showApiKeyField={apiKeyOwner === "dictation"}
 					t={t}
 					tc={tc}
 					update={updateDictation}
 					updateShared={updateShared}
 					warmupStatus={warmupStatus}
 				>
-					<DictationPresetControls model={model} />
+					<FeaturePresetControls
+						feature="dictation"
+						model={model}
+						snapshot={dictation}
+						update={updateDictation}
+					/>
+					<Playground feature="dictation" />
 				</FeatureBlock>
 
 				<FeatureBlock
@@ -1407,14 +1582,24 @@ export function LlmSettingsPanel() {
 					providerOpts={providerOpts}
 					setShowApiKeyDialog={setShowApiKeyDialogFor("transforms")}
 					setShowOllamaDialog={setShowOllamaDialogFor("transforms")}
-					showApiKeyField={apiKeyOwner === "transforms"}
 					t={t}
 					tc={tc}
 					update={updateTransforms}
 					updateShared={updateShared}
 					warmupStatus={warmupStatus}
 				>
-					<TransformsSection />
+					<FeaturePresetControls
+						feature="transforms"
+						model={model}
+						snapshot={transforms}
+						update={updateTransforms}
+					/>
+					<TransformHotkeyField
+						hotkey={transforms.hotkey}
+						onChange={(hotkey) => updateTransforms({ hotkey })}
+						t={t}
+					/>
+					<Playground feature="transforms" />
 				</FeatureBlock>
 			</SettingSection>
 
@@ -1530,7 +1715,6 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 		providerOpts,
 		setShowOllamaDialog,
 		setShowApiKeyDialog,
-		showApiKeyField,
 		checkOllamaReachable,
 		update,
 		updateShared,
@@ -1552,7 +1736,6 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 			ollamaReachable,
 			setShowOllamaDialog,
 			setShowApiKeyDialog,
-			showApiKeyField,
 			update,
 			updateShared,
 			warmupStatus,
@@ -1572,7 +1755,7 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 	});
 	return (
 		<SettingSubsection
-			caption={isDictation ? t("subDictationCaption") : t("transformsCaption")}
+			caption={isDictation ? t("subDictationCaption") : t("subTransformCaption")}
 			icon={isDictation ? PencilIcon : MagicWand01Icon}
 			onToggle={handleToggle}
 			title={isDictation ? t("subDictationTitle") : t("subTransformTitle")}
@@ -1597,7 +1780,6 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 				{featureSnapshot.provider === "ollama" ? (
 					<OllamaSection
 						enabled={featureSnapshot.enabled}
-						endpoint={endpoint}
 						librarySearch={librarySearch}
 						model={featureSnapshot.model}
 						ollamaError={ollamaCatalog.error}
@@ -1606,7 +1788,6 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 						ollamaScanning={ollamaCatalog.isScanning}
 						pullBundle={ollamaPullBundle}
 						scanOllama={ollamaCatalog.scanModels}
-						setEndpoint={(v) => updateShared({ endpoint: v })}
 						setModel={(v) => {
 							beginOllamaSwap(v);
 							updateAny({ model: v });
@@ -1619,13 +1800,12 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 					/>
 				) : (
 					<OpenRouterSection
+						apiKeyMissing={!openrouterApiKey}
 						fallbackExclusion={fallbackExclusion}
 						maxOutputTokens={featureSnapshot.maxOutputTokens}
-						onApiKeyChange={(key) => updateShared({ openrouterApiKey: key })}
 						onMaxOutputTokensChange={(v) => updateAny({ maxOutputTokens: v })}
 						onReasoningEffortChange={(v) => updateAny({ reasoningEffort: v })}
 						onVerbosityChange={(v) => updateAny({ verbosity: v })}
-						openrouterApiKey={openrouterApiKey}
 						openrouterError={openrouterCatalog.error}
 						openrouterFallbackModel={featureSnapshot.openrouterFallbackModel}
 						openrouterModel={featureSnapshot.openrouterModel}
@@ -1635,9 +1815,7 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 						scanOpenRouter={openrouterCatalog.scanModels}
 						setFallbackModel={(v) => updateAny({ openrouterFallbackModel: v })}
 						setModel={(v) => updateAny({ openrouterModel: v })}
-						showApiKeyField={showApiKeyField}
 						t={t}
-						tc={tc}
 						verbosity={featureSnapshot.verbosity}
 					/>
 				)}
@@ -1665,24 +1843,6 @@ interface OllamaDialogProps extends DialogProps {
 	isOpen: boolean;
 	onClose: () => void;
 	onStarted: () => void;
-}
-
-interface OllamaDialogTexts {
-	description: string;
-	title: string;
-}
-
-function getOllamaDialogTexts(showRun: boolean, t: TranslateFn): OllamaDialogTexts {
-	if (showRun) {
-		return {
-			title: t("ollamaNotRunning"),
-			description: t("ollamaNotRunningDescription"),
-		};
-	}
-	return {
-		title: t("ollamaRequired"),
-		description: t("ollamaRequiredDescription"),
-	};
 }
 
 function OllamaStartErrorBanner({ message }: { message: string | null }) {
@@ -1903,27 +2063,3 @@ function ApiKeyDialog({ t, tc, isOpen, onClose, onSave, initialKey }: ApiKeyDial
 		</Modal>
 	);
 }
-
-// Test-only exports — pure helpers extracted from the panel logic.
-export const __llm_settings_panel_test_helpers__ = {
-	readLlmSnapshot,
-	readFeatureSnapshot,
-	buildToneOpts,
-	buildLevelOpts,
-	buildProviderOpts,
-	pickReplacementOllamaModel,
-	shouldSyncOllamaModel,
-	shouldScanOpenRouter,
-	tryEnableOllamaForFeature,
-	tryEnableOpenRouterForFeature,
-	performFeatureToggle,
-	getOllamaDialogTexts,
-	DEFAULT_LLM,
-	DEFAULT_FEATURE,
-	getToneKey,
-	isIndependentEnabled,
-	getLevel,
-	setTone,
-	toggleIndependent,
-	setIndependentLevel,
-};

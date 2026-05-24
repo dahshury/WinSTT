@@ -41,6 +41,7 @@ const ALLOWED_METHODS = new Set([
 	"wakeup",
 	"shutdown",
 	"text",
+	"request_diarization_toggle",
 ]);
 
 interface ParamPayload {

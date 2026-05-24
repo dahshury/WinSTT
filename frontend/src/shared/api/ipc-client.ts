@@ -1,5 +1,3 @@
-"use client";
-
 import { IPC } from "./ipc-channels";
 import type {
 	AllowedMethod,
@@ -212,8 +210,8 @@ export const gpuGetInfo = () => invokeOrDefault<GpuInfo | null>(IPC.GPU_GET_INFO
 export const getSystemLocale = () => invokeOrDefault<string>(IPC.APP_GET_SYSTEM_LOCALE, "");
 
 // Settings
-export const settingsSave = (settings: AppSettingsSaveInput) =>
-	send(IPC.SETTINGS_SAVE, { settings });
+export const settingsSave = (settings: AppSettings) =>
+	send(IPC.SETTINGS_SAVE, { settings: settings as AppSettingsSaveInput });
 export const settingsLoad = async (): Promise<AppSettings> => {
 	const payload = await invokeOrDefault<unknown>(IPC.SETTINGS_LOAD, {});
 	return decodeSettingsPayload(payload);
@@ -366,6 +364,54 @@ export const onModelSwapCompleted = (cb: (info: ModelSwapPayload) => void) =>
 
 export const onModelSwapFailed = (cb: (info: ModelSwapFailedPayload) => void) =>
 	on(IPC.STT_MODEL_SWAP_FAILED, (data) => cb(data as ModelSwapFailedPayload));
+
+// ── Runtime diarization toggle (no server restart) ──────────────────
+
+/** Enable/disable speaker diarization at runtime. Fire-and-forget; the
+ * server pushes ``diarization-toggle-*`` lifecycle events back. */
+export const sttRequestDiarizationToggle = (enabled: boolean) =>
+	sttCallMethod("request_diarization_toggle", [enabled]);
+
+export interface DiarizationTogglePayload {
+	enabled: boolean;
+}
+
+export interface DiarizationToggleCompletedPayload extends DiarizationTogglePayload {
+	message: string;
+}
+
+export interface DiarizationToggleFailedPayload extends DiarizationTogglePayload {
+	/** Reuses the model-swap category codes (same server classifier). */
+	category: ModelSwapFailedCategory;
+	detail: string;
+	reason: string;
+}
+
+export const onDiarizationToggleStarted = (cb: (info: DiarizationTogglePayload) => void) =>
+	on(IPC.STT_DIARIZATION_TOGGLE_STARTED, (data) => cb(data as DiarizationTogglePayload));
+
+export const onDiarizationToggleCompleted = (
+	cb: (info: DiarizationToggleCompletedPayload) => void
+) =>
+	on(IPC.STT_DIARIZATION_TOGGLE_COMPLETED, (data) => cb(data as DiarizationToggleCompletedPayload));
+
+export const onDiarizationToggleFailed = (cb: (info: DiarizationToggleFailedPayload) => void) =>
+	on(IPC.STT_DIARIZATION_TOGGLE_FAILED, (data) => cb(data as DiarizationToggleFailedPayload));
+
+export interface ServerRestartRequiredPayload {
+	/** `unmanaged`: a startup-only setting changed but the server isn't
+	 * Electron-managed. `skew`: the running server is missing a capability
+	 * this build needs (it's executing stale code). */
+	kind?: "unmanaged" | "skew";
+	/** Human-readable thing that needs the restart (a setting, or a build). */
+	setting: string;
+}
+
+/** The user must restart the STT server manually — either a startup-only
+ * setting changed on an unmanaged server, or the server is running an
+ * outdated build (capability handshake mismatch). */
+export const onServerRestartRequired = (cb: (info: ServerRestartRequiredPayload) => void) =>
+	on(IPC.STT_RESTART_REQUIRED, (data) => cb(data as ServerRestartRequiredPayload));
 
 // ── Model cache + fitness state (drives selector badges + download UX) ──
 export type CacheState = "cached" | "partial" | "not_cached";
@@ -665,6 +711,11 @@ export const onWindowTelemetry = (cb: (payload: WindowTelemetryPayload) => void)
 export interface TranscriptionHistoryEntry {
 	durationMs: number;
 	id: string;
+	/**
+	 * Provider/model used for LLM post-processing (e.g. an Ollama model name
+	 * like `qwen2.5:7b`). Omitted when no LLM ran.
+	 */
+	llmModel?: string;
 	/** Pre-LLM text (post-processing applied). Omitted when no LLM ran. */
 	originalText?: string;
 	/** Final text (after LLM correction if configured). */
@@ -747,48 +798,42 @@ export const processWithLlm = (text: string): Promise<string> =>
 	invokeOrDefault<string>(IPC.LLM_PROCESS_TEXT, text, { text });
 
 /**
- * Apply a transform to whatever the user currently has selected. Captures
- * the selection in main, runs the LLM with the transform's custom prompt,
+ * Apply the transforms feature's composed preset prompt to whatever the user
+ * currently has selected. Captures the selection in main, runs the LLM,
  * pastes back to replace the selection, and emits {@link onTransformApplied}.
+ * No per-transform identifier — the configuration lives in
+ * `settings.llm.transforms` (presets + customModifiers).
  */
 export interface TransformApplyResult {
 	after: string;
 	before: string;
 	source: "uia" | "clipboard" | "empty";
-	transformId: string;
 }
 
-export const applyTransform = (transformId: string): Promise<TransformApplyResult> =>
+export const applyTransform = (): Promise<TransformApplyResult> =>
 	invokeOrDefault<TransformApplyResult>(
 		IPC.TRANSFORMS_APPLY,
-		{
-			transformId,
-			before: "",
-			after: "",
-			source: "empty" as const,
-		},
-		{ transformId }
+		{ before: "", after: "", source: "empty" as const },
+		{}
 	);
 
 /**
- * Playground preview — runs `systemPrompt` against `text` and returns the
- * transformed result, without touching selection, clipboard, or paste.
- * Used by the Transforms settings UI's playground panel.
+ * Playground preview — runs `text` through the chosen feature's full pipeline
+ * (composed presets+customModifiers + provider/model). Returns the transformed
+ * result. Does not touch selection, clipboard, or paste. Used by the LLM
+ * settings playground in both the dictation and transforms sections.
  */
-export const previewTransform = (text: string, systemPrompt: string): Promise<string> =>
-	invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, { text, systemPrompt });
+export const runLlmPreview = (text: string, feature: "dictation" | "transforms"): Promise<string> =>
+	invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, { text, feature });
 
 interface TransformAppliedPayload {
 	after: string;
 	before: string;
 	source: "uia" | "clipboard" | "empty";
-	transformId: string;
-	transformName: string;
 }
 
 interface TransformFailedPayload {
 	reason: string;
-	transformId: string;
 }
 
 export const onTransformApplied = (
@@ -868,7 +913,29 @@ export interface TtsModelDownloadProgressPayload {
 	totalBytes: number;
 }
 
+export interface TtsDownloadEstimatePayload {
+	alreadyInstalled: boolean;
+	components: Array<{ id: string; label: string; bytes: number; installed: boolean }>;
+	totalBytes: number;
+	/** True when the estimate couldn't be fetched (server / no internet). */
+	unavailable?: boolean;
+}
+
+/** Install phase emitted while the on-demand TTS install runs. */
+export type TtsInstallPhase = "engine" | "model" | "ready" | "unknown";
+
+export interface TtsInstallStatusPayload {
+	phase: TtsInstallPhase;
+}
+
 const TTS_VOICE_FALLBACK: TtsVoiceCatalog = { voices: [], languages: [] };
+
+const TTS_ESTIMATE_FALLBACK: TtsDownloadEstimatePayload = {
+	totalBytes: 0,
+	components: [],
+	alreadyInstalled: false,
+	unavailable: true,
+};
 
 /**
  * Fetch the static Kokoro voice catalog from the server. Result is
@@ -876,6 +943,15 @@ const TTS_VOICE_FALLBACK: TtsVoiceCatalog = { voices: [], languages: [] };
  */
 export const listTtsVoices = (): Promise<TtsVoiceCatalog> =>
 	invokeOrDefault<TtsVoiceCatalog>(IPC.TTS_LIST_VOICES, TTS_VOICE_FALLBACK);
+
+/**
+ * Side-effect-free probe of what enabling TTS will download. Drives the
+ * confirmation dialog — calling this never starts a download. A
+ * `unavailable: true` result means the server / internet couldn't be
+ * reached to size the install.
+ */
+export const ttsDownloadEstimate = (): Promise<TtsDownloadEstimatePayload> =>
+	invokeOrDefault<TtsDownloadEstimatePayload>(IPC.TTS_DOWNLOAD_ESTIMATE, TTS_ESTIMATE_FALLBACK);
 
 /**
  * Force eager construction of the synthesizer (which on first call also
@@ -964,6 +1040,10 @@ export const onTtsModelDownloadProgress = (
 ): (() => void) =>
 	onCast<TtsModelDownloadProgressPayload>(IPC.TTS_MODEL_DOWNLOAD_PROGRESS, callback);
 
+export const onTtsInstallStatus = (
+	callback: (payload: TtsInstallStatusPayload) => void
+): (() => void) => onCast<TtsInstallStatusPayload>(IPC.TTS_INSTALL_STATUS, callback);
+
 export const onTtsModelDownloadComplete = (
 	callback: (payload: { cancelled: boolean }) => void
 ): (() => void) => onCast<{ cancelled: boolean }>(IPC.TTS_MODEL_DOWNLOAD_COMPLETE, callback);
@@ -1042,6 +1122,16 @@ export const onLlmProcessingEnd = (cb: () => void) => on(IPC.LLM_PROCESSING_END,
 export const onLlmReasoningDelta = (cb: (payload: { delta: string }) => void): (() => void) =>
 	onCast(IPC.LLM_REASONING_DELTA, cb);
 
+/**
+ * Subscribe to learned-proper-nouns events. The cleanup LLM emits a
+ * small batch (≤10 entries) after each successful dictation when it
+ * identified proper nouns worth remembering. Consumer is the
+ * dictionary auto-add UI in DictionarySettingsPanel.
+ */
+export const onLlmLearnedProperNouns = (
+	cb: (payload: { nouns: readonly string[] }) => void
+): (() => void) => onCast(IPC.LLM_LEARNED_PROPER_NOUNS, cb);
+
 // Warmup status — main-process broadcaster is still WIP. Until it lands,
 // the invoke handler is missing in main, so `invokeOrDefault` falls back
 // to `null` and the subscriber never fires. Renderer code consuming this
@@ -1095,3 +1185,41 @@ export interface DiagSaveBundleResult {
 
 export const diagSaveBundle = (): Promise<DiagSaveBundleResult> =>
 	invokeOrDefault(IPC.DIAG_SAVE_BUNDLE, { ok: false, error: "IPC unavailable" });
+
+// ── About / licenses ────────────────────────────────────────────────
+export interface AboutAppInfo {
+	copyright: string;
+	electronVersion: string;
+	nodeVersion: string;
+	version: string;
+}
+
+const ABOUT_APP_INFO_FALLBACK: AboutAppInfo = {
+	copyright: "",
+	electronVersion: "",
+	nodeVersion: "",
+	version: "",
+};
+
+export const aboutGetLicense = (): Promise<string> =>
+	invokeOrDefault<string>(IPC.ABOUT_GET_LICENSE, "");
+
+export const aboutGetNotices = (): Promise<string> =>
+	invokeOrDefault<string>(IPC.ABOUT_GET_NOTICES, "");
+
+export const aboutGetAppInfo = (): Promise<AboutAppInfo> =>
+	invokeOrDefault<AboutAppInfo>(IPC.ABOUT_GET_APP_INFO, ABOUT_APP_INFO_FALLBACK);
+
+/**
+ * Run a one-shot transform against arbitrary sample text — used by the
+ * Transforms playground to preview a prompt before binding it.
+ *
+ * WIP: the main-process IPC handler isn't wired up yet. The renderer-side
+ * Transforms UI calls this from its Playground "Run" button; until the
+ * handler lands the call throws so failures are visible instead of
+ * pretending to succeed with an empty string.
+ */
+export const previewTransform = (_sample: string, _prompt: string): Promise<string> =>
+	Promise.reject(
+		new Error("previewTransform: IPC handler not yet wired (main-process implementation pending)")
+	);

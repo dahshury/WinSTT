@@ -1,10 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import { render } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import {
-	GeneralSettingsPanel,
-	__general_settings_panel_test_helpers__ as helpers,
-} from "./GeneralSettingsPanel";
+import { __general_settings_panel_test_helpers__ as helpers } from "../lib/general-settings-panel-test-helpers";
+import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 
 describe("GeneralSettingsPanel", () => {
 	test("renders without crashing", () => {
@@ -64,39 +62,27 @@ describe("GeneralSettingsPanel helpers — pickLocale", () => {
 	});
 });
 
-describe("GeneralSettingsPanel helpers — muteCaption", () => {
-	test("returns disabled caption in listen mode", () => {
-		expect(helpers.muteCaption(true, tStub)).toBe("muteSystemAudioCaptionDisabled");
-	});
-
-	test("returns normal caption outside listen mode", () => {
-		expect(helpers.muteCaption(false, tStub)).toBe("muteSystemAudioCaption");
-	});
-});
-
 describe("GeneralSettingsPanel helpers — muteLevel", () => {
-	const cases: [boolean, { systemAudioReductionWhileDictating?: number } | undefined, number][] = [
-		[true, { systemAudioReductionWhileDictating: 100 }, 0],
-		[false, { systemAudioReductionWhileDictating: 100 }, 100],
-		[false, { systemAudioReductionWhileDictating: 80 }, 80],
-		[false, { systemAudioReductionWhileDictating: 0 }, 0],
-		[false, undefined, 0],
+	const cases: [{ systemAudioReductionWhileDictating?: number } | undefined, number][] = [
+		[{ systemAudioReductionWhileDictating: 100 }, 100],
+		[{ systemAudioReductionWhileDictating: 80 }, 80],
+		[{ systemAudioReductionWhileDictating: 0 }, 0],
+		[undefined, 0],
 	];
-	test.each(cases)("listen=%s settings=%j -> %s", (listen, settings, expected) => {
-		expect(helpers.muteLevel(listen, settings as never)).toBe(expected);
+	test.each(cases)("settings=%j -> %s", (settings, expected) => {
+		expect(helpers.muteLevel(settings as never)).toBe(expected);
 	});
 });
 
 describe("GeneralSettingsPanel helpers — muteEnabled", () => {
-	const cases: [boolean, { systemAudioReductionWhileDictating?: number } | undefined, boolean][] = [
-		[false, { systemAudioReductionWhileDictating: 100 }, true],
-		[false, { systemAudioReductionWhileDictating: 20 }, true],
-		[false, { systemAudioReductionWhileDictating: 0 }, false],
-		[true, { systemAudioReductionWhileDictating: 100 }, false],
-		[false, undefined, false],
+	const cases: [{ systemAudioReductionWhileDictating?: number } | undefined, boolean][] = [
+		[{ systemAudioReductionWhileDictating: 100 }, true],
+		[{ systemAudioReductionWhileDictating: 20 }, true],
+		[{ systemAudioReductionWhileDictating: 0 }, false],
+		[undefined, false],
 	];
-	test.each(cases)("listen=%s settings=%j -> %s", (listen, settings, expected) => {
-		expect(helpers.muteEnabled(listen, settings as never)).toBe(expected);
+	test.each(cases)("settings=%j -> %s", (settings, expected) => {
+		expect(helpers.muteEnabled(settings as never)).toBe(expected);
 	});
 });
 
@@ -133,27 +119,27 @@ describe("GeneralSettingsPanel helpers — reduction slider mapping", () => {
 });
 
 describe("GeneralSettingsPanel helpers — computeDisplayFlags", () => {
-	test("everything enabled when overlay shown, not listen, realtime on", () => {
-		const flags = helpers.computeDisplayFlags(false, { showRecordingOverlay: true } as any, true);
+	test("overlay enabled when shown and not listen mode", () => {
+		const flags = helpers.computeDisplayFlags(false, { showRecordingOverlay: true } as any);
 		expect(flags).toEqual({
 			overlayEnabled: true,
 			subDisabled: false,
-			liveDisplayHidden: false,
 		});
 	});
 
-	test("listen mode disables the overlay/size picker but leaves the live-transcription picker visible", () => {
-		// liveDisplayHidden hinges only on realtime — listen mode keeps the
-		// in-app option meaningful so the picker stays rendered.
-		const flags = helpers.computeDisplayFlags(true, { showRecordingOverlay: true } as any, true);
+	test("listen mode disables the overlay/size picker", () => {
+		// The combined live-transcription picker is always visible — it IS the
+		// realtime on/off switch now (see realtime-enabled.ts) — so this only
+		// gates the overlay-dependent visualizer controls.
+		const flags = helpers.computeDisplayFlags(true, { showRecordingOverlay: true } as any);
 		expect(flags.overlayEnabled).toBe(false);
 		expect(flags.subDisabled).toBe(true);
-		expect(flags.liveDisplayHidden).toBe(false);
 	});
 
-	test("realtime off hides the combined live-transcription picker", () => {
-		const flags = helpers.computeDisplayFlags(false, { showRecordingOverlay: true } as any, false);
-		expect(flags.liveDisplayHidden).toBe(true);
+	test("overlay hidden disables overlay-dependent sub-controls", () => {
+		const flags = helpers.computeDisplayFlags(false, { showRecordingOverlay: false } as any);
+		expect(flags.overlayEnabled).toBe(false);
+		expect(flags.subDisabled).toBe(true);
 	});
 });
 

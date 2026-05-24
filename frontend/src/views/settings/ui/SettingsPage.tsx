@@ -1,14 +1,13 @@
-"use client";
-
 import { Tabs } from "@base-ui/react/tabs";
 import {
 	AiChat02Icon,
 	Cancel01Icon,
 	ChartHistogramIcon,
 	CpuChargeIcon,
-	LaptopIcon,
+	InformationCircleIcon,
 	Mic01Icon,
 	Note01Icon,
+	PlugSocketIcon,
 	SlidersHorizontalIcon,
 	TextIcon,
 } from "@hugeicons/core-free-icons";
@@ -23,10 +22,11 @@ import { Elevated, SurfaceProvider } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Tooltip } from "@/shared/ui/tooltip";
+import { AboutSettingsPanel } from "@/widgets/about-settings";
 import { AudioSettingsPanel } from "@/widgets/audio-settings";
-import { DesktopToolsSettingsPanel } from "@/widgets/desktop-tools-settings";
 import { DictionarySettingsPanel } from "@/widgets/dictionary-settings";
 import { GeneralSettingsPanel } from "@/widgets/general-settings";
+import { IntegrationsSettingsPanel } from "@/widgets/integrations-settings";
 import { LlmSettingsPanel } from "@/widgets/llm-settings";
 import { ModelSettingsPanel } from "@/widgets/model-settings";
 import { QualitySettingsPanel } from "@/widgets/quality-settings";
@@ -75,6 +75,7 @@ export function SettingsPage() {
 			label: t("tabProcessing"),
 			icon: CpuChargeIcon,
 			tooltip: t("tabProcessingTooltip"),
+			groupEnd: true,
 		},
 		{
 			key: "dictionary",
@@ -87,18 +88,27 @@ export function SettingsPage() {
 			label: t("tabSnippets"),
 			icon: Note01Icon,
 			tooltip: t("tabSnippetsTooltip"),
-		},
-		{
-			key: "desktop",
-			label: t("tabDesktop"),
-			icon: LaptopIcon,
-			tooltip: t("tabDesktopTooltip"),
+			groupEnd: true,
 		},
 		{
 			key: "history",
 			label: t("tabHistory"),
 			icon: ChartHistogramIcon,
 			tooltip: t("tabHistoryTooltip"),
+			groupEnd: true,
+		},
+		{
+			key: "integrations",
+			label: t("tabIntegrations"),
+			icon: PlugSocketIcon,
+			tooltip: t("tabIntegrationsTooltip"),
+			groupEnd: true,
+		},
+		{
+			key: "about",
+			label: t("tabAbout"),
+			icon: InformationCircleIcon,
+			tooltip: t("tabAboutTooltip"),
 		},
 	];
 
@@ -174,11 +184,14 @@ export function SettingsPage() {
 								<Tabs.Panel value="snippets">
 									<SnippetsSettingsPanel />
 								</Tabs.Panel>
-								<Tabs.Panel value="desktop">
-									<DesktopToolsSettingsPanel />
-								</Tabs.Panel>
 								<Tabs.Panel value="history">
 									<TranscriptionHistoryPanel />
+								</Tabs.Panel>
+								<Tabs.Panel value="integrations">
+									<IntegrationsSettingsPanel />
+								</Tabs.Panel>
+								<Tabs.Panel value="about">
+									<AboutSettingsPanel />
 								</Tabs.Panel>
 							</ScrollArea>
 						</Elevated>

@@ -1,5 +1,3 @@
-"use client";
-
 import { MusicNote01Icon, PlusSignIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";

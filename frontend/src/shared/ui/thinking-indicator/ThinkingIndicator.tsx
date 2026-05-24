@@ -1,5 +1,3 @@
-"use client";
-
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
 import { type ComponentPropsWithoutRef, useEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
@@ -352,6 +350,12 @@ export function ThinkingIndicator({
 					>
 						<m.path
 							animate={{ d: [CIRCLE_A, INFINITY_PATH, CIRCLE_B, INFINITY_PATH, CIRCLE_A] }}
+							// Concrete base `d` so the path is valid at static-export
+							// paint and at every keyframe boundary — without it Motion
+							// briefly writes `d="undefined"` and the browser logs an
+							// SVG path parse error on a ~6s loop.
+							d={CIRCLE_A}
+							initial={{ d: CIRCLE_A }}
 							transition={{
 								d: {
 									duration: 6,

@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {

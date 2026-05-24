@@ -1,4 +1,10 @@
-export { buildModelOpts, buildRealtimeOpts, isUncomfortable } from "./lib/model-options";
+export {
+	buildModelOpts,
+	buildRealtimeOpts,
+	isUncomfortable,
+	needsModelFallback,
+	pickDefaultSttModel,
+} from "./lib/model-options";
 export type { ModelInfo } from "./model/catalog-store";
 export { useCatalogStore } from "./model/catalog-store";
 export { useModelStateStore } from "./model/model-state-store";

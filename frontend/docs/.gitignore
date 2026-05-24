@@ -1,0 +1,13 @@
+# Build output (TanStack Start / Nitro / Vite)
+.output/
+.nitro/
+.tanstack/
+.vinxi/
+
+# Vite / Bun caches
+node_modules/
+.cache/
+dist/
+
+# TypeScript build info
+*.tsbuildinfo

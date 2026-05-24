@@ -14,15 +14,13 @@ function normalizeOpenFileOptions(options: unknown): {
 	filters?: Electron.FileFilter[];
 } {
 	const safe = toSafeOptions(options);
-	return {
-		title: typeof safe.title === "string" ? safe.title : "Select File",
-		filters: Array.isArray(safe.filters) ? safe.filters : undefined,
-	};
+	const title = typeof safe.title === "string" ? safe.title : "Select File";
+	return Array.isArray(safe.filters) ? { title, filters: safe.filters } : { title };
 }
 
 async function handleOpenFile(options: unknown): Promise<string | null> {
-	const { title, filters } = normalizeOpenFileOptions(options);
-	const result = await dialog.showOpenDialog({ title, filters, properties: ["openFile"] });
+	const normalized = normalizeOpenFileOptions(options);
+	const result = await dialog.showOpenDialog({ ...normalized, properties: ["openFile"] });
 	if (result.canceled) {
 		return null;
 	}

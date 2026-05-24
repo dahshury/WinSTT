@@ -1,12 +1,14 @@
-"use client";
-
 import { KeyboardIcon, Mic01Icon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { useMemo } from "react";
 import { useInputDevices } from "@/entities/audio-device";
-import { SettingSection, useSettingsStore } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingResetButton,
+	SettingSection,
+	useSettingsStore,
+} from "@/entities/setting";
 import { HotkeyRecorder } from "@/features/record-hotkey";
-import { Button } from "@/shared/ui/button";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Select, type SelectOption } from "@/shared/ui/select";
@@ -25,6 +27,7 @@ export function AudioSettingsPanel() {
 	const t = useTranslations("audio");
 	const th = useTranslations("hotkey");
 	const tt = useTranslations("tts");
+	const pttKey = hotkey?.pushToTalkKey ?? DEFAULT_SETTINGS.hotkey.pushToTalkKey;
 	const { devices, defaultDevice } = useInputDevices();
 	const deviceOptions = useMemo<SelectOption[]>(() => {
 		const defaultLabel = defaultDevice
@@ -80,10 +83,18 @@ export function AudioSettingsPanel() {
 							}
 							disabled={recordingMode === "listen"}
 							label={th("pushToTalkKey")}
+							labelTrailing={
+								<SettingResetButton
+									isDefault={pttKey === DEFAULT_SETTINGS.hotkey.pushToTalkKey}
+									onReset={() =>
+										updateHotkey({ pushToTalkKey: DEFAULT_SETTINGS.hotkey.pushToTalkKey })
+									}
+								/>
+							}
 							tooltip={th("pushToTalkKeyTooltip")}
 						>
 							<HotkeyRecorder
-								currentKey={hotkey?.pushToTalkKey ?? "LCtrl+LMeta"}
+								currentKey={pttKey}
 								onKeyRecorded={(key) => updateHotkey({ pushToTalkKey: key })}
 							/>
 						</FormControl>
@@ -92,26 +103,33 @@ export function AudioSettingsPanel() {
 						<FormControl
 							caption={th("repasteKeyCaption")}
 							label={th("repasteKey")}
+							labelTrailing={
+								<SettingResetButton
+									isDefault={repasteHotkey === DEFAULT_SETTINGS.general.repasteHotkey}
+									onReset={() =>
+										updateGeneral({ repasteHotkey: DEFAULT_SETTINGS.general.repasteHotkey })
+									}
+								/>
+							}
 							tooltip={th("repasteKeyTooltip")}
 						>
-							<div className="flex items-center gap-2">
-								<HotkeyRecorder
-									currentKey={repasteHotkey}
-									onKeyRecorded={(key) => updateGeneral({ repasteHotkey: key })}
-								/>
-								{repasteHotkey !== "" && (
-									<Button
-										className="rounded-md border border-border bg-surface px-3 py-1.5 text-body-sm hover:bg-surface-hover"
-										onClick={() => updateGeneral({ repasteHotkey: "" })}
-									>
-										{th("repasteKeyClear")}
-									</Button>
-								)}
-							</div>
+							<HotkeyRecorder
+								currentKey={repasteHotkey}
+								onKeyRecorded={(key) => updateGeneral({ repasteHotkey: key })}
+							/>
 						</FormControl>
 					</div>
 					<div className="py-2">
-						<FormControl caption={tt("hotkeyHint")} label={tt("hotkeyLabel")}>
+						<FormControl
+							caption={tt("hotkeyHint")}
+							label={tt("hotkeyLabel")}
+							labelTrailing={
+								<SettingResetButton
+									isDefault={ttsHotkey === DEFAULT_SETTINGS.tts.hotkey}
+									onReset={() => updateTts({ hotkey: DEFAULT_SETTINGS.tts.hotkey })}
+								/>
+							}
+						>
 							<HotkeyRecorder
 								currentKey={ttsHotkey}
 								onKeyRecorded={(key) => updateTts({ hotkey: key })}

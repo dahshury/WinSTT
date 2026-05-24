@@ -1,9 +1,7 @@
-"use client";
-
 import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import {
 	SurfaceProvider,
 	surfaceClasses,
@@ -16,10 +14,23 @@ import "./searchable-select.css";
 
 export interface SearchableSelectProps {
 	disabled?: boolean;
+	/**
+	 * Interactive node pinned inside the trigger, just left of the chevron —
+	 * stays visible whether the popup is open or closed. Pointer/click events
+	 * are stopped from bubbling so it can't toggle the popup. Used by the TTS
+	 * voice picker for the "preview selected voice" play/stop control.
+	 */
+	inputTrailing?: ReactNode;
 	onChange: (value: string) => void;
 	onOpenChange?: (open: boolean) => void;
 	options: readonly SelectOption[];
 	placeholder?: string;
+	/**
+	 * Per-row trailing node rendered at the end of each option in the popup.
+	 * Pointer/click events are stopped so pressing it previews that row
+	 * without selecting (or closing) the combobox.
+	 */
+	renderItemTrailing?: (option: SelectOption) => ReactNode;
 	value: string;
 }
 
@@ -31,6 +42,23 @@ function Badge({ text }: { text: string }) {
 	return (
 		<span className="pointer-events-none inline-flex h-4 min-w-[22px] shrink-0 items-center justify-center rounded-xs border border-border bg-surface-1 px-1 font-mono font-semibold text-[10px] text-foreground-secondary uppercase tracking-wider">
 			{text}
+		</span>
+	);
+}
+
+/**
+ * Wraps an interactive control rendered inside the combobox so its pointer
+ * and click events don't reach Base UI's input/item handlers (which would
+ * otherwise toggle the popup or commit the row).
+ */
+function StopBubble({ children, className }: { children: ReactNode; className?: string }) {
+	const swallow = (e: { stopPropagation: () => void }) => e.stopPropagation();
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: event-isolation wrapper, not a control
+		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard is handled by the real button this wraps
+		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: stopPropagation-only shim, not a UI affordance
+		<span className={className} onClick={swallow} onMouseDown={swallow} onPointerDown={swallow}>
+			{children}
 		</span>
 	);
 }
@@ -53,6 +81,8 @@ export function SearchableSelect({
 	onOpenChange,
 	placeholder = "Search…",
 	disabled = false,
+	inputTrailing,
+	renderItemTrailing,
 }: SearchableSelectProps) {
 	const selected = options.find((o) => o.id === value) ?? null;
 
@@ -121,10 +151,15 @@ export function SearchableSelect({
 					</span>
 				) : null}
 				<Combobox.Input
-					className={`flex h-8 w-full items-center rounded-sm ${surfaceClasses(inputLevel)} pr-7 pl-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 disabled:cursor-not-allowed disabled:opacity-40`}
+					className={`flex h-8 w-full items-center rounded-sm ${surfaceClasses(inputLevel)} ${inputTrailing ? "pr-16" : "pr-7"} pl-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 disabled:cursor-not-allowed disabled:opacity-40`}
 					placeholder={placeholder}
 					style={decorationPadding > 0 ? { paddingLeft: `${decorationPadding}px` } : undefined}
 				/>
+				{inputTrailing ? (
+					<StopBubble className="absolute top-1/2 right-7 flex -translate-y-1/2 items-center">
+						{inputTrailing}
+					</StopBubble>
+				) : null}
 				<Combobox.Trigger
 					aria-label="Open popup"
 					className="absolute top-1/2 right-1.5 flex size-5 shrink-0 -translate-y-1/2 cursor-pointer items-center justify-center rounded-xs border-none bg-transparent p-0 text-foreground-dim"
@@ -158,9 +193,14 @@ export function SearchableSelect({
 										</span>
 										{item.badge ? <Badge text={item.badge} /> : null}
 										{item.icon ? <OptionIcon icon={item.icon} /> : null}
-										<span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+										<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
 											{item.label}
 										</span>
+										{renderItemTrailing ? (
+											<StopBubble className="ml-auto flex shrink-0 items-center">
+												{renderItemTrailing(item)}
+											</StopBubble>
+										) : null}
 									</Combobox.Item>
 								)}
 							</Combobox.List>

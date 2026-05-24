@@ -1,5 +1,3 @@
-"use client";
-
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceHoverBg, useSurface } from "@/shared/lib/surface";
@@ -9,12 +7,12 @@ import { Tooltip } from "@/shared/ui/tooltip";
 export interface IconButtonProps {
 	/** Accessible label — required for icon-only buttons (WCAG 4.1.2) */
 	"aria-label": string;
-	className?: string;
-	disabled?: boolean;
+	className?: string | undefined;
+	disabled?: boolean | undefined;
 	icon: ReactNode;
-	onClick?: () => void;
+	onClick?: (() => void) | undefined;
 	/** Tooltip text — defaults to aria-label */
-	tooltip?: string;
+	tooltip?: string | undefined;
 }
 
 export function IconButton({

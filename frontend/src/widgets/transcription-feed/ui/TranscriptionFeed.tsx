@@ -1,5 +1,3 @@
-"use client";
-
 import { ScrollArea } from "@base-ui/react/scroll-area";
 import { useTranslations } from "next-intl";
 import { useConnectionStore } from "@/entities/connection";

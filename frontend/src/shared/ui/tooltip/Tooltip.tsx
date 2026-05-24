@@ -1,5 +1,3 @@
-"use client";
-
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { Z_INDEX } from "@/shared/config/z-index";

@@ -45,12 +45,14 @@ export function createContextMenuIpcHandler(
 		});
 
 		await new Promise<void>((resolve) => {
-			adapter.popup({
-				template,
-				x: request.x,
-				y: request.y,
-				onClose: resolve,
-			});
+			const input: PopupInput = { template, onClose: resolve };
+			if (request.x !== undefined) {
+				input.x = request.x;
+			}
+			if (request.y !== undefined) {
+				input.y = request.y;
+			}
+			adapter.popup(input);
 		});
 
 		return { selectedId };
@@ -84,11 +86,18 @@ function parseContextMenuRequest(payload: unknown): ContextMenuIpcRequest {
 	if (!(isRecord(payload) && Array.isArray(payload.template))) {
 		throw new Error("Context menu request must contain a template array.");
 	}
-	return {
+	const request: ContextMenuIpcRequest = {
 		template: payload.template as ContextMenuTemplateItem[],
-		x: parseCoordinate(payload.x, "x"),
-		y: parseCoordinate(payload.y, "y"),
 	};
+	const x = parseCoordinate(payload.x, "x");
+	if (x !== undefined) {
+		request.x = x;
+	}
+	const y = parseCoordinate(payload.y, "y");
+	if (y !== undefined) {
+		request.y = y;
+	}
+	return request;
 }
 
 function isFiniteNumber(value: unknown): value is number {

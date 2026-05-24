@@ -1,5 +1,3 @@
-"use client";
-
 import type { ComponentPropsWithoutRef, ReactNode, Ref } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceClasses } from "./surface-classes";

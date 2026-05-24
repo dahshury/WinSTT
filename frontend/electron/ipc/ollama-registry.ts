@@ -113,13 +113,24 @@ function parseSearchHit(block: string, slug: string): OllamaLibraryHit {
 	const descMatch = block.match(DESCRIPTION_RE);
 	const pullsMatch = block.match(PULLS_RE);
 	const updatedMatch = block.match(UPDATED_RE);
-	return {
-		name: titleMatch?.[1] ?? slug,
-		description: descMatch ? stripTags(descMatch[1] ?? "") : undefined,
-		pulls: pullsMatch ? stripTags(pullsMatch[1] ?? "") : undefined,
-		updated: updatedMatch ? stripTags(updatedMatch[1] ?? "") : undefined,
-		capabilities: parseCapabilities(block),
-	};
+	const hit: OllamaLibraryHit = { name: titleMatch?.[1] ?? slug };
+	const description = descMatch ? stripTags(descMatch[1] ?? "") : undefined;
+	if (description !== undefined) {
+		hit.description = description;
+	}
+	const pulls = pullsMatch ? stripTags(pullsMatch[1] ?? "") : undefined;
+	if (pulls !== undefined) {
+		hit.pulls = pulls;
+	}
+	const updated = updatedMatch ? stripTags(updatedMatch[1] ?? "") : undefined;
+	if (updated !== undefined) {
+		hit.updated = updated;
+	}
+	const capabilities = parseCapabilities(block);
+	if (capabilities !== undefined) {
+		hit.capabilities = capabilities;
+	}
+	return hit;
 }
 
 function parseSearchPage(html: string): OllamaLibraryHit[] {
@@ -196,6 +207,34 @@ function parseParameterSize(tag: string): string | undefined {
 	return match[1]?.toUpperCase();
 }
 
+function buildLibraryTag(name: string, block: string): OllamaLibraryTag {
+	const sizeInfo = parseSize(block);
+	const ctxMatch = block.match(CONTEXT_RE);
+	const isLatest = LATEST_TAG_RE.test(block);
+	const quant = parseQuantization(name);
+	const paramSize = parseParameterSize(name);
+	const tag: OllamaLibraryTag = { name };
+	if (sizeInfo?.bytes !== undefined) {
+		tag.sizeBytes = sizeInfo.bytes;
+	}
+	if (sizeInfo?.label !== undefined) {
+		tag.sizeLabel = sizeInfo.label;
+	}
+	if (ctxMatch?.[1] !== undefined) {
+		tag.contextWindow = ctxMatch[1];
+	}
+	if (quant !== undefined) {
+		tag.quantization = quant;
+	}
+	if (paramSize !== undefined) {
+		tag.parameterSize = paramSize;
+	}
+	if (isLatest) {
+		tag.isLatest = true;
+	}
+	return tag;
+}
+
 function parseTagsPage(_model: string, html: string): OllamaLibraryTag[] {
 	const tags: OllamaLibraryTag[] = [];
 	const seen = new Set<string>();
@@ -214,19 +253,7 @@ function parseTagsPage(_model: string, html: string): OllamaLibraryTag[] {
 		seen.add(name);
 		const start = match.index ?? 0;
 		const end = anchors[i + 1]?.index ?? html.length;
-		const block = html.slice(start, end);
-		const sizeInfo = parseSize(block);
-		const ctxMatch = block.match(CONTEXT_RE);
-		const isLatest = LATEST_TAG_RE.test(block);
-		tags.push({
-			name,
-			sizeBytes: sizeInfo?.bytes,
-			sizeLabel: sizeInfo?.label,
-			contextWindow: ctxMatch ? ctxMatch[1] : undefined,
-			quantization: parseQuantization(name),
-			parameterSize: parseParameterSize(name),
-			isLatest: isLatest || undefined,
-		});
+		tags.push(buildLibraryTag(name, html.slice(start, end)));
 	}
 	// Ollama's tag page renders each row twice (mobile + desktop). We dedup
 	// by tag name above, but the page also starts with a `:latest` alias

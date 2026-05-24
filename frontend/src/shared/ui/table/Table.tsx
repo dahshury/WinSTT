@@ -1,5 +1,3 @@
-"use client";
-
 import { AnimatePresence, m as motion } from "motion/react";
 import {
 	type ComponentPropsWithoutRef,

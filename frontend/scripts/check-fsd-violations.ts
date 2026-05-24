@@ -4,7 +4,21 @@
  * FSD Violation Detection Script
  *
  * Detects all Feature-Sliced Design architecture violations according to
- * the rules defined in .cursor/rules/frontend_structure.mdc
+ * the rules defined in:
+ *   - frontend/CLAUDE.md (project-specific FSD rulebook)
+ *   - frontend/.fsd-ledger/ (per-rule provenance + residuals; the rules
+ *     here are derived from the official FSD spec at https://fsd.how
+ *     — see .fsd-ledger/_COVERAGE_MATRIX.md for the cross-reference)
+ *
+ * Stack assumptions:
+ *   - Bundler: Vite (multi-page Electron renderer; one HTML + one
+ *     src/entries/<name>.tsx per BrowserWindow). No Next.js, no router
+ *     framework — the old Next-era guards (App-Router app/ re-exports,
+ *     Pages-Router pages/_app.tsx, middleware.ts, instrumentation.ts)
+ *     have been removed.
+ *   - FSD layer rename: WinSTT keeps the FSD `pages` layer as `src/views/`
+ *     (originally a Next.js Pages-Router collision workaround; kept post
+ *     the Vite migration for import stability).
  */
 
 import { execSync } from "node:child_process";
@@ -62,7 +76,7 @@ interface ViolationReport {
 	deepAliasImports: Violation[];
 	deepRelativeImports: Violation[];
 	domainBasedFileNaming: Violation[];
-	// Batch D — Framework boundaries (Electron / Next.js / React-Query / routes)
+	// Batch D — Framework boundaries (Electron / Vite / React-Query / routes)
 	electronBoundary: Violation[];
 	excessiveSlicing: Violation[];
 	featureInfraSmuggling: Violation[];
@@ -81,7 +95,6 @@ interface ViolationReport {
 	missingPublicApi: Violation[];
 	multiPurposeFeature: Violation[];
 	nestedSegments: Violation[];
-	nextjsRouter: Violation[];
 	// Batch A — Layer & Structure Integrity
 	nonCanonicalLayers: Violation[];
 	nonCanonicalSegments: Violation[];
@@ -89,12 +102,13 @@ interface ViolationReport {
 	reactQueryPlacement: Violation[];
 	redirectOwnership: Violation[];
 	reservedTermNaming: Violation[];
-	sharedNameMirrorsSlice: Violation[];
+	routerPlacement: Violation[];
 	scatteredDomain: Violation[];
 	segmentAsSlice: Violation[];
 	selfImports: Violation[];
 	sharedAggregateImports: Violation[];
 	sharedLayerSlices: Violation[];
+	sharedNameMirrorsSlice: Violation[];
 	sharedQueryKeys: Violation[];
 	sliceGroupCode: Violation[];
 	summary: {
@@ -106,7 +120,7 @@ interface ViolationReport {
 }
 
 // FSD Layer hierarchy (top to bottom)
-// NOTE: WinSTT uses `views/` instead of `pages/` to avoid conflict with Next.js Pages Router.
+// NOTE: WinSTT uses `views/` instead of `pages/` to avoid conflict with Pages-style routers.
 // The FSD semantic role is identical — views is the route-level composition layer.
 const LAYERS = ["app", "views", "widgets", "features", "entities", "shared"] as const;
 type Layer = (typeof LAYERS)[number];
@@ -317,7 +331,7 @@ const violations: ViolationReport = {
 	authPagePairing: [],
 	// Batch D — Framework boundaries
 	electronBoundary: [],
-	nextjsRouter: [],
+	routerPlacement: [],
 	reactQueryPlacement: [],
 	redirectOwnership: [],
 	summary: {
@@ -913,7 +927,10 @@ function checkProcessesLayer(): void {
 // ===========================================================================
 
 // The only valid top-level FSD layer directories under src/ for WinSTT.
-// `views` is WinSTT's deliberate, sanctioned rename of FSD `pages`.
+// `views` is WinSTT's deliberate, sanctioned rename of FSD `pages` (originally
+// to dodge the Next.js Pages-Router collision; the rename stuck after the
+// migration to Vite because flipping it back would touch every `@/views/*`
+// import for zero architectural gain).
 const CANONICAL_LAYERS_SET = new Set<string>([
 	"app",
 	"views",
@@ -922,6 +939,30 @@ const CANONICAL_LAYERS_SET = new Set<string>([
 	"entities",
 	"shared",
 ]);
+
+// Sanctioned NON-layer top-level directories under src/. These are not FSD
+// layers — they are project conventions that must exist alongside the layers
+// without being flagged by checkNonCanonicalLayers. Files inside these dirs
+// are treated as "outside FSD" (getLayerFromPath returns null), so the
+// layer-aware import checks correctly skip them while the structural checks
+// (wildcardExports, artifactFiles, etc.) still apply per-file.
+//
+// `entries/` is the Vite multi-page Electron renderer bootstrap location.
+// Each Electron BrowserWindow loads its own HTML file from frontend/ root;
+// each HTML's <script> tag points at `src/entries/<name>.tsx`, which does
+// `createRoot(...).render(<View />)` and composes the FSD `app/` layout
+// stack around a `views/<view>` page. There is one .tsx per window
+// (main, settings, overlay, tray-menu, model-picker, device-picker,
+// onboarding). The vite.config.ts `rollupOptions.input` map is the
+// canonical list of valid entries; this script does NOT enforce that
+// listing — that is the build's job.
+//
+// Semantically these files belong to the FSD `app/` layer (they ARE the
+// renderer bootstrap), but Vite needs them at a stable input path that
+// matches the HTML reference, so they live at src/entries/ rather than
+// inside src/app/. Treat this as a Vite-imposed deviation from canonical
+// FSD layout, not a slice or a new layer.
+const RENDERER_BOOTSTRAP_ALLOWED_DIRS_SET = new Set<string>(["entries"]);
 
 // Deprecated `processes` layer + its documented synonyms / ad-hoc-layer revivals
 // (ref-layers-04, und-naming-03, mig-combined-01, skill-09/10). Any of these as a
@@ -1132,6 +1173,14 @@ async function checkNonCanonicalLayers(): Promise<void> {
 
 		// Exact canonical match -> valid layer, nothing to flag here.
 		if (CANONICAL_LAYERS_SET.has(name)) {
+			continue;
+		}
+
+		// Sanctioned non-layer top-level dirs (Vite multi-page renderer
+		// bootstraps in src/entries/). See RENDERER_BOOTSTRAP_ALLOWED_DIRS_SET
+		// for the rationale — these are not FSD layers but are required to
+		// coexist with the layers at src/ root.
+		if (RENDERER_BOOTSTRAP_ALLOWED_DIRS_SET.has(name)) {
 			continue;
 		}
 
@@ -3402,8 +3451,14 @@ async function scanDirectory(dir: string, fileList: string[] = []): Promise<stri
 		for (const entry of entries) {
 			const fullPath = join(dir, entry.name);
 
-			// Skip node_modules, .next, dist, etc.
-			if (entry.name.startsWith(".") || entry.name === "node_modules") {
+			// Skip node_modules, .next, dist, dist-renderer (the Vite output),
+			// etc. Dot-prefixed dirs catch `.next/`, `.cache/`, `.vite/`, etc.
+			if (
+				entry.name.startsWith(".") ||
+				entry.name === "node_modules" ||
+				entry.name === "dist" ||
+				entry.name === "dist-renderer"
+			) {
 				continue;
 			}
 
@@ -3446,7 +3501,9 @@ async function analyzeFile(filePath: string): Promise<void> {
 				const fsParts = relativePath.split(PATH_SEPARATOR_REGEX);
 				const fsSegIdx = fsParts.indexOf(segment);
 				const fsSlicePrefix =
-					fsSegIdx >= 1 ? fsParts.slice(0, fsSegIdx).join("/") : `${fsParts[0] ?? "<layer>"}/<slice>`;
+					fsSegIdx >= 1
+						? fsParts.slice(0, fsSegIdx).join("/")
+						: `${fsParts[0] ?? "<layer>"}/<slice>`;
 				const fixByName: Record<string, string> = {
 					hooks: `Move each file under src/${relativePath} out of the forbidden hooks/ segment: a domain/data hook → src/${fsSlicePrefix}/model/, an API query/mutation hook → src/${fsSlicePrefix}/api/, UI-only behavior → its component file in src/${fsSlicePrefix}/ui/, a project-wide reusable hook → src/shared/lib/hooks/. Then delete the empty hooks/ folder.`,
 					types: `Move the type aliases in src/${relativePath} out of the forbidden types/ segment: domain types → src/${fsSlicePrefix}/model/<domain>.ts, request/response/DTO types → src/${fsSlicePrefix}/api/, component prop types → the same .tsx file in src/${fsSlicePrefix}/ui/, generic utility types → src/shared/lib/utility-types/. Delete the types/ folder; never create a types/ bucket.`,
@@ -3732,7 +3789,7 @@ async function analyzeFile(filePath: string): Promise<void> {
 					) {
 						// Allow @x imports - they are the sanctioned cross-entity bridge
 						const isAtXImport = importParts[2] === "@x";
-						// Allow index.client.ts imports (Next.js pattern)
+						// Allow index.client.ts imports (Next-style pattern; harmless)
 						const isClientIndex = importParts[2] === "index.client";
 						if (!isAtXImport && !isClientIndex && !isTestFile(filePath)) {
 							violations.deepAliasImports.push({
@@ -4892,18 +4949,28 @@ function checkHardenedCircularImports(allFiles: readonly string[]): void {
 
 // ===========================================================================
 // Batch D — Framework boundaries (re-derived)
-//   Ledgers: tech-electron.md, tech-nextjs.md, tech-react-query.md,
+//   Ledgers: tech-electron.md, tech-router.md, tech-react-query.md,
 //            iss-routes.md, skill.md (Rskill-08 hardening only)
-//   Detectors: checkElectronBoundary, checkNextjsRouter,
+//   Detectors: checkElectronBoundary, checkRouterPlacement,
 //              checkReactQueryPlacement, checkRedirectOwnership (+ hardcodedUrls
 //              hardening). Strictly additive; reuses the Batch B edge helpers.
 // ===========================================================================
 
-/** frontend/ root (sibling of src/, electron/, app/). srcPath may be a fixture. */
+/** frontend/ root (sibling of src/, electron/). srcPath may be a fixture. */
 const BATCH_D_FRONTEND_ROOT = join(srcPath, "..");
 const BATCH_D_ELECTRON_DIR = join(BATCH_D_FRONTEND_ROOT, "electron");
-const BATCH_D_ROOT_APP_DIR = join(BATCH_D_FRONTEND_ROOT, "app");
-const BATCH_D_ROOT_PAGES_DIR = join(BATCH_D_FRONTEND_ROOT, "pages");
+// frontend/ now hosts per-window HTML files at its root (index.html,
+// settings.html, overlay.html, tray-menu.html, model-picker.html,
+// device-picker.html, onboarding.html) which Vite consumes as
+// rollupOptions.input entries. Each pairs with a src/entries/<name>.tsx
+// bootstrap (createRoot + render of an app-layer-composed views/<view>/
+// page). There is no router framework on disk after the Vite migration —
+// no Next.js app/, no Next.js pages/, no react-router routes.tsx — so the
+// old project-root `app/` and `pages/` Next-era guards have been removed.
+// The remaining router-shaped-file detector below (BATCH_D_ROUTER_BASENAMES)
+// still defends against page.tsx / layout.tsx / route.ts / (group)/ / [param]/
+// drifting INTO src/, which would re-introduce routing intent inside FSD
+// business layers regardless of which bundler we use.
 
 const BATCH_D_SCANNED_EXTS = [
 	".ts",
@@ -4931,7 +4998,17 @@ async function batchDCollect(
 	for (const e of entries) {
 		const full = join(dir, e.name);
 		if (e.isDirectory()) {
-			if (e.name === "node_modules" || e.name === ".next" || e.name === "dist") {
+			// Skip build/dependency artifacts. `dist-renderer/` is the current
+			// Vite output (per frontend/vite.config.ts -> build.outDir);
+			// `.next/` and `dist/` are kept as defensive skips in case any
+			// legacy / nested package re-introduces a Next.js or generic
+			// bundler output directory under the scan root.
+			if (
+				e.name === "node_modules" ||
+				e.name === ".next" ||
+				e.name === "dist" ||
+				e.name === "dist-renderer"
+			) {
 				continue;
 			}
 			await batchDCollect(full, exts, out);
@@ -5244,7 +5321,8 @@ async function checkElectronBoundary(allSrcFiles: readonly string[]): Promise<vo
 			const a = batchDPosix(abs);
 			const aNoExt = a.replace(/\.ts$/, "");
 			const targetsAnyEntry =
-				([...entryCandidates].some((c) => c === a) || entryNoExt.has(aNoExt)) && aNoExt !== p.replace(/\.ts$/, "");
+				([...entryCandidates].some((c) => c === a) || entryNoExt.has(aNoExt)) &&
+				aNoExt !== p.replace(/\.ts$/, "");
 			const targetsRendererAppEntry = a.startsWith(`${srcRoot}/app/`);
 			if (targetsAnyEntry) {
 				importedEntries.add(aNoExt);
@@ -5279,7 +5357,7 @@ async function checkElectronBoundary(allSrcFiles: readonly string[]): Promise<vo
 	}
 }
 
-const BATCH_D_NEXT_ROUTER_BASENAMES = new Set<string>([
+const BATCH_D_ROUTER_BASENAMES = new Set<string>([
 	"page",
 	"layout",
 	"template",
@@ -5292,27 +5370,39 @@ const BATCH_D_NEXT_ROUTER_BASENAMES = new Set<string>([
 ]);
 const BATCH_D_ROUTE_GROUP_RE = /^\(.*\)$/;
 const BATCH_D_DYNAMIC_SEG_RE = /^\[.*\]$/;
-const BATCH_D_ROOT_ONLY_RE =
-	/^(middleware|instrumentation|instrumentation-client)(\.(node|edge))?\.(ts|js|mjs|cjs|mts|cts|tsx)$/;
 
 function batchDBasenameNoExt(name: string): string {
 	return name.replace(/\.[^.]+$/, "");
 }
 
 /**
- * Rule Rtech-nextjs-01/02/04 — Next.js router files belong at the project
- * root `app/`, never inside `src/`; `middleware`/`instrumentation` are
- * root-only; `src/pages/` is forbidden (FSD pages layer is renamed views/).
+ * Rule Rtech-router-01/02 — routing concerns don't belong in FSD
+ * business-domain layers. WinSTT no longer ships a router framework: the
+ * Vite multi-page setup loads each Electron BrowserWindow's HTML directly
+ * (file:// in prod, http://localhost:3000/<page>.html in dev), and each
+ * HTML's <script> tag points at a single bootstrap in src/entries/. There
+ * is no react-router, no Next App-Router, no Pages-Router. The FSD
+ * invariant still stands, though: a file or directory named with router
+ * conventions (page.tsx / layout.tsx / route.ts / route-group `(grp)/` /
+ * dynamic `[param]/`) inside src/ signals that someone is about to leak
+ * routing intent into entities/features/widgets/views, so we flag those
+ * shapes defensively.
  *
- * Pages-Router guard (Rtech-nextjs-02) is CONDITIONAL: it fires ONLY on a
- * genuine Pages-Router risk — an existing `src/pages/` dir, or a real
- * Pages-Router file (`_app`/`_document` with logic) under a stray `pages/`.
- * It does NOT fire merely because the bare root `pages/` guard dir is absent
- * (WinSTT deliberately renamed pages→views; a perpetual "missing guard" would
- * be pure noise per the batch brief).
+ * Rule Rtech-router-02 also locks the layer name: WinSTT keeps FSD's
+ * pages layer renamed to src/views/ (originally a Next.js Pages-Router
+ * collision workaround; the rename stuck post the Vite migration because
+ * flipping it back would churn every @/views/* import for zero
+ * architectural gain). A `src/pages/` directory appearing alongside
+ * `src/views/` would split the codebase between two equivalent layer
+ * names; flag it so we keep one canonical home.
+ *
+ * The old `middleware.ts`/`instrumentation.ts` root-only check (Rtech-
+ * router-04) and the Pages-Router `_app`/`_document` activation guard
+ * were both Next-specific. They've been removed — no current bundler
+ * picks those file names up specially.
  */
-async function checkNextjsRouter(): Promise<void> {
-	// (1) reserved router files / route-group / dynamic-seg dirs under src/
+async function checkRouterPlacement(): Promise<void> {
+	// (1) router-shaped files / route-group / dynamic-seg dirs under src/
 	const srcAll = await batchDCollect(srcPath, [
 		".ts",
 		".tsx",
@@ -5336,90 +5426,45 @@ async function checkNextjsRouter(): Promise<void> {
 				const dirRel = `src/${parts.slice(0, i + 1).join("/")}`;
 				if (!seenDir.has(dirRel)) {
 					seenDir.add(dirRel);
-					violations.nextjsRouter.push({
+					violations.routerPlacement.push({
 						file: dirRel,
-						message: `Next.js route-group/dynamic-segment directory "${d}/" found under src/ (${dirRel}). Route folders belong in the project-root app/, not inside FSD layers (Rtech-nextjs-01).`,
+						message: `Router-convention directory "${d}/" found under src/ (${dirRel}). Route-group / dynamic-segment naming belongs in a project-root router folder, never inside FSD business layers (Rtech-router-01).`,
 						severity: "high",
 						suggestion:
-							"Move the routing concern to the root app/ folder (sibling of src/). Keep the route file a thin re-export of the FSD view: app/<route>/page.tsx → `export { <Slice>View as default, metadata } from \"@/views/<slice>\";`. Put the UI in src/views/<slice>/ui/.",
+							"Rename the directory to a plain FSD slice name (no parens, no brackets). If you genuinely need router-driven routing, set it up at the project root (sibling of src/) and re-export the FSD view from there — never put routing concerns inside src/.",
 					});
 				}
 			}
 		}
 
 		// reserved router basename inside src/, but NOT inside an FSD ui/ segment
-		if (BATCH_D_NEXT_ROUTER_BASENAMES.has(baseNoExt)) {
+		if (BATCH_D_ROUTER_BASENAMES.has(baseNoExt)) {
 			const inUiSegment = parts.includes("ui");
 			if (inUiSegment) {
 				continue;
 			}
-			violations.nextjsRouter.push({
+			violations.routerPlacement.push({
 				file: `src/${relPosix}`,
-				message: `Next.js App Router file "${parts[parts.length - 1]}" found under src/ (src/${relPosix}). Router files must live in the project-root app/ folder, not inside FSD layers (Rtech-nextjs-01).`,
+				message: `Router-shaped file "${parts[parts.length - 1]}" found under src/ (src/${relPosix}). Names like page.tsx / layout.tsx / route.ts encode routing intent and belong in a project-root router folder, not inside FSD layers (Rtech-router-01).`,
 				severity: "high",
 				suggestion:
-					"Move the routing concern out of src/: create/keep the route file at app/<route>/page.tsx (root, sibling of src/) as a thin re-export — `export { <Slice>View as default, metadata } from \"@/views/<slice>\";`. Put the actual UI in src/views/<slice>/ui/ and expose it via src/views/<slice>/index.ts. Never re-point Next.js's app dir into src/ via next.config.ts.",
-			});
-		}
-
-		// middleware / instrumentation anywhere under src/ (Rtech-nextjs-04)
-		const baseName = parts[parts.length - 1] ?? "";
-		if (BATCH_D_ROOT_ONLY_RE.test(baseName)) {
-			violations.nextjsRouter.push({
-				file: `src/${relPosix}`,
-				message: `Next.js root-only entrypoint "${baseName}" found under src/ (src/${relPosix}). middleware/instrumentation are only loaded from the project root (Rtech-nextjs-04).`,
-				severity: "high",
-				suggestion:
-					"Move it to the project root as middleware.ts / instrumentation.ts (sibling of app/). If the logic must live in FSD layers, keep the root file a thin wrapper importing from @/shared/... and rename the implementation file so it is NOT named middleware.ts/instrumentation.ts inside src/.",
+					'Rename the file to something domain-named (e.g. SettingsView.tsx, settings-layout.tsx). If routing is genuinely required, build the router at the project root and have its files re-export FSD views via `export { <Slice>View as default } from "@/views/<slice>";`.',
 			});
 		}
 	}
 
-	// (2) src/pages/ forbidden — FSD pages layer is renamed to src/views/
+	// (2) src/pages/ — WinSTT uses src/views/ as the FSD pages layer. Having
+	// both at once means imports get split between two equivalent homes.
 	const srcPagesDir = join(srcPath, "pages");
 	if (existsSync(srcPagesDir)) {
-		violations.nextjsRouter.push({
+		violations.routerPlacement.push({
 			file: "src/pages",
 			message:
-				"src/pages/ exists. In this project the FSD pages layer is renamed src/views/; a src/pages/ dir is both a non-canonical layer AND a genuine Next.js Pages-Router collision risk (Rtech-nextjs-02).",
+				"src/pages/ exists. WinSTT's FSD pages layer is renamed src/views/ (originally a Next.js Pages-Router workaround; the rename stuck post the Vite migration because flipping it back would churn every @/views/* import for zero architectural gain). Having both src/pages/ and src/views/ splits the codebase between two equivalent layer names (Rtech-router-02).",
 			severity: "high",
 			suggestion:
-				"Rename src/pages/ → src/views/ (the WinSTT FSD pages layer). Update imports to @/views/<slice>. Never keep a src/pages/ directory alongside src/views/ — Next.js may consume it as the Pages Router and break the build.",
+				"Pick one canonical home: either move the contents of src/pages/ into src/views/ and delete src/pages/, or commit to renaming the whole layer back to src/pages/ (touches every @/views/* import). Mixing both is the worst option. (Note: Vite-multi-page Electron does NOT need src/pages/ — each window's bootstrap lives in src/entries/<window>.tsx and composes a src/views/<view>/ page.)",
 		});
-	}
-
-	// (3) CONDITIONAL Pages-Router guard: only on genuine risk — a real
-	// Pages-Router file (`_app`/`_document` carrying logic) in a stray root
-	// pages/ dir. Bare absence of the root pages/ guard is intentionally NOT
-	// flagged (WinSTT renamed pages→views; that guard would be perpetual noise).
-	if (existsSync(BATCH_D_ROOT_PAGES_DIR)) {
-		const pagesFiles = await batchDCollect(BATCH_D_ROOT_PAGES_DIR, [
-			".ts",
-			".tsx",
-			".js",
-			".jsx",
-		]);
-		for (const filePath of pagesFiles) {
-			const base = batchDBasenameNoExt(basename(filePath));
-			const relPosix = batchDPosix(relative(BATCH_D_FRONTEND_ROOT, filePath));
-			const content = batchBReadFile(filePath);
-			const isReexportOnly =
-				/^\s*export\s*\{[^}]*\}\s*from\s*['"]/m.test(content) &&
-				!/\b(function|class)\b/.test(content) &&
-				!/<[A-Za-z]/.test(content);
-			// _app/_document with real logic, or any non-reexport route file in
-			// the root pages/ dir, is a genuine Pages-Router activation.
-			const isPagesRouterFile = base === "_app" || base === "_document";
-			if (isPagesRouterFile && !isReexportOnly) {
-				violations.nextjsRouter.push({
-					file: relPosix,
-					message: `Root pages/${basename(filePath)} contains Pages-Router logic. The root pages/ guard must stay empty/re-export-only or Next.js activates the Pages Router and breaks the App-Router build (Rtech-nextjs-02).`,
-					severity: "high",
-					suggestion:
-						"Reduce this file to a thin re-export: `export { <Slice>View as default } from \"@/views/<slice>\";`. The root pages/ folder must be (almost) empty — README.md/.gitkeep plus re-export-only stubs only. Real page implementations live in src/views/<slice>/.",
-				});
-			}
-		}
 	}
 }
 
@@ -5503,7 +5548,7 @@ async function checkReactQueryPlacement(allSrcFiles: readonly string[]): Promise
 					message: `React Query query factory found outside an entity api/ segment or shared/api/queries/ (src/${relPosix}, layer=${layer}). Query factories belong in src/entities/<e>/api/<e>.queries.ts or src/shared/api/queries/ (Rtech-react-query-01).`,
 					severity: "high",
 					suggestion:
-						"Move the query factory into the api/ segment of its owning entity: src/entities/<entity>/api/<entity>.queries.ts exporting `export const <entity>Queries = { all: () => [\"<entity>\"], list: (...) => queryOptions({ queryKey, queryFn }) }`, re-export it from the slice index.ts (named, no export *). If it does not belong to one entity, put it at src/shared/api/queries/<name>.ts and re-export from src/shared/api/index.ts. Never keep query factories in model/, lib/, ui/, a page/view, or a features/widgets slice.",
+						'Move the query factory into the api/ segment of its owning entity: src/entities/<entity>/api/<entity>.queries.ts exporting `export const <entity>Queries = { all: () => ["<entity>"], list: (...) => queryOptions({ queryKey, queryFn }) }`, re-export it from the slice index.ts (named, no export *). If it does not belong to one entity, put it at src/shared/api/queries/<name>.ts and re-export from src/shared/api/index.ts. Never keep query factories in model/, lib/, ui/, a page/view, or a features/widgets slice.',
 				});
 			} else if (relPosix.startsWith("shared/api/") && !inSharedApiQueries && !okStrict) {
 				violations.reactQueryPlacement.push({
@@ -5511,7 +5556,7 @@ async function checkReactQueryPlacement(allSrcFiles: readonly string[]): Promise
 					message: `Query factory under shared/api/ but not in the queries/ subfolder (src/${relPosix}). It must be src/shared/api/queries/<name>.ts (Rtech-react-query-01).`,
 					severity: "high",
 					suggestion:
-						"Move it to src/shared/api/queries/<name>.ts and add `export { <name>Queries } from \"./queries/<name>\";` to src/shared/api/index.ts. Do not define the factory inline in shared/api/index.ts.",
+						'Move it to src/shared/api/queries/<name>.ts and add `export { <name>Queries } from "./queries/<name>";` to src/shared/api/index.ts. Do not define the factory inline in shared/api/index.ts.',
 				});
 			}
 			// R-02: mutation mixed into the query factory
@@ -5606,14 +5651,15 @@ async function checkReactQueryPlacement(allSrcFiles: readonly string[]): Promise
 					message: `Generated API code (codegen banner / openapi-typescript paths|components shape) found outside src/shared/api/ (src/${relPosix}) (Rtech-react-query-08).`,
 					severity: "medium",
 					suggestion:
-						"Configure your codegen tool's output to src/shared/api/ (e.g. src/shared/api/<spec-name>/) and re-export the needed surface from src/shared/api/index.ts. Do not hand-place or generate OpenAPI client code, interface paths, or components[\"schemas\"] inside an entity/feature/widget/page, and do not strip the auto-generated banner.",
+						'Configure your codegen tool\'s output to src/shared/api/ (e.g. src/shared/api/<spec-name>/) and re-export the needed surface from src/shared/api/index.ts. Do not hand-place or generate OpenAPI client code, interface paths, or components["schemas"] inside an entity/feature/widget/page, and do not strip the auto-generated banner.',
 				});
 			}
 		}
 	}
 }
 
-const BATCH_D_REDIRECT_NAV_RE = /\b(useRouter|useNavigate|redirect|next\/navigation|react-router)\b/;
+const BATCH_D_REDIRECT_NAV_RE =
+	/\b(useRouter|useNavigate|redirect|next\/navigation|react-router)\b/;
 const BATCH_D_NAV_CALL_RE = /\b(redirect|navigate|push|replace)\s*\(/;
 const BATCH_D_ROUTE_LITERAL_RE = /['"`]\/(?!\/)[^'"`\s]*/;
 
@@ -5752,7 +5798,7 @@ async function checkHardcodedUrlsBatchDHardening(allSrcFiles: readonly string[])
 				message: `Hardcoded route below the pages layer via ${matchKind} ("${literal}") in src/${relPosix} (layer=${layer}). Layers below views/ must be URL-agnostic (Riss-routes-01 / Rskill-08).`,
 				severity: "high",
 				suggestion:
-					"Move this route literal out of the lower layer. (1) Add it to the centralized registry src/shared/routes/ (e.g. `export const ROUTES = { login: \"/login\", post: (id: string) => `/post/${id}` } as const;`). (2) In the owning page src/views/<page>/ui/<Page>.tsx compute the URL from ROUTES and pass it down as a prop. (3) This src/{entities|features|widgets|shared}/ file must accept the route via props/factory and contain no `/...` literal, redirect(), router.push/replace, navigate(), or aliased nav call. Only src/views/ and src/app/ own URLs and redirect logic.",
+					'Move this route literal out of the lower layer. (1) Add it to the centralized registry src/shared/routes/ (e.g. `export const ROUTES = { login: "/login", post: (id: string) => `/post/${id}` } as const;`). (2) In the owning page src/views/<page>/ui/<Page>.tsx compute the URL from ROUTES and pass it down as a prop. (3) This src/{entities|features|widgets|shared}/ file must accept the route via props/factory and contain no `/...` literal, redirect(), router.push/replace, navigate(), or aliased nav call. Only src/views/ and src/app/ own URLs and redirect logic.',
 			});
 		}
 	}
@@ -5807,7 +5853,7 @@ function generateSummary(): void {
 		violations.authInPageWidget.length +
 		violations.authPagePairing.length +
 		violations.electronBoundary.length +
-		violations.nextjsRouter.length +
+		violations.routerPlacement.length +
 		violations.reactQueryPlacement.length +
 		violations.redirectOwnership.length;
 
@@ -5856,7 +5902,7 @@ function generateSummary(): void {
 		authInPageWidget: violations.authInPageWidget.length,
 		authPagePairing: violations.authPagePairing.length,
 		electronBoundary: violations.electronBoundary.length,
-		nextjsRouter: violations.nextjsRouter.length,
+		routerPlacement: violations.routerPlacement.length,
 		reactQueryPlacement: violations.reactQueryPlacement.length,
 		redirectOwnership: violations.redirectOwnership.length,
 	};
@@ -5906,7 +5952,7 @@ function generateSummary(): void {
 		...violations.authInPageWidget,
 		...violations.authPagePairing,
 		...violations.electronBoundary,
-		...violations.nextjsRouter,
+		...violations.routerPlacement,
 		...violations.reactQueryPlacement,
 		...violations.redirectOwnership,
 	];
@@ -6097,9 +6143,9 @@ async function writeViolationsToFiles(): Promise<void> {
 			...v,
 			category: "Electron Process-Boundary Violation",
 		})),
-		...violations.nextjsRouter.map((v) => ({
+		...violations.routerPlacement.map((v) => ({
 			...v,
-			category: "Next.js Router Placement / Purity",
+			category: "Router Placement / Purity",
 		})),
 		...violations.reactQueryPlacement.map((v) => ({
 			...v,
@@ -6534,7 +6580,7 @@ function printReport(): void {
 	console.log(`  Auth in Page/Widget:   ${violations.summary.byCategory.authInPageWidget}`);
 	console.log(`  Auth Page Pairing:     ${violations.summary.byCategory.authPagePairing}`);
 	console.log(`  Electron Boundary:     ${violations.summary.byCategory.electronBoundary}`);
-	console.log(`  Next.js Router:        ${violations.summary.byCategory.nextjsRouter}`);
+	console.log(`  Router Placement:     ${violations.summary.byCategory.routerPlacement}`);
 	console.log(`  React-Query Placement: ${violations.summary.byCategory.reactQueryPlacement}`);
 	console.log(`  Redirect Ownership:    ${violations.summary.byCategory.redirectOwnership}`);
 
@@ -7192,14 +7238,14 @@ function printReport(): void {
 		}
 	}
 
-	// Batch D — Framework boundaries (Electron / Next.js / React-Query / routes)
+	// Batch D — Framework boundaries (Electron / Vite / React-Query / routes)
 	const batchDSections: Array<{ label: string; list: Violation[]; cap: number }> = [
 		{
 			label: " CRITICAL: Electron Process-Boundary Violation",
 			list: violations.electronBoundary,
 			cap: 60,
 		},
-		{ label: "  HIGH: Next.js Router Placement / Purity", list: violations.nextjsRouter, cap: 60 },
+		{ label: "  HIGH: Router Placement / Purity", list: violations.routerPlacement, cap: 60 },
 		{
 			label: "  HIGH: React-Query Factory/Client/Provider Placement",
 			list: violations.reactQueryPlacement,
@@ -7334,9 +7380,9 @@ async function main(): Promise<void> {
 	await checkLaunderedCrossImports(files);
 	checkHardenedCircularImports(files);
 
-	// Batch D — Framework boundaries (Electron / Next.js / React-Query / routes)
+	// Batch D — Framework boundaries (Electron / Vite / React-Query / routes)
 	await checkElectronBoundary(files);
-	await checkNextjsRouter();
+	await checkRouterPlacement();
 	await checkReactQueryPlacement(files);
 	await checkRedirectOwnership(files);
 	await checkHardcodedUrlsBatchDHardening(files);
@@ -7395,7 +7441,7 @@ async function main(): Promise<void> {
 						authInPageWidget: violations.authInPageWidget,
 						authPagePairing: violations.authPagePairing,
 						electronBoundary: violations.electronBoundary,
-						nextjsRouter: violations.nextjsRouter,
+						routerPlacement: violations.routerPlacement,
 						reactQueryPlacement: violations.reactQueryPlacement,
 						redirectOwnership: violations.redirectOwnership,
 					},

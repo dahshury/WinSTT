@@ -1,5 +1,3 @@
-"use client";
-
 import { Form } from "@base-ui/react/form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Delete02Icon } from "@hugeicons/core-free-icons";

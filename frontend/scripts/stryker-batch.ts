@@ -40,13 +40,13 @@ function run(): void {
 		concurrency: 1,
 		tempDirName: `.stryker-tmp/${reportSlug}`,
 		// Exclude heavy build output and prior sandbox leftovers from the copy.
-		// Without this, the sandbox copies the 731MB Next.js build dir AND any
-		// leftover .stryker-tmp/<slug> from previous batch runs, leading to
-		// path-too-long ENOENT errors on Windows.
+		// Without this, the sandbox copies dist-renderer/dist-electron/etc.
+		// AND any leftover .stryker-tmp/<slug> from previous batch runs,
+		// leading to path-too-long ENOENT errors on Windows.
 		ignorePatterns: [
-			"out",
-			".next",
 			"dist",
+			"dist-electron",
+			"dist-renderer",
 			".stryker-tmp",
 			"reports",
 			"playwright-report",

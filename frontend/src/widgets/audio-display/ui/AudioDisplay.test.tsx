@@ -1,7 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import { render } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import { AudioDisplay, __audio_display_test_helpers__ as helpers } from "./AudioDisplay";
+import { __audio_display_test_helpers__ as helpers } from "../lib/audio-display-test-helpers";
+import { AudioDisplay } from "./AudioDisplay";
 
 describe("AudioDisplay", () => {
 	test("renders without crashing", () => {

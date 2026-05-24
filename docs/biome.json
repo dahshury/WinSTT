@@ -10,10 +10,12 @@
     "includes": [
       "**",
       "!node_modules",
-      "!.next",
       "!dist",
       "!build",
-      "!.source"
+      "!.output",
+      "!.nitro",
+      "!.source",
+      "!src/routeTree.gen.ts"
     ]
   },
   "formatter": {
@@ -27,7 +29,6 @@
       "recommended": true
     },
     "domains": {
-      "next": "recommended",
       "react": "recommended"
     }
   },

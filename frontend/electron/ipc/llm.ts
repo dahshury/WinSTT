@@ -6,10 +6,6 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateObject } from "ai";
 import { BrowserWindow, ipcMain } from "electron";
 import { z } from "zod";
-import {
-	buildSystemPrompt,
-	type PresetEntry,
-} from "../../src/entities/llm-catalog/lib/preset-prompts";
 import { IPC } from "../../src/shared/api/ipc-channels";
 import {
 	ConnectionError,
@@ -19,9 +15,20 @@ import {
 } from "../../src/shared/lib/errors";
 import { buildOllamaApiUrl, normalizeOllamaEndpoint } from "../../src/shared/lib/ollama-endpoint";
 import { parseModelSelection } from "../../src/shared/lib/openrouter-model-selection";
+import {
+	buildSystemPrompt,
+	type CustomModifier,
+	isCustomEntry,
+	mergePresetsWithCustomModifiers,
+	type PresetEntry,
+} from "../../src/shared/lib/preset-prompts";
 import { dbg } from "../lib/debug-log";
 import { getStoreValue, store } from "../lib/store";
-import { getPostProcessingVocab } from "../lib/text-processing";
+import {
+	applyReplacementPairs,
+	getPostProcessingVocab,
+	type ReplacementPair,
+} from "../lib/text-processing";
 
 const execFileAsync = promisify(execFile);
 const NEWLINE_RE = /\r?\n/;
@@ -235,23 +242,117 @@ interface OpenRouterScanResult {
 // don't assert on its content; mutating to "" still produces a valid request
 // that the OpenAI/Ollama mock handlers accept identically.
 const STRUCTURED_OUTPUT_DESCRIPTION =
-	"Return ONLY the transformed text. No commentary, no explanations, no JSON keys other than `text`.";
+	"Return a JSON object with `text` (the transformed text, no commentary) and optionally `learned_proper_nouns` (an array of proper nouns / technical identifiers that appear in the dictation and are worth remembering across future dictations — see schema for the criteria).";
+
+const LEARNED_PROPER_NOUNS_DESCRIPTION =
+	'Optional. Up to 5 proper nouns or technical identifiers that appear in the user\'s dictation AND would be useful for the user to remember for future dictations. Include: people\'s names (first or full), product names, technical jargon, distinctive acronyms, unusual place names. EXCLUDE: common English words, generic terms ("app", "file", "dog"), anything already in the existing vocabulary list above, and anything from the visible CONTEXT that wasn\'t actually spoken. Leave empty when nothing qualifies. Pick conservatively — false positives are worse than misses.';
+
+/**
+ * Compose-vs-Generate rule. Applied UNCONDITIONALLY (independent of
+ * whether context-awareness captured anything) because the rule is
+ * about how to interpret the dictation itself: instructions like
+ * "reply professionally" / "translate to Spanish" / "make this concise"
+ * should be followed (compose), but instructions like "write a todo
+ * app" / "explain quantum physics" should NOT (generate from nothing).
+ *
+ * The line is "is the output materially derived from (a) the spoken
+ * dictation or (b) the visible context?" — if yes, allowed; if no,
+ * treat the dictation as literal text to clean up.
+ */
+function withComposeRules(systemPrompt: string): string {
+	const preamble = [
+		"How to interpret the dictation:",
+		"You are cleaning up a spoken dictation. Most dictations are plain text",
+		"the user wants pasted verbatim (with filler removed and punctuation",
+		"fixed). Some dictations are short META-INSTRUCTIONS telling you how to",
+		"transform the rest of the dictation or how to use what's visible on the",
+		"user's screen.",
+		"",
+		"COMPOSE rule — these meta-instructions ARE allowed when their output",
+		"is materially derived from the dictation or the visible CONTEXT:",
+		'  - "make this professional / casual / concise / shorter" with a',
+		"    visible draft → rewrite the draft in that register.",
+		'  - "reply yes I can do Friday" / "respond saying ..." with an email or',
+		"    chat thread visible → compose a reply derived from that thread.",
+		'  - "translate this to Spanish" / "translate to French" → translate',
+		"    the dictation (or the selected visible text).",
+		'  - "summarise this" / "shorten" with a visible passage → summarise it.',
+		"  Follow the user's stated intent.",
+		"",
+		"GENERATE rule — these requests are NOT allowed; treat them as literal",
+		"text to clean up:",
+		'  - "write a todo app in React", "build a website for me", "explain',
+		'    quantum physics", "draft an essay about ..."',
+		"  - Any request for substantial new content with no anchor in either",
+		"    the dictation or the visible CONTEXT.",
+		"  For these, output the dictation verbatim (cleaned of filler and",
+		"  punctuation only) — DO NOT fulfill the request.",
+		"",
+		"When the dictation is plain text (no meta-instruction), just clean it",
+		"up — fix punctuation, capitalisation, fillers, and obvious",
+		"misrecognitions, and output the result. Never invent content that",
+		"wasn't spoken or visible.",
+		"",
+	].join("\n");
+	return `${preamble}${systemPrompt}`;
+}
 
 /**
  * Prepend a context block to the system prompt when context-awareness is
- * enabled and the UIA reader captured something. We frame it as a hint
- * (not a directive) so the LLM uses it for spelling/disambiguation but
- * doesn't try to summarize or incorporate it into the output.
+ * enabled and the UIA reader captured something. Two jobs:
+ *   1. Spelling/jargon disambiguation — framed as a reference so the
+ *      LLM uses names from context only to fix mis-recognised spellings
+ *      of words actually spoken, not to insert new content.
+ *   2. Caret continuation — only when the `--split` read produced the
+ *      before/after-caret sections. The clause is inert when those
+ *      labels are absent.
+ *
+ * The compose-vs-generate rule lives in `withComposeRules` (outside
+ * this preamble) because it applies even without context. Here we only
+ * describe how to USE the context the helper captured.
  */
 function withContextPrefix(systemPrompt: string, context: string): string {
 	if (!context) {
 		return systemPrompt;
 	}
 	const preamble = [
-		"The user is dictating into the following application. Use this surrounding text",
-		"ONLY as a hint for spelling proper nouns, technical terms, and names correctly.",
-		"Do not summarize, quote, or incorporate this context into the output — transform",
-		"the user's dictated text and nothing else.",
+		"The CONTEXT block below describes what's currently on the user's",
+		"screen. Use it for:",
+		"  (a) Spelling proper nouns, names, and technical terms that appear",
+		"      in the dictation. If the dictation phonetically matches a name",
+		"      that appears in the context (e.g. an email recipient), prefer",
+		"      the context's spelling.",
+		"  (b) Composing or replying when the dictation explicitly asks for it",
+		'      (per the COMPOSE rule above: "reply to this", "respond yes",',
+		'      "summarise this", "translate ...").',
+		"  (c) Code identifier recognition. When the CONTEXT contains code —",
+		'      either because "IDE context: yes" is present in the header, or',
+		"      because the axHtml shows code-shaped tokens (camelCase like",
+		"      `useState`, PascalCase classes, snake_case functions, file",
+		"      paths with extensions like `auth.ts`, CLI flags like `--fix`) —",
+		"      AND the dictation phonetically matches one of those tokens,",
+		"      output the identifier verbatim wrapped in backticks. Examples:",
+		'        "use state hook" with `useState` visible → "`useState` hook"',
+		'        "get user by id"  with `getUserById` visible → "`getUserById`"',
+		'        "run with fix flag" with `--fix` visible → "run with `--fix`"',
+		"      Apply only when the match is phonetically clear; never invent",
+		"      identifiers the context doesn't actually show.",
+		"Do not reproduce, summarise, or echo the context unless a COMPOSE",
+		"instruction asked for it. Treat it as reference, not as content to",
+		"include.",
+		"",
+		"When a section for the text before the caret is present, the dictation is",
+		"being inserted at that caret — decide from how that text ends:",
+		"- If it ends mid-sentence (no terminal . ! ? : and not on a blank/new line),",
+		"  the dictation continues it: do not capitalize the first word (unless it is",
+		'  "I" or a proper noun) and add only the minimal joining space or punctuation',
+		"  needed to read on naturally.",
+		"- If it ends a sentence, ends with a newline, or there is no before-text,",
+		"  start the dictation normally with a capital letter.",
+		"Never reproduce the surrounding text. When a section for the text",
+		"after the caret is present, do not repeat words it already contains.",
+		"Output only the cleaned dictation, adjusted at its boundaries so it",
+		"stitches into place.",
 		"",
 		"<context>",
 		context,
@@ -262,16 +363,22 @@ function withContextPrefix(systemPrompt: string, context: string): string {
 }
 
 /**
- * Prepend the user's dictionary terms and snippet shortcuts to the system
- * prompt. The dictionary tells the LLM which canonical spellings to snap
- * mis-transcribed words to; snippets tell it which spoken phrases to expand.
- * Both lists are folded in here when the dictation LLM is enabled, replacing
- * the algorithmic post-processor — see relay.ts handleFullSentence flow.
+ * Prepend the user's dictionary terms, replacement pairs, and snippet
+ * shortcuts to the system prompt. Three lists folded in:
+ *   - `dictionary`     — vocab words; spelling reference (fuzzy near-miss).
+ *   - `replacementPairs` — deterministic misspelling→correction pairs;
+ *                          model is told to apply them, AND a safety-net
+ *                          string-replace runs on the output afterwards.
+ *   - `snippets`       — voice-trigger phrase expansions.
+ *
+ * Folded in when the dictation LLM is enabled, replacing the algorithmic
+ * post-processor — see relay.ts handleFullSentence flow.
  */
 function withVocabPrefix(
 	systemPrompt: string,
 	vocab: {
 		dictionary: readonly string[];
+		replacementPairs: readonly ReplacementPair[];
 		snippets: readonly { trigger: string; expansion: string }[];
 	}
 ): string {
@@ -279,16 +386,47 @@ function withVocabPrefix(
 	if (vocab.dictionary.length > 0) {
 		blocks.push(
 			[
-				"The user has the following preferred spellings for names, jargon, and",
-				"technical terms. When the dictated text contains a word that is",
-				"phonetically close to one of these terms (a near-miss spelling, a",
-				"homophone, or a transcription that drops/adds letters), replace it with",
-				"the exact canonical form below. Do NOT introduce these terms into the",
-				"output when they are not actually present in the dictated speech.",
+				"The list below is ONLY a spelling reference. Use it solely to fix a",
+				"word the speaker actually said but that was mis-transcribed: replace",
+				"a dictated word with a listed term ONLY when that word is an",
+				"unmistakable near-miss of it — essentially the same sounds and",
+				"length, differing only by a homophone or a few dropped, added, or",
+				'swapped letters (e.g. "oh llama" → "ollama", "base you eye" →',
+				'"baseui").',
+				"Hard limits — violating these is worse than missing a correction:",
+				"- NEVER insert a listed term that has no clearly corresponding",
+				"  similar-sounding word in the speech. If nothing in the dictation",
+				"  closely matches, output it unchanged.",
+				"- NEVER replace a common function word (it, is, the, will, this,",
+				"  that, a, to, and, pronouns, …) with a listed term.",
+				"- NEVER add a term as new content, and never rephrase or pad the",
+				"  sentence so a term fits. Only the words actually spoken may appear.",
+				'  (e.g. "Will it transcribe the text cleanly?" stays exactly that —',
+				'  it does NOT become "Will Ollama BaseUI transcribe …".)',
+				"- When in doubt, leave the original word as dictated.",
 				"",
 				"<preferred-terms>",
 				...vocab.dictionary.map((t) => `- ${t}`),
 				"</preferred-terms>",
+				"",
+			].join("\n")
+		);
+	}
+	if (vocab.replacementPairs.length > 0) {
+		blocks.push(
+			[
+				"The pairs below are DETERMINISTIC find-and-replace rules. When the",
+				"dictation contains a whole-word match of the FIND side (case-",
+				'insensitive, e.g. dictating "github" or "GitHub" or "GITHUB"),',
+				"replace it verbatim with the REPLACE side preserving the exact",
+				"casing shown. This is mechanical — apply without judgement, do not",
+				"second-guess the user's casing or punctuation choice.",
+				"",
+				"<replacement-pairs>",
+				...vocab.replacementPairs.map(
+					(p) => `- find "${p.term}" -> "${p.replacement.replaceAll("\n", "\\n")}"`
+				),
+				"</replacement-pairs>",
 				"",
 			].join("\n")
 		);
@@ -319,18 +457,35 @@ function withVocabPrefix(
  * Build the dictation system prompt with context + vocab folded in. The
  * vocab is read from the runtime post-processor cache so settings changes
  * are picked up live without re-plumbing the call chain.
+ *
+ * Layering (outermost → innermost):
+ *   1. vocab prefix    — user's spelling reference list
+ *   2. compose rules   — COMPOSE-vs-GENERATE rule for all dictations
+ *   3. context prefix  — how to use the visible UIA snapshot, caret rules
+ *   4. preset prompt   — chosen style (formal/casual/concise/...)
  */
 function buildDictationSystemPrompt(presets: readonly PresetEntry[], context: string): string {
 	const vocab = getPostProcessingVocab();
-	return withVocabPrefix(withContextPrefix(buildSystemPrompt(presets), context), vocab);
+	return withVocabPrefix(
+		withComposeRules(withContextPrefix(buildSystemPrompt(presets), context)),
+		vocab
+	);
 }
 
 // Stryker disable next-line ObjectLiteral,StringLiteral: equivalent — emptying
 // the schema definition or the `.describe()` annotation has no effect on parse
 // behaviour for the test fixtures (the `text` field is always present and a
 // string), and `.describe()` is metadata used only by tooling.
+//
+// `learned_proper_nouns` is the single-call dictionary-learning channel: the
+// cleanup model emits 0–5 proper nouns from the dictation that would be
+// useful to remember across future dictations. This replaces the parallel
+// `/llm/extract_asr_words` call Wispr Flow makes on the server — for local
+// LLMs a second call would double latency, so we piggyback the extraction on
+// the existing cleanup call's structured output.
 const transformedTextSchema = z.object({
 	text: z.string().describe("The transformed text, with no commentary or explanations."),
+	learned_proper_nouns: z.array(z.string()).optional().describe(LEARNED_PROPER_NOUNS_DESCRIPTION),
 });
 
 // Stryker disable next-line Regex: equivalent — the regex variants Stryker
@@ -367,7 +522,17 @@ function assertValidEndpoint(endpoint: string): string {
 }
 
 function describePresets(presets: readonly PresetEntry[]): string {
-	return presets.map((p) => (p.level ? `${p.key}:${p.level}` : p.key)).join(",");
+	return presets
+		.map((p) => {
+			if (isCustomEntry(p)) {
+				return p.level ? `custom:${p.id}:${p.level}` : `custom:${p.id}`;
+			}
+			if (p.key === "translate") {
+				return `translate:${p.targetLang ?? "English"}`;
+			}
+			return p.level ? `${p.key}:${p.level}` : p.key;
+		})
+		.join(",");
 }
 
 async function safeFetch(
@@ -408,16 +573,29 @@ function toOllamaModel(item: z.infer<typeof ollamaTagsModelSchema>): OllamaModel
 	// Normalize details: drop the wrapper entirely when every field is absent
 	// so consumers can `if (model.details)` for "we have something to render".
 	const details: OllamaModelDetails | undefined = d
-		? {
+		? llmOmitUndefined({
 				format: d.format ?? undefined,
 				family: d.family ?? undefined,
 				families: d.families ?? undefined,
 				parameterSize: d.parameter_size ?? undefined,
 				quantizationLevel: d.quantization_level ?? undefined,
-			}
+			})
 		: undefined;
 	const hasAny = details && Object.values(details).some((v) => v !== undefined);
-	return { name: item.name, size: item.size, modifiedAt, details: hasAny ? details : undefined };
+	const base = { name: item.name, size: item.size, modifiedAt };
+	return hasAny && details ? { ...base, details } : base;
+}
+
+function llmOmitUndefined<T extends Record<string, unknown>>(
+	obj: T
+): { [K in keyof T]?: Exclude<T[K], undefined> } {
+	const out: Record<string, unknown> = {};
+	for (const [k, v] of Object.entries(obj)) {
+		if (v !== undefined) {
+			out[k] = v;
+		}
+	}
+	return out as { [K in keyof T]?: Exclude<T[K], undefined> };
 }
 
 function parseOllamaTagsOrFail(json: unknown): OllamaScanResult {
@@ -447,6 +625,11 @@ const OPEN_THINK_TAG_RE = /<\/?think(?:ing)?>/gi;
 // input (whichever comes first). Used to stream natural-prose chunks to
 // the pill while the model is still emitting JSON characters.
 const PARTIAL_STRUCTURED_TEXT_RE = /"text"\s*:\s*"((?:[^"\\]|\\.)*)/;
+// Salvage-path scaffold peelers (see salvageStructuredText). Hoisted to
+// module scope — they run on every finalize for the malformed-envelope path.
+const TRAILING_BACKSLASH_RE = /\\+$/;
+const TRAILING_BRACE_RE = /\s*\}\s*$/;
+const TRAILING_QUOTE_RE = /\s*["”“]\s*$/u;
 // Match a balanced `\boxed{…}` allowing one level of nested braces (covers
 // the math-output convention used by Qwen-Math / DeepSeek-Math when the
 // model leaks chain-of-thought into `content` instead of `thinking`. The
@@ -529,6 +712,23 @@ function broadcastReasoningDelta(delta: string): void {
 	}
 }
 
+/**
+ * Broadcast a learned-proper-nouns batch to every renderer. The
+ * dictionary auto-add UI listens on this channel and folds each entry
+ * into its "Accept / Decline" queue. Empty arrays are dropped to keep
+ * the channel quiet on dictations where nothing qualifies — the listener
+ * doesn't need to debounce away no-ops.
+ */
+function broadcastLearnedProperNouns(nouns: readonly string[]): void {
+	if (nouns.length === 0) {
+		return;
+	}
+	const live = BrowserWindow.getAllWindows().filter(isLiveBrowserWindowForChat);
+	for (const bw of live) {
+		bw.webContents.send(IPC.LLM_LEARNED_PROPER_NOUNS, { nouns });
+	}
+}
+
 function parseChatStreamLine(line: string): z.infer<typeof ollamaChatStreamChunkSchema> | null {
 	try {
 		const json = JSON.parse(line) as unknown;
@@ -581,16 +781,27 @@ function applyChatStreamChunk(
 	}
 	if (message?.content) {
 		state.content += message.content;
-		// Try to stream the natural-prose `text` portion of the JSON to the
-		// pill. We accept partial extractions — once the `text` field opens
-		// every additional character becomes a delta the user can see live.
-		// When Ollama's structured-outputs path isn't in play (older Ollama,
-		// or a model that emits raw text instead of JSON) the partial-extract
-		// returns null and we fall back to broadcasting the raw content so
-		// the pill still streams something useful.
+		// Stream the natural-prose answer to the pill — never the JSON
+		// scaffolding. Two content shapes:
+		//
+		//  - Structured output (Ollama honored `format`): content is a JSON
+		//    envelope `{"text":"…"}`. ONLY the inner `text` value is human
+		//    output. Stream it via the partial extractor; until the field
+		//    opens, `partial` is null and we stream nothing — that's by
+		//    design and is what keeps the `{"text": "` scaffold (which the
+		//    user otherwise saw as a literal `text:{…}` prefix) out of the
+		//    visible reasoning band.
+		//  - Raw passthrough (older Ollama, or a model that ignored
+		//    `format` and emitted prose directly): stream the content as-is.
+		//
+		// The envelope is detected by a leading `{` on the trimmed buffer —
+		// the first non-whitespace char never changes as content grows, so
+		// this stays stable for the whole stream and a partial-extract miss
+		// no longer falls back to leaking the raw JSON.
+		const isStructuredEnvelope = state.content.trimStart().startsWith("{");
 		const partial = extractPartialStructuredText(state.content);
-		const visible = partial ?? state.content;
-		if (visible.length > state.contentStreamCursor) {
+		const visible = isStructuredEnvelope ? partial : state.content;
+		if (visible !== null && visible.length > state.contentStreamCursor) {
 			const delta = visible.slice(state.contentStreamCursor);
 			state.contentStreamCursor = visible.length;
 			broadcastReasoningDelta(delta);
@@ -741,15 +952,110 @@ function extractHarmonyAnswer(content: string): { thinking: string; answer: stri
 	return { thinking: analysisChunks.join("\n\n"), answer };
 }
 
+/** Resolve the JSON string escapes a model emits through Ollama's
+ *  schema-guided output. Unicode first, structural backslash last (so a
+ *  `\\n` literal isn't turned into a newline). Best-effort: exotic escapes
+ *  a dictation-cleanup model never emits are left as-is. */
+function unescapeJsonStringBody(s: string): string {
+	return s
+		.replace(/\\u([0-9a-fA-F]{4})/g, (_m, h: string) => String.fromCharCode(Number.parseInt(h, 16)))
+		.replace(/\\n/g, "\n")
+		.replace(/\\r/g, "\r")
+		.replace(/\\t/g, "\t")
+		.replace(/\\b/g, "\b")
+		.replace(/\\f/g, "\f")
+		.replace(/\\\//g, "/")
+		.replace(/\\"/g, '"')
+		.replace(/\\\\/g, "\\");
+}
+
+/** Salvage the `text` value from a near-miss envelope: the model closed the
+ *  JSON string with a smart/curly quote instead of `"`, dropped the closing
+ *  brace, or ran out of tokens mid-string. Without this the raw
+ *  `{ "text": "…\n…"}` (escapes and all) leaks straight into the paste —
+ *  exactly the failure users hit when a model substitutes “ for ". */
+function salvageStructuredText(content: string): string | null {
+	const m = content.match(PARTIAL_STRUCTURED_TEXT_RE);
+	if (!m) {
+		return null;
+	}
+	const body = (m[1] ?? "")
+		// A truncated tail can end on a lone escape backslash — drop it so
+		// the unescape pass below doesn't eat the next real character.
+		.replace(TRAILING_BACKSLASH_RE, "")
+		// Peel the trailing scaffold the broken JSON left behind: an
+		// optional closing brace and/or one closing quote (straight OR the
+		// smart quote that broke `JSON.parse` in the first place).
+		.replace(TRAILING_BRACE_RE, "")
+		.replace(TRAILING_QUOTE_RE, "");
+	const out = unescapeJsonStringBody(body).trim();
+	return out.length > 0 ? out : null;
+}
+
+/**
+ * Best-effort extraction of `learned_proper_nouns` from the structured
+ * envelope. Returns an empty array when the field is missing or the
+ * payload couldn't be parsed (the field is `optional` in the schema so
+ * a model that skips it isn't an error). Filters to non-empty strings
+ * and caps at 10 entries — the schema says ≤5 but a leaky model
+ * occasionally over-emits; we don't want a single bad cleanup turning
+ * into a dictionary spam attack.
+ */
+function extractLearnedProperNouns(content: string): readonly string[] {
+	const trimmed = content
+		.trim()
+		.replace(MARKDOWN_FENCE_OPEN_RE, "")
+		.replace(MARKDOWN_FENCE_CLOSE_RE, "")
+		.trim();
+	if (!trimmed.startsWith("{")) {
+		return [];
+	}
+	try {
+		const parsed = JSON.parse(trimmed) as unknown;
+		if (
+			parsed &&
+			typeof parsed === "object" &&
+			"learned_proper_nouns" in parsed &&
+			Array.isArray((parsed as { learned_proper_nouns: unknown }).learned_proper_nouns)
+		) {
+			const raw = (parsed as { learned_proper_nouns: unknown[] }).learned_proper_nouns;
+			const cleaned: string[] = [];
+			for (const item of raw) {
+				if (typeof item !== "string") {
+					continue;
+				}
+				const value = item.trim();
+				if (value.length === 0 || value.length > 60) {
+					continue;
+				}
+				cleaned.push(value);
+				if (cleaned.length >= 10) {
+					break;
+				}
+			}
+			return cleaned;
+		}
+	} catch {
+		// Truncated or malformed JSON — accept the nounless answer.
+	}
+	return [];
+}
+
 /**
  * Try to parse the chat content as the structured-output JSON envelope
  * `{ "text": "..." }`. Returns the inner text on success, `null` when
- * the content isn't JSON (model didn't honor `format`) or doesn't have
- * the expected shape — in which case we fall through to the legacy
- * extractors below.
+ * the content isn't an envelope at all (model didn't honor `format`) — in
+ * which case we fall through to the legacy extractors below. Strict
+ * `JSON.parse` is the happy path; a malformed-but-recognisable envelope
+ * (smart-quote close, missing brace, truncation) is salvaged rather than
+ * leaked verbatim.
  */
 function extractStructuredFinalText(content: string): string | null {
-	const trimmed = content.trim();
+	const trimmed = content
+		.trim()
+		.replace(MARKDOWN_FENCE_OPEN_RE, "")
+		.replace(MARKDOWN_FENCE_CLOSE_RE, "")
+		.trim();
 	if (!trimmed.startsWith("{")) {
 		return null;
 	}
@@ -761,12 +1067,17 @@ function extractStructuredFinalText(content: string): string | null {
 			"text" in parsed &&
 			typeof (parsed as { text: unknown }).text === "string"
 		) {
+			// Surface the proper nouns as a side effect — the cleanup
+			// call's return type stays a single string (compatible with
+			// every existing caller) but Phase 3b's dictionary auto-add
+			// pipeline reads from the broadcast channel.
+			broadcastLearnedProperNouns(extractLearnedProperNouns(trimmed));
 			return (parsed as { text: string }).text;
 		}
 	} catch {
-		// Truncated or malformed JSON — fall through.
+		// Truncated or malformed JSON — fall through to salvage.
 	}
-	return null;
+	return salvageStructuredText(trimmed);
 }
 
 function finalizeChatAnswer(state: OllamaChatStreamState, fallback: string): string {
@@ -894,6 +1205,11 @@ const OLLAMA_STRUCTURED_OUTPUT_SCHEMA = {
 			description:
 				"The transformed text only. No reasoning, no steps, no preambles, no commentary.",
 		},
+		learned_proper_nouns: {
+			type: "array",
+			items: { type: "string" },
+			description: LEARNED_PROPER_NOUNS_DESCRIPTION,
+		},
 	},
 	required: ["text"],
 	additionalProperties: false,
@@ -1005,7 +1321,7 @@ function enrichOpenRouterModel(m: z.infer<typeof openRouterModelSchema>): OpenRo
 	// frontend) doesn't have to thread null-handling through every downstream
 	// renderer. OpenRouter is inconsistent about this — some endpoints return
 	// `null`, others omit the field entirely; we collapse both to "absent".
-	return {
+	return llmOmitUndefined({
 		id: m.id,
 		name: m.name,
 		description: m.description ?? undefined,
@@ -1017,7 +1333,7 @@ function enrichOpenRouterModel(m: z.infer<typeof openRouterModelSchema>): OpenRo
 		variant,
 		supported_parameters: m.supported_parameters ?? undefined,
 		architecture: m.architecture ?? undefined,
-	};
+	}) as OpenRouterScanModel;
 }
 
 /**
@@ -1112,10 +1428,10 @@ async function fetchModelEndpoints(
 	if (!data) {
 		return null;
 	}
-	return {
-		description: data.description,
-		endpoints: data.endpoints ?? [],
-	};
+	const endpoints = data.endpoints ?? [];
+	return data.description === undefined
+		? { endpoints }
+		: { description: data.description, endpoints };
 }
 
 /**
@@ -1166,11 +1482,13 @@ function enrichOpenRouterModelsWithEndpoints(
 			if (!detail) {
 				return model;
 			}
-			return {
-				...model,
-				description: pickLongerDescription(model.description, detail.description),
-				endpoints: detail.endpoints,
-			};
+			const description = pickLongerDescription(model.description, detail.description);
+			const { description: _omitted, ...rest } = model;
+			const enriched: OpenRouterScanModel =
+				description === undefined
+					? { ...rest, endpoints: detail.endpoints }
+					: { ...rest, endpoints: detail.endpoints, description };
+			return enriched;
 		} catch (err) {
 			dbg("llm", `Failed to enrich ${model.id}:`, getErrorMessage(err));
 			return model;
@@ -1320,7 +1638,8 @@ async function processWithOllama(
 	presets: readonly PresetEntry[],
 	endpoint: string,
 	_timeout: number,
-	context: string
+	context: string,
+	thinkingEffort: ThinkingEffort
 ): Promise<string> {
 	assertNonEmptyString(model, "Ollama model is required", "model");
 	const normalizedEndpoint = assertValidEndpoint(endpoint);
@@ -1343,8 +1662,7 @@ async function processWithOllama(
 	const controller = new AbortController();
 	registerChatController(controller);
 	const supportsThinking = await modelSupportsThinking(normalizedEndpoint, model);
-	const effort =
-		(getStoreValue("llm.dictation.thinkingEffort") as ThinkingEffort | undefined) ?? "medium";
+	const effort = thinkingEffort;
 	try {
 		const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/chat"), {
 			method: "POST",
@@ -1507,6 +1825,28 @@ async function processWithOpenRouter(
 		},
 	});
 
+	// Surface any proper nouns the model identified — same channel the
+	// Ollama path uses, so the dictionary auto-add UI doesn't care which
+	// provider answered. Filter / cap defensively even though the schema
+	// already constrains `learned_proper_nouns`: provider quirks (extra
+	// whitespace, occasional dupes) are cheaper to handle here than in
+	// every consumer.
+	const rawNouns = result.object.learned_proper_nouns ?? [];
+	const seen = new Set<string>();
+	const cleanedNouns: string[] = [];
+	for (const raw of rawNouns) {
+		const value = typeof raw === "string" ? raw.trim() : "";
+		if (value.length === 0 || value.length > 60 || seen.has(value)) {
+			continue;
+		}
+		seen.add(value);
+		cleanedNouns.push(value);
+		if (cleanedNouns.length >= 10) {
+			break;
+		}
+	}
+	broadcastLearnedProperNouns(cleanedNouns);
+
 	return returnTextIfEmpty(result.object.text.trim(), text);
 }
 
@@ -1594,40 +1934,94 @@ async function runOpenRouterWithFallback(
 	}
 }
 
+// Per-feature LLM config. dictation and transforms each carry their own
+// provider/model/openrouter selection, custom modifiers, and thinking effort.
+type LlmFeature = "dictation" | "transforms";
+
+interface FeatureLlmConfig {
+	customModifiers: readonly CustomModifier[];
+	model: string;
+	openrouterFallbackModel: string;
+	openrouterModel: string;
+	presets: readonly PresetEntry[];
+	provider: string;
+	thinkingEffort: ThinkingEffort;
+}
+
+function readFeatureLlmConfig(feature: LlmFeature): FeatureLlmConfig {
+	if (feature === "transforms") {
+		return {
+			provider: getStoreValue("llm.transforms.provider"),
+			model: getStoreValue("llm.transforms.model"),
+			openrouterModel: getStoreValue("llm.transforms.openrouterModel"),
+			openrouterFallbackModel: getStoreValue("llm.transforms.openrouterFallbackModel"),
+			thinkingEffort:
+				(getStoreValue("llm.transforms.thinkingEffort") as ThinkingEffort | undefined) ?? "medium",
+			presets: getStoreValue("llm.transforms.presets") as readonly PresetEntry[],
+			customModifiers: getStoreValue("llm.transforms.customModifiers") as readonly CustomModifier[],
+		};
+	}
+	return {
+		provider: getStoreValue("llm.dictation.provider"),
+		model: getStoreValue("llm.dictation.model"),
+		openrouterModel: getStoreValue("llm.dictation.openrouterModel"),
+		openrouterFallbackModel: getStoreValue("llm.dictation.openrouterFallbackModel"),
+		thinkingEffort:
+			(getStoreValue("llm.dictation.thinkingEffort") as ThinkingEffort | undefined) ?? "medium",
+		presets: getStoreValue("llm.dictation.presets") as readonly PresetEntry[],
+		customModifiers: getStoreValue("llm.dictation.customModifiers") as readonly CustomModifier[],
+	};
+}
+
 function runOpenRouterPath(
 	text: string,
 	presets: readonly PresetEntry[],
 	timeout: number,
-	context: string
+	context: string,
+	cfg: FeatureLlmConfig
 ): Promise<string> {
 	const apiKey = getStoreValue("llm.openrouterApiKey");
-	const primary = getStoreValue("llm.dictation.openrouterModel");
-	const fallback = getStoreValue("llm.dictation.openrouterFallbackModel");
-	return runOpenRouterWithFallback(text, apiKey, primary, fallback, presets, timeout, context);
+	return runOpenRouterWithFallback(
+		text,
+		apiKey,
+		cfg.openrouterModel,
+		cfg.openrouterFallbackModel,
+		presets,
+		timeout,
+		context
+	);
 }
 
 function runOllamaPath(
 	text: string,
 	presets: readonly PresetEntry[],
 	timeout: number,
-	context: string
+	context: string,
+	cfg: FeatureLlmConfig
 ): Promise<string> {
 	const endpoint = getStoreValue("llm.endpoint");
-	const model = getStoreValue("llm.dictation.model");
-	return processWithOllama(text, model, presets, endpoint, timeout, context);
+	return processWithOllama(
+		text,
+		cfg.model,
+		presets,
+		endpoint,
+		timeout,
+		context,
+		cfg.thinkingEffort
+	);
 }
 
 function runProcessText(
 	text: string,
-	provider: string,
 	presets: readonly PresetEntry[],
 	timeout: number,
-	context: string
+	context: string,
+	cfg: FeatureLlmConfig
 ): Promise<string> {
-	if (provider === "openrouter") {
-		return runOpenRouterPath(text, presets, timeout, context);
+	if (cfg.provider === "openrouter") {
+		return runOpenRouterPath(text, presets, timeout, context, cfg);
 	}
-	return runOllamaPath(text, presets, timeout, context);
+	return runOllamaPath(text, presets, timeout, context, cfg);
 }
 
 /**
@@ -1642,20 +2036,35 @@ function runProcessText(
  * Windows UIA reader when context-awareness is enabled. Empty string ⇒
  * behaves identically to the no-context path.
  */
-export async function processText(text: string, context = ""): Promise<string> {
+export async function processText(
+	text: string,
+	context = "",
+	feature: LlmFeature = "dictation"
+): Promise<string> {
 	assertNonEmptyString(text, "Text is required for LLM processing", "text");
 
-	const provider = getStoreValue("llm.dictation.provider");
-	const presets = getStoreValue("llm.dictation.presets") as readonly PresetEntry[];
+	const cfg = readFeatureLlmConfig(feature);
+	// Enabled custom modifiers are folded into the preset list here so the
+	// whole downstream chain (compose, logging, both provider paths) keeps
+	// operating on the single `presets` array — no extra param threading.
+	const presets = mergePresetsWithCustomModifiers(cfg.presets, cfg.customModifiers);
 	// `llm.timeout` is read so settings/wiring stay live (settings UI, persisted
 	// value, tests asserting `storeKeyAccesses`), but the value is currently
 	// ignored at the network layer — see processWithOllama/processWithOpenRouter.
 	const timeout = getStoreValue("llm.timeout");
 
 	try {
-		return await runProcessText(text, provider, presets, timeout, context);
+		const cleaned = await runProcessText(text, presets, timeout, context, cfg);
+		// Deterministic safety net: even when the LLM was supposed to apply
+		// the user's replacement pairs from the system prompt, models
+		// occasionally miss one or invent their own casing. The same
+		// string-replace pass runs on the algorithmic path; running it here
+		// too means a replacement pair is GUARANTEED to fire regardless of
+		// which provider answered (or whether it misbehaved).
+		const vocab = getPostProcessingVocab();
+		return applyReplacementPairs(cleaned, vocab.replacementPairs);
 	} catch (err) {
-		return mapAndThrowOrReturn(err, { provider, presets, timeout }, text);
+		return mapAndThrowOrReturn(err, { provider: cfg.provider, presets, timeout }, text);
 	}
 }
 
@@ -2064,7 +2473,7 @@ function buildPullProgress(
 	model: string,
 	parsed: z.infer<typeof ollamaPullProgressSchema>
 ): OllamaPullProgressPayload {
-	return {
+	return llmOmitUndefined({
 		model,
 		status: classifyPullStatus(parsed.status),
 		statusText: parsed.status,
@@ -2073,7 +2482,7 @@ function buildPullProgress(
 		total: parsed.total,
 		percent: computePercent(parsed.completed, parsed.total),
 		error: parsed.error,
-	};
+	}) as OllamaPullProgressPayload;
 }
 
 function* iterateNdjsonChunks(buffer: { value: string }): Generator<string> {
@@ -2944,6 +3353,8 @@ function cleanupLlmWarmup(): void {
 
 export const __llm_test_helpers__ = {
 	withContextPrefix,
+	withVocabPrefix,
+	salvageStructuredText,
 	assertNonEmptyString,
 	assertValidEndpoint,
 	describePresets,

@@ -1,5 +1,3 @@
-"use client";
-
 import { useTranslations } from "next-intl";
 import { formatKeyName } from "@/shared/lib/format-key-name";
 import type { InputGroupTone } from "@/shared/ui/input-group";

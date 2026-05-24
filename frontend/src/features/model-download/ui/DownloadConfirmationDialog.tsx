@@ -1,5 +1,3 @@
-"use client";
-
 import { resolveQuantCache } from "@picker";
 import { type ReactNode, useCallback } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -50,7 +48,7 @@ export interface DownloadConfirmationDialogProps {
 		kind: "main" | "realtime";
 		modelId: string;
 		previousModelId: string;
-		quantization?: OnnxQuantization;
+		quantization?: OnnxQuantization | undefined;
 	} | null;
 	statesById: StatesById;
 	systemInfo: SystemInfo;

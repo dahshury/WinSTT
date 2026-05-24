@@ -166,7 +166,7 @@ describe("matchesRecommended", () => {
 	});
 
 	test("handles model with no tags (undefined)", () => {
-		const m = makeRecommended({ tags: undefined, name: "gemma3:4b" });
+		const m = makeRecommended({ name: "gemma3:4b" });
 		// With non-matching query, should only rely on name/displayName/description
 		expect(matchesRecommended(m, new Set(), "xyz")).toBe(false);
 		expect(matchesRecommended(m, new Set(), "gemma")).toBe(true);
@@ -184,7 +184,6 @@ describe("matchesRecommended", () => {
 			name: "gemma3:4b",
 			displayName: "Gemma 3 4B",
 			description: "A small but capable language model.",
-			tags: undefined,
 		});
 		expect(matchesRecommended(m, new Set(), "stryker")).toBe(false);
 	});

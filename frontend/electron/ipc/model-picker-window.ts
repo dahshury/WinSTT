@@ -1,14 +1,26 @@
 import path from "node:path";
 import { BrowserWindow, ipcMain, screen, shell } from "electron";
 import { dbg } from "../lib/debug-log";
+import {
+	isAllowedRendererUrl,
+	isHttpUrl,
+	isSameOrigin,
+	loadRendererPage,
+} from "../lib/renderer-url";
 
 // Detached, frameless window that hosts the full STT model picker. The main
 // window is only 420×150, and Electron clips DOM at the OS window edge — so
 // the rich picker (search / family rail / per-row quantization) physically
-// can't be shown inside it. This window escapes those bounds: it renders the
-// `/model-picker` route, sizes itself to the picker's reported content size,
-// and anchors just above the footer chip that opened it. Mirrors the proven
-// tray-menu-window mechanism.
+// can't be shown inside it.
+//
+// This is a **full-screen transparent backdrop window**: it fills the entire
+// display work area, the visible panel is absolutely positioned inside it
+// (anchored above the footer chip via the `model-picker:anchor` IPC), and
+// everything else is a transparent click-to-dismiss backdrop. A click that
+// isn't the panel — the visualizer, the dictation text, the desktop, another
+// window — lands on the backdrop and closes it. That makes dismissal
+// independent of OS focus, window activation, drag regions, and global hooks,
+// all of which previously each missed some region.
 
 let pickerWindow: BrowserWindow | null = null;
 let pageLoaded = false;
@@ -52,15 +64,6 @@ let desiredSize = { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
 let suppressBlurUntil = 0;
 let lastHiddenAt = 0;
 
-function getRendererBaseUrl(): string {
-	return process.env.WINSTT_RENDERER_BASE_URL ?? "http://localhost:3000";
-}
-
-function getRendererRouteUrl(route: string): string {
-	const normalizedRoute = route.startsWith("/") ? route : `/${route}`;
-	return new URL(normalizedRoute, `${getRendererBaseUrl()}/`).toString();
-}
-
 function isWindowAlive(win: BrowserWindow | null): win is BrowserWindow {
 	return win !== null && !win.isDestroyed();
 }
@@ -93,6 +96,8 @@ function hideAliveWindow(win: BrowserWindow | null): void {
 	animateOpacity(win, 0, easeInCubic, () => moveOffscreen(win));
 }
 
+// The renderer backdrop catches in-app clicks; blur only covers leaving to
+// another app entirely (alt-tab) — a useful secondary close.
 function handleBlur(): void {
 	if (Date.now() < suppressBlurUntil) {
 		return;
@@ -113,23 +118,11 @@ function handleDidFinishLoad(): void {
 	pageLoaded = true;
 }
 
-function isSameOrigin(url: string, baseUrl: string): boolean {
-	try {
-		return new URL(url).origin === new URL(baseUrl).origin;
-	} catch {
-		return false;
-	}
-}
-
 function handleWillNavigate(event: Electron.Event, url: string): void {
-	if (isSameOrigin(url, getRendererBaseUrl())) {
+	if (isAllowedRendererUrl(url)) {
 		return;
 	}
 	event.preventDefault();
-}
-
-function isHttpUrl(url: string): boolean {
-	return url.startsWith("https://") || url.startsWith("http://");
 }
 
 function handleWindowOpen({ url }: { url: string }): { action: "deny" } {
@@ -174,7 +167,7 @@ function attachPickerListeners(win: BrowserWindow): void {
 	win.webContents.on("will-navigate", handleWillNavigate);
 	win.webContents.setWindowOpenHandler(handleWindowOpen);
 	win.webContents.once("did-finish-load", handleDidFinishLoad);
-	win.loadURL(getRendererRouteUrl("/model-picker")).catch(logPickerLoadError);
+	loadRendererPage(win, "model-picker").catch(logPickerLoadError);
 	win.on("blur", handleBlur);
 }
 
@@ -272,6 +265,18 @@ export function computePickerPosition(
 	return { x, y: Math.max(y, workArea.y), width, height };
 }
 
+// Tell the renderer where to draw the panel inside the full-screen window.
+// Coords are window-local (= screen coords minus the work-area origin, since
+// the window IS the work area).
+function sendAnchor(win: BrowserWindow, panel: PickerBounds, workArea: { x: number; y: number }) {
+	win.webContents.send("model-picker:anchor", {
+		x: panel.x - workArea.x,
+		y: panel.y - workArea.y,
+		width: panel.width,
+		height: panel.height,
+	});
+}
+
 function placeAndShowPicker(win: BrowserWindow): void {
 	if (!lastAnchor) {
 		return;
@@ -280,9 +285,13 @@ function placeAndShowPicker(win: BrowserWindow): void {
 		x: lastAnchor.screenLeft,
 		y: lastAnchor.screenTopY,
 	});
-	const bounds = computePickerPosition(lastAnchor, desiredSize, display.workArea);
+	const { workArea } = display;
+	// The window fills the whole work area; the visible panel is positioned
+	// within it by the renderer, everything else is a transparent backdrop.
+	const panel = computePickerPosition(lastAnchor, desiredSize, workArea);
 	win.setOpacity(0);
-	win.setBounds(bounds);
+	win.setBounds(workArea);
+	sendAnchor(win, panel, workArea);
 	win.show();
 	win.setAlwaysOnTop(true);
 	win.moveTop();
@@ -291,8 +300,18 @@ function placeAndShowPicker(win: BrowserWindow): void {
 	win.focus();
 }
 
+let pendingDeferredShow = false;
+
 function deferShowUntilLoaded(win: BrowserWindow): void {
+	// Repeated chip clicks before the route finishes loading must not stack
+	// multiple did-finish-load callbacks (each would re-run the show). One
+	// is enough — it reads the latest `lastAnchor` when it fires.
+	if (pendingDeferredShow) {
+		return;
+	}
+	pendingDeferredShow = true;
 	win.webContents.once("did-finish-load", () => {
+		pendingDeferredShow = false;
 		placeAndShowPicker(win);
 	});
 }
@@ -357,17 +376,20 @@ interface OpenRect {
 	y: number;
 }
 
-function isOpenPayload(value: unknown): value is OpenRect {
+function isSizePayload(value: unknown): value is { width: number; height: number } {
 	if (typeof value !== "object" || value === null) {
 		return false;
 	}
 	const r = value as Record<string, unknown>;
-	return (
-		typeof r.x === "number" &&
-		typeof r.y === "number" &&
-		typeof r.width === "number" &&
-		typeof r.height === "number"
-	);
+	return typeof r.width === "number" && typeof r.height === "number";
+}
+
+function isOpenPayload(value: unknown): value is OpenRect {
+	if (!isSizePayload(value)) {
+		return false;
+	}
+	const r = value as Record<string, unknown>;
+	return typeof r.x === "number" && typeof r.y === "number";
 }
 
 function handleOpen(event: Electron.IpcMainEvent, payload: unknown): void {
@@ -400,15 +422,9 @@ function handleOpen(event: Electron.IpcMainEvent, payload: unknown): void {
 }
 
 function handleResize(_event: Electron.IpcMainEvent, payload: unknown): void {
-	if (
-		typeof payload !== "object" ||
-		payload === null ||
-		typeof (payload as { width: unknown }).width !== "number" ||
-		typeof (payload as { height: unknown }).height !== "number"
-	) {
-		return;
+	if (isSizePayload(payload)) {
+		applyResize(payload);
 	}
-	applyResize(payload as { width: number; height: number });
 }
 
 function handleClose(): void {
@@ -421,6 +437,7 @@ function destroyPickerWindow(): void {
 	}
 	pickerWindow = null;
 	pageLoaded = false;
+	pendingDeferredShow = false;
 }
 
 export function setupModelPickerHandlers(): () => void {
@@ -445,16 +462,14 @@ export const __model_picker_window_test_helpers__ = {
 	clearFadeTimer,
 	moveOffscreen,
 	hideAliveWindow,
-	isSameOrigin,
 	isHttpUrl,
+	isSameOrigin,
 	handleWindowOpen,
 	computePickerPosition,
 	easeOutCubic,
 	easeInCubic,
 	normalizeResizePayload,
 	sizeUnchanged,
-	getRendererBaseUrl,
-	getRendererRouteUrl,
 	handleWillNavigate,
 	logPickerLoadError,
 	isPickerVisible,

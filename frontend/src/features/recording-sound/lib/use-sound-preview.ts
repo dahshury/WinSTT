@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ipcInvoke, soundLibraryReadFile } from "@/shared/api/ipc-client";
 import { toArrayBuffer } from "@/shared/lib/use-recording-sound";

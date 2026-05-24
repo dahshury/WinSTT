@@ -844,6 +844,17 @@ class TestRecorderService:
         assert transcriber.call_count == 1
         service.shutdown()
 
+    def test_warmup_loads_diarizer_when_present(self) -> None:
+        """warmup() also eagerly loads the diarizer so the first diarized
+        utterance (and the renderer's warming spinner) doesn't stall."""
+        diarizer = FakeDiarizer(segments=(SpeakerSegment(start=0.0, end=1.0, speaker=0),))
+        service, transcriber, _, _ = self._make_service(diarizer=diarizer)
+        assert diarizer.diarize_calls == 0
+        service.warmup()
+        assert transcriber.call_count == 1
+        assert diarizer.diarize_calls == 1
+        service.shutdown()
+
     def test_warmup_is_safe_when_main_transcriber_slot_is_none(self) -> None:
         """Defensive guard: a swap can leave the slot transiently ``None``,
         and an unlucky warmup re-call should not crash."""

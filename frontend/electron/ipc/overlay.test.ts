@@ -39,7 +39,13 @@ import { electronMock } from "@test/mocks/electron";
 mock.module("electron", () => ({
 	...electronMock(),
 	screen: {
-		getPrimaryDisplay: () => ({ workAreaSize: { width: 1920, height: 1080 } }),
+		getPrimaryDisplay: () => ({
+			workAreaSize: { width: 1920, height: 1080 },
+			// `bounds` is the physical-screen geometry (includes the taskbar
+			// area). Dynamic-island mode docks against `bounds.y` so the
+			// capsule sits flush against the top bezel of the display.
+			bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+		}),
 	},
 }));
 
@@ -55,6 +61,7 @@ interface MockWin {
 	calls: string[];
 	getSize: () => number[];
 	hide: () => void;
+	isDestroyed: () => boolean;
 	isVisible: () => boolean;
 	positions: [number, number][];
 	setOpacity: (v: number) => void;
@@ -85,6 +92,9 @@ function makeWindow(): MockWin {
 			win.visible = false;
 		},
 		isVisible: () => win.visible,
+		// Real Electron BrowserWindow exposes `isDestroyed()`; the
+		// `repositionIfVisible` guard reads it before touching the window.
+		isDestroyed: () => false,
 		visible: false,
 		positions,
 		calls,
@@ -177,6 +187,66 @@ describe("overlay handlers", () => {
 		// 1080 - 120 - 60 = 900. Mutating - 60 to + 60 → 1020;
 		// mutating - winHeight to + winHeight → 1140.
 		expect(win.positions[0]?.[1]).toBe(900);
+	});
+
+	test("dynamic-island mode docks flush to the primary display's TOP bezel (y = bounds.y)", () => {
+		const win = makeWindow();
+		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		// Switch to the new mode for this test only.
+		(storeData.general as Record<string, unknown>).overlayMode = "dynamic-island";
+		showOverlay();
+		// x = bounds.x + (bounds.width - winWidth) / 2 = 0 + (1920 - 800) / 2 = 560.
+		// y = bounds.y = 0 — flush to the physical top of the display.
+		expect(win.positions[0]).toEqual([560, 0]);
+	});
+
+	test("dynamic-island ignores work-area inset (no `- 60` margin like floating-bottom)", () => {
+		const win = makeWindow();
+		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		(storeData.general as Record<string, unknown>).overlayMode = "dynamic-island";
+		showOverlay();
+		// A `+ 60` mutant on the dynamic-island y branch would produce y=60,
+		// breaking the "no gap from the top bezel" requirement.
+		expect(win.positions[0]?.[1]).toBe(0);
+	});
+
+	test("overlayMode change repositions a visible pill without a hide/show cycle", async () => {
+		const win = makeWindow();
+		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		const dispose = setupOverlayHandlers();
+		showOverlay();
+		// Drain the opacity ramp so subsequent setPosition calls show up
+		// distinct from the show sequence.
+		await new Promise<void>((r) => setTimeout(r, 120));
+		const positionsBefore = win.positions.length;
+
+		// Flip the mode while the pill is up. The handler should reposition
+		// in place — no extra show/hide flicker.
+		(storeData.general as Record<string, unknown>).overlayMode = "dynamic-island";
+		for (const cb of storeChangeHandlers.get("general.overlayMode") ?? []) {
+			cb("dynamic-island");
+		}
+
+		// The most recent setPosition call should anchor the pill at y=0 for
+		// the new mode.
+		expect(win.positions.length).toBeGreaterThan(positionsBefore);
+		const last = win.positions.at(-1);
+		expect(last).toEqual([560, 0]);
+		dispose();
+	});
+
+	test("overlayMode change while hidden is a no-op (next showOverlay reads the new mode)", () => {
+		const win = makeWindow();
+		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		const dispose = setupOverlayHandlers();
+		// Pill never shown — visible flag stays false.
+		(storeData.general as Record<string, unknown>).overlayMode = "dynamic-island";
+		for (const cb of storeChangeHandlers.get("general.overlayMode") ?? []) {
+			cb("dynamic-island");
+		}
+		// No spurious setPosition / show calls.
+		expect(win.calls).toEqual([]);
+		dispose();
 	});
 
 	test("showOverlay does NOT show when overlay is disabled in settings", () => {

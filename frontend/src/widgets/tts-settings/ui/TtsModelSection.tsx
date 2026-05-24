@@ -1,16 +1,16 @@
-"use client";
-
 import { PlayIcon, StopIcon, VolumeHighIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
-import { SettingSection, useSettingsStore } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingResetButton,
+	SettingSection,
+	useSettingsStore,
+} from "@/entities/setting";
 import {
 	listTtsVoices,
 	onTtsFailed,
-	onTtsModelDownloadComplete,
-	onTtsModelDownloadProgress,
-	onTtsModelDownloadStart,
 	onTtsPlaybackEnded,
 	onTtsPlaybackStarted,
 	onTtsStarted,
@@ -18,7 +18,6 @@ import {
 	ttsCancel,
 	ttsSpeak,
 } from "@/shared/api/ipc-client";
-import { formatBytes } from "@/shared/lib/format-bytes";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
@@ -27,6 +26,9 @@ import { SearchableSelect } from "@/shared/ui/searchable-select";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
 import { Spinner } from "@/shared/ui/spinner";
+import { useTtsDownloadProgress } from "../model/use-tts-download-progress";
+import { useTtsInstallGate } from "../model/use-tts-install-gate";
+import { TtsInstallDialog } from "./TtsInstallDialog";
 
 export interface TtsModelSectionProps {
 	/** Reserved for future composition — currently the section pulls all state
@@ -91,27 +93,12 @@ function buildDeviceOptions(t: ReturnType<typeof useTranslations>): SelectOption
 	];
 }
 
-interface DownloadState {
-	active: boolean;
-	downloadedBytes: number;
-	progress: number;
-	totalBytes: number;
-}
-
-const INITIAL_DOWNLOAD: DownloadState = {
-	active: false,
-	progress: 0,
-	downloadedBytes: 0,
-	totalBytes: 0,
-};
-
 export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 	const t = useTranslations("tts");
 	const tts = useSettingsStore((s) => s.settings.tts);
 	const update = useSettingsStore((s) => s.updateTtsSettings);
 
 	const [catalog, setCatalog] = useState<TtsVoiceCatalog>({ voices: [], languages: [] });
-	const [download, setDownload] = useState<DownloadState>(INITIAL_DOWNLOAD);
 
 	// The play/loading/stop affordance tracks *audible* playback via events
 	// the main process broadcasts to every window — so it works even though
@@ -125,11 +112,28 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		playing: false,
 	});
 	const [errorReason, setErrorReason] = useState<string | null>(null);
+	// Which voice the active preview belongs to — drives the per-row and
+	// in-trigger play/stop/loading affordance. Set optimistically on click
+	// (the request id isn't known until `onTtsStarted`) and cleared whenever
+	// playback returns to idle.
+	const [previewVoiceId, setPreviewVoiceId] = useState<string | null>(null);
+	// Confirm-before-download gate (state + handlers live in the model
+	// hook — see use-tts-install-gate). `handleEnabledToggle` only flips
+	// the store's `enabled` flag after the user accepts the dialog.
+	const {
+		confirmOpen,
+		estimate,
+		probing,
+		installPhase,
+		handleEnabledToggle,
+		handleInstallConfirm,
+		handleInstallCancel,
+		closeConfirm,
+	} = useTtsInstallGate();
 
 	const enabled = tts?.enabled ?? false;
 	const voice = tts?.voice ?? "af_heart";
-	const lang = tts?.lang ?? "en-us";
-	const speed = tts?.speed ?? 1.0;
+	const speed = tts?.speed ?? DEFAULT_SETTINGS.tts.speed;
 	const device: DeviceValue = (tts?.device as DeviceValue) ?? "auto";
 
 	// Fetch the voice catalog whenever the section becomes enabled. The IPC
@@ -148,6 +152,26 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 			cancelled = true;
 		};
 	}, [enabled]);
+
+	// Guard: TTS must always resolve to a voice the catalog actually offers.
+	// The schema default ("af_heart") covers the common case, but a stale
+	// saved voice (catalog change, corrupted settings) would otherwise leave
+	// the dropdown in an empty-selection state and crash synth at request
+	// time. Auto-fall back to the first catalog entry so the selector stays
+	// in a usable state.
+	useEffect(() => {
+		if (!enabled || catalog.voices.length === 0) {
+			return;
+		}
+		const valid = catalog.voices.some((v) => v.id === voice);
+		if (valid) {
+			return;
+		}
+		const first = catalog.voices[0];
+		if (first) {
+			update({ voice: first.id, lang: first.language });
+		}
+	}, [enabled, catalog.voices, voice, update]);
 
 	useEffect(
 		() =>
@@ -187,43 +211,22 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		[]
 	);
 
-	// First-use download lifecycle. Reset to idle on completion so the bar
-	// disappears once the model lands on disk (or the user cancels).
-	useEffect(
-		() =>
-			onTtsModelDownloadStart(() => {
-				setDownload({ ...INITIAL_DOWNLOAD, active: true });
-			}),
-		[]
-	);
-	useEffect(
-		() =>
-			onTtsModelDownloadProgress((payload) => {
-				setDownload({
-					active: true,
-					progress: payload.progress,
-					downloadedBytes: payload.downloadedBytes,
-					totalBytes: payload.totalBytes,
-				});
-			}),
-		[]
-	);
-	useEffect(
-		() =>
-			onTtsModelDownloadComplete(() => {
-				setDownload(INITIAL_DOWNLOAD);
-			}),
-		[]
-	);
+	// Reset the row affordance once audio stops, fails, or finishes — the
+	// playback handlers above null out `requestId` on every terminal event.
+	useEffect(() => {
+		if (playback.requestId === null) {
+			setPreviewVoiceId(null);
+		}
+	}, [playback.requestId]);
 
+	const downloadProgress = useTtsDownloadProgress(installPhase);
 	const voiceOptions = buildVoiceOptions(catalog);
 	const deviceOptions = buildDeviceOptions(t);
 
-	const handleEnabledToggle = useCallback(
-		(next: boolean) => {
-			update({ enabled: next });
-		},
-		[update]
+	const langForVoice = useCallback(
+		(voiceId: string) =>
+			catalog.voices.find((v) => v.id === voiceId)?.language ?? deriveLanguage(voiceId),
+		[catalog.voices]
 	);
 
 	// Speak a short sample in the given voice. Cancels any in-flight
@@ -232,11 +235,12 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 	// the active one, so an un-cancelled prior preview would otherwise
 	// swallow the new one).
 	const previewVoice = useCallback(
-		(previewVoiceId: string, previewLang: string) => {
+		(nextVoiceId: string, previewLang: string) => {
 			ttsCancel();
+			setPreviewVoiceId(nextVoiceId);
 			ttsSpeak({
 				text: t("testVoiceSample") || TEST_SAMPLE_FALLBACK,
-				voice: previewVoiceId,
+				voice: nextVoiceId,
 				lang: previewLang,
 				speed,
 			});
@@ -259,20 +263,6 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		[catalog.voices, update, previewVoice]
 	);
 
-	// Inline play/stop affordance next to the select: replays the current
-	// voice without re-picking it, and doubles as a stop control while a
-	// preview (or any TTS) is playing. Disabled (no-op) during the
-	// synthesis-loading window — the button shows a spinner then.
-	const handlePreviewToggle = useCallback(() => {
-		if (playback.requestId !== null) {
-			if (playback.playing) {
-				ttsCancel(playback.requestId);
-			}
-			return;
-		}
-		previewVoice(voice, lang);
-	}, [playback.requestId, playback.playing, previewVoice, voice, lang]);
-
 	const handleSpeedChange = useCallback(
 		(next: number) => {
 			update({ speed: next });
@@ -287,98 +277,134 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		[update]
 	);
 
-	const percentLabel =
-		download.totalBytes > 0
-			? t("downloadingProgress", {
-					percent: Math.round(download.progress * 100).toString(),
-					downloaded: formatBytes(download.downloadedBytes) ?? "0 B",
-					total: formatBytes(download.totalBytes) ?? "0 B",
-				})
-			: t("downloading");
-
 	const isLoading = playback.requestId !== null && !playback.playing;
 	const isSpeaking = playback.requestId !== null && playback.playing;
-	let previewLabel = t("previewVoice");
-	if (isSpeaking) {
-		previewLabel = t("stopSpeaking");
-	} else if (isLoading) {
-		previewLabel = t("loadingVoice");
-	}
-	const previewIcon = isLoading ? (
-		<Spinner className="size-4" />
-	) : (
-		<HugeiconsIcon icon={isSpeaking ? StopIcon : PlayIcon} size={16} />
+
+	// Builds the play / loading / stop control for one voice. Used both as
+	// the per-row button in the dropdown and as the in-trigger control for
+	// the selected voice (closed state). Playback state is global, so only
+	// the row matching `previewVoiceId` shows stop/spinner — every other row
+	// stays a plain play button. `compact` shrinks it to fit a list row.
+	const renderPreviewButton = useCallback(
+		(targetVoiceId: string, compact: boolean) => {
+			const active = previewVoiceId === targetVoiceId;
+			const thisLoading = active && isLoading;
+			const thisSpeaking = active && isSpeaking;
+			let label = t("previewVoice");
+			if (thisSpeaking) {
+				label = t("stopSpeaking");
+			} else if (thisLoading) {
+				label = t("loadingVoice");
+			}
+			const icon = thisLoading ? (
+				<Spinner className="size-4" />
+			) : (
+				<HugeiconsIcon icon={thisSpeaking ? StopIcon : PlayIcon} size={compact ? 14 : 16} />
+			);
+			const onClick = () => {
+				if (thisSpeaking) {
+					if (playback.requestId) {
+						ttsCancel(playback.requestId);
+					}
+					return;
+				}
+				if (thisLoading) {
+					return;
+				}
+				previewVoice(targetVoiceId, langForVoice(targetVoiceId));
+			};
+			return (
+				<IconButton
+					aria-label={label}
+					className={compact ? "size-6" : undefined}
+					disabled={thisLoading}
+					icon={icon}
+					onClick={onClick}
+					tooltip={label}
+				/>
+			);
+		},
+		[previewVoiceId, isLoading, isSpeaking, t, playback.requestId, previewVoice, langForVoice]
 	);
 	const voicePlaceholder = voiceOptions.length === 0 ? t("noVoicesYet") : t("voiceCaption");
 
 	return (
-		<SettingSection
-			description={t("description")}
-			icon={VolumeHighIcon}
-			onToggle={handleEnabledToggle}
-			title={t("title")}
-			toggled={enabled}
-		>
-			<div className="flex flex-col divide-y divide-surface-1">
-				<FormControl caption={voicePlaceholder} label={t("voice")}>
-					<div className="flex items-center gap-2">
-						<div className="min-w-0 flex-1">
-							<ElevatedSurface inline>
-								<SearchableSelect
-									onChange={handleVoiceChange}
-									options={voiceOptions}
-									placeholder={t("noVoicesYet")}
-									value={voice}
-								/>
-							</ElevatedSurface>
-						</div>
-						<IconButton
-							aria-label={previewLabel}
-							disabled={isLoading}
-							icon={previewIcon}
-							onClick={handlePreviewToggle}
-							tooltip={previewLabel}
-						/>
+		<>
+			<SettingSection
+				description={t("description")}
+				icon={VolumeHighIcon}
+				onToggle={handleEnabledToggle}
+				title={t("title")}
+				toggled={enabled}
+			>
+				<div className="flex flex-col divide-y divide-surface-1">
+					<FormControl caption={voicePlaceholder} label={t("voice")}>
+						<ElevatedSurface inline>
+							<SearchableSelect
+								inputTrailing={renderPreviewButton(voice, true)}
+								onChange={handleVoiceChange}
+								options={voiceOptions}
+								placeholder={t("noVoicesYet")}
+								renderItemTrailing={(option) => renderPreviewButton(option.id, true)}
+								value={voice}
+							/>
+						</ElevatedSurface>
+					</FormControl>
+					<FormControl
+						caption={t("speedCaption")}
+						label={t("speed")}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={speed === DEFAULT_SETTINGS.tts.speed}
+								onReset={() => update({ speed: DEFAULT_SETTINGS.tts.speed })}
+							/>
+						}
+					>
+						<ElevatedSurface inline>
+							<Slider
+								aria-label={t("speed")}
+								formatValue={(v) => `${v.toFixed(1)}×`}
+								max={2.0}
+								min={0.5}
+								onChange={handleSpeedChange}
+								step={0.1}
+								value={speed}
+							/>
+						</ElevatedSurface>
+					</FormControl>
+					<FormControl caption={t("deviceCaption")} label={t("device")}>
+						<ElevatedSurface inline>
+							<Select
+								aria-label={t("device")}
+								onChange={handleDeviceChange}
+								options={deviceOptions}
+								value={device}
+							/>
+						</ElevatedSurface>
+					</FormControl>
+					<div className="flex flex-col gap-3 py-3">
+						{downloadProgress.active ? (
+							<DownloadProgressBar
+								label={downloadProgress.label}
+								percent={downloadProgress.percent}
+								variant="active"
+							/>
+						) : null}
+						{errorReason ? (
+							<div className="rounded-md border border-error/40 bg-error/10 p-2 text-error text-xs">
+								<span className="font-medium">{t("errorTitle")}:</span> {errorReason}
+							</div>
+						) : null}
 					</div>
-				</FormControl>
-				<FormControl caption={t("speedCaption")} label={t("speed")}>
-					<ElevatedSurface inline>
-						<Slider
-							aria-label={t("speed")}
-							formatValue={(v) => `${v.toFixed(1)}×`}
-							max={2.0}
-							min={0.5}
-							onChange={handleSpeedChange}
-							step={0.1}
-							value={speed}
-						/>
-					</ElevatedSurface>
-				</FormControl>
-				<FormControl caption={t("deviceCaption")} label={t("device")}>
-					<ElevatedSurface inline>
-						<Select
-							aria-label={t("device")}
-							onChange={handleDeviceChange}
-							options={deviceOptions}
-							value={device}
-						/>
-					</ElevatedSurface>
-				</FormControl>
-				<div className="flex flex-col gap-3 py-3">
-					{download.active ? (
-						<DownloadProgressBar
-							label={percentLabel}
-							percent={Math.round(download.progress * 100)}
-							variant="active"
-						/>
-					) : null}
-					{errorReason ? (
-						<div className="rounded-md border border-error/40 bg-error/10 p-2 text-error text-xs">
-							<span className="font-medium">{t("errorTitle")}:</span> {errorReason}
-						</div>
-					) : null}
 				</div>
-			</div>
-		</SettingSection>
+			</SettingSection>
+			<TtsInstallDialog
+				estimate={estimate}
+				onCancel={handleInstallCancel}
+				onClose={closeConfirm}
+				onConfirm={handleInstallConfirm}
+				open={confirmOpen && !probing}
+			/>
+		</>
 	);
 }

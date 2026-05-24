@@ -10,8 +10,11 @@ export interface DefaultCalendarPresetLabels {
 	last7Days: string;
 	last30Days: string;
 	lastMonth: string;
+	lastYear: string;
+	monthToDate: string;
 	thisMonth: string;
 	today: string;
+	yearToDate: string;
 	yesterday: string;
 }
 
@@ -35,6 +38,14 @@ function startOfMonth(d: Date): Date {
 
 function endOfMonth(d: Date): Date {
 	return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+}
+
+function startOfYear(d: Date): Date {
+	return new Date(d.getFullYear(), 0, 1);
+}
+
+function endOfYear(d: Date): Date {
+	return new Date(d.getFullYear(), 11, 31, 23, 59, 59, 999);
 }
 
 /**
@@ -64,12 +75,22 @@ export function buildDefaultCalendarPresets(
 	const lastMonthStart = startOfMonth(lastMonthAnchor);
 	const lastMonthEnd = endOfMonth(lastMonthAnchor);
 
+	const monthToDateStart = startOfMonth(now);
+	const yearToDateStart = startOfYear(now);
+
+	const lastYearAnchor = new Date(now.getFullYear() - 1, 0, 1);
+	const lastYearStart = startOfYear(lastYearAnchor);
+	const lastYearEnd = endOfYear(lastYearAnchor);
+
 	return [
 		{ label: labels.today, range: { from: todayStart, to: todayEnd } },
 		{ label: labels.yesterday, range: { from: yesterdayStart, to: yesterdayEnd } },
 		{ label: labels.last7Days, range: { from: last7Start, to: todayEnd } },
 		{ label: labels.last30Days, range: { from: last30Start, to: todayEnd } },
+		{ label: labels.monthToDate, range: { from: monthToDateStart, to: todayEnd } },
 		{ label: labels.thisMonth, range: { from: thisMonthStart, to: thisMonthEnd } },
 		{ label: labels.lastMonth, range: { from: lastMonthStart, to: lastMonthEnd } },
+		{ label: labels.yearToDate, range: { from: yearToDateStart, to: todayEnd } },
+		{ label: labels.lastYear, range: { from: lastYearStart, to: lastYearEnd } },
 	];
 }

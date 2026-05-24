@@ -1,29 +1,38 @@
-"use client";
-
 import { SttModelSelector } from "@picker";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import { providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
 import { useCatalogStore, useModelStateStore, useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
 import { useConnectionListener } from "@/features/connect-server";
 import { DownloadConfirmationDialog, useDownloadListener } from "@/features/model-download";
+import { CloudSttSection } from "@/features/select-cloud-stt-model";
 import { useModelSwapController } from "@/features/swap-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { IPC } from "@/shared/api/ipc-channels";
-import { gpuGetInfo, ipcSend } from "@/shared/api/ipc-client";
+import { gpuGetInfo, ipcOn, ipcSend } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 
 // Desired footprint reported once to the main process. Main caps the height
-// to whatever fits above the chip (never spilling over the screen top), then
-// the panel fills the actual OS window via h-screen/w-screen — its internal
-// list scrolls when the window ends up shorter than this.
+// to whatever fits above the chip (never spilling over the screen top) and
+// sends back the exact panel rect; the panel fills that absolutely-positioned
+// box (h-full/w-full) and scrolls internally if it ends up shorter.
 const DESIRED_WIDTH = 600;
 const DESIRED_HEIGHT = 560;
-const PANEL_HEIGHT = "h-screen";
-const PANEL_WIDTH = "w-screen";
+const PANEL_HEIGHT = "h-full";
+const PANEL_WIDTH = "w-full";
+
+// Window-local rect (CSS px) for the visible panel inside the full-screen
+// backdrop window. Null until the main process reports it.
+interface PanelRect {
+	height: number;
+	width: number;
+	x: number;
+	y: number;
+}
 
 function close(): void {
 	ipcSend(IPC.MODEL_PICKER_CLOSE);
@@ -87,30 +96,35 @@ export function ModelPickerWindow() {
 	// Close once a swap actually starts (server emitted model_swap_started →
 	// activeMain set). Selecting a model that needs a download/resource
 	// confirmation keeps the window open so its dialog stays interactive;
-	// the swap (and this close) only fire after the user confirms.
+	// the swap (and this close) only fire after the user confirms. Fire only
+	// on the false→true edge so a remount while a swap is still running
+	// doesn't re-send a redundant close.
+	const wasSwappingRef = useRef(mainSwapping);
 	useEffect(() => {
-		if (mainSwapping) {
+		if (mainSwapping && !wasSwappingRef.current) {
 			close();
 		}
+		wasSwappingRef.current = mainSwapping;
 	}, [mainSwapping]);
 
-	const handleChange = useCallback(
-		(modelId: string, quantization?: OnnxQuantization) => {
-			controller.handleModelChange(modelId, quantization);
-			// Re-selecting the loaded model is a no-op for the controller (no
-			// swap, no dialog) — dismiss the window so the click still does
-			// something sensible.
-			if (modelId === currentModel && quantization === undefined) {
-				close();
-			}
-		},
-		[controller, currentModel]
-	);
+	const handleChange = (modelId: string, quantization?: OnnxQuantization) => {
+		controller.handleModelChange(modelId, quantization);
+		// Re-selecting the loaded model is a no-op for the controller (no
+		// swap, no dialog) — dismiss the window so the click still does
+		// something sensible.
+		if (modelId === currentModel && quantization === undefined) {
+			close();
+		}
+	};
+
+	// Main reports where to draw the panel inside the full-screen window
+	// (recomputed on every open and on resize, so it always reflects the
+	// current chip position / clamped height).
+	const [panel, setPanel] = useState<PanelRect | null>(null);
+	useEffect(() => ipcOn(IPC.MODEL_PICKER_ANCHOR, (rect) => setPanel(rect as PanelRect)), []);
 
 	// Report the desired footprint once. Main clamps it to the room above
-	// the chip; a ResizeObserver here would fight that clamp (panel is
-	// h-screen → it always equals the window), so this is intentionally a
-	// single fixed report, not a measured/observed one.
+	// the chip and sends back the final panel rect via MODEL_PICKER_ANCHOR.
 	useEffect(() => {
 		ipcSend(IPC.MODEL_PICKER_RESIZE, { width: DESIRED_WIDTH, height: DESIRED_HEIGHT });
 	}, []);
@@ -130,20 +144,46 @@ export function ModelPickerWindow() {
 	}, []);
 
 	return (
-		<div className="h-screen w-screen overflow-hidden">
-			<SttModelSelector
-				currentQuantization={currentQuantization}
-				inline
-				isLoading={!catalogLoaded}
-				kind="main"
-				models={catalogModels}
-				onChange={handleChange}
-				popupHeightClass={PANEL_HEIGHT}
-				popupWidthClass={PANEL_WIDTH}
-				statesById={statesById}
-				systemInfo={systemInfo}
-				value={currentModel ?? ""}
-			/>
+		// Full-screen transparent backdrop. A pointer-down that lands on the
+		// backdrop itself (anything that isn't the panel — the visualizer, the
+		// dictation text, the desktop) closes the picker. The panel is a child
+		// so clicks on it never match `target === currentTarget`.
+		<div
+			className="fixed inset-0 overflow-hidden"
+			onPointerDown={(e) => {
+				if (e.target === e.currentTarget) {
+					close();
+				}
+			}}
+		>
+			{panel && (
+				<div
+					// `[&>*]:size-full` stretches the picker's own flex wrapper to
+					// this box so its inner `h-full`/`w-full` panel resolves.
+					className="absolute flex flex-col gap-2 [&>:last-child]:size-full"
+					style={{
+						left: panel.x,
+						top: panel.y,
+						width: panel.width,
+						height: panel.height,
+					}}
+				>
+					<CloudSttSection onSelect={(id) => handleChange(id)} selectedId={currentModel ?? ""} />
+					<SttModelSelector
+						currentQuantization={currentQuantization}
+						inline
+						isLoading={!catalogLoaded}
+						kind="main"
+						models={catalogModels}
+						onChange={handleChange}
+						popupHeightClass={PANEL_HEIGHT}
+						popupWidthClass={PANEL_WIDTH}
+						statesById={statesById}
+						systemInfo={systemInfo}
+						value={providerOf(currentModel ?? "") === null ? (currentModel ?? "") : ""}
+					/>
+				</div>
+			)}
 			<DownloadConfirmationDialog
 				getModel={getModel}
 				onCancel={controller.cancelPendingDownload}

@@ -1,7 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "@testing-library/react";
-import { __provider_rail_test_helpers__ as helpers, ProviderRail } from "./ProviderRail";
+import { __provider_rail_test_helpers__ as helpers } from "../lib/provider-rail-test-helpers";
+import { ProviderRail } from "./ProviderRail";
 
 describe("ProviderRail", () => {
 	test("renders nothing visible when there are no providers (empty list still renders the rail)", () => {

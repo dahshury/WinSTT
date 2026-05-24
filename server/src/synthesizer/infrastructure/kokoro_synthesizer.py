@@ -47,6 +47,7 @@ class KokoroSynthesizer(ISpeechSynthesizer):
     _synth_lock: threading.Lock
     _on_progress: object | None
     _should_cancel: object | None
+    _on_status: object | None
 
     def __init__(self, config: SynthesizerConfig) -> None:
         self._config = config
@@ -55,20 +56,30 @@ class KokoroSynthesizer(ISpeechSynthesizer):
         self._synth_lock = threading.Lock()
         self._on_progress = None
         self._should_cancel = None
+        self._on_status = None
 
     def attach_download_callbacks(
         self,
         on_progress: object,
         should_cancel: object,
+        on_status: object | None = None,
     ) -> None:
         """Plug in the same lifecycle callbacks the STT side uses for downloads.
 
         Called from bootstrap right after construction. Stored as untyped
         objects because the concrete callback signature lives in the
         ``stt_server`` layer and we don't want to import that here.
+        ``on_status`` (optional) takes a phase string so the UI can label
+        which part of the install is running (engine vs model vs voices).
         """
         self._on_progress = on_progress
         self._should_cancel = should_cancel
+        self._on_status = on_status
+
+    def _emit_status(self, phase: str) -> None:
+        """Best-effort phase ping for the UI (engine / model / ready)."""
+        if self._on_status is not None:
+            self._on_status(phase)  # type: ignore[operator]
 
     def _resolve_provider(self) -> str:
         """Pick the ORT execution provider.
@@ -94,6 +105,28 @@ class KokoroSynthesizer(ISpeechSynthesizer):
         """Lazy-load the ONNX session + voicepacks on first use."""
         if self._kokoro is not None:
             return
+        # Step 1: ensure the on-demand engine pack is downloaded + on
+        # sys.path BEFORE importing kokoro_onnx. The exe ships zero TTS
+        # code; this is what makes ``import kokoro_onnx`` resolvable in
+        # the same frozen process. Reuses the same progress callback so
+        # the UI bar moves during the engine download too.
+        from src.synthesizer.infrastructure.support_pack import (
+            activate,
+            ensure_support_pack,
+            resolve_runtime_dir,
+        )
+
+        runtime_dir = resolve_runtime_dir()
+        self._emit_status("engine")
+        ensure_support_pack(
+            runtime_dir,
+            on_progress=self._on_progress,  # type: ignore[arg-type]
+            should_cancel=self._should_cancel,  # type: ignore[arg-type]
+        )
+        activate(runtime_dir)
+
+        # Step 2: ensure the Kokoro weights + voicepacks.
+        self._emit_status("model")
         cache_dir = resolve_cache_dir(self._config.cache_dir)
         # The callbacks are typed at the call site but kept opaque here.
         model_path, voices_path = ensure_assets(
@@ -117,7 +150,8 @@ class KokoroSynthesizer(ISpeechSynthesizer):
             self._kokoro = Kokoro(str(model_path), str(voices_path))
         except ImportError as exc:
             raise RuntimeError(
-                "kokoro-onnx is not installed. Run `uv sync --extra cpu --extra tts` (or `--extra gpu --extra tts`)."
+                "TTS engine pack did not provide kokoro_onnx — the support pack may be corrupt. "
+                "Disable and re-enable TTS to re-download it."
             ) from exc
         except Exception:
             # CUDA EP can fail to come up (missing CUDA DLLs, driver mismatch).
@@ -132,6 +166,7 @@ class KokoroSynthesizer(ISpeechSynthesizer):
             else:
                 raise
         self._ready = True
+        self._emit_status("ready")
 
     @override
     async def synthesize_stream(

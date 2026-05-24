@@ -1,5 +1,3 @@
-"use client";
-
 import { useTranslations } from "next-intl";
 import { useEffect } from "react";
 import { useTranscriptionStore } from "@/entities/transcription";

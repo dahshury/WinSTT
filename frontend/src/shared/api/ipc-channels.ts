@@ -35,6 +35,12 @@ export const IPC = {
 	STT_ASSESS_OLLAMA_FIT: "stt:assess-ollama-fit",
 	STT_VAD_SENSITIVITY_ADAPTED: "stt:vad-sensitivity-adapted",
 	STT_SPEAKER_SEGMENTS: "stt:speaker-segments",
+	STT_DIARIZATION_TOGGLE_STARTED: "stt:diarization-toggle-started",
+	STT_DIARIZATION_TOGGLE_COMPLETED: "stt:diarization-toggle-completed",
+	STT_DIARIZATION_TOGGLE_FAILED: "stt:diarization-toggle-failed",
+	// A startup-only setting changed but the STT server is not Electron-
+	// managed (dev: user-run server), so it can't be auto-restarted.
+	STT_RESTART_REQUIRED: "stt:restart-required",
 
 	// Hotkey events (main → renderer)
 	HOTKEY_PRESSED: "hotkey:pressed",
@@ -91,6 +97,25 @@ export const IPC = {
 	MODEL_PICKER_OPEN: "model-picker:open",
 	MODEL_PICKER_CLOSE: "model-picker:close",
 	MODEL_PICKER_RESIZE: "model-picker:resize",
+	// Main → renderer: where to place the panel inside the full-screen
+	// backdrop window (window-local CSS px). Everything else in the window
+	// is a transparent click-to-dismiss backdrop.
+	MODEL_PICKER_ANCHOR: "model-picker:anchor",
+
+	// Detached input-device-picker window (renderer → main)
+	DEVICE_PICKER_OPEN: "device-picker:open",
+	DEVICE_PICKER_CLOSE: "device-picker:close",
+	DEVICE_PICKER_RESIZE: "device-picker:resize",
+
+	// First-run onboarding wizard (renderer → main).
+	// The wizard owns a dedicated BrowserWindow opened before the main window
+	// when `general.onboarded` is false. ONBOARDING_FINISH closes the window,
+	// flips `general.onboarded` to true (with an `onboardedAt` timestamp and
+	// the chosen track), and triggers the main-window boot path. Payload:
+	//   { completed: boolean, track?: "" | "local" | "cloud" }
+	// `completed=true` ⇒ user walked through to the end; `false` ⇒ user hit
+	// "Skip" or closed the window. Either way the wizard never re-appears.
+	ONBOARDING_FINISH: "onboarding:finish",
 
 	// Dialog (renderer → main)
 	DIALOG_OPEN_FILE: "dialog:open-file",
@@ -140,6 +165,23 @@ export const IPC = {
 	LLM_FETCH_OLLAMA_LIBRARY: "llm:fetch-ollama-library",
 	LLM_FETCH_OLLAMA_TAGS: "llm:fetch-ollama-tags",
 
+	// Integrations / cloud STT credentials (renderer → main)
+	// VERIFY is the only handler — set/remove flow through the existing
+	// SETTINGS_SAVE pipe (apiKey is a normal settings field, encrypted at
+	// rest by the secret-storage layer). VERIFY probes the provider's
+	// cheapest auth-checking endpoint and persists verified/lastVerifiedAt
+	// back into the store via SETTINGS_CHANGED.
+	INTEGRATIONS_VERIFY: "integrations:verify",
+
+	// Cloud STT error events (main → renderer) — fired by stt-cloud.ts
+	// when an AI SDK transcribe() call fails. Each maps to a distinct
+	// toast in the renderer via the verify-credentials feature.
+	STT_CLOUD_AUTH_FAILED: "stt:cloud-auth-failed",
+	STT_CLOUD_NETWORK_ERROR: "stt:cloud-network-error",
+	STT_CLOUD_KEY_MISSING: "stt:cloud-key-missing",
+	STT_CLOUD_RATE_LIMITED: "stt:cloud-rate-limited",
+	STT_CLOUD_PROVIDER_ERROR: "stt:cloud-provider-error",
+
 	// Transforms (renderer → main)
 	TRANSFORMS_APPLY: "transforms:apply",
 	TRANSFORMS_PREVIEW: "transforms:preview",
@@ -154,6 +196,9 @@ export const IPC = {
 	TTS_CANCEL: "tts:cancel",
 	TTS_INIT: "tts:init",
 	TTS_LIST_VOICES: "tts:list-voices",
+	// Side-effect-free probe: what enabling TTS will download (engine pack +
+	// model + voices). Drives the confirm dialog; never triggers a download.
+	TTS_DOWNLOAD_ESTIMATE: "tts:download-estimate",
 	// The window that owns the Web Audio queue reports when audio actually
 	// starts / finishes playing (distinct from server-side synthesis
 	// dispatch / completion — there's a ~1s synthesis gap before audio).
@@ -173,6 +218,9 @@ export const IPC = {
 	TTS_MODEL_DOWNLOAD_START: "tts:model-download-start",
 	TTS_MODEL_DOWNLOAD_PROGRESS: "tts:model-download-progress",
 	TTS_MODEL_DOWNLOAD_COMPLETE: "tts:model-download-complete",
+	// Install-phase ping (engine pack → voice model → ready) so the
+	// progress UI can label which part of the on-demand install is running.
+	TTS_INSTALL_STATUS: "tts:install-status",
 
 	// LLM events (main → renderer)
 	LLM_CATALOG: "llm:catalog",
@@ -185,6 +233,12 @@ export const IPC = {
 	// reason; the final answer streams in via the same chat call but is
 	// surfaced separately as `STT_FULL_SENTENCE` when the call completes.
 	LLM_REASONING_DELTA: "llm:reasoning-delta",
+	// Proper nouns the cleanup model identified in the user's dictation
+	// during the last successful structured-output call. Emitted as a
+	// single event with `{ nouns: string[] }`. Consumed by the
+	// dictionary auto-add UI which surfaces each noun as an
+	// Accept/Decline pill. Skipped if the array is empty.
+	LLM_LEARNED_PROPER_NOUNS: "llm:learned-proper-nouns",
 	// Warmup status — invoke pulls the last snapshot on mount, broadcast
 	// fires whenever the periodic probe in main runs. Main-side wiring is
 	// still WIP; until it lands, the invoke handler is missing and the
@@ -209,6 +263,13 @@ export const IPC = {
 	// Diagnostics bundle (renderer → main)
 	DIAG_OPEN_LOGS_FOLDER: "diag:open-logs-folder",
 	DIAG_SAVE_BUNDLE: "diag:save-bundle",
+
+	// About panel (renderer → main) — reads the bundled LICENSE and
+	// THIRD_PARTY_NOTICES.md so the Settings → About tab can render them
+	// without having to ship the text inside the renderer bundle.
+	ABOUT_GET_LICENSE: "about:get-license",
+	ABOUT_GET_NOTICES: "about:get-notices",
+	ABOUT_GET_APP_INFO: "about:get-app-info",
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];
@@ -321,6 +382,15 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.MODEL_PICKER_OPEN]: ["send"],
 	[IPC.MODEL_PICKER_CLOSE]: ["send"],
 	[IPC.MODEL_PICKER_RESIZE]: ["send"],
+	[IPC.MODEL_PICKER_ANCHOR]: ["on"],
+
+	// Detached input-device-picker window
+	[IPC.DEVICE_PICKER_OPEN]: ["send"],
+	[IPC.DEVICE_PICKER_CLOSE]: ["send"],
+	[IPC.DEVICE_PICKER_RESIZE]: ["send"],
+
+	// First-run onboarding
+	[IPC.ONBOARDING_FINISH]: ["send"],
 
 	// Dialog & menus
 	[IPC.DIALOG_OPEN_FILE]: ["invoke"],
@@ -364,6 +434,16 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: ["invoke"],
 	[IPC.LLM_FETCH_OLLAMA_TAGS]: ["invoke"],
 
+	// Integrations / cloud STT credentials
+	[IPC.INTEGRATIONS_VERIFY]: ["invoke"],
+
+	// Cloud STT error events (main → renderer)
+	[IPC.STT_CLOUD_AUTH_FAILED]: ["on"],
+	[IPC.STT_CLOUD_NETWORK_ERROR]: ["on"],
+	[IPC.STT_CLOUD_KEY_MISSING]: ["on"],
+	[IPC.STT_CLOUD_RATE_LIMITED]: ["on"],
+	[IPC.STT_CLOUD_PROVIDER_ERROR]: ["on"],
+
 	// Transforms
 	[IPC.TRANSFORMS_APPLY]: ["invoke"],
 	[IPC.TRANSFORMS_PREVIEW]: ["invoke"],
@@ -376,6 +456,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_CANCEL]: ["send"],
 	[IPC.TTS_INIT]: ["invoke"],
 	[IPC.TTS_LIST_VOICES]: ["invoke"],
+	[IPC.TTS_DOWNLOAD_ESTIMATE]: ["invoke"],
 	[IPC.TTS_REPORT_PLAYBACK_STARTED]: ["send"],
 	[IPC.TTS_REPORT_PLAYBACK_ENDED]: ["send"],
 
@@ -389,6 +470,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_MODEL_DOWNLOAD_START]: ["on"],
 	[IPC.TTS_MODEL_DOWNLOAD_PROGRESS]: ["on"],
 	[IPC.TTS_MODEL_DOWNLOAD_COMPLETE]: ["on"],
+	[IPC.TTS_INSTALL_STATUS]: ["on"],
 
 	// LLM events (main → renderer)
 	[IPC.LLM_CATALOG]: ["on"],
@@ -396,6 +478,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.LLM_PROCESSING_START]: ["on"],
 	[IPC.LLM_PROCESSING_END]: ["on"],
 	[IPC.LLM_REASONING_DELTA]: ["on"],
+	[IPC.LLM_LEARNED_PROPER_NOUNS]: ["on"],
 
 	// Updater
 	[IPC.UPDATER_GET_STATUS_HISTORY]: ["invoke", "secure"],
@@ -423,10 +506,19 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 
 	// Speaker diarization (server → main → renderer)
 	[IPC.STT_SPEAKER_SEGMENTS]: ["on"],
+	[IPC.STT_DIARIZATION_TOGGLE_STARTED]: ["on"],
+	[IPC.STT_DIARIZATION_TOGGLE_COMPLETED]: ["on"],
+	[IPC.STT_DIARIZATION_TOGGLE_FAILED]: ["on"],
+	[IPC.STT_RESTART_REQUIRED]: ["on"],
 
 	// Diagnostics bundle (renderer → main)
 	[IPC.DIAG_OPEN_LOGS_FOLDER]: ["invoke"],
 	[IPC.DIAG_SAVE_BUNDLE]: ["invoke"],
+
+	// About panel
+	[IPC.ABOUT_GET_LICENSE]: ["invoke"],
+	[IPC.ABOUT_GET_NOTICES]: ["invoke"],
+	[IPC.ABOUT_GET_APP_INFO]: ["invoke"],
 };
 
 /** Return every channel whose direction list includes the given direction. */

@@ -23,6 +23,10 @@ export type OpenRouterModel = components["schemas"]["OpenRouterModel"];
 export type OpenRouterEndpoint = components["schemas"]["OpenRouterEndpoint"];
 export type OpenRouterPricing = components["schemas"]["OpenRouterPricing"];
 export type OpenRouterScanResult = components["schemas"]["OpenRouterScanResult"];
+export type CloudSttProvider = components["schemas"]["CloudSttProvider"];
+export type CloudSttErrorCode = components["schemas"]["CloudSttErrorCode"];
+export type ProviderIntegrationStatus = components["schemas"]["ProviderIntegrationStatus"];
+export type Integrations = components["schemas"]["Integrations"];
 
 // LLM warmup status (main → renderer broadcast describing the latest probe
 // against the user's configured Ollama endpoint). Defined renderer-side

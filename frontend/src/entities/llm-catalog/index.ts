@@ -7,11 +7,16 @@ export {
 } from "./lib/hardware-fit";
 export {
 	ALL_PRESET_KEYS,
+	type BuiltinPresetEntry,
 	buildSystemPrompt,
+	type CustomModifier,
+	type CustomModifierEntry,
 	getPresetPrompt,
 	hasLevels,
 	INDEPENDENT_PRESETS,
+	isCustomEntry,
 	isToneKey,
+	mergePresetsWithCustomModifiers,
 	PRESET_LEVELS,
 	PRESETS_WITH_LEVELS,
 	type PresetEntry,

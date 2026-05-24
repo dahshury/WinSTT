@@ -1,5 +1,3 @@
-"use client";
-
 import { Input } from "@base-ui/react/input";
 import type { ComponentPropsWithoutRef, Ref } from "react";
 import { cn } from "@/shared/lib/cn";

@@ -1,5 +1,3 @@
-"use client";
-
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
@@ -17,13 +15,30 @@ import { Toggle } from "@/shared/ui/toggle";
  * Toggle-on path: show the warning dialog → confirm persists the flag;
  * cancel reverts. Toggle-off path: persist immediately (no consent needed
  * to disable a privacy-affecting feature).
+ *
+ * Gated on dictation LLM being configured — when it isn't, the captured
+ * snapshot would be thrown away (relay.ts `maybeRunLlm` bails on
+ * `!isLlmConfigured()` and the fallback `applyPostProcessing` ignores
+ * context). The toggle is disabled with a tooltip explaining the
+ * dependency rather than silently letting users pay the UIA snapshot cost
+ * for nothing. The persisted `contextAwareness` value is preserved so the
+ * preference comes back automatically when dictation LLM is re-enabled.
  */
 export function ContextAwarenessSection() {
 	const general = useSettingsStore((s) => s.settings.general);
+	const dictation = useSettingsStore((s) => s.settings.llm.dictation);
+	const openrouterApiKey = useSettingsStore((s) => s.settings.llm.openrouterApiKey);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
 	const t = useTranslations("general");
 	const enabled = general?.contextAwareness ?? false;
 	const [dialogOpen, setDialogOpen] = useState(false);
+
+	// Mirrors relay.ts `isLlmConfigured()` — provider-aware so OpenRouter
+	// counts as "configured" via an API key (model defaults are filled in
+	// by the per-feature toggle), while Ollama requires a chosen model name.
+	const hasDictationModel =
+		dictation.provider === "openrouter" ? openrouterApiKey.length > 0 : dictation.model.length > 0;
+	const dictationLlmConfigured = dictation.enabled && hasDictationModel;
 
 	const handleToggle = (next: boolean): void => {
 		if (next) {
@@ -33,14 +48,23 @@ export function ContextAwarenessSection() {
 		update({ contextAwareness: false });
 	};
 
+	const tooltip = dictationLlmConfigured
+		? t("contextAwarenessTooltip")
+		: `${t("contextAwarenessRequiresDictation")}\n\n${t("contextAwarenessTooltip")}`;
+
 	return (
 		<>
 			<FormControl
 				caption={t("contextAwarenessCaption")}
+				disabled={!dictationLlmConfigured}
 				label={t("contextAwareness")}
-				tooltip={t("contextAwarenessTooltip")}
+				tooltip={tooltip}
 			>
-				<Toggle checked={enabled} onCheckedChange={handleToggle} />
+				<Toggle
+					checked={enabled}
+					disabled={!dictationLlmConfigured}
+					onCheckedChange={handleToggle}
+				/>
 			</FormControl>
 			<OptInDialog
 				body={t("contextAwarenessDialogBody")}

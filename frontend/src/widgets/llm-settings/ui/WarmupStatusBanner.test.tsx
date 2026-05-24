@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LlmWarmupStatus } from "@/shared/api/ipc-client";
-import { __warmup_banner_test_helpers__ } from "./WarmupStatusBanner";
+import { __warmup_banner_test_helpers__ } from "../lib/warmup-banner-test-helpers";
 
 const { findModelStatus } = __warmup_banner_test_helpers__;
 

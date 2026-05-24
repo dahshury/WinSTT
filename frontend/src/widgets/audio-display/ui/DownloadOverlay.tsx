@@ -1,5 +1,3 @@
-"use client";
-
 import { Progress } from "@base-ui/react/progress";
 import { useTranslations } from "next-intl";
 import { memo, useCallback } from "react";

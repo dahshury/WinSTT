@@ -1,5 +1,3 @@
-"use client";
-
 import { PlayIcon, StopCircleIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { AnimatePresence, domAnimation, LazyMotion, m as motion } from "motion/react";

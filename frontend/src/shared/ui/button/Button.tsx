@@ -1,5 +1,3 @@
-"use client";
-
 import { Button as BaseButton } from "@base-ui/react/button";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";

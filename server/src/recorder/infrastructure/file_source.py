@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.signal import resample
+from scipy.signal import resample_poly
 from typing_extensions import override
 
 from src.building_blocks.types import AudioChunk, BufferSize, SampleRate
@@ -90,8 +90,12 @@ class FileAudioSource(IAudioSource):
             if arr.ndim == 2:
                 arr = np.mean(arr, axis=1)
             if original_sample_rate != self._sample_rate:
-                num_samples = int(len(arr) * self._sample_rate / original_sample_rate)
-                arr = resample(arr, num_samples)
+                # Polyphase (not FFT `resample`): the FFT path assumes a
+                # periodic signal and rings at the edges of every fed
+                # chunk. resample_poly applies a windowed-sinc anti-alias
+                # FIR with no periodicity assumption. Mirrors
+                # pyaudio_source._resample.
+                arr = resample_poly(arr.astype(np.float64), self._sample_rate, original_sample_rate)
             raw_bytes: bytes = arr.astype(np.int16).tobytes()
         else:
             raw_bytes = chunk

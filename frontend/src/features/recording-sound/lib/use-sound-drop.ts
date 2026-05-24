@@ -1,5 +1,3 @@
-"use client";
-
 import { type DragEvent, useCallback, useState } from "react";
 import { getFilePath } from "@/shared/api/ipc-client";
 

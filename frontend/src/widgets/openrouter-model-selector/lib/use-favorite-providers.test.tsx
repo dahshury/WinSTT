@@ -90,12 +90,16 @@ describe("readStoredFavorites", () => {
 	});
 
 	test("returns null when window is undefined (SSR guard)", () => {
-		const savedWindow = (globalThis as { window?: Window }).window;
+		const g = globalThis as { window?: Window | undefined };
+		const savedWindow = g.window;
 		try {
-			(globalThis as { window?: Window }).window = undefined;
+			// biome-ignore lint/performance/noDelete: exact-optional `window?: Window` requires omission to simulate SSR (assigning undefined is a type error)
+			delete g.window;
 			expect(helpers.readStoredFavorites()).toBeNull();
 		} finally {
-			(globalThis as { window?: Window }).window = savedWindow;
+			if (savedWindow) {
+				g.window = savedWindow;
+			}
 		}
 	});
 });

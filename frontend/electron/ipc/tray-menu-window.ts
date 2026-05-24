@@ -1,6 +1,7 @@
 import path from "node:path";
 import { BrowserWindow, ipcMain, screen, shell } from "electron";
 import { dbg } from "../lib/debug-log";
+import { isAllowedRendererUrl, isSameOrigin, loadRendererPage } from "../lib/renderer-url";
 
 let trayMenuWindow: BrowserWindow | null = null;
 // Stryker disable next-line BooleanLiteral: equivalent — `destroyTrayMenuWindow`
@@ -16,19 +17,6 @@ const OFFSCREEN = -9999;
 // top edge extends a few pixels above the workArea boundary, so a flush
 // menu visually overlaps the taskbar. Native context menus leave a small gap.
 const TASKBAR_MARGIN = 8;
-
-function getRendererBaseUrl(): string {
-	return process.env.WINSTT_RENDERER_BASE_URL ?? "http://localhost:3000";
-}
-
-function getRendererRouteUrl(route: string): string {
-	// Stryker disable next-line StringLiteral: equivalent — `route.startsWith("")`
-	// always returns true so the prepend is skipped for both leading-slash and
-	// no-slash routes; the URL constructor then resolves both forms identically
-	// against the base URL, producing the same final string.
-	const normalizedRoute = route.startsWith("/") ? route : `/${route}`;
-	return new URL(normalizedRoute, `${getRendererBaseUrl()}/`).toString();
-}
 
 function isWindowAlive(win: BrowserWindow | null): win is BrowserWindow {
 	return win !== null && !win.isDestroyed();
@@ -62,7 +50,30 @@ function hideAliveWindow(win: BrowserWindow | null): void {
 	moveOffscreen(win);
 }
 
+// Suppressed while a child popup (the detached device picker) is open: that
+// popup steals OS focus, which would otherwise blur-hide the tray menu out
+// from under it. The picker re-enables this when it closes.
+let blurSuppressed = false;
+
+export function setTrayMenuBlurSuppressed(value: boolean): void {
+	blurSuppressed = value;
+}
+
+export function isTrayMenuVisible(): boolean {
+	return isMenuVisible();
+}
+
+export function getTrayMenuBounds(): Electron.Rectangle | null {
+	if (!(isMenuVisible() && isWindowAlive(trayMenuWindow))) {
+		return null;
+	}
+	return trayMenuWindow.getBounds();
+}
+
 function handleBlur(): void {
+	if (blurSuppressed) {
+		return;
+	}
 	hideAliveWindow(trayMenuWindow);
 }
 
@@ -86,16 +97,8 @@ function handleDidFinishLoad(): void {
 	pageLoaded = true;
 }
 
-function isSameOrigin(url: string, baseUrl: string): boolean {
-	try {
-		return new URL(url).origin === new URL(baseUrl).origin;
-	} catch {
-		return false;
-	}
-}
-
 function handleWillNavigate(event: Electron.Event, url: string): void {
-	if (isSameOrigin(url, getRendererBaseUrl())) {
+	if (isAllowedRendererUrl(url)) {
 		return;
 	}
 	event.preventDefault();
@@ -171,8 +174,8 @@ function attachTrayMenuListeners(win: BrowserWindow): void {
 	win.webContents.on("will-navigate", handleWillNavigate);
 	win.webContents.setWindowOpenHandler(handleWindowOpen);
 	win.webContents.once("did-finish-load", handleDidFinishLoad);
-	// Load the tray menu page from the renderer server.
-	win.loadURL(getRendererRouteUrl("/tray-menu")).catch(logTrayMenuLoadError);
+	// Load the tray-menu HTML entry (Vite multi-page output).
+	loadRendererPage(win, "tray-menu").catch(logTrayMenuLoadError);
 	// When the menu loses focus, move it offscreen
 	win.on("blur", handleBlur);
 }
@@ -314,6 +317,7 @@ function destroyTrayMenuWindow(): void {
 function teardownTrayMenu(closeHandler: () => void): void {
 	ipcMain.off("tray-menu:close", closeHandler);
 	ipcMain.off("tray-menu:resize", handleResize);
+	blurSuppressed = false;
 	clearFadeTimer();
 	destroyTrayMenuWindow();
 }
@@ -339,15 +343,13 @@ export const __tray_menu_window_test_helpers__ = {
 	clearFadeTimer,
 	moveOffscreen,
 	hideAliveWindow,
-	isSameOrigin,
 	isHttpUrl,
+	isSameOrigin,
 	handleWindowOpen,
 	clampToWorkArea,
 	stepFadeIn,
 	normalizeResizePayload,
 	sizeUnchanged,
-	getRendererBaseUrl,
-	getRendererRouteUrl,
 	handleWillNavigate,
 	logTrayMenuLoadError,
 	isMenuVisible,

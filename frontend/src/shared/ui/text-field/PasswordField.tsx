@@ -1,5 +1,3 @@
-"use client";
-
 import { Input } from "@base-ui/react/input";
 import { ViewIcon, ViewOffIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";

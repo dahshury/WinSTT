@@ -123,10 +123,14 @@ def _ensure_synthesizer(state: ServerState) -> bool:
         def _should_cancel() -> bool:
             return state.cancel_tts_requested
 
+        def _on_status(phase: str) -> None:
+            _enqueue(state, loop, json.dumps({"type": "tts_install_status", "phase": phase}))
+
         state.synthesizer = build_synthesizer(
             cfg,
             on_progress=_on_progress,
             should_cancel=_should_cancel,
+            on_status=_on_status,
         )
         print(f"{bcolors.OKGREEN}TTS synthesizer constructed (lazy-load on first request){bcolors.ENDC}")
         return True
@@ -180,6 +184,55 @@ async def _handle_list_voices(ws: ServerConnection, state: ServerState, data: di
         "status": "success",
         "command": "list_tts_voices",
         "value": {"voices": voices, "languages": languages},
+    }
+    if request_id is not None:
+        payload["request_id"] = request_id
+    await ws.send(json.dumps(payload))
+
+
+@register_command("tts_download_estimate", pre_ready=True)
+async def _handle_tts_download_estimate(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Report what enabling TTS will download — drives the confirm dialog.
+
+    Pre-ready safe and side-effect free: it only inspects disk, never
+    downloads. The renderer shows ``total_bytes`` in the confirmation
+    dialog and must not send ``init_tts`` until the user accepts.
+    """
+    from src.synthesizer.infrastructure.support_pack import (
+        ENGINE_PACK_BYTES,
+        KOKORO_MODEL_BYTES,
+        KOKORO_VOICES_BYTES,
+        is_installed,
+        resolve_runtime_dir,
+    )
+
+    cache_override = getattr(state.args, "tts_cache_dir", None)
+    engine_installed = is_installed(resolve_runtime_dir())
+
+    components: list[dict[str, Any]] = []
+    if not engine_installed:
+        components.append({"id": "engine", "label": "TTS engine", "bytes": ENGINE_PACK_BYTES})
+    # Model/voices presence is cheap to check via the kokoro cache dir.
+    from src.synthesizer.domain.config import SynthesizerConfig
+    from src.synthesizer.infrastructure.asset_downloader import resolve_cache_dir
+
+    cfg = SynthesizerConfig(cache_dir=cache_override)
+    kokoro_dir = resolve_cache_dir(cfg.cache_dir)
+    if not (kokoro_dir / cfg.model_filename).exists():
+        components.append({"id": "model", "label": "Voice model", "bytes": KOKORO_MODEL_BYTES})
+    if not (kokoro_dir / cfg.voices_filename).exists():
+        components.append({"id": "voices", "label": "Voicepacks", "bytes": KOKORO_VOICES_BYTES})
+
+    total = sum(int(c["bytes"]) for c in components)
+    request_id = data.get("request_id")
+    payload: dict[str, Any] = {
+        "status": "success",
+        "command": "tts_download_estimate",
+        "value": {
+            "total_bytes": total,
+            "components": components,
+            "already_installed": total == 0,
+        },
     }
     if request_id is not None:
         payload["request_id"] = request_id
@@ -252,6 +305,13 @@ async def _run_synthesis(
         )
     except Exception as exc:
         logger.warning("TTS synthesis failed", exc_info=True)
+        # Reuse the STT swap-error classifier so an offline failure during
+        # the on-demand engine/model download surfaces the same clear
+        # "check your internet connection" message instead of a raw
+        # "RuntimeError: Failed to download …" trace.
+        from src.recorder.domain.swap_errors import classify_swap_error
+
+        info = classify_swap_error(exc)
         _enqueue(
             state,
             loop,
@@ -259,7 +319,8 @@ async def _run_synthesis(
                 {
                     "type": "tts_failed",
                     "request_id": request_id,
-                    "reason": f"{type(exc).__name__}: {exc}",
+                    "reason": info.user_message,
+                    "category": str(info.category),
                 }
             ),
         )

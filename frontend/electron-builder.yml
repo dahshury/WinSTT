@@ -1,32 +1,35 @@
 appId: com.winstt.app
 productName: WinSTT
+# afterPack hook trims unused Chromium locale .pak files (saves ~30 MB).
+afterPack: ./scripts/electron-builder-after-pack.cjs
 asar: true
+compression: maximum
 asarUnpack:
   - "node_modules/uiohook-napi/**/*"
   - "node_modules/node-gyp-build/**/*"
-  - "out/standalone/**/*"
 directories:
   output: dist
   buildResources: build
 files:
   - "!**/*"
   - dist-electron/**/*
-  # Only the Next.js standalone server tree is needed at runtime. The wider
-  # `out/**/*` glob used to bundle Next's dev cache (out/dev/, up to 1.5 GB)
-  # and intermediate build artefacts (out/server/, out/build/, etc.) into
-  # the asar — `prepare-next-standalone` already copies `out/static` and
-  # `public/` inside `out/standalone/`, so nothing else from `out/` is needed.
-  - out/standalone/**/*
   - package.json
   - "node_modules/uiohook-napi/**/*"
   - "node_modules/node-gyp-build/**/*"
   - "node_modules/pngjs/**/*"
-# Bundled STT server (PyInstaller/Nuitka executable).
-# Place the built server at frontend/stt-server-dist/ before running electron:build.
-# In production, stt-process.ts resolves to process.resourcesPath/stt-server/
+# Bundled STT server (PyInstaller-frozen executable). Place the built
+# server at frontend/stt-server-dist/ before running electron:build. In
+# production, stt-process.ts resolves to process.resourcesPath/stt-server/.
+#
+# Renderer is a Vite static SPA at dist-renderer/; main.ts resolves windows
+# via loadRendererPage() in electron/lib/renderer-url.ts.
 extraResources:
   - from: stt-server-dist/
     to: stt-server
+    filter:
+      - "**/*"
+  - from: dist-renderer/
+    to: renderer
     filter:
       - "**/*"
   # Native paste helper. Built by `bun run native:build` (which compiles
@@ -37,14 +40,25 @@ extraResources:
     filter:
       - "winstt-paste.exe"
       - "winstt-context.exe"
+  # End-user license + third-party notices. Read at runtime by the
+  # About tab in Settings (see notices-resources.ts in electron/lib/).
+  - from: ../LICENSE
+    to: LICENSE
+  - from: ../THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
 win:
   target:
-    - nsis
+    - portable
   icon: build/icon.ico
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
-  createDesktopShortcut: true
+  artifactName: ${productName}-Portable-${version}.${ext}
+portable:
+  artifactName: ${productName}-Portable-${version}.${ext}
+  # Stable extraction folder under %LOCALAPPDATA% — see electron-builder.gpu.yml
+  # for the rationale (avoid re-extracting the payload on every launch).
+  unpackDirName: WinSTT
+  requestExecutionLevel: user
+  # Splash bitmap shown during first-run extract.
+  splashImage: build/splash.bmp
 publish:
   - provider: github
     releaseType: release

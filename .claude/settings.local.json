@@ -56,6 +56,14 @@
       "Bash(timeout 10 docker logs:*)",
       "mcp__MCP_DOCKER__get-library-docs",
       "Bash(wc:*)"
+    ],
+    "deny": [
+      "Bash(git stash:*)",
+      "Bash(git stash)",
+      "Bash(*git stash:*)",
+      "Bash(*git stash)",
+      "Bash(*WINSTT_ALLOW_STASH*)",
+      "Bash(*HUSKY=0 git stash*)"
     ]
   },
   "env": {

@@ -1,7 +1,6 @@
-"use client";
-
 import { ContextMenu } from "@base-ui/react/context-menu";
 import { useTranslations } from "next-intl";
+import { VList } from "virtua";
 import {
 	formatDuration,
 	formatWpm,
@@ -12,21 +11,22 @@ import { clipboardWriteText } from "@/shared/api/ipc-client";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceClasses, surfaceHighlightedBg } from "@/shared/lib/surface";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableEmpty,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@/shared/ui/table";
 
 interface HistoryTableProps {
 	entries: TranscriptionHistoryEntry[];
 }
 
 const MAX_BODY_HEIGHT_PX = 480;
+// Hint only — virtua re-measures every mounted row.
+const ROW_HEIGHT_HINT_PX = 36;
+// Below this row count, render directly (cheaper than VList's bookkeeping);
+// at/above it, virtualize so the ContextMenu.Root count stays bounded.
+const VIRTUALIZE_THRESHOLD = 30;
+// Each track is `minmax(min, max)` so columns shrink gracefully when the
+// settings sidebar expands. Without this, fixed widths summed to 534px and
+// squeezed the text column to ~0 inside the 700px settings window.
+const COLUMN_TEMPLATE =
+	"minmax(100px, 150px) minmax(40px, 56px) minmax(48px, 64px) minmax(40px, 56px) minmax(60px, 110px) minmax(100px, 1fr)";
 const MENU_SURFACE_LEVEL = 6;
 const MENU_SHADOW_LEVEL = 7;
 
@@ -44,7 +44,6 @@ interface HistoryRowProps {
 	copyLabel: string;
 	copyOriginalLabel: string;
 	entry: TranscriptionHistoryEntry;
-	index: number;
 }
 
 function copyEntryText(text: string): void {
@@ -62,29 +61,38 @@ function copyEntryText(text: string): void {
 	clipboardWriteText(text).catch(() => undefined);
 }
 
-function HistoryRow({ entry, copyLabel, copyOriginalLabel, index }: HistoryRowProps) {
+function HistoryRow({ entry, copyLabel, copyOriginalLabel }: HistoryRowProps) {
 	const hasOriginal = entry.originalText !== undefined && entry.originalText.length > 0;
 	return (
 		<ContextMenu.Root>
 			<ContextMenu.Trigger
 				render={
-					<TableRow index={index}>
-						<TableCell className="w-[170px] whitespace-nowrap font-mono text-foreground-secondary text-xs-tight tabular-nums">
-							{formatTimestamp(entry.timestamp)}
-						</TableCell>
-						<TableCell className="w-[68px] text-right tabular-nums">{entry.wordCount}</TableCell>
-						<TableCell className="w-[88px] text-right tabular-nums">
-							{formatDuration(entry.durationMs)}
-						</TableCell>
-						<TableCell className="w-[68px] text-right tabular-nums">
-							{formatWpm(wordsPerMinute(entry.wordCount, entry.durationMs))}
-						</TableCell>
-						<TableCell className="truncate text-foreground" title={entry.text}>
-							{entry.text}
-						</TableCell>
-					</TableRow>
+					<div
+						className="grid items-center border-border border-b text-body text-foreground-muted transition-colors duration-100 hover:bg-surface-hover hover:text-foreground"
+						style={{ gridTemplateColumns: COLUMN_TEMPLATE }}
+					/>
 				}
-			/>
+			>
+				<span className="whitespace-nowrap px-3 py-2 font-mono text-foreground-secondary text-xs-tight tabular-nums">
+					{formatTimestamp(entry.timestamp)}
+				</span>
+				<span className="px-3 py-2 text-right tabular-nums">{entry.wordCount}</span>
+				<span className="px-3 py-2 text-right tabular-nums">
+					{formatDuration(entry.durationMs)}
+				</span>
+				<span className="px-3 py-2 text-right tabular-nums">
+					{formatWpm(wordsPerMinute(entry.wordCount, entry.durationMs))}
+				</span>
+				<span
+					className="truncate px-3 py-2 font-mono text-foreground-secondary text-xs-tight"
+					title={entry.llmModel ?? ""}
+				>
+					{entry.llmModel ?? "—"}
+				</span>
+				<span className="truncate px-3 py-2 text-foreground" title={entry.text}>
+					{entry.text}
+				</span>
+			</ContextMenu.Trigger>
 			<ContextMenu.Portal>
 				<SurfaceProvider value={MENU_SURFACE_LEVEL}>
 					<ContextMenu.Positioner style={{ zIndex: Z_INDEX.popover }}>
@@ -132,34 +140,55 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 	const copyLabel = t("copy");
 	const copyOriginalLabel = t("copyOriginal");
 
+	const rows = sorted.map((entry) => (
+		<HistoryRow
+			copyLabel={copyLabel}
+			copyOriginalLabel={copyOriginalLabel}
+			entry={entry}
+			key={entry.id}
+		/>
+	));
+
+	let body: React.ReactNode;
+	if (sorted.length === 0) {
+		body = (
+			<div className="px-3 py-6 text-center text-body-sm text-foreground-muted">
+				{t("tableEmpty")}
+			</div>
+		);
+	} else if (sorted.length < VIRTUALIZE_THRESHOLD) {
+		body = (
+			<div className="overflow-y-auto overscroll-contain" style={{ maxHeight: MAX_BODY_HEIGHT_PX }}>
+				{rows}
+			</div>
+		);
+	} else {
+		body = (
+			<VList
+				itemSize={ROW_HEIGHT_HINT_PX}
+				style={{
+					height: Math.min(sorted.length * ROW_HEIGHT_HINT_PX, MAX_BODY_HEIGHT_PX),
+				}}
+			>
+				{rows}
+			</VList>
+		);
+	}
+
 	return (
-		<div className="overflow-y-auto overscroll-contain" style={{ maxHeight: MAX_BODY_HEIGHT_PX }}>
-			<Table containerClassName="rounded border border-border bg-surface-tertiary overflow-hidden">
-				<TableHeader>
-					<TableRow>
-						<TableHead className="w-[170px] whitespace-nowrap">{t("colTime")}</TableHead>
-						<TableHead className="w-[68px] text-right">{t("colWords")}</TableHead>
-						<TableHead className="w-[88px] text-right">{t("colDuration")}</TableHead>
-						<TableHead className="w-[68px] text-right">{t("colWpm")}</TableHead>
-						<TableHead>{t("colText")}</TableHead>
-					</TableRow>
-				</TableHeader>
-				<TableBody>
-					{sorted.length === 0 ? (
-						<TableEmpty colSpan={5}>{t("tableEmpty")}</TableEmpty>
-					) : (
-						sorted.map((entry, idx) => (
-							<HistoryRow
-								copyLabel={copyLabel}
-								copyOriginalLabel={copyOriginalLabel}
-								entry={entry}
-								index={idx}
-								key={entry.id}
-							/>
-						))
-					)}
-				</TableBody>
-			</Table>
+		<div className="overflow-hidden rounded border border-border bg-surface-tertiary">
+			<div
+				className="grid border-border border-b font-medium text-body text-foreground"
+				style={{ gridTemplateColumns: COLUMN_TEMPLATE }}
+			>
+				<span className="whitespace-nowrap px-3 py-2 text-left">{t("colTime")}</span>
+				<span className="px-3 py-2 text-right">{t("colWords")}</span>
+				<span className="px-3 py-2 text-right">{t("colDuration")}</span>
+				<span className="px-3 py-2 text-right">{t("colWpm")}</span>
+				<span className="px-3 py-2 text-left">{t("colModel")}</span>
+				<span className="px-3 py-2 text-left">{t("colText")}</span>
+			</div>
+			{body}
 		</div>
 	);
 }

@@ -1,8 +1,9 @@
-"use client";
-
 import { Tooltip } from "@base-ui/react/tooltip";
 import type { ReactNode } from "react";
 import { useSettingsStore } from "@/entities/setting";
+import { RestartRequiredToast } from "@/features/restart-notice";
+import { CloudKeyRemovalBanner } from "@/features/show-cloud-key-removal-banner";
+import { CloudSttErrorToasts } from "@/features/show-cloud-stt-errors";
 import { SwapFailureToast } from "@/features/swap-notifications";
 import { TransformToast } from "@/features/transform-notifications";
 import { TtsPlaybackMount } from "@/features/tts-playback";
@@ -24,6 +25,9 @@ export function RootLayout({ children }: { children: ReactNode }) {
 							<main className="flex-1 overflow-hidden">{children}</main>
 							<TransformToast />
 							<SwapFailureToast />
+							<RestartRequiredToast />
+							<CloudSttErrorToasts />
+							<CloudKeyRemovalBanner />
 							<TtsPlaybackMount />
 						</div>
 					</SurfaceProvider>

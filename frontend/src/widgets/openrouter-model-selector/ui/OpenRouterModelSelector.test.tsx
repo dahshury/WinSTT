@@ -2,10 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "@testing-library/react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
-import {
-	__openrouter_model_selector_test_helpers__ as helpers,
-	OpenRouterModelSelector,
-} from "./OpenRouterModelSelector";
+import { __openrouter_model_selector_test_helpers__ as helpers } from "../lib/openrouter-model-selector-test-helpers";
+import { OpenRouterModelSelector } from "./OpenRouterModelSelector";
 
 describe("SearchPendingIndicator", () => {
 	const { SearchPendingIndicator } = helpers;
@@ -342,7 +340,6 @@ describe("OpenRouterModelSelector helpers", () => {
 		test("undefined providerSlug for trailing @", () => {
 			expect(helpers.splitTokenAtSeparator("openai/gpt-4o@")).toEqual({
 				modelId: "openai/gpt-4o",
-				providerSlug: undefined,
 			});
 		});
 	});

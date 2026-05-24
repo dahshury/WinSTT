@@ -26,11 +26,12 @@ import {
 	parseModelSelection,
 } from "../src/shared/lib/openrouter-model-selection";
 
-const apiKey = process.env.OPENROUTER_API_KEY;
-if (!apiKey) {
+const rawApiKey = process.env.OPENROUTER_API_KEY;
+if (!rawApiKey) {
 	console.error("OPENROUTER_API_KEY env var is required");
 	process.exit(1);
 }
+const apiKey: string = rawApiKey;
 
 // ── 1. Model-selection encoding round-trip ────────────────────────────
 {

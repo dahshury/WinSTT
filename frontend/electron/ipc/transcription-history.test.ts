@@ -230,6 +230,45 @@ describe("createTranscriptionHistoryStore.record", () => {
 		const entry = history.record("hello world", 1000, "hello world", false);
 		expect(entry?.originalText).toBeUndefined();
 	});
+
+	test("records (trimmed) llmModel when the LLM ran", () => {
+		const store = makeStore();
+		const history = createTranscriptionHistoryStore({
+			maxEntries: 5,
+			now: () => 1,
+			makeId,
+			store,
+			storeKey: "history",
+		});
+		const entry = history.record("hello world", 1000, "hello", true, "  qwen2.5:7b  ");
+		expect(entry?.llmModel).toBe("qwen2.5:7b");
+	});
+
+	test("omits llmModel when the LLM did NOT run, even if a model was passed", () => {
+		const store = makeStore();
+		const history = createTranscriptionHistoryStore({
+			maxEntries: 5,
+			now: () => 1,
+			makeId,
+			store,
+			storeKey: "history",
+		});
+		const entry = history.record("hello world", 1000, "hello world", false, "qwen2.5:7b");
+		expect(entry?.llmModel).toBeUndefined();
+	});
+
+	test("omits llmModel when the model is empty/whitespace or absent", () => {
+		const store = makeStore();
+		const history = createTranscriptionHistoryStore({
+			maxEntries: 5,
+			now: () => 1,
+			makeId,
+			store,
+			storeKey: "history",
+		});
+		expect(history.record("a", 1, undefined, true, "   ")?.llmModel).toBeUndefined();
+		expect(history.record("b", 1, undefined, true)?.llmModel).toBeUndefined();
+	});
 });
 
 describe("createTranscriptionHistoryStore.getHistory", () => {

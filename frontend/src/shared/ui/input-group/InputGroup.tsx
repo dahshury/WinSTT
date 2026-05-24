@@ -1,5 +1,3 @@
-"use client";
-
 import { Button as BaseButton } from "@base-ui/react/button";
 import { Input as BaseInput } from "@base-ui/react/input";
 import type {

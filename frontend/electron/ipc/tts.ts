@@ -49,6 +49,17 @@ interface ListVoicesResult {
 	voices: Array<{ id: string; label: string; language: string; gender: string }>;
 }
 
+interface TtsDownloadEstimate {
+	/** True when nothing needs downloading (everything already on disk). */
+	alreadyInstalled: boolean;
+	/** Per-component breakdown (engine pack / voice model / voicepacks). */
+	components: Array<{ id: string; label: string; bytes: number; installed: boolean }>;
+	/** Sum of every component that still needs downloading, in bytes. */
+	totalBytes: number;
+	/** True when the estimate couldn't be fetched (server/internet down). */
+	unavailable?: boolean;
+}
+
 /**
  * Set by {@link setupTts} so the global TTS hotkey listener (a separate
  * module) can trigger a full cancel without re-implementing the
@@ -179,6 +190,10 @@ function setupTtsImpl(sttClient: SttClient) {
 		tts_model_download_progress: (event) => handleDownloadProgress(event),
 		tts_model_download_complete: (event) =>
 			broadcastAll(IPC.TTS_MODEL_DOWNLOAD_COMPLETE, { cancelled: event.cancelled === true }),
+		tts_install_status: (event) =>
+			broadcastAll(IPC.TTS_INSTALL_STATUS, {
+				phase: typeof event.phase === "string" ? event.phase : "unknown",
+			}),
 	};
 
 	const onDataEvent = (event: Record<string, unknown>): void => {
@@ -362,6 +377,51 @@ function setupTtsImpl(sttClient: SttClient) {
 		return { voices: [], languages: [] };
 	};
 
+	const handleDownloadEstimate = async (): Promise<TtsDownloadEstimate> => {
+		try {
+			const raw = (await sttClient.ttsDownloadEstimate()) as unknown;
+			if (
+				isPlainObject(raw) &&
+				typeof (raw as { total_bytes?: unknown }).total_bytes === "number"
+			) {
+				const r = raw as {
+					total_bytes: number;
+					components?: unknown;
+					already_installed?: unknown;
+				};
+				const components = Array.isArray(r.components)
+					? r.components.flatMap((c) =>
+							isPlainObject(c) &&
+							typeof (c as { id?: unknown }).id === "string" &&
+							typeof (c as { label?: unknown }).label === "string" &&
+							typeof (c as { bytes?: unknown }).bytes === "number"
+								? [
+										{
+											id: c.id as string,
+											label: c.label as string,
+											bytes: c.bytes as number,
+											// Older servers omit `installed`; absence ⇒ not installed
+											// (the pre-status behaviour listed only missing pieces).
+											installed: (c as { installed?: unknown }).installed === true,
+										},
+									]
+								: []
+						)
+					: [];
+				return {
+					totalBytes: r.total_bytes,
+					components,
+					alreadyInstalled: r.already_installed === true,
+				};
+			}
+		} catch (err) {
+			dbg("tts", `ttsDownloadEstimate failed: ${getErrorMessage(err)}`);
+		}
+		// Network/server unavailable — caller (the confirm dialog) treats a
+		// null estimate as "can't reach the internet to size this".
+		return { totalBytes: 0, components: [], alreadyInstalled: false, unavailable: true };
+	};
+
 	ipcMain.handle(IPC.TTS_SPEAK, handleSpeak);
 	ipcMain.handle(IPC.TTS_SPEAK_SELECTION, handleSpeakSelection);
 	ipcMain.on(IPC.TTS_CANCEL, handleCancel);
@@ -369,6 +429,7 @@ function setupTtsImpl(sttClient: SttClient) {
 	ipcMain.on(IPC.TTS_REPORT_PLAYBACK_ENDED, handleReportPlaybackEnded);
 	ipcMain.handle(IPC.TTS_INIT, handleInit);
 	ipcMain.handle(IPC.TTS_LIST_VOICES, handleListVoices);
+	ipcMain.handle(IPC.TTS_DOWNLOAD_ESTIMATE, handleDownloadEstimate);
 
 	return () => {
 		ipcMain.removeHandler(IPC.TTS_SPEAK);
@@ -378,6 +439,7 @@ function setupTtsImpl(sttClient: SttClient) {
 		ipcMain.removeAllListeners(IPC.TTS_REPORT_PLAYBACK_ENDED);
 		ipcMain.removeHandler(IPC.TTS_INIT);
 		ipcMain.removeHandler(IPC.TTS_LIST_VOICES);
+		ipcMain.removeHandler(IPC.TTS_DOWNLOAD_ESTIMATE);
 		sttClient.off("data-binary", onDataBinary);
 		sttClient.off("data-event", onDataEvent);
 		sttClient.off("connected", maybeWarmup);

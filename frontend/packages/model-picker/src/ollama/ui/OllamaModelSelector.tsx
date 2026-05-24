@@ -98,46 +98,46 @@ export interface OllamaLibrarySearchProps {
 }
 
 export interface OllamaModelSelectorProps {
-	disabled?: boolean;
-	isLoading?: boolean;
+	disabled?: boolean | undefined;
+	isLoading?: boolean | undefined;
 	/** When provided, the popup grows a third "Library" section that lists
 	 *  scraped ollama.com search results with paginated pull actions. */
-	librarySearch?: OllamaLibrarySearchProps;
+	librarySearch?: OllamaLibrarySearchProps | undefined;
 	models: readonly OllamaModel[];
 	onChange: (modelName: string) => void;
 	/** Delete an installed model. Omit to hide the delete button. */
-	onDelete?: (modelName: string) => void;
+	onDelete?: ((modelName: string) => void) | undefined;
 	/** Forget a paused pull (doesn't touch disk). Omit to hide the recommended UI. */
-	onDiscardPull?: (modelName: string) => void;
+	onDiscardPull?: ((modelName: string) => void) | undefined;
 	/** Called when the dropdown opens — used to refresh the catalog. */
-	onOpen?: () => void;
+	onOpen?: (() => void) | undefined;
 	/** Start (or restart) a pull. Omit to hide the recommended UI. */
-	onPull?: (modelName: string) => void;
+	onPull?: ((modelName: string) => void) | undefined;
 	/** Resume a previously-paused pull. Omit to hide the recommended UI. */
-	onResumePull?: (modelName: string) => void;
+	onResumePull?: ((modelName: string) => void) | undefined;
 	/** Stop an active pull (becomes a paused pull). Omit to hide the recommended UI. */
-	onStopPull?: (modelName: string) => void;
-	pausedPulls?: Readonly<Record<string, PausedPullState>>;
-	placeholder?: string;
+	onStopPull?: ((modelName: string) => void) | undefined;
+	pausedPulls?: Readonly<Record<string, PausedPullState>> | undefined;
+	placeholder?: string | undefined;
 	/** Active pulls keyed by model name. Omit to hide the recommended UI. */
-	pulls?: Readonly<Record<string, OllamaPullProgress>>;
+	pulls?: Readonly<Record<string, OllamaPullProgress>> | undefined;
 	/** Curated list of suggested models. When supplied alongside pull
 	 *  callbacks, the popup grows a "Recommended" section with inline
 	 *  install actions; omitting it falls back to installed-only mode. */
-	recommendedModels?: readonly RecommendedOllamaModel[];
+	recommendedModels?: readonly RecommendedOllamaModel[] | undefined;
 	/** In-flight model swap (caller-driven; the picker has no IPC subscription
 	 *  for Ollama swaps the way the STT picker does). When set, the trigger
 	 *  renders the same `from → ◌ → to` view + accent sweep used by the STT
 	 *  selector. `fromName` is the previously-loaded model id; `toName` the
 	 *  one the user just picked. Both are resolved against `models` to render
 	 *  publisher chips. Omit (or pass `null`) when no swap is in flight. */
-	swap?: { fromName?: string | null; toName: string } | null;
+	swap?: { fromName?: string | null | undefined; toName: string } | null | undefined;
 	/** Optional fit-assessment lookup. Called per recommended model to
 	 *  render a "Won't fit" badge when the host system can't run it. */
-	systemFit?: (sizeBytes: number) => OllamaFitInfo;
+	systemFit?: ((sizeBytes: number) => OllamaFitInfo) | undefined;
 	/** Optional system info — currently only used to decide whether to call
 	 *  `systemFit`; if the caller supplies neither, the badge is suppressed. */
-	systemInfo?: SystemInfoEntry | null;
+	systemInfo?: SystemInfoEntry | null | undefined;
 	value: string;
 }
 

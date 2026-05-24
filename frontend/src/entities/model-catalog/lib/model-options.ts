@@ -125,3 +125,44 @@ export function buildRealtimeOpts(
 		ctx
 	);
 }
+
+/** True when the saved model id is missing or not present in the loaded
+ *  catalog. Drives the auto-fallback guard in ModelSettingsPanel: STT is the
+ *  app's core capability and the selector must never be in a "no model"
+ *  state, but a stale saved id (model deleted from the catalog, corrupted
+ *  settings) can leave it pointing at nothing. */
+export function needsModelFallback(
+	modelId: string | undefined | null,
+	models: readonly ModelInfo[]
+): boolean {
+	if (!modelId) {
+		return true;
+	}
+	return !models.some((m) => m.id === modelId);
+}
+
+/** Resolve a sensible default STT model when the user's saved selection is
+ *  invalid. Prefers something already cached on disk (zero-friction enable,
+ *  no surprise download), then falls back to the smallest in the catalog.
+ *  `filter` narrows the eligible set (e.g. realtime-viable only). Returns
+ *  null only when the catalog itself is empty (boot race). */
+export function pickDefaultSttModel(
+	models: readonly ModelInfo[],
+	statesById: Record<string, ModelStateEntry>,
+	filter: (m: ModelInfo) => boolean = () => true
+): string | null {
+	const eligible = models.filter(filter);
+	if (eligible.length === 0) {
+		return null;
+	}
+	const bySize = (a: ModelInfo, b: ModelInfo): number => {
+		const sa = statesById[a.id]?.estimated_bytes ?? Number.POSITIVE_INFINITY;
+		const sb = statesById[b.id]?.estimated_bytes ?? Number.POSITIVE_INFINITY;
+		return sa - sb;
+	};
+	const cached = eligible.filter((m) => statesById[m.id]?.cache.state === "cached");
+	if (cached.length > 0) {
+		return cached.toSorted(bySize)[0]?.id ?? null;
+	}
+	return eligible.toSorted(bySize)[0]?.id ?? null;
+}

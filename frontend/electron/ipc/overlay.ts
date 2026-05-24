@@ -54,6 +54,22 @@ const SHOW_OPACITY_RAMP_DELAY_MS = 80;
 
 let overlayWindow: BrowserWindow | null = null;
 
+// The visible *main* WinSTT window. The pill is only a stand-in for the
+// transcription surface the main window already renders, so the two must
+// never be on screen at the same time. Tracked here so `showOverlay()` can
+// suppress the pill while the main window is up and `syncOverlayToMainWindow`
+// can restore it the moment the main window goes away.
+let mainWindow: BrowserWindow | null = null;
+
+// Whether the current dictation session wants the pill, independent of
+// whether we're actually painting it right now. `showOverlay()` sets this
+// even when suppressed (settings / main window visible); `hideOverlay()`
+// clears it. `syncOverlayToMainWindow` reads it to decide whether a
+// main-window hide should bring the pill back.
+// Stryker disable next-line BooleanLiteral: closure init — show/hideOverlay
+// always assign this before any consumer reads it.
+let sessionWantsOverlay = false;
+
 type DesiredState = "hidden" | "shown";
 // Stryker disable next-line StringLiteral: equivalent — the public API
 // (__resetOverlayForTesting__, hideOverlay, showOverlay) overwrites `desired`
@@ -209,6 +225,25 @@ export function setOverlayWindow(win: BrowserWindow): void {
 	overlayWindow = win;
 }
 
+/**
+ * Register (or clear, with `null` on main-window destruction) the main
+ * WinSTT window so the pill can stay mutually exclusive with it.
+ */
+export function setMainWindow(win: BrowserWindow | null): void {
+	mainWindow = win;
+}
+
+// The pill is suppressed only while the main window is actually *focused* —
+// not merely visible. A visible-but-unfocused main window is the normal
+// dictation case (the user is typing into another app), where the pill is
+// still the only on-screen feed and must stay. `isFocused()` is already
+// false for a hidden/minimized window, so this also covers those cases.
+// Listen mode is handled separately by `isOverlaySuppressedBySettings()`
+// (the pill never shows there regardless of focus).
+function isMainWindowFocused(): boolean {
+	return Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
+}
+
 function isOverlaySuppressedBySettings(): boolean {
 	const enabled = getStoreValue("general.showRecordingOverlay");
 	const recordingMode = getStoreValue("general.recordingMode");
@@ -216,19 +251,54 @@ function isOverlaySuppressedBySettings(): boolean {
 }
 
 /**
- * Show the overlay window with position and settings checks.
- * Fires synchronously — no debounce, no animation delay.
+ * Compute the on-screen (x, y) for the overlay window for the given mode.
+ *
+ * `floating-bottom` (the historical layout): centered horizontally in the
+ * primary display's *work area* (so it sits above the Windows taskbar),
+ * 60px above the work-area bottom edge.
+ *
+ * `dynamic-island`: docked flush to the *physical top* of the primary
+ * display (`bounds.y`), centered horizontally in `bounds.width`. The user
+ * asked for "no distance between it and the top bezel of the desktop", so
+ * we use `bounds` not `workArea` — a top-mounted taskbar would still get
+ * painted under, mirroring Apple's Dynamic Island behavior.
  */
-export function showOverlay(): void {
-	if (!overlayWindow || isOverlaySuppressedBySettings()) {
+function computeOverlayPosition(
+	mode: "floating-bottom" | "dynamic-island",
+	winWidth: number,
+	winHeight: number
+): { x: number; y: number } {
+	const primaryDisplay = screen.getPrimaryDisplay();
+	if (mode === "dynamic-island") {
+		const { x: boundsX, y: boundsY, width: boundsWidth } = primaryDisplay.bounds;
+		return {
+			x: boundsX + Math.round((boundsWidth - winWidth) / 2),
+			y: boundsY,
+		};
+	}
+	const { width, height } = primaryDisplay.workAreaSize;
+	return {
+		x: Math.round((width - winWidth) / 2),
+		y: Math.round(height - winHeight - 60),
+	};
+}
+
+function resolveOverlayMode(): "floating-bottom" | "dynamic-island" {
+	const raw = getStoreValue("general.overlayMode");
+	return raw === "dynamic-island" ? "dynamic-island" : "floating-bottom";
+}
+
+/**
+ * Position and reveal the pill. Caller is responsible for the gating
+ * (settings / main-window visibility) — this is the unconditional show.
+ */
+function doShow(): void {
+	if (!overlayWindow) {
 		return;
 	}
 
-	const primaryDisplay = screen.getPrimaryDisplay();
-	const { width, height } = primaryDisplay.workAreaSize;
 	const [winWidth = 800, winHeight = 120] = overlayWindow.getSize();
-	const x = Math.round((width - winWidth) / 2);
-	const y = Math.round(height - winHeight - 60);
+	const { x, y } = computeOverlayPosition(resolveOverlayMode(), winWidth, winHeight);
 
 	desired = "shown";
 	clearPendingTimers();
@@ -237,10 +307,48 @@ export function showOverlay(): void {
 }
 
 /**
- * Hide the overlay window immediately, with multiple retry passes to
- * fight DWM compositor caching on transparent windows.
+ * Re-anchor the pill in response to a live `general.overlayMode` change.
+ * Only acts when the pill is currently visible — switching modes while the
+ * pill is hidden is a no-op (the next `showOverlay()` will read the new
+ * mode through `doShow()`).
  */
-export function hideOverlay(): void {
+function repositionIfVisible(): void {
+	if (!overlayWindow || overlayWindow.isDestroyed()) {
+		return;
+	}
+	if (desired !== "shown" || !overlayWindow.isVisible()) {
+		return;
+	}
+	const [winWidth = 800, winHeight = 120] = overlayWindow.getSize();
+	const { x, y } = computeOverlayPosition(resolveOverlayMode(), winWidth, winHeight);
+	safeCall(() => overlayWindow?.setPosition(x, y));
+}
+
+/**
+ * Show the overlay window with position and settings checks.
+ * Fires synchronously — no debounce, no animation delay.
+ *
+ * The pill is suppressed while the main window is focused: it already
+ * renders the same transcription + LLM thinking indicator, so the pill
+ * would be a redundant duplicate. `sessionWantsOverlay` is still set so
+ * `syncOverlayToMainWindow` can bring the pill back if the main window
+ * loses focus before the session ends.
+ */
+export function showOverlay(): void {
+	sessionWantsOverlay = true;
+	if (!overlayWindow || isOverlaySuppressedBySettings() || isMainWindowFocused()) {
+		return;
+	}
+	doShow();
+}
+
+/**
+ * Drop the pill off-screen with the full DWM-fighting retry dance, WITHOUT
+ * touching `sessionWantsOverlay`. Used both by the public `hideOverlay()`
+ * (session over) and by `syncOverlayToMainWindow` (session still live, the
+ * main window is just covering for the pill).
+ */
+function performHide(): void {
 	if (!overlayWindow) {
 		return;
 	}
@@ -262,6 +370,38 @@ export function hideOverlay(): void {
 	}
 
 	startHideReconciler();
+}
+
+/**
+ * Hide the overlay window immediately, with multiple retry passes to
+ * fight DWM compositor caching on transparent windows. Marks the session
+ * as no longer wanting the pill so a later main-window hide can't
+ * resurrect a finished session's pill.
+ */
+export function hideOverlay(): void {
+	sessionWantsOverlay = false;
+	performHide();
+}
+
+/**
+ * Keep the pill and the focused main window mutually exclusive. Driven by
+ * the main window's focus / blur / hide / minimize events (wired in
+ * main.ts).
+ *
+ * - Main window focused → drop the pill (it's redundant; the main window
+ *   shows the same transcription + thinking indicator). Intent is kept so
+ *   the pill can return when focus is lost.
+ * - Main window not focused, session still wants the pill, not otherwise
+ *   suppressed → bring the pill back so the live feed isn't lost.
+ */
+export function syncOverlayToMainWindow(): void {
+	if (isMainWindowFocused()) {
+		performHide();
+		return;
+	}
+	if (sessionWantsOverlay && overlayWindow && !isOverlaySuppressedBySettings()) {
+		doShow();
+	}
 }
 
 /**
@@ -287,9 +427,16 @@ export function setupOverlayHandlers(): () => void {
 			hideOverlayImmediate();
 		}
 	});
+	// Live overlay-mode swap: reposition the visible pill in place so the
+	// user sees the layout change immediately rather than after the next
+	// recording session.
+	const disposeOverlayMode = store.onDidChange("general.overlayMode", () => {
+		repositionIfVisible();
+	});
 	return () => {
 		disposeOverlaySetting();
 		disposeModeSetting();
+		disposeOverlayMode();
 		clearPendingTimers();
 		stopReconciler();
 	};
@@ -298,6 +445,8 @@ export function setupOverlayHandlers(): () => void {
 /** Test hook: reset all overlay module state. */
 export function __resetOverlayForTesting__(): void {
 	desired = "hidden";
+	sessionWantsOverlay = false;
+	mainWindow = null;
 	clearPendingTimers();
 	stopReconciler();
 	overlayWindow = null;

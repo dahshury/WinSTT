@@ -1,5 +1,3 @@
-"use client";
-
 import { createContext, type ReactNode, use } from "react";
 
 const SurfaceContext = createContext<number>(1);

@@ -1,5 +1,3 @@
-"use client";
-
 import { Dialog } from "@base-ui/react/dialog";
 import type { ReactNode } from "react";
 import { SurfaceProvider, surfaceClasses, useSurface } from "@/shared/lib/surface";

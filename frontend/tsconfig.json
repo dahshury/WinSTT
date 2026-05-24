@@ -11,13 +11,15 @@
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "verbatimModuleSyntax": true,
     "incremental": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
-    "types": ["bun"],
+    "exactOptionalPropertyTypes": true,
+    "types": ["bun", "vite/client"],
     "paths": {
       "@/*": ["./src/*"],
       "@spec/*": ["../spec/generated/ts/*"],
@@ -26,21 +28,15 @@
       "@picker": ["./packages/model-picker/src/index.ts"],
       "@picker/*": ["./packages/model-picker/src/*"]
     },
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
     "allowJs": true
   },
-  "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
-    "out/types/**/*.ts",
-    "out/dev/types/**/*.ts"
-  ],
-  "exclude": ["node_modules", ".next", "out", "dist", "coverage"]
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "dist-electron",
+    "dist-renderer",
+    "coverage",
+    "out"
+  ]
 }

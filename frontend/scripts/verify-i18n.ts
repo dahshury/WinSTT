@@ -28,7 +28,7 @@ const MESSAGES_DIR = join(REPO_ROOT, "messages");
 const EN_PATH = join(MESSAGES_DIR, "en.json");
 
 const SOURCE_EXTS = new Set([".ts", ".tsx"]);
-const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "dist-electron", "out"]);
+const SKIP_DIRS = new Set(["node_modules", "dist", "dist-electron", "dist-renderer", "coverage"]);
 
 const STRICT = process.argv.includes("--strict");
 
@@ -56,6 +56,32 @@ const KEEP_ENGLISH: ReadonlySet<string> = new Set([
 	"model.deviceAutoLabel", // "Auto" — same loanword in fr
 	"general.visualizerRadial", // same loanword in es/fr
 	"general.visualizerAura", // same loanword in es/fr
+	// Brand names: identical across all languages.
+	"integrations.openai", // "OpenAI"
+	"integrations.elevenlabs", // "ElevenLabs"
+	"integrations.groupOpenai", // "OpenAI"
+	"integrations.groupElevenlabs", // "ElevenLabs"
+	"integrations.groupLocal", // "Local" — same word in es/fr
+	"llm.providerOpenRouter", // "OpenRouter" brand
+	"llm.providerOllama", // "Ollama (local)" — brand + cognate in es/fr
+	// API-key placeholders: literal prefixes shared with the provider.
+	"integrations.openaiApiKeyPlaceholder", // "sk-…"
+	"integrations.elevenlabsApiKeyPlaceholder", // "el-…"
+	"llm.openrouterApiKeyPlaceholder", // "sk-or-v1-…"
+	// Pure format strings (no translatable words).
+	"llm.modelSizeLabel", // "{size} GB"
+	"llm.pullProgress", // "{percent}% — {status}"
+	// Acronyms / shared loanwords across many languages.
+	"tts.deviceCpu", // "CPU" acronym
+	"tts.deviceCuda", // "GPU (CUDA)" acronyms
+	"tray.sectionDiagnostics", // "Diagnostics" — same word in fr
+	"tray.sectionTranscription", // "Transcription" — same word in fr
+	// About panel — brand / proper-noun tokens that legitimately stay identical
+	// across every locale.
+	"about.electronVersion", // "Electron" brand
+	"about.nodeVersion", // "Node" brand
+	"about.appInfoTitle", // "Application" — same word in fr/es
+	"about.appVersion", // "Version" — same word in fr
 ]);
 
 async function* walk(dir: string): AsyncGenerator<string> {
@@ -104,12 +130,18 @@ function extractRefs(file: string, source: string, refs: Reference[]): void {
 }
 
 function hasKey(messages: Json, namespace: string, key: string): boolean {
-	if (typeof messages !== "object" || messages === null || Array.isArray(messages)) {
-		return false;
+	// next-intl supports dotted keys within a namespace, e.g.
+	// `useTranslations("model")` + `t("resourceWarning.cancel")` resolves
+	// `messages.model.resourceWarning.cancel`. Walk both the namespace and
+	// the (possibly dotted) key to mirror runtime lookup semantics.
+	const parts = [...namespace.split("."), ...key.split(".")];
+	let cur: Json = messages;
+	for (const p of parts) {
+		if (typeof cur !== "object" || cur === null || Array.isArray(cur)) return false;
+		cur = (cur as Record<string, Json>)[p] as Json;
+		if (cur === undefined) return false;
 	}
-	const ns = (messages as Record<string, Json>)[namespace];
-	if (typeof ns !== "object" || ns === null || Array.isArray(ns)) return false;
-	return key in (ns as Record<string, Json>);
+	return typeof cur === "string";
 }
 
 function flatKeys(obj: Json, prefix = ""): string[] {

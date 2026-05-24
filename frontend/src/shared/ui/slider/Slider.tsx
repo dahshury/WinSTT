@@ -1,5 +1,3 @@
-"use client";
-
 import { animate, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import type React from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -43,9 +41,16 @@ function decimalsForStep(step: number): number {
 	return dot === -1 ? 0 : s.length - dot - 1;
 }
 
-function roundValue(val: number, step: number): number {
-	const raw = Math.round(val / step) * step;
-	return Number.parseFloat(raw.toFixed(decimalsForStep(step)));
+// Snap to the min-anchored step grid (NOT zero-anchored) and clamp to bounds.
+// Without min-anchoring, a slider with min=3 step=2 would emit 4,6,…,20,22 —
+// 22 overshoots a schema bound like max=21, the broadcast then fails Zod
+// validation in other windows, those windows fall back to all defaults, and
+// the broadcast back wipes the user's edit. Anchoring at `min` keeps the
+// emitted grid (3,5,…,21) inside the schema's range.
+function roundValue(val: number, min: number, max: number, step: number): number {
+	const snapped = min + Math.round((val - min) / step) * step;
+	const bounded = clamp(snapped, min, max);
+	return Number.parseFloat(bounded.toFixed(decimalsForStep(step)));
 }
 
 // Magnetic snap to the nearest decile when within 3.125% of it.
@@ -78,8 +83,12 @@ export function Slider({
 	min,
 	onChange,
 	step,
-	value,
+	value: rawValue,
 }: SliderProps) {
+	// Clamp the incoming value so a stale persisted out-of-range number (e.g. a
+	// pre-fix `22` from when the snap grid was zero-anchored) renders as `max`
+	// instead of overflowing the track and displaying an unreachable number.
+	const value = clamp(rawValue, min, max);
 	const substrate = useSurface();
 	// Lift two levels above the surrounding substrate so the track stays
 	// distinct against ElevatedSurface-wrapped controls (which already sit one
@@ -235,7 +244,7 @@ export function Slider({
 		animRef.current?.stop();
 		animRef.current = null;
 		fillPercent.jump(percentFromValue(newValue));
-		onChange(roundValue(newValue, step));
+		onChange(roundValue(newValue, min, max, step));
 	}
 
 	function handlePointerUp(e: React.PointerEvent): void {
@@ -247,12 +256,10 @@ export function Slider({
 			// continuous sliders keep the decile-magnetic behavior.
 			const rawValue = positionToValue(e.clientX);
 			const discreteSteps = range / step;
-			const snapped =
-				discreteSteps <= 10
-					? clamp(min + Math.round((rawValue - min) / step) * step, min, max)
-					: snapToDecile(rawValue, min, max);
+			const target = discreteSteps <= 10 ? rawValue : snapToDecile(rawValue, min, max);
+			const snapped = roundValue(target, min, max, step);
 			animateFillTo(percentFromValue(snapped));
-			onChange(roundValue(snapped, step));
+			onChange(snapped);
 		}
 		if (!shouldReduceMotion && rubberStretch.get() !== 0) {
 			animate(rubberStretch, 0, { type: "spring", visualDuration: 0.35, bounce: 0.15 });
@@ -289,7 +296,7 @@ export function Slider({
 		}
 		e.preventDefault();
 		setKeyboardFocusRing(true);
-		const snapped = roundValue(clamp(next, min, max), step);
+		const snapped = roundValue(next, min, max, step);
 		animateFillTo(percentFromValue(snapped));
 		onChange(snapped);
 	}

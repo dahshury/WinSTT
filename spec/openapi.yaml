@@ -533,6 +533,7 @@ components:
         - wakeup
         - shutdown
         - text
+        - request_diarization_toggle
 
     WhisperModel:
       type: string
@@ -957,14 +958,21 @@ components:
         A canonical word/name/phrase the user wants Whisper to land on. At
         post-process time we fuzzy-match each transcribed token against every
         dictionary term (Jaro-Winkler + Double Metaphone) and replace the
-        closest near-miss with the canonical form. Single column — no manual
-        `find`/`replace`/case/word-boundary controls.
+        closest near-miss with the canonical form. When `replacement` is
+        present, the entry is a deterministic replacement pair: occurrences
+        of `term` are rewritten to `replacement` after the LLM cleanup pass.
       properties:
         id:
           type: string
         term:
           type: string
           description: The canonical spelling/casing of the term.
+        replacement:
+          type: string
+          description: >-
+            Optional. When set, occurrences of `term` in transcribed text are
+            replaced with `replacement` (case-insensitive whole-word) after
+            the LLM cleanup pass. When absent, the entry is a vocab bias only.
 
     SnippetEntry:
       type: object
@@ -1572,6 +1580,61 @@ components:
           type: string
           description: Human-readable failure reason when not reachable.
 
+    # ─── Cloud STT integrations ────────────────────────────────────────
+
+    CloudSttProvider:
+      type: string
+      enum: [openai, elevenlabs]
+      description: >-
+        Identifier for a cloud STT provider. The renderer-side picker
+        persists the colon-prefixed `<provider>:<model_id>` to
+        `settings.model.model`, and the main process routes accordingly.
+
+    CloudSttErrorCode:
+      type: string
+      enum: [auth, network, key_missing, rate_limit, provider_error]
+      description: >-
+        Stable classification of a cloud STT failure surfaced to the
+        renderer. `auth` = the provider rejected the API key.
+        `network` = transport-level failure (DNS, TLS, timeout).
+        `key_missing` = no API key configured for this provider.
+        `rate_limit` = provider returned 429 / quota exceeded.
+        `provider_error` = catch-all for any other 4xx/5xx response.
+
+    ProviderIntegrationStatus:
+      type: object
+      required: [apiKey, verified, lastVerifiedAt]
+      description: >-
+        Per-provider integration record. `apiKey` is encrypted at rest via
+        Electron `safeStorage` (DPAPI on Windows); the wire/in-memory shape
+        is plaintext. `verified` is the result of the last successful probe
+        (null = never probed); `lastVerifiedAt` is epoch-ms (or null).
+      properties:
+        apiKey:
+          type: string
+          default: ""
+        verified:
+          type: boolean
+          nullable: true
+          default: null
+        lastVerifiedAt:
+          type: number
+          nullable: true
+          default: null
+
+    Integrations:
+      type: object
+      required: [openai, elevenlabs]
+      description: >-
+        Per-provider cloud STT integration status. One entry per supported
+        provider; entries persist even when `apiKey` is empty so the UI can
+        show the most recent probe result on revisit.
+      properties:
+        openai:
+          $ref: "#/components/schemas/ProviderIntegrationStatus"
+        elevenlabs:
+          $ref: "#/components/schemas/ProviderIntegrationStatus"
+
     AppSettings:
       type: object
       properties:
@@ -1595,6 +1658,8 @@ components:
             $ref: "#/components/schemas/SnippetEntry"
         llm:
           $ref: "#/components/schemas/LlmSettings"
+        integrations:
+          $ref: "#/components/schemas/Integrations"
 
     # ─── Entity Types ─────────────────────────────────────────────────
 

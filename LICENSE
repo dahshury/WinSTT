@@ -1,0 +1,126 @@
+WinSTT End User License Agreement
+
+Copyright (c) 2024-2026 dahshury. All rights reserved.
+
+This software ("WinSTT") and its source code, documentation, build artifacts,
+configuration, models packaged or referenced herein, icons, audio assets,
+trademarks, and any other material distributed with it (collectively, the
+"Software") are proprietary works owned by the copyright holder.
+
+The Software is licensed, not sold. Subject to the terms below, the copyright
+holder grants the end user a personal, non-exclusive, non-transferable,
+revocable license to install and use the Software on a single device for the
+end user's own purposes, in exchange for any applicable purchase price.
+
+Restrictions
+------------
+Unless the copyright holder has granted prior written permission, you may not:
+
+  1. Copy, redistribute, publish, sublicense, sell, rent, lease, or otherwise
+     transfer the Software or any part of it to any third party.
+  2. Modify, translate, adapt, or create derivative works of the Software.
+  3. Reverse engineer, decompile, disassemble, or attempt to derive the source
+     code of any compiled portion of the Software, except to the extent that
+     such activity is expressly permitted by applicable law notwithstanding
+     this restriction (and only to that extent).
+  4. Remove, alter, or obscure any proprietary notices, branding, copyright
+     notices, or license terms in or on the Software.
+  5. Use the Software, or any part of its source code, to train, fine-tune,
+     evaluate, or benchmark a machine-learning model, except where the
+     underlying file is itself a third-party component governed by a license
+     that permits such use.
+  6. Use the Software to provide a hosted, multi-tenant, or "as-a-service"
+     offering to any third party.
+
+Source availability
+-------------------
+The source code for the Software may be made publicly visible (for example,
+on a public source-code hosting service) for the purposes of transparency,
+issue reporting, and end-user evaluation. Public visibility of the source
+code does not grant any of the rights restricted above. No license, express
+or implied, to use, copy, modify, or distribute the source code is granted
+except as expressly stated in this Agreement.
+
+Contributions
+-------------
+By submitting any patch, pull request, suggestion, bug report, design, or
+other contribution to the Software (a "Contribution"), you grant the
+copyright holder a perpetual, worldwide, non-exclusive, royalty-free,
+irrevocable license to reproduce, prepare derivative works of, publicly
+display, publicly perform, sublicense, and distribute the Contribution as
+part of the Software under any license terms the copyright holder chooses,
+including the terms of this Agreement. You confirm that you have the right
+to grant that license.
+
+Third-party components
+----------------------
+The Software incorporates, bundles, or downloads open-source and third-party
+components. Each such component remains licensed under its own terms, which
+take precedence over this Agreement with respect to that component. A
+consolidated list of those components, their copyright holders, and their
+license texts is provided in the file THIRD_PARTY_NOTICES.md distributed
+with the Software. Nothing in this Agreement is intended to limit any rights
+you have under those third-party licenses.
+
+Trademarks
+----------
+"WinSTT" and the WinSTT logo are trademarks of the copyright holder. This
+Agreement does not grant any right to use those trademarks except as
+required for reasonable and customary identification of the Software in
+descriptive references.
+
+Termination
+-----------
+This Agreement is effective until terminated. Your rights under this
+Agreement terminate automatically and without notice if you fail to comply
+with any of its terms. Upon termination you must cease all use of the
+Software and destroy all copies in your possession or control. Sections
+that by their nature should survive termination (including disclaimers,
+limitations of liability, contribution license, and governing-law
+provisions) will survive.
+
+Disclaimer of warranty
+----------------------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, AVAILABILITY, AND
+NON-INFRINGEMENT. THE COPYRIGHT HOLDER MAKES NO WARRANTY THAT THE SOFTWARE
+WILL OPERATE UNINTERRUPTED OR ERROR-FREE, OR THAT TRANSCRIPTION OUTPUTS
+WILL BE ACCURATE, COMPLETE, OR FIT FOR ANY PARTICULAR USE.
+
+Limitation of liability
+-----------------------
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL,
+CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS,
+REVENUE, DATA, GOODWILL, OR BUSINESS OPPORTUNITY, ARISING OUT OF OR IN
+CONNECTION WITH THIS AGREEMENT OR THE USE OF, OR INABILITY TO USE, THE
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. THE
+COPYRIGHT HOLDER'S AGGREGATE LIABILITY UNDER THIS AGREEMENT SHALL NOT
+EXCEED THE AMOUNT YOU ACTUALLY PAID FOR THE SOFTWARE IN THE TWELVE (12)
+MONTHS PRECEDING THE EVENT GIVING RISE TO THE CLAIM, OR FIVE U.S. DOLLARS
+(USD $5), WHICHEVER IS GREATER.
+
+Export and compliance
+---------------------
+You agree to comply with all applicable export-control, sanctions, and
+trade-compliance laws of the jurisdictions in which you use the Software.
+
+Severability
+------------
+If any provision of this Agreement is held to be unenforceable, that
+provision shall be modified to the minimum extent necessary to make it
+enforceable, and the remaining provisions shall remain in full force.
+
+Entire agreement
+----------------
+This Agreement, together with the third-party notices and any separately
+executed commercial-licensing or distribution agreement signed by the
+copyright holder, constitutes the entire agreement between the parties
+with respect to the Software and supersedes any prior oral or written
+understanding.
+
+Contact
+-------
+For commercial-licensing inquiries, redistribution permissions, or any
+question about this Agreement, contact: dahshury@gmail.com.

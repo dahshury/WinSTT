@@ -1,6 +1,13 @@
 import { EventEmitter } from "node:events";
-import WebSocket from "ws";
 import { z } from "zod";
+
+// Use the native global `WebSocket` (stable in Node 22+ which Electron 42
+// bundles). The `ws` npm package was the historical default but it's
+// ~50 KB of bundled deps that we now get for free from the runtime. The
+// only adapter we need is to ask for `arraybuffer` binary frames — Node's
+// native WebSocket defaults to `blob`, while the `ws` package always
+// handed us a Node `Buffer`. The downstream message handler accepts both
+// shapes (see the `onmessage` in `connectInternal` below).
 import { ConnectionError, getErrorMessage, TimeoutError } from "../../src/shared/lib/errors";
 import { dbgVerbose } from "../lib/debug-log";
 import { isRecord } from "../lib/ipc-helpers";
@@ -38,8 +45,18 @@ const dataMessageSchema = z
 const DEFAULT_CONTROL_PORT = 8011;
 const DEFAULT_DATA_PORT = 8012;
 const REQUEST_TIMEOUT_MS = 10_000;
-const INITIAL_RECONNECT_DELAY_MS = 1000;
-const MAX_RECONNECT_DELAY_MS = 30_000;
+// Aggressive backoff tuned for the bundled-server topology: the stt-server
+// child process needs ~5–8 s after spawn to load Whisper/Silero ONNX
+// sessions and start accepting WebSocket connections. With the old
+// 1000 ms / 30 000 ms values, the exponential schedule (1, 2, 4, 8, 16,
+// 30, 30, …) means the first attempt that lands *after* the server is
+// ready can be as late as t=15 s — and any failed attempt past that
+// stretches the next try out to 30 s. End users saw the bottom-left
+// connection chip stuck on "offline" for ~1 minute after first launch.
+// 250 ms / 2 000 ms keeps the connect-success latency under ~10 s on a
+// cold boot while still being polite to a server that's actually down.
+const INITIAL_RECONNECT_DELAY_MS = 250;
+const MAX_RECONNECT_DELAY_MS = 2000;
 /** Jitter factor (±50%) applied to reconnect delays to avoid thundering-herd on server restart. */
 const RECONNECT_JITTER_FACTOR = 0.5;
 
@@ -254,15 +271,22 @@ export class SttClient extends EventEmitter {
 			};
 
 			this.dataWs = new WebSocket(`ws://${this.host}:${this.dataPort}`);
+			// Force binary frames to arrive as ArrayBuffer, not Blob (Node's
+			// native WebSocket default per WHATWG spec). The downstream
+			// handler converts to Node Buffer.
+			this.dataWs.binaryType = "arraybuffer";
 			this.dataWs.onopen = () => {
 				dataReady = true;
 				checkReady();
 			};
 			this.dataWs.onmessage = (event) => {
-				// The data channel now carries both JSON text frames (legacy STT
-				// events) and binary frames (TTS audio chunks: u32 meta_len ||
-				// JSON || PCM). Dispatch by type — the `ws` library hands us a
-				// Buffer for binary and a string for text.
+				// The data channel carries both JSON text frames (STT events)
+				// and binary frames (TTS audio chunks: u32 meta_len || JSON
+				// || PCM). Dispatch by type. The legacy `ws` package handed
+				// us a Node Buffer for binary; the native WebSocket gives us
+				// an ArrayBuffer (because we set binaryType above). Both
+				// branches still get handled — the Buffer branch is dead
+				// under native but kept defensively in case ws is reintroduced.
 				const data = event.data;
 				if (Buffer.isBuffer(data)) {
 					this.handleBinaryDataMessage(data);
@@ -382,18 +406,22 @@ export class SttClient extends EventEmitter {
 	}
 
 	private handleClose() {
-		// Only emit disconnected once per connection
-		if (this._disconnectedEmitted) {
-			return;
-		}
-		this._disconnectedEmitted = true;
-
+		// Always tear down sockets + reject pending requests, but emit
+		// "disconnected" + breadcrumb only ONCE per disconnected period so
+		// the UI / logs don't get one event per retry. Critically, we must
+		// always re-schedule another reconnect — otherwise a slow server
+		// boot (e.g. the bundled stt-server.exe needs ~5–7 s to load the
+		// Whisper/Silero ONNX sessions) outlives the first retry and the
+		// client gives up while the backend is still coming online.
 		this.closeAll();
 		this.rejectAllPending(
 			new ConnectionError("Connection lost", `${this.host}:${this.controlPort}`, true)
 		);
-		breadcrumb("stt", "server disconnected", undefined, "warning");
-		this.emit("disconnected");
+		if (!this._disconnectedEmitted) {
+			this._disconnectedEmitted = true;
+			breadcrumb("stt", "server disconnected", undefined, "warning");
+			this.emit("disconnected");
+		}
 		this.scheduleReconnect();
 	}
 
@@ -427,7 +455,10 @@ export class SttClient extends EventEmitter {
 		this.pendingRequests.clear();
 	}
 
-	private resolveControlRequest(data: { request_id?: number | string | null; value?: unknown }) {
+	private resolveControlRequest(data: {
+		request_id?: number | string | null | undefined;
+		value?: unknown;
+	}) {
 		// Only numeric ids correlate to `sendRequest` promises. String ids
 		// belong to TTS (UUIDs) and are dispatched as events, not resolved
 		// here — bail before the typed Map lookup.
@@ -561,6 +592,15 @@ export class SttClient extends EventEmitter {
 		return this.sendRequest({ command: "list_tts_voices" }, "listTtsVoices");
 	}
 
+	/**
+	 * Side-effect-free probe of what enabling TTS will download (engine
+	 * pack + voice model + voicepacks). Drives the confirm dialog — never
+	 * triggers a download server-side.
+	 */
+	ttsDownloadEstimate(): Promise<unknown> {
+		return this.sendRequest({ command: "tts_download_estimate" }, "ttsDownloadEstimate");
+	}
+
 	/** Begin synthesis. PCM chunks stream back on the data channel as binary frames. */
 	ttsSynthesize(payload: {
 		requestId: string;
@@ -608,9 +648,9 @@ function warnDataMessageInvalid(json: unknown, errorMessage: string): void {
 
 /** Shape of the control payload routed through {@link SttClient.dispatchControlEvents}. */
 export interface ControlEventData {
-	command?: string;
-	models?: unknown[];
-	type?: string;
+	command?: string | undefined;
+	models?: unknown[] | undefined;
+	type?: string | undefined;
 	[key: string]: unknown;
 }
 

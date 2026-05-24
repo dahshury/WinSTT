@@ -6,27 +6,11 @@ import { isPlainObject } from "../lib/ipc-helpers";
 import { pasteText } from "../lib/paste";
 import { captureSelection } from "../lib/selection-capture";
 import { getStoreValue } from "../lib/store";
-import { processTextWithCustomPrompt } from "./llm";
-
-interface StoredTransform {
-	builtin: boolean;
-	hotkey: string;
-	id: string;
-	name: string;
-	prompt: string;
-}
-
-interface ApplyPayload {
-	transformId: string;
-}
+import { processText } from "./llm";
 
 interface PreviewPayload {
-	systemPrompt: string;
+	feature: "dictation" | "transforms";
 	text: string;
-}
-
-function isNonEmptyString(value: unknown): value is string {
-	return typeof value === "string" && value.length > 0;
 }
 
 function asRecord(payload: unknown, label: string): Record<string, unknown> {
@@ -36,26 +20,17 @@ function asRecord(payload: unknown, label: string): Record<string, unknown> {
 	return payload;
 }
 
-function assertApplyPayload(payload: unknown): asserts payload is ApplyPayload {
-	const obj = asRecord(payload, "Transform apply");
-	if (!isNonEmptyString(obj.transformId)) {
-		throw new ValidationError("Transform apply payload.transformId is required", "transformId");
-	}
-}
-
 function assertPreviewPayload(payload: unknown): asserts payload is PreviewPayload {
-	const obj = asRecord(payload, "Transform preview");
+	const obj = asRecord(payload, "LLM preview");
 	if (typeof obj.text !== "string") {
-		throw new ValidationError("Transform preview payload.text must be a string", "text");
+		throw new ValidationError("LLM preview payload.text must be a string", "text");
 	}
-	if (!isNonEmptyString(obj.systemPrompt)) {
-		throw new ValidationError("Transform preview payload.systemPrompt is required", "systemPrompt");
+	if (obj.feature !== "dictation" && obj.feature !== "transforms") {
+		throw new ValidationError(
+			"LLM preview payload.feature must be 'dictation' or 'transforms'",
+			"feature"
+		);
 	}
-}
-
-function findTransform(transformId: string): StoredTransform | undefined {
-	const prompts = getStoreValue("llm.transforms.prompts");
-	return prompts.find((t) => t.id === transformId);
 }
 
 function hasTransformsModel(): boolean {
@@ -92,35 +67,24 @@ function broadcastAll(channel: string, payload: unknown): void {
 }
 
 /** Broadcast `transforms:failed` and throw a {@link ValidationError}. */
-function fail(transformId: string, message: string, field: string): never {
-	broadcastAll(IPC.TRANSFORMS_FAILED, { transformId, reason: message });
+function fail(message: string, field: string): never {
+	broadcastAll(IPC.TRANSFORMS_FAILED, { reason: message });
 	throw new ValidationError(message, field);
 }
 
-function requireEnabledTransform(transformId: string): StoredTransform {
+function requireEnabled(): void {
 	if (!isTransformsEnabled()) {
-		fail(transformId, "LLM text transformation is disabled", "transformsEnabled");
-	}
-	const transform = findTransform(transformId);
-	if (!transform) {
-		fail(transformId, `Transform "${transformId}" not found`, "transformId");
-	}
-	return transform;
-}
-
-function requirePrompt(transform: StoredTransform): void {
-	if (!transform.prompt.trim()) {
-		fail(transform.id, `Transform "${transform.name}" has no prompt`, "prompt");
+		fail("LLM text transformation is disabled", "transformsEnabled");
 	}
 }
 
-async function runLlm(transformId: string, text: string, prompt: string): Promise<string> {
+async function runLlm(text: string): Promise<string> {
 	try {
-		return await processTextWithCustomPrompt(text, prompt);
+		return await processText(text, "", "transforms");
 	} catch (err) {
 		const reason = getErrorMessage(err);
 		dbg("transforms", `LLM call failed: ${reason}`);
-		broadcastAll(IPC.TRANSFORMS_FAILED, { transformId, reason });
+		broadcastAll(IPC.TRANSFORMS_FAILED, { reason });
 		throw err;
 	}
 }
@@ -129,37 +93,27 @@ export interface ApplyResult {
 	after: string;
 	before: string;
 	source: "uia" | "clipboard" | "empty";
-	transformId: string;
 }
 
 /**
- * End-to-end Transforms pipeline: capture selection → run LLM with the
- * transform's custom prompt → paste-replace. Used by both the IPC handler
+ * End-to-end Transforms pipeline: capture selection → run the composed
+ * presets+modifiers prompt → paste-replace. Used by both the IPC handler
  * (renderer invoke) and the hotkey listener (uIOhook keydown match).
  *
  * Resolves with the {@link ApplyResult} on success. On failure, emits the
  * `transforms:failed` event and re-throws — the IPC layer surfaces the
  * error to the renderer for the toast.
  */
-async function runTransformPipeline(transformId: string): Promise<ApplyResult> {
-	const transform = requireEnabledTransform(transformId);
-	requirePrompt(transform);
+async function runTransformPipeline(): Promise<ApplyResult> {
+	requireEnabled();
 
 	const selection = await captureSelection();
 	if (!selection.text.trim()) {
-		broadcastAll(IPC.TRANSFORMS_FAILED, {
-			transformId,
-			reason: "No text selected",
-		});
-		return {
-			transformId,
-			before: "",
-			after: "",
-			source: selection.source,
-		};
+		broadcastAll(IPC.TRANSFORMS_FAILED, { reason: "No text selected" });
+		return { before: "", after: "", source: selection.source };
 	}
 
-	const transformed = await runLlm(transformId, selection.text, transform.prompt);
+	const transformed = await runLlm(selection.text);
 
 	// Paste replaces the selection. pasteText() mirrors to clipboard, then
 	// the native helper sends SendInput Ctrl+V — which, because the
@@ -167,36 +121,32 @@ async function runTransformPipeline(transformId: string): Promise<ApplyResult> {
 	pasteText(transformed);
 
 	broadcastAll(IPC.TRANSFORMS_APPLIED, {
-		transformId,
 		before: selection.text,
 		after: transformed,
 		source: selection.source,
-		transformName: transform.name,
 	});
 
 	return {
-		transformId,
 		before: selection.text,
 		after: transformed,
 		source: selection.source,
 	};
 }
 
-export async function applyTransform(transformId: string): Promise<ApplyResult> {
-	return await runTransformPipeline(transformId);
+export async function applyTransform(): Promise<ApplyResult> {
+	return await runTransformPipeline();
 }
 
 export function setupTransforms(): () => void {
-	const handleApply = async (_event: unknown, payload: unknown) => {
-		assertApplyPayload(payload);
-		return await applyTransform(payload.transformId);
-	};
+	const handleApply = async () => await applyTransform();
 
-	// Playground: feeds the user's WIP prompt + sample text through the LLM
-	// without touching their clipboard, selection, or any external app.
+	// Playground: feeds the user's sample text through the chosen feature's
+	// full pipeline (composed presets+modifiers + provider/model), bypassing
+	// selection capture and paste. Same code path the runtime would take —
+	// only the input/output sites differ.
 	const handlePreview = async (_event: unknown, payload: unknown) => {
 		assertPreviewPayload(payload);
-		return await processTextWithCustomPrompt(payload.text, payload.systemPrompt);
+		return await processText(payload.text, "", payload.feature);
 	};
 
 	ipcMain.handle(IPC.TRANSFORMS_APPLY, handleApply);
@@ -209,16 +159,12 @@ export function setupTransforms(): () => void {
 }
 
 export const __transforms_test_helpers__ = {
-	assertApplyPayload,
 	assertPreviewPayload,
 	asRecord,
 	broadcastAll,
-	findTransform,
 	hasTransformsModel,
-	isNonEmptyString,
 	isTransformsEnabled,
-	requireEnabledTransform,
-	requirePrompt,
+	requireEnabled,
 	runLlm,
 	runTransformPipeline,
 	sendToWindow,

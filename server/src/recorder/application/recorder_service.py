@@ -443,10 +443,14 @@ class RecorderService:
         if arr.ndim == 2:
             arr = np.mean(arr, axis=1)
         if original_sample_rate != self._config.audio.sample_rate:
-            from scipy.signal import resample
+            from scipy.signal import resample_poly
 
-            num_samples = int(len(arr) * self._config.audio.sample_rate / original_sample_rate)
-            arr = resample(arr, num_samples)
+            # Polyphase (not FFT `resample`): the FFT path assumes a
+            # periodic signal and rings at the edges of every fed chunk —
+            # audible/measurable boundary artifacts on the loopback/external
+            # feed. resample_poly applies a windowed-sinc anti-alias FIR and
+            # has no periodicity assumption. Mirrors pyaudio_source._resample.
+            arr = resample_poly(arr.astype(np.float64), self._config.audio.sample_rate, original_sample_rate)
         arr = arr.astype(np.int16)
         return bytes(arr.tobytes())
 
@@ -578,6 +582,15 @@ class RecorderService:
         if self._wake_word_detector is not None:
             self._safe_step("cleaning up wake word detector", self._wake_word_detector.cleanup)
 
+    def _warm_transcriber(self, transcriber: ITranscriber | None, dummy: np.ndarray[Any, Any], lang: str) -> None:
+        """Run a dummy inference through ``transcriber`` if its slot is set.
+
+        The slot is Optional via the swap bookkeeping — guard for type
+        safety / defensive code (a swap can leave it transiently ``None``).
+        """
+        if transcriber is not None:
+            transcriber.transcribe(dummy, lang)
+
     def warmup(self) -> None:
         """Run a dummy inference to eagerly compile CUDA kernels.
 
@@ -589,10 +602,16 @@ class RecorderService:
         # Warmup runs immediately after construction (before any swap is
         # possible) but the slots are typed as Optional via the swap
         # bookkeeping — guard for type safety / defensive code.
-        if self._transcriber is not None:
-            self._transcriber.transcribe(dummy, lang)
-        if self._realtime_transcriber is not None:
-            self._realtime_transcriber.transcribe(dummy, lang)
+        self._warm_transcriber(self._transcriber, dummy, lang)
+        self._warm_transcriber(self._realtime_transcriber, dummy, lang)
+        # Eagerly load the diarizer's ORT sessions (pyannote-segmentation +
+        # wespeaker, ~32 MB first-run download) the same way we warm the
+        # transcribers. Without this the first diarized utterance pays the
+        # download+JIT tax mid-recording; with it, `server_ready` (and the
+        # renderer's diarization "warming" spinner) only clears once the
+        # diarizer is actually hot. Fail-soft via _safe_diarize.
+        if self._diarizer is not None:
+            self._safe_diarize(dummy)
 
     def abort(self) -> None:
         self._pipeline.request_abort()

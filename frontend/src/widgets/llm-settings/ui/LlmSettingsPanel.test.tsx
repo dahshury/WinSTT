@@ -1,10 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import { render } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import {
-	__llm_settings_panel_test_helpers__ as helpers,
-	LlmSettingsPanel,
-} from "./LlmSettingsPanel";
+import { __llm_settings_panel_test_helpers__ as helpers } from "../lib/llm-settings-panel-test-helpers";
+import { LlmSettingsPanel } from "./LlmSettingsPanel";
 
 describe("LlmSettingsPanel", () => {
 	test("renders without crashing", () => {
@@ -185,14 +183,17 @@ describe("LlmSettingsPanel helpers — shouldScanOpenRouter", () => {
 });
 
 interface ToggleDepsForTest {
+	apply: ReturnType<typeof mock>;
 	checkOllamaReachable: ReturnType<typeof mock>;
+	currentOllamaModel: string;
+	currentOpenRouterModel: string;
 	ollamaLoaded: boolean;
+	ollamaModels: ReadonlyArray<{ name: string; size?: number }>;
 	openrouterApiKey: string;
 	openrouterLoaded: boolean;
 	provider: string;
 	scanOllama: ReturnType<typeof mock>;
 	scanOpenRouter: ReturnType<typeof mock>;
-	setEnabled: ReturnType<typeof mock>;
 	setShowApiKeyDialog: ReturnType<typeof mock>;
 	setShowOllamaDialog: ReturnType<typeof mock>;
 }
@@ -202,16 +203,42 @@ function makeDeps(overrides: Partial<ToggleDepsForTest> = {}): ToggleDepsForTest
 		provider: "ollama",
 		openrouterApiKey: "",
 		ollamaLoaded: false,
+		ollamaModels: [],
 		openrouterLoaded: false,
+		currentOllamaModel: "",
+		currentOpenRouterModel: "",
 		checkOllamaReachable: mock(() => Promise.resolve(true)),
 		scanOllama: mock(() => undefined),
 		scanOpenRouter: mock(() => undefined),
-		setEnabled: mock(() => undefined),
+		apply: mock(() => undefined),
 		setShowOllamaDialog: mock(() => undefined),
 		setShowApiKeyDialog: mock(() => undefined),
 		...overrides,
 	};
 }
+
+describe("LlmSettingsPanel helpers — pickSmallestInstalledOllama", () => {
+	test("returns null when no models installed", () => {
+		expect(helpers.pickSmallestInstalledOllama([])).toBeNull();
+	});
+
+	test("picks the smallest by size", () => {
+		const out = helpers.pickSmallestInstalledOllama([
+			{ name: "big", size: 3_000_000_000 },
+			{ name: "tiny", size: 270_000_000 },
+			{ name: "mid", size: 1_200_000_000 },
+		]);
+		expect(out).toBe("tiny");
+	});
+
+	test("treats missing size as 0 (returns first such entry)", () => {
+		const out = helpers.pickSmallestInstalledOllama([
+			{ name: "sized", size: 500 },
+			{ name: "unsized" },
+		]);
+		expect(out).toBe("unsized");
+	});
+});
 
 describe("LlmSettingsPanel helpers — tryEnableOllamaForFeature", () => {
 	test("opens dialog when Ollama is unreachable", async () => {
@@ -220,21 +247,61 @@ describe("LlmSettingsPanel helpers — tryEnableOllamaForFeature", () => {
 		});
 		await helpers.tryEnableOllamaForFeature(deps as any);
 		expect(deps.setShowOllamaDialog).toHaveBeenCalledWith(true);
-		expect(deps.setEnabled).not.toHaveBeenCalled();
+		expect(deps.apply).not.toHaveBeenCalled();
 	});
 
-	test("scans and enables when reachable and not yet loaded", async () => {
-		const deps = makeDeps();
-		await helpers.tryEnableOllamaForFeature(deps as any);
-		expect(deps.scanOllama).toHaveBeenCalledTimes(1);
-		expect(deps.setEnabled).toHaveBeenCalledWith(true);
-	});
-
-	test("skips scan when already loaded", async () => {
+	test("opens install dialog when reachable but no models installed", async () => {
 		const deps = makeDeps({ ollamaLoaded: true });
 		await helpers.tryEnableOllamaForFeature(deps as any);
-		expect(deps.scanOllama).not.toHaveBeenCalled();
-		expect(deps.setEnabled).toHaveBeenCalledWith(true);
+		// No model to pick — must NOT silently enable with model: "".
+		expect(deps.apply).not.toHaveBeenCalled();
+		expect(deps.setShowOllamaDialog).toHaveBeenCalledWith(true);
+	});
+
+	test("auto-picks smallest installed when current model is empty", async () => {
+		const deps = makeDeps({
+			ollamaLoaded: true,
+			currentOllamaModel: "",
+			ollamaModels: [
+				{ name: "big", size: 3_000_000_000 },
+				{ name: "tiny", size: 270_000_000 },
+			],
+		});
+		await helpers.tryEnableOllamaForFeature(deps as any);
+		expect(deps.apply).toHaveBeenCalledWith({ model: "tiny", enabled: true });
+	});
+
+	test("keeps current model when it's still installed", async () => {
+		const deps = makeDeps({
+			ollamaLoaded: true,
+			currentOllamaModel: "big",
+			ollamaModels: [
+				{ name: "big", size: 3_000_000_000 },
+				{ name: "tiny", size: 270_000_000 },
+			],
+		});
+		await helpers.tryEnableOllamaForFeature(deps as any);
+		expect(deps.apply).toHaveBeenCalledWith({ enabled: true });
+	});
+
+	test("replaces current model when it's no longer installed", async () => {
+		const deps = makeDeps({
+			ollamaLoaded: true,
+			currentOllamaModel: "deleted-model",
+			ollamaModels: [{ name: "tiny", size: 270_000_000 }],
+		});
+		await helpers.tryEnableOllamaForFeature(deps as any);
+		expect(deps.apply).toHaveBeenCalledWith({ model: "tiny", enabled: true });
+	});
+
+	test("scans when not yet loaded", async () => {
+		const deps = makeDeps({
+			currentOllamaModel: "tiny",
+			ollamaModels: [{ name: "tiny", size: 270_000_000 }],
+		});
+		await helpers.tryEnableOllamaForFeature(deps as any);
+		expect(deps.scanOllama).toHaveBeenCalledTimes(1);
+		expect(deps.apply).toHaveBeenCalledWith({ enabled: true });
 	});
 });
 
@@ -243,14 +310,39 @@ describe("LlmSettingsPanel helpers — tryEnableOpenRouterForFeature", () => {
 		const deps = makeDeps({ provider: "openrouter" });
 		helpers.tryEnableOpenRouterForFeature(deps as any);
 		expect(deps.setShowApiKeyDialog).toHaveBeenCalledWith(true);
-		expect(deps.setEnabled).not.toHaveBeenCalled();
+		expect(deps.apply).not.toHaveBeenCalled();
 	});
 
-	test("enables and scans when key present and not loaded", () => {
+	test("auto-picks hardcoded default when no model selected", () => {
+		const deps = makeDeps({
+			provider: "openrouter",
+			openrouterApiKey: "k",
+			openrouterLoaded: true,
+			currentOpenRouterModel: "",
+		});
+		helpers.tryEnableOpenRouterForFeature(deps as any);
+		expect(deps.apply).toHaveBeenCalledWith({
+			openrouterModel: helpers.DEFAULT_OPENROUTER_MODEL,
+			enabled: true,
+		});
+	});
+
+	test("keeps user's model when one is already selected", () => {
+		const deps = makeDeps({
+			provider: "openrouter",
+			openrouterApiKey: "k",
+			openrouterLoaded: true,
+			currentOpenRouterModel: "anthropic/claude-3.5-sonnet",
+		});
+		helpers.tryEnableOpenRouterForFeature(deps as any);
+		expect(deps.apply).toHaveBeenCalledWith({ enabled: true });
+	});
+
+	test("scans when key present and not loaded", () => {
 		const deps = makeDeps({ provider: "openrouter", openrouterApiKey: "k" });
 		helpers.tryEnableOpenRouterForFeature(deps as any);
 		expect(deps.scanOpenRouter).toHaveBeenCalled();
-		expect(deps.setEnabled).toHaveBeenCalledWith(true);
+		expect(deps.apply).toHaveBeenCalled();
 	});
 
 	test("skips scan when already loaded", () => {
@@ -261,7 +353,7 @@ describe("LlmSettingsPanel helpers — tryEnableOpenRouterForFeature", () => {
 		});
 		helpers.tryEnableOpenRouterForFeature(deps as any);
 		expect(deps.scanOpenRouter).not.toHaveBeenCalled();
-		expect(deps.setEnabled).toHaveBeenCalledWith(true);
+		expect(deps.apply).toHaveBeenCalled();
 	});
 });
 
@@ -269,7 +361,7 @@ describe("LlmSettingsPanel helpers — performFeatureToggle", () => {
 	test("disables without provider checks when next is false", async () => {
 		const deps = makeDeps();
 		await helpers.performFeatureToggle(false, deps as any);
-		expect(deps.setEnabled).toHaveBeenCalledWith(false);
+		expect(deps.apply).toHaveBeenCalledWith({ enabled: false });
 		expect(deps.checkOllamaReachable).not.toHaveBeenCalled();
 	});
 

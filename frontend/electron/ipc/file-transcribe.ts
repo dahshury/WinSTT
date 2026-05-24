@@ -338,7 +338,10 @@ function enqueueTranscription(
 	// verify the requestId is a non-empty string and use it as an opaque key.
 	// The genuine code uses ++ for monotonic IDs in production logs.
 	const requestId = `file-${++requestCounter}-${Date.now()}`;
-	pendingRequests.set(requestId, { filePath, outputPath });
+	pendingRequests.set(
+		requestId,
+		outputPath === undefined ? { filePath } : { filePath, outputPath }
+	);
 	client.sendControl({
 		command: "transcribe_file",
 		request_id: requestId,

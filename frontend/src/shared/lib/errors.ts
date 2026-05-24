@@ -3,7 +3,7 @@
  * All custom errors should extend this class.
  */
 export class ApplicationError extends Error {
-	readonly context?: Record<string, unknown>;
+	readonly context?: Record<string, unknown> | undefined;
 	readonly timestamp: number;
 
 	constructor(message: string, context?: Record<string, unknown>) {
@@ -32,7 +32,7 @@ export class ApplicationError extends Error {
  * Validation error - thrown when input validation fails.
  */
 export class ValidationError extends ApplicationError {
-	readonly field?: string;
+	readonly field?: string | undefined;
 
 	constructor(message: string, field?: string, context?: Record<string, unknown>) {
 		super(message, context);
@@ -52,7 +52,7 @@ export class ValidationError extends ApplicationError {
  */
 export class NotFoundError extends ApplicationError {
 	readonly resource: string;
-	readonly identifier?: string | number;
+	readonly identifier?: string | number | undefined;
 
 	constructor(resource: string, identifier?: string | number, context?: Record<string, unknown>) {
 		const msg = identifier
@@ -76,7 +76,7 @@ export class NotFoundError extends ApplicationError {
  * Connection error - thrown when network/IPC connection fails.
  */
 export class ConnectionError extends ApplicationError {
-	readonly endpoint?: string;
+	readonly endpoint?: string | undefined;
 	readonly retryable: boolean;
 
 	constructor(
@@ -104,7 +104,7 @@ export class ConnectionError extends ApplicationError {
  */
 export class TimeoutError extends ApplicationError {
 	readonly timeoutMs: number;
-	readonly operation?: string;
+	readonly operation?: string | undefined;
 
 	constructor(timeoutMs: number, operation?: string, context?: Record<string, unknown>) {
 		const msg = operation
@@ -183,7 +183,7 @@ export class FileSystemError extends ApplicationError {
  */
 export class ProcessSpawnError extends ApplicationError {
 	readonly command: string;
-	readonly exitCode?: number;
+	readonly exitCode?: number | undefined;
 
 	constructor(
 		message: string,

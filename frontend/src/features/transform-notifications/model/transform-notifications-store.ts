@@ -13,8 +13,6 @@ export interface TransformNotification {
 	id: string;
 	kind: "applied" | "failed" | "no-selection";
 	reason?: string;
-	transformId: string;
-	transformName?: string;
 }
 
 interface TransformNotificationState {

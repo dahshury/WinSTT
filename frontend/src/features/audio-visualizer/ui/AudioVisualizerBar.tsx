@@ -1,5 +1,3 @@
-"use client";
-
 import { cva } from "class-variance-authority";
 import { type ComponentProps, type CSSProperties, useMemo } from "react";
 import { cn } from "@/shared/lib/cn";
@@ -41,10 +39,10 @@ const barContainerVariants = cva("relative flex items-center justify-center", {
 });
 
 export interface AudioVisualizerBarProps {
-	barCount?: number;
-	className?: string;
-	color?: `#${string}`;
-	size?: VisualizerSize;
+	barCount?: number | undefined;
+	className?: string | undefined;
+	color?: `#${string}` | undefined;
+	size?: VisualizerSize | undefined;
 }
 
 export function resolveBarCount(barCount: number | undefined, size: VisualizerSize): number {

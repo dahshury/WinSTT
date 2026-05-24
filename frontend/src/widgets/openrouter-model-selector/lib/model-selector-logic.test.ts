@@ -109,7 +109,8 @@ describe("groupModelsByMaker", () => {
 	});
 
 	test("falls back to 'Other' for missing maker", () => {
-		const noMaker = [{ ...sample[0], maker: undefined }] as OpenRouterModel[];
+		const { maker: _maker, ...rest } = sample[0] as OpenRouterModel;
+		const noMaker = [rest] as OpenRouterModel[];
 		const groups = groupModelsByMaker(noMaker);
 		expect(groups.map(([maker]) => maker)).toEqual(["Other"]);
 	});
@@ -383,7 +384,8 @@ describe("getMakerKey", () => {
 	});
 
 	test("returns 'Other' for missing/empty maker", () => {
-		expect(getMakerKey({ ...openaiModel, maker: undefined } as OpenRouterModel)).toBe("Other");
+		const { maker: _maker, ...withoutMaker } = openaiModel;
+		expect(getMakerKey(withoutMaker as OpenRouterModel)).toBe("Other");
 		expect(getMakerKey({ ...openaiModel, maker: "" } as OpenRouterModel)).toBe("Other");
 	});
 });
@@ -594,7 +596,8 @@ describe("passesMakerFilter — undefined maker boundary", () => {
 		// `===` would invert the meaning so an undefined-maker model would
 		// then attempt the makers.has(undefined) lookup (false anyway), but a
 		// model WITH a defined maker would be rejected.
-		const m = { ...sample[0], maker: undefined } as OpenRouterModel;
+		const { maker: _maker, ...rest } = sample[0] as OpenRouterModel;
+		const m = rest as OpenRouterModel;
 		expect(passesMakerFilter(m, new Set(["openai"]))).toBe(false);
 	});
 
@@ -604,7 +607,8 @@ describe("passesMakerFilter — undefined maker boundary", () => {
 		// undefined (coerced via cast), real returns false (left side
 		// short-circuits), but mutant `true && set.has(undefined)` would
 		// return true.
-		const m = { ...sample[0], maker: undefined } as OpenRouterModel;
+		const { maker: _maker, ...rest } = sample[0] as OpenRouterModel;
+		const m = rest as OpenRouterModel;
 		const makers = new Set([undefined as unknown as string, "openai"]);
 		expect(passesMakerFilter(m, makers)).toBe(false);
 	});
@@ -636,7 +640,7 @@ describe("applySearch (via filterModels) trims the query", () => {
 	});
 
 	test("treats undefined searchQuery as no search", () => {
-		const out = filterModels(sample, { searchQuery: undefined });
+		const out = filterModels(sample, {});
 		expect(out).toEqual(sample);
 	});
 });

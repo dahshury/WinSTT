@@ -21,7 +21,7 @@ interface ExecFileArgs {
 const execFileLog: ExecFileArgs[] = [];
 
 interface ExecFileStub {
-	emitError?: string;
+	emitError?: string | undefined;
 	stdout: string | undefined;
 }
 const execStub: ExecFileStub = { stdout: "" };
@@ -46,6 +46,7 @@ mock.module("node:child_process", () => ({
 
 const {
 	readWindowContext,
+	readWindowContextSplit,
 	readWindowSelection,
 	formatContextForPrompt,
 	EMPTY_CONTEXT,
@@ -179,6 +180,50 @@ describe("readWindowContext", () => {
 		expect(execFileLog).toHaveLength(2);
 		// Same binary used for both calls (cache hit on the 2nd).
 		expect(execFileLog[0]?.cmd).toBe(execFileLog[1]?.cmd);
+	});
+});
+
+describe("readWindowContextSplit", () => {
+	test("passes --split flag to the helper", async () => {
+		reset();
+		execStub.stdout =
+			'{"windowTitle":"VS Code","elementName":"Editor","focusedText":"","textBefore":"I was about to say","textAfter":" and then it ended"}';
+		const snap = await readWindowContextSplit();
+		expect(execFileLog).toHaveLength(1);
+		expect(execFileLog[0]?.args).toEqual(["--split"]);
+		expect(snap.textBefore).toBe("I was about to say");
+		expect(snap.textAfter).toBe(" and then it ended");
+		expect(snap.focusedText).toBe("");
+	});
+
+	test("attaches caret fields only when the helper emits them", async () => {
+		reset();
+		// Legacy whole-text fallback (no caret) — snapshot must stay the
+		// exact 3-field shape so `toEqual(EMPTY_CONTEXT)`-style callers and
+		// downstream consumers are unaffected.
+		execStub.stdout = '{"windowTitle":"X","elementName":"","focusedText":"plain"}';
+		const snap = await readWindowContextSplit();
+		expect(snap).toEqual({ windowTitle: "X", elementName: "", focusedText: "plain" });
+		expect("textBefore" in snap).toBe(false);
+		expect("textAfter" in snap).toBe(false);
+	});
+
+	test("keeps caret fields when only one side is present", async () => {
+		reset();
+		execStub.stdout =
+			'{"windowTitle":"","elementName":"","focusedText":"","textBefore":"caret at end of this","textAfter":""}';
+		const snap = await readWindowContextSplit();
+		expect(snap.textBefore).toBe("caret at end of this");
+		expect(snap.textAfter).toBe("");
+	});
+
+	test("returns empty snapshot when the binary is missing", async () => {
+		reset();
+		fsStub.exists = false;
+		__resetContextReaderForTesting__();
+		const snap = await readWindowContextSplit();
+		expect(snap).toEqual(EMPTY_CONTEXT);
+		expect(execFileLog).toHaveLength(0);
 	});
 });
 

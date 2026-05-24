@@ -58,7 +58,7 @@ describe("pullStatusToI18nKey", () => {
 
 describe("computePullPercent", () => {
 	test("returns 0 when percent is undefined", () => {
-		expect(computePullPercent(makeProgress({ percent: undefined }))).toBe(0);
+		expect(computePullPercent(makeProgress({}))).toBe(0);
 	});
 
 	test("returns 0 when percent is 0", () => {

@@ -6,7 +6,7 @@
  * unit-testable.
  */
 
-import type { AppSettingsSaveInput as AppSettings } from "@/shared/api/models";
+import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
 
 /** True when a parameter must be sent on an initial (post-connect) flush. */
 export function shouldSendInitial(value: unknown): boolean {

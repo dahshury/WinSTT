@@ -1,5 +1,3 @@
-"use client";
-
 import { ScrollArea as BaseScrollArea } from "@base-ui/react/scroll-area";
 import type { ComponentPropsWithoutRef, ReactNode, Ref } from "react";
 import { cn } from "@/shared/lib/cn";

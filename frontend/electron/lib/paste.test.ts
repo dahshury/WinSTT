@@ -61,13 +61,13 @@ interface SpawnArgs {
 }
 const spawnLog: SpawnArgs[] = [];
 const spawnStub: {
-	emitError?: string;
+	emitError?: string | undefined;
 	exitCode: number;
 	hangs: boolean;
-	stderr?: string;
-	throwOnSpawn?: string;
+	stderr?: string | undefined;
+	throwOnSpawn?: string | undefined;
 	/** When set, the Nth spawn uses this exit code instead of `exitCode`. */
-	exitCodeSequence?: number[];
+	exitCodeSequence?: number[] | undefined;
 } = {
 	exitCode: 0,
 	hangs: false,
@@ -542,7 +542,7 @@ describe("finishBinaryRun", () => {
 			resolutions.push(v);
 		});
 		finishBinaryRun(run, true, undefined);
-		expect(resolutions).toEqual([{ ok: true, reason: undefined }]);
+		expect(resolutions).toEqual([{ ok: true }]);
 		expect(run.done).toBe(true);
 	});
 
@@ -622,7 +622,7 @@ describe("closeBinaryRun", () => {
 			resolutions.push(v);
 		});
 		closeBinaryRun(run, 0);
-		expect(resolutions).toEqual([{ ok: true, reason: undefined }]);
+		expect(resolutions).toEqual([{ ok: true }]);
 	});
 
 	test("resolves with ok=false and the exit code when non-zero", () => {
@@ -715,7 +715,7 @@ describe("makeBinaryRun", () => {
 		expect(run.stderrBuf).toBe("");
 		// Resolve callback wiring: invoke via finishBinaryRun and watch the array.
 		finishBinaryRun(run, true, undefined);
-		expect(calls).toEqual([{ ok: true, reason: undefined }]);
+		expect(calls).toEqual([{ ok: true }]);
 	});
 });
 

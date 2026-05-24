@@ -1,5 +1,3 @@
-"use client";
-
 import { NextIntlClientProvider } from "next-intl";
 import { type ReactNode, useEffect } from "react";
 import { getSystemLocale } from "@/shared/api/ipc-client";

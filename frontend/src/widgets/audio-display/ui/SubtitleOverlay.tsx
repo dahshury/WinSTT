@@ -1,5 +1,3 @@
-"use client";
-
 import { memo, useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
@@ -81,6 +79,26 @@ function splitTextBySpeaker(
 	return chunks;
 }
 
+/** Speaker owning the most speech time in an item, or -1 if undiarized. */
+function dominantSpeaker(segments: SpeakerSegment[] | undefined): number {
+	if (!segments || segments.length === 0) {
+		return -1;
+	}
+	const totals = new Map<number, number>();
+	for (const s of segments) {
+		totals.set(s.speaker, (totals.get(s.speaker) ?? 0) + Math.max(0, s.end - s.start));
+	}
+	let best = -1;
+	let bestDur = -1;
+	for (const [spk, dur] of totals) {
+		if (dur > bestDur) {
+			bestDur = dur;
+			best = spk;
+		}
+	}
+	return best;
+}
+
 function OverlayLineText({ item }: { item: TranscriptionItem }) {
 	const segments = item.speakerSegments;
 	const distinctSpeakers = segments ? new Set(segments.map((s) => s.speaker)).size : 0;
@@ -155,45 +173,57 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 			return null;
 		}
 
+		// Rolling, speaker-colored transcript feed (movie-subtitle style):
+		// every finalized utterance is kept and scrolls up under the top
+		// fade as new ones arrive. No time-fade here (unlike PTT/Toggle) —
+		// for a 2h movie the user wants scroll-back history, not lines that
+		// vanish after a few seconds.
 		return (
 			<ScrollArea
 				className="titlebar-no-drag absolute inset-0"
 				style={{
-					maskImage: "linear-gradient(to bottom, transparent 0%, black 40%)",
-					WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 40%)",
+					maskImage: "linear-gradient(to bottom, transparent 0%, black 14%, black 100%)",
+					WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 14%, black 100%)",
+					// Scrim so subtitles stay legible over arbitrary video.
+					background:
+						"linear-gradient(to top, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.34) 55%, rgba(0,0,0,0.08) 100%)",
 				}}
-				viewportClassName="flex flex-col justify-end"
 				viewportRef={scrollRef}
 			>
-				<div className="flex flex-col items-center gap-0.5 px-5 pt-12 pb-3">
+				{/* `min-h-full` + `justify-end` on the *content* (not the
+				    scroll viewport) bottom-aligns short content yet lets it
+				    overflow downward once it exceeds the viewport. Putting
+				    `justify-end` on the viewport itself clipped the overflow
+				    at the top and made it unreachable, so older lines never
+				    scrolled away and `scrollTop = scrollHeight` was a no-op. */}
+				<div className="flex min-h-full flex-col justify-end gap-2 px-6 pt-14 pb-4">
 					{items.map((item) => {
-						const tf = timeFade(item.timestamp, now);
-						if (tf <= 0) {
-							return null;
-						}
+						const spk = dominantSpeaker(item.speakerSegments);
+						const color = spk >= 0 ? colorForSpeaker(spk) : undefined;
 						return (
 							<p
-								className="max-w-full text-center font-sans text-body text-foreground leading-snug"
+								className="font-sans text-foreground text-title leading-snug [text-shadow:0_1px_4px_rgba(0,0,0,0.95)]"
 								key={item.id}
-								style={{ opacity: tf, transition: "opacity 300ms ease-out" }}
+								style={color ? { color } : undefined}
 							>
+								{spk >= 0 ? <span className="font-semibold">{`Speaker ${spk + 1}: `}</span> : null}
 								<OverlayLineText item={item} />
 							</p>
 						);
 					})}
-					{liveText && (
-						<p className="max-w-full text-center font-sans text-body text-foreground/60 italic leading-snug">
+					{liveText ? (
+						<p className="font-sans text-foreground/75 text-title leading-snug [text-shadow:0_1px_4px_rgba(0,0,0,0.95)]">
 							{liveText}
 						</p>
-					)}
-					{showEphemeral && ephemeral && (
+					) : null}
+					{showEphemeral && ephemeral ? (
 						<p
-							className="max-w-full text-center font-sans text-body text-foreground/70 italic leading-snug"
+							className="font-sans text-body text-foreground/70 italic leading-snug"
 							style={{ opacity: ephemeralOpacity, transition: "opacity 200ms ease-out" }}
 						>
 							{ephemeral.text}
 						</p>
-					)}
+					) : null}
 				</div>
 			</ScrollArea>
 		);

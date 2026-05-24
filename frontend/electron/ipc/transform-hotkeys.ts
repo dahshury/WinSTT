@@ -5,90 +5,56 @@ import { store } from "../lib/store";
 import { isPasteGuardActive } from "./hotkey";
 import { applyTransform } from "./transforms";
 
-interface RegisteredCombo {
-	combo: Set<number>;
-	transformId: string;
-}
-
 /**
- * Active uIOhook listener for transform hotkeys, separate from the PTT
- * listener in hotkey.ts. uIOhook allows multiple listeners; each fires
- * independently on every keyboard event. We track the global set of
- * physically-pressed keys (synced with the OS via keydown/keyup) and,
- * on each keydown, fire any transform whose combo is now fully held.
+ * Single uIOhook listener for the transforms hotkey. Unlike the old per-row
+ * design (one combo per named transform), the transforms feature now has a
+ * single composed prompt and a single global hotkey. uIOhook allows multiple
+ * listeners; each fires independently on every keyboard event. We track the
+ * global set of physically-pressed keys (synced with the OS via keydown/keyup)
+ * and, on each keydown, fire when the registered combo is fully held.
  *
- * Single-shot semantics per hold: once a combo fires, it won't re-fire
- * until at least one of its keys is released — prevents auto-repeat
- * from firing the LLM call dozens of times per held press.
+ * Single-shot semantics per hold: once the combo fires, it won't re-fire
+ * until at least one of its keys is released — prevents auto-repeat from
+ * firing the LLM call dozens of times per held press.
  */
 interface ListenerHandle {
 	dispose: () => void;
 }
 
 const pressed = new Set<number>();
-let combos: RegisteredCombo[] = [];
-const firedThisHold = new Set<string>();
+let combo: Set<number> | null = null;
+let firedThisHold = false;
 let listenerInstalled = false;
 let onKeyDown: ((event: { keycode: number }) => void) | null = null;
 let onKeyUp: ((event: { keycode: number }) => void) | null = null;
 let storeUnsubscribe: (() => void) | null = null;
 
-interface RawTransform {
-	hotkey: string;
-	id: string;
+function loadHotkey(): string {
+	return (store.get("llm.transforms.hotkey") ?? "").toString().trim();
 }
 
-function loadRawTransforms(): RawTransform[] {
-	return (store.get("llm.transforms.prompts") ?? []) as RawTransform[];
-}
-
-/**
- * Parse a (non-empty) hotkey string into a key set, logging when the
- * accelerator can't be parsed. Returns `null` on failure. Pulled out of
- * `tryRegisterTransform` so the latter stays at CC ≤ 3.
- */
-function parseHotkeyOrLog(hotkey: string, transformId: string): Set<number> | null {
-	const combo = parseAccelerator(hotkey);
-	if (combo) {
-		return combo;
-	}
-	dbg("transform-hotkeys", `ignored unparseable hotkey "${hotkey}" for ${transformId}`);
-	return null;
-}
-
-/**
- * Resolve a single raw transform entry to a registered combo, or `null` when
- * the hotkey is blank or unparseable. Extracted from `rebuildCombos` to keep
- * that function's cyclomatic complexity inside the CRAP-≤-4 budget.
- */
-function normalizeHotkey(raw: string | undefined): string {
-	return (raw ?? "").trim();
-}
-
-function tryRegisterTransform(entry: RawTransform): RegisteredCombo | null {
-	const hotkey = normalizeHotkey(entry.hotkey);
+function rebuildCombo(): void {
+	const hotkey = loadHotkey();
 	if (!hotkey) {
-		return null;
+		combo = null;
+		firedThisHold = false;
+		dbg("transform-hotkeys", "no hotkey configured; combo cleared");
+		return;
 	}
-	const combo = parseHotkeyOrLog(hotkey, entry.id);
-	return combo ? { transformId: entry.id, combo } : null;
+	const parsed = parseAccelerator(hotkey);
+	if (!parsed) {
+		combo = null;
+		firedThisHold = false;
+		dbg("transform-hotkeys", `ignored unparseable hotkey "${hotkey}"`);
+		return;
+	}
+	combo = parsed;
+	firedThisHold = false;
+	dbg("transform-hotkeys", `registered combo for hotkey "${hotkey}"`);
 }
 
-function rebuildCombos(): void {
-	const next: RegisteredCombo[] = [];
-	for (const entry of loadRawTransforms()) {
-		const registered = tryRegisterTransform(entry);
-		if (registered) {
-			next.push(registered);
-		}
-	}
-	combos = next;
-	firedThisHold.clear();
-	dbg("transform-hotkeys", `rebuilt ${combos.length} transform combos`);
-}
-
-function isComboHeld(combo: Set<number>): boolean {
-	for (const code of combo) {
+function isComboHeld(target: Set<number>): boolean {
+	for (const code of target) {
 		if (!pressed.has(code)) {
 			return false;
 		}
@@ -96,65 +62,45 @@ function isComboHeld(combo: Set<number>): boolean {
 	return true;
 }
 
-/**
- * True when `entry` is freshly held: combo fully pressed and not already fired
- * within this hold. Pulled out of `maybeFireCombos` so the orchestrator's
- * cyclomatic complexity stays at CC ≤ 3.
- */
-function isComboReadyToFire(entry: RegisteredCombo): boolean {
-	return !firedThisHold.has(entry.transformId) && isComboHeld(entry.combo);
-}
-
-function maybeFireCombos(): void {
-	for (const entry of combos.filter(isComboReadyToFire)) {
-		const { transformId } = entry;
-		firedThisHold.add(transformId);
-		applyTransform(transformId).catch((err: unknown) => {
-			dbg(
-				"transform-hotkeys",
-				`apply(${transformId}) failed: ${err instanceof Error ? err.message : String(err)}`
-			);
-		});
+function maybeFireCombo(): void {
+	if (!combo || firedThisHold || !isComboHeld(combo)) {
+		return;
 	}
+	firedThisHold = true;
+	applyTransform().catch((err: unknown) => {
+		dbg("transform-hotkeys", `apply failed: ${err instanceof Error ? err.message : String(err)}`);
+	});
 }
 
 function handleKeyDown(event: { keycode: number }): void {
 	// Synthetic keystrokes from `winstt-paste.exe --type` flood this hook
 	// at 2 events per character; skip the entire pipeline (Set mutation +
-	// combo iteration) for the duration of the paste. The matching keyup
-	// is also skipped, so the `pressed` set stays balanced.
+	// combo check) for the duration of the paste. The matching keyup is
+	// also skipped, so the `pressed` set stays balanced.
 	if (isPasteGuardActive()) {
 		return;
 	}
 	pressed.add(event.keycode);
-	maybeFireCombos();
-}
-
-/**
- * True when this combo previously fired but is no longer fully held — i.e.
- * the fired-flag is stale and must be cleared so re-press can re-fire.
- * Pulled out of `handleKeyUp` so the orchestrator stays at CC ≤ 3.
- */
-function isFiredFlagStale(entry: RegisteredCombo): boolean {
-	return firedThisHold.has(entry.transformId) && !isComboHeld(entry.combo);
+	maybeFireCombo();
 }
 
 function handleKeyUp(event: { keycode: number }): void {
 	// See handleKeyDown — skip synthetic events from the paste binary so
-	// the per-char flood doesn't churn the `pressed` set or combos array.
+	// the per-char flood doesn't churn the `pressed` set.
 	if (isPasteGuardActive()) {
 		return;
 	}
 	pressed.delete(event.keycode);
-	// Clear any fired-flag whose combo is no longer fully held — once the
-	// user releases part of the combo, allow re-fire on next full press.
-	for (const entry of combos.filter(isFiredFlagStale)) {
-		firedThisHold.delete(entry.transformId);
+	// Clear the fired-flag once any combo key is released so a re-press
+	// can re-fire. Without this guard, a user holding Ctrl+Shift+T forever
+	// fires once but never re-arms.
+	if (firedThisHold && combo && !isComboHeld(combo)) {
+		firedThisHold = false;
 	}
 }
 
 /**
- * Install the keyboard listener and start listening for transform combos.
+ * Install the keyboard listener and start watching for the transforms combo.
  * Idempotent — second call is a no-op.
  *
  * The caller is responsible for calling the returned `dispose` on app exit.
@@ -165,7 +111,7 @@ export function setupTransformHotkeys(): ListenerHandle {
 	}
 	listenerInstalled = true;
 
-	rebuildCombos();
+	rebuildCombo();
 	onKeyDown = handleKeyDown;
 	onKeyUp = handleKeyUp;
 	uIOhook.on("keydown", onKeyDown);
@@ -174,17 +120,17 @@ export function setupTransformHotkeys(): ListenerHandle {
 	// electron-store onDidChange fires whenever the persisted file changes.
 	// The `settings:save` IPC handler rewrites every `llm.*` key on every
 	// save (even transient ones triggered by VAD sensitivity adaptation
-	// after each dictation), so a naive listener rebuilds combos on every
-	// PTT release. Gate on a JSON-stable fingerprint of the transforms
-	// subtree so identical writes are a no-op.
-	let lastTransformsFingerprint = JSON.stringify(loadRawTransforms());
+	// after each dictation), so a naive listener rebuilds the combo on
+	// every PTT release. Gate on the hotkey string itself so identical
+	// writes are a no-op.
+	let lastHotkey = loadHotkey();
 	storeUnsubscribe = store.onDidChange("llm", () => {
-		const next = JSON.stringify(loadRawTransforms());
-		if (next === lastTransformsFingerprint) {
+		const next = loadHotkey();
+		if (next === lastHotkey) {
 			return;
 		}
-		lastTransformsFingerprint = next;
-		rebuildCombos();
+		lastHotkey = next;
+		rebuildCombo();
 	});
 
 	return { dispose: cleanup };
@@ -216,17 +162,17 @@ function cleanup(): void {
 	detachKeyboardListeners();
 	detachStoreSubscription();
 	pressed.clear();
-	combos = [];
-	firedThisHold.clear();
+	combo = null;
+	firedThisHold = false;
 }
 
 export const __transform_hotkeys_test_helpers__ = {
-	rebuildCombos,
-	maybeFireCombos,
+	rebuildCombo,
+	maybeFireCombo,
 	handleKeyDown,
 	handleKeyUp,
-	getCombos: () => combos.slice(),
+	getCombo: () => (combo ? new Set(combo) : null),
 	getPressed: () => new Set(pressed),
-	getFired: () => new Set(firedThisHold),
+	getFired: () => firedThisHold,
 	resetForTesting: cleanup,
 };

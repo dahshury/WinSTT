@@ -1,15 +1,28 @@
-"use client";
-
 import { Tabs } from "@base-ui/react/tabs";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
-import { TextureSeparator } from "@/shared/ui/texture-card";
 import { Tooltip } from "@/shared/ui/tooltip";
 
+/**
+ * Rail-tuned divider. The card `TextureSeparator` stacks a dark
+ * (`surface-1`) hairline that disappears on the dark rail, so this mirrors
+ * the rail's own edge treatment instead: a `divider-strong` line lifted by
+ * a faint top-light highlight — etched, and actually visible here.
+ */
+function RailSeparator() {
+	return (
+		<div
+			aria-hidden="true"
+			className="relative h-px w-full bg-[var(--color-divider-strong)] shadow-[0_1px_0_0_oklch(100%_0_0_/_0.05)]"
+		/>
+	);
+}
+
 export interface SidebarLink {
+	/** Render a separator after this row to close a logical tab group */
+	groupEnd?: boolean;
 	icon: IconSvgElement;
 	key: string;
 	label: string;
@@ -49,7 +62,6 @@ const SPRING = "cubic-bezier(0.16, 1, 0.3, 1)";
 
 export function SettingsSidebar({ links }: SettingsSidebarProps) {
 	const [expanded, setExpanded] = useState(false);
-	const t = useTranslations("settings");
 
 	// Substrate is the page (surface-1). The rail lifts +1 to mirror the
 	// content viewport.
@@ -67,110 +79,120 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 
 	return (
 		<SurfaceProvider value={railLevel}>
-			{/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: sidebar wrapper uses focus/hover events to drive visual expansion only */}
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: sidebar wrapper uses focus/hover events to drive visual expansion only */}
-			<div
-				className={`relative flex h-full shrink-0 flex-col overflow-hidden ${surfaceBg(railLevel)} shadow-[inset_-1px_0_0_0_var(--color-divider-strong),inset_0_1px_0_0_oklch(100%_0_0_/_0.04)] transition-[width] duration-[280ms] ease-[cubic-bezier(0.16,1,0.3,1)]`}
-				onBlur={(e) => {
-					if (!e.currentTarget.contains(e.relatedTarget)) {
-						setExpanded(false);
-					}
-				}}
-				onFocus={() => setExpanded(true)}
-				onMouseEnter={() => setExpanded(true)}
-				onMouseLeave={() => setExpanded(false)}
-				style={{ width: expanded ? EXPANDED_WIDTH : COLLAPSED_WIDTH }}
-			>
-				{/* Atmosphere — same brand vocabulary as the settings titlebar:
+			{/* Flow spacer — reserves a constant collapsed-width column so the
+			    content viewport never reflows when the rail expands. The rail
+			    itself is absolutely positioned and overlays the content on
+			    hover/focus, so a wide control (e.g. the recording-mode
+			    Switcher) is never squeezed/clipped by a transient hover. */}
+			<div className="relative h-full shrink-0" style={{ width: COLLAPSED_WIDTH }}>
+				{/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: sidebar wrapper uses focus/hover events to drive visual expansion only */}
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: sidebar wrapper uses focus/hover events to drive visual expansion only */}
+				<div
+					className={`absolute inset-y-0 left-0 z-overlay flex h-full flex-col overflow-hidden ${surfaceBg(railLevel)} shadow-[inset_-1px_0_0_0_var(--color-divider-strong),inset_0_1px_0_0_oklch(100%_0_0_/_0.04)] transition-[width] duration-[280ms] ease-[cubic-bezier(0.16,1,0.3,1)]`}
+					onBlur={(e) => {
+						if (!e.currentTarget.contains(e.relatedTarget)) {
+							setExpanded(false);
+						}
+					}}
+					onFocus={(e) => {
+						// Only expand for keyboard-driven focus. Mouse clicks and
+						// window-focus-restoration (e.g. clicking the taskbar to
+						// bring the app forward) also land focus on the last-active
+						// Tab in this rail — without the :focus-visible gate the
+						// sidebar would auto-open every time the user came back to
+						// the window.
+						const target = e.target as Element | null;
+						if (target?.matches?.(":focus-visible")) {
+							setExpanded(true);
+						}
+					}}
+					onMouseEnter={() => setExpanded(true)}
+					onMouseLeave={() => setExpanded(false)}
+					style={{ width: expanded ? EXPANDED_WIDTH : COLLAPSED_WIDTH }}
+				>
+					{/* Atmosphere — same brand vocabulary as the settings titlebar:
 				    an accent hairline kissing the top edge and a soft top-light
 				    wash, plus a faint bottom vignette so the rail reads as a
 				    grounded column rather than a floating strip. */}
-				<span
-					aria-hidden="true"
-					className="pointer-events-none absolute inset-x-0 top-0 z-raised h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent"
-				/>
-				<span
-					aria-hidden="true"
-					className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[var(--color-surface-3)]/40 to-transparent"
-				/>
-				<span
-					aria-hidden="true"
-					className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-surface-1/35 to-transparent"
-				/>
-
-				{/* Header strip — accent dot + wordmark, same vocabulary as the
-				    settings titlebar. The dot stays put while the wordmark
-				    slides+fades in with the expansion. */}
-				<div
-					className="relative flex h-10 shrink-0 items-center gap-2 overflow-hidden"
-					style={{ paddingInline: SIDE_PAD + 4 }}
-				>
 					<span
 						aria-hidden="true"
-						className="size-1.5 shrink-0 rounded-full bg-accent shadow-[0_0_6px_var(--color-accent-glow-strong)]"
+						className="pointer-events-none absolute inset-x-0 top-0 z-raised h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent"
 					/>
 					<span
-						className="whitespace-nowrap font-mono text-foreground-secondary text-xs-tight uppercase tracking-[0.18em]"
-						style={revealStyle(0)}
-					>
-						{t("title")}
-					</span>
-				</div>
-				<TextureSeparator />
+						aria-hidden="true"
+						className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[var(--color-surface-3)]/40 to-transparent"
+					/>
+					<span
+						aria-hidden="true"
+						className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-surface-1/35 to-transparent"
+					/>
 
-				{/* Tab list */}
-				<Tabs.List
-					className="relative flex flex-1 flex-col gap-1 py-3"
-					style={{ paddingInline: SIDE_PAD }}
-				>
-					{links.map((link, index) => {
-						const tab = (
-							<Tabs.Tab
-								className="group relative flex w-full cursor-pointer items-center rounded-md border-0 bg-transparent p-0 outline-none transition-[background-color,box-shadow] duration-200 hover:bg-foreground/[0.03] focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 data-[active]:bg-accent/[0.06] data-[active]:shadow-[inset_0_0_0_1px_var(--color-divider-strong)]"
-								key={link.key}
-								style={{ height: ROW_HEIGHT }}
-								value={link.key}
-							>
-								<span
-									aria-hidden="true"
-									className="flex shrink-0 items-center justify-center"
-									style={{ width: ICON_COL, height: ROW_HEIGHT }}
+					<RailSeparator />
+
+					{/* Tab list */}
+					<Tabs.List
+						className="relative flex flex-1 flex-col gap-1 py-3"
+						style={{ paddingInline: SIDE_PAD }}
+					>
+						{links.map((link, index) => {
+							const tab = (
+								<Tabs.Tab
+									className="group relative flex w-full cursor-pointer items-center rounded-md border-0 bg-transparent p-0 outline-none transition-[background-color,box-shadow] duration-200 hover:bg-foreground/[0.03] focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 data-[active]:bg-accent/[0.06] data-[active]:shadow-[inset_0_0_0_1px_var(--color-divider-strong)]"
+									key={link.key}
+									style={{ height: ROW_HEIGHT }}
+									value={link.key}
 								>
-									{/* Icon badge — SettingSection's accent-badge
+									<span
+										aria-hidden="true"
+										className="flex shrink-0 items-center justify-center"
+										style={{ width: ICON_COL, height: ROW_HEIGHT }}
+									>
+										{/* Icon badge — SettingSection's accent-badge
 									    vocabulary, scaled down to a quiet marker:
 									    transparent until active, then a soft
 									    accent wash + text-accent + a single
 									    inset hairline. No glow, no scale jump —
 									    the same clean, embossed way the section
 									    header marks itself. */}
-									<span
-										className="flex items-center justify-center rounded-md bg-transparent ring-1 ring-transparent transition-[background-color,box-shadow] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:bg-foreground/[0.04] group-data-[active]:bg-accent/[0.1] group-data-[active]:ring-accent/25"
-										style={{ width: BADGE_SIZE, height: BADGE_SIZE }}
-									>
-										<HugeiconsIcon
-											className="text-foreground-muted transition-colors duration-200 group-hover:text-foreground-secondary group-data-[active]:text-accent"
-											icon={link.icon}
-											size={16}
-										/>
+										<span
+											className="flex items-center justify-center rounded-md bg-transparent ring-1 ring-transparent transition-[background-color,box-shadow] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:bg-foreground/[0.04] group-data-[active]:bg-accent/[0.1] group-data-[active]:ring-accent/25"
+											style={{ width: BADGE_SIZE, height: BADGE_SIZE }}
+										>
+											<HugeiconsIcon
+												className="text-foreground-muted transition-colors duration-200 group-hover:text-foreground-secondary group-data-[active]:text-accent"
+												icon={link.icon}
+												size={16}
+											/>
+										</span>
 									</span>
-								</span>
-								<span
-									className="pointer-events-none whitespace-nowrap pl-2 font-sans text-body text-foreground-secondary group-data-[active]:font-medium group-data-[active]:text-foreground"
-									style={revealStyle(index + 1)}
-								>
-									{link.label}
-								</span>
-							</Tabs.Tab>
-						);
-						return link.tooltip ? (
-							<Tooltip content={link.tooltip} key={link.key} side="right">
-								{tab}
-							</Tooltip>
-						) : (
-							tab
-						);
-					})}
-				</Tabs.List>
+									<span
+										className="pointer-events-none whitespace-nowrap pl-2 font-sans text-body text-foreground-secondary group-data-[active]:font-medium group-data-[active]:text-foreground"
+										style={revealStyle(index + 1)}
+									>
+										{link.label}
+									</span>
+								</Tabs.Tab>
+							);
+							const row = link.tooltip ? (
+								<Tooltip content={link.tooltip} side="right">
+									{tab}
+								</Tooltip>
+							) : (
+								tab
+							);
+							return (
+								<div className="contents" key={link.key}>
+									{row}
+									{link.groupEnd ? (
+										<div className="py-1">
+											<RailSeparator />
+										</div>
+									) : null}
+								</div>
+							);
+						})}
+					</Tabs.List>
+				</div>
 			</div>
 		</SurfaceProvider>
 	);

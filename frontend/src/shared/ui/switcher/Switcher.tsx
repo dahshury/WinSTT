@@ -1,5 +1,3 @@
-"use client";
-
 import { Toggle } from "@base-ui/react/toggle";
 import { ToggleGroup } from "@base-ui/react/toggle-group";
 import type { IconSvgElement } from "@hugeicons/react";
@@ -49,7 +47,7 @@ function rectFromElement(el: HTMLElement, containerRect: DOMRect): SegmentRect {
 	};
 }
 
-type SwitcherCssVars = CSSProperties & { "--switcher-color"?: string };
+type SwitcherCssVars = CSSProperties & { "--switcher-color"?: string | undefined };
 
 export function Switcher<T extends string = string>({
 	options,
@@ -153,11 +151,9 @@ export function Switcher<T extends string = string>({
 							)}
 							initial={false}
 							key="active-indicator"
-							style={
-								usesColor && selectedOption?.color
-									? { backgroundColor: selectedOption.color }
-									: undefined
-							}
+							{...(usesColor && selectedOption?.color
+								? { style: { backgroundColor: selectedOption.color } }
+								: {})}
 							transition={{ ...springs.moderate, opacity: { duration: 0.08 } }}
 						/>
 					) : null}
@@ -221,7 +217,11 @@ export function Switcher<T extends string = string>({
 						if (isSelected || isHovered) {
 							return "text-foreground";
 						}
-						return "text-foreground-dim";
+						// foreground-dim (oklch 38%) is barely legible against
+						// the elevated switcher substrate; -muted (55%) keeps the
+						// unselected options clearly readable while still ranking
+						// visually below the selected/hovered label.
+						return "text-foreground-muted";
 					})();
 					return (
 						<Toggle

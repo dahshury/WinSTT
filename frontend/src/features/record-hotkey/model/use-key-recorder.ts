@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import {
 	hotkeyStartRecording,

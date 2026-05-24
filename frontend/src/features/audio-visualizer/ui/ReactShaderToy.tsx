@@ -7,8 +7,6 @@
  * Adapted for WinSTT — no LiveKit SDK dependencies.
  */
 
-"use client";
-
 import {
 	type ComponentPropsWithoutRef,
 	type CSSProperties,

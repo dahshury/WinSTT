@@ -13,7 +13,7 @@ import {
 } from "./preset-prompts";
 
 describe("preset-prompts", () => {
-	test("ALL_PRESET_KEYS contains the ten canonical presets", () => {
+	test("ALL_PRESET_KEYS contains the eleven canonical presets", () => {
 		expect([...(ALL_PRESET_KEYS as readonly string[])].sort()).toEqual(
 			[
 				"casual",
@@ -26,6 +26,7 @@ describe("preset-prompts", () => {
 				"rewordForClarity",
 				"summarize",
 				"technical",
+				"translate",
 			].sort()
 		);
 	});
@@ -88,6 +89,90 @@ describe("preset-prompts", () => {
 	test("buildSystemPrompt includes the single preset body verbatim", () => {
 		const out = buildSystemPrompt([{ key: "formal" }]);
 		expect(out).toContain(getPresetPrompt("formal"));
+	});
+
+	test("Polish base is present in every system prompt, exactly once", () => {
+		const polishBase = getPresetPrompt("neutral");
+		const occurrences = (haystack: string, needle: string): number =>
+			haystack.split(needle).length - 1;
+
+		for (const presets of [
+			[] as const,
+			[{ key: "neutral" }] as const,
+			[{ key: "formal" }] as const,
+			[{ key: "summarize", level: "high" }] as const,
+			[{ key: "formal" }, { key: "concise", level: "medium" }, { key: "reorder" }] as const,
+			[{ key: "neutral" }, { key: "neutral" }] as const,
+		]) {
+			const out = buildSystemPrompt([...presets]);
+			expect(occurrences(out, polishBase)).toBe(1);
+		}
+	});
+
+	test("neutral alone is exactly the Polish prompt (no extra style layer)", () => {
+		const base = getPresetPrompt("neutral");
+		const expected = buildSystemPrompt([]);
+		expect(buildSystemPrompt([{ key: "neutral" }])).toBe(expected);
+		expect(buildSystemPrompt([{ key: "neutral" }, { key: "neutral" }])).toBe(expected);
+		expect(expected).toContain(base);
+		expect(expected).not.toContain("on top");
+	});
+
+	test("restructure defaults to prose and gates list conversion", () => {
+		// Regression: restructure numbered every sentence of a connected
+		// statement+question ("…Whisper models… Is that correct?") as 1-/2-/3-.
+		const r = getPresetPrompt("restructure");
+		expect(r.toLowerCase()).toContain("default to keeping the speaker");
+		expect(r).toContain("Do NOT convert text to a list merely because it has several sentences");
+		expect(r.toLowerCase()).toContain("never turn a question into a list item");
+	});
+
+	test("Polish base forbids unprompted list/structure and stray blank lines", () => {
+		// Regression: with no restructure modifier the model spontaneously
+		// turned a few sentences into a numbered list with blank lines.
+		const base = getPresetPrompt("neutral");
+		expect(base).toContain("do not reorganize prose into lists");
+		expect(base).toContain("do not introduce blank lines");
+		// Spoken layout commands must still survive the prohibition.
+		expect(base).toContain("new paragraph");
+	});
+
+	test("a tone layers its own prompt on top of the Polish base", () => {
+		const out = buildSystemPrompt([{ key: "formal" }]);
+		expect(out).toContain(getPresetPrompt("neutral"));
+		expect(out).toContain(getPresetPrompt("formal"));
+		expect(out).toContain("on top");
+	});
+
+	test("translate is an independent preset with no levels", () => {
+		expect((INDEPENDENT_PRESETS as readonly string[]).includes("translate")).toBe(true);
+		expect(isToneKey("translate")).toBe(false);
+		expect(hasLevels("translate")).toBe(false);
+	});
+
+	test("translate entry resolves the chosen target language into the prompt", () => {
+		const out = buildSystemPrompt([{ key: "translate", targetLang: "Spanish" }]);
+		// Polish base is still present exactly once (cleanup runs first).
+		expect(out).toContain(getPresetPrompt("neutral"));
+		// The target language is named in the composed instruction.
+		expect(out).toContain("Spanish");
+		// Generalization clause: English examples are illustrative only.
+		expect(out.toLowerCase()).toContain("language-general");
+		// Must not leak the original / transliteration.
+		expect(out).toContain("Output ONLY the Spanish text");
+	});
+
+	test("translate is folded LAST so cleanup/style run in the source language", () => {
+		const out = buildSystemPrompt([{ key: "formal" }, { key: "translate", targetLang: "French" }]);
+		const formalIdx = out.indexOf(getPresetPrompt("formal"));
+		const translateIdx = out.indexOf("Translate the cleaned, styled result into French");
+		expect(formalIdx).toBeGreaterThan(-1);
+		expect(translateIdx).toBeGreaterThan(formalIdx);
+	});
+
+	test("translate without an explicit language defaults to English", () => {
+		const out = buildSystemPrompt([{ key: "translate" }]);
+		expect(out).toContain("into English");
 	});
 
 	test("buildSystemPrompt combines multiple presets as bullets, NOT numbered steps", () => {

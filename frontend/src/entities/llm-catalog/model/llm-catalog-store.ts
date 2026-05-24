@@ -1,5 +1,3 @@
-"use client";
-
 import { create } from "zustand";
 import {
 	cancelOllamaModelPull,
@@ -40,7 +38,7 @@ export interface PausedPullState {
 
 interface LlmCatalogState {
 	cancelPull: (model: string) => Promise<void>;
-	deleteModel: (model: string) => Promise<{ success: boolean; error?: string }>;
+	deleteModel: (model: string) => Promise<{ success: boolean; error?: string | undefined }>;
 	/** Forget a paused pull from the UI. Doesn't touch disk — the partial
 	 *  blobs stay until the next pull either consumes them or Ollama GCs. */
 	discardPausedPull: (model: string) => void;
@@ -50,9 +48,9 @@ interface LlmCatalogState {
 	isScanning: boolean;
 	models: OllamaModel[];
 	pausedPulls: Record<string, PausedPullState>;
-	pullModel: (model: string) => Promise<{ success: boolean; error?: string }>;
+	pullModel: (model: string) => Promise<{ success: boolean; error?: string | undefined }>;
 	pulls: Record<string, PullState>;
-	resumePull: (model: string) => Promise<{ success: boolean; error?: string }>;
+	resumePull: (model: string) => Promise<{ success: boolean; error?: string | undefined }>;
 	scanModels: () => Promise<void>;
 	setError: (error: string | null) => void;
 	setModels: (models: OllamaModel[]) => void;

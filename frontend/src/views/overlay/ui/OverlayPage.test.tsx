@@ -73,7 +73,12 @@ describe("OverlayPage", () => {
 		useTranscriptionStore.setState({ currentRealtime: "", ephemeral: null });
 		const { container } = renderOverlay();
 		// The text div should not be present
-		const textDiv = container.querySelector(".line-clamp-5");
+		// The bubble (.rounded-2xl) wraps a <p> for transcription text via
+		// ScrollingText. Querying ".rounded-2xl p" matches that text node
+		// when the bubble is mounted, and stays null whenever the bubble
+		// itself is hidden — both the presence-test and absence-test paths
+		// the old `.line-clamp-5` selector covered.
+		const textDiv = container.querySelector(".rounded-2xl p");
 		expect(textDiv).toBeNull();
 	});
 
@@ -93,11 +98,12 @@ describe("OverlayPage", () => {
 		useSettingsStore.setState({ settings: initialSettings });
 	});
 
-	test("shows the pill the moment VAD reports speech (before any transcription text arrives)", () => {
-		// Reproduces the user's "make it show faster" request: with the
-		// recording armed but no transcription chunk yet, VAD's
-		// `vad_detect_start` should pop the pill so the visualizer is on
-		// screen the instant the user begins speaking.
+	test("does NOT pre-mount the pill on VAD-only — waits for the first transcription chunk", () => {
+		// VAD pre-mount was deliberately removed (see `showPill` comment in
+		// OverlayPage). Even with the recording armed AND VAD reporting
+		// speech, the pill stays hidden until the realtime model emits its
+		// first token — so the pill lands on the same paint as the first
+		// word rather than flashing the visualizer hundreds of ms early.
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
@@ -111,11 +117,10 @@ describe("OverlayPage", () => {
 		});
 		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
-		const pill = container.querySelector(".rounded-2xl");
-		expect(pill).not.toBeNull();
-		// No transcription text yet — the text row stays out until realtime
-		// chunks arrive. The visualizer-only pill is the early-show state.
-		expect(container.querySelector(".line-clamp-5")).toBeNull();
+		// Bubble (.rounded-2xl) and chip (.rounded-full) both stay hidden
+		// — the pill mounts only on transcribed text or LLM thinking.
+		expect(container.querySelector(".rounded-2xl")).toBeNull();
+		expect(container.querySelector(".rounded-full")).toBeNull();
 	});
 
 	test("VAD-driven show still respects the isRecordingActive gate (stale isSpeaking can't flash an unarmed pill)", () => {
@@ -195,7 +200,12 @@ describe("OverlayPage", () => {
 			isRecordingActive: true,
 		});
 		const { container } = renderOverlay();
-		const textDiv = container.querySelector(".line-clamp-5");
+		// The bubble (.rounded-2xl) wraps a <p> for transcription text via
+		// ScrollingText. Querying ".rounded-2xl p" matches that text node
+		// when the bubble is mounted, and stays null whenever the bubble
+		// itself is hidden — both the presence-test and absence-test paths
+		// the old `.line-clamp-5` selector covered.
+		const textDiv = container.querySelector(".rounded-2xl p");
 		expect(textDiv?.textContent).toContain("hello world");
 		useSettingsStore.setState({ settings: initialSettings });
 		useTranscriptionStore.setState({
@@ -218,7 +228,12 @@ describe("OverlayPage", () => {
 			isRecordingActive: true,
 		});
 		const { container } = renderOverlay();
-		const textDiv = container.querySelector(".line-clamp-5");
+		// The bubble (.rounded-2xl) wraps a <p> for transcription text via
+		// ScrollingText. Querying ".rounded-2xl p" matches that text node
+		// when the bubble is mounted, and stays null whenever the bubble
+		// itself is hidden — both the presence-test and absence-test paths
+		// the old `.line-clamp-5` selector covered.
+		const textDiv = container.querySelector(".rounded-2xl p");
 		expect(textDiv).toBeNull();
 		useSettingsStore.setState({ settings: initialSettings });
 		useTranscriptionStore.setState({
@@ -241,7 +256,12 @@ describe("OverlayPage", () => {
 			isRecordingActive: true,
 		});
 		const { container } = renderOverlay();
-		const textDiv = container.querySelector(".line-clamp-5");
+		// The bubble (.rounded-2xl) wraps a <p> for transcription text via
+		// ScrollingText. Querying ".rounded-2xl p" matches that text node
+		// when the bubble is mounted, and stays null whenever the bubble
+		// itself is hidden — both the presence-test and absence-test paths
+		// the old `.line-clamp-5` selector covered.
+		const textDiv = container.querySelector(".rounded-2xl p");
 		expect(textDiv).toBeNull();
 		useSettingsStore.setState({ settings: initialSettings });
 		useTranscriptionStore.setState({
@@ -271,7 +291,12 @@ describe("OverlayPage", () => {
 				isRecordingActive: true,
 			});
 		});
-		const textDiv = container.querySelector(".line-clamp-5");
+		// The bubble (.rounded-2xl) wraps a <p> for transcription text via
+		// ScrollingText. Querying ".rounded-2xl p" matches that text node
+		// when the bubble is mounted, and stays null whenever the bubble
+		// itself is hidden — both the presence-test and absence-test paths
+		// the old `.line-clamp-5` selector covered.
+		const textDiv = container.querySelector(".rounded-2xl p");
 		expect(textDiv?.textContent).toContain("ephemeral preview");
 		useSettingsStore.setState({ settings: initialSettings });
 		useTranscriptionStore.setState({

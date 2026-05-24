@@ -1,6 +1,11 @@
 import { app, BrowserWindow, ipcMain } from "electron";
+import { IPC } from "../../src/shared/api/ipc-channels";
 import { appSettingsSchema } from "../../src/shared/config/settings-schema";
 import { getErrorMessage, ValidationError } from "../../src/shared/lib/errors";
+import {
+	isRealtimeEnabled,
+	type LiveTranscriptionDisplay,
+} from "../../src/shared/lib/realtime-enabled";
 import { decryptSecret, encryptSecret, SECRET_DOT_PATHS } from "../lib/secret-storage";
 import { store } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
@@ -32,13 +37,15 @@ const STARTUP_ONLY_KEYS = new Set([
 	"audio.webrtcSensitivity",
 	"audio.minLengthOfRecording",
 	"audio.sileroDeactivityDetection",
-	"quality.enableRealtimeTranscription",
 	"quality.useMainModelForRealtime",
 	"quality.realtimeProcessingPause",
 	"quality.earlyTranscriptionOnSilence",
 	"quality.initRealtimeAfterSeconds",
 	"quality.batchSize",
 	"quality.realtimeBatchSize",
+	// NOTE: general.speakerDiarization is intentionally NOT here — it is
+	// toggled at runtime via the `request_diarization_toggle` control
+	// command (see use-sync-settings), so it must never trigger a restart.
 ]);
 
 /**
@@ -98,6 +105,36 @@ function wakeWordRestartNeeded(
 		modeCrossesWakeword(oldMode, newMode) ||
 		wakeConfigChangedWhileInWakeword(oldMode, newMode, oldSettings, newSettings)
 	);
+}
+
+function readDisplayMode(value: unknown): LiveTranscriptionDisplay {
+	if (value === "none" || value === "in-app" || value === "in-pill" || value === "both") {
+		return value;
+	}
+	return "both";
+}
+
+function effectiveRealtime(settings: Record<string, unknown>): boolean {
+	return isRealtimeEnabled({
+		showRecordingOverlay: readNestedValue(settings, "general", "showRecordingOverlay") !== false,
+		liveTranscriptionDisplay: readDisplayMode(
+			readNestedValue(settings, "general", "liveTranscriptionDisplay")
+		),
+	});
+}
+
+/**
+ * Realtime is fully derived from `general.liveTranscriptionDisplay` (plus
+ * `general.showRecordingOverlay` when the display is pill-only). Neither of
+ * those is in STARTUP_ONLY_KEYS, so a change to either could flip the CLI
+ * flag the server was spawned with — this predicate catches that so we
+ * schedule a restart to bring the server in line.
+ */
+function realtimeEffectiveChanged(
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
+): boolean {
+	return effectiveRealtime(oldSettings) !== effectiveRealtime(newSettings);
 }
 
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
@@ -178,7 +215,19 @@ function isRestartActionable(): boolean {
 	return hasServerToRestart();
 }
 
-function performRestart(): void {
+function broadcastRestartRequired(setting: string): void {
+	for (const win of BrowserWindow.getAllWindows()) {
+		if (!win.isDestroyed()) {
+			try {
+				win.webContents.send(IPC.STT_RESTART_REQUIRED, { setting, kind: "unmanaged" });
+			} catch {
+				// A single hung renderer must not block the others.
+			}
+		}
+	}
+}
+
+function performRestart(changedKey: string | null): void {
 	restartTimer = null;
 	if (isShuttingDown) {
 		return;
@@ -189,12 +238,16 @@ function performRestart(): void {
 		restartSttProcess();
 		return;
 	}
-	// External server — cannot restart from Electron. These settings
-	// will take effect on the next manual server restart.
+	// External server — cannot restart from Electron. Surface this instead
+	// of only logging: a startup-only setting silently never applying (and
+	// any UI gating on the never-arriving restart, e.g. a spinner) is
+	// indistinguishable from a bug. The renderer shows a "restart the STT
+	// server" notice.
 	console.log(
 		"[settings] Startup-only setting changed but server is not managed by Electron." +
 			" Restart the server manually to apply the change."
 	);
+	broadcastRestartRequired(changedKey ?? "a setting");
 }
 
 /**
@@ -209,7 +262,9 @@ function shouldScheduleRestart(
 ): boolean {
 	const startupKeyChanged = findChangedStartupKey(oldSettings, newSettings) !== null;
 	const restartRelevantChange =
-		startupKeyChanged || wakeWordRestartNeeded(oldSettings, newSettings);
+		startupKeyChanged ||
+		wakeWordRestartNeeded(oldSettings, newSettings) ||
+		realtimeEffectiveChanged(oldSettings, newSettings);
 	return restartRelevantChange && isRestartActionable();
 }
 
@@ -221,9 +276,20 @@ function checkForRestartNeeded(
 	if (!shouldScheduleRestart(oldSettings, newSettings)) {
 		return;
 	}
+	// Capture which key forced the restart so the manual-restart notice
+	// can name it. Falls back to the wake-word group when the change was
+	// a wake-word param (those route through wakeWordRestartNeeded, which
+	// findChangedStartupKey doesn't cover), and to the realtime-gate group
+	// when the change came from the overlay/pill flipping effective realtime.
+	const changedKey =
+		findChangedStartupKey(oldSettings, newSettings) ??
+		(wakeWordRestartNeeded(oldSettings, newSettings) ? "general.wakeWord" : null) ??
+		(realtimeEffectiveChanged(oldSettings, newSettings)
+			? "general.liveTranscriptionDisplay"
+			: null);
 	// Debounce restart so rapid changes don't cause multiple restarts
 	clearRestartTimer();
-	restartTimer = setTimeout(performRestart, 500);
+	restartTimer = setTimeout(() => performRestart(changedKey), 500);
 }
 
 export function setupSettingsHandlers(sttClient?: SttClient): void {

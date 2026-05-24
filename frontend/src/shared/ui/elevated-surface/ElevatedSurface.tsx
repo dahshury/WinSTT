@@ -1,12 +1,10 @@
-"use client";
-
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 
 export interface ElevatedSurfaceProps {
 	children: ReactNode;
-	className?: string;
+	className?: string | undefined;
 	/**
 	 * Use `inline` for narrow trigger controls (Select, NumberStepper,
 	 * TextField) that already carry their own internal padding — the wrapper

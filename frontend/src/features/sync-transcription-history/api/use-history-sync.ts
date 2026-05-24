@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect } from "react";
 import { useTranscriptionHistoryStore } from "@/entities/transcription-history";
 import { fetchTranscriptionHistory, onTranscriptionHistoryAdded } from "@/shared/api/ipc-client";

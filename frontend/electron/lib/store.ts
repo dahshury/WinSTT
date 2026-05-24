@@ -32,17 +32,56 @@ const storeValueSchemas = {
 	"general.fileTranscriptionFormat": z.enum(["txt", "srt"]).catch("txt"),
 	"general.fileTranscriptionSaveLocation": z.enum(["auto", "ask"]).catch("auto"),
 	"general.showRecordingOverlay": z.boolean().catch(true),
+	"general.overlayMode": z.enum(["floating-bottom", "dynamic-island"]).catch("floating-bottom"),
 	"general.visualizerSize": z.enum(["xs", "sm", "md", "lg", "xl"]).catch("xs"),
 	"general.liveTranscriptionDisplay": z.enum(["none", "in-app", "in-pill", "both"]).catch("both"),
 	"general.systemAudioReductionWhileDictating": z.number().int().min(0).max(100).catch(0),
 	"general.contextAwareness": z.boolean().catch(false),
+	/**
+	 * User-managed deny-list for context capture. Each entry is either
+	 * an executable basename (e.g. `"chrome.exe"`, `"1password.exe"`)
+	 * or a URL host suffix (e.g. `"bankofamerica.com"`). When the
+	 * foreground app or URL matches, the captured snapshot is stripped
+	 * of `focusedText` / `axHtml` / `url` before reaching the LLM —
+	 * the window title still flows through as harmless metadata so the
+	 * LLM knows *something* was active, just not what.
+	 *
+	 * Defaults to a seed list of common sensitive apps so first-run
+	 * users are protected without having to think about it. The
+	 * defaults are NOT immutable — anyone hitting "remove" in the UI
+	 * gets that change persisted; the seed only ever applies when the
+	 * key has never been written.
+	 */
+	"general.contextDenyList": z
+		.array(z.string())
+		.catch([
+			"1password.exe",
+			"bitwarden.exe",
+			"keepass.exe",
+			"keepassxc.exe",
+			"dashlane.exe",
+			"lastpass.exe",
+		]),
+	// Speaker diarization (Listen mode). MUST be declared here: the
+	// main-process store schema strips keys it doesn't know, so without
+	// this entry the renderer's toggle never persisted to the main store
+	// and stt-process.ts never added `--enable_diarization` — diarization
+	// silently never ran (no server logs, spinner stuck) across restarts.
+	"general.speakerDiarization": z.boolean().catch(false),
 	// Opt-out toggle for Sentry crash/error reporting. Defaults to true (opt-out
 	// model — installers ship with reporting on so we get the early crash data
 	// that lets us fix bugs users can't reproduce). Takes effect on next launch;
 	// `initSentryMain` reads this synchronously at startup.
 	"general.sendCrashReports": z.boolean().catch(true),
+	// First-run onboarding gate. `false` opens the onboarding wizard before the
+	// main window; flipped to `true` once the wizard completes or is skipped.
+	// Must be declared here so the main process can read it synchronously at
+	// startup — the renderer settings store hydrates too late to gate the
+	// initial BrowserWindow choice.
+	"general.onboarded": z.boolean().catch(false),
+	"general.onboardedAt": z.number().nullable().catch(null),
+	"general.onboardedTrack": z.enum(["", "local", "cloud"]).catch(""),
 	// quality
-	"quality.enableRealtimeTranscription": z.boolean().catch(true),
 	"quality.useMainModelForRealtime": z.boolean().catch(false),
 	"quality.ensureSentenceEndsWithPeriod": z.boolean().catch(true),
 	// audio
@@ -51,6 +90,14 @@ const storeValueSchemas = {
 	// llm — shared infrastructure (one Ollama instance, one OpenRouter account)
 	"llm.endpoint": z.string().catch("http://localhost:11434"),
 	"llm.openrouterApiKey": z.string().catch(""),
+	// integrations — per-provider API keys for cloud STT. apiKey is
+	// encrypted at rest via secret-storage (matches llm.openrouterApiKey).
+	"integrations.openai.apiKey": z.string().catch(""),
+	"integrations.openai.verified": z.boolean().nullable().catch(null),
+	"integrations.openai.lastVerifiedAt": z.number().nullable().catch(null),
+	"integrations.elevenlabs.apiKey": z.string().catch(""),
+	"integrations.elevenlabs.verified": z.boolean().nullable().catch(null),
+	"integrations.elevenlabs.lastVerifiedAt": z.number().nullable().catch(null),
 	// Wired through but currently NOT applied at the network layer (see
 	// processWithOllama / processWithOpenRouter — `_timeout` is read but the
 	// AbortSignal.timeout was removed because local LLM cold-start exceeds it).
@@ -80,6 +127,21 @@ const storeValueSchemas = {
 			})
 		)
 		.catch([{ key: "neutral" as const }]),
+	// User-authored modifiers; persisted even while `enabled` is false.
+	// Folded into the active preset list at processing time (see
+	// `mergePresetsWithCustomModifiers`); never written into `presets`.
+	"llm.dictation.customModifiers": z
+		.array(
+			z.object({
+				id: z.string(),
+				name: z.string().catch(""),
+				prompt: z.string().catch(""),
+				enabled: z.boolean().catch(false),
+				levelsEnabled: z.boolean().catch(false),
+				level: z.enum(["light", "medium", "high"]).optional(),
+			})
+		)
+		.catch([]),
 	// Per-feature thinking budget for Ollama models that advertise the
 	// `thinking` capability. Falls back to "medium" so reasoning models
 	// behave sensibly on first run; non-thinking models ignore the value.
@@ -91,17 +153,41 @@ const storeValueSchemas = {
 	"llm.transforms.openrouterModel": z.string().catch(""),
 	"llm.transforms.openrouterFallbackModel": z.string().catch(""),
 	"llm.transforms.thinkingEffort": z.enum(["off", "low", "medium", "high"]).catch("medium"),
-	"llm.transforms.prompts": z
+	// Same preset/customModifier schemas as dictation — see comments on the
+	// dictation entries above for shape/intent. The transforms hotkey is a
+	// single uiohook combo string ("LCtrl+LShift+T", etc.); empty disables.
+	"llm.transforms.presets": z
+		.array(
+			z.object({
+				key: z.enum([
+					"neutral",
+					"formal",
+					"friendly",
+					"technical",
+					"casual",
+					"concise",
+					"summarize",
+					"reorder",
+					"restructure",
+					"rewordForClarity",
+				]),
+				level: z.enum(["light", "medium", "high"]).optional(),
+			})
+		)
+		.catch([{ key: "neutral" as const }]),
+	"llm.transforms.customModifiers": z
 		.array(
 			z.object({
 				id: z.string(),
-				name: z.string(),
+				name: z.string().catch(""),
 				prompt: z.string().catch(""),
-				hotkey: z.string().catch(""),
-				builtin: z.boolean().catch(false),
+				enabled: z.boolean().catch(false),
+				levelsEnabled: z.boolean().catch(false),
+				level: z.enum(["light", "medium", "high"]).optional(),
 			})
 		)
 		.catch([]),
+	"llm.transforms.hotkey": z.string().catch(""),
 	// tts — Kokoro-82M ONNX text-to-speech
 	"tts.enabled": z.boolean().catch(false),
 	"tts.voice": z.string().catch("af_heart"),
@@ -187,8 +273,6 @@ export const store = new Store({
 			initialPromptRealtime: "",
 		},
 		quality: {
-			// Stryker disable next-line BooleanLiteral: equivalent — the migration block at L168 forces this to true regardless of the initial default, so flipping the literal here is unobservable
-			enableRealtimeTranscription: true,
 			// Stryker disable next-line BooleanLiteral: equivalent — the migration block at L171 forces this to false regardless of the initial default
 			useMainModelForRealtime: false,
 			realtimeProcessingPause: 0.02,
@@ -232,6 +316,7 @@ export const store = new Store({
 			wakeWordSensitivity: 0.6,
 			wakeWordTimeout: 5,
 			showRecordingOverlay: true,
+			overlayMode: "floating-bottom" as "floating-bottom" | "dynamic-island",
 			visualizerSize: "xs" as const,
 			liveTranscriptionDisplay: "both" as const,
 			visualizerType: "bar",
@@ -242,6 +327,11 @@ export const store = new Store({
 			// Toggling requires app restart — `initSentryMain` reads it once
 			// synchronously at startup; runtime live-reconfigure isn't safe.
 			sendCrashReports: true,
+			// First-run onboarding gate. Defaults to false so net-new installs
+			// see the wizard; flipped to true once the user finishes or skips.
+			onboarded: false,
+			onboardedAt: null as number | null,
+			onboardedTrack: "" as "" | "local" | "cloud",
 		},
 		hotkey: {
 			pushToTalkKey: "LCtrl+LMeta",
@@ -282,6 +372,18 @@ export const store = new Store({
 			speed: 1.0,
 			hotkey: "",
 			device: "auto" as const,
+		},
+		integrations: {
+			openai: {
+				apiKey: "",
+				verified: null as boolean | null,
+				lastVerifiedAt: null as number | null,
+			},
+			elevenlabs: {
+				apiKey: "",
+				verified: null as boolean | null,
+				lastVerifiedAt: null as number | null,
+			},
 		},
 		windowBounds: null as { x: number; y: number; width: number; height: number } | null,
 	},
@@ -398,12 +500,15 @@ function migrateLlmSubFlags(write: StoreWrite): void {
  *   - shared provider/model fields are copied into BOTH feature blocks so
  *     users see the same setup they had before, just doubled.
  *   - llm.presets → llm.dictation.presets
- *   - llm.transforms (array) → llm.transforms.prompts
+ *   - legacy llm.transforms (array of custom prompts) is dropped; the new
+ *     transforms feature uses the same presets+customModifiers shape as
+ *     dictation (seeded with defaults on first read).
  *
  * Legacy `llm.transforms` was an array; the new `llm.transforms` is an
- * object whose `prompts` field holds the array. Delete the legacy key
- * BEFORE writing any nested `llm.transforms.*` field so electron-store
- * doesn't try to treat the array as an object.
+ * object whose `presets`/`customModifiers`/`hotkey` fields are populated
+ * by the schema defaults. Delete the legacy key BEFORE writing any nested
+ * `llm.transforms.*` field so electron-store doesn't try to treat the
+ * array as an object.
  */
 function migrateLlmPerFeatureConfig(write: StoreWrite): void {
 	// Snapshot legacy values up-front — once we start deleting / overwriting
@@ -416,7 +521,6 @@ function migrateLlmPerFeatureConfig(write: StoreWrite): void {
 	const openrouterModel = store.get("llm.openrouterModel") as unknown;
 	const openrouterFallbackModel = store.get("llm.openrouterFallbackModel") as unknown;
 	const presets = store.get("llm.presets") as unknown;
-	const legacyPrompts = store.get("llm.transforms") as unknown;
 
 	const newDictationEnabled = masterOn && dictationOn !== false;
 	const newTransformsEnabled = masterOn && transformsOn === true;
@@ -427,7 +531,6 @@ function migrateLlmPerFeatureConfig(write: StoreWrite): void {
 		typeof openrouterFallbackModel === "string" ? openrouterFallbackModel : "";
 	const dictationPresets =
 		Array.isArray(presets) && presets.length > 0 ? presets : [{ key: "neutral" }];
-	const transformsPrompts = Array.isArray(legacyPrompts) ? legacyPrompts : [];
 
 	// Delete legacy keys FIRST so the dot-path writes below can create the
 	// new `llm.dictation` / `llm.transforms` objects without colliding with
@@ -440,6 +543,9 @@ function migrateLlmPerFeatureConfig(write: StoreWrite): void {
 	store.delete("llm.openrouterModel" as never);
 	store.delete("llm.openrouterFallbackModel" as never);
 	store.delete("llm.presets" as never);
+	// Legacy `llm.transforms` array of per-name prompts is intentionally
+	// discarded — the new feature uses the same presets/modifiers shape as
+	// dictation (development-phase decision; no user-data preservation).
 	store.delete("llm.transforms" as never);
 	// `llm.timeout` stays at the top level under `llm.*` — it's wired through
 	// the new schema (see settings-schema.ts) so we do NOT delete it here.
@@ -455,7 +561,6 @@ function migrateLlmPerFeatureConfig(write: StoreWrite): void {
 	write("llm.transforms.model", sharedModel);
 	write("llm.transforms.openrouterModel", sharedOpenrouterModel);
 	write("llm.transforms.openrouterFallbackModel", sharedOpenrouterFallback);
-	write("llm.transforms.prompts", transformsPrompts);
 }
 
 /**
@@ -476,7 +581,6 @@ function migrateDictionaryToFuzzy(write: StoreWrite): void {
  * branchy version-gated logic can be exhaustively unit-tested without
  * re-importing the module under multiple mock states.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: the migration cascade grows by one branch per SCHEMA_VERSION bump — the structure is a deliberate dispatch table; refactoring to a registry would add indirection without test or correctness wins.
 export function applyStoreMigration(
 	current: number,
 	read: <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreValueSchemas[K]>,
@@ -485,11 +589,10 @@ export function applyStoreMigration(
 	log: (msg: string, from: number, to: number) => void = (msg, f, t) => console.log(msg, f, t)
 ): void {
 	if (current < SCHEMA_VERSION) {
-		// Ensure realtime transcription is enabled with separate tiny model.
-		// Use !value to catch both `false` and `undefined` (missing key in persisted JSON).
-		if (!read("quality.enableRealtimeTranscription")) {
-			write("quality.enableRealtimeTranscription", true);
-		}
+		// `quality.enableRealtimeTranscription` was removed — realtime is now
+		// derived from `general.liveTranscriptionDisplay !== "none"`. The
+		// persisted key (if present from older builds) is left in place; nothing
+		// reads it. New installs simply never write it.
 		if (read("quality.useMainModelForRealtime") !== false) {
 			write("quality.useMainModelForRealtime", false);
 		}

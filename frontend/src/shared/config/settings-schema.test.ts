@@ -4,7 +4,6 @@ import {
 	addSnippetEntrySchema,
 	appSettingsSchema,
 	audioSettingsSchema,
-	BUILTIN_TRANSFORMS,
 	dictionaryEntrySchema,
 	generalSettingsSchema,
 	hotkeySettingsSchema,
@@ -12,7 +11,6 @@ import {
 	modelSettingsSchema,
 	qualitySettingsSchema,
 	snippetEntrySchema,
-	transformSchema,
 } from "./settings-schema";
 
 describe("modelSettingsSchema defaults", () => {
@@ -114,7 +112,6 @@ describe("qualitySettingsSchema", () => {
 
 	test("realtime defaults align with PTT mode", () => {
 		const out = qualitySettingsSchema.parse({});
-		expect(out.enableRealtimeTranscription).toBe(true);
 		expect(out.useMainModelForRealtime).toBe(false);
 	});
 });
@@ -151,8 +148,14 @@ describe("generalSettingsSchema", () => {
 	test("visualizerBarCount bounded [3, 21]", () => {
 		expect(generalSettingsSchema.parse({ visualizerBarCount: 3 }).visualizerBarCount).toBe(3);
 		expect(generalSettingsSchema.parse({ visualizerBarCount: 21 }).visualizerBarCount).toBe(21);
-		expect(() => generalSettingsSchema.parse({ visualizerBarCount: 2 })).toThrow();
-		expect(() => generalSettingsSchema.parse({ visualizerBarCount: 22 })).toThrow();
+	});
+
+	test("visualizerBarCount falls back to default on out-of-range stale value", () => {
+		// An earlier slider bug persisted out-of-range values like 22. Without
+		// `.catch(9)`, parsing them would throw and `decodeSettingsPayload`
+		// would wipe the entire settings object back to defaults.
+		expect(generalSettingsSchema.parse({ visualizerBarCount: 22 }).visualizerBarCount).toBe(9);
+		expect(generalSettingsSchema.parse({ visualizerBarCount: 2 }).visualizerBarCount).toBe(9);
 	});
 
 	test("rejects invalid fileTranscriptionFormat", () => {
@@ -600,61 +603,29 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 		).toThrow();
 	});
 
-	test("transforms.prompts default seeds from BUILTIN_TRANSFORMS, preserving order and values", () => {
-		// The default flows through `z.array(transformSchema)`, so each transform's
-		// own `.default("")` / `.default(false)` fills in any optional fields.
-		// Assert the full output equals the seeded built-ins after parsing — any
-		// mutation that drops the spread or swaps the source array would either
-		// change the count, the order, or the canonical field values.
-		const out = llmSettingsSchema.parse({}).transforms.prompts;
-		expect(out).toHaveLength(BUILTIN_TRANSFORMS.length);
-		expect(out).toEqual(BUILTIN_TRANSFORMS.map((t) => transformSchema.parse(t)));
-		expect(out.map((t) => t.id)).toEqual(["polish", "prompt-engineer"]);
-		for (const t of out) {
-			expect(t.builtin).toBe(true);
-			expect(t.hotkey).toBe("");
-			expect(typeof t.prompt).toBe("string");
-			expect(t.prompt.length).toBeGreaterThan(0);
-		}
+	test("transforms defaults mirror dictation: neutral preset, no modifiers, empty hotkey", () => {
+		const out = llmSettingsSchema.parse({}).transforms;
+		expect(out.presets).toEqual([{ key: "neutral" }]);
+		expect(out.customModifiers).toEqual([]);
+		expect(out.hotkey).toBe("");
 	});
 
-	test("transforms.prompts default is a fresh array each parse — mutating one parse leaves the next intact", () => {
-		// Without the `[...BUILTIN_TRANSFORMS]` spread, every parse would share
-		// the same array reference and consumers that mutate (e.g. push a
-		// user-added transform) would leak across `parse({})` calls.
-		const a = llmSettingsSchema.parse({}).transforms.prompts;
-		a.push({
-			id: "leak",
-			name: "leak",
-			prompt: "",
-			hotkey: "",
-			builtin: false,
-		});
-		const b = llmSettingsSchema.parse({}).transforms.prompts;
-		expect(b).toHaveLength(BUILTIN_TRANSFORMS.length);
-		expect(b.find((t) => t.id === "leak")).toBeUndefined();
+	test("transforms.presets shares the same composition rules as dictation.presets", () => {
+		// Same schema (`presetsSchema`) backs both — the dictation tests above
+		// cover the rule surface; here we just confirm transforms rejects the
+		// same shapes (level on a non-leveled preset).
+		expect(() =>
+			llmSettingsSchema.parse({
+				transforms: { presets: [{ key: "neutral", level: "high" }] },
+			})
+		).toThrow();
 	});
 
-	test("explicit transforms.prompts input is honoured (no double-defaulting)", () => {
-		// Passing transforms.prompts explicitly bypasses the default but still
-		// flows through transformSchema (so each entry's optional fields get
-		// their per-field defaults).
+	test("transforms.hotkey accepts arbitrary string (validation deferred to the IPC parser)", () => {
 		const out = llmSettingsSchema.parse({
-			transforms: { prompts: [{ id: "custom", name: "Custom" }] },
-		}).transforms.prompts;
-		expect(out).toEqual([{ id: "custom", name: "Custom", prompt: "", hotkey: "", builtin: false }]);
-	});
-
-	test("BUILTIN_TRANSFORMS entries each parse cleanly through transformSchema", () => {
-		// Lock-down for the BUILTIN_TRANSFORMS shape: if anyone shortens
-		// `id`/`name` to "" or drops the `prompt` body, transformSchema
-		// (.min(1) on id/name) will reject it here.
-		for (const t of BUILTIN_TRANSFORMS) {
-			const parsed = transformSchema.parse(t);
-			expect(parsed.id).toBe(t.id);
-			expect(parsed.name).toBe(t.name);
-			expect(parsed.builtin).toBe(true);
-		}
+			transforms: { hotkey: "LCtrl+LShift+T" },
+		}).transforms;
+		expect(out.hotkey).toBe("LCtrl+LShift+T");
 	});
 });
 

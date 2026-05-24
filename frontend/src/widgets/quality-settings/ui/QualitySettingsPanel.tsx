@@ -1,5 +1,3 @@
-"use client";
-
 import {
 	EyeIcon,
 	FileScriptIcon,
@@ -11,7 +9,14 @@ import {
 } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { SettingSection, useSettingsStore } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingResetButton,
+	SettingSection,
+	useSettingsStore,
+} from "@/entities/setting";
+import { cn } from "@/shared/lib/cn";
+import { isRealtimeEnabled } from "@/shared/lib/realtime-enabled";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { NumberStepper } from "@/shared/ui/number-stepper";
@@ -26,10 +31,13 @@ const TRANSCRIPTION_FORMAT_OPTIONS: readonly SwitcherOption<"txt" | "srt">[] = [
 ] as const;
 
 type QualityT = ReturnType<typeof useTranslations<"quality">>;
+type AudioT = ReturnType<typeof useTranslations<"audio">>;
 type QualitySettings = NonNullable<
 	ReturnType<typeof useSettingsStore.getState>["settings"]["quality"]
 >;
+type AudioSettings = NonNullable<ReturnType<typeof useSettingsStore.getState>["settings"]["audio"]>;
 type UpdateQualityFn = (patch: Partial<QualitySettings>) => void;
+type UpdateAudioFn = (patch: Partial<AudioSettings>) => void;
 
 interface SmartEndpointSectionProps {
 	onToggle: (next: boolean) => void;
@@ -53,15 +61,26 @@ function SmartEndpointSection({ q, t, update, onToggle }: SmartEndpointSectionPr
 					<FormControl
 						caption={t("detectionSpeedCaption")}
 						label={t("detectionSpeed")}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={
+									(q?.smartEndpointSpeed ?? DEFAULT_SETTINGS.quality.smartEndpointSpeed) ===
+									DEFAULT_SETTINGS.quality.smartEndpointSpeed
+								}
+								onReset={() =>
+									update({ smartEndpointSpeed: DEFAULT_SETTINGS.quality.smartEndpointSpeed })
+								}
+							/>
+						}
 						tooltip={t("detectionSpeedTooltip")}
 					>
-						<ElevatedSurface inline>
+						<ElevatedSurface className="w-fit" inline>
 							<NumberStepper
 								max={3.0}
 								min={0.5}
 								onChange={(v) => update({ smartEndpointSpeed: v })}
 								step={0.1}
-								value={q?.smartEndpointSpeed ?? 2.0}
+								value={q?.smartEndpointSpeed ?? DEFAULT_SETTINGS.quality.smartEndpointSpeed}
 							/>
 						</ElevatedSurface>
 					</FormControl>
@@ -87,45 +106,231 @@ function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
 				<FormControl
 					caption={t("endOfSentencePauseCaption")}
 					label={t("endOfSentencePause")}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								(q?.endOfSentenceDetectionPause ??
+									DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause) ===
+								DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause
+							}
+							onReset={() =>
+								update({
+									endOfSentenceDetectionPause: DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause,
+								})
+							}
+						/>
+					}
 					tooltip={t("endOfSentencePauseTooltip")}
 				>
-					<ElevatedSurface inline>
+					<ElevatedSurface className="w-fit" inline>
 						<NumberStepper
 							max={5.0}
 							min={0.1}
 							onChange={(v) => update({ endOfSentenceDetectionPause: v })}
 							step={0.05}
-							value={q?.endOfSentenceDetectionPause ?? 0.45}
+							value={
+								q?.endOfSentenceDetectionPause ??
+								DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause
+							}
 						/>
 					</ElevatedSurface>
 				</FormControl>
 				<FormControl
 					caption={t("unknownSentencePauseCaption")}
 					label={t("unknownSentencePause")}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								(q?.unknownSentenceDetectionPause ??
+									DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause) ===
+								DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause
+							}
+							onReset={() =>
+								update({
+									unknownSentenceDetectionPause:
+										DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause,
+								})
+							}
+						/>
+					}
 					tooltip={t("unknownSentencePauseTooltip")}
 				>
-					<ElevatedSurface inline>
+					<ElevatedSurface className="w-fit" inline>
 						<NumberStepper
 							max={5.0}
 							min={0.1}
 							onChange={(v) => update({ unknownSentenceDetectionPause: v })}
 							step={0.05}
-							value={q?.unknownSentenceDetectionPause ?? 0.7}
+							value={
+								q?.unknownSentenceDetectionPause ??
+								DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause
+							}
 						/>
 					</ElevatedSurface>
 				</FormControl>
 				<FormControl
 					caption={t("midSentencePauseCaption")}
 					label={t("midSentencePause")}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								(q?.midSentenceDetectionPause ??
+									DEFAULT_SETTINGS.quality.midSentenceDetectionPause) ===
+								DEFAULT_SETTINGS.quality.midSentenceDetectionPause
+							}
+							onReset={() =>
+								update({
+									midSentenceDetectionPause: DEFAULT_SETTINGS.quality.midSentenceDetectionPause,
+								})
+							}
+						/>
+					}
 					tooltip={t("midSentencePauseTooltip")}
 				>
-					<ElevatedSurface inline>
+					<ElevatedSurface className="w-fit" inline>
 						<NumberStepper
 							max={10.0}
 							min={0.1}
 							onChange={(v) => update({ midSentenceDetectionPause: v })}
 							step={0.1}
-							value={q?.midSentenceDetectionPause ?? 2.0}
+							value={
+								q?.midSentenceDetectionPause ?? DEFAULT_SETTINGS.quality.midSentenceDetectionPause
+							}
+						/>
+					</ElevatedSurface>
+				</FormControl>
+			</div>
+		</SettingSection>
+	);
+}
+
+interface VadSectionProps {
+	audio: AudioSettings | undefined;
+	ta: AudioT;
+	updateAudio: UpdateAudioFn;
+}
+
+// Voice Activity Detection tuning — only surfaced when VAD actually drives
+// the endpoint (listen / wakeword). Extracted so the panel root stays under
+// the cyclomatic-complexity ceiling.
+function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
+	return (
+		<SettingSection
+			icon={VoiceIdIcon}
+			onToggle={(v) => updateAudio({ sileroDeactivityDetection: v })}
+			title={ta("vad")}
+			toggled={audio?.sileroDeactivityDetection ?? true}
+		>
+			<div className="flex flex-col divide-y divide-surface-1">
+				<FormControl
+					caption={ta("sileroSensitivityCaption")}
+					label={ta("sileroSensitivity")}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								(audio?.sileroSensitivity ?? DEFAULT_SETTINGS.audio.sileroSensitivity) ===
+								DEFAULT_SETTINGS.audio.sileroSensitivity
+							}
+							onReset={() =>
+								updateAudio({ sileroSensitivity: DEFAULT_SETTINGS.audio.sileroSensitivity })
+							}
+						/>
+					}
+					tooltip={ta("sileroSensitivityTooltip")}
+				>
+					<ElevatedSurface className="p-3">
+						<Slider
+							aria-label={ta("sileroSensitivity")}
+							formatValue={(v) => v.toFixed(2)}
+							max={1}
+							min={0}
+							onChange={(v) => updateAudio({ sileroSensitivity: v })}
+							step={0.05}
+							value={audio?.sileroSensitivity ?? DEFAULT_SETTINGS.audio.sileroSensitivity}
+						/>
+					</ElevatedSurface>
+				</FormControl>
+				<FormControl
+					caption={ta("webrtcSensitivityCaption")}
+					label={ta("webrtcSensitivity")}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								(audio?.webrtcSensitivity ?? DEFAULT_SETTINGS.audio.webrtcSensitivity) ===
+								DEFAULT_SETTINGS.audio.webrtcSensitivity
+							}
+							onReset={() =>
+								updateAudio({ webrtcSensitivity: DEFAULT_SETTINGS.audio.webrtcSensitivity })
+							}
+						/>
+					}
+					tooltip={ta("webrtcSensitivityTooltip")}
+				>
+					<ElevatedSurface className="p-3">
+						<Slider
+							aria-label={ta("webrtcSensitivity")}
+							max={3}
+							min={0}
+							onChange={(v) => updateAudio({ webrtcSensitivity: v })}
+							step={1}
+							value={audio?.webrtcSensitivity ?? DEFAULT_SETTINGS.audio.webrtcSensitivity}
+						/>
+					</ElevatedSurface>
+				</FormControl>
+				<FormControl
+					caption={ta("postSpeechSilenceCaption")}
+					label={ta("postSpeechSilence")}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								(audio?.postSpeechSilenceDuration ??
+									DEFAULT_SETTINGS.audio.postSpeechSilenceDuration) ===
+								DEFAULT_SETTINGS.audio.postSpeechSilenceDuration
+							}
+							onReset={() =>
+								updateAudio({
+									postSpeechSilenceDuration: DEFAULT_SETTINGS.audio.postSpeechSilenceDuration,
+								})
+							}
+						/>
+					}
+					tooltip={ta("postSpeechSilenceTooltip")}
+				>
+					<ElevatedSurface className="w-fit" inline>
+						<NumberStepper
+							min={0.1}
+							onChange={(v) => updateAudio({ postSpeechSilenceDuration: v })}
+							step={0.1}
+							value={
+								audio?.postSpeechSilenceDuration ?? DEFAULT_SETTINGS.audio.postSpeechSilenceDuration
+							}
+						/>
+					</ElevatedSurface>
+				</FormControl>
+				<FormControl
+					caption={ta("minRecordingLengthCaption")}
+					label={ta("minRecordingLength")}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								(audio?.minLengthOfRecording ?? DEFAULT_SETTINGS.audio.minLengthOfRecording) ===
+								DEFAULT_SETTINGS.audio.minLengthOfRecording
+							}
+							onReset={() =>
+								updateAudio({
+									minLengthOfRecording: DEFAULT_SETTINGS.audio.minLengthOfRecording,
+								})
+							}
+						/>
+					}
+					tooltip={ta("minRecordingLengthTooltip")}
+				>
+					<ElevatedSurface className="w-fit" inline>
+						<NumberStepper
+							min={0.1}
+							onChange={(v) => updateAudio({ minLengthOfRecording: v })}
+							step={0.1}
+							value={audio?.minLengthOfRecording ?? DEFAULT_SETTINGS.audio.minLengthOfRecording}
 						/>
 					</ElevatedSurface>
 				</FormControl>
@@ -189,82 +394,20 @@ export function QualitySettingsPanel() {
 		<div className="flex flex-col gap-2">
 			{/* ── Voice Activity Detection (only meaningful when VAD drives endpoints) */}
 			{(recordingMode === "listen" || recordingMode === "wakeword") && (
-				<SettingSection
-					icon={VoiceIdIcon}
-					onToggle={(v) => updateAudio({ sileroDeactivityDetection: v })}
-					title={ta("vad")}
-					toggled={audio?.sileroDeactivityDetection ?? true}
-				>
-					<div className="flex flex-col divide-y divide-surface-1">
-						<FormControl
-							caption={ta("sileroSensitivityCaption")}
-							label={ta("sileroSensitivity")}
-							tooltip={ta("sileroSensitivityTooltip")}
-						>
-							<ElevatedSurface className="p-3">
-								<Slider
-									aria-label={ta("sileroSensitivity")}
-									formatValue={(v) => v.toFixed(2)}
-									max={1}
-									min={0}
-									onChange={(v) => updateAudio({ sileroSensitivity: v })}
-									step={0.05}
-									value={audio?.sileroSensitivity ?? 0.4}
-								/>
-							</ElevatedSurface>
-						</FormControl>
-						<FormControl
-							caption={ta("webrtcSensitivityCaption")}
-							label={ta("webrtcSensitivity")}
-							tooltip={ta("webrtcSensitivityTooltip")}
-						>
-							<ElevatedSurface className="p-3">
-								<Slider
-									aria-label={ta("webrtcSensitivity")}
-									max={3}
-									min={0}
-									onChange={(v) => updateAudio({ webrtcSensitivity: v })}
-									step={1}
-									value={audio?.webrtcSensitivity ?? 3}
-								/>
-							</ElevatedSurface>
-						</FormControl>
-						<FormControl
-							caption={ta("postSpeechSilenceCaption")}
-							label={ta("postSpeechSilence")}
-							tooltip={ta("postSpeechSilenceTooltip")}
-						>
-							<ElevatedSurface inline>
-								<NumberStepper
-									min={0.1}
-									onChange={(v) => updateAudio({ postSpeechSilenceDuration: v })}
-									step={0.1}
-									value={audio?.postSpeechSilenceDuration ?? 0.7}
-								/>
-							</ElevatedSurface>
-						</FormControl>
-						<FormControl
-							caption={ta("minRecordingLengthCaption")}
-							label={ta("minRecordingLength")}
-							tooltip={ta("minRecordingLengthTooltip")}
-						>
-							<ElevatedSurface inline>
-								<NumberStepper
-									min={0.1}
-									onChange={(v) => updateAudio({ minLengthOfRecording: v })}
-									step={0.1}
-									value={audio?.minLengthOfRecording ?? 1.1}
-								/>
-							</ElevatedSurface>
-						</FormControl>
-					</div>
-				</SettingSection>
+				<VadSection audio={audio} ta={ta} updateAudio={updateAudio} />
 			)}
 
-			{/* ── Smart Endpoint (Toggle / Wake Word only, realtime required) */}
-			{(q?.enableRealtimeTranscription ?? true) && smartEndpointApplicable && (
-				<SmartEndpointSection onToggle={handleSmartEndpointToggle} q={q} t={t} update={update} />
-			)}
+			{/* ── Smart Endpoint (Toggle / Wake Word only, realtime required).
+				   Realtime is derived from the live-transcription display picker
+				   (see `isRealtimeEnabled`); when no display surface is active
+				   the engine isn't running, so Smart Endpoint has nothing to gate. */}
+			{isRealtimeEnabled({
+				showRecordingOverlay: general?.showRecordingOverlay ?? true,
+				liveTranscriptionDisplay: general?.liveTranscriptionDisplay ?? "both",
+			}) &&
+				smartEndpointApplicable && (
+					<SmartEndpointSection onToggle={handleSmartEndpointToggle} q={q} t={t} update={update} />
+				)}
 
 			{/* ── Sentence pauses (toggle/wakeword only, hidden when smart endpoint
 				   handles them automatically or manual-toggle bypasses silence detection) */}
@@ -273,14 +416,23 @@ export function QualitySettingsPanel() {
 			)}
 
 			{/* ── Formatting ─────────────────────────────────── */}
+			{/* LLM dictation rewrites the transcript wholesale (casing, punctuation,
+				modifiers) before paste, so the per-character uppercase/period fixups
+				below are redundant — disable them while LLM dictation is on. */}
 			<SettingSection icon={TextSquareIcon} title={t("formatting")}>
-				<div className="flex flex-col divide-y divide-surface-1">
+				<div
+					className={cn(
+						"flex flex-col divide-y divide-surface-1 transition-opacity duration-200 ease-out",
+						llmDictationEnabled && "pointer-events-none opacity-40"
+					)}
+				>
 					<FormControl
 						caption={t("uppercaseFirstCaption")}
 						label={t("uppercaseFirst")}
 						labelAddon={
 							<Toggle
 								checked={q?.ensureSentenceStartingUppercase ?? true}
+								disabled={llmDictationEnabled}
 								onCheckedChange={(v) => update({ ensureSentenceStartingUppercase: v })}
 							/>
 						}
@@ -292,6 +444,7 @@ export function QualitySettingsPanel() {
 						labelAddon={
 							<Toggle
 								checked={q?.ensureSentenceEndsWithPeriod ?? true}
+								disabled={llmDictationEnabled}
 								onCheckedChange={(v) => update({ ensureSentenceEndsWithPeriod: v })}
 							/>
 						}

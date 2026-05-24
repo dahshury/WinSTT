@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect } from "react";
 import { ModelPickerWindow } from "@/widgets/model-picker-window";
 

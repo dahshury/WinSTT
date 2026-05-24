@@ -1,3 +1,7 @@
+export {
+	initDiarizationToggleStore,
+	useDiarizationToggleStore,
+} from "./model/diarization-toggle-store";
 export type {
 	AppSettings,
 	AudioSettings,
@@ -10,6 +14,10 @@ export type {
 } from "./model/setting";
 export { DEFAULT_SETTINGS } from "./model/setting";
 export { useSettingsStore } from "./model/settings-store";
+export {
+	SettingResetButton,
+	type SettingResetButtonProps,
+} from "./ui/SettingResetButton";
 export { SettingRow, type SettingRowProps } from "./ui/SettingRow";
 export { SettingSection, type SettingSectionProps } from "./ui/SettingSection";
 export {

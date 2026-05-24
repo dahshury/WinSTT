@@ -18,8 +18,8 @@ interface SpawnCall {
 interface FakeChild extends EventEmitter {
 	kill: (signal?: string) => void;
 	killCalls: string[];
-	pid?: number;
-	spawnfile?: string;
+	pid?: number | undefined;
+	spawnfile?: string | undefined;
 	stderr: EventEmitter | null;
 	stdout: EventEmitter | null;
 }
@@ -298,7 +298,7 @@ describe("tryAutoSpawnServer", () => {
 		// "stt-spawn" tag literal. AND the L186 "CLI args:" / spawn log dbg.
 		expect(dbgHas("stt-spawn", "Auto-spawn succeeded")).toBe(true);
 		expect(dbgHas("stt-spawn", "CLI args")).toBe(true);
-		expect(dbgHas("stt-spawn", "store enableRealtimeTranscription")).toBe(true);
+		expect(dbgHas("stt-spawn", "derived realtime: liveTranscriptionDisplay=")).toBe(true);
 		// Find the auto-spawn dbg call and check its pid arg matches 13579.
 		// dbg("stt-spawn", "Auto-spawn succeeded, pid=", <pid>) — pid is args[1].
 		const autoSpawnDbg = dbgCalls.find(
@@ -619,39 +619,70 @@ describe("spawnServer argv builder", () => {
 		}
 	});
 
-	test("buildServerArgs: BooleanOptionalAction = true pushes --enable_realtime_transcription", () => {
-		sharedStoreMock.store.set("quality.enableRealtimeTranscription", true);
+	test("buildServerArgs: default display='both' pushes --enable_realtime_transcription", () => {
+		// Default mock state: overlay on, display="both" → at least one consumer
+		// (pill + in-app) → derived realtime ON.
 		sttProcess.tryAutoSpawnServer();
 		const args = spawnLog[0]?.args ?? [];
 		expect(args).toContain("--enable_realtime_transcription");
 		expect(args).not.toContain("--no-enable_realtime_transcription");
 	});
 
-	test("buildServerArgs: BooleanOptionalAction = false pushes --no-enable_realtime_transcription", () => {
-		sharedStoreMock.store.set("quality.enableRealtimeTranscription", false);
+	test("buildServerArgs: liveTranscriptionDisplay='none' forces --no-enable_realtime_transcription", () => {
+		// No display surface → no consumer → derived realtime OFF.
+		sharedStoreMock.store.set("general.liveTranscriptionDisplay", "none");
 		try {
 			sttProcess.tryAutoSpawnServer();
 			const args = spawnLog[0]?.args ?? [];
 			expect(args).toContain("--no-enable_realtime_transcription");
 			expect(args).not.toContain("--enable_realtime_transcription");
 		} finally {
-			sharedStoreMock.store.set("quality.enableRealtimeTranscription", true);
+			sharedStoreMock.store.set("general.liveTranscriptionDisplay", "both");
 		}
 	});
 
-	test("buildServerArgs: BooleanOptionalAction = undefined omits BOTH variants", () => {
-		// Set the value explicitly to undefined via delete on the underlying record.
-		const data = sharedStoreMock.store.store as Record<string, unknown>;
-		const quality = data.quality as Record<string, unknown>;
-		const previous = quality.enableRealtimeTranscription;
-		quality.enableRealtimeTranscription = undefined;
+	test("buildServerArgs: 'in-pill' with overlay hidden forces --no-enable_realtime_transcription", () => {
+		// 'in-pill' is the only display mode that requires the overlay window
+		// to be visible — hide the overlay and the pill can't render, leaving
+		// no consumer.
+		sharedStoreMock.store.set("general.liveTranscriptionDisplay", "in-pill");
+		sharedStoreMock.store.set("general.showRecordingOverlay", false);
 		try {
 			sttProcess.tryAutoSpawnServer();
 			const args = spawnLog[0]?.args ?? [];
+			expect(args).toContain("--no-enable_realtime_transcription");
 			expect(args).not.toContain("--enable_realtime_transcription");
+		} finally {
+			sharedStoreMock.store.set("general.liveTranscriptionDisplay", "both");
+			sharedStoreMock.store.set("general.showRecordingOverlay", true);
+		}
+	});
+
+	test("buildServerArgs: 'in-app' keeps --enable_realtime_transcription regardless of overlay", () => {
+		// In-app panel is independent of the overlay; the engine still has a
+		// consumer.
+		sharedStoreMock.store.set("general.liveTranscriptionDisplay", "in-app");
+		sharedStoreMock.store.set("general.showRecordingOverlay", false);
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnLog[0]?.args ?? [];
+			expect(args).toContain("--enable_realtime_transcription");
 			expect(args).not.toContain("--no-enable_realtime_transcription");
 		} finally {
-			quality.enableRealtimeTranscription = previous;
+			sharedStoreMock.store.set("general.liveTranscriptionDisplay", "both");
+			sharedStoreMock.store.set("general.showRecordingOverlay", true);
+		}
+	});
+
+	test("buildServerArgs: 'in-pill' with overlay visible keeps --enable_realtime_transcription", () => {
+		sharedStoreMock.store.set("general.liveTranscriptionDisplay", "in-pill");
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnLog[0]?.args ?? [];
+			expect(args).toContain("--enable_realtime_transcription");
+			expect(args).not.toContain("--no-enable_realtime_transcription");
+		} finally {
+			sharedStoreMock.store.set("general.liveTranscriptionDisplay", "both");
 		}
 	});
 
@@ -1326,11 +1357,12 @@ describe("dbg payload coverage in spawnServer", () => {
 		}
 	});
 
-	test("logs 'store enableRealtimeTranscription=' AND 'useMainModelForRealtime=' diagnostics (L188-192)", () => {
-		// Set distinctive values for both keys; these must round-trip to dbg.
-		// If the key string literal on L190 / L192 is mutated to "", the value
-		// becomes undefined — so we assert the actual values flow through.
-		sharedStoreMock.store.set("quality.enableRealtimeTranscription", true);
+	test("logs 'derived realtime: ...' diagnostic with live display + overlay values", () => {
+		// Set distinctive values for the inputs to the derivation; these must
+		// round-trip to dbg so the diagnostic is useful when triaging "why is
+		// the realtime engine on/off?".
+		sharedStoreMock.store.set("general.liveTranscriptionDisplay", "in-app");
+		sharedStoreMock.store.set("general.showRecordingOverlay", false);
 		sharedStoreMock.store.set("quality.useMainModelForRealtime", false);
 		try {
 			resetDbgCalls();
@@ -1338,21 +1370,22 @@ describe("dbg payload coverage in spawnServer", () => {
 			const storeLog = dbgCalls.find(
 				(c) =>
 					c.tag === "stt-spawn" &&
-					c.args.some((a) => String(a).includes("store enableRealtimeTranscription="))
+					c.args.some((a) => String(a).includes("derived realtime: liveTranscriptionDisplay="))
 			);
 			expect(storeLog).toBeDefined();
-			expect(storeLog!.args).toContain("store enableRealtimeTranscription=");
+			expect(storeLog!.args).toContain("derived realtime: liveTranscriptionDisplay=");
+			expect(storeLog!.args).toContain("showRecordingOverlay=");
 			expect(storeLog!.args).toContain("useMainModelForRealtime=");
-			// Locks in L190 and L192 — the resolved values must be the ones we set.
-			// The args order is: [tag, label1, value1, label2, value2].
-			// Find the values immediately after each label.
-			const idxLabel1 = storeLog!.args.indexOf("store enableRealtimeTranscription=");
-			const idxLabel2 = storeLog!.args.indexOf("useMainModelForRealtime=");
-			expect(storeLog!.args[idxLabel1 + 1]).toBe(true);
-			expect(storeLog!.args[idxLabel2 + 1]).toBe(false);
+			// Args order: [tag, label1, value1, label2, value2, label3, value3].
+			const idxDisplay = storeLog!.args.indexOf("derived realtime: liveTranscriptionDisplay=");
+			const idxOverlay = storeLog!.args.indexOf("showRecordingOverlay=");
+			const idxMain = storeLog!.args.indexOf("useMainModelForRealtime=");
+			expect(storeLog!.args[idxDisplay + 1]).toBe("in-app");
+			expect(storeLog!.args[idxOverlay + 1]).toBe(false);
+			expect(storeLog!.args[idxMain + 1]).toBe(false);
 		} finally {
-			sharedStoreMock.store.set("quality.enableRealtimeTranscription", true);
-			sharedStoreMock.store.set("quality.useMainModelForRealtime", false);
+			sharedStoreMock.store.set("general.liveTranscriptionDisplay", "both");
+			sharedStoreMock.store.set("general.showRecordingOverlay", true);
 		}
 	});
 

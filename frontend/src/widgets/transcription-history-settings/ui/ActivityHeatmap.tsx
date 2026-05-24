@@ -1,21 +1,27 @@
-"use client";
-
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import {
 	buildHeatmap,
-	formatDuration,
 	formatWpm,
 	intensityLevel,
 	type TranscriptionHistoryEntry,
 	toDayKey,
 	wordsPerMinute,
 } from "@/entities/transcription-history";
-import { CalendarHeatmap, type CalendarSystemId } from "@/shared/ui/calendar-heatmap";
+import { cn } from "@/shared/lib/cn";
+import {
+	buildDefaultCalendarPresets,
+	CalendarHeatmap,
+	type CalendarPreset,
+	type CalendarSystemId,
+	type DateRange,
+} from "@/shared/ui/calendar-heatmap";
 import { Select } from "@/shared/ui/select";
 
 interface ActivityHeatmapProps {
 	entries: TranscriptionHistoryEntry[];
+	onRangeChange: (range: DateRange | null) => void;
+	selectedRange: DateRange | null;
 }
 
 type Metric = "transcriptions" | "words" | "wpm";
@@ -24,13 +30,6 @@ interface DayStat {
 	count: number;
 	durationMs: number;
 	words: number;
-}
-
-function formatEntryTime(timestamp: number): string {
-	return new Date(timestamp).toLocaleTimeString(undefined, {
-		hour: "2-digit",
-		minute: "2-digit",
-	});
 }
 
 const EMPTY_CLASS = "bg-surface-elevated";
@@ -79,11 +78,19 @@ function formatMetric(value: number, metric: Metric): string {
 	return String(Math.round(value));
 }
 
-export function ActivityHeatmap({ entries }: ActivityHeatmapProps) {
+function formatRangeDate(date: Date): string {
+	return date.toLocaleDateString(undefined, {
+		year: "numeric",
+		month: "short",
+		day: "numeric",
+	});
+}
+
+export function ActivityHeatmap({ entries, onRangeChange, selectedRange }: ActivityHeatmapProps) {
 	const t = useTranslations("history");
 	const [metric, setMetric] = useState<Metric>("transcriptions");
 	const [calendarSystem, setCalendarSystem] = useState<CalendarSystemId>("gregorian");
-	const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+	const [month, setMonth] = useState<Date>(() => new Date());
 
 	const dayStats = buildDayStats(entries);
 	const buckets = buildHeatmap(entries);
@@ -105,11 +112,7 @@ export function ActivityHeatmap({ entries }: ActivityHeatmapProps) {
 	}
 
 	const formatTooltip = (date: Date): string => {
-		const formatted = date.toLocaleDateString(undefined, {
-			year: "numeric",
-			month: "short",
-			day: "numeric",
-		});
+		const formatted = formatRangeDate(date);
 		const stat = dayStats.get(toDayKey(date.getTime()));
 		if (!stat) {
 			return formatted;
@@ -126,8 +129,12 @@ export function ActivityHeatmap({ entries }: ActivityHeatmapProps) {
 	const isDisabled = (date: Date): boolean =>
 		(dayStats.get(toDayKey(date.getTime()))?.count ?? 0) === 0;
 
-	const handleSelect = (value: Date | { from: Date | null; to: Date | null } | null) => {
-		setSelectedDate(value instanceof Date ? value : null);
+	const handleSelect = (value: Date | DateRange | null) => {
+		if (value === null || value instanceof Date) {
+			onRangeChange(null);
+			return;
+		}
+		onRangeChange(value);
 	};
 
 	const metricOptions = [
@@ -141,12 +148,31 @@ export function ActivityHeatmap({ entries }: ActivityHeatmapProps) {
 		{ id: "hijri", label: t("heatmapCalendarHijri") },
 	];
 
-	const selectedStat = selectedDate ? dayStats.get(toDayKey(selectedDate.getTime())) : undefined;
-	const selectedEntries = selectedDate
-		? entries
-				.filter((e) => toDayKey(e.timestamp) === toDayKey(selectedDate.getTime()))
-				.sort((a, b) => a.timestamp - b.timestamp)
-		: [];
+	const presets = buildDefaultCalendarPresets({
+		today: t("presetToday"),
+		yesterday: t("presetYesterday"),
+		last7Days: t("presetLast7Days"),
+		last30Days: t("presetLast30Days"),
+		monthToDate: t("presetMonthToDate"),
+		thisMonth: t("presetThisMonth"),
+		lastMonth: t("presetLastMonth"),
+		yearToDate: t("presetYearToDate"),
+		lastYear: t("presetLastYear"),
+	});
+
+	const hasRange = Boolean(selectedRange?.from && selectedRange?.to);
+
+	const isPresetActive = (preset: CalendarPreset): boolean => {
+		const r = selectedRange;
+		const p = preset.range;
+		if (!(r?.from && r.to && p.from && p.to)) {
+			return false;
+		}
+		return (
+			toDayKey(r.from.getTime()) === toDayKey(p.from.getTime()) &&
+			toDayKey(r.to.getTime()) === toDayKey(p.to.getTime())
+		);
+	};
 
 	return (
 		<div className="flex w-full flex-col gap-3">
@@ -181,16 +207,49 @@ export function ActivityHeatmap({ entries }: ActivityHeatmapProps) {
 				className="p-0"
 				datesPerVariant={datesPerVariant}
 				disabled={isDisabled}
+				fillWidth
 				formatTooltip={formatTooltip}
-				mode="single"
+				mode="range"
+				month={month}
 				nextMonthLabel={t("heatmapNextMonth")}
+				numberOfMonths={2}
+				onMonthChange={setMonth}
 				onSelect={handleSelect}
 				prevMonthLabel={t("heatmapPrevMonth")}
 				renderDayBadge={renderDayBadge}
-				selected={selectedDate}
+				selected={selectedRange}
 				variantClassnames={VARIANT_CLASSES}
 				weekStartsOn={0}
 			/>
+
+			<div className="border-border border-t pt-3">
+				<div className="flex flex-wrap items-center gap-1.5">
+					{presets.map((preset) => {
+						const active = isPresetActive(preset);
+						return (
+							<button
+								className={cn(
+									"inline-flex h-7 items-center justify-center rounded-md border px-2.5 font-medium text-xs-tight transition-colors",
+									active
+										? "border-teal/60 bg-teal/15 text-foreground shadow-surface-1"
+										: "border-border bg-surface-elevated text-foreground-secondary hover:border-foreground-muted/40 hover:bg-surface-hover hover:text-foreground"
+								)}
+								key={preset.label}
+								onClick={() => {
+									onRangeChange(preset.range);
+									const target = preset.range.from ?? preset.range.to;
+									if (target) {
+										setMonth(target);
+									}
+								}}
+								type="button"
+							>
+								{preset.label}
+							</button>
+						);
+					})}
+				</div>
+			</div>
 
 			<div className="flex items-center justify-end gap-1.5 text-foreground-muted text-xs-tight">
 				<span>{t("heatmapLess")}</span>
@@ -200,45 +259,21 @@ export function ActivityHeatmap({ entries }: ActivityHeatmapProps) {
 				<span>{t("heatmapMore")}</span>
 			</div>
 
-			{selectedDate && selectedStat ? (
-				<div className="flex flex-col gap-2 rounded-md border border-border bg-surface-elevated p-3">
-					<div className="flex items-baseline justify-between">
-						<span className="font-medium text-foreground text-sm">
-							{selectedDate.toLocaleDateString(undefined, {
-								weekday: "long",
-								year: "numeric",
-								month: "long",
-								day: "numeric",
-							})}
-						</span>
-						<span className="text-foreground-muted text-xs-tight">
-							{selectedStat.count} {t("tableTitle").toLowerCase()} ·{" "}
-							{selectedStat.words.toLocaleString()} {t("heatmapWords")} ·{" "}
-							{formatWpm(wordsPerMinute(selectedStat.words, selectedStat.durationMs))} {t("colWpm")}{" "}
-							· {formatDuration(selectedStat.durationMs)}
-						</span>
-					</div>
-					<ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
-						{selectedEntries.map((entry) => (
-							<li
-								className="flex items-start gap-2 rounded-sm bg-surface-tertiary px-2 py-1.5 text-xs-tight"
-								key={entry.id}
-							>
-								<span className="shrink-0 font-mono text-foreground-muted">
-									{formatEntryTime(entry.timestamp)}
-								</span>
-								<span className="min-w-0 flex-1 truncate text-foreground-secondary">
-									{entry.text}
-								</span>
-								<span className="shrink-0 text-foreground-muted">
-									{entry.wordCount} {t("heatmapWords")}
-								</span>
-							</li>
-						))}
-					</ul>
+			{hasRange && selectedRange?.from && selectedRange.to ? (
+				<div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-surface-elevated px-3 py-2 text-foreground-muted text-xs-tight">
+					<span className="font-mono text-foreground-secondary">
+						{`${formatRangeDate(selectedRange.from)} — ${formatRangeDate(selectedRange.to)}`}
+					</span>
+					<button
+						className="rounded-md border border-border bg-surface-tertiary px-2 py-0.5 text-foreground-secondary text-xs-tight transition-colors hover:bg-surface-hover hover:text-foreground"
+						onClick={() => onRangeChange(null)}
+						type="button"
+					>
+						{t("heatmapClearRange")}
+					</button>
 				</div>
 			) : (
-				<p className="text-center text-foreground-muted text-xs-tight">{t("heatmapDayHint")}</p>
+				<p className="text-center text-foreground-muted text-xs-tight">{t("heatmapRangeHint")}</p>
 			)}
 		</div>
 	);

@@ -1045,19 +1045,27 @@ describe("setupRelay", () => {
 		expect(w.sent.some((s) => s.channel === "stt:model-catalog")).toBe(true);
 	});
 
-	test("onServerReady sends stt:server-status running to main window", () => {
+	test("onServerReady broadcasts stt:server-status running to ALL windows", () => {
+		// Must reach the settings window (separate BrowserWindow) too —
+		// the Speaker Diarization warm-up spinner gates on this signal and
+		// spun forever when it was mainSend-only.
 		resetState();
 		const client = makeMockClient();
-		const win = makeMockWindow();
+		const mainWin = makeMockWindow();
+		const settingsWin = makeMockWindow();
 		mockWindows.length = 0;
-		mockWindows.push(win as unknown as (typeof mockWindows)[0]);
+		mockWindows.push(
+			mainWin as unknown as (typeof mockWindows)[0],
+			settingsWin as unknown as (typeof mockWindows)[0]
+		);
 		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
+			mainWin as unknown as Parameters<typeof relayModule.setupRelay>[0],
 			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
 		);
 		client.emit("server-ready");
 		cleanup();
-		expect(win.sent.some((s) => s.channel === "stt:server-status")).toBe(true);
+		expect(mainWin.sent.some((s) => s.channel === "stt:server-status")).toBe(true);
+		expect(settingsWin.sent.some((s) => s.channel === "stt:server-status")).toBe(true);
 	});
 
 	test("data-event with fullSentence is processed without throwing", async () => {

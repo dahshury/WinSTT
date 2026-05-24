@@ -3,6 +3,7 @@ export {
 	aggregate,
 	buildHeatmap,
 	type DayBucket,
+	filterEntriesByDateRange,
 	formatDuration,
 	formatWpm,
 	intensityLevel,

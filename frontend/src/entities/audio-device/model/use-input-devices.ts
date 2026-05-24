@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import { audioGetDevices } from "@/shared/api/ipc-client";
 import type { AudioDevice } from "./audio-device";

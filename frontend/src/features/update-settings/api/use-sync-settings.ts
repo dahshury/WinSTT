@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useRef } from "react";
 import { useConnectionStore } from "@/entities/connection";
 import { useSettingsStore } from "@/entities/setting";
@@ -8,10 +6,12 @@ import {
 	onSettingsChanged,
 	settingsLoad,
 	settingsSave,
+	sttRequestDiarizationToggle,
 	sttSetParameter,
 } from "@/shared/api/ipc-client";
-import type { AllowedParameter, AppSettingsSaveInput as AppSettings } from "@/shared/api/models";
+import type { AllowedParameter } from "@/shared/api/models";
 import { decodeSettingsPayload } from "@/shared/api/settings-codec";
+import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
 import {
 	advanceSkipRefs,
 	autoStartChanged,
@@ -147,10 +147,22 @@ function syncSystemParams(settings: AppSettings, prev: AppSettings | undefined) 
  * - If `prev` is undefined → initial connect: push all non-null settings.
  * - If `prev` is provided → incremental: push only changed keys.
  */
+function syncDiarizationParams(settings: AppSettings, prev: AppSettings | undefined) {
+	const enabled = settings.general?.speakerDiarization ?? false;
+	const prevEnabled = prev?.general?.speakerDiarization ?? false;
+	// Initial connect: push the persisted state so a server that started
+	// without the diarizer builds it now (and one that has it can drop it).
+	// Incremental: only on an actual flip. Runtime command — never a restart.
+	if (!prev || enabled !== prevEnabled) {
+		sttRequestDiarizationToggle(enabled);
+	}
+}
+
 function syncToServer(settings: AppSettings, prev?: AppSettings) {
 	syncAudioParams(settings, prev);
 	syncModelParams(settings, prev);
 	syncQualityParams(settings, prev);
+	syncDiarizationParams(settings, prev);
 	syncSystemParams(settings, prev);
 }
 

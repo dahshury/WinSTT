@@ -1,9 +1,8 @@
-"use client";
-
 import { TextIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
-import { DictionaryTable } from "@/features/manage-dictionary";
+import { AutoAddSuggestions, DictionaryTable } from "@/features/manage-dictionary";
+import type { DictionaryEntry } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";
 
 export function DictionarySettingsPanel() {
@@ -11,15 +10,25 @@ export function DictionarySettingsPanel() {
 	const updateDictionary = useSettingsStore((s) => s.updateDictionary);
 	const t = useTranslations("dictionary");
 
+	// Compute existing terms inline (React Compiler memoises this — per
+	// project convention, no manual useMemo).
+	const existingTerms = dictionary.map((e) => e.term);
+
+	const handleAdd = (entry: Omit<DictionaryEntry, "id">): void => {
+		updateDictionary([...dictionary, { ...entry, id: generateId() }]);
+	};
+
 	return (
 		<SettingSection icon={TextIcon} title={t("title")}>
-			<div className="py-2">
-				<p className="mb-3 text-body-sm text-foreground-muted">{t("description")}</p>
+			<div className="flex flex-col gap-3 py-2">
+				<p className="text-body-sm text-foreground-muted">{t("description")}</p>
+				<AutoAddSuggestions
+					existingTerms={existingTerms}
+					onAccept={(term) => handleAdd({ term })}
+				/>
 				<DictionaryTable
 					entries={dictionary}
-					onAdd={(entry) => {
-						updateDictionary([...dictionary, { ...entry, id: generateId() }]);
-					}}
+					onAdd={handleAdd}
 					onClearAll={() => {
 						updateDictionary([]);
 					}}

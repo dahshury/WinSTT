@@ -67,7 +67,6 @@ describe("store module", () => {
 
 	itIfClean("default store contains canonical quality defaults", () => {
 		const s = (key: string) => (store.get as (k: string) => unknown)(key);
-		expect(s("quality.enableRealtimeTranscription")).toBe(true);
 		expect(s("quality.useMainModelForRealtime")).toBe(false);
 		expect(s("quality.realtimeProcessingPause")).toBe(0.02);
 		expect(s("quality.initRealtimeAfterSeconds")).toBe(0.2);
@@ -236,17 +235,6 @@ describe("store migration block (module-load side effects)", () => {
 		expect((store.get as (k: string) => unknown)("audio.inputDeviceIndex")).toBeNull();
 	});
 
-	itIfClean(
-		"migration leaves quality.enableRealtimeTranscription untouched when already true",
-		() => {
-			// Default is true; the !value branch should NOT overwrite it. Test
-			// that after migration the value is still true.
-			expect((store.get as (k: string) => unknown)("quality.enableRealtimeTranscription")).toBe(
-				true
-			);
-		}
-	);
-
 	itIfClean("migration leaves quality.useMainModelForRealtime untouched when already false", () => {
 		expect((store.get as (k: string) => unknown)("quality.useMainModelForRealtime")).toBe(false);
 	});
@@ -315,7 +303,6 @@ describe("applyStoreMigration (pure)", () => {
 		applyStoreMigration(
 			1,
 			fakeRead({
-				"quality.enableRealtimeTranscription": false,
 				"quality.useMainModelForRealtime": true,
 				"audio.sileroSensitivity": 0.05,
 			}),
@@ -323,7 +310,6 @@ describe("applyStoreMigration (pure)", () => {
 			() => undefined
 		);
 		const map = new Map(writes.map((w) => [w.key, w.value]));
-		expect(map.get("quality.enableRealtimeTranscription")).toBe(true);
 		expect(map.get("quality.useMainModelForRealtime")).toBe(false);
 		expect(map.get("audio.sileroSensitivity")).toBe(0.4);
 		expect(map.get("audio.inputDeviceIndex")).toBeNull();
@@ -337,32 +323,12 @@ describe("applyStoreMigration (pure)", () => {
 	});
 
 	itIfMigrationLoaded(
-		"skips quality.enableRealtimeTranscription write when value is already truthy",
-		() => {
-			const writes: Write[] = [];
-			applyStoreMigration(
-				1,
-				fakeRead({
-					"quality.enableRealtimeTranscription": true,
-					"quality.useMainModelForRealtime": false,
-					"audio.sileroSensitivity": 0.4,
-				}),
-				fakeWrite(writes),
-				() => undefined
-			);
-			const keys = writes.map((w) => w.key);
-			expect(keys).not.toContain("quality.enableRealtimeTranscription");
-		}
-	);
-
-	itIfMigrationLoaded(
 		"skips quality.useMainModelForRealtime write when value is already false",
 		() => {
 			const writes: Write[] = [];
 			applyStoreMigration(
 				1,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -379,7 +345,6 @@ describe("applyStoreMigration (pure)", () => {
 		applyStoreMigration(
 			1,
 			fakeRead({
-				"quality.enableRealtimeTranscription": true,
 				"quality.useMainModelForRealtime": true,
 				"audio.sileroSensitivity": 0.4,
 			}),
@@ -395,7 +360,6 @@ describe("applyStoreMigration (pure)", () => {
 		applyStoreMigration(
 			1,
 			fakeRead({
-				"quality.enableRealtimeTranscription": true,
 				"quality.useMainModelForRealtime": false,
 				"audio.sileroSensitivity": 0.06,
 			}),
@@ -410,7 +374,6 @@ describe("applyStoreMigration (pure)", () => {
 		applyStoreMigration(
 			1,
 			fakeRead({
-				"quality.enableRealtimeTranscription": true,
 				"quality.useMainModelForRealtime": false,
 				"audio.sileroSensitivity": 0.05,
 			}),
@@ -436,7 +399,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				3,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -455,7 +417,6 @@ describe("applyStoreMigration (pure)", () => {
 		applyStoreMigration(
 			2,
 			fakeRead({
-				"quality.enableRealtimeTranscription": true,
 				"quality.useMainModelForRealtime": false,
 				"audio.sileroSensitivity": 0.4,
 			}),
@@ -480,7 +441,6 @@ describe("applyStoreMigration (pure)", () => {
 		applyStoreMigration(
 			1,
 			fakeRead({
-				"quality.enableRealtimeTranscription": true,
 				"quality.useMainModelForRealtime": false,
 				"audio.sileroSensitivity": 0.4,
 			}),
@@ -499,7 +459,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				5,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 					// `fakeRead` is only consulted by the v1–v5 reads — the v6 step
@@ -527,7 +486,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				6,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -549,7 +507,6 @@ describe("applyStoreMigration (pure)", () => {
 		applyStoreMigration(
 			6,
 			fakeRead({
-				"quality.enableRealtimeTranscription": true,
 				"quality.useMainModelForRealtime": false,
 				"audio.sileroSensitivity": 0.4,
 			}),
@@ -573,7 +530,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				7,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -597,7 +553,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				7,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -619,7 +574,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				7,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -648,7 +602,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				8,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -667,7 +620,6 @@ describe("applyStoreMigration (pure)", () => {
 		applyStoreMigration(
 			8,
 			fakeRead({
-				"quality.enableRealtimeTranscription": true,
 				"quality.useMainModelForRealtime": false,
 				"audio.sileroSensitivity": 0.4,
 			}),
@@ -687,7 +639,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				8,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -708,7 +659,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				8,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -729,7 +679,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				8,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -761,7 +710,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				8,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -785,8 +733,12 @@ describe("applyStoreMigration (pure)", () => {
 	);
 
 	itIfMigrationLoaded(
-		"v9 migration: legacy llm.transforms (array) → llm.transforms.prompts",
+		"v9 migration: legacy llm.transforms (array) is dropped, not migrated",
 		() => {
+			// Pre-refactor we migrated legacy prompts into llm.transforms.prompts.
+			// The new transforms feature uses the same presets+modifiers shape as
+			// dictation, so legacy per-name prompts have no destination — the
+			// migration deletes the legacy key and writes nothing for it.
 			const legacyPrompts = [
 				{ id: "polish", name: "Polish", prompt: "p", hotkey: "", builtin: true },
 			];
@@ -795,7 +747,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				8,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -803,7 +754,7 @@ describe("applyStoreMigration (pure)", () => {
 				() => undefined
 			);
 			const map = new Map(writes.map((w) => [w.key, w.value]));
-			expect(map.get("llm.transforms.prompts")).toEqual(legacyPrompts);
+			expect(map.has("llm.transforms.prompts")).toBe(false);
 		}
 	);
 
@@ -814,7 +765,6 @@ describe("applyStoreMigration (pure)", () => {
 		applyStoreMigration(
 			8,
 			fakeRead({
-				"quality.enableRealtimeTranscription": true,
 				"quality.useMainModelForRealtime": false,
 				"audio.sileroSensitivity": 0.4,
 			}),
@@ -836,7 +786,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				8,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),
@@ -864,7 +813,6 @@ describe("applyStoreMigration (pure)", () => {
 			applyStoreMigration(
 				8,
 				fakeRead({
-					"quality.enableRealtimeTranscription": true,
 					"quality.useMainModelForRealtime": false,
 					"audio.sileroSensitivity": 0.4,
 				}),

@@ -1,7 +1,7 @@
-import { createWriteStream, existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import archiver from "archiver";
+import AdmZip from "adm-zip";
 import { app, dialog, ipcMain, shell } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
 import { dbg } from "../lib/debug-log";
@@ -119,26 +119,30 @@ interface ArchiveResult {
 	bytes: number;
 }
 
-function writeZipArchive(
+async function writeZipArchive(
 	outPath: string,
 	logFiles: ZipFileEntry[],
 	systemInfoContent: string
 ): Promise<ArchiveResult> {
-	return new Promise<ArchiveResult>((resolve, reject) => {
-		const output = createWriteStream(outPath);
-		const archive = archiver("zip", { zlib: { level: 6 } });
-		output.on("close", () => {
-			resolve({ bytes: archive.pointer() });
-		});
-		output.on("error", reject);
-		archive.on("error", reject);
-		archive.pipe(output);
-		for (const entry of logFiles) {
-			archive.file(entry.source, { name: entry.name });
-		}
-		archive.append(systemInfoContent, { name: "system-info.txt" });
-		archive.finalize().catch(reject);
-	});
+	// adm-zip builds the archive in memory and writes it in one shot. For
+	// the diagnostic bundle (debug.log + a couple optional logs + a small
+	// system-info.txt; typically 5-25 MB total), the transient memory cost
+	// is negligible compared to keeping `archiver` (~1 MB of dependencies
+	// inlined into main.js for streaming output we don't need).
+	const zip = new AdmZip();
+	for (const entry of logFiles) {
+		// addLocalFile reads the file synchronously and embeds it under the
+		// supplied zipPath name. We pass `""` for the zipPath so the entry
+		// lives at the archive root (no leading folder), matching what the
+		// previous archiver call produced via `{ name: entry.name }`.
+		zip.addLocalFile(entry.source, "", entry.name);
+	}
+	zip.addFile("system-info.txt", Buffer.from(systemInfoContent, "utf8"));
+	await zip.writeZipPromise(outPath);
+	// `writeZipPromise` doesn't return the byte count; stat the resulting
+	// file once so callers and the breadcrumb log still see real size data.
+	const stats = statSync(outPath);
+	return { bytes: stats.size };
 }
 
 async function maybeRevealInExplorer(outPath: string): Promise<void> {

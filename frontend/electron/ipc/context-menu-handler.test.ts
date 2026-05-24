@@ -10,7 +10,14 @@ describe("createContextMenuIpcHandler", () => {
 		const popupCalls: Array<{ x?: number; y?: number }> = [];
 		const handler = createContextMenuIpcHandler({
 			popup: ({ template, x, y, onClose }) => {
-				popupCalls.push({ x, y });
+				const call: { x?: number; y?: number } = {};
+				if (x !== undefined) {
+					call.x = x;
+				}
+				if (y !== undefined) {
+					call.y = y;
+				}
+				popupCalls.push(call);
 				(template[1] as { click?: () => void }).click?.();
 				onClose();
 			},

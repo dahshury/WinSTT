@@ -1,5 +1,3 @@
-"use client";
-
 import type { ComponentPropsWithoutRef } from "react";
 import { cn } from "@/shared/lib/cn";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./Tooltip";

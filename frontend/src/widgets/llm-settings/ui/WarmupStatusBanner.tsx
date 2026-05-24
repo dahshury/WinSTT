@@ -1,8 +1,7 @@
-"use client";
-
 import { useTranslations } from "next-intl";
-import type { LlmWarmupModelStatus, LlmWarmupStatus } from "@/shared/api/ipc-client";
+import type { LlmWarmupStatus } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
+import { findModelStatus } from "../lib/warmup-banner-test-helpers";
 
 /**
  * Per-feature banner that translates warmup-status broadcasts from the
@@ -27,16 +26,6 @@ interface WarmupStatusBannerProps {
 	onRetry?: () => void;
 	provider: "ollama" | "openrouter";
 	status: LlmWarmupStatus | null;
-}
-
-function findModelStatus(
-	status: LlmWarmupStatus | null,
-	model: string
-): LlmWarmupModelStatus | null {
-	if (!(status && model)) {
-		return null;
-	}
-	return status.models.find((m) => m.model === model) ?? null;
 }
 
 /** Two severities cover the three warmup-failure outcomes: unreachable +
@@ -65,11 +54,11 @@ const STATUS_SEVERITY_CLASSES: Record<
 };
 
 interface StatusBannerProps {
-	action?: { label: string; onClick: () => void };
+	action?: { label: string; onClick: () => void } | undefined;
 	description: string;
 	/** Verbatim server error body shown in a monospace box. Used only by
 	 *  load-failed today; other variants omit this and get no detail box. */
-	detail?: string;
+	detail?: string | undefined;
 	severity: StatusSeverity;
 	title: string;
 }
@@ -181,8 +170,3 @@ export function WarmupStatusBanner({
 	}
 	return null;
 }
-
-// Test-only exports
-export const __warmup_banner_test_helpers__ = {
-	findModelStatus,
-};

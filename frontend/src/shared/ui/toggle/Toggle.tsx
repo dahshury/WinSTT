@@ -1,14 +1,12 @@
-"use client";
-
 import { Switch } from "@base-ui/react/switch";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 
 export interface ToggleProps {
-	"aria-label"?: string;
+	"aria-label"?: string | undefined;
 	checked: boolean;
-	disabled?: boolean;
-	label?: string;
+	disabled?: boolean | undefined;
+	label?: string | undefined;
 	onCheckedChange: (checked: boolean) => void;
 }
 

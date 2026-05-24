@@ -1,8 +1,9 @@
 import { BrowserWindow, ipcMain } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
 import { clearSessionAborted, isSessionAborted } from "../lib/abort-state";
-import { readWindowContext } from "../lib/context-reader";
+import { readWindowContextTree } from "../lib/context-reader";
 import { dbg, dbgVerbose } from "../lib/debug-log";
+import { installInitialPromptSync } from "../lib/initial-prompt-sync";
 import { createSafeSender, isRecord, type SafeSend } from "../lib/ipc-helpers";
 import { setLastTranscription } from "../lib/last-transcription";
 import { pasteText } from "../lib/paste";
@@ -44,6 +45,17 @@ function hasDictationModel(): boolean {
 // transforms have their own independent gate in transforms.ts.
 function isLlmConfigured(): boolean {
 	return getStoreValue("llm.dictation.enabled") === true && hasDictationModel();
+}
+
+// Name of the model that post-processing would run on, for the history
+// record. Provider-aware: Ollama exposes a bare model name, OpenRouter a
+// slug. Returns "" when nothing usable is configured so callers can treat
+// it the same as "no LLM ran".
+function dictationLlmModel(): string {
+	const provider = getStoreValue("llm.dictation.provider");
+	const key = provider === "openrouter" ? "llm.dictation.openrouterModel" : "llm.dictation.model";
+	const model = getStoreValue(key);
+	return typeof model === "string" ? model : "";
 }
 
 // Listen mode is a passive monitor — captions only. No personalisation,
@@ -123,7 +135,12 @@ function pasteIfDictating(mode: unknown, text: string): void {
 }
 
 interface HistoryCapture {
-	capture(text: string, originalText?: string, llmRan?: boolean): TranscriptionHistoryEntry | null;
+	capture(
+		text: string,
+		originalText?: string,
+		llmRan?: boolean,
+		llmModel?: string
+	): TranscriptionHistoryEntry | null;
 	notifyStarted(): void;
 	notifyStopped(): void;
 }
@@ -220,7 +237,7 @@ async function handleFullSentence(
 	// Stryker disable next-line StringLiteral: dbg() message is informational only
 	dbg("relay", `fullSentence: text=${JSON.stringify(processed)} mode=${mode}`);
 	safeSend(IPC.STT_FULL_SENTENCE, { text: processed });
-	history?.capture(processed, originalForHistory, isLlmConfigured());
+	history?.capture(processed, originalForHistory, isLlmConfigured(), dictationLlmModel());
 	pasteIfDictating(mode, processed);
 }
 
@@ -315,6 +332,31 @@ function handleModelSwapFailed(event: Record<string, unknown>, safeSend: SafeSen
 	safeSend(IPC.STT_MODEL_SWAP_FAILED, {
 		kind: event.kind,
 		name: event.name,
+		reason: event.reason,
+		category: event.category ?? "unknown",
+		detail: event.detail ?? "",
+	});
+}
+
+function handleDiarizationToggleStarted(event: Record<string, unknown>, safeSend: SafeSend): void {
+	safeSend(IPC.STT_DIARIZATION_TOGGLE_STARTED, { enabled: event.enabled });
+}
+
+function handleDiarizationToggleCompleted(
+	event: Record<string, unknown>,
+	safeSend: SafeSend
+): void {
+	safeSend(IPC.STT_DIARIZATION_TOGGLE_COMPLETED, {
+		enabled: event.enabled,
+		message: event.message ?? "",
+	});
+}
+
+function handleDiarizationToggleFailed(event: Record<string, unknown>, safeSend: SafeSend): void {
+	// Same stable category vocabulary as model-swap failures (shared
+	// server classifier) so the renderer can reuse the toast variants.
+	safeSend(IPC.STT_DIARIZATION_TOGGLE_FAILED, {
+		enabled: event.enabled,
 		reason: event.reason,
 		category: event.category ?? "unknown",
 		detail: event.detail ?? "",
@@ -470,13 +512,18 @@ function handleSimpleRelayEvent(
 // Simple-relay event types that must reach EVERY renderer, not just the main
 // window. Overlay needs the VAD/no-audio events; the settings window's
 // dictation model download dialog needs the download lifecycle events to drive
-// its progress bar and auto-close on completion.
+// its progress bar and auto-close on completion. `speaker_segments` must follow
+// `fullSentence` (which broadcasts via DATA_EVENT_HANDLERS) so diarized captions
+// stay consistent in every window that renders the transcript feed — otherwise
+// fullSentence reaches all windows but its speaker colors reach only the main
+// one, silently de-diarizing any other consumer.
 const OVERLAY_RELEVANT_SIMPLE_TYPES = new Set([
 	"no_audio_detected",
 	"vad_detect_start",
 	"vad_detect_stop",
 	"model_download_start",
 	"model_download_complete",
+	"speaker_segments",
 ]);
 
 interface DispatchContext {
@@ -580,6 +627,13 @@ const DATA_EVENT_HANDLERS: Record<string, DataEventHandler> = {
 	model_swap_started: (event, ctx) => handleModelSwapStarted(event, ctx.broadcast),
 	model_swap_completed: (event, ctx) => handleModelSwapCompleted(event, ctx.broadcast),
 	model_swap_failed: (event, ctx) => handleModelSwapFailed(event, ctx.broadcast),
+	// Runtime diarization toggle lifecycle — broadcast so the settings
+	// window (separate BrowserWindow) drives the toggle's spinner/enabled
+	// state off real signals instead of guessing.
+	diarization_toggle_started: (event, ctx) => handleDiarizationToggleStarted(event, ctx.broadcast),
+	diarization_toggle_completed: (event, ctx) =>
+		handleDiarizationToggleCompleted(event, ctx.broadcast),
+	diarization_toggle_failed: (event, ctx) => handleDiarizationToggleFailed(event, ctx.broadcast),
 	model_cache_changed: (event, ctx) => handleModelCacheChanged(event, ctx.broadcast),
 	// Server's once-per-launch HuggingFace catalog refresh — pushes a
 	// fresh list with up-to-date `languages` for every model. Update the
@@ -657,8 +711,11 @@ function logServerRealtimeConfig(): void {
 	dbgVerbose(
 		"relay",
 		// Stryker disable next-line StringLiteral: label part — informational only
-		"Store realtime config: enableRealtimeTranscription=",
-		store.get("quality.enableRealtimeTranscription"),
+		"Store realtime config: liveTranscriptionDisplay=",
+		store.get("general.liveTranscriptionDisplay"),
+		// Stryker disable next-line StringLiteral: label part — informational only
+		"showRecordingOverlay=",
+		store.get("general.showRecordingOverlay"),
 		// Stryker disable next-line StringLiteral: label part — informational only
 		"useMainModelForRealtime=",
 		store.get("quality.useMainModelForRealtime"),
@@ -670,12 +727,35 @@ function logServerRealtimeConfig(): void {
 
 const RECORDING_STATE_EVENT_TYPES = new Set(["recording_start", "recording_stop"]);
 
+// Methods this frontend build depends on that are recent enough to act as
+// a staleness canary. The server stamps its live ALLOWED_METHODS into
+// runtime_info; if any of these are absent the user is talking to an old
+// server process (the split-brain dev failure) and needs to restart it.
+// Add the newest protocol-affecting method here when one is introduced.
+const REQUIRED_SERVER_METHODS = ["request_diarization_toggle"] as const;
+
+function findMissingServerMethods(info: unknown): string[] {
+	if (!(isRecord(info) && Array.isArray(info.allowed_methods))) {
+		// No capability list (older server pre-handshake, or no runtime_info
+		// yet) — can't assert staleness, so don't cry wolf.
+		return [];
+	}
+	const methods = info.allowed_methods as unknown[];
+	return REQUIRED_SERVER_METHODS.filter((m) => !methods.includes(m));
+}
+
 /**
  * Determine which serial queue should handle a given data event type.
  * Returns "fullSentence", "recordingState", or "direct" (immediate dispatch).
  */
 function routeEventToQueue(type: string): "fullSentence" | "recordingState" | "direct" {
-	if (type === "fullSentence") {
+	// `speaker_segments` rides the fullSentence queue so it is dispatched
+	// strictly after the matching fullSentence handler has broadcast its
+	// text. Dispatched directly it raced ahead of the not-yet-committed
+	// sentence, so the renderer's attachSpeakerSegments() landed on the
+	// previous item (or none) and the just-spoken words were never colored
+	// per speaker even with Speaker Diarization enabled.
+	if (type === "fullSentence" || type === "speaker_segments") {
 		return "fullSentence";
 	}
 	if (RECORDING_STATE_EVENT_TYPES.has(type)) {
@@ -759,15 +839,33 @@ function reconcilePersistedModel(info: unknown): void {
 	store.set("model.model", loaded);
 }
 
-export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
+/**
+ * Optional state to prime setupRelay's cache with events that fired before
+ * the relay was wired up. Required when setupRelay is called AFTER the
+ * SttClient has already emitted `server-ready` / `runtime-info` — e.g. when
+ * the first-run onboarding wizard delays main-window creation past the
+ * server's warm-up. Without it, `STT_GET_SERVER_READY` / `STT_GET_RUNTIME_INFO`
+ * return false/null forever and the GPU/CPU chip stays at "Connecting".
+ */
+export interface SetupRelayInitialState {
+	runtimeInfo?: unknown;
+	serverReady?: boolean;
+}
+
+export function setupRelay(
+	win: BrowserWindow,
+	client: SttClient,
+	initialState: SetupRelayInitialState = {}
+): () => void {
 	/** Last known model catalog — cached so any window can fetch it on demand. */
 	// Stryker disable next-line ArrayDeclaration: closure init — onModelCatalog overwrites this before any consumer can read the cached value
 	let cachedModelCatalog: unknown[] = [];
 
 	/** Last known ORT runtime snapshot (providers / is_gpu / model names).
 	 * Cached so windows that mount after server_ready can pull the chip state
-	 * without an extra round-trip. */
-	let cachedRuntimeInfo: unknown = null;
+	 * without an extra round-trip. Primed from `initialState.runtimeInfo` so
+	 * setupRelay called AFTER the wizard finishes still sees pre-relay events. */
+	let cachedRuntimeInfo: unknown = initialState.runtimeInfo ?? null;
 
 	// Order-preserving chain for fullSentence handling.
 	//
@@ -787,9 +885,17 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 	// reordering scenario.
 	const recordingStateQueue = createSerialQueue();
 
-	/** Tracks whether server_ready has been received (survives renderer late-mount). */
+	/** Tracks whether server_ready has been received (survives renderer late-mount).
+	 * Primed from `initialState.serverReady` so a wizard-delayed setupRelay still
+	 * answers STT_GET_SERVER_READY correctly for pre-relay server_ready events. */
 	// Stryker disable next-line BooleanLiteral: closure init — onServerReady() / onDisconnected() always reset this
-	let serverIsReady = false;
+	let serverIsReady = initialState.serverReady ?? false;
+
+	// One-shot per connection: runtime_info re-broadcasts on every
+	// model_swap_completed, so without this the stale-server toast would
+	// re-fire repeatedly. Reset on disconnect.
+	// Stryker disable next-line BooleanLiteral: closure init — onDisconnected() resets this
+	let skewWarned = false;
 
 	// Persistent transcription history (capped at HISTORY_MAX_ENTRIES so we
 	// don't grow the user's settings file forever). Capture happens on each
@@ -811,13 +917,13 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		notifyStopped: () => {
 			lastRecordingStopMs = Date.now();
 		},
-		capture: (text, originalText, llmRan) => {
+		capture: (text, originalText, llmRan, llmModel) => {
 			const duration = computeRecordingDurationMs(
 				lastRecordingStartMs,
 				lastRecordingStopMs,
 				Date.now()
 			);
-			const entry = historyStore.record(text, duration, originalText, llmRan);
+			const entry = historyStore.record(text, duration, originalText, llmRan, llmModel);
 			broadcastHistoryEntry(entry);
 			lastRecordingStartMs = 0;
 			lastRecordingStopMs = 0;
@@ -878,12 +984,19 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		broadcastToAll(channel, ...args);
 	};
 
-	// Context-awareness capture: snapshots the focused window's text on
-	// recording_start (when the user opted in) and serves the stored
-	// snapshot to fullSentence so the LLM cleanup can spell names right.
+	// Context-awareness capture: snapshots the focused window's UIA
+	// subtree on recording_start (when the user opted in) and serves
+	// the formatted snapshot to fullSentence so the LLM cleanup has
+	// the "what is on screen" context for proper-noun spelling and
+	// reply-to-this-email composition. The tree reader runs the same
+	// caret-split the legacy reader did, plus a hierarchical axHtml
+	// walk + browser URL + process exe. Apps/URLs on the user's
+	// deny-list still produce a snapshot, but with all sensitive
+	// fields stripped before reaching the LLM.
 	const contextCapture = createContextCapture({
 		isEnabled: () => getStoreValue("general.contextAwareness"),
-		read: readWindowContext,
+		getDenyList: () => getStoreValue("general.contextDenyList"),
+		read: readWindowContextTree,
 	});
 
 	const ctx: DispatchContext = {
@@ -920,6 +1033,7 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		// Stryker disable next-line StringLiteral: dbg() message is informational only
 		dbg("relay", "STT server DISCONNECTED");
 		serverIsReady = false;
+		skewWarned = false;
 		onRecordingStop();
 		broadcastConnectionChange(false);
 	};
@@ -936,14 +1050,39 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		// GPU/CPU chip honestly without polling.
 		broadcastToAll(IPC.STT_RUNTIME_INFO, info);
 		reconcilePersistedModel(info);
+		// Stale-server guardrail: if the running server lacks a method this
+		// build depends on, it's executing old code (hand-started dev server
+		// never restarted). Surface it once instead of letting commands
+		// silently 404 — reuses the manual-restart toast.
+		if (!skewWarned) {
+			const missing = findMissingServerMethods(info);
+			if (missing.length > 0) {
+				skewWarned = true;
+				// Stryker disable next-line StringLiteral: dbg() message is informational only
+				dbg("relay", `STT server is outdated — missing methods: ${missing.join(", ")}`);
+				broadcastToAll(IPC.STT_RESTART_REQUIRED, {
+					setting: `the STT server build (missing: ${missing.join(", ")})`,
+					kind: "skew",
+				});
+			}
+		}
 	};
 
 	const onServerReady = () => {
 		// Stryker disable next-line StringLiteral: dbg() message is informational only
-		dbg("relay", "Server READY — recorder initialized, sending status=running to renderer");
+		dbg(
+			"relay",
+			"Server READY — recorder initialized, broadcasting status=running to all renderers"
+		);
 		logServerRealtimeConfig();
 		serverIsReady = true;
-		mainSend(IPC.STT_SERVER_STATUS, { status: "running" });
+		// Broadcast (not mainSend): the settings window is a separate
+		// BrowserWindow and hosts controls that gate on server readiness —
+		// e.g. the Speaker Diarization toggle's warm-up spinner. mainSend
+		// left that window stuck on "idle" after a restart, so the spinner
+		// spun forever even though the server (with diarization) was up.
+		// Mirrors how connection-change / runtime-info already broadcast.
+		broadcastToAll(IPC.STT_SERVER_STATUS, { status: "running" });
 
 		// Diagnostic: query the server's actual realtime transcription config
 		client
@@ -959,6 +1098,13 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 	client.on("runtime-info", onRuntimeInfo);
 	client.on("server-ready", onServerReady);
 
+	// Wire the dictionary→initial_prompt pipe: pushes a fresh
+	// composed prompt on every relevant store edit AND on every
+	// server-ready event. The hexagonal server's facade setter
+	// propagates straight into the live transcriber — see
+	// `OnnxAsrTranscriber.initial_prompt` + the WS control allow-list.
+	const disposeInitialPromptSync = installInitialPromptSync(client);
+
 	return () => {
 		client.off("data-event", onDataEvent);
 		client.off("connected", onConnected);
@@ -966,6 +1112,7 @@ export function setupRelay(win: BrowserWindow, client: SttClient): () => void {
 		client.off("model-catalog", onModelCatalog);
 		client.off("runtime-info", onRuntimeInfo);
 		client.off("server-ready", onServerReady);
+		disposeInitialPromptSync();
 		ipcMain.removeHandler(IPC.STT_CANCEL_DOWNLOAD);
 		ipcMain.removeHandler("stt:delete-model-cache");
 		ipcMain.removeHandler(IPC.STT_GET_MODEL_CATALOG);

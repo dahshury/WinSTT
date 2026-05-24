@@ -1,16 +1,23 @@
-"use client";
-
 import { Combobox } from "@base-ui/react/combobox";
 import { type ReactNode, useRef, useState } from "react";
-import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
-import { createModelSelection, parseModelSelection } from "@/shared/lib/openrouter-model-selection";
-import { Spinner } from "@/shared/ui/spinner";
-import {
-	filterModelsForFallback,
-	isEndpointExcluded,
-	type ModelExclusionConfig,
-} from "../lib/model-exclusion";
+import type { OpenRouterModel } from "@/shared/api/models";
+import { parseModelSelection } from "@/shared/lib/openrouter-model-selection";
+import type { ModelExclusionConfig } from "../lib/model-exclusion";
 import type { ModelVariant } from "../lib/model-variant-utils";
+import {
+	applyCloseWith,
+	applyModelFilters,
+	applyToggleExpanded,
+	buildScrollRequestForModel,
+	buildScrollRequestForProvider,
+	findEndpointForProviderSlug,
+	isInsideMenuPopup,
+	parseSelectionToken,
+	resolveSelectionValue,
+	type ScrollToMakerRequest,
+	SearchPendingIndicator,
+	shouldBlockSelection,
+} from "../lib/openrouter-model-selector-test-helpers";
 import type { FilterableParameter } from "../lib/openrouter-provider-utils";
 import { useModelSelectorClickTracking } from "../lib/use-model-selector-click-tracking";
 import { useModelSelectorFilters } from "../lib/use-model-selector-filters";
@@ -24,233 +31,6 @@ import { ProviderRail } from "./ProviderRail";
 const DEFAULT_PLACEHOLDER = "Select a model";
 const DEFAULT_LABEL = "Model";
 const ITEM_PRESS_REASON = "item-press";
-const POPUP_ROLES: ReadonlySet<string> = new Set(["menu", "menuitem", "tooltip"]);
-const POPUP_SLOT = "model-filters-menu-content";
-
-interface ScrollToMakerRequest {
-	maker: string;
-	modelId?: string;
-	nonce: number;
-}
-
-interface ParsedSelectionToken {
-	modelId: string;
-	providerSlug?: string;
-}
-
-// --- Pure DOM-walking helpers (used by isInsideMenuPopup) ---
-
-/** True when the element's role attribute marks it as a popup-style node. */
-function nodeRoleIsPopup(node: HTMLElement): boolean {
-	const role = node.getAttribute("role");
-	return role !== null && POPUP_ROLES.has(role);
-}
-
-/** True when the element's data-slot marks it as the filters menu content. */
-function nodeSlotIsPopup(node: HTMLElement): boolean {
-	return node.dataset?.slot === POPUP_SLOT;
-}
-
-/**
- * True when the node is the combobox's own popup, has a popup role, or
- * carries the model-filters-menu data-slot.
- */
-function nodeMatchesPopupSelector(node: HTMLElement, ownPopup: HTMLElement | null): boolean {
-	return node === ownPopup || nodeRoleIsPopup(node) || nodeSlotIsPopup(node);
-}
-
-/** Materializes the ancestor chain (including `start`) into an array. */
-function walkAncestors(start: HTMLElement | null): HTMLElement[] {
-	const chain: HTMLElement[] = [];
-	for (let cursor = start; cursor; cursor = cursor.parentElement) {
-		chain.push(cursor);
-	}
-	return chain;
-}
-
-/**
- * If a click landed inside an open Base UI menu / submenu, the parent
- * combobox popup should stay open. Walks the click target's ancestors
- * looking for any popup-style attribute Base UI emits.
- */
-function isInsideMenuPopup(target: HTMLElement | null, ownPopup: HTMLElement | null): boolean {
-	return walkAncestors(target).some((node) => nodeMatchesPopupSelector(node, ownPopup));
-}
-
-// --- Pure model-list filtering helpers (used by filteredModels useMemo) ---
-
-/** Apply the fallback-exclusion config (no-op when config is absent). */
-function applyExclusion(
-	models: OpenRouterModel[],
-	config: ModelExclusionConfig | undefined
-): OpenRouterModel[] {
-	if (!config) {
-		return models;
-	}
-	return filterModelsForFallback(models, config);
-}
-
-/** Filter out any model whose id is in the disabled-id list. */
-function applyDisabledFilter(
-	models: OpenRouterModel[],
-	disabledIds: readonly string[] | undefined
-): OpenRouterModel[] {
-	if (!disabledIds || disabledIds.length === 0) {
-		return models;
-	}
-	const set = new Set(disabledIds);
-	return models.filter((m) => !set.has(m.id));
-}
-
-/** Compose exclusion + disabled-id filtering into a single pipeline call. */
-function applyModelFilters(
-	models: OpenRouterModel[],
-	exclusionConfig: ModelExclusionConfig | undefined,
-	disabledModelIds: readonly string[] | undefined
-): OpenRouterModel[] {
-	return applyDisabledFilter(applyExclusion(models, exclusionConfig), disabledModelIds);
-}
-
-// --- Pure endpoint-resolution helpers (used by selectedEndpoint useMemo) ---
-
-/** True when the endpoint's provider_name or tag matches the slug. */
-function endpointMatchesProviderSlug(endpoint: OpenRouterEndpoint, slug: string): boolean {
-	return endpoint.provider_name === slug || endpoint.tag === slug;
-}
-
-/** Pick the first endpoint matching `slug`, or null when none match. */
-function selectEndpointFromList(
-	endpoints: OpenRouterEndpoint[],
-	slug: string
-): OpenRouterEndpoint | null {
-	return endpoints.find((e) => endpointMatchesProviderSlug(e, slug)) ?? null;
-}
-
-/** Resolve the active endpoint for a model + provider slug pair. */
-function findEndpointForProviderSlug(
-	model: OpenRouterModel | undefined,
-	slug: string | undefined
-): OpenRouterEndpoint | null {
-	if (!(model?.endpoints && slug)) {
-		return null;
-	}
-	return selectEndpointFromList(model.endpoints, slug);
-}
-
-// --- Pure selection helpers (used by handleSelectModel / handleValueChange) ---
-
-/** True when the (modelId, providerSlug) pair is excluded by the fallback config. */
-function shouldBlockSelection(
-	modelId: string | undefined,
-	providerSlug: string | undefined,
-	exclusionConfig: ModelExclusionConfig | undefined
-): boolean {
-	if (!(exclusionConfig && modelId)) {
-		return false;
-	}
-	return isEndpointExcluded(modelId, providerSlug, exclusionConfig);
-}
-
-/** Resolve the value to push to onChange given the chosen + default model ids. */
-function resolveSelectionValue(
-	modelId: string | undefined,
-	providerSlug: string | undefined,
-	defaultModelId: string | null
-): string {
-	if (modelId) {
-		return createModelSelection(modelId, providerSlug);
-	}
-	if (defaultModelId) {
-		return createModelSelection(defaultModelId);
-	}
-	return "";
-}
-
-/**
- * Split a `modelId@providerSlug` token. Empty providerSlug becomes undefined
- * so callers don't pass empty strings into createModelSelection.
- */
-function splitTokenAtSeparator(token: string): ParsedSelectionToken {
-	const atIndex = token.lastIndexOf("@");
-	if (atIndex === -1) {
-		return { modelId: token };
-	}
-	const providerSlug = token.slice(atIndex + 1) || undefined;
-	return { modelId: token.slice(0, atIndex), providerSlug };
-}
-
-/** Parse Combobox.Root onValueChange string into a selection, or null when invalid. */
-function parseSelectionToken(token: string | null): ParsedSelectionToken | null {
-	if (typeof token !== "string" || token.length === 0) {
-		return null;
-	}
-	return splitTokenAtSeparator(token);
-}
-
-/** Build the next scroll-to-maker request preserving the prev nonce monotonic counter. */
-function buildScrollRequestForModel(
-	prev: ScrollToMakerRequest | null,
-	model: OpenRouterModel
-): ScrollToMakerRequest {
-	return {
-		maker: model.maker as string,
-		modelId: model.id,
-		nonce: (prev?.nonce ?? 0) + 1,
-	};
-}
-
-/** Return true when a close event should be intercepted (popup click). */
-export function shouldInterceptClose(
-	reason: string | undefined,
-	itemPressReason: string,
-	isInsidePopup: boolean
-): boolean {
-	return reason !== itemPressReason && isInsidePopup;
-}
-
-/**
- * Applies the close-with-reason logic: calls setOpen(false) unless the event
- * is intercepted. Returns true when the popup was closed, false when intercepted.
- */
-export function applyCloseWith(
-	reason: string | undefined,
-	itemPressReason: string,
-	isInsidePopup: boolean,
-	setOpen: (open: boolean) => void
-): boolean {
-	if (shouldInterceptClose(reason, itemPressReason, isInsidePopup)) {
-		return false;
-	}
-	setOpen(false);
-	return true;
-}
-
-/** Apply the toggle-expand updater to a set of expanded model ids. */
-export function applyToggleExpanded(
-	prev: Set<string>,
-	modelId: string,
-	nextOpen?: boolean
-): Set<string> {
-	const next = new Set(prev);
-	const shouldOpen = nextOpen ?? !next.has(modelId);
-	if (shouldOpen) {
-		next.add(modelId);
-	} else {
-		next.delete(modelId);
-	}
-	return next;
-}
-
-/** Build a scroll request for a manually-clicked provider on the rail. */
-function buildScrollRequestForProvider(
-	prev: ScrollToMakerRequest | null,
-	provider: string
-): ScrollToMakerRequest {
-	return {
-		maker: provider,
-		nonce: (prev?.nonce ?? 0) + 1,
-	};
-}
 
 /**
  * Bundle the selector's local UI state into one hook so the panel doesn't
@@ -308,7 +88,11 @@ export function OpenRouterModelSelector({
 }: OpenRouterModelSelectorProps) {
 	// Apply exclusion + disabled-id filtering. React Compiler memoizes
 	// pure expressions, so we don't need useMemo here.
-	const filteredModels = applyModelFilters(models, exclusionConfig, disabledModelIds);
+	const filteredModels = applyModelFilters(
+		models,
+		exclusionConfig as ModelExclusionConfig | undefined,
+		disabledModelIds
+	);
 	const {
 		open,
 		setOpen,
@@ -384,7 +168,13 @@ export function OpenRouterModelSelector({
 	const defaultModelId = filteredModels.find((m) => m.id === "openrouter/auto")?.id ?? null;
 
 	const handleSelectModel = (modelId: string | undefined, providerSlug?: string) => {
-		if (shouldBlockSelection(modelId, providerSlug, exclusionConfig)) {
+		if (
+			shouldBlockSelection(
+				modelId,
+				providerSlug,
+				exclusionConfig as ModelExclusionConfig | undefined
+			)
+		) {
 			return;
 		}
 		onChange(resolveSelectionValue(modelId, providerSlug, defaultModelId));
@@ -533,18 +323,6 @@ export function OpenRouterModelSelector({
 	);
 }
 
-/** Renders a spinner overlay on the search input when a search is pending. */
-function SearchPendingIndicator({ pending }: { pending: boolean }) {
-	if (!pending) {
-		return null;
-	}
-	return (
-		<div className="pointer-events-none absolute end-10 top-1/2 -translate-y-1/2 text-foreground-muted">
-			<Spinner className="size-4" />
-		</div>
-	);
-}
-
 /**
  * Inner popup body — extracted so the parent component stays under the
  * giant-component threshold. Owns no state of its own; everything is
@@ -632,32 +410,3 @@ function ModelSelectorPopupBody({
 		</div>
 	);
 }
-
-/**
- * Test helpers for newly extracted pure functions. Not part of the public
- * runtime API — exported so unit tests can exercise the helpers without
- * mounting the component.
- */
-export const __openrouter_model_selector_test_helpers__ = {
-	nodeRoleIsPopup,
-	nodeSlotIsPopup,
-	nodeMatchesPopupSelector,
-	walkAncestors,
-	isInsideMenuPopup,
-	applyExclusion,
-	applyDisabledFilter,
-	applyModelFilters,
-	endpointMatchesProviderSlug,
-	selectEndpointFromList,
-	findEndpointForProviderSlug,
-	shouldBlockSelection,
-	resolveSelectionValue,
-	splitTokenAtSeparator,
-	parseSelectionToken,
-	buildScrollRequestForModel,
-	buildScrollRequestForProvider,
-	applyToggleExpanded,
-	shouldInterceptClose,
-	applyCloseWith,
-	SearchPendingIndicator,
-};

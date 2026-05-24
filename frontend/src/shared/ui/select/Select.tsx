@@ -1,5 +1,3 @@
-"use client";
-
 import { Menu } from "@base-ui/react/menu";
 import { ArrowDown01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";

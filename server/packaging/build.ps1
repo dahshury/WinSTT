@@ -40,6 +40,10 @@ try {
     & uv sync --extra $Flavor --group dev
     if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
 
+    Write-Host "==> Seeding offline base model (whisper-tiny q4)" -ForegroundColor Cyan
+    & uv run python packaging/seed_models.py --out packaging/seed-cache --quant q4
+    if ($LASTEXITCODE -ne 0) { throw "seed model download failed" }
+
     Write-Host "==> Running PyInstaller" -ForegroundColor Cyan
     & uv run pyinstaller packaging/stt-server.spec --clean --noconfirm --distpath dist --workpath dist/build
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }

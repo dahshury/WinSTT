@@ -1,5 +1,3 @@
-"use client";
-
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import type { ComponentPropsWithoutRef, CSSProperties, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";

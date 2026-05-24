@@ -1,16 +1,35 @@
-"use client";
-
-import { AiMagicIcon, AiSettingIcon, CpuIcon, SpeechToTextIcon } from "@hugeicons/core-free-icons";
+import {
+	AiCloud01Icon,
+	AiMagicIcon,
+	AiSettingIcon,
+	CpuIcon,
+	SpeechToTextIcon,
+} from "@hugeicons/core-free-icons";
 import { isRealtimeViable, SttModelSelector } from "@picker";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useEffect, useMemo } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
-import { useCatalogStore, useModelStateStore, useModelSwapStore } from "@/entities/model-catalog";
-import { SettingSection, useSettingsStore } from "@/entities/setting";
+import {
+	needsModelFallback,
+	pickDefaultSttModel,
+	useCatalogStore,
+	useModelStateStore,
+	useModelSwapStore,
+} from "@/entities/model-catalog";
+import {
+	DEFAULT_SETTINGS,
+	SettingResetButton,
+	SettingSection,
+	useSettingsStore,
+} from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
 import { DownloadConfirmationDialog } from "@/features/model-download";
+import { CloudModelSelect } from "@/features/select-cloud-stt-model";
 import { type SwapController, useModelSwapController } from "@/features/swap-model";
 import { LANGUAGES, type OnnxQuantization } from "@/shared/config/defaults";
+import { isRealtimeEnabled } from "@/shared/lib/realtime-enabled";
+import { Button } from "@/shared/ui/button";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { NumberStepper } from "@/shared/ui/number-stepper";
@@ -18,7 +37,7 @@ import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
-import { Toggle } from "@/shared/ui/toggle";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 export interface ModelSettingsPanelProps {
 	llmSlot?: ReactNode;
@@ -75,20 +94,60 @@ function MainModelSection({
 	selectedModel,
 	handleModelChange,
 }: MainModelSectionProps): ReactNode {
+	const tIntegrations = useTranslations("integrations");
+	const isCloud = providerOf(selectedModel) !== null;
+
+	// Local-only UI state for which picker is on screen. Initialised from the
+	// persisted model (cloud `provider:*` id → "cloud", otherwise "local") so
+	// the user lands on the picker that matches what's currently selected.
+	// Toggling the source does NOT touch persisted settings — the persisted
+	// model only changes when the user picks a row from the visible picker.
+	const [source, setSource] = useState<"local" | "cloud">(isCloud ? "cloud" : "local");
+	// Re-sync if the persisted model changes underneath us (e.g. another
+	// window picked a model). Without this, opening this panel after a
+	// cross-window swap could leave the wrong picker visible.
+	useEffect(() => {
+		setSource(isCloud ? "cloud" : "local");
+	}, [isCloud]);
+
+	const sourceOpts: SwitcherOption<"local" | "cloud">[] = [
+		{ value: "local", label: tIntegrations("sourceLocal"), icon: CpuIcon },
+		{ value: "cloud", label: tIntegrations("sourceCloud"), icon: AiCloud01Icon },
+	];
+
 	return (
 		<SettingSection icon={SpeechToTextIcon} title={t("mainModel")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2">
+					<FormControl
+						caption={tIntegrations("sourceCaption")}
+						label={tIntegrations("sourceLabel")}
+						tooltip={tIntegrations("sourceTooltip")}
+					>
+						<ElevatedSurface>
+							<Switcher onChange={(v) => setSource(v)} options={sourceOpts} value={source} />
+						</ElevatedSurface>
+					</FormControl>
+				</div>
+				<div className="col-span-2">
 					<FormControl caption={t("modelCaption")} label={t("model")} tooltip={t("modelTooltip")}>
-						<SttModelSelector
-							currentQuantization={currentQuantization}
-							isLoading={!catalogLoaded || isSwapping}
-							models={catalogModels}
-							onChange={handleModelChange}
-							statesById={statesById}
-							systemInfo={systemInfo}
-							value={selectedModel}
-						/>
+						{source === "cloud" ? (
+							<CloudModelSelect
+								onSelect={(id) => handleModelChange(id)}
+								selectedId={isCloud ? selectedModel : ""}
+							/>
+						) : (
+							<SttModelSelector
+								currentQuantization={currentQuantization}
+								isLoading={!catalogLoaded || isSwapping}
+								kind="main"
+								models={catalogModels}
+								onChange={handleModelChange}
+								statesById={statesById}
+								systemInfo={systemInfo}
+								value={isCloud ? "" : selectedModel}
+							/>
+						)}
 					</FormControl>
 				</div>
 				<FormControl caption={t("languageCaption")} label={t("language")}>
@@ -116,15 +175,24 @@ function MainModelSection({
 					<FormControl
 						caption={t("beamSizeCaption")}
 						label={t("beamSize")}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={
+									(settings?.beamSize ?? DEFAULT_SETTINGS.model.beamSize) ===
+									DEFAULT_SETTINGS.model.beamSize
+								}
+								onReset={() => update({ beamSize: DEFAULT_SETTINGS.model.beamSize })}
+							/>
+						}
 						tooltip={t("beamSizeTooltip")}
 					>
-						<ElevatedSurface inline>
+						<ElevatedSurface className="w-fit" inline>
 							<NumberStepper
 								max={20}
 								min={1}
 								onChange={(v) => update({ beamSize: v })}
 								step={1}
-								value={settings?.beamSize ?? 5}
+								value={settings?.beamSize ?? DEFAULT_SETTINGS.model.beamSize}
 							/>
 						</ElevatedSurface>
 					</FormControl>
@@ -141,9 +209,9 @@ interface RealtimeModelSectionProps {
 	handleRealtimeModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	isSwapping: boolean;
 	isWhisperBackend: boolean;
-	onToggle: (v: boolean) => void;
+	mainModelId: string;
+	onUseMainModel: () => void;
 	quality: QualitySettings | undefined;
-	realtimeEnabled: boolean;
 	settings: ModelSettings | undefined;
 	statesById: StatesById;
 	systemInfo: SystemInfo;
@@ -152,6 +220,11 @@ interface RealtimeModelSectionProps {
 	updateQuality: UpdateQualityFn;
 }
 
+// Always rendered when the parent decides realtime is on — there is no
+// on/off toggle here anymore. The realtime engine's lifecycle is derived
+// from `general.liveTranscriptionDisplay` (see `isRealtimeEnabled`); without
+// a display surface the engine wouldn't have any observable output, so the
+// section itself is gated by the parent instead.
 function RealtimeModelSection({
 	t,
 	settings,
@@ -163,67 +236,80 @@ function RealtimeModelSection({
 	statesById,
 	systemInfo,
 	currentQuantization,
-	realtimeEnabled,
-	onToggle,
 	isSwapping,
 	isWhisperBackend,
 	handleRealtimeModelChange,
+	mainModelId,
+	onUseMainModel,
 }: RealtimeModelSectionProps): ReactNode {
-	// When the realtime worker reuses the main model, the dedicated realtime
-	// model picker and beam size have no effect server-side — gray them out so
-	// the user isn't tweaking dead controls. The update interval still drives
-	// how often realtime fires, so it stays enabled.
+	// The dedicated realtime picker stays interactive at all times so the user
+	// can always pick a different realtime model. The "Use Main Model" affordance
+	// is the trailing button on the picker's header. The realtime beam-size has
+	// no server-side effect once the realtime worker reuses the main model, so
+	// keep that one gated by the flag.
 	const useMainModel = quality?.useMainModelForRealtime ?? false;
+	const realtimeModelId = settings?.realtimeModel ?? "tiny";
+	const modelsMatch = realtimeModelId === mainModelId;
 	return (
-		<SettingSection
-			icon={AiMagicIcon}
-			onToggle={onToggle}
-			title={t("realtimeModelSection")}
-			toggled={realtimeEnabled}
-		>
+		<SettingSection icon={AiMagicIcon} title={t("realtimeModelSection")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2">
 					<FormControl
 						caption={t("realtimeModelCaption")}
-						disabled={useMainModel}
 						label={t("realtimeModel")}
+						labelTrailing={
+							<Tooltip content={t("useMainModelTooltip")}>
+								<Button
+									className="rounded-md bg-transparent px-1.5 py-0.5 font-medium text-2xs text-foreground-muted leading-none ring-1 ring-divider-strong ring-inset transition-colors hover:not-disabled:bg-surface-2 hover:not-disabled:text-foreground"
+									disabled={modelsMatch}
+									onClick={onUseMainModel}
+								>
+									{t("useMainModel")}
+								</Button>
+							</Tooltip>
+						}
 						tooltip={t("realtimeModelTooltip")}
 					>
 						<SttModelSelector
 							currentQuantization={currentQuantization}
-							disabled={useMainModel}
 							isLoading={!catalogLoaded || isSwapping}
+							kind="realtime"
 							models={catalogModels}
 							onChange={handleRealtimeModelChange}
 							prefilter={isRealtimeViable}
 							statesById={statesById}
 							systemInfo={systemInfo}
-							value={settings?.realtimeModel ?? "tiny"}
+							value={realtimeModelId}
 						/>
 					</FormControl>
 				</div>
 				<FormControl
-					caption={t("useMainModelCaption")}
-					label={t("useMainModel")}
-					labelAddon={
-						<Toggle
-							checked={useMainModel}
-							onCheckedChange={(v) => updateQuality({ useMainModelForRealtime: v })}
-						/>
-					}
-					tooltip={t("useMainModelTooltip")}
-				/>
-				<FormControl
 					caption={t("updateIntervalCaption")}
 					label={t("updateInterval")}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								(quality?.realtimeProcessingPause ??
+									DEFAULT_SETTINGS.quality.realtimeProcessingPause) ===
+								DEFAULT_SETTINGS.quality.realtimeProcessingPause
+							}
+							onReset={() =>
+								updateQuality({
+									realtimeProcessingPause: DEFAULT_SETTINGS.quality.realtimeProcessingPause,
+								})
+							}
+						/>
+					}
 					tooltip={t("updateIntervalTooltip")}
 				>
-					<ElevatedSurface inline>
+					<ElevatedSurface className="w-fit" inline>
 						<NumberStepper
 							min={0.01}
 							onChange={(v) => updateQuality({ realtimeProcessingPause: v })}
 							step={0.01}
-							value={quality?.realtimeProcessingPause ?? 0.02}
+							value={
+								quality?.realtimeProcessingPause ?? DEFAULT_SETTINGS.quality.realtimeProcessingPause
+							}
 						/>
 					</ElevatedSurface>
 				</FormControl>
@@ -232,15 +318,26 @@ function RealtimeModelSection({
 						caption={t("realtimeBeamSizeCaption")}
 						disabled={useMainModel}
 						label={t("realtimeBeamSize")}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={
+									(settings?.beamSizeRealtime ?? DEFAULT_SETTINGS.model.beamSizeRealtime) ===
+									DEFAULT_SETTINGS.model.beamSizeRealtime
+								}
+								onReset={() =>
+									update({ beamSizeRealtime: DEFAULT_SETTINGS.model.beamSizeRealtime })
+								}
+							/>
+						}
 						tooltip={t("realtimeBeamSizeTooltip")}
 					>
-						<ElevatedSurface inline>
+						<ElevatedSurface className="w-fit" inline>
 							<NumberStepper
 								max={20}
 								min={1}
 								onChange={(v) => update({ beamSizeRealtime: v })}
 								step={1}
-								value={settings?.beamSizeRealtime ?? 3}
+								value={settings?.beamSizeRealtime ?? DEFAULT_SETTINGS.model.beamSizeRealtime}
 							/>
 						</ElevatedSurface>
 					</FormControl>
@@ -334,7 +431,19 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const isListenMode = recordingMode === "listen";
-	const realtimeEnabled = quality?.enableRealtimeTranscription ?? true;
+	const showRecordingOverlay = useSettingsStore(
+		(s) => s.settings.general?.showRecordingOverlay ?? true
+	);
+	const liveTranscriptionDisplay = useSettingsStore(
+		(s) => s.settings.general?.liveTranscriptionDisplay ?? "both"
+	);
+	// Realtime is fully derived from the display picker — the engine has no
+	// observable output without a display surface, so there is no separate
+	// on/off toggle. The realtime section here is hidden when this is false.
+	const realtimeEnabled = isRealtimeEnabled({
+		showRecordingOverlay,
+		liveTranscriptionDisplay,
+	});
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
 	const gpuAvailable = gpuInfo?.available ?? true;
 	const t = useTranslations("model");
@@ -364,8 +473,48 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 		refreshLive();
 	}, [refreshModelState, refreshLive]);
 
+	// Guard: STT is the always-on core capability — the selector must never
+	// be in a "no model" state. If the saved id is empty (corrupted settings)
+	// or refers to a model that's no longer in the catalog (catalog change),
+	// auto-pick the smallest cached model so the user always lands on
+	// something usable. Skips while the catalog is still loading so we don't
+	// false-positive every model as missing during the boot race. Also skips
+	// when the active model is a cloud `provider:*` id — those are never in
+	// the local catalog by design and should not trigger a fallback.
+	useEffect(() => {
+		if (!catalogLoaded) {
+			return;
+		}
+		if (providerOf(settings?.model ?? "") !== null) {
+			return;
+		}
+		if (!needsModelFallback(settings?.model, catalogModels)) {
+			return;
+		}
+		const next = pickDefaultSttModel(catalogModels, statesById);
+		if (next && next !== settings?.model) {
+			update({ model: next });
+		}
+	}, [catalogLoaded, catalogModels, statesById, settings?.model, update]);
+
+	// Same guard for the realtime model, narrowed to realtime-viable entries.
+	useEffect(() => {
+		if (!catalogLoaded) {
+			return;
+		}
+		const realtimeViable = catalogModels.filter((m) => m.supportsRealtime);
+		if (!needsModelFallback(settings?.realtimeModel, realtimeViable)) {
+			return;
+		}
+		const next = pickDefaultSttModel(catalogModels, statesById, (m) => m.supportsRealtime);
+		if (next && next !== settings?.realtimeModel) {
+			update({ realtimeModel: next });
+		}
+	}, [catalogLoaded, catalogModels, statesById, settings?.realtimeModel, update]);
+
 	const selectedModel = settings?.model ?? "large-v2";
-	const selectedInfo = getModel(selectedModel);
+	const selectedIsCloud = providerOf(selectedModel) !== null;
+	const selectedInfo = selectedIsCloud ? undefined : getModel(selectedModel);
 	const isWhisperBackend = !selectedInfo || selectedInfo.backend === "faster_whisper";
 	const currentQuantization = (settings?.onnxQuantization ?? "") as OnnxQuantization;
 
@@ -387,10 +536,25 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 		update
 	);
 
-	const handleRealtimeToggle = useCallback(
-		(v: boolean) => updateQuality({ enableRealtimeTranscription: v }),
-		[updateQuality]
-	);
+	const useMainModelFlag = quality?.useMainModelForRealtime ?? false;
+	const handleUseMainModel = () => {
+		// Mirror the main model into the realtime slot. The controller no-ops when
+		// the ids already match, so this is safe to call unconditionally. Also flip
+		// the server flag so the realtime worker actually reuses the loaded main
+		// transcriber instead of loading a duplicate.
+		controller.handleRealtimeModelChange(selectedModel);
+		if (!useMainModelFlag) {
+			updateQuality({ useMainModelForRealtime: true });
+		}
+	};
+	const handleRealtimePick = (v: string, quantization?: OnnxQuantization) => {
+		controller.handleRealtimeModelChange(v, quantization);
+		// Picking a model that is NOT the main model means the user wants a
+		// separate realtime model — clear the server flag so it actually loads.
+		if (v !== selectedModel && useMainModelFlag) {
+			updateQuality({ useMainModelForRealtime: false });
+		}
+	};
 
 	return (
 		<div className="flex flex-col gap-2">
@@ -414,23 +578,25 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 					update={update}
 				/>
 			)}
-			<RealtimeModelSection
-				catalogLoaded={catalogLoaded}
-				catalogModels={catalogModels}
-				currentQuantization={currentQuantization}
-				handleRealtimeModelChange={controller.handleRealtimeModelChange}
-				isSwapping={realtimeSwapping}
-				isWhisperBackend={isWhisperBackend}
-				onToggle={handleRealtimeToggle}
-				quality={quality}
-				realtimeEnabled={realtimeEnabled}
-				settings={settings}
-				statesById={statesById}
-				systemInfo={systemInfo}
-				t={t}
-				update={update}
-				updateQuality={updateQuality}
-			/>
+			{realtimeEnabled && !selectedIsCloud && (
+				<RealtimeModelSection
+					catalogLoaded={catalogLoaded}
+					catalogModels={catalogModels}
+					currentQuantization={currentQuantization}
+					handleRealtimeModelChange={handleRealtimePick}
+					isSwapping={realtimeSwapping}
+					isWhisperBackend={isWhisperBackend}
+					mainModelId={selectedModel}
+					onUseMainModel={handleUseMainModel}
+					quality={quality}
+					settings={settings}
+					statesById={statesById}
+					systemInfo={systemInfo}
+					t={t}
+					update={update}
+					updateQuality={updateQuality}
+				/>
+			)}
 			{llmSlot}
 			{ttsSlot}
 			<SwapDialogs

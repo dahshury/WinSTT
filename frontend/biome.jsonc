@@ -1,10 +1,6 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
-  "extends": [
-    "ultracite/biome/core",
-    "ultracite/biome/react",
-    "ultracite/biome/next"
-  ],
+  "extends": ["ultracite/biome/core", "ultracite/biome/react"],
   "formatter": {
     "indentStyle": "tab",
     "lineWidth": 100
@@ -66,7 +62,7 @@
       //  - `async () => { ... }` wrappers without await (test runner contracts)
       //  - `import * as foo` for bulk-mocking modules
       //  - template-curly inside expectation strings
-      //  - <img> without next/image (no Next runtime in tests)
+      //  - <img> tags (no DOM/runtime dependency checks in tests)
       "includes": ["**/*.test.ts", "**/*.test.tsx", "e2e/**", "test/**"],
       "linter": {
         "rules": {

@@ -1,5 +1,3 @@
-"use client";
-
 import { Checkbox } from "@base-ui/react/checkbox";
 import { AnimatePresence, domAnimation, LazyMotion, m as motion } from "motion/react";
 import {
@@ -317,20 +315,6 @@ export function CheckboxItem({
 		onToggle();
 	};
 
-	// Stop click/keydown from bubbling to the row so the inner control
-	// (e.g. level switcher) owns its own interaction without re-triggering
-	// onToggle. Wired via native listeners on the wrapper element so the
-	// wrapper stays a non-interactive presentational node.
-	const setTrailingRef = (node: HTMLSpanElement) => {
-		const stop = (e: Event) => e.stopPropagation();
-		node.addEventListener("click", stop);
-		node.addEventListener("keydown", stop);
-		return () => {
-			node.removeEventListener("click", stop);
-			node.removeEventListener("keydown", stop);
-		};
-	};
-
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: native <input type="checkbox"> can't host the proximity-hover row layout; aria-checked + role lives here, Checkbox.Root provides the form-bound hidden input
 		<div
@@ -439,7 +423,21 @@ export function CheckboxItem({
 			</span>
 
 			{trailing ? (
-				<span className="shrink-0" ref={setTrailingRef}>
+				// Stop click/keydown from bubbling to the row so the inner
+				// control (e.g. the level switcher) owns its own interaction
+				// without re-triggering onToggle. Must use React's synthetic
+				// handlers, NOT native addEventListener: React 19 delegates
+				// events to the root, so a native stopPropagation here would
+				// fire before the root and swallow the inner control's own
+				// React onClick entirely (the switcher would never change).
+				// Synthetic bubbling runs the inner handler first, then this.
+				// biome-ignore lint/a11y/noNoninteractiveElementInteractions: presentational wrapper; interactive semantics live on the inner control and the row
+				// biome-ignore lint/a11y/noStaticElementInteractions: the handlers are a propagation barrier only — not an interactive affordance; a11y semantics live on the inner control and the row
+				<span
+					className="shrink-0"
+					onClick={(e) => e.stopPropagation()}
+					onKeyDown={(e) => e.stopPropagation()}
+				>
 					{trailing}
 				</span>
 			) : null}

@@ -1,5 +1,3 @@
-"use client";
-
 import { cva } from "class-variance-authority";
 import { type ComponentProps, useMemo, useRef } from "react";
 import { cn } from "@/shared/lib/cn";

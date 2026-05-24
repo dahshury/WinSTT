@@ -1,5 +1,3 @@
-"use client";
-
 import type { FitAssessmentEntry } from "@/shared/api/ipc-client";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { OptInDialog } from "@/shared/ui/opt-in-dialog";

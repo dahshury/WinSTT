@@ -392,6 +392,15 @@ async def main_async() -> None:
         release=_resolve_release(),
     )
 
+    # Seed the bundled offline base model into the HF cache before any
+    # model load so the app transcribes with zero network on first run.
+    # Idempotent + best-effort: a populated cache is left untouched.
+    from src.recorder.infrastructure.seed_cache import seed_bundled_models
+
+    seeded = seed_bundled_models()
+    if seeded:
+        print(f"{bcolors.OKGREEN}[seed] offline base model ready: {', '.join(seeded)}{bcolors.ENDC}")
+
     loopback_capture = LoopbackCapture()
     state = ServerState.from_args(args, loopback_capture)
 

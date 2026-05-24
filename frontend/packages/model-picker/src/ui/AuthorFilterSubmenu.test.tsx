@@ -2,10 +2,8 @@ import { describe, expect, mock, test } from "bun:test";
 import { Combobox } from "@base-ui/react/combobox";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "@testing-library/react";
-import {
-	AuthorFilterSubmenu,
-	__author_filter_submenu_test_helpers__ as helpers,
-} from "./AuthorFilterSubmenu";
+import { __author_filter_submenu_test_helpers__ as helpers } from "../lib/author-filter-submenu-test-helpers";
+import { AuthorFilterSubmenu } from "./AuthorFilterSubmenu";
 
 describe("AuthorFilterSubmenu", () => {
 	test("module exports the component (full render requires a parent Menu popup)", () => {

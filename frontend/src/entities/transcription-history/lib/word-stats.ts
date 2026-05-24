@@ -10,6 +10,26 @@ export interface AggregateStats {
 	wpm: number;
 }
 
+/**
+ * Returns the subset of entries whose timestamps fall on or between the
+ * inclusive local-day bounds [from, to]. When either bound is missing the
+ * range is treated as unbounded and the input is returned unchanged — this
+ * keeps "selection in progress" (only `from` set) from collapsing the table
+ * mid-pick.
+ */
+export function filterEntriesByDateRange(
+	entries: TranscriptionHistoryEntry[],
+	from: Date | null,
+	to: Date | null
+): TranscriptionHistoryEntry[] {
+	if (!(from && to)) {
+		return entries;
+	}
+	const fromTs = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
+	const toTs = new Date(to.getFullYear(), to.getMonth(), to.getDate(), 23, 59, 59, 999).getTime();
+	return entries.filter((e) => e.timestamp >= fromTs && e.timestamp <= toTs);
+}
+
 export function aggregate(entries: TranscriptionHistoryEntry[]): AggregateStats {
 	let totalWords = 0;
 	let totalDurationMs = 0;

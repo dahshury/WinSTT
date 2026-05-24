@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
 import type { FilterableParameter } from "../lib/openrouter-provider-utils";
+import { __parameters_filter_submenu_test_helpers__ as helpers } from "../lib/parameters-filter-submenu-test-helpers";
 import { DropdownMenu } from "./DropdownMenu";
-import {
-	__parameters_filter_submenu_test_helpers__ as helpers,
-	ParametersFilterSubmenu,
-} from "./ParametersFilterSubmenu";
+import { ParametersFilterSubmenu } from "./ParametersFilterSubmenu";
 
 describe("ParametersFilterSubmenu", () => {
 	test("module exports the component (full render requires a parent Menu popup)", () => {

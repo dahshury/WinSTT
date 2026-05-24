@@ -9,6 +9,8 @@ import {
 	hasGpu,
 	isRescuedByGpu,
 	isUncomfortable,
+	needsModelFallback,
+	pickDefaultSttModel,
 } from "./model-options";
 
 const fixture: ModelInfo[] = [
@@ -293,5 +295,80 @@ describe("isUncomfortable", () => {
 				makeSys(1)
 			)
 		).toBe(false);
+	});
+});
+
+describe("needsModelFallback", () => {
+	test("returns true for empty string", () => {
+		expect(needsModelFallback("", fixture)).toBe(true);
+	});
+
+	test("returns true for null/undefined", () => {
+		expect(needsModelFallback(null, fixture)).toBe(true);
+		expect(needsModelFallback(undefined, fixture)).toBe(true);
+	});
+
+	test("returns true when the saved id is not in the catalog", () => {
+		expect(needsModelFallback("ghost-model", fixture)).toBe(true);
+	});
+
+	test("returns false when the saved id is in the catalog", () => {
+		expect(needsModelFallback("tiny", fixture)).toBe(false);
+		expect(needsModelFallback("large", fixture)).toBe(false);
+	});
+});
+
+describe("pickDefaultSttModel", () => {
+	test("returns null when no models are eligible", () => {
+		expect(pickDefaultSttModel([], {})).toBeNull();
+		// Filter rules out every entry.
+		expect(pickDefaultSttModel(fixture, {}, () => false)).toBeNull();
+	});
+
+	test("prefers the smallest cached model over an uncached but smaller one", () => {
+		const statesById: Record<string, ModelStateEntry> = {
+			tiny: makeEntry({
+				id: "tiny",
+				estimated_bytes: 39_000_000,
+				cache: { state: "not_cached", downloaded_bytes: 0, progress: 0, total_bytes: 0 },
+			}),
+			large: makeEntry({
+				id: "large",
+				estimated_bytes: 1_500_000_000,
+				cache: { state: "cached", downloaded_bytes: 0, progress: 1, total_bytes: 0 },
+			}),
+			"nemo-en": makeEntry({
+				id: "nemo-en",
+				estimated_bytes: 300_000_000,
+				cache: { state: "cached", downloaded_bytes: 0, progress: 1, total_bytes: 0 },
+			}),
+		};
+		// nemo-en (300M, cached) wins over large (1.5B, cached) and tiny (39M, not cached).
+		expect(pickDefaultSttModel(fixture, statesById)).toBe("nemo-en");
+	});
+
+	test("falls back to smallest in catalog when nothing is cached", () => {
+		const statesById: Record<string, ModelStateEntry> = {
+			tiny: makeEntry({ id: "tiny", estimated_bytes: 39_000_000 }),
+			large: makeEntry({ id: "large", estimated_bytes: 1_500_000_000 }),
+			"nemo-en": makeEntry({ id: "nemo-en", estimated_bytes: 300_000_000 }),
+		};
+		expect(pickDefaultSttModel(fixture, statesById)).toBe("tiny");
+	});
+
+	test("honors the filter when narrowing to realtime-viable entries", () => {
+		const statesById: Record<string, ModelStateEntry> = {
+			tiny: makeEntry({ id: "tiny", estimated_bytes: 39_000_000 }),
+			large: makeEntry({ id: "large", estimated_bytes: 1_500_000_000 }),
+			"nemo-en": makeEntry({ id: "nemo-en", estimated_bytes: 300_000_000 }),
+		};
+		// `large` has supportsRealtime=false in the fixture, so it must not be chosen.
+		expect(pickDefaultSttModel(fixture, statesById, (m) => m.supportsRealtime)).toBe("tiny");
+	});
+
+	test("handles missing state entries by treating estimated size as infinite", () => {
+		// With no state entries at all, every model has Infinity size — first stays first.
+		const out = pickDefaultSttModel(fixture, {});
+		expect(out).toBe("tiny");
 	});
 });

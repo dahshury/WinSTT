@@ -99,11 +99,19 @@ mock.module("../ipc/hotkey", () => ({
 	},
 }));
 
-const llmCalls: Array<{ prompt: string; text: string }> = [];
+const llmCalls: Array<{ feature: "dictation" | "transforms"; text: string }> = [];
+// The new pipeline calls processText(text, context, feature). We capture
+// (text, feature) and synthesize a deterministic transformed string so the
+// behavioural assertions stay stable.
+let processTextShouldThrow = false;
 mock.module("./llm", () => ({
-	processTextWithCustomPrompt: (text: string, prompt: string) => {
-		llmCalls.push({ text, prompt });
-		if (prompt === "__throw__") {
+	processText: (
+		text: string,
+		_context: string,
+		feature: "dictation" | "transforms" = "dictation"
+	) => {
+		llmCalls.push({ text, feature });
+		if (processTextShouldThrow) {
 			return Promise.reject(new Error("LLM exploded"));
 		}
 		return Promise.resolve(`TRANSFORMED:${text}`);
@@ -112,26 +120,16 @@ mock.module("./llm", () => ({
 
 const { __transforms_test_helpers__ } = await import("./transforms");
 
-// ── Cross-file pollution: drive the pipeline via the test helpers ────
-// bun's `mock.module` registry is process-global and keyed by ABSOLUTE path.
-// transform-hotkeys.test.ts runs first alphabetically and registers
-// `mock.module("./transforms", () => ({ ...realTransforms, applyTransform: stub }))`.
-// Under the full suite this file's `await import("./transforms")` therefore
-// yields a STUBBED `applyTransform` but a SPREAD-THROUGH (real)
-// `__transforms_test_helpers__`. The behavioural tests below exercise the real
-// pipeline through `helpers.runTransformPipeline` (the thin exported
-// `applyTransform` just delegates to it), so they run — and produce real
-// coverage — regardless of which test file ran first.
 const helpers = __transforms_test_helpers__;
 const runTransformPipeline = helpers.runTransformPipeline;
 
-// Write transforms through the SAME `../lib/store` module instance that the
-// real `applyTransform` reads from. bun's `mock.module` registry is
-// process-global: if a sibling test (e.g. transform-hotkeys.test.ts, which
-// runs first alphabetically) already registered its own `../lib/store` mock,
-// our local `storeApi` is NOT the instance `applyTransform` sees. Resolving
-// the module here picks up whichever instance actually won the cache, so
-// set→get round-trips regardless of ordering.
+// Write transforms config through the SAME `../lib/store` module instance
+// that the real `applyTransform` reads from. bun's `mock.module` registry is
+// process-global: if a sibling test (e.g. transform-hotkeys.test.ts) already
+// registered its own `../lib/store` mock, our local `storeApi` is NOT the
+// instance `applyTransform` sees. Resolving the module here picks up
+// whichever instance won the cache, so set→get round-trips regardless of
+// ordering.
 const liveStore = (await import("../lib/store")) as unknown as {
 	store: { set: (key: string, value: unknown) => void };
 };
@@ -145,19 +143,16 @@ afterAll(async () => {
 	mock.module("../ipc/hotkey", () => realHotkey);
 });
 
-function setTransforms(arr: unknown): void {
-	liveStore.store.set("llm.transforms.prompts", arr);
-}
-
 function reset(): void {
-	liveStore.store.set("llm.transforms.prompts", []);
 	// Transforms now require the transforms sub-feature enabled + a model
-	// configured for its provider. There is no master switch.
+	// configured for its provider. There is no master switch and no per-row
+	// prompts array — the composition lives in presets+customModifiers.
 	liveStore.store.set("llm.transforms.enabled", true);
 	liveStore.store.set("llm.transforms.provider", "local");
 	liveStore.store.set("llm.openrouterApiKey", "");
 	liveStore.store.set("llm.transforms.model", "test-model");
 	llmCalls.length = 0;
+	processTextShouldThrow = false;
 	clipboardWrites.length = 0;
 	guardLog.length = 0;
 	clipboardText = "";
@@ -167,16 +162,12 @@ function reset(): void {
 describe("runTransformPipeline (applyTransform)", () => {
 	test("captures selection → LLM → paste happy path", async () => {
 		reset();
-		setTransforms([
-			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
-		]);
 		const pasteMod = await import("../lib/paste");
 		pasteMod.__resetPasteCallsForTesting__();
-		const result = await runTransformPipeline("polish");
-		expect(result.transformId).toBe("polish");
+		const result = await runTransformPipeline();
 		expect(result.before).toBe("hello world");
 		expect(result.after).toBe("TRANSFORMED:hello world");
-		expect(llmCalls).toEqual([{ text: "hello world", prompt: "polish me" }]);
+		expect(llmCalls).toEqual([{ text: "hello world", feature: "transforms" }]);
 		// `pasteText` no longer writes the clipboard on the success path — the
 		// new typing-mode helper streams the text to the binary's stdin. We
 		// observe the invocation via the call log instead.
@@ -184,31 +175,12 @@ describe("runTransformPipeline (applyTransform)", () => {
 		expect(pasteMod.__getPasteCallsForTesting__()).toContain("TRANSFORMED:hello world");
 	});
 
-	test("missing transform id throws ValidationError without paste/LLM call", async () => {
-		reset();
-		setTransforms([]);
-		await expect(runTransformPipeline("nope")).rejects.toThrow();
-		expect(llmCalls.length).toBe(0);
-		expect(clipboardWrites.length).toBe(0);
-	});
-
-	test("empty prompt throws and never reaches the LLM", async () => {
-		reset();
-		setTransforms([{ id: "blank", name: "Blank", prompt: "   ", hotkey: "", builtin: false }]);
-		await expect(runTransformPipeline("blank")).rejects.toThrow();
-		expect(llmCalls.length).toBe(0);
-		expect(clipboardWrites.length).toBe(0);
-	});
-
 	test("empty selection short-circuits — no LLM call, no paste", async () => {
 		reset();
-		setTransforms([
-			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
-		]);
 		// Empty UIA + no clipboard change → real captureSelection returns
 		// EMPTY_SELECTION (source "empty").
 		uiaSelection = "";
-		const result = await runTransformPipeline("polish");
+		const result = await runTransformPipeline();
 		expect(result.before).toBe("");
 		expect(result.after).toBe("");
 		expect(result.source).toBe("empty");
@@ -218,11 +190,8 @@ describe("runTransformPipeline (applyTransform)", () => {
 
 	test("throws when the transforms sub-feature is disabled (no LLM call)", async () => {
 		reset();
-		setTransforms([
-			{ id: "polish", name: "Polish", prompt: "polish me", hotkey: "", builtin: true },
-		]);
 		liveStore.store.set("llm.transforms.enabled", false);
-		await expect(runTransformPipeline("polish")).rejects.toThrow();
+		await expect(runTransformPipeline()).rejects.toThrow();
 		expect(llmCalls.length).toBe(0);
 		expect(clipboardWrites.length).toBe(0);
 	});
@@ -258,39 +227,30 @@ describe("transforms gate helpers", () => {
 		expect(helpers.isTransformsEnabled()).toBe(false);
 	});
 
-	test("requireEnabledTransform / requirePrompt enforce the gate", () => {
+	test("requireEnabled throws when the gate is closed", () => {
 		reset();
-		setTransforms([{ id: "p", name: "P", prompt: "go", hotkey: "", builtin: true }]);
-		const t = helpers.requireEnabledTransform("p");
-		expect(t.id).toBe("p");
-		expect(() => helpers.requireEnabledTransform("missing")).toThrow();
-		expect(() =>
-			helpers.requirePrompt({ id: "p", name: "P", prompt: "   ", hotkey: "", builtin: true })
-		).toThrow();
-		expect(() =>
-			helpers.requirePrompt({ id: "p", name: "P", prompt: "ok", hotkey: "", builtin: true })
-		).not.toThrow();
+		liveStore.store.set("llm.transforms.enabled", false);
+		expect(() => helpers.requireEnabled()).toThrow();
+	});
+
+	test("requireEnabled passes when both the flag and a model are present", () => {
+		reset();
+		expect(() => helpers.requireEnabled()).not.toThrow();
 	});
 
 	test("runLlm resolves on success", async () => {
 		reset();
-		await expect(helpers.runLlm("id", "text", "ok")).resolves.toBe("TRANSFORMED:text");
+		await expect(helpers.runLlm("hello")).resolves.toBe("TRANSFORMED:hello");
 	});
 
 	test("runLlm re-throws and broadcasts on LLM failure", async () => {
 		reset();
-		await expect(helpers.runLlm("id", "text", "__throw__")).rejects.toThrow("LLM exploded");
+		processTextShouldThrow = true;
+		await expect(helpers.runLlm("hello")).rejects.toThrow("LLM exploded");
 	});
 });
 
-describe("string + record guards", () => {
-	test("isNonEmptyString", () => {
-		expect(helpers.isNonEmptyString("x")).toBe(true);
-		expect(helpers.isNonEmptyString("")).toBe(false);
-		expect(helpers.isNonEmptyString(5)).toBe(false);
-		expect(helpers.isNonEmptyString(null)).toBe(false);
-	});
-
+describe("record guards", () => {
 	test("asRecord returns the object or throws", () => {
 		expect(helpers.asRecord({ a: 1 }, "X")).toEqual({ a: 1 });
 		expect(() => helpers.asRecord(null, "X")).toThrow();
@@ -329,45 +289,25 @@ describe("broadcastAll / sendToWindow", () => {
 	});
 });
 
-describe("assertApplyPayload", () => {
-	test("rejects non-object payloads", () => {
-		expect(() => __transforms_test_helpers__.assertApplyPayload(null)).toThrow();
-		expect(() => __transforms_test_helpers__.assertApplyPayload("hi")).toThrow();
-		expect(() => __transforms_test_helpers__.assertApplyPayload([])).toThrow();
-	});
-
-	test("rejects payload without transformId", () => {
-		expect(() => __transforms_test_helpers__.assertApplyPayload({})).toThrow();
-		expect(() => __transforms_test_helpers__.assertApplyPayload({ transformId: "" })).toThrow();
-	});
-
-	test("accepts payload with valid transformId", () => {
-		expect(() =>
-			__transforms_test_helpers__.assertApplyPayload({ transformId: "ok" })
-		).not.toThrow();
-	});
-});
-
 describe("assertPreviewPayload", () => {
+	test("rejects non-object payloads", () => {
+		expect(() => helpers.assertPreviewPayload(null)).toThrow();
+		expect(() => helpers.assertPreviewPayload("hi")).toThrow();
+		expect(() => helpers.assertPreviewPayload([])).toThrow();
+	});
+
 	test("rejects non-string text", () => {
-		expect(() =>
-			__transforms_test_helpers__.assertPreviewPayload({ text: 5, systemPrompt: "y" })
-		).toThrow();
+		expect(() => helpers.assertPreviewPayload({ text: 5, feature: "dictation" })).toThrow();
 	});
 
-	test("rejects missing or empty systemPrompt", () => {
-		expect(() =>
-			__transforms_test_helpers__.assertPreviewPayload({ text: "x", systemPrompt: "" })
-		).toThrow();
-		expect(() => __transforms_test_helpers__.assertPreviewPayload({ text: "x" })).toThrow();
+	test("rejects missing or invalid feature", () => {
+		expect(() => helpers.assertPreviewPayload({ text: "x" })).toThrow();
+		expect(() => helpers.assertPreviewPayload({ text: "x", feature: "" })).toThrow();
+		expect(() => helpers.assertPreviewPayload({ text: "x", feature: "other" })).toThrow();
 	});
 
-	test("accepts full preview payload", () => {
-		expect(() =>
-			__transforms_test_helpers__.assertPreviewPayload({
-				text: "x",
-				systemPrompt: "y",
-			})
-		).not.toThrow();
+	test("accepts payload for either feature", () => {
+		expect(() => helpers.assertPreviewPayload({ text: "x", feature: "dictation" })).not.toThrow();
+		expect(() => helpers.assertPreviewPayload({ text: "x", feature: "transforms" })).not.toThrow();
 	});
 });

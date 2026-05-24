@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import { dialogOpenFile, soundLibraryAdd, soundLibraryRemove } from "@/shared/api/ipc-client";

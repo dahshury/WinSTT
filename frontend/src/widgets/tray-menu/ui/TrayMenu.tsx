@@ -1,11 +1,9 @@
-"use client";
-
 import { Separator } from "@base-ui/react/separator";
-import { ArrowDown01Icon, Bug01Icon, Folder01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
+import { ArrowRight01Icon, Bug01Icon, Folder01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { useEffect, useMemo, useReducer, useRef } from "react";
-import { useInputDevices } from "@/entities/audio-device";
+import { useEffect, useReducer, useRef } from "react";
+import { buildInputDeviceOptions, useInputDevices } from "@/entities/audio-device";
 import { IPC } from "@/shared/api/ipc-channels";
 import {
 	diagOpenLogsFolder,
@@ -14,6 +12,7 @@ import {
 	fileTranscribe,
 	ipcSend,
 	onConnectionChange,
+	onSettingsChanged,
 	settingsLoad,
 	settingsSave,
 	sttIsConnected,
@@ -33,7 +32,6 @@ import { Switcher } from "@/shared/ui/switcher";
 interface TrayMenuState {
 	inputDeviceIndex: number | null;
 	isConnected: boolean;
-	isDeviceListOpen: boolean;
 	recordingMode: RecordingMode;
 }
 
@@ -45,8 +43,7 @@ type TrayMenuAction =
 	  }
 	| { type: "set-connected"; value: boolean }
 	| { type: "set-recording-mode"; value: RecordingMode }
-	| { type: "select-input-device"; value: number | null }
-	| { type: "toggle-device-list" };
+	| { type: "set-input-device"; value: number | null };
 
 function trayMenuReducer(state: TrayMenuState, action: TrayMenuAction): TrayMenuState {
 	switch (action.type) {
@@ -60,10 +57,8 @@ function trayMenuReducer(state: TrayMenuState, action: TrayMenuAction): TrayMenu
 			return { ...state, isConnected: action.value };
 		case "set-recording-mode":
 			return { ...state, recordingMode: action.value };
-		case "select-input-device":
-			return { ...state, inputDeviceIndex: action.value, isDeviceListOpen: false };
-		case "toggle-device-list":
-			return { ...state, isDeviceListOpen: !state.isDeviceListOpen };
+		case "set-input-device":
+			return { ...state, inputDeviceIndex: action.value };
 		default:
 			return state;
 	}
@@ -72,13 +67,12 @@ function trayMenuReducer(state: TrayMenuState, action: TrayMenuAction): TrayMenu
 const INITIAL_TRAY_MENU_STATE: TrayMenuState = {
 	recordingMode: "ptt",
 	inputDeviceIndex: null,
-	isDeviceListOpen: false,
 	isConnected: false,
 };
 
 export function TrayMenu() {
 	const [state, dispatch] = useReducer(trayMenuReducer, INITIAL_TRAY_MENU_STATE);
-	const { recordingMode, inputDeviceIndex, isDeviceListOpen, isConnected } = state;
+	const { recordingMode, inputDeviceIndex, isConnected } = state;
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const t = useTranslations("tray");
 	const tAudio = useTranslations("audio");
@@ -94,11 +88,19 @@ export function TrayMenu() {
 		});
 
 		sttIsConnected().then((connected) => dispatch({ type: "set-connected", value: connected }));
-		const unsubscribe = onConnectionChange((connected) => {
+		const unsubscribeConn = onConnectionChange((connected) => {
 			dispatch({ type: "set-connected", value: connected });
 		});
+		// The device popup writes the new index to settings; mirror it back so
+		// the row label stays correct while the (persistent) tray window is up.
+		const unsubscribeSettings = onSettingsChanged((s) => {
+			dispatch({ type: "set-input-device", value: s.audio?.inputDeviceIndex ?? null });
+		});
 
-		return unsubscribe;
+		return () => {
+			unsubscribeConn();
+			unsubscribeSettings();
+		};
 	}, []);
 
 	useEffect(() => {
@@ -137,13 +139,17 @@ export function TrayMenu() {
 		});
 	};
 
-	const handleDeviceChange = async (id: string) => {
-		const next = id === "default" ? null : Number.parseInt(id, 10);
-		dispatch({ type: "select-input-device", value: next });
-		const settings = await settingsLoad();
-		await settingsSave({
-			...settings,
-			audio: { ...settings.audio, inputDeviceIndex: next },
+	// Open the detached device picker anchored to this row. Sending the row's
+	// viewport rect (the main process converts it to screen space via the
+	// tray-menu window bounds) keeps the popup glued above the row instead of
+	// expanding inline and ballooning the tiny tray window off-screen.
+	const handleOpenDevicePicker = (e: React.MouseEvent<HTMLButtonElement>) => {
+		const r = e.currentTarget.getBoundingClientRect();
+		ipcSend(IPC.DEVICE_PICKER_OPEN, {
+			x: r.left,
+			y: r.top,
+			width: r.width,
+			height: r.height,
 		});
 	};
 
@@ -184,26 +190,13 @@ export function TrayMenu() {
 		{ value: "wakeword", label: t("modeWakeWord") },
 	];
 
-	const { deviceOptions, currentDeviceId, currentDeviceLabel } = useMemo(() => {
-		const defaultLabel = defaultDevice
-			? `${tAudio("systemDefault")} (${defaultDevice.name})`
-			: tAudio("systemDefault");
-		const opts: { id: string; label: string }[] = [{ id: "default", label: defaultLabel }];
-		for (const d of devices) {
-			opts.push({ id: String(d.index), label: d.name });
-		}
-		const id = inputDeviceIndex == null ? "default" : String(inputDeviceIndex);
-		const found = opts.find((o) => o.id === id);
-		return {
-			deviceOptions: opts,
-			currentDeviceId: id,
-			currentDeviceLabel: found?.label ?? defaultLabel,
-		};
-	}, [devices, defaultDevice, inputDeviceIndex, tAudio]);
+	const defaultLabel = defaultDevice
+		? `${tAudio("systemDefault")} (${defaultDevice.name})`
+		: tAudio("systemDefault");
+	const { currentDeviceLabel } = buildInputDeviceOptions(devices, inputDeviceIndex, defaultLabel);
 
 	const substrate = useSurface();
 	const menuLevel = Math.min(substrate + 4, 8);
-	const submenuLevel = Math.min(menuLevel + 1, 8);
 	const hoverLevel = Math.min(menuLevel + 1, 8);
 	const activeLevel = Math.min(menuLevel + 2, 8);
 	const hoverBg = surfaceHoverBg(hoverLevel);
@@ -244,14 +237,13 @@ export function TrayMenu() {
 				<MenuSeparator />
 
 				<Button
-					aria-expanded={isDeviceListOpen}
 					className={cn(
 						"w-full justify-between gap-3 rounded px-3 py-1.5 text-left transition-colors",
 						hoverBg,
 						"hover:text-foreground",
 						activeBg
 					)}
-					onClick={() => dispatch({ type: "toggle-device-list" })}
+					onClick={handleOpenDevicePicker}
 				>
 					<span className="flex min-w-0 items-center gap-2">
 						<HugeiconsIcon
@@ -264,37 +256,11 @@ export function TrayMenu() {
 					</span>
 					<HugeiconsIcon
 						aria-hidden="true"
-						className={cn(
-							"shrink-0 text-foreground-muted transition-transform",
-							isDeviceListOpen && "rotate-180"
-						)}
-						icon={ArrowDown01Icon}
+						className="shrink-0 text-foreground-muted"
+						icon={ArrowRight01Icon}
 						size={11}
 					/>
 				</Button>
-				{isDeviceListOpen && (
-					<div
-						className={cn(
-							"mx-1 mt-0.5 max-h-48 overflow-y-auto rounded-sm py-0.5",
-							surfaceClasses(submenuLevel)
-						)}
-					>
-						{deviceOptions.map((opt) => (
-							<Button
-								aria-pressed={opt.id === currentDeviceId}
-								className={cn(
-									"w-full justify-start truncate rounded px-2 py-1 text-left text-2xs transition-colors",
-									hoverBg,
-									opt.id === currentDeviceId ? "text-accent" : "text-foreground-dim"
-								)}
-								key={opt.id}
-								onClick={() => handleDeviceChange(opt.id)}
-							>
-								<span className="truncate">{opt.label}</span>
-							</Button>
-						))}
-					</div>
-				)}
 
 				<MenuSeparator />
 

@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
 import { MODEL_VARIANT_INFO } from "../lib/model-variant-utils";
+import { __variant_filter_submenu_test_helpers__ as helpers } from "../lib/variant-filter-submenu-test-helpers";
 import { DropdownMenu } from "./DropdownMenu";
-import {
-	__variant_filter_submenu_test_helpers__ as helpers,
-	VariantFilterSubmenu,
-} from "./VariantFilterSubmenu";
+import { VariantFilterSubmenu } from "./VariantFilterSubmenu";
 
 describe("VariantFilterSubmenu", () => {
 	test("module exports the component (full render requires a parent Menu popup)", () => {

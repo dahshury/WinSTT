@@ -192,7 +192,7 @@ export function finishBinaryRun(run: BinaryRun, ok: boolean, reason: string | un
 		clearTimeout(run.killTimer);
 		run.killTimer = null;
 	}
-	run.resolve({ ok, reason });
+	run.resolve(reason === undefined ? { ok } : { ok, reason });
 }
 
 /** Best-effort kill on timeout. Wrapped so SIGKILL throws don't escape. */

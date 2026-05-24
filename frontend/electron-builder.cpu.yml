@@ -1,18 +1,18 @@
 appId: com.winstt.app
 productName: WinSTT
+# afterPack hook trims unused Chromium locale .pak files (saves ~30 MB).
+afterPack: ./scripts/electron-builder-after-pack.cjs
 asar: true
+compression: maximum
 asarUnpack:
   - "node_modules/uiohook-napi/**/*"
   - "node_modules/node-gyp-build/**/*"
-  - "out/standalone/**/*"
 directories:
   output: dist
   buildResources: build
 files:
   - "!**/*"
   - dist-electron/**/*
-  # See electron-builder.yml for why the glob is narrowed to out/standalone.
-  - out/standalone/**/*
   - package.json
   - "node_modules/uiohook-napi/**/*"
   - "node_modules/node-gyp-build/**/*"
@@ -20,9 +20,16 @@ files:
 # CPU flavor: bundles the lightweight stt-server (onnxruntime CPU-only).
 # Built by ``pwsh ../server/build/build.ps1 -Flavor cpu`` → outputs
 # frontend/stt-server-dist-cpu/.
+#
+# Renderer (Vite static SPA) lives at dist-renderer/; main.ts resolves
+# windows via loadRendererPage() in renderer-url.ts.
 extraResources:
   - from: stt-server-dist-cpu/
     to: stt-server
+    filter:
+      - "**/*"
+  - from: dist-renderer/
+    to: renderer
     filter:
       - "**/*"
   - from: electron/native/bin/
@@ -30,18 +37,28 @@ extraResources:
     filter:
       - "winstt-paste.exe"
       - "winstt-context.exe"
+  # End-user license + third-party notices. Read at runtime by the
+  # About tab in Settings (see notices-resources.ts in electron/lib/).
+  - from: ../LICENSE
+    to: LICENSE
+  - from: ../THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
 win:
   target:
-    - nsis
+    - portable
   icon: build/icon.ico
-  # Differentiate the installer filename so the GitHub Release page shows
-  # two distinct downloads. electron-updater treats both installers as
-  # separate update channels — users stay on the channel they installed.
-  artifactName: ${productName}-CPU-Setup-${version}.${ext}
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
-  createDesktopShortcut: true
+  # Single-file portable .exe — no installer. Users double-click to run the
+  # app directly; settings/cache live under %LOCALAPPDATA% as usual.
+  artifactName: ${productName}-CPU-Portable-${version}.${ext}
+portable:
+  artifactName: ${productName}-CPU-Portable-${version}.${ext}
+  # Stable extraction folder under %LOCALAPPDATA% — see electron-builder.gpu.yml
+  # for the rationale (avoid re-extracting the payload on every launch).
+  unpackDirName: WinSTT-CPU
+  requestExecutionLevel: user
+  # Splash bitmap shown during first-run extract — see .gpu.yml for the
+  # full explanation of why this is the only built-in option.
+  splashImage: build/splash.bmp
 publish:
   - provider: github
     releaseType: release

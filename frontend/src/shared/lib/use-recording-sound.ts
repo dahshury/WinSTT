@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useRef } from "react";
 import { ipcInvoke, ipcOn } from "@/shared/api/ipc-client";
 

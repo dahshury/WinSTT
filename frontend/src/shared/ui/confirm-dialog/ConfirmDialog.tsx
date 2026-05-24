@@ -1,5 +1,3 @@
-"use client";
-
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";

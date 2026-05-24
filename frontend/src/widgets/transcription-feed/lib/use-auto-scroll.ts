@@ -1,5 +1,3 @@
-"use client";
-
 import { type DependencyList, useEffect, useRef } from "react";
 
 export function useAutoScroll<T extends HTMLElement>(deps: DependencyList) {

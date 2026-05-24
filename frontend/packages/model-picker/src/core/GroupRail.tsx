@@ -143,7 +143,7 @@ interface GroupRailTileProps {
 	isFavorited: boolean;
 	item: GroupRailItem;
 	onClick: (id: string) => void;
-	onToggleFavorite?: (id: string) => void;
+	onToggleFavorite?: ((id: string) => void) | undefined;
 }
 
 function GroupRailTile({

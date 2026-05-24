@@ -1,5 +1,3 @@
-"use client";
-
 import { Collapsible } from "@base-ui/react/collapsible";
 import { Component, type ReactNode } from "react";
 import { formatErrorForLog, isApplicationError } from "@/shared/lib/errors";

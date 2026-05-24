@@ -9,14 +9,14 @@ import { ReasoningEffortDropdown } from "./ReasoningEffortDropdown";
 import { VerbosityDropdown } from "./VerbosityDropdown";
 
 export interface ReasoningControlsProps {
-	className?: string;
+	className?: string | undefined;
 	effectiveReasoningEffort: ReasoningEffort;
 	effectiveVerbosity: Verbosity;
 	isReasoningSelected: boolean;
-	maxOutputTokens?: number | null;
-	onMaxOutputTokensChange?: (value: number | null) => void;
-	onReasoningEffortChange?: (value: ReasoningEffort) => void;
-	onVerbosityChange?: (value: Verbosity) => void;
+	maxOutputTokens?: number | null | undefined;
+	onMaxOutputTokensChange?: ((value: number | null) => void) | undefined;
+	onReasoningEffortChange?: ((value: ReasoningEffort) => void) | undefined;
+	onVerbosityChange?: ((value: Verbosity) => void) | undefined;
 	supportsMaxTokens: boolean;
 	supportsVerbosity: boolean;
 }

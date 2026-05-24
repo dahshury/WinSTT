@@ -1,5 +1,3 @@
-"use client";
-
 import { Combobox } from "@base-ui/react/combobox";
 import { useEffect, useRef, useState } from "react";
 import type { ModelInfo } from "@/entities/model-catalog";

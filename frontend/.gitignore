@@ -2,9 +2,9 @@
 node_modules
 
 # output
-out
 dist
 dist-electron
+dist-renderer
 *.tgz
 
 # code coverage
@@ -57,3 +57,13 @@ fsd-violations.json
 design-system/
 .fsd-ledger/
 .fsd-fixtures-tmp/
+
+# Windows reserved-device-name files (e.g. a stray `nul` from a botched
+# `> nul` redirect under bash/bun). Tailwind v4 auto-source-detection
+# respects .gitignore, so ignoring it stops the Turbopack PostCSS panic
+# ("reading file frontend\nul" / os error 1) regardless of what creates it.
+/nul
+/NUL
+/aux
+/con
+/prn

@@ -2,10 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "@testing-library/react";
 import type { OpenRouterEndpoint } from "@/shared/api/models";
-import {
-	EndpointFeatureIcons,
-	__endpoint_feature_icons_test_helpers__ as helpers,
-} from "./EndpointFeatureIcons";
+import { __endpoint_feature_icons_test_helpers__ as helpers } from "../lib/endpoint-feature-icons-test-helpers";
+import { EndpointFeatureIcons } from "./EndpointFeatureIcons";
 
 function makeEndpoint(opts?: Partial<OpenRouterEndpoint>): OpenRouterEndpoint {
 	return {

@@ -8,12 +8,8 @@ import {
 } from "./family-helpers";
 
 function model(name: string, family?: string): OllamaModel {
-	return {
-		name,
-		size: 0,
-		modifiedAt: "",
-		details: family ? { family } : undefined,
-	};
+	const base: OllamaModel = { name, size: 0, modifiedAt: "" };
+	return family ? { ...base, details: { family } } : base;
 }
 
 describe("formatOllamaDisplayName", () => {

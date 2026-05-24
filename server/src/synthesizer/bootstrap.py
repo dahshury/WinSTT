@@ -16,6 +16,7 @@ from src.synthesizer.domain.ports.synthesizer import ISpeechSynthesizer
 # DownloadCallbacks closure produced by ``recorder.bootstrap``.
 ProgressFn = Callable[[float, int, int], None]
 CancelFn = Callable[[], bool]
+StatusFn = Callable[[str], None]
 
 
 def build_synthesizer(
@@ -23,6 +24,7 @@ def build_synthesizer(
     *,
     on_progress: ProgressFn | None = None,
     should_cancel: CancelFn | None = None,
+    on_status: StatusFn | None = None,
 ) -> ISpeechSynthesizer:
     """Construct the configured TTS adapter.
 
@@ -32,6 +34,6 @@ def build_synthesizer(
     from src.synthesizer.infrastructure.kokoro_synthesizer import KokoroSynthesizer
 
     synthesizer = KokoroSynthesizer(config)
-    if on_progress is not None or should_cancel is not None:
-        synthesizer.attach_download_callbacks(on_progress, should_cancel)
+    if on_progress is not None or should_cancel is not None or on_status is not None:
+        synthesizer.attach_download_callbacks(on_progress, should_cancel, on_status)
     return synthesizer

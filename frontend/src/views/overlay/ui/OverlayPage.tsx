@@ -1,7 +1,5 @@
-"use client";
-
-import { AnimatePresence, domAnimation, LazyMotion, m, type Variants } from "motion/react";
-import { useEffect } from "react";
+import { AnimatePresence, domAnimation, domMax, LazyMotion, m, type Variants } from "motion/react";
+import { useEffect, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import {
@@ -13,6 +11,12 @@ import { useTranscriptionFeed } from "@/features/live-transcription";
 import { useLlmProcessingFeed, useLlmProcessingStore } from "@/features/llm-processing";
 import { onSettingsChanged } from "@/shared/api/ipc-client";
 import { decodeSettingsPayload } from "@/shared/api/settings-codec";
+import {
+	DynamicIsland,
+	DynamicIslandProvider,
+	type DynamicIslandSize,
+	useDynamicIslandSize,
+} from "@/shared/ui/dynamic-island";
 import { ScrollingText } from "@/shared/ui/scrolling-text";
 import { ThinkingIndicator } from "@/shared/ui/thinking-indicator";
 
@@ -95,6 +99,51 @@ const PRESET_HEIGHT_PX: Record<SizePreset, number> = {
 // in AudioVisualizerBar.tsx). Used to compute the zoom factor.
 const ICON_PRESET_PX = 24;
 
+// Text font-size (px) per `visualizerSize` for dynamic-island mode. Chosen
+// to track the same growth curve as the visualizer chip: small enough at xs
+// to keep a chip-sized island legible, large enough at xl to read like a
+// caption from across the room.
+const TEXT_FONT_SIZE_PX: Record<SizePreset, number> = {
+	xs: 11,
+	sm: 12,
+	md: 14,
+	lg: 16,
+	xl: 20,
+};
+
+/**
+ * Live mm:ss elapsed-time string for the dynamic island's recording timer
+ * (mirrors Apple's notch readout). Resets to 00:00 the moment recording
+ * starts and stops ticking when it ends. Updates every second — that's
+ * enough fidelity for a notch readout and saves the overlay window the
+ * cost of a per-frame timer.
+ *
+ * Hook MUST be called unconditionally (rules-of-hooks), so the consumer
+ * always pays the setState cost while the recording is live; when
+ * `isRecordingActive` is false the interval doesn't run.
+ */
+function useRecordingElapsed(isRecordingActive: boolean): string {
+	const [elapsedMs, setElapsedMs] = useState(0);
+
+	useEffect(() => {
+		if (!isRecordingActive) {
+			setElapsedMs(0);
+			return;
+		}
+		const start = Date.now();
+		setElapsedMs(0);
+		const interval = setInterval(() => {
+			setElapsedMs(Date.now() - start);
+		}, 1000);
+		return () => clearInterval(interval);
+	}, [isRecordingActive]);
+
+	const seconds = Math.floor(elapsedMs / 1000);
+	const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
+	const ss = String(seconds % 60).padStart(2, "0");
+	return `${mm}:${ss}`;
+}
+
 // Older builds persisted `visualizerSize` as an integer pixel value; zustand's
 // localStorage hydration runs before the IPC settingsLoad reconciles, so we
 // can briefly observe a stale number here. Coerce anything unrecognized to xs.
@@ -164,6 +213,200 @@ const BUBBLE_SHADOW =
 const CHIP_SHADOW =
 	"shadow-[inset_0_1px_0_0_rgba(255,255,255,0.10),inset_0_-1px_0_0_rgba(0,0,0,0.40),0_4px_14px_-6px_rgba(2,3,8,0.6)]";
 
+/**
+ * Pure mapping from the renderer's live state to a Dynamic-Island size
+ * preset. Drives ONLY the shell's WIDTH (and the `empty` collapse) in
+ * dynamic-island mode — height is intrinsic (see `DynamicIsland`'s
+ * `fitContent` prop), so the island grows by exactly one text-line per
+ * wrap instead of jumping between height presets.
+ *
+ *   1. `isThinking` always wins — the LLM-thinking state survives the
+ *      recording → post-processing transition. `long` gives the
+ *      ThinkingIndicator a comfortable wide surface; height grows to fit.
+ *   2. `!isRecordingActive` collapses to `empty` (0×0) unless thinking —
+ *      same gate as the legacy floating pill, so the island disappears
+ *      between dictation sessions.
+ *   3. Captioned recording uses `long` (460px wide) — the natural width
+ *      for legible text wrap. Height adds one line per wrap, no jump.
+ *   4. Otherwise grow with VAD: `compactMedium` while speaking, `compact`
+ *      at rest. This is the "just-started, no words yet" state.
+ *
+ * Exported for unit testing without mounting the motion-heavy pill tree.
+ */
+export function computeIslandSize(args: {
+	isRecordingActive: boolean;
+	isSpeaking: boolean;
+	isThinking: boolean;
+	hasShownText: boolean;
+}): DynamicIslandSize {
+	if (args.isThinking) {
+		return "long";
+	}
+	if (!args.isRecordingActive) {
+		return "empty";
+	}
+	if (args.hasShownText) {
+		return "long";
+	}
+	if (args.isSpeaking) {
+		return "compactMedium";
+	}
+	return "compact";
+}
+
+interface IslandStateArgs {
+	isRecordingActive: boolean;
+	isSpeaking: boolean;
+	isThinking: boolean;
+	showLiveTranscription: boolean;
+	sizePreset: SizePreset;
+	text: string;
+	thinkingStartedAt: number | null;
+	thinkingText: string;
+}
+
+/**
+ * Inner content of the Dynamic Island — Apple-style two-zone layout:
+ *
+ *   ┌──────────────────────────────────────┐
+ *   │ [waveform]              ● 00:32      │  ← top row, while recording
+ *   │ transcribed text wraps here...       │  ← fills remaining space
+ *   └──────────────────────────────────────┘
+ *
+ * Top row uses `justify-between` so the visualizer hugs the LEFT edge
+ * and the recording dot + elapsed-time timer hug the RIGHT edge, with
+ * the dead space between them swallowed by the flex gap. Mirrors the
+ * iPhone Dynamic Island's "voice memo" look (see the reference shot).
+ *
+ * Both the visualizer and the text scale with `visualizerSize`:
+ *   - visualizer zoom = `PRESET_HEIGHT_PX[sizePreset] / ICON_PRESET_PX`
+ *     (matches the floating-bottom chip's scale curve)
+ *   - text + timer fontSize = `TEXT_FONT_SIZE_PX[sizePreset]` (the timer
+ *     uses `tabular-nums` so digit width doesn't jitter every second)
+ *
+ * Padding is asymmetric — `pt-1` keeps the visualizer almost flush with
+ * the island's top edge (the iPhone look the user asked for), while
+ * `pb-1.5` gives the trailing text room to breathe.
+ */
+function DynamicIslandPillContent({
+	isRecordingActive,
+	isSpeaking,
+	isThinking,
+	sizePreset,
+	text,
+	thinkingText,
+	thinkingStartedAt,
+	showLiveTranscription,
+}: IslandStateArgs) {
+	// Hook runs unconditionally — the early `null` return below would
+	// otherwise violate rules-of-hooks. The timer's interval only ticks
+	// when `isRecordingActive` is true (see `useRecordingElapsed`).
+	const elapsed = useRecordingElapsed(isRecordingActive);
+
+	if (!(isRecordingActive || isThinking)) {
+		// Belt-and-suspenders — the shell's `empty` preset (width 0) already
+		// hides the island; this guard prevents stale renders from leaking
+		// an empty padded box during the brief transition out.
+		return null;
+	}
+
+	const visualizerZoom = PRESET_HEIGHT_PX[sizePreset] / ICON_PRESET_PX;
+	const textFontSize = TEXT_FONT_SIZE_PX[sizePreset];
+	// Timer is secondary information — render it slightly smaller than
+	// the transcription, like Apple's notch readout.
+	const timerFontSize = Math.max(10, Math.round(textFontSize * 0.8));
+	const showText = isRecordingActive && showLiveTranscription && text.length > 0;
+
+	// Padding tuned to the shell's 28px bottom-corner radius:
+	//   - `pt-1`  (4px) keeps the top row almost flush with the flat top
+	//     edge — the iPhone-notch look the user asked for.
+	//   - `px-5` (20px) keeps the rightmost char of the timer and the
+	//     last word of wrapped text clear of the bottom-corner curves.
+	//   - `pb-3` (12px) leaves a comfortable gap between the bottom text
+	//     line and the rounded bottom edge.
+	// Inner `gap-1` separates the top row from the transcription/thinking
+	// block by ~4px so they don't visually touch.
+	return (
+		<div className="flex flex-col gap-1 px-5 pt-1 pb-3">
+			{isRecordingActive ? (
+				<div className="flex items-center justify-between gap-3">
+					{/* Visualizer hugged to the top-left, scaled per setting */}
+					<div className="flex items-center" style={{ zoom: visualizerZoom }}>
+						<AudioVisualizer size="icon" />
+					</div>
+					{/* Recording dot + mm:ss timer, hugged to the top-right */}
+					<div className="flex items-center gap-1.5">
+						<LivePulse isSpeaking={isSpeaking} />
+						<span
+							className="font-mono text-white/70 tabular-nums"
+							style={{ fontSize: timerFontSize }}
+						>
+							{elapsed}
+						</span>
+					</div>
+				</div>
+			) : null}
+			{showText ? (
+				<div className="w-full" style={{ fontSize: textFontSize }}>
+					<ScrollingText
+						className="text-left font-medium text-white tracking-tight"
+						// Solid black fade-mask matches the island's bg so the
+						// edge fade reads as "more text" rather than a band.
+						fadeColor="rgb(0 0 0 / 0.95)"
+						lineHeight={1.25}
+						maxLines={5}
+						text={text}
+					/>
+				</div>
+			) : null}
+			{isThinking ? (
+				<div className="w-full" style={{ fontSize: textFontSize }}>
+					<ThinkingIndicator reasoning={thinkingText} startedAt={thinkingStartedAt} />
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function LivePulse({ isSpeaking }: { isSpeaking: boolean }) {
+	return (
+		<span
+			aria-hidden="true"
+			className="inline-block h-2 w-2 shrink-0 rounded-full bg-[oklch(62%_0.19_260)]"
+			style={isSpeaking ? { boxShadow: "0 0 8px 0 oklch(62% 0.19 260 / 0.7)" } : undefined}
+		/>
+	);
+}
+
+/**
+ * Provider-aware wrapper: pulls the target size from external state, drives
+ * `setSize` via effect, and renders the shell + content. Sits inside
+ * `DynamicIslandProvider` so the hook context is available.
+ *
+ * `flatTop` removes the top corner radius so the island visually hangs from
+ * the top bezel; `fitContent` lets each transcribed line extend the shell
+ * by exactly one line's height.
+ */
+function DynamicIslandPill(args: IslandStateArgs) {
+	const { setSize } = useDynamicIslandSize();
+	const target = computeIslandSize({
+		isRecordingActive: args.isRecordingActive,
+		isSpeaking: args.isSpeaking,
+		isThinking: args.isThinking,
+		hasShownText: args.showLiveTranscription && args.text.length > 0,
+	});
+
+	useEffect(() => {
+		setSize(target);
+	}, [target, setSize]);
+
+	return (
+		<DynamicIsland fitContent flatTop id="winstt-overlay-island">
+			<DynamicIslandPillContent {...args} />
+		</DynamicIsland>
+	);
+}
+
 export function OverlayPage() {
 	useTransparentBody();
 	useResetOnOverlayShow();
@@ -176,6 +419,7 @@ export function OverlayPage() {
 	const liveDisplay = useSettingsStore(
 		(s) => s.settings.general?.liveTranscriptionDisplay ?? "both"
 	);
+	const overlayMode = useSettingsStore((s) => s.settings.general?.overlayMode ?? "floating-bottom");
 	const showLiveTranscription = liveDisplay === "in-pill" || liveDisplay === "both";
 
 	const realtime = useTranscriptionStore((s) => s.currentRealtime);
@@ -224,7 +468,44 @@ export function OverlayPage() {
 	// in-pill captions still shows the instrument.
 	const showBubble = showPill && (showText || isThinking);
 
+	if (overlayMode === "dynamic-island") {
+		// Top-flush layout: container anchors content to the *top* of the
+		// renderer window (which is itself docked at `y = 0` of the primary
+		// display via electron/ipc/overlay.ts), so the island sits against
+		// the physical top bezel with no gap.
+		//
+		// Scaling is per-element inside the island (visualizer zoom + text
+		// font-size) rather than a uniform outer `zoom`. The shell's width
+		// stays bounded by the size preset (max 460px at `long`) regardless
+		// of `visualizerSize`, while the visualizer and text grow / shrink
+		// individually — same scale curve the floating-bottom pill uses.
+		return (
+			<LazyMotion features={domMax} strict>
+				<div className="flex h-screen w-screen items-start justify-center overflow-hidden">
+					<DynamicIslandProvider initialSize="empty">
+						<DynamicIslandPill
+							isRecordingActive={isRecordingActive}
+							isSpeaking={isSpeaking}
+							isThinking={isThinking}
+							showLiveTranscription={showLiveTranscription}
+							sizePreset={sizePreset}
+							text={text}
+							thinkingStartedAt={thinkingStartedAt}
+							thinkingText={thinkingText}
+						/>
+					</DynamicIslandProvider>
+				</div>
+			</LazyMotion>
+		);
+	}
+
 	return (
+		// Floating-bottom keeps `domAnimation` (no layout animations). The
+		// text bubble carries a `layout` prop for historical reasons; under
+		// `domMax` it would activate framer's layout-tween system and the
+		// bubble's per-line growth would suddenly animate every keystroke —
+		// the "weird expansion" we don't want. `domAnimation` ignores
+		// `layout`, restoring the pre-DynamicIsland floating-pill behavior.
 		<LazyMotion features={domAnimation} strict>
 			<div className="flex h-screen w-screen items-end justify-center overflow-hidden pb-3">
 				{/* Two-piece stack. The visualizer chip is pinned to the screen

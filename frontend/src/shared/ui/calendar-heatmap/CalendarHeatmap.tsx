@@ -1,8 +1,6 @@
-"use client";
-
 import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type ChangeEvent, type CSSProperties, type ReactNode, useState } from "react";
+import { type ChangeEvent, type CSSProperties, type ReactNode, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { type CalendarSystem, type CalendarSystemId, getCalendarSystem } from "./calendar-system";
@@ -34,11 +32,14 @@ export interface CalendarHeatmapProps {
 	datesPerVariant?: Date[][];
 	defaultMonth?: Date;
 	disabled?: (date: Date) => boolean;
+	fillWidth?: boolean;
 	formatTooltip?: (date: Date, weight?: number) => string;
 
 	mode?: CalendarMode;
+	month?: Date;
 	nextMonthLabel?: string;
 	numberOfMonths?: number;
+	onMonthChange?: (date: Date) => void;
 	onSelect?: (value: Date | DateRange | null) => void;
 
 	presets?: CalendarPreset[];
@@ -216,16 +217,17 @@ const NAV_BUTTON_CLASS =
 	"inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-transparent p-0 text-foreground-muted opacity-50 transition-opacity hover:opacity-100";
 
 interface MonthGridProps {
-	caption?: string;
+	caption?: string | undefined;
 	classMap: Map<number, string>;
-	formatTooltip?: (date: Date, weight?: number) => string;
+	fillWidth: boolean;
+	formatTooltip?: ((date: Date, weight?: number) => string) | undefined;
 	hovered: Date | null;
-	isDisabled?: (date: Date) => boolean;
+	isDisabled?: ((date: Date) => boolean) | undefined;
 	mode: CalendarMode;
 	monthDate: Date;
 	onDayClick: (date: Date) => void;
 	onDayHover: (date: Date | null) => void;
-	renderDayBadge?: (date: Date, weight?: number) => ReactNode;
+	renderDayBadge?: ((date: Date, weight?: number) => ReactNode) | undefined;
 	selected: Date | DateRange | null;
 	showOutsideDays: boolean;
 	system: CalendarSystem;
@@ -241,7 +243,7 @@ function DayBadge({
 }: {
 	cellDate: Date;
 	render: (date: Date, weight?: number) => ReactNode;
-	weight?: number;
+	weight?: number | undefined;
 }) {
 	return <span className="text-[10px] opacity-70">{render(cellDate, weight)}</span>;
 }
@@ -258,6 +260,7 @@ function DayCell({
 	mode,
 	dayState,
 	disabled,
+	fillWidth,
 	system,
 	onDayHover,
 	onDayClick,
@@ -267,19 +270,21 @@ function DayCell({
 	showOutsideDays: boolean;
 	classMap: Map<number, string>;
 	weightMap: Map<number, number>;
-	formatTooltip?: (date: Date, weight?: number) => string;
-	renderDayBadge?: (date: Date, weight?: number) => ReactNode;
+	formatTooltip?: ((date: Date, weight?: number) => string) | undefined;
+	renderDayBadge?: ((date: Date, weight?: number) => ReactNode) | undefined;
 	today: Date;
 	mode: CalendarMode;
 	dayState: DayState;
 	disabled: boolean;
+	fillWidth: boolean;
 	system: CalendarSystem;
 	onDayHover: (date: Date | null) => void;
 	onDayClick: (date: Date) => void;
 }) {
 	const inMonth = system.isSameDisplayMonth(cellDate, monthDate);
+	const widthClass = fillWidth ? "w-full" : "w-(--cell-size)";
 	if (!(inMonth || showOutsideDays)) {
-		return <td className="h-(--cell-size) w-(--cell-size) p-0" key={cellDate.toISOString()} />;
+		return <td className={cn("h-(--cell-size) p-0", widthClass)} key={cellDate.toISOString()} />;
 	}
 	const key = startOfDay(cellDate).getTime();
 	const variantClass = classMap.get(key);
@@ -290,7 +295,8 @@ function DayCell({
 	const useVariant = !dayState && variantClass;
 
 	const innerClass = cn(
-		"inline-flex h-(--cell-size) w-(--cell-size) flex-col items-center justify-center gap-0 rounded-md p-0 font-normal text-sm leading-none",
+		"inline-flex h-(--cell-size) flex-col items-center justify-center gap-0 rounded-md p-0 font-normal text-sm leading-none",
+		widthClass,
 		useVariant ? variantClass : "",
 		!(useVariant || dayState || disabled) && "hover:bg-surface-hover",
 		!inMonth && "text-foreground-muted opacity-50",
@@ -328,7 +334,10 @@ function DayCell({
 		);
 
 	return (
-		<td className="p-0 text-center text-sm" key={cellDate.toISOString()}>
+		<td
+			className={cn("p-0 text-center text-sm", fillWidth && "w-full")}
+			key={cellDate.toISOString()}
+		>
 			{tooltipText ? <Tooltip content={tooltipText}>{cellNode}</Tooltip> : cellNode}
 		</td>
 	);
@@ -347,6 +356,7 @@ function MonthGrid({
 	selected,
 	hovered,
 	isDisabled,
+	fillWidth,
 	system,
 	caption,
 	onDayHover,
@@ -354,8 +364,10 @@ function MonthGrid({
 }: MonthGridProps) {
 	const grid = getCalendarGrid(system.startOfDisplayMonth(monthDate), weekStartsOn);
 	const weekdayLabels = weekStartsOn === 1 ? WEEKDAY_LABELS_MON : WEEKDAY_LABELS_SUN;
+	const rowClass = fillWidth ? "grid w-full grid-cols-7" : "flex";
+	const cellWidthClass = fillWidth ? "w-full" : "w-(--cell-size)";
 	return (
-		<div className="flex flex-col gap-2">
+		<div className={cn("flex flex-col gap-2", fillWidth && "min-w-0 flex-1")}>
 			{caption ? (
 				<span className="text-center font-medium text-foreground-secondary text-xs-tight">
 					{caption}
@@ -363,10 +375,13 @@ function MonthGrid({
 			) : null}
 			<table aria-label={system.monthLabel(monthDate)} className="w-full border-collapse">
 				<thead>
-					<tr className="flex">
+					<tr className={rowClass}>
 						{weekdayLabels.map((label) => (
 							<th
-								className="w-(--cell-size) rounded-md font-normal text-[0.8rem] text-foreground-muted"
+								className={cn(
+									"rounded-md font-normal text-[0.8rem] text-foreground-muted",
+									cellWidthClass
+								)}
 								key={label}
 								scope="col"
 							>
@@ -377,13 +392,14 @@ function MonthGrid({
 				</thead>
 				<tbody className="flex flex-col gap-1 pt-1">
 					{Array.from({ length: 6 }, (_, weekIdx) => (
-						<tr className="flex w-full" key={`week-${monthDate.toISOString()}-${weekIdx}`}>
+						<tr className={rowClass} key={`week-${monthDate.toISOString()}-${weekIdx}`}>
 							{grid.slice(weekIdx * 7, weekIdx * 7 + 7).map((cellDate) => (
 								<DayCell
 									cellDate={cellDate}
 									classMap={classMap}
 									dayState={computeDayState(cellDate, mode, selected, hovered)}
 									disabled={isDisabled?.(cellDate) ?? false}
+									fillWidth={fillWidth}
 									formatTooltip={formatTooltip}
 									key={cellDate.toISOString()}
 									mode={mode}
@@ -465,7 +481,7 @@ function PickerGrid({
 	onPick: (date: Date) => void;
 }) {
 	return (
-		<div className="grid grid-cols-3 gap-2 pt-2">
+		<div className="grid w-full grid-cols-3 gap-2 pt-2">
 			{cells.map((cell) => {
 				const isActive = activeDate ? isSameDay(cell.date, activeDate) : false;
 				const isCurrent = isSameDay(cell.date, today);
@@ -586,6 +602,8 @@ export function CalendarHeatmap({
 	className,
 	numberOfMonths = 1,
 	defaultMonth,
+	month,
+	onMonthChange,
 	showOutsideDays = true,
 	weekStartsOn = 0,
 	prevMonthLabel = "Previous month",
@@ -598,6 +616,7 @@ export function CalendarHeatmap({
 	formatTooltip,
 	renderDayBadge,
 	disabled,
+	fillWidth = false,
 	mode = "none",
 	selected,
 	onSelect,
@@ -622,14 +641,61 @@ export function CalendarHeatmap({
 	};
 
 	const [hovered, setHovered] = useState<Date | null>(null);
-	const [viewMode, setViewMode] = useState<ViewMode>("days");
-	const [anchor, setAnchor] = useState<Date>(() =>
-		system.startOfDisplayMonth(defaultMonth ?? new Date())
+	const monthCount = Math.max(1, numberOfMonths);
+	const [internalAnchors, setInternalAnchors] = useState<Date[]>(() => {
+		const base = system.startOfDisplayMonth(month ?? defaultMonth ?? new Date());
+		return Array.from({ length: monthCount }, (_, i) => system.addMonths(base, i));
+	});
+	const [viewModes, setViewModes] = useState<ViewMode[]>(() =>
+		Array.from({ length: monthCount }, () => "days" as ViewMode)
 	);
+	// Skip the next controlled-`month` resync when WE caused the change via
+	// internal nav of the first calendar. Without this, parent re-emitting the
+	// same anchor would clobber any independent navigation of the right
+	// calendar.
+	const skipNextMonthSyncRef = useRef(false);
+	// React's "sync prop to state" pattern: compare during render instead of
+	// useEffect, so we don't have to list `system.*` (rebuilt each render) in
+	// a dep array.
+	const [prevMonthTs, setPrevMonthTs] = useState<number | undefined>(() => month?.getTime());
+	const currentMonthTs = month?.getTime();
+	if (currentMonthTs !== prevMonthTs) {
+		setPrevMonthTs(currentMonthTs);
+		if (month && !skipNextMonthSyncRef.current) {
+			const base = system.startOfDisplayMonth(month);
+			setInternalAnchors((prev) => {
+				if (prev[0] && prev[0].getTime() === base.getTime()) {
+					return prev;
+				}
+				return Array.from({ length: monthCount }, (_, i) => system.addMonths(base, i));
+			});
+		}
+		skipNextMonthSyncRef.current = false;
+	}
+
+	const anchors = internalAnchors;
 	const today = startOfDay(new Date());
-	const months = Array.from({ length: Math.max(1, numberOfMonths) }, (_, i) =>
-		system.addMonths(anchor, i)
-	);
+
+	const updateAnchor = (i: number, next: Date) => {
+		const start = system.startOfDisplayMonth(next);
+		setInternalAnchors((prev) => {
+			const arr = [...prev];
+			arr[i] = start;
+			return arr;
+		});
+		if (i === 0) {
+			skipNextMonthSyncRef.current = true;
+			onMonthChange?.(start);
+		}
+	};
+
+	const updateViewMode = (i: number, v: ViewMode) => {
+		setViewModes((prev) => {
+			const arr = [...prev];
+			arr[i] = v;
+			return arr;
+		});
+	};
 
 	const handleDayClick = (date: Date) => {
 		if (disabled?.(date)) {
@@ -647,21 +713,26 @@ export function CalendarHeatmap({
 	const handlePresetPick = (preset: CalendarPreset) => {
 		setSelected({ from: preset.range.from, to: preset.range.to });
 		if (preset.range.from) {
-			setAnchor(system.startOfDisplayMonth(preset.range.from));
+			const base = system.startOfDisplayMonth(preset.range.from);
+			setInternalAnchors(Array.from({ length: monthCount }, (_, i) => system.addMonths(base, i)));
+			skipNextMonthSyncRef.current = true;
+			onMonthChange?.(base);
 		}
 	};
 
-	const stepView = (dir: -1 | 1) => {
-		if (viewMode === "days") {
-			setAnchor((d) => system.addMonths(d, dir));
-		} else if (viewMode === "months") {
-			setAnchor((d) => system.addYears(d, dir));
+	const stepView = (i: number, dir: -1 | 1) => {
+		const vMode = viewModes[i] ?? "days";
+		const current = anchors[i] ?? new Date();
+		let next: Date;
+		if (vMode === "days") {
+			next = system.addMonths(current, dir);
+		} else if (vMode === "months") {
+			next = system.addYears(current, dir);
 		} else {
-			setAnchor((d) => system.addYears(d, dir * YEAR_SPAN));
+			next = system.addYears(current, dir * YEAR_SPAN);
 		}
+		updateAnchor(i, next);
 	};
-
-	const headerSegments = headerSegmentsFor(viewMode, system, anchor, setViewMode);
 
 	const activePickDate = isDateValue(currentSelected) ? currentSelected : null;
 
@@ -684,21 +755,25 @@ export function CalendarHeatmap({
 	const rootClass = cn(
 		"flex flex-col gap-4 p-3 [--cell-size:2.25rem]",
 		presets ? "sm:flex-row" : "sm:flex-row sm:gap-4",
+		fillWidth && "w-full",
 		className
 	);
 
-	const daysBlock = (
-		<div className="flex flex-col gap-4 sm:flex-row sm:gap-4">
-			{months.map((monthDate) => (
+	const renderMonth = (anchorDate: Date, i: number): ReactNode => {
+		const vMode = viewModes[i] ?? "days";
+		const segments = headerSegmentsFor(vMode, system, anchorDate, (v) => updateViewMode(i, v));
+
+		let monthBody: ReactNode;
+		if (vMode === "days") {
+			monthBody = (
 				<MonthGrid
-					caption={numberOfMonths > 1 ? system.monthLabel(monthDate) : undefined}
 					classMap={classMap}
+					fillWidth={fillWidth}
 					formatTooltip={formatTooltip}
 					hovered={hovered}
 					isDisabled={disabled}
-					key={monthDate.toISOString()}
 					mode={mode}
-					monthDate={monthDate}
+					monthDate={anchorDate}
 					onDayClick={handleDayClick}
 					onDayHover={setHovered}
 					renderDayBadge={renderDayBadge}
@@ -709,56 +784,66 @@ export function CalendarHeatmap({
 					weekStartsOn={weekStartsOn}
 					weightMap={weightMap}
 				/>
-			))}
+			);
+		} else if (vMode === "months") {
+			monthBody = (
+				<PickerGrid
+					activeDate={activePickDate}
+					cells={system.monthsOfYear(anchorDate)}
+					onPick={(date) => {
+						updateAnchor(i, date);
+						updateViewMode(i, "days");
+					}}
+					today={today}
+				/>
+			);
+		} else {
+			monthBody = (
+				<PickerGrid
+					activeDate={activePickDate}
+					cells={system.yearsAround(anchorDate, YEAR_SPAN)}
+					onPick={(date) => {
+						updateAnchor(i, date);
+						updateViewMode(i, "months");
+					}}
+					today={today}
+				/>
+			);
+		}
+
+		return (
+			<div className={cn("flex flex-col gap-1", fillWidth && "min-w-0 flex-1")} key={`month-${i}`}>
+				<CalendarHeader
+					nextLabel={nextMonthLabel}
+					onNext={() => stepView(i, 1)}
+					onPrev={() => stepView(i, -1)}
+					prevLabel={prevMonthLabel}
+					segments={segments}
+				/>
+				{monthBody}
+			</div>
+		);
+	};
+
+	const monthsBlock = (
+		<div className={cn("flex flex-row gap-4", fillWidth && "w-full")}>
+			{anchors.map((anchorDate, i) => renderMonth(anchorDate, i))}
 		</div>
 	);
 
-	let body: ReactNode = daysBlock;
-	if (viewMode === "months") {
-		body = (
-			<PickerGrid
-				activeDate={activePickDate}
-				cells={system.monthsOfYear(anchor)}
-				onPick={(date) => {
-					setAnchor(system.startOfDisplayMonth(date));
-					setViewMode("days");
-				}}
-				today={today}
-			/>
-		);
-	} else if (viewMode === "years") {
-		body = (
-			<PickerGrid
-				activeDate={activePickDate}
-				cells={system.yearsAround(anchor, YEAR_SPAN)}
-				onPick={(date) => {
-					setAnchor(date);
-					setViewMode("months");
-				}}
-				today={today}
-			/>
-		);
-	}
-
+	const anyPickerOpen = viewModes.some((v) => v !== "days");
 	const timeBlock =
-		viewMode === "days" && withTime
-			? renderTimeFields(mode, currentSelected, handleTimeChange)
-			: null;
+		!anyPickerOpen && withTime ? renderTimeFields(mode, currentSelected, handleTimeChange) : null;
 
 	return (
 		<div className={rootClass} style={containerStyle}>
 			{presets && mode === "range" ? (
 				<PresetList onPick={handlePresetPick} presets={presets} />
 			) : null}
-			<div className="flex min-w-(--cell-size) flex-col gap-1">
-				<CalendarHeader
-					nextLabel={nextMonthLabel}
-					onNext={() => stepView(1)}
-					onPrev={() => stepView(-1)}
-					prevLabel={prevMonthLabel}
-					segments={headerSegments}
-				/>
-				{body}
+			<div
+				className={cn("flex flex-col gap-1", fillWidth ? "min-w-0 flex-1" : "min-w-(--cell-size)")}
+			>
+				{monthsBlock}
 				{timeBlock}
 			</div>
 		</div>

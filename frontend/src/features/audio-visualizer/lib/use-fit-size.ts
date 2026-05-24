@@ -1,5 +1,3 @@
-"use client";
-
 import { type RefObject, useEffect, useState } from "react";
 import type { VisualizerSize } from "./audio-visualizer";
 

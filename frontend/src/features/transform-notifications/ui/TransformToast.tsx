@@ -1,5 +1,3 @@
-"use client";
-
 import { Cancel01Icon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect } from "react";
@@ -12,6 +10,9 @@ import {
 
 const AUTO_DISMISS_MS = 5000;
 const PREVIEW_CHARS = 120;
+// The transforms feature is now a single composed prompt instead of a list of
+// named per-row prompts, so there's no transform-specific name to surface.
+const HEADLINE = "Text transformation";
 
 function truncate(text: string, max: number): string {
 	if (text.length <= max) {
@@ -43,28 +44,13 @@ export function TransformToast() {
 			// An "applied" event with no selection counts as a no-op signal —
 			// surface it as a hint rather than a success.
 			if (!(payload.before || payload.after)) {
-				show({
-					kind: "no-selection",
-					transformId: payload.transformId,
-					transformName: payload.transformName,
-					reason: "No text selected",
-				});
+				show({ kind: "no-selection", reason: "No text selected" });
 				return;
 			}
-			show({
-				kind: "applied",
-				transformId: payload.transformId,
-				transformName: payload.transformName,
-				before: payload.before,
-				after: payload.after,
-			});
+			show({ kind: "applied", before: payload.before, after: payload.after });
 		});
 		const offFailed = onTransformFailed((payload) => {
-			show({
-				kind: "failed",
-				transformId: payload.transformId,
-				reason: payload.reason,
-			});
+			show({ kind: "failed", reason: payload.reason });
 		});
 		return () => {
 			offApplied();
@@ -85,11 +71,11 @@ export function TransformToast() {
 	}
 
 	const isFailure = current.kind === "failed" || current.kind === "no-selection";
-	const headline = current.transformName || current.transformId;
+	const headline = HEADLINE;
 	const body = resolveToastBody(current);
 
 	const handleRetry = () => {
-		applyTransform(current.transformId).catch(() => undefined);
+		applyTransform().catch(() => undefined);
 	};
 
 	return (

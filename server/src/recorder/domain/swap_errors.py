@@ -75,6 +75,24 @@ _MESSAGE_RULES: tuple[tuple[tuple[str, ...], SwapErrorCategory, str], ...] = (
         SwapErrorCategory.MODEL_CORRUPT,
         "The model file appears corrupted. Delete it from the cache and re-download.",
     ),
+    (
+        # urllib.error.URLError (and our ``RuntimeError("Failed to
+        # download …")`` wrapper around it on the TTS pack/model path)
+        # — these are the offline tells the type name can't reveal.
+        (
+            "failed to download",
+            "urlopen error",
+            "getaddrinfo failed",
+            "name or service not known",
+            "temporary failure in name resolution",
+            "no address associated with hostname",
+            "[errno 11001]",
+            "network is unreachable",
+            "connection refused",
+        ),
+        SwapErrorCategory.NETWORK,
+        _NETWORK_MESSAGE,
+    ),
 )
 
 # Exact exception-class-name matchers. Maps a frozenset of class names to the
@@ -91,6 +109,8 @@ _TYPE_NAME_RULES: tuple[tuple[frozenset[str], SwapErrorCategory, str], ...] = (
                 "MaxRetryError",
                 "SSLError",
                 "HfHubHTTPError",
+                "URLError",
+                "HTTPError",
             }
         ),
         SwapErrorCategory.NETWORK,

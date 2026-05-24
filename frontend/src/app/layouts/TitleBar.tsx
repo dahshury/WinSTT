@@ -1,9 +1,6 @@
-"use client";
-
 import { Separator } from "@base-ui/react/separator";
 import { Cancel01Icon, MinusSignIcon, Settings05Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { windowClose, windowMinimize, windowOpenSettings } from "@/shared/api/ipc-client";
 import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
@@ -23,7 +20,7 @@ export function TitleBar() {
 			>
 				{/* Left: Branding */}
 				<div className="flex items-center pl-3">
-					<Image
+					<img
 						alt=""
 						className="mr-1.5 size-4"
 						draggable={false}

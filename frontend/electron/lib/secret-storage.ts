@@ -19,7 +19,11 @@ import { safeStorage } from "electron";
 const ENC_PREFIX = "enc:v1:";
 
 /** Dot-paths whose stored value should be encrypted at rest. */
-export const SECRET_DOT_PATHS: readonly string[] = ["llm.openrouterApiKey"];
+export const SECRET_DOT_PATHS: readonly string[] = [
+	"llm.openrouterApiKey",
+	"integrations.openai.apiKey",
+	"integrations.elevenlabs.apiKey",
+];
 
 /** Returns true if the dot-path identifies a secret-at-rest field. */
 export function isSecretDotPath(dotPath: string): boolean {

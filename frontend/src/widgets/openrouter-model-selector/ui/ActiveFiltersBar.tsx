@@ -1,5 +1,3 @@
-"use client";
-
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
 import { cn } from "@/shared/lib/cn";
 import { formatMaker } from "../lib/model-selector-utils";

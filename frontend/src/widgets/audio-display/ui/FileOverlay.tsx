@@ -1,5 +1,3 @@
-"use client";
-
 import { Progress } from "@base-ui/react/progress";
 import { memo } from "react";
 import { useShallow } from "zustand/react/shallow";

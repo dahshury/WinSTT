@@ -221,59 +221,12 @@ describe("tray-menu-window module", () => {
 	});
 });
 
-describe("tray-menu-window renderer url helpers", () => {
-	test("getRendererBaseUrl returns default when env var is not set", () => {
-		const old = process.env.WINSTT_RENDERER_BASE_URL;
-		delete process.env.WINSTT_RENDERER_BASE_URL;
-		try {
-			expect(helpers.getRendererBaseUrl()).toBe("http://localhost:3000");
-		} finally {
-			if (old !== undefined) {
-				process.env.WINSTT_RENDERER_BASE_URL = old;
-			}
-		}
-	});
-
-	test("getRendererBaseUrl returns env var when set", () => {
-		process.env.WINSTT_RENDERER_BASE_URL = "http://localhost:4000";
-		try {
-			expect(helpers.getRendererBaseUrl()).toBe("http://localhost:4000");
-		} finally {
-			delete process.env.WINSTT_RENDERER_BASE_URL;
-		}
-	});
-
-	test("getRendererRouteUrl prepends slash when missing", () => {
-		delete process.env.WINSTT_RENDERER_BASE_URL;
-		const url = helpers.getRendererRouteUrl("tray-menu");
-		expect(url).toContain("/tray-menu");
-	});
-
-	test("getRendererRouteUrl preserves leading slash", () => {
-		delete process.env.WINSTT_RENDERER_BASE_URL;
-		const url = helpers.getRendererRouteUrl("/tray-menu");
-		expect(url).toContain("/tray-menu");
-	});
-
-	test("getRendererRouteUrl returns the EXACT origin+path (kills empty-string and endsWith mutants on the route detection)", () => {
-		delete process.env.WINSTT_RENDERER_BASE_URL;
-		// Mutating `route.startsWith("/")` to `route.endsWith("/")` would make
-		// the check pass for `tray-menu/` but fail for `/tray-menu` (which would
-		// then get re-prefixed to `//tray-menu`). Mutating to "" would always
-		// match (input would never be re-prefixed even when missing leading /).
-		expect(helpers.getRendererRouteUrl("/tray-menu")).toBe("http://localhost:3000/tray-menu");
-		expect(helpers.getRendererRouteUrl("tray-menu")).toBe("http://localhost:3000/tray-menu");
-	});
-
-	test("getRendererRouteUrl with already-leading-slash does NOT double-up the slash", () => {
-		delete process.env.WINSTT_RENDERER_BASE_URL;
-		expect(helpers.getRendererRouteUrl("/abc")).not.toContain("//abc");
-	});
-});
+// Renderer-URL helpers live in electron/lib/renderer-url.ts
+// (`loadRendererPage`, `isAllowedRendererUrl`) and are covered by tests
+// alongside that module.
 
 describe("tray-menu-window event handlers", () => {
 	test("handleWillNavigate prevents navigation to external URLs", () => {
-		delete process.env.WINSTT_RENDERER_BASE_URL;
 		let prevented = false;
 		const event = {
 			preventDefault: () => {
@@ -285,7 +238,6 @@ describe("tray-menu-window event handlers", () => {
 	});
 
 	test("handleWillNavigate allows same-origin navigation", () => {
-		delete process.env.WINSTT_RENDERER_BASE_URL;
 		let prevented = false;
 		const event = {
 			preventDefault: () => {

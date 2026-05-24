@@ -1,5 +1,3 @@
-"use client";
-
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { useConnectionStore } from "@/entities/connection";
@@ -9,6 +7,7 @@ import { useConnectionListener } from "@/features/connect-server";
 import { useFileTranscriptionListener } from "@/features/file-transcription";
 import { useListenMode } from "@/features/listen-mode";
 import { useTranscriptionFeed } from "@/features/live-transcription";
+import { useLlmProcessingFeed } from "@/features/llm-processing";
 import { useDownloadListener } from "@/features/model-download";
 import { usePushToTalk } from "@/features/push-to-talk";
 import { useSyncActiveModel } from "@/features/sync-active-model";
@@ -23,6 +22,10 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 	// Initialize all IPC subscriptions
 	useConnectionListener();
 	useTranscriptionFeed();
+	// Populates this renderer's LLM-processing store from the broadcast
+	// LLM_PROCESSING_START/END + LLM_REASONING_DELTA events so the main
+	// window can mirror the pill's thinking indicator.
+	useLlmProcessingFeed();
 	useVisualizerSync();
 	usePushToTalk();
 	useSyncSettings();

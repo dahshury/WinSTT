@@ -1,5 +1,3 @@
-"use client";
-
 import { useTtsPlayback } from "../model/use-tts-playback";
 
 /**

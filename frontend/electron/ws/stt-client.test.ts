@@ -1,8 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
 
-// ── Mock `ws` BEFORE importing the SUT ───────────────────────────────
-// stt-client.ts does `import WebSocket from "ws"` and uses both
-// `new WebSocket(url)` and the `WebSocket.OPEN` static constant.
+// ── Override the global `WebSocket` BEFORE importing the SUT ─────────
+// stt-client.ts uses the native global `WebSocket` (Node 22+ / Electron 42)
+// and reads the `WebSocket.OPEN` static constant. Replacing the global
+// gives the SUT a deterministic test double for both `new WebSocket(url)`
+// and `WebSocket.OPEN` checks.
 
 interface MockMessageEvent {
 	data: string;
@@ -63,10 +65,10 @@ class MockWebSocket {
 	}
 }
 
-mock.module("ws", () => ({
-	default: MockWebSocket,
-	WebSocket: MockWebSocket,
-}));
+// Override the global the SUT reads at runtime. Bun's `globalThis.WebSocket`
+// is its own implementation by default; the SUT calls `new WebSocket(url)`
+// and `WebSocket.OPEN` so both shape-points need our test double.
+(globalThis as { WebSocket: unknown }).WebSocket = MockWebSocket;
 
 mock.module("../lib/debug-log", () => ({
 	dbg: () => undefined,

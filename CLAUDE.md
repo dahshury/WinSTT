@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> 🛑 **NEVER run `git stash` in any form** — not `git stash`, not `git stash --keep-index`, not `git stash push`, not `git stash save`. The repo's working tree is huge and stash conflicts have repeatedly held in-progress refactors hostage. Two separate incidents on record (see `memory/feedback_no_git_stash.md`). Defenses in place: (a) `.husky/reference-transaction` blocks CREATE/UPDATE of `refs/stash`; (b) `.claude/settings.local.json` denies `git stash*` Bash commands; (c) the harness denylist blocks `git stash pop` / `git stash apply`. If you need a side copy, use `cp <file> <file>.bak`. If you need to compare against HEAD, use `git show HEAD:<path>`. If you genuinely need an isolated checkout, use `git worktree add ../winstt-scratch`.
+
 ## Project Overview
 
 WinSTT is a Windows speech-to-text desktop application with a Python backend (WebSocket STT server) and an Electron frontend. The two communicate over dual WebSocket channels (control JSON + binary audio data).

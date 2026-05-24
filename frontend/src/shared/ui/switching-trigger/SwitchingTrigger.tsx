@@ -1,5 +1,3 @@
-"use client";
-
 import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
@@ -17,7 +15,7 @@ import { Spinner } from "@/shared/ui/spinner";
  */
 
 interface SwitchingFromToRowProps {
-	ariaLabel?: string;
+	ariaLabel?: string | undefined;
 	/** Left side — the model being left. Rendered dim + struck-through by the
 	 *  caller's chip style. Omit when the swap was server-initiated and no
 	 *  prior model is known; the row collapses to `◌ → to`. */

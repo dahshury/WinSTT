@@ -1,5 +1,3 @@
-"use client";
-
 import type React from "react";
 import { memo, useRef } from "react";
 import { useSettingsStore } from "@/entities/setting";
@@ -61,9 +59,9 @@ export const AudioVisualizer = memo(function AudioVisualizer({
 });
 
 interface AutoSizedVisualizerProps {
-	barCount?: number;
-	className?: string;
-	color?: `#${string}`;
+	barCount?: number | undefined;
+	className?: string | undefined;
+	color?: `#${string}` | undefined;
 	type: VisualizerType;
 }
 
@@ -85,16 +83,16 @@ function AutoSizedVisualizer({ type, className, color, barCount }: AutoSizedVisu
 }
 
 interface VisualizerVariantProps {
-	barCount?: number;
-	className?: string;
-	color?: `#${string}`;
+	barCount?: number | undefined;
+	className?: string | undefined;
+	color?: `#${string}` | undefined;
 	size: VisualizerSize;
 	type: VisualizerType;
 }
 
 interface CommonVisualizerProps {
-	className?: string;
-	color?: `#${string}`;
+	className?: string | undefined;
+	color?: `#${string}` | undefined;
 	size: VisualizerSize;
 }
 type VisualizerComponent = React.ComponentType<CommonVisualizerProps>;

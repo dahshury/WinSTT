@@ -105,7 +105,9 @@ class TestLoopbackCapture:
 
         lc.stop(stub)  # type: ignore[arg-type]
         assert not lc.is_active
-        assert stub._mic_on is True  # restored
+        # Listen mode leaves the mic PAUSED so PTT/Toggle reach idle with
+        # the OS mic stream closed (they re-open it on the next hotkey).
+        assert stub._mic_on is False
         assert stub._external is False  # restored
 
     def test_rapid_start_stop_cycles(self) -> None:
@@ -128,7 +130,7 @@ class TestLoopbackCapture:
 
         # Final state is clean
         assert not lc.is_active
-        assert stub._mic_on is True
+        assert stub._mic_on is False
         assert stub._external is False
 
     def test_concurrent_start_stop_threads(self) -> None:
@@ -216,5 +218,5 @@ class TestLoopbackCapture:
         # Stop — should restore to original 0.42
         lc.stop(stub)  # type: ignore[arg-type]
         assert stub.post_speech_silence_duration == 0.42
-        assert stub._mic_on is True
+        assert stub._mic_on is False
         assert stub._external is False

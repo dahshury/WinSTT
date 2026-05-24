@@ -49,6 +49,25 @@ class TestClassifyNetwork:
         info = classify_swap_error(_make("SSLError", "certificate verify failed"))
         assert info.category == SwapErrorCategory.NETWORK
 
+    def test_urlerror_type_maps_to_network(self) -> None:
+        # The TTS pack/model downloader raises urllib.error.URLError when
+        # offline; classify by type name like the hf_hub failures.
+        info = classify_swap_error(_make("URLError", "<urlopen error [Errno 11001] getaddrinfo failed>"))
+        assert info.category == SwapErrorCategory.NETWORK
+        assert "internet" in info.user_message.lower()
+
+    def test_wrapped_download_runtimeerror_maps_to_network(self) -> None:
+        # support_pack/asset_downloader wrap URLError as
+        # RuntimeError("Failed to download <url>: <urlopen error ...>") —
+        # the type name is RuntimeError, so the offline tell must be
+        # matched from the message for the TTS install to report a clear
+        # "no internet" instead of a raw trace.
+        info = classify_swap_error(
+            _make("RuntimeError", "Failed to download https://example/pack.zip: <urlopen error getaddrinfo failed>")
+        )
+        assert info.category == SwapErrorCategory.NETWORK
+        assert "internet" in info.user_message.lower()
+
     def test_local_entry_not_found_offline_message(self) -> None:
         info = classify_swap_error(_make("LocalEntryNotFoundError", "cache miss"))
         assert info.category == SwapErrorCategory.NETWORK

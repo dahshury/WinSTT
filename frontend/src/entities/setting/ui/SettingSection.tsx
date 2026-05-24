@@ -1,5 +1,3 @@
-"use client";
-
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
@@ -14,7 +12,7 @@ import {
 import { Toggle } from "@/shared/ui/toggle";
 
 export interface SettingSectionProps {
-	children: ReactNode;
+	children?: ReactNode;
 	/**
 	 * Optional one-line description rendered in the *footer* of the card —
 	 * the brighter strip at the bottom — providing the contrast band the
@@ -24,6 +22,8 @@ export interface SettingSectionProps {
 	description?: string;
 	/** Custom footer content (e.g. status, hint, action). Overrides `description`. */
 	footer?: ReactNode;
+	/** Action rendered on the trailing edge of the header (e.g. a button). Renders alongside the toggle when both are provided. */
+	headerAction?: ReactNode;
 	/** Optional leading icon shown before the title. */
 	icon?: IconSvgElement;
 	onToggle?: (checked: boolean) => void;
@@ -50,6 +50,7 @@ export function SettingSection({
 	description,
 	footer,
 	children,
+	headerAction,
 	icon,
 	toggled,
 	onToggle,
@@ -58,6 +59,7 @@ export function SettingSection({
 	const hasToggle = onToggle !== undefined;
 	const isDisabled = hasToggle && !toggled;
 	const renderedFooter = footer ?? (description ? <span>{description}</span> : null);
+	const hasBody = children !== undefined && children !== null && children !== false;
 
 	return (
 		<TextureCard offset={1}>
@@ -71,6 +73,7 @@ export function SettingSection({
 					</span>
 				)}
 				<h3 className="min-w-0 flex-1 font-semibold text-foreground text-title">{title}</h3>
+				{headerAction ? <div className="shrink-0">{headerAction}</div> : null}
 				{hasToggle && (
 					<div className="shrink-0">
 						<Toggle
@@ -82,15 +85,19 @@ export function SettingSection({
 					</div>
 				)}
 			</TextureCardHeader>
-			<TextureSeparator />
-			<TextureCardBody
-				className={cn(
-					"transition-opacity duration-200 ease-out",
-					isDisabled && "pointer-events-none opacity-40"
-				)}
-			>
-				{children}
-			</TextureCardBody>
+			{hasBody ? (
+				<>
+					<TextureSeparator />
+					<TextureCardBody
+						className={cn(
+							"transition-opacity duration-200 ease-out",
+							isDisabled && "pointer-events-none opacity-40"
+						)}
+					>
+						{children}
+					</TextureCardBody>
+				</>
+			) : null}
 			{renderedFooter ? (
 				<>
 					<TextureSeparator />

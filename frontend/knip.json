@@ -1,19 +1,12 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
-    "app/**/*.{ts,tsx}",
-    "src/**/*.{ts,tsx}",
-    "electron/**/*.ts",
-    "test/**/*.{ts,tsx}",
+    "*.html",
+    "src/entries/*.tsx",
     "**/*.test.{ts,tsx}",
     "stryker.conf.json"
   ],
-  "project": [
-    "app/**/*.{ts,tsx}",
-    "src/**/*.{ts,tsx}",
-    "electron/**/*.ts",
-    "test/**/*.{ts,tsx}"
-  ],
+  "project": ["src/**/*.{ts,tsx}", "electron/**/*.ts", "test/**/*.{ts,tsx}"],
   "ignoreDependencies": [
     "tailwindcss",
     "@stryker-mutator/core",

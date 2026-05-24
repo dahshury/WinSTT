@@ -1,5 +1,3 @@
-"use client";
-
 import { Cancel01Icon, CloudDownloadIcon, PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";

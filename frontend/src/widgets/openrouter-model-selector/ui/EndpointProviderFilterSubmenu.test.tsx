@@ -1,10 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Combobox } from "@base-ui/react/combobox";
 import { render } from "@testing-library/react";
-import {
-	EndpointProviderFilterSubmenu,
-	__endpoint_provider_filter_submenu_test_helpers__ as helpers,
-} from "./EndpointProviderFilterSubmenu";
+import { __endpoint_provider_filter_submenu_test_helpers__ as helpers } from "../lib/endpoint-provider-filter-submenu-test-helpers";
+import { EndpointProviderFilterSubmenu } from "./EndpointProviderFilterSubmenu";
 
 describe("EndpointProviderFilterSubmenu", () => {
 	test("module exports the component (full render requires a parent Menu popup)", () => {

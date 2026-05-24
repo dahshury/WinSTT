@@ -1,5 +1,3 @@
-"use client";
-
 import { create } from "zustand";
 import { fetchOllamaLibraryCatalog, fetchOllamaLibraryTags } from "@/shared/api/ipc-client";
 import type {

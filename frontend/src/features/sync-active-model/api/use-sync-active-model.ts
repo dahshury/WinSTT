@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect } from "react";
 import { useConnectionStore } from "@/entities/connection";
 import { useModelSwapStore } from "@/entities/model-catalog";

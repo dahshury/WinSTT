@@ -43,9 +43,15 @@ describe("isSecretDotPath", () => {
 		expect(isSecretDotPath("llm.openrouterApiKey")).toBe(true);
 	});
 
+	test("identifies cloud STT integration key paths", () => {
+		expect(isSecretDotPath("integrations.openai.apiKey")).toBe(true);
+		expect(isSecretDotPath("integrations.elevenlabs.apiKey")).toBe(true);
+	});
+
 	test("returns false for non-secret paths", () => {
 		expect(isSecretDotPath("llm.endpoint")).toBe(false);
 		expect(isSecretDotPath("general.recordingMode")).toBe(false);
+		expect(isSecretDotPath("integrations.openai.verified")).toBe(false);
 	});
 });
 

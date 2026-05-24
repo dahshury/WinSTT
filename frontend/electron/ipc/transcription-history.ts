@@ -3,6 +3,12 @@ import { isRecord } from "../lib/ipc-helpers";
 export interface TranscriptionHistoryEntry {
 	durationMs: number;
 	id: string;
+	/**
+	 * Provider/model used for LLM post-processing (e.g. an Ollama model name
+	 * like `qwen2.5:7b`). Omitted when no LLM ran (dictation cleanup disabled
+	 * or no model configured for the active provider).
+	 */
+	llmModel?: string;
 	/** Pre-LLM text (post-processing applied). Omitted when no LLM ran. */
 	originalText?: string;
 	/** Final text (after LLM correction if configured). */
@@ -29,7 +35,8 @@ export interface TranscriptionHistoryStore {
 		text: string,
 		durationMs: number,
 		originalText?: string,
-		llmRan?: boolean
+		llmRan?: boolean,
+		llmModel?: string
 	): TranscriptionHistoryEntry | null;
 }
 
@@ -117,7 +124,7 @@ export function createTranscriptionHistoryStore(options: CreateOptions): Transcr
 	}
 
 	return {
-		record(text, durationMs, originalText, llmRan) {
+		record(text, durationMs, originalText, llmRan, llmModel) {
 			const trimmed = text.trim();
 			if (trimmed.length === 0) {
 				return null;
@@ -144,6 +151,14 @@ export function createTranscriptionHistoryStore(options: CreateOptions): Transcr
 				: false;
 			if (trimmedOriginal && shouldKeepOriginal) {
 				entry.originalText = trimmedOriginal;
+			}
+			// Record which model produced the post-processing. Tied to the
+			// `llmRan` signal (not text-equality) for the same reason as
+			// `originalText`: a no-op LLM run still used a model worth
+			// surfacing in the history.
+			const trimmedModel = llmModel?.trim();
+			if (llmRan === true && trimmedModel) {
+				entry.llmModel = trimmedModel;
 			}
 			entries.push(entry);
 			if (entries.length > maxEntries) {

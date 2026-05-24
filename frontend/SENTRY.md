@@ -42,10 +42,11 @@ this priority:
 
 Only the **main process** initialises Sentry (via `@sentry/electron/main`).
 The renderer SDK was dropped to shrink the renderer bundle — React errors are
-caught locally by `ErrorBoundary.tsx` and the Next.js error templates and
-written to `console.error`. If you need a renderer-originated error to reach
-Sentry, forward it over IPC and call `captureMainException` from the main
-process.
+caught locally by `ErrorBoundary.tsx` and written to `console.error` (which
+flows through the `webContents#console-message` listener in main.ts → debug.log
+→ main-process Sentry). If you need a renderer-originated error to reach
+Sentry directly, forward it over IPC and call `captureMainException` from the
+main process.
 
 ## User opt-out
 

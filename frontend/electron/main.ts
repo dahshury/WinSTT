@@ -1,6 +1,3 @@
-import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import net from "node:net";
 import path from "node:path";
 import {
 	app,
@@ -17,6 +14,7 @@ import {
 } from "electron";
 import log from "electron-log/main";
 import { IPC } from "../src/shared/api/ipc-channels";
+import { setupAboutHandlers } from "./ipc/about";
 import { registerAppMenuIpcHandlers } from "./ipc/app-menu-ipc";
 import type { AppMenuBuiltItem } from "./ipc/app-menu-template";
 import { flushMutePending, unmuteSystemAudio } from "./ipc/audio-mute";
@@ -26,6 +24,8 @@ import {
 	createContextMenuIpcHandler,
 	registerContextMenuIpcHandler,
 } from "./ipc/context-menu-handler";
+import { setupCredentials } from "./ipc/credentials";
+import { setupDevicePickerHandlers } from "./ipc/device-picker-window";
 import { setupDiagBundleHandler } from "./ipc/diag-bundle";
 import { setupDialogHandlers } from "./ipc/dialog";
 import { setupFileTranscribeHandlers } from "./ipc/file-transcribe";
@@ -40,7 +40,15 @@ import { setupLlm, setupLlmWarmup } from "./ipc/llm";
 import { setupLoopbackHandlers } from "./ipc/loopback";
 import { setupModelPickerHandlers } from "./ipc/model-picker-window";
 import { setupOllamaRegistry } from "./ipc/ollama-registry";
-import { hideOverlay, setOverlayWindow, setupOverlayHandlers, showOverlay } from "./ipc/overlay";
+import { createOnboardingWindow, setupOnboardingHandlers } from "./ipc/onboarding-window";
+import {
+	hideOverlay,
+	setMainWindow,
+	setOverlayWindow,
+	setupOverlayHandlers,
+	showOverlay,
+	syncOverlayToMainWindow,
+} from "./ipc/overlay";
 import { setupRelay } from "./ipc/relay";
 import { setupRepasteHotkey } from "./ipc/repaste-hotkey";
 import {
@@ -48,6 +56,7 @@ import {
 	cleanupSettingsHandlers,
 	setupSettingsHandlers,
 } from "./ipc/settings";
+import { setupCloudStt } from "./ipc/stt-cloud";
 import { handleAbortOperation, setupSttCommandHandlers } from "./ipc/stt-commands";
 import { killSttProcess, setupSttProcessHandlers, tryAutoSpawnServer } from "./ipc/stt-process";
 import { setupSystemLocaleHandler } from "./ipc/system-locale";
@@ -66,6 +75,7 @@ import { registerWindowTelemetry } from "./ipc/window-telemetry";
 import { dbg } from "./lib/debug-log";
 import { shutdownPsHost } from "./lib/ps-host";
 import { cleanupRecordingIndicator, initRecordingIndicator } from "./lib/recording-indicator";
+import { isAllowedRendererUrl, loadRendererPage } from "./lib/renderer-url";
 import { captureMainException, initSentryMain } from "./lib/sentry-main";
 import { cleanupSound, initSound } from "./lib/sound";
 import { initSoundLibrary } from "./lib/sound-library";
@@ -83,6 +93,7 @@ Object.assign(console, log.scope("console"));
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
+let settingsFadeTimer: ReturnType<typeof setInterval> | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let cleanupRelay: (() => void) | null = null;
@@ -90,6 +101,8 @@ let cleanupRepasteHotkey: (() => void) | null = null;
 let cleanupHotkeys: (() => void) | null = null;
 let cleanupFileTranscribe: (() => void) | null = null;
 let cleanupLlm: (() => void) | null = null;
+let cleanupCredentials: (() => void) | null = null;
+let cleanupCloudStt: (() => void) | null = null;
 let cleanupLlmWarmup: (() => void) | null = null;
 let cleanupOllamaRegistry: (() => void) | null = null;
 let cleanupTransforms: (() => void) | null = null;
@@ -98,6 +111,8 @@ let cleanupTts: (() => void) | null = null;
 let cleanupTtsHotkey: (() => void) | null = null;
 let cleanupTrayMenu: (() => void) | null = null;
 let cleanupModelPicker: (() => void) | null = null;
+let cleanupDevicePicker: (() => void) | null = null;
+let cleanupOnboarding: (() => void) | null = null;
 let cleanupAppMenu: (() => void) | null = null;
 let cleanupContextMenu: (() => void) | null = null;
 let cleanupWindowTelemetry: (() => void) | null = null;
@@ -108,11 +123,9 @@ let cleanupWindowControls: (() => void) | null = null;
 let cleanupOverlay: (() => void) | null = null;
 let cleanupSystemLocale: (() => void) | null = null;
 let cleanupDiagBundle: (() => void) | null = null;
+let cleanupAbout: (() => void) | null = null;
 let cleanupSoundLibrary: (() => void) | null = null;
 let autoUpdateCheckTimer: ReturnType<typeof setInterval> | null = null;
-let rendererServerProcess: ChildProcess | null = null;
-let rendererBaseUrl = process.env.WINSTT_RENDERER_BASE_URL ?? "http://localhost:3000";
-const TRAILING_SLASHES_REGEX = /\/+$/;
 const secureIpcKey = generateIpcPayloadKey();
 const updaterStatusHistory = createUpdaterStatusHistory({ maxEntries: 200 });
 const sttClient = new SttClient();
@@ -128,6 +141,28 @@ const sharedWebPreferences: Electron.WebPreferences = {
 
 /** Set to true during app.quit() so the main window close handler allows actual destruction. */
 let isQuitting = false;
+
+// Tracks whether the stt-server has signalled `server-ready` since process
+// start. Needed because we kick the WS connect off in parallel with the
+// renderer (Vite dev server / loadFile) boot — the event can fire BEFORE
+// the main window's `ready-to-show` handler runs, in which case a fresh
+// `once("server-ready")` listener registered there would never see it.
+// Set once and stay true until process exit; a server restart raises a
+// fresh ready event but the initial-show gate only cares about the first.
+let serverReadyFiredOnce = false;
+sttClient.on("server-ready", () => {
+	serverReadyFiredOnce = true;
+});
+// Last `runtime_info` payload from the server. Tracked at the module level so
+// it survives the gap between the SttClient firing the event and the relay
+// (set up inside createWindow) registering its own listener. Without this,
+// the first-run onboarding wizard delay would let the event fire into the
+// void, leaving the GPU/CPU chip stuck on "Connecting" once the main window
+// finally mounts and queries STT_GET_RUNTIME_INFO.
+let lastRuntimeInfo: unknown = null;
+sttClient.on("runtime-info", (info: unknown) => {
+	lastRuntimeInfo = info;
+});
 let hasFlushedAudioOnQuit = false;
 let cspHookInstalled = false;
 let disposeGeneralSettingsWatcher: (() => void) | null = null;
@@ -238,148 +273,12 @@ function getWindowIconPath(): string | undefined {
 	return;
 }
 
-function setRendererBaseUrl(baseUrl: string): void {
-	rendererBaseUrl = baseUrl.replace(TRAILING_SLASHES_REGEX, "");
-	process.env.WINSTT_RENDERER_BASE_URL = rendererBaseUrl;
-}
-
-function getRendererBaseUrl(): string {
-	return rendererBaseUrl;
-}
-
-function getRendererRouteUrl(route: string): string {
-	const normalizedRoute = route.startsWith("/") ? route : `/${route}`;
-	return new URL(normalizedRoute, `${getRendererBaseUrl()}/`).toString();
-}
-
-function isRendererOrigin(url: string): boolean {
-	try {
-		return new URL(url).origin === new URL(getRendererBaseUrl()).origin;
-	} catch {
-		return false;
-	}
-}
-
-function getStandaloneServerEntryPath(): string {
-	const appRoot = app.isPackaged
-		? path.join(process.resourcesPath, "app.asar.unpacked")
-		: path.join(import.meta.dirname, "..");
-	return path.join(appRoot, "out", "standalone", "server.js");
-}
-
-function getAvailablePort(): Promise<number> {
-	return new Promise((resolve, reject) => {
-		const server = net.createServer();
-		server.unref();
-		server.on("error", reject);
-		server.listen(0, "127.0.0.1", () => {
-			const address = server.address();
-			if (!address || typeof address === "string") {
-				server.close();
-				reject(new Error("Failed to allocate a local TCP port"));
-				return;
-			}
-			server.close((closeError) => {
-				if (closeError) {
-					reject(closeError);
-					return;
-				}
-				resolve(address.port);
-			});
-		});
-	});
-}
-
-async function waitForRendererServer(baseUrl: string, timeoutMs = 15_000): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	let lastError: unknown;
-
-	while (Date.now() < deadline) {
-		try {
-			// react-doctor-disable-next-line async-await-in-loop
-			const response = await fetch(`${baseUrl}/settings`);
-			if (response.ok) {
-				return;
-			}
-			lastError = new Error(`status=${response.status}`);
-		} catch (error) {
-			lastError = error;
-		}
-		await new Promise<void>((resolve) => setTimeout(resolve, 200));
-	}
-
-	throw new Error(
-		`Timed out waiting for bundled renderer server at ${baseUrl} (${toErrorMessage(lastError)})`
-	);
-}
-
-async function startBundledRendererServer(): Promise<string> {
-	const serverEntryPath = getStandaloneServerEntryPath();
-	if (!existsSync(serverEntryPath)) {
-		throw new Error(`Bundled renderer server not found: ${serverEntryPath}`);
-	}
-
-	const host = "127.0.0.1";
-	const port = await getAvailablePort();
-	const baseUrl = `http://${host}:${port}`;
-
-	const child = spawn(process.execPath, [serverEntryPath], {
-		cwd: path.dirname(serverEntryPath),
-		env: {
-			...process.env,
-			ELECTRON_RUN_AS_NODE: "1",
-			HOSTNAME: host,
-			NODE_ENV: "production",
-			PORT: String(port),
-		},
-		stdio: ["ignore", "pipe", "pipe"],
-		windowsHide: true,
-	});
-
-	rendererServerProcess = child;
-	child.stdout?.setEncoding("utf8");
-	child.stderr?.setEncoding("utf8");
-	child.stdout?.on("data", (chunk: string) => {
-		const message = chunk.trim();
-		if (message) {
-			dbg("renderer-server", message);
-		}
-	});
-	child.stderr?.on("data", (chunk: string) => {
-		const message = chunk.trim();
-		if (message) {
-			dbg("renderer-server", message);
-		}
-	});
-	child.once("exit", (code, signal) => {
-		dbg("renderer-server", `Exited (code=${String(code)}, signal=${String(signal)})`);
-		if (rendererServerProcess === child) {
-			rendererServerProcess = null;
-		}
-	});
-
-	try {
-		await waitForRendererServer(baseUrl);
-		return baseUrl;
-	} catch (error) {
-		child.kill();
-		if (rendererServerProcess === child) {
-			rendererServerProcess = null;
-		}
-		throw error;
-	}
-}
+// Renderer is a Vite-built static SPA loaded directly via file:// in
+// production and via http://localhost:3000 in dev. See
+// electron/lib/renderer-url.ts for the loadRendererPage helper.
 
 function isAllowedNavigation(url: string): boolean {
-	try {
-		const parsed = new URL(url);
-		if (isRendererOrigin(url)) {
-			return true;
-		}
-		return parsed.protocol === "file:";
-	} catch {
-		return false;
-	}
+	return isAllowedRendererUrl(url);
 }
 
 function protectWindowNavigation(win: BrowserWindow): void {
@@ -405,14 +304,27 @@ function installCspHook(): void {
 		return;
 	}
 	session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-		// `sentry-ipc:` is the custom protocol that @sentry/electron's renderer SDK
-		// uses to talk to the main-process SDK (scope sync, event forwarding). The
-		// scheme is registered as a privileged protocol handler in main; it never
-		// touches the network. Must be in connect-src for both dev and prod, even
-		// when SENTRY_DSN is unset, because the renderer init runs unconditionally.
+		// `sentry-ipc:` is the custom protocol that @sentry/electron's renderer
+		// SDK uses to talk to the main-process SDK (scope sync, event forwarding).
+		// Stays in connect-src for both dev and prod, even when SENTRY_DSN is
+		// unset, because the renderer init runs unconditionally.
+		//
+		// Dev: Vite serves the renderer from http://localhost:3000 with an HMR
+		// WebSocket on ws://localhost:3000 — both must be reachable from the
+		// renderer (which loads from that same origin, so `'self'` covers
+		// fetches but the HMR socket needs an explicit ws://localhost:*).
+		// 'unsafe-eval' is for React-refresh's eval-driven HMR.
+		//
+		// Prod: the renderer loads from `file://` (no scheme is "self" for
+		// file: URLs; we treat file: assets as same-origin via the directive
+		// list below). Vite emits external `<script type="module" src="..."/>`,
+		// so we no longer need `'unsafe-inline'` for scripts — only for styles
+		// (Base UI / Tailwind insert inline style tags at runtime). No
+		// localhost / 127.0.0.1 endpoints to whitelist — there is no longer
+		// a bundled Node renderer-server in this process.
 		const csp = isDev
-			? "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc: ws://localhost:* http://localhost:* http://127.0.0.1:*; font-src 'self' http://localhost:* https://cdn.jsdelivr.net data:; img-src 'self' data:"
-			: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc:; font-src 'self'; img-src 'self' data:";
+			? "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc: ws://localhost:* http://localhost:*; font-src 'self' data:; img-src 'self' data:"
+			: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc:; font-src 'self' data:; img-src 'self' data:";
 		callback({
 			responseHeaders: {
 				...details.responseHeaders,
@@ -440,14 +352,23 @@ async function initAutoUpdater(): Promise<void> {
 	}
 
 	try {
+		// electron-updater is bundled into main.js via tsup (no node_modules at
+		// runtime). The bundled-ESM shape sometimes exposes named exports at
+		// `module.<name>` and sometimes at `module.default.<name>` depending on
+		// how esbuild wraps the original CJS module — accept both.
+		interface AutoUpdater {
+			autoDownload: boolean;
+			checkForUpdatesAndNotify: () => Promise<unknown>;
+			on: (event: string, listener: (...args: unknown[]) => void) => void;
+		}
 		const updaterModule = (await import("electron-updater")) as {
-			autoUpdater: {
-				autoDownload: boolean;
-				on: (event: string, listener: (...args: unknown[]) => void) => void;
-				checkForUpdatesAndNotify: () => Promise<unknown>;
-			};
+			autoUpdater?: AutoUpdater;
+			default?: { autoUpdater?: AutoUpdater };
 		};
-		const { autoUpdater } = updaterModule;
+		const autoUpdater = updaterModule.autoUpdater ?? updaterModule.default?.autoUpdater;
+		if (!autoUpdater) {
+			throw new Error("electron-updater: autoUpdater export not found on module");
+		}
 
 		const getUpdateVersion = (payload: unknown): string => {
 			if (typeof payload === "object" && payload !== null && "version" in payload) {
@@ -503,9 +424,7 @@ async function initAutoUpdater(): Promise<void> {
 // SDK's own uncaughtException handler is installed first; ours then captures
 // to Sentry too (Sentry dedupes by error identity, so the double-capture is safe).
 // The `general.sendCrashReports` setting is the user-facing opt-out — when
-// false, `initSentryMain` is a no-op and the renderer skips its own init too
-// (the flag is forwarded via the renderer URL query string, see
-// `getRendererRouteUrl`).
+// false, `initSentryMain` is a no-op and the renderer skips its own init too.
 const sendCrashReports = getStoreValue("general.sendCrashReports") ?? true;
 initSentryMain({ enabled: sendCrashReports });
 setupFatalErrorHandlers();
@@ -524,7 +443,7 @@ sttClient.on("error", (err: unknown) => {
 	dbg("stt-client", "Connection error:", msg);
 });
 
-// Suppress Electron's CSP security warning in dev (Next.js HMR requires unsafe-eval)
+// Suppress Electron's CSP security warning in dev (Vite HMR + React Fast Refresh require unsafe-eval)
 if (isDev) {
 	process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
 }
@@ -562,18 +481,75 @@ if (gotTheLock) {
 	});
 
 	// ── Register IPC handlers once at app level (not per window) ──────
+	// Startup-phase timing: each milestone logs a delta from process
+	// start so the debug.log makes it trivial to see where the launch
+	// budget is going. Useful when tuning the parallel-warmup ordering
+	// or chasing regressions in the bundled stt-server cold path.
+	const startupT0 = Date.now();
+	const phase = (name: string): void => {
+		dbg("startup", `[+${String(Date.now() - startupT0).padStart(5)} ms] ${name}`);
+	};
+	phase("app.whenReady gate entered");
 	app
 		.whenReady()
-		.then(async () => {
+		.then(() => {
 			// Encrypt any legacy plaintext secrets persisted before this version.
 			// Must run before any IPC handler that ships settings to the renderer.
 			migrateSecretsAtRest();
-			const baseUrl = isDev
-				? (process.env.WINSTT_RENDERER_BASE_URL ?? "http://localhost:3000")
-				: await startBundledRendererServer();
-			setRendererBaseUrl(baseUrl);
+			phase("secrets migrated");
+
+			// Kick off the stt-server child process AND the WS client
+			// connection BEFORE creating any window. The server takes
+			// ~5–8 s on a cold start to load Whisper/Silero ONNX sessions;
+			// the renderer (Vite file:// load) is ready in well under a
+			// second. Running these in parallel means by the time the
+			// window is asked to show, the WS handshake has typically
+			// already completed and `server_ready` fires right around the
+			// same moment as `ready-to-show` — the user never sees the
+			// offline chip during cold launch.
+			//
+			// Both calls are non-blocking and self-recovering: spawn errors
+			// surface via `(stt-spawn)` log + IPC status; connect failures
+			// retry via the 250 ms → 2 s exponential backoff in stt-client.
 			setupGlobalIpcHandlers();
-			createWindow();
+			phase("IPC handlers registered");
+			if (process.env.WINSTT_E2E_SKIP_STT !== "1") {
+				tryAutoSpawnServer();
+				phase("stt-server spawn dispatched");
+			}
+			dbg("stt-client", "Connecting to STT server (pre-window)...");
+			sttClient.connect().catch(() => {
+				dbg("stt-client", "Initial connect failed — will retry via reconnection");
+			});
+			sttClient.once("connected", () => phase("stt-client WS connected"));
+			sttClient.once("server-ready", () => phase("stt-server READY (recorder initialized)"));
+
+			// No more startBundledRendererServer() — Vite static files load
+			// directly via file:// in production, and from the running Vite
+			// dev server in dev (bun electron:start waits on tcp:3000 first,
+			// so by the time we get here the dev server is already listening).
+			//
+			// First-run gate: when `general.onboarded` is false, show the
+			// onboarding wizard before the main window. The main window only
+			// opens once the wizard finishes (either via the Finish button or
+			// the user closing/skipping). All the background services we just
+			// kicked off (stt-server, WS client, IPC handlers) keep running in
+			// the meantime — by the time the user lands in the main window,
+			// the server is already warm.
+			const isOnboarded = getStoreValue("general.onboarded") === true;
+			if (isOnboarded) {
+				createWindow();
+				phase("createWindow returned (window created hidden)");
+			} else {
+				cleanupOnboarding = setupOnboardingHandlers({
+					onFinish: () => {
+						phase("onboarding finished — creating main window");
+						createWindow();
+					},
+				});
+				createOnboardingWindow();
+				phase("onboarding window created");
+			}
 			initAutoUpdater().catch((error) => {
 				dbg("updater", "Auto-updater init task failed:", toErrorMessage(error));
 			});
@@ -625,8 +601,16 @@ if (gotTheLock) {
 		cleanupTrayMenu = null;
 		cleanupModelPicker?.();
 		cleanupModelPicker = null;
+		cleanupDevicePicker?.();
+		cleanupDevicePicker = null;
+		cleanupOnboarding?.();
+		cleanupOnboarding = null;
 		cleanupLlm?.();
 		cleanupLlm = null;
+		cleanupCredentials?.();
+		cleanupCredentials = null;
+		cleanupCloudStt?.();
+		cleanupCloudStt = null;
 		cleanupLlmWarmup?.();
 		cleanupLlmWarmup = null;
 		cleanupOllamaRegistry?.();
@@ -661,6 +645,8 @@ if (gotTheLock) {
 		cleanupSystemLocale = null;
 		cleanupDiagBundle?.();
 		cleanupDiagBundle = null;
+		cleanupAbout?.();
+		cleanupAbout = null;
 		cleanupSoundLibrary?.();
 		cleanupSoundLibrary = null;
 		disposeGeneralSettingsWatcher?.();
@@ -670,8 +656,6 @@ if (gotTheLock) {
 			clearInterval(autoUpdateCheckTimer);
 			autoUpdateCheckTimer = null;
 		}
-		rendererServerProcess?.kill();
-		rendererServerProcess = null;
 		killSttProcess();
 		sttClient.disconnect();
 		tray?.destroy();
@@ -681,6 +665,7 @@ if (gotTheLock) {
 			overlayWindow.destroy();
 		}
 		overlayWindow = null;
+		clearSettingsFadeTimer();
 		if (settingsWindow && !settingsWindow.isDestroyed()) {
 			settingsWindow.removeAllListeners();
 			settingsWindow.destroy();
@@ -703,7 +688,10 @@ function setupGlobalIpcHandlers() {
 	cleanupOverlay = setupOverlayHandlers();
 	cleanupTrayMenu = setupTrayMenuHandlers();
 	cleanupModelPicker = setupModelPickerHandlers();
+	cleanupDevicePicker = setupDevicePickerHandlers();
 	cleanupLlm = setupLlm();
+	cleanupCredentials = setupCredentials();
+	cleanupCloudStt = setupCloudStt(sttClient);
 	// Keep Ollama dictation/transforms models hot so the first dictation
 	// after launch doesn't pay the cold-start penalty (~30s for a 7B model).
 	cleanupLlmWarmup = setupLlmWarmup();
@@ -720,6 +708,7 @@ function setupGlobalIpcHandlers() {
 	cleanupSecureInvoke = setupSecureInvokeHandlers();
 	cleanupSystemLocale = setupSystemLocaleHandler();
 	cleanupDiagBundle = setupDiagBundleHandler();
+	cleanupAbout = setupAboutHandlers();
 	cleanupSoundLibrary = initSoundLibrary();
 }
 
@@ -759,12 +748,17 @@ function setupContextMenuHandlers(): () => void {
 		popup: ({ template, x, y, onClose }) => {
 			const menu = Menu.buildFromTemplate(template);
 			const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
-			menu.popup({
-				window: targetWindow,
-				x,
-				y,
-				callback: onClose,
-			});
+			const opts: Electron.PopupOptions = { callback: onClose };
+			if (targetWindow) {
+				opts.window = targetWindow;
+			}
+			if (x !== undefined) {
+				opts.x = x;
+			}
+			if (y !== undefined) {
+				opts.y = y;
+			}
+			menu.popup(opts);
 		},
 	});
 	return registerContextMenuIpcHandler(ipcMain, IPC.CONTEXT_MENU_SHOW, handler);
@@ -886,6 +880,11 @@ function applyListenModeWindow(win: BrowserWindow) {
 	const mode = getStoreValue("general.recordingMode");
 	const isListen = mode === "listen";
 	win.setResizable(isListen);
+	// Listen mode is a passive monitor the user reads while working in
+	// another app, so pin the main window above other windows. Cleared
+	// again when switching to any other mode (the main window is not
+	// otherwise always-on-top — only the recording overlay pill is).
+	win.setAlwaysOnTop(isListen);
 	if (!isListen) {
 		win.setSize(420, 150);
 	}
@@ -933,13 +932,112 @@ function keepWindowOnScreen(win: BrowserWindow, minVisible?: number): void {
 	}
 }
 
+// ── Settings window fade ───────────────────────────────────────────
+// The window is pre-created hidden and reused, so a bare `show()` pops it
+// in with no motion while the close (a real destroy request the OS dresses
+// up) reads as animated. Mirror the model-picker pair: ease-out fade-in on
+// open, ease-in fade-out before hide on close. Cubic so neither leg is the
+// flagged "linear motion". The main process has no rAF, so opacity is
+// tweened in ~16ms ticks.
+const SETTINGS_FADE_MS = 150;
+const SETTINGS_FADE_TICK_MS = 16;
+
+const settingsEaseOut = (t: number): number => 1 - (1 - t) ** 3;
+const settingsEaseIn = (t: number): number => t ** 3;
+
+function clearSettingsFadeTimer(): void {
+	if (settingsFadeTimer) {
+		clearInterval(settingsFadeTimer);
+	}
+	settingsFadeTimer = null;
+}
+
+/** Time-based opacity tween. Cancels any in-flight fade first so a reopen
+ *  mid-close (or vice-versa) picks up from the current opacity instead of
+ *  snapping. `onComplete` only fires if the tween runs to the end — a
+ *  superseding fade clears the timer and its callback never runs, so a
+ *  reopen mid-close cancels the pending hide. */
+function animateSettingsOpacity(
+	win: BrowserWindow,
+	to: number,
+	easing: (t: number) => number,
+	onComplete?: () => void
+): void {
+	clearSettingsFadeTimer();
+	const from = win.getOpacity();
+	if (from === to) {
+		win.setOpacity(to);
+		onComplete?.();
+		return;
+	}
+	const start = Date.now();
+	settingsFadeTimer = setInterval(() => {
+		if (win.isDestroyed()) {
+			clearSettingsFadeTimer();
+			return;
+		}
+		const p = Math.min(1, (Date.now() - start) / SETTINGS_FADE_MS);
+		win.setOpacity(from + (to - from) * easing(p));
+		if (p >= 1) {
+			win.setOpacity(to);
+			clearSettingsFadeTimer();
+			onComplete?.();
+		}
+	}, SETTINGS_FADE_TICK_MS);
+}
+
+// Blur-to-dismiss: a click anywhere outside settings (main window, desktop,
+// another app) closes the panel — modal-style. Two guards keep it usable:
+//  - `settingsSuppressBlurUntil` swallows the initial post-show blur race
+//    (the click that *opened* settings sometimes trails after the show).
+//  - The deferred re-check ignores blur when focus moved to one of our own
+//    popup windows (model-picker, device-picker, tray-menu, …); those are
+//    conceptually part of the settings UI and would otherwise dismiss it
+//    the moment they steal focus.
+const SETTINGS_BLUR_GUARD_MS = 200;
+const SETTINGS_BLUR_SETTLE_MS = 50;
+let settingsSuppressBlurUntil = 0;
+
+function dismissSettingsWindow(): void {
+	if (!settingsWindow || settingsWindow.isDestroyed() || !settingsWindow.isVisible()) {
+		return;
+	}
+	const win = settingsWindow;
+	animateSettingsOpacity(win, 0, settingsEaseIn, () => {
+		if (!win.isDestroyed()) {
+			win.hide();
+		}
+	});
+}
+
+function handleSettingsBlur(): void {
+	if (Date.now() < settingsSuppressBlurUntil) {
+		return;
+	}
+	// Focus transitions aren't synchronous on Windows — settle a tick before
+	// asking who owns focus now.
+	setTimeout(() => {
+		if (!settingsWindow || settingsWindow.isDestroyed() || !settingsWindow.isVisible()) {
+			return;
+		}
+		const focused = BrowserWindow.getFocusedWindow();
+		// Focus left our app entirely (null) OR landed on the main window —
+		// both mean "user clicked outside settings", so dismiss.
+		// Anything else (model-picker, device-picker, tray-menu, …) is a
+		// settings-adjacent popup; keep settings open under it.
+		if (focused && focused !== mainWindow && focused !== settingsWindow) {
+			return;
+		}
+		dismissSettingsWindow();
+	}, SETTINGS_BLUR_SETTLE_MS);
+}
+
 // ── Settings window (pre-created hidden for instant open) ───────────
 function createSettingsWindow(): BrowserWindow {
 	const iconPath = getWindowIconPath();
 	settingsWindow = new BrowserWindow({
 		title: "WinSTT Settings",
 		...(iconPath ? { icon: iconPath } : {}),
-		...(mainWindow ? { parent: mainWindow, modal: true } : {}),
 		width: 700,
 		height: 560,
 		resizable: false,
@@ -950,7 +1048,7 @@ function createSettingsWindow(): BrowserWindow {
 	});
 	protectWindowNavigation(settingsWindow);
 
-	const loadSettingsPromise = settingsWindow.loadURL(getRendererRouteUrl("/settings"));
+	const loadSettingsPromise = loadRendererPage(settingsWindow, "settings");
 	loadSettingsPromise.catch((error) => {
 		dbg("window", "Failed to load settings window:", toErrorMessage(error));
 		if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -963,9 +1061,14 @@ function createSettingsWindow(): BrowserWindow {
 	settingsWindow.on("close", (event) => {
 		if (!isQuitting && settingsWindow) {
 			event.preventDefault();
-			settingsWindow.hide();
+			dismissSettingsWindow();
 		}
 	});
+
+	// Modal-style dismissal: clicking anywhere outside (main window, desktop,
+	// another app) blurs settings → hide. See `handleSettingsBlur` for the
+	// popup-window exemption.
+	settingsWindow.on("blur", handleSettingsBlur);
 
 	// If a drag left the draggable header off-screen, snap it back so the
 	// titlebar (and its close/minimize buttons) stay reachable.
@@ -989,19 +1092,39 @@ function openSettingsWindow() {
 				Math.round(mainBounds.y + (mainBounds.height - settingsBounds.height) / 2)
 			);
 		}
+		// Start from transparent only when actually hidden — if it's still
+		// visible (e.g. reopened mid close-fade) fade up from where it is so
+		// there's no 0-opacity flash.
+		if (!settingsWindow.isVisible()) {
+			settingsWindow.setOpacity(0);
+		}
+		// Swallow any blur that fires during/right after show — the click
+		// that opened settings can trail past show() and otherwise dismiss
+		// the panel before the user sees it.
+		settingsSuppressBlurUntil = Date.now() + SETTINGS_BLUR_GUARD_MS;
 		settingsWindow.show();
 		settingsWindow.focus();
+		animateSettingsOpacity(settingsWindow, 1, settingsEaseOut);
 		return;
 	}
 	// Fallback: recreate if somehow destroyed
 	const newSettingsWindow = createSettingsWindow();
+	newSettingsWindow.setOpacity(0);
+	settingsSuppressBlurUntil = Date.now() + SETTINGS_BLUR_GUARD_MS;
 	newSettingsWindow.show();
+	animateSettingsOpacity(newSettingsWindow, 1, settingsEaseOut);
 }
 
 // ── Overlay window (pre-created hidden for instant show during recording) ───
 function createOverlayWindow() {
 	overlayWindow = new BrowserWindow({
-		width: 520,
+		// 720×240: wide enough that the dynamic-island mode's `long` preset
+		// (460px wide) still fits at the user's largest visualizerSize
+		// (xl → 1.5× zoom → 690px). Floating-bottom mode is unaffected
+		// — its content centers horizontally regardless of window width
+		// and the window is click-through, so the extra transparent margin
+		// is invisible.
+		width: 720,
 		height: 240,
 		transparent: true,
 		frame: false,
@@ -1024,7 +1147,7 @@ function createOverlayWindow() {
 	});
 	protectWindowNavigation(overlayWindow);
 
-	const loadOverlayPromise = overlayWindow.loadURL(getRendererRouteUrl("/overlay"));
+	const loadOverlayPromise = loadRendererPage(overlayWindow, "overlay");
 	loadOverlayPromise.catch((error) => {
 		dbg("window", "Failed to load overlay window:", toErrorMessage(error));
 		if (overlayWindow && !overlayWindow.isDestroyed()) {
@@ -1066,16 +1189,26 @@ function createWindow() {
 	});
 	protectWindowNavigation(mainWindow);
 
+	// The pill is only a stand-in for the main window's transcription
+	// surface — they must never both be on screen *while the main window is
+	// focused*. Register the window so overlay.ts suppresses the pill on
+	// focus, and react to focus/blur (plus hide/minimize, which also drop
+	// focus) mid-session so the pill follows.
+	setMainWindow(mainWindow);
+	mainWindow.on("focus", syncOverlayToMainWindow);
+	mainWindow.on("blur", syncOverlayToMainWindow);
+	mainWindow.on("hide", syncOverlayToMainWindow);
+	mainWindow.on("minimize", syncOverlayToMainWindow);
+
 	// Intercept all close attempts — hide to tray instead of destroying.
 	// Only allow actual destruction during app.quit() (isQuitting flag).
+	// Settings is independent now; it dismisses itself on blur, so hiding
+	// main doesn't need to cascade to it here.
 	mainWindow.on("close", (event) => {
 		if (!isQuitting) {
 			const minimizeToTray = getStoreValue("general.minimizeToTray");
 			if (minimizeToTray) {
 				event.preventDefault();
-				if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isVisible()) {
-					settingsWindow.hide();
-				}
 				mainWindow?.hide();
 				return;
 			}
@@ -1095,9 +1228,49 @@ function createWindow() {
 	mainWindow.once("ready-to-show", () => {
 		dbg("window", "ready-to-show");
 		const startMinimized = getStoreValue("general.startMinimized");
-		if (!startMinimized) {
-			mainWindow?.show();
+		if (startMinimized) {
+			// User has opted in to tray-only launch: skip the show entirely
+			// (no point waiting on server-ready when the window will stay hidden).
+			return;
 		}
+		// Gate show() on the backend being fully READY (recorder initialized,
+		// models loaded). The connection indicator otherwise flashes "offline"
+		// for whatever portion of the 5–8 s server-warmup outlasts the
+		// renderer's hydration window — users see a stale chip and assume the
+		// backend is broken. Waiting until READY means the chip lands on
+		// "GPU"/"CPU" on first paint.
+		//
+		// Hard fallback timeout: if the server fails to come up (broken
+		// install, missing CUDA, etc.) we must NOT keep the window hidden
+		// forever — the user would just see a blank taskbar entry. After
+		// 15 s we show anyway so the user can at least see the error chip
+		// and use the settings/diagnostics UI to investigate.
+		const READY_TIMEOUT_MS = 15_000;
+		let shown = false;
+		const showOnce = (reason: string) => {
+			if (shown || !mainWindow || mainWindow.isDestroyed()) {
+				return;
+			}
+			shown = true;
+			dbg("window", `showing main window (${reason})`);
+			mainWindow.show();
+		};
+		// Server may already be ready (parallel-warmup path) — don't wait.
+		if (serverReadyFiredOnce) {
+			showOnce("server-already-ready");
+			return;
+		}
+		const onReady = () => showOnce("server-ready");
+		sttClient.once("server-ready", onReady);
+		const fallback = setTimeout(() => {
+			sttClient.off("server-ready", onReady);
+			showOnce("ready-timeout");
+		}, READY_TIMEOUT_MS);
+		// If the user closes the window before either fires, clear the
+		// timer so we don't leak a setTimeout reference. Optional-chain
+		// against the closure-captured `mainWindow` — the top-level `let`
+		// can in principle be re-assigned before this callback runs.
+		mainWindow?.once("closed", () => clearTimeout(fallback));
 	});
 
 	// Block DevTools in production
@@ -1128,7 +1301,7 @@ function createWindow() {
 
 	// Load content
 	dbg("window", "Loading content, isDev=", isDev);
-	const loadMainPromise = mainWindow.loadURL(getRendererRouteUrl("/"));
+	const loadMainPromise = loadRendererPage(mainWindow, "main");
 	loadMainPromise.catch((error) => {
 		dbg("window", "Failed to load main window:", toErrorMessage(error));
 		app.quit();
@@ -1154,7 +1327,14 @@ function createWindow() {
 	// Setup tray with custom menu window
 	const newTray = setupTray(mainWindow);
 	tray = newTray;
-	cleanupRelay = setupRelay(mainWindow, sttClient);
+	// Pass the module-level cache of pre-window events so the relay's IPC
+	// handlers (STT_GET_SERVER_READY / STT_GET_RUNTIME_INFO) answer correctly
+	// even when the onboarding wizard delayed window creation past the
+	// server's warm-up. See `serverReadyFiredOnce` / `lastRuntimeInfo` above.
+	cleanupRelay = setupRelay(mainWindow, sttClient, {
+		serverReady: serverReadyFiredOnce,
+		runtimeInfo: lastRuntimeInfo,
+	});
 
 	// Initialize recording indicator (tray + taskbar overlay icons)
 	if (iconPath) {
@@ -1170,18 +1350,10 @@ function createWindow() {
 		}
 	});
 
-	// Auto-spawn the STT server (production: bundled exe, dev: requires STT_SERVER_DIR env var).
-	// Skipped for E2E runs that only test pure-IPC behaviours like the overlay pill —
-	// avoids a slow / fragile dependency on the Python server during Playwright tests.
-	if (process.env.WINSTT_E2E_SKIP_STT !== "1") {
-		tryAutoSpawnServer();
-	}
-
-	// Auto-connect to STT server (reconnects with exponential backoff if not yet running)
-	dbg("stt-client", "Connecting to STT server...");
-	sttClient.connect().catch(() => {
-		dbg("stt-client", "Initial connect failed — will retry via reconnection");
-	});
+	// STT server auto-spawn + WS client connect both happen in the
+	// `app.whenReady()` block above, BEFORE this function runs. By the
+	// time createWindow is reached the recorder is typically already
+	// loading models in the background.
 
 	mainWindow.on("closed", () => {
 		cleanupHotkeys?.();
@@ -1194,6 +1366,7 @@ function createWindow() {
 		cleanupRelay = null;
 		cleanupFileTranscribe = null;
 		cleanupWindowTelemetry = null;
+		setMainWindow(null);
 		mainWindow = null;
 		// Main window destroyed (not hidden to tray) — quit the app.
 		// This triggers before-quit → isQuitting=true → settings window close passes through.

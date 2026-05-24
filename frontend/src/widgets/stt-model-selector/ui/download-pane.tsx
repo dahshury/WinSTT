@@ -1,5 +1,3 @@
-"use client";
-
 import {
 	CloudDownloadIcon,
 	Delete02Icon,

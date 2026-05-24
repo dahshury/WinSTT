@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect } from "react";
 import { getLlmWarmupStatus, onLlmWarmupStatus } from "@/shared/api/ipc-client";
 import { useWarmupStatusStore } from "../model/warmup-status-store";

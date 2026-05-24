@@ -1,5 +1,3 @@
-"use client";
-
 import { Progress } from "@base-ui/react/progress";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";

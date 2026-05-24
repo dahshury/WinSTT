@@ -65,6 +65,31 @@ jobs:
         shell: pwsh
         run: pwsh server/packaging/build.ps1 -Flavor ${{ matrix.flavor }}
 
+      # On-demand TTS support pack (kokoro-onnx + espeak-ng + phonemizer
+      # tree — never frozen into the exe). Built once against the same
+      # cp312 venv the exe was frozen with, then published to the stable
+      # ``tts-pack-v1`` release. The server resolves a pinned URL there
+      # (see server/src/synthesizer/infrastructure/support_pack.py), so
+      # the pack is decoupled from the per-app-version release — same
+      # pattern as the pinned Kokoro model URLs. CPU job only: the pack
+      # is flavor-agnostic (python/arch-specific), so building it in both
+      # matrix legs would just race to upload an identical artifact.
+      - name: Build And Publish TTS support pack
+        if: matrix.flavor == 'cpu'
+        shell: pwsh
+        working-directory: server
+        run: |
+          uv run python packaging/build_tts_pack.py --out packaging/dist-tts
+          $tag = "tts-pack-v1"
+          # Idempotent: create the pinned release once, then clobber the
+          # asset on every release build so it tracks the dep closure.
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "TTS support pack" --notes "On-demand TTS engine pack downloaded by WinSTT when the user enables Text-to-Speech. Rebuilt automatically; pinned URL is version-independent." --latest=false
+          }
+          $assets = Get-ChildItem packaging/dist-tts -Include "winstt-tts-pack-*.zip","winstt-tts-pack-*.zip.sha256" -Recurse | ForEach-Object { $_.FullName }
+          gh release upload $tag $assets --clobber
+
       - name: Install Frontend Dependencies
         working-directory: frontend
         run: bun install --frozen-lockfile

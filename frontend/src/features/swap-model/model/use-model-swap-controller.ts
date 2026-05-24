@@ -1,5 +1,3 @@
-"use client";
-
 import { resolveQuantCache } from "@picker";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
@@ -28,7 +26,7 @@ export interface PendingDownload {
 	kind: "main" | "realtime";
 	modelId: string;
 	previousModelId: string;
-	quantization?: OnnxQuantization;
+	quantization?: OnnxQuantization | undefined;
 }
 
 // Pending resource-warning dialog state. When the server's fit assessment

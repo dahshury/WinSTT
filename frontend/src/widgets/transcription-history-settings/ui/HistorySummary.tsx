@@ -1,5 +1,3 @@
-"use client";
-
 import {
 	DashboardSpeed02Icon,
 	SpeechToTextIcon,
@@ -21,7 +19,7 @@ interface Tile {
 	accent: Accent;
 	icon: IconSvgElement;
 	label: string;
-	unit?: string;
+	unit?: string | undefined;
 	value: string;
 }
 

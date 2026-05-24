@@ -18,7 +18,6 @@ export const modelSettingsSchema = z.object({
 });
 
 export const qualitySettingsSchema = z.object({
-	enableRealtimeTranscription: z.boolean().default(true),
 	useMainModelForRealtime: z.boolean().default(false),
 	realtimeProcessingPause: z.number().default(0.02),
 	initRealtimeAfterSeconds: z.number().default(0.2),
@@ -143,6 +142,17 @@ export const generalSettingsSchema = z.object({
 	// stray noise minutes after the user actually said the wake word.
 	wakeWordTimeout: z.number().min(1).max(30).default(5),
 	showRecordingOverlay: z.boolean().default(true),
+	// Layout of the recording overlay.
+	// `floating-bottom` keeps the historical two-piece pill near the bottom
+	// of the primary display; `dynamic-island` docks a morphing capsule flush
+	// against the top-center of the primary display, switching size presets
+	// in OverlayPage as content changes. `.catch` keeps an older persisted
+	// value (or a missing key on first read after upgrade) from wiping the
+	// whole `general` section.
+	overlayMode: z
+		.enum(["floating-bottom", "dynamic-island"])
+		.default("floating-bottom")
+		.catch("floating-bottom"),
 	// `.catch` covers older builds that persisted an integer pixel value;
 	// without it an integer here fails the whole settings parse and the codec
 	// falls back to ALL defaults, wiping unrelated settings on upgrade.
@@ -155,8 +165,41 @@ export const generalSettingsSchema = z.object({
 		.default("both")
 		.catch("both"),
 	visualizerType: z.enum(["bar", "grid", "radial", "wave", "aura"]).default("bar"),
-	visualizerBarCount: z.number().int().min(3).max(21).default(9),
+	// `.catch(9)` covers stale persisted values from an earlier slider bug that
+	// emitted 22 (off the zero-anchored snap grid). Without it, a single
+	// out-of-range integer fails the whole `general` parse in
+	// `decodeSettingsPayload`, and other windows fall back to ALL defaults —
+	// which then broadcasts back and silently resets unrelated settings.
+	visualizerBarCount: z.number().int().min(3).max(21).default(9).catch(9),
 	contextAwareness: z.boolean().default(false),
+	/**
+	 * User-managed deny-list for context capture. Each entry is either
+	 * an executable basename (`"1password.exe"`) or a URL host suffix
+	 * (`"bankofamerica.com"` — any subdomain matches). When the active
+	 * app or URL matches an entry, the captured snapshot is stripped of
+	 * focused-text / axHtml / URL fields before reaching the LLM. The
+	 * window title still flows through as harmless metadata. Seed list
+	 * covers common password managers — anyone hitting "remove" in the
+	 * UI gets that change persisted; the seed only applies on first run.
+	 */
+	contextDenyList: z
+		.array(z.string())
+		.default([
+			"1password.exe",
+			"bitwarden.exe",
+			"keepass.exe",
+			"keepassxc.exe",
+			"dashlane.exe",
+			"lastpass.exe",
+		])
+		.catch([
+			"1password.exe",
+			"bitwarden.exe",
+			"keepass.exe",
+			"keepassxc.exe",
+			"dashlane.exe",
+			"lastpass.exe",
+		]),
 	// Speaker diarization — per-utterance, with session-wide identity tracking.
 	// Toggle-mode only in the UI (long-form dictation is where multi-speaker
 	// conversations actually happen); the server still runs the same pipeline
@@ -168,23 +211,49 @@ export const generalSettingsSchema = z.object({
 	// `init()` can't be cleanly reversed at runtime, so the renderer + main
 	// SDKs both read this flag once at startup.
 	sendCrashReports: z.boolean().default(true),
+	// First-run onboarding gate. `false` triggers the onboarding wizard window
+	// (one-time wizard that picks local vs cloud STT, tests the mic, optionally
+	// collects cloud keys, and offers Ollama setup). `.catch(false)` means a
+	// corrupt persisted value re-shows the wizard rather than skipping it —
+	// re-running setup is cheap; silently skipping a broken first install isn't.
+	onboarded: z.boolean().default(false).catch(false),
+	// Epoch-ms when the user finished (or skipped) the wizard. Null until then.
+	// Used for telemetry / debugging only — the gate keys off `onboarded`.
+	onboardedAt: z.number().nullable().default(null).catch(null),
+	// Which STT track the wizard picked: local Whisper or a cloud provider.
+	// Empty until the wizard runs; settings UI doesn't read it directly (it
+	// reads the active model from `model.model`), but the wizard persists it
+	// so we can answer "did this user start on cloud?" in support tickets.
+	onboardedTrack: z.enum(["", "local", "cloud"]).default("").catch(""),
 });
 
 export const hotkeySettingsSchema = z.object({
 	pushToTalkKey: z.string().min(1).default("LCtrl+LMeta"),
 });
 
-// Dictionary is a list of canonical terms (names, jargon, proper nouns) that
-// the fuzzy post-processor uses to correct mis-transcribed words. Single
-// column — no manual find/replace pair, no case/word-boundary toggles.
-// Replacement logic lives in electron/lib/text-processing.ts.
+// Dictionary entries are dual-purpose, matching Wispr Flow's two-mode model:
+//
+//  - VOCAB words (`replacement` absent) — names, jargon, proper nouns the
+//    model should bias TOWARD. Folded into the LLM system prompt via
+//    withVocabPrefix and (when LLM is off) fuzzy-matched by the algorithmic
+//    post-processor in text-processing.ts.
+//
+//  - REPLACEMENT PAIRS (`replacement` present) — `term` is a common
+//    mis-transcription that should always become `replacement`. Applied as a
+//    case-insensitive whole-word string replace AFTER the LLM cleanup pass,
+//    so the rule fires deterministically regardless of what the model did.
+//    The LLM is also told about the pair in its prompt so it can apply the
+//    correction with context awareness; the post-pass is the safety net.
 export const dictionaryEntrySchema = z.object({
 	id: z.string().min(1),
 	term: z.string().min(1, "Required"),
+	replacement: z.string().optional(),
 });
+export type DictionaryEntry = z.infer<typeof dictionaryEntrySchema>;
 
 export const addDictionaryEntrySchema = z.object({
 	term: z.string().trim().min(1, "Required"),
+	replacement: z.string().trim().optional(),
 });
 export type AddDictionaryEntry = z.infer<typeof addDictionaryEntrySchema>;
 
@@ -211,6 +280,7 @@ export const presetKeySchema = z.enum([
 	"reorder",
 	"restructure",
 	"rewordForClarity",
+	"translate",
 ]);
 
 export const presetLevelSchema = z.enum(["light", "medium", "high"]);
@@ -222,10 +292,17 @@ export const presetEntrySchema = z
 	.object({
 		key: presetKeySchema,
 		level: presetLevelSchema.optional(),
+		// English name of the target language; only meaningful for `translate`.
+		// Mirrors how `level` parameterizes summarize/concise.
+		targetLang: z.string().optional(),
 	})
 	.refine((entry) => entry.level === undefined || KEYS_WITH_LEVELS.has(entry.key), {
 		message: "level is only allowed for summarize or concise",
 		path: ["level"],
+	})
+	.refine((entry) => entry.targetLang === undefined || entry.key === "translate", {
+		message: "targetLang is only allowed for the translate preset",
+		path: ["targetLang"],
 	});
 
 export const presetsSchema = z
@@ -252,35 +329,23 @@ export const presetsSchema = z
 		{ message: "only one tone preset (neutral/formal/friendly/technical/casual) may be active" }
 	);
 
-export const transformSchema = z.object({
+// User-authored cleanup modifiers layered on top of the built-in tone /
+// independent presets. Unlike `presetsSchema` (which holds only *active*
+// built-in keys), this array persists the full definition even while
+// `enabled` is false so the name/prompt the user wrote survives a toggle.
+// `level` is always allowed here — for a custom modifier the Low/Medium/High
+// switcher tunes intensity of the single authored prompt rather than
+// selecting between distinct texts (see `CUSTOM_LEVEL_HINT`).
+export const customModifierSchema = z.object({
 	id: z.string().min(1),
-	name: z.string().min(1),
+	name: z.string().default(""),
 	prompt: z.string().default(""),
-	hotkey: z.string().default(""),
-	builtin: z.boolean().default(false),
+	enabled: z.boolean().default(false),
+	// When false the prompt is applied verbatim; when true the Low/Medium/High
+	// switcher appears on the row and `level` tunes the intensity hint.
+	levelsEnabled: z.boolean().default(false),
+	level: presetLevelSchema.optional(),
 });
-
-// Built-in transforms seeded on first run. Kept terse and instructive — the
-// model is told to return ONLY the transformed text so the paste-replace flow
-// doesn't accidentally inject commentary.
-export const BUILTIN_TRANSFORMS: readonly z.output<typeof transformSchema>[] = [
-	{
-		id: "polish",
-		name: "Polish",
-		prompt:
-			"You are polishing the user's selected text. Fix grammar, punctuation, capitalization, and any awkward phrasing. Preserve the user's voice and intent — do not add new content, do not summarize, do not rewrite for a different audience. Return ONLY the polished text with no commentary, no quotation marks, and no markdown fences.",
-		hotkey: "",
-		builtin: true,
-	},
-	{
-		id: "prompt-engineer",
-		name: "Prompt Engineer",
-		prompt:
-			"You are rewriting the user's selected text as a clear, well-structured prompt for an LLM. Make the role explicit, state the task plainly, list constraints as a short bulleted block when relevant, and specify the desired output format. Keep the user's intent. Return ONLY the rewritten prompt with no commentary, no quotation marks, and no markdown fences.",
-		hotkey: "",
-		builtin: true,
-	},
-];
 
 // Per-feature provider config. Dictation and transforms each pick their own
 // provider (Ollama or OpenRouter) and own model selection independently — so
@@ -313,15 +378,47 @@ export const llmDictationSchema = z.object({
 	enabled: z.boolean().default(false),
 	...llmFeatureBaseShape,
 	presets: presetsSchema,
+	// Empty by default; rows are appended from the Modifiers UI. Folded into
+	// the runtime presets array at processing time via
+	// `mergePresetsWithCustomModifiers` — never persisted into `presets`.
+	customModifiers: z.array(customModifierSchema).default([]),
 });
+
+// Single user-configurable text transform. Mirrors the OpenAPI `Transform`
+// schema (see `spec/openapi.yaml`). Built-in entries flag `builtin: true`
+// so the UI can show a Reset action instead of Delete.
+export const transformSchema = z.object({
+	id: z.string().min(1),
+	name: z.string().default(""),
+	prompt: z.string().default(""),
+	hotkey: z.string().default(""),
+	builtin: z.boolean().default(false),
+});
+export type TransformEntry = z.infer<typeof transformSchema>;
+
+// Built-in transforms seeded into `settings.llm.transforms.prompts` on first
+// run. Currently empty — the catalog will be filled out as the Transforms
+// feature lands more presets. Exported so the renderer can offer a Reset
+// action that restores a built-in's prompt without wiping user-authored
+// entries.
+export const BUILTIN_TRANSFORMS: readonly TransformEntry[] = [];
 
 export const llmTransformsSchema = z.object({
 	enabled: z.boolean().default(false),
 	...llmFeatureBaseShape,
-	// User-authored custom prompts triggered by hotkey / UI. The array is
-	// seeded with BUILTIN_TRANSFORMS on first run; transformSchema's own
-	// per-field defaults fill in any partial entries persisted in older builds.
-	prompts: z.array(transformSchema).default([...BUILTIN_TRANSFORMS]),
+	// Same composition shape as dictation: ordered preset list + custom modifiers.
+	// At runtime, mergePresetsWithCustomModifiers folds them into a single prompt
+	// applied to the currently-selected text.
+	presets: presetsSchema,
+	customModifiers: z.array(customModifierSchema).default([]),
+	// uiohook-style accelerator (e.g. "LCtrl+LShift+T") that captures the
+	// active selection and runs the composed transform. Empty disables the
+	// global hotkey; the transform can still be invoked from the UI.
+	hotkey: z.string().default(""),
+	// User-configurable text transforms. Each entry carries its own prompt
+	// and optional hotkey. Built-in entries (see `BUILTIN_TRANSFORMS`) carry
+	// `builtin: true` so the UI can show a Reset action instead of Delete.
+	prompts: z.array(transformSchema).default([]),
 });
 
 export const llmSettingsSchema = z.object({
@@ -338,6 +435,25 @@ export const llmSettingsSchema = z.object({
 	// finite cap, and a silent abort + un-processed-text paste is misleading.
 	// Kept here so the persisted setting / IPC plumbing / tests stay stable.
 	timeout: z.number().int().min(1000).max(30_000).default(5000),
+});
+
+// Per-provider integration record. `apiKey` is encrypted at rest via
+// Electron `safeStorage` (DPAPI on Windows) — the wire/in-memory shape
+// is plaintext but the persisted JSON contains `enc:v1:<base64>`; the
+// secret-storage layer transparently encrypts on save and decrypts on
+// read (see `electron/lib/secret-storage.ts`). `verified` is the result
+// of the last successful probe (null = never probed); `lastVerifiedAt`
+// is epoch-ms. Matches the existing `llm.openrouterApiKey` pattern so
+// the UI can use `PasswordField` directly against the store value.
+export const providerIntegrationStatusSchema = z.object({
+	apiKey: z.string().default(""),
+	verified: z.boolean().nullable().default(null),
+	lastVerifiedAt: z.number().nullable().default(null),
+});
+
+export const integrationsSchema = z.object({
+	openai: providerIntegrationStatusSchema.prefault({}),
+	elevenlabs: providerIntegrationStatusSchema.prefault({}),
 });
 
 // Kokoro-82M ONNX text-to-speech. Opt-in feature — `enabled` defaults to
@@ -370,6 +486,7 @@ export const appSettingsSchema = z.object({
 	snippets: z.array(snippetEntrySchema).default([]),
 	llm: llmSettingsSchema.prefault({}),
 	tts: ttsSettingsSchema.prefault({}),
+	integrations: integrationsSchema.prefault({}),
 });
 
 export type AppSettingsInput = z.input<typeof appSettingsSchema>;

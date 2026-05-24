@@ -2,12 +2,16 @@
 
 ## Commands
 
-| Command         | Description                              |
-| --------------- | ---------------------------------------- |
-| `bun typecheck` | TypeScript type checking (NOT `npx tsc`) |
-| `bun dev`       | Start development server                 |
-| `bun build`     | Production build                         |
-| `bun lint`      | ESLint                                   |
+| Command              | Description                                              |
+| -------------------- | -------------------------------------------------------- |
+| `bun typecheck`      | TypeScript type checking (NOT `npx tsc`)                 |
+| `bun dev:renderer`   | Start Vite dev server (renderer only)                    |
+| `bun electron:dev`   | Full Electron + Vite dev (concurrent)                    |
+| `bun build`          | Production renderer build (vite build → `dist-renderer/`) |
+| `bun electron:build` | Build distributable Electron app                         |
+| `bun lint`           | Biome linting                                            |
+| `bun lint:fix`       | Biome lint with auto-fix                                 |
+| `bun test`           | Run tests (Bun test runner)                              |
 
 ---
 
@@ -336,112 +340,38 @@ app/
 
 ## 8. Framework Integrations
 
-### Next.js (App Router)
+### Vite (multi-page Electron renderer)
 
-- Default to Server Components
-- `'use client'` only for event listeners, browser APIs, state
-- Use async runtime APIs (Next.js 15+):
-
-```typescript
-const cookieStore = await cookies();
-const params = await props.params;
-```
+This project is a Vite multi-page app — there is no router. Each Electron
+BrowserWindow loads its own HTML entry directly via `file://` in production
+and via the Vite dev server (`http://localhost:3000/<page>.html`) in dev.
 
 **Structure:**
 
 ```
-├── app/                    # Next.js router
-│   ├── api/example/route.ts  # Re-exports from src/app/api-routes
-│   └── example/page.tsx      # Re-exports from src/pages
-└── src/                    # FSD layers
+frontend/
+├── index.html, settings.html, overlay.html,        # one HTML per window
+│   tray-menu.html, model-picker.html,
+│   device-picker.html
+├── src/
+│   ├── entries/             # one .tsx per HTML entry (createRoot here)
+│   │   ├── main.tsx
+│   │   ├── settings.tsx
+│   │   ├── overlay.tsx
+│   │   ├── tray-menu.tsx
+│   │   ├── model-picker.tsx
+│   │   └── device-picker.tsx
+│   └── ... (FSD layers — unchanged)
+└── vite.config.ts          # rollupOptions.input lists all 6 entries
 ```
 
-**Page re-export:**
+**Adding a new window:**
 
-```typescript
-// app/example/page.tsx
-export { ExamplePage as default, metadata } from "@/pages/example";
-```
-
-**API route:**
-
-```typescript
-// src/app/api-routes/get-example-data.ts
-export const getExampleData = () => {
-  try {
-    return Response.json({ data: getExamplesList() });
-  } catch {
-    return Response.json(null, { status: 500 });
-  }
-};
-// app/api/example/route.ts
-export { getExampleData as GET } from "@/app/api-routes";
-```
-
-### Remix
-
-<details><summary>Route File</summary>
-
-```typescript
-// app/routes/_index.tsx
-import { FeedPage } from "pages/feed";
-export { loader } from "pages/feed";
-export const meta: MetaFunction = () => [{ title: "Conduit" }];
-export default FeedPage;
-```
-
-</details>
-
-<details><summary>Loader</summary>
-
-```typescript
-// pages/feed/api/loader.ts
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const url = new URL(request.url);
-  const tag = url.searchParams.get("tag") ?? undefined;
-  const page = parseInt(url.searchParams.get("page") ?? "", 10);
-  return json(
-    await promiseHash({
-      articles: throwAnyErrors(
-        GET("/articles", {
-          params: { query: { tag, limit: 20, offset: page * 20 } },
-        }),
-      ),
-      tags: throwAnyErrors(GET("/tags")),
-    }),
-  );
-};
-```
-
-</details>
-
-<details><summary>Named Actions</summary>
-
-```typescript
-// pages/article-read/api/action.ts
-export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const currentUser = await requireUser(request);
-  const formData = await request.formData();
-  return namedAction(formData, {
-    async delete() {
-      await DELETE("/articles/{slug}", {
-        params: { path: { slug: params.slug } },
-        headers: auth,
-      });
-      return redirect("/");
-    },
-    async favorite() {
-      await POST("/articles/{slug}/favorite", {
-        params: { path: { slug: params.slug } },
-        headers: auth,
-      });
-      return redirectBack(request, { fallback: "/" });
-    },
-  });
-};
-```
-
-</details>
+1. Create `<window-name>.html` at frontend root (copy an existing one).
+2. Create `src/entries/<window-name>.tsx` with `createRoot(...).render(<View />)`.
+3. Add the entry to `vite.config.ts` `rollupOptions.input`.
+4. Add the page key to `PAGE_TO_FILE` in `electron/lib/renderer-url.ts`.
+5. In Electron main, call `loadRendererPage(win, "<window-name>")`.
 
 ### SvelteKit
 
@@ -468,20 +398,6 @@ export default {
   import { HomePage } from "@/pages/home";
 </script>
 <HomePage />
-```
-
-</details>
-
-### NuxtJS
-
-<details><summary>Config</summary>
-
-```typescript
-// nuxt.config.ts
-export default defineNuxtConfig({
-  alias: { "@": "../src" },
-  dir: { pages: "./src/app/routes", layouts: "./src/app/layouts" },
-});
 ```
 
 </details>

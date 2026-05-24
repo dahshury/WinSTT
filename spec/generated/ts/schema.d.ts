@@ -306,7 +306,7 @@ export interface components {
         /** @enum {string} */
         AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "silence_endpoint_enabled" | "smart_endpoint_enabled" | "detection_speed" | "input_device_index" | "end_of_sentence_detection_pause" | "mid_sentence_detection_pause" | "unknown_sentence_detection_pause";
         /** @enum {string} */
-        AllowedMethod: "set_microphone" | "abort" | "stop" | "clear_audio_queue" | "wakeup" | "shutdown" | "text";
+        AllowedMethod: "set_microphone" | "abort" | "stop" | "clear_audio_queue" | "wakeup" | "shutdown" | "text" | "request_diarization_toggle";
         /** @enum {string} */
         WhisperModel: "tiny" | "tiny.en" | "base" | "base.en" | "small" | "small.en" | "medium" | "medium.en" | "large-v1" | "large-v2" | "large-v3" | "large-v3-turbo";
         /** @enum {string} */
@@ -532,11 +532,13 @@ export interface components {
             /** @description Electron accelerator string */
             pushToTalkKey?: string;
         };
-        /** @description A canonical word/name/phrase the user wants Whisper to land on. At post-process time we fuzzy-match each transcribed token against every dictionary term (Jaro-Winkler + Double Metaphone) and replace the closest near-miss with the canonical form. Single column — no manual `find`/`replace`/case/word-boundary controls. */
+        /** @description A canonical word/name/phrase the user wants Whisper to land on. At post-process time we fuzzy-match each transcribed token against every dictionary term (Jaro-Winkler + Double Metaphone) and replace the closest near-miss with the canonical form. When `replacement` is present, the entry is a deterministic replacement pair: occurrences of `term` are rewritten to `replacement` after the LLM cleanup pass. */
         DictionaryEntry: {
             id: string;
             /** @description The canonical spelling/casing of the term. */
             term: string;
+            /** @description Optional. When set, occurrences of `term` in transcribed text are replaced with `replacement` (case-insensitive whole-word) after the LLM cleanup pass. When absent, the entry is a vocab bias only. */
+            replacement?: string;
         };
         SnippetEntry: {
             id: string;
@@ -893,6 +895,30 @@ export interface components {
             /** @description Human-readable failure reason when not reachable. */
             error?: string;
         };
+        /**
+         * @description Identifier for a cloud STT provider. The renderer-side picker persists the colon-prefixed `<provider>:<model_id>` to `settings.model.model`, and the main process routes accordingly.
+         * @enum {string}
+         */
+        CloudSttProvider: "openai" | "elevenlabs";
+        /**
+         * @description Stable classification of a cloud STT failure surfaced to the renderer. `auth` = the provider rejected the API key. `network` = transport-level failure (DNS, TLS, timeout). `key_missing` = no API key configured for this provider. `rate_limit` = provider returned 429 / quota exceeded. `provider_error` = catch-all for any other 4xx/5xx response.
+         * @enum {string}
+         */
+        CloudSttErrorCode: "auth" | "network" | "key_missing" | "rate_limit" | "provider_error";
+        /** @description Per-provider integration record. `apiKey` is encrypted at rest via Electron `safeStorage` (DPAPI on Windows); the wire/in-memory shape is plaintext. `verified` is the result of the last successful probe (null = never probed); `lastVerifiedAt` is epoch-ms (or null). */
+        ProviderIntegrationStatus: {
+            /** @default  */
+            apiKey: string;
+            /** @default null */
+            verified: boolean | null;
+            /** @default null */
+            lastVerifiedAt: number | null;
+        };
+        /** @description Per-provider cloud STT integration status. One entry per supported provider; entries persist even when `apiKey` is empty so the UI can show the most recent probe result on revisit. */
+        Integrations: {
+            openai: components["schemas"]["ProviderIntegrationStatus"];
+            elevenlabs: components["schemas"]["ProviderIntegrationStatus"];
+        };
         AppSettings: {
             model?: components["schemas"]["ModelSettings"];
             quality?: components["schemas"]["QualitySettings"];
@@ -902,6 +928,7 @@ export interface components {
             dictionary?: components["schemas"]["DictionaryEntry"][];
             snippets?: components["schemas"]["SnippetEntry"][];
             llm?: components["schemas"]["LlmSettings"];
+            integrations?: components["schemas"]["Integrations"];
         };
         TranscriptionItem: {
             id: string;

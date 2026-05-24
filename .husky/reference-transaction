@@ -1,11 +1,14 @@
 #!/usr/bin/env sh
-# WINSTT_NO_STASH_GUARD: block any operation that creates or moves a `refs/stash` ref.
+# WINSTT_NO_STASH_GUARD: block any operation that CREATES or UPDATES a
+# `refs/stash` ref. Deletions are allowed so `git stash drop` / cleanup of an
+# orphaned stash works without needing the escape hatch.
 #
 # Git fires `reference-transaction` for every ref update. We read the staged
 # updates from stdin (`<old-oid> <new-oid> <ref-name>` per line) and abort the
-# transaction by exiting non-zero whenever we see a stash ref in the "prepared"
-# phase. The hook fires three times per transaction (prepared / committed /
-# aborted) so we only check during `prepared` — aborting later is moot.
+# transaction by exiting non-zero whenever we see a stash ref being created or
+# updated in the "prepared" phase. The hook fires three times per transaction
+# (prepared / committed / aborted) so we only check during `prepared` —
+# aborting later is moot.
 #
 # Why: `git stash` in this repo is catastrophic — the working tree is large,
 # pop-conflicts are routine, and a stashed mid-refactor can hold the user's
@@ -23,9 +26,19 @@ state="$1"
 # User opt-out for genuine emergencies.
 [ "${WINSTT_ALLOW_STASH:-0}" = "1" ] && exit 0
 
+# A 40- or 64-character all-zero hash is git's "no object" sentinel. When `new`
+# is that, the operation is a DELETE — safe to allow. Match SHA-1 and SHA-256
+# repo modes.
+ZERO_SHA1="0000000000000000000000000000000000000000"
+ZERO_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
+
 while IFS=' ' read -r old new ref; do
 	case "$ref" in
 		refs/stash)
+			# Deletion: old = real, new = zero. Allow.
+			if [ "$new" = "$ZERO_SHA1" ] || [ "$new" = "$ZERO_SHA256" ]; then
+				continue
+			fi
 			cat >&2 <<'EOF'
 
 husky - git stash is BLOCKED in this repository.
@@ -39,6 +52,9 @@ husky - git stash is BLOCKED in this repository.
       mutating the index.
     - `cp <file> <file>.bak` if you need a temporary side copy.
     - `git worktree add ../winstt-scratch` for an isolated checkout.
+
+  Deletions (e.g. `git stash drop`) are allowed — this guard only blocks
+  CREATE and UPDATE of refs/stash.
 
   If you ABSOLUTELY have to bypass this guard:
     WINSTT_ALLOW_STASH=1 git stash ...

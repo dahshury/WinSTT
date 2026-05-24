@@ -277,20 +277,25 @@ class RecordingPipeline(Worker):
     def _vad_onset_armed(self) -> bool:
         return self._start_recording_on_voice_activity or self._wakeword_detected
 
-    def _try_start_on_voice_activity(self, chunk: AudioChunk) -> bool:
-        if not self._vad_onset_armed():
-            return False
+    def _accumulate_onset_speech(self, chunk: AudioChunk) -> bool:
+        """Track consecutive-speech onset; return whether it's sustained.
+
+        A non-speech chunk breaks the run — onset must be CONSECUTIVE
+        speech so an isolated noisy frame can't accumulate a start. When
+        speech is present but not yet sustained the caller stays in
+        LISTENING (no RecordingStarted) while still pre-rolling the chunk
+        so the onset audio is preserved for when we do commit.
+        """
         if not self._vad.detect(chunk).is_speech:
-            # A non-speech chunk breaks the run — onset must be CONSECUTIVE
-            # speech so an isolated noisy frame can't accumulate a start.
             self._consecutive_speech_chunks = 0
             return False
         self._consecutive_speech_chunks += 1
-        if self._consecutive_speech_chunks < self._speech_onset_required:
-            # Speech, but not yet sustained. Stay in LISTENING — emit no
-            # RecordingStarted (pill stays hidden, Whisper stays asleep).
-            # The caller still adds this chunk to the pre-roll, so the onset
-            # audio is preserved for when we do commit.
+        return self._consecutive_speech_chunks >= self._speech_onset_required
+
+    def _try_start_on_voice_activity(self, chunk: AudioChunk) -> bool:
+        if not self._vad_onset_armed():
+            return False
+        if not self._accumulate_onset_speech(chunk):
             return False
         self._consecutive_speech_chunks = 0
         self._event_bus.publish(VADStarted(timestamp=self._clock.get_current_time()))

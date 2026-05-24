@@ -134,3 +134,73 @@ describe("formatContextForPrompt", () => {
 		expect(snapshot).toEqual(before);
 	});
 });
+
+describe("formatContextForPrompt — caret-split mode", () => {
+	test("emits before/after caret sections and suppresses Visible content", () => {
+		const result = formatContextForPrompt({
+			windowTitle: "VS Code",
+			elementName: "Editor",
+			focusedText: "should be ignored in caret mode",
+			textBefore: "The meeting is",
+			textAfter: " at noon.",
+		});
+		expect(result).toContain("Window: VS Code");
+		expect(result).toContain("Focused field: Editor");
+		expect(result).toContain("before the caret");
+		expect(result).toContain("The meeting is");
+		expect(result).toContain("after the caret");
+		expect(result).toContain("at noon.");
+		// focusedText must NOT leak in (it would duplicate the split text).
+		expect(result).not.toContain("Visible content");
+		expect(result).not.toContain("should be ignored");
+	});
+
+	test("emits only the before section when after is empty", () => {
+		const result = formatContextForPrompt({
+			windowTitle: "",
+			elementName: "",
+			focusedText: "",
+			textBefore: "continue this thought",
+			textAfter: "",
+		});
+		expect(result).toContain("before the caret");
+		expect(result).toContain("continue this thought");
+		expect(result).not.toContain("after the caret");
+	});
+
+	test("falls back to legacy layout when both caret fields are blank", () => {
+		const result = formatContextForPrompt({
+			windowTitle: "Mail",
+			elementName: "Subject",
+			focusedText: "body",
+			textBefore: "   ",
+			textAfter: "",
+		});
+		expect(result).toBe("Window: Mail\nFocused field: Subject\nVisible content:\nbody");
+	});
+
+	test("collapses blank-line runs inside caret text", () => {
+		const result = formatContextForPrompt({
+			windowTitle: "",
+			elementName: "",
+			focusedText: "",
+			textBefore: "alpha\n\n\n\nbeta",
+			textAfter: "",
+		});
+		expect(result).toContain("alpha\nbeta");
+		expect(result).not.toContain("alpha\n\n");
+	});
+
+	test("does not mutate a caret-mode input snapshot", () => {
+		const snapshot: WindowContextSnapshot = {
+			windowTitle: "X",
+			elementName: "Y",
+			focusedText: "",
+			textBefore: "a\n\n\nb",
+			textAfter: "c",
+		};
+		const before = { ...snapshot };
+		formatContextForPrompt(snapshot);
+		expect(snapshot).toEqual(before);
+	});
+});

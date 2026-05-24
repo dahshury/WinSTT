@@ -14,6 +14,16 @@ interface SettingsState {
 	updateDictionary: (dictionary: AppSettingsOutput["dictionary"]) => void;
 	updateGeneralSettings: (patch: Partial<AppSettingsOutput["general"]>) => void;
 	updateHotkeySettings: (patch: Partial<AppSettingsOutput["hotkey"]>) => void;
+	/**
+	 * Patches the per-provider integration record on `settings.integrations`.
+	 * Each provider patch is shallow-merged so the caller can update just
+	 * `apiKey` (typing) or just `verified` + `lastVerifiedAt` (probe result)
+	 * without clobbering the other field.
+	 */
+	updateIntegrations: (patch: {
+		elevenlabs?: Partial<AppSettingsOutput["integrations"]["elevenlabs"]>;
+		openai?: Partial<AppSettingsOutput["integrations"]["openai"]>;
+	}) => void;
 	updateLlmDictation: (patch: Partial<AppSettingsOutput["llm"]["dictation"]>) => void;
 	/**
 	 * Patches top-level shared fields on `settings.llm` (endpoint, openrouterApiKey).
@@ -113,6 +123,26 @@ export const useSettingsStore = create<SettingsState>()(
 					settings: {
 						...state.settings,
 						tts: { ...state.settings.tts, ...patch },
+					},
+				})),
+			updateIntegrations: (patch) =>
+				set((state) => ({
+					settings: {
+						...state.settings,
+						integrations: {
+							...state.settings.integrations,
+							...(patch.openai
+								? { openai: { ...state.settings.integrations.openai, ...patch.openai } }
+								: {}),
+							...(patch.elevenlabs
+								? {
+										elevenlabs: {
+											...state.settings.integrations.elevenlabs,
+											...patch.elevenlabs,
+										},
+									}
+								: {}),
+						},
 					},
 				})),
 			resetSettings: () =>

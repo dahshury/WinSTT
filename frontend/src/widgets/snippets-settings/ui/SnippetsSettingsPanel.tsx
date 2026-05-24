@@ -1,5 +1,3 @@
-"use client";
-
 import { Note01Icon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";

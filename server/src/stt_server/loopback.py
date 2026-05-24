@@ -143,7 +143,7 @@ class LoopbackCapture:
                 raise RuntimeError(msg) from fmt_err
 
             # Switch recorder to feed_audio mode — external audio mode first
-            # so the reader thread discards instead of injecting silence
+            # so the reader thread discards instead of injecting silence.
             recorder.set_external_audio_mode(True)
             recorder.set_microphone(False)
 
@@ -236,8 +236,15 @@ class LoopbackCapture:
         # Clear stale audio left in the feed buffer from this session
         recorder.clear_feed_buffer()
 
-        # Restore microphone input and silence duration
-        recorder.set_microphone(True)
+        # Leave the mic PAUSED, not resumed. Every non-listen mode reaches
+        # idle with the hardware mic closed: PTT/Toggle only open it on a
+        # hotkey press, and Wake Word respawns the server. An unconditional
+        # set_microphone(True) here (or restoring the stale use_microphone
+        # flag, which is left at True in PTT idle even though the hardware
+        # is paused) re-opened the OS mic stream the instant the user
+        # switched away from Listen — the bug the user kept hitting. PTT/
+        # Toggle re-resume() the stream themselves on the next hotkey press.
+        recorder.set_microphone(False)
         recorder.set_external_audio_mode(False)
         if self._saved_silence_duration is not None:
             recorder.post_speech_silence_duration = self._saved_silence_duration
@@ -270,13 +277,23 @@ class LoopbackCapture:
                     # Convert to numpy int16 and reshape for multi-channel
                     samples = np.frombuffer(data, dtype=np.int16).reshape(-1, self._device_channels)
 
-                    # AGC: normalize audio level so VAD works regardless of system volume
+                    # AGC: normalize speech level so VAD works regardless of
+                    # system volume. A chunk below the noise floor is silence
+                    # — decay the gain back toward unity and pass it through
+                    # *un-amplified*. Holding the speech-time gain over the
+                    # trailing silence (multiplying residual room/noise by up
+                    # to MAX_GAIN) kept the composite VAD pegged at "speech",
+                    # so Listen mode never reached its silence endpoint and
+                    # the model transcribed continuously instead of gating on
+                    # voice activity like Toggle/Wake Word.
                     peak = float(np.max(np.abs(samples)))
                     if peak > NOISE_FLOOR:
                         desired_gain = min(TARGET_PEAK / peak, MAX_GAIN)
                         self._gain += GAIN_SMOOTH * (desired_gain - self._gain)
-                    if self._gain > 1.0:
-                        samples = np.clip(samples.astype(np.float32) * self._gain, -32768, 32767).astype(np.int16)
+                        if self._gain > 1.0:
+                            samples = np.clip(samples.astype(np.float32) * self._gain, -32768, 32767).astype(np.int16)
+                    else:
+                        self._gain += GAIN_SMOOTH * (1.0 - self._gain)
 
                     # feed_audio handles stereo->mono and resampling internally
                     recorder.feed_audio(samples, original_sample_rate=self._device_rate)
