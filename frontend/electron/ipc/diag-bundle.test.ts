@@ -37,6 +37,31 @@ const shellState: {
 
 const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
 
+const debugLogState: {
+	calls: Array<{ scope: string; args: unknown[] }>;
+} = {
+	calls: [],
+};
+
+const sentryState: {
+	exceptions: Array<{ err: unknown; context: unknown }>;
+} = {
+	exceptions: [],
+};
+
+mock.module("../lib/debug-log", () => ({
+	dbg: (scope: string, ...args: unknown[]) => {
+		debugLogState.calls.push({ scope, args });
+	},
+}));
+
+mock.module("../lib/sentry-main", () => ({
+	breadcrumb: () => undefined,
+	captureMainException: (err: unknown, context?: unknown) => {
+		sentryState.exceptions.push({ err, context });
+	},
+}));
+
 mock.module("electron", () => {
 	const base = electronMock();
 	return {
@@ -104,6 +129,8 @@ beforeEach(() => {
 	shellState.openPathResult = "";
 	shellState.openPathCalls = [];
 	shellState.showItemInFolderCalls = [];
+	debugLogState.calls = [];
+	sentryState.exceptions = [];
 });
 
 describe("setupDiagBundleHandler", () => {
@@ -288,6 +315,104 @@ describe("end-to-end save path", () => {
 		expect(result.ok).toBe(true);
 		expect(shellState.showItemInFolderCalls).toEqual([]);
 		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+});
+
+describe("logGpuInfoError", () => {
+	test("logs an Error's .message under the diag-bundle scope", () => {
+		__diag_bundle_test_helpers__.logGpuInfoError(new Error("gpu blew up"));
+		expect(debugLogState.calls.length).toBe(1);
+		const call = debugLogState.calls[0];
+		expect(call?.scope).toBe("diag-bundle");
+		expect(call?.args[0]).toBe("getGPUInfo failed:");
+		expect(call?.args[1]).toBe("gpu blew up");
+	});
+
+	test("stringifies non-Error values via String(err)", () => {
+		__diag_bundle_test_helpers__.logGpuInfoError("string failure");
+		expect(debugLogState.calls.length).toBe(1);
+		expect(debugLogState.calls[0]?.args[1]).toBe("string failure");
+	});
+
+	test("handles null/undefined without throwing", () => {
+		__diag_bundle_test_helpers__.logGpuInfoError(null);
+		__diag_bundle_test_helpers__.logGpuInfoError(undefined);
+		expect(debugLogState.calls.length).toBe(2);
+		expect(debugLogState.calls[0]?.args[1]).toBe("null");
+		expect(debugLogState.calls[1]?.args[1]).toBe("undefined");
+	});
+});
+
+describe("logRevealDialogError", () => {
+	test("logs an Error's .message under the diag-bundle scope", () => {
+		__diag_bundle_test_helpers__.logRevealDialogError(new Error("dialog crashed"));
+		expect(debugLogState.calls.length).toBe(1);
+		const call = debugLogState.calls[0];
+		expect(call?.scope).toBe("diag-bundle");
+		expect(call?.args[0]).toBe("Post-save dialog failed:");
+		expect(call?.args[1]).toBe("dialog crashed");
+	});
+
+	test("stringifies non-Error values via String(err)", () => {
+		__diag_bundle_test_helpers__.logRevealDialogError(42);
+		expect(debugLogState.calls.length).toBe(1);
+		expect(debugLogState.calls[0]?.args[1]).toBe("42");
+	});
+});
+
+describe("safeShowErrorBox", () => {
+	test("calls dialog.showErrorBox with the diagnostic-bundle title and message", () => {
+		__diag_bundle_test_helpers__.safeShowErrorBox("Disk full");
+		expect(dialogState.errorBoxCalls).toEqual([
+			{ title: "Diagnostic bundle failed", content: "Disk full" },
+		]);
+	});
+
+	test("swallows showErrorBox failures (does not throw)", () => {
+		const original = dialogState.errorBoxCalls;
+		// Force showErrorBox to throw by swapping the mocked impl temporarily.
+		// We can't easily re-mock electron here, so simulate by passing a value
+		// that the mock would record fine — main behavior is the try/catch
+		// guards a hypothetical throw. Verify with a getter that throws.
+		Object.defineProperty(dialogState, "errorBoxCalls", {
+			configurable: true,
+			get() {
+				throw new Error("dialog unavailable");
+			},
+		});
+		expect(() => __diag_bundle_test_helpers__.safeShowErrorBox("anything")).not.toThrow();
+		// Restore plain property so other tests work.
+		Object.defineProperty(dialogState, "errorBoxCalls", {
+			configurable: true,
+			writable: true,
+			value: original,
+		});
+	});
+});
+
+describe("reportSaveFailure", () => {
+	test("returns ok:false with the Error.message and logs + Sentry + error box", () => {
+		const result = __diag_bundle_test_helpers__.reportSaveFailure(new Error("write failed"));
+		expect(result).toEqual({ ok: false, error: "write failed" });
+		// dbg called with "Bundle save failed:" + message
+		expect(debugLogState.calls.length).toBe(1);
+		expect(debugLogState.calls[0]?.args[0]).toBe("Bundle save failed:");
+		expect(debugLogState.calls[0]?.args[1]).toBe("write failed");
+		// Sentry receives the original error + source tag
+		expect(sentryState.exceptions.length).toBe(1);
+		expect((sentryState.exceptions[0]?.err as Error).message).toBe("write failed");
+		expect(sentryState.exceptions[0]?.context).toEqual({ source: "diag-bundle" });
+		// User-visible error box surfaced the message
+		expect(dialogState.errorBoxCalls).toEqual([
+			{ title: "Diagnostic bundle failed", content: "write failed" },
+		]);
+	});
+
+	test("stringifies non-Error values via String(err)", () => {
+		const result = __diag_bundle_test_helpers__.reportSaveFailure("EACCES");
+		expect(result).toEqual({ ok: false, error: "EACCES" });
+		expect(debugLogState.calls[0]?.args[1]).toBe("EACCES");
+		expect(dialogState.errorBoxCalls[0]?.content).toBe("EACCES");
 	});
 });
 

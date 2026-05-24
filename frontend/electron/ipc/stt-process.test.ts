@@ -180,7 +180,13 @@ describe("stt-process module surface", () => {
 		expect(typeof sttProcess.restartSttProcess).toBe("function");
 		expect(typeof sttProcess.tryAutoSpawnServer).toBe("function");
 		expect(typeof sttProcess.killSttProcess).toBe("function");
-		for (const value of Object.values(sttProcess)) {
+		for (const [key, value] of Object.entries(sttProcess)) {
+			// __stt_process_test_helpers__ is an object aggregator (Phase 1B
+			// pattern) — every other export must be a function.
+			if (key === "__stt_process_test_helpers__") {
+				expect(typeof value).toBe("object");
+				continue;
+			}
 			expect(typeof value).toBe("function");
 		}
 	});
@@ -1725,5 +1731,141 @@ describe("dispatchPlatformKill branch coverage", () => {
 		sttProcess.killSttProcess();
 		expect(spawnLog.length).toBe(0);
 		expect(child.killCalls).toEqual(["SIGTERM"]);
+	});
+});
+
+// ─── readActiveWakeWord + resolveWakeWordContext direct tests ─────────
+//
+// Both helpers were extracted to drop applyWakeWordFlags's CRAP below 4.
+// Each helper has CC≤3 and we exercise EVERY branch directly to lock the
+// CRAP score in (formula: CC^2*(1-cov)^3 + CC; at 100% cov the score
+// equals CC, so we want both helpers fully covered to keep CRAP=3 ≤ 3).
+
+const { __stt_process_test_helpers__: processHelpers } = sttProcess as unknown as {
+	__stt_process_test_helpers__: {
+		readActiveWakeWord: () => string | null;
+		resolveWakeWordContext: () => { backend: string; word: string } | null;
+	};
+};
+
+describe("readActiveWakeWord", () => {
+	test("returns null when recordingMode !== 'wakeword' (branch 1: mode guard)", () => {
+		// Default storeMock mode is "ptt". The mode-mismatch branch is the
+		// earliest return and prevents any wakeWord read.
+		sharedStoreMock.store.set("general.recordingMode", "ptt");
+		expect(processHelpers.readActiveWakeWord()).toBeNull();
+	});
+
+	test("returns null when mode='wakeword' but wakeWord is empty (branch 2: empty word)", () => {
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "");
+		try {
+			expect(processHelpers.readActiveWakeWord()).toBeNull();
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+
+	test("returns the wake word as a string when mode='wakeword' and word is set (branch 3: happy path)", () => {
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "jarvis");
+		try {
+			expect(processHelpers.readActiveWakeWord()).toBe("jarvis");
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+
+	test("coerces non-string wakeWord values via String() (locks the ternary's truthy branch)", () => {
+		// A numeric or otherwise non-string value should still produce a string
+		// when truthy. This is rare in practice but guards the String(word)
+		// coercion against StringLiteral / ConditionalExpression mutants.
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", 42 as unknown as string);
+		try {
+			expect(processHelpers.readActiveWakeWord()).toBe("42");
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+});
+
+describe("resolveWakeWordContext", () => {
+	test("returns null when readActiveWakeWord returns null (mode != wakeword)", () => {
+		sharedStoreMock.store.set("general.recordingMode", "ptt");
+		expect(processHelpers.resolveWakeWordContext()).toBeNull();
+	});
+
+	test("returns null when wakeWord is empty in wakeword mode", () => {
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "");
+		try {
+			expect(processHelpers.resolveWakeWordContext()).toBeNull();
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+
+	test("returns null when wakeWord doesn't match ANY backend (corrupt-store branch)", () => {
+		// "definitely-not-a-real-wake-word" is in neither PORCUPINE_KEYWORDS nor
+		// OPENWAKEWORD_KEYWORDS, so wakeWordBackendFor returns null and the
+		// ternary's first arm fires. This branch was previously uncovered.
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "definitely-not-a-real-wake-word");
+		try {
+			expect(processHelpers.resolveWakeWordContext()).toBeNull();
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+
+	test("returns {backend: 'pvporcupine', word: 'jarvis'} for Porcupine-only keywords", () => {
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "jarvis");
+		try {
+			expect(processHelpers.resolveWakeWordContext()).toEqual({
+				backend: "pvporcupine",
+				word: "jarvis",
+			});
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+
+	test("returns {backend: 'composite', word: 'alexa'} for cross-engine keywords", () => {
+		// "alexa" appears in BOTH PORCUPINE_KEYWORDS and OPENWAKEWORD_KEYWORDS,
+		// so wakeWordBackendFor returns "composite" — the highest-accuracy path.
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "alexa");
+		try {
+			expect(processHelpers.resolveWakeWordContext()).toEqual({
+				backend: "composite",
+				word: "alexa",
+			});
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+
+	test("returns {backend: 'openwakeword', word: 'hey_jarvis'} for OWW-only keywords", () => {
+		// "hey_jarvis" is in OPENWAKEWORD_KEYWORDS only — the third backend path.
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "hey_jarvis");
+		try {
+			expect(processHelpers.resolveWakeWordContext()).toEqual({
+				backend: "openwakeword",
+				word: "hey_jarvis",
+			});
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
 	});
 });

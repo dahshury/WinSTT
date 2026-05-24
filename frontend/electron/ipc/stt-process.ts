@@ -229,16 +229,21 @@ interface WakeWordContext {
 	word: string;
 }
 
-function resolveWakeWordContext(): WakeWordContext | null {
+function readActiveWakeWord(): string | null {
 	if (getStoreValue("general.recordingMode") !== "wakeword") {
 		return null;
 	}
 	const word = getStoreValue("general.wakeWord");
+	return word ? String(word) : null;
+}
+
+function resolveWakeWordContext(): WakeWordContext | null {
+	const word = readActiveWakeWord();
 	if (!word) {
 		return null;
 	}
-	const backend = wakeWordBackendFor(String(word));
-	return backend === null ? null : { backend, word: String(word) };
+	const backend = wakeWordBackendFor(word);
+	return backend === null ? null : { backend, word };
 }
 
 function applyWakeWordFlags(args: string[]): void {
@@ -606,3 +611,9 @@ export function killSttProcess(): void {
 		dbg("stt-process", `Failed to kill process ${pid}:`, getErrorMessage(err));
 	}
 }
+
+/** Test hook: extracted helpers for direct unit testing. */
+export const __stt_process_test_helpers__ = {
+	readActiveWakeWord,
+	resolveWakeWordContext,
+};

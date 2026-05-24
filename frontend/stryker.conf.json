@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment": "Mutation testing scoped to pure-logic files where surviving mutants reliably indicate weak tests or real bugs. Uses the command runner because there is no Stryker-Bun runner. Each mutant kills bun-test scoped to the matching test file, so killing time is bounded per mutant.",
+  "_comment": "Mutation testing scoped to pure-logic files where surviving mutants reliably indicate weak tests or real bugs. Uses the command runner because there is no Stryker-Bun runner. Each mutant kills bun-test scoped to the matching test files (example + property), so killing time is bounded per mutant.",
   "packageManager": "npm",
   "reporters": ["progress", "clear-text", "html", "json"],
   "jsonReporter": {
@@ -8,7 +8,7 @@
   },
   "testRunner": "command",
   "commandRunner": {
-    "command": "bun test src/shared/lib/errors.test.ts src/shared/api/settings-codec.test.ts src/shared/lib/openrouter-model-selection.test.ts src/shared/lib/ollama-endpoint.test.ts src/widgets/openrouter-model-selector/lib/model-exclusion.test.ts"
+    "command": "bun test src/shared/lib/errors.test.ts src/shared/api/settings-codec.test.ts src/shared/lib/openrouter-model-selection.test.ts src/shared/lib/ollama-endpoint.test.ts src/widgets/openrouter-model-selector/lib/model-exclusion.test.ts src/shared/lib/cn.test.ts src/shared/lib/fuzzy-match.test.ts src/shared/lib/format-time.test.ts src/shared/lib/format-bytes.test.ts src/shared/lib/generate-id.test.ts src/features/audio-visualizer/lib/hex-to-rgb.test.ts src/features/text-post-processing/lib/apply-replacements.test.ts src/entities/transcription/lib/speaker-color.test.ts src/entities/audio-device/lib/device-options.test.ts src/widgets/stt-model-selector/lib/quantization-helpers.test.ts src/widgets/stt-model-selector/lib/family-helpers.test.ts src/widgets/stt-model-selector/lib/variant-helpers.test.ts src/widgets/stt-model-selector/lib/realtime-viability.test.ts src/shared/lib/realtime-enabled.test.ts src/shared/lib/errors.property.test.ts src/shared/api/settings-codec.property.test.ts src/shared/lib/openrouter-model-selection.property.test.ts src/shared/lib/ollama-endpoint.property.test.ts src/widgets/openrouter-model-selector/lib/model-exclusion.property.test.ts src/shared/lib/cn.property.test.ts src/shared/lib/fuzzy-match.property.test.ts src/shared/lib/format-time.property.test.ts src/shared/lib/format-bytes.property.test.ts src/shared/lib/generate-id.property.test.ts src/features/audio-visualizer/lib/hex-to-rgb.property.test.ts src/features/text-post-processing/lib/apply-replacements.property.test.ts src/entities/transcription/lib/speaker-color.property.test.ts src/entities/audio-device/lib/device-options.property.test.ts src/shared/lib/realtime-enabled.property.test.ts src/widgets/stt-model-selector/lib/quantization-helpers.property.test.ts src/widgets/stt-model-selector/lib/family-helpers.property.test.ts src/widgets/stt-model-selector/lib/variant-helpers.property.test.ts src/widgets/stt-model-selector/lib/realtime-viability.property.test.ts"
   },
   "coverageAnalysis": "off",
   "mutate": [
@@ -16,7 +16,21 @@
     "src/shared/api/settings-codec.ts",
     "src/shared/lib/openrouter-model-selection.ts",
     "src/shared/lib/ollama-endpoint.ts",
-    "src/widgets/openrouter-model-selector/lib/model-exclusion.ts"
+    "src/widgets/openrouter-model-selector/lib/model-exclusion.ts",
+    "src/shared/lib/cn.ts",
+    "src/shared/lib/fuzzy-match.ts",
+    "src/shared/lib/format-time.ts",
+    "src/shared/lib/format-bytes.ts",
+    "src/shared/lib/generate-id.ts",
+    "src/features/audio-visualizer/lib/hex-to-rgb.ts",
+    "src/features/text-post-processing/lib/apply-replacements.ts",
+    "src/entities/transcription/lib/speaker-color.ts",
+    "src/entities/audio-device/lib/device-options.ts",
+    "src/widgets/stt-model-selector/lib/quantization-helpers.ts",
+    "src/widgets/stt-model-selector/lib/family-helpers.ts",
+    "src/widgets/stt-model-selector/lib/variant-helpers.ts",
+    "src/widgets/stt-model-selector/lib/realtime-viability.ts",
+    "src/shared/lib/realtime-enabled.ts"
   ],
   "thresholds": {
     "high": 90,

@@ -812,6 +812,82 @@ describe("handleAssessDictationFit", () => {
 	});
 });
 
+describe("safeAssessDictationFit (direct)", () => {
+	test("success path: forwards all three fields verbatim and returns the client's result", async () => {
+		const online = makeClient(true);
+		online.assessDictationFitResult = { fits: true, eta: 2.5 };
+		const result = await helpers.safeAssessDictationFit(online as unknown as SttClient, {
+			modelId: "base.en",
+			quantization: "fp16",
+			device: "cuda",
+		});
+		expect(result).toEqual({ fits: true, eta: 2.5 });
+		expect(online.calls).toEqual([
+			{ kind: "assessDictationFit", args: ["base.en", "fp16", "cuda"] },
+		]);
+	});
+
+	test("preserves empty-string quantization and null device exactly (no normalization)", async () => {
+		// After the CC reduction, AssessDictationFitPayload fields are required
+		// (the parser pre-fills "" and null defaults). safeAssessDictationFit must
+		// pass them through verbatim — locks in that the helper does NOT inject
+		// any fallback of its own.
+		const online = makeClient(true);
+		online.assessDictationFitResult = null;
+		await helpers.safeAssessDictationFit(online as unknown as SttClient, {
+			modelId: "tiny",
+			quantization: "",
+			device: null,
+		});
+		expect(online.calls).toEqual([{ kind: "assessDictationFit", args: ["tiny", "", null] }]);
+	});
+
+	test("catch path: returns null and emits a console.warn when the client throws", async () => {
+		const original = console.warn;
+		const warnings: string[] = [];
+		console.warn = (...args: unknown[]) => {
+			warnings.push(args.map((a) => String(a)).join(" "));
+		};
+		try {
+			const online = makeClient(true);
+			online.assessDictationFit = async () => {
+				throw new Error("server-side OOM");
+			};
+			const result = await helpers.safeAssessDictationFit(online as unknown as SttClient, {
+				modelId: "large-v3",
+				quantization: "int8",
+				device: null,
+			});
+			expect(result).toBeNull();
+			// The catch branch logs with the canonical "[stt:assess-dictation-fit]" tag.
+			expect(warnings.some((w) => w.includes("[stt:assess-dictation-fit] request failed"))).toBe(
+				true
+			);
+		} finally {
+			console.warn = original;
+		}
+	});
+
+	test("catch path: returns null for a non-Error throw (locks the bare catch semantics)", async () => {
+		const original = console.warn;
+		console.warn = () => undefined;
+		try {
+			const online = makeClient(true);
+			online.assessDictationFit = async () => {
+				throw "raw-string-error" as unknown as Error;
+			};
+			const result = await helpers.safeAssessDictationFit(online as unknown as SttClient, {
+				modelId: "tiny",
+				quantization: "",
+				device: null,
+			});
+			expect(result).toBeNull();
+		} finally {
+			console.warn = original;
+		}
+	});
+});
+
 describe("handleAssessOllamaFit", () => {
 	test("returns null when payload is not a record", async () => {
 		const online = makeClient(true);

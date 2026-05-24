@@ -816,32 +816,75 @@ async def _handle_start_loopback(ws: ServerConnection, state: ServerState, data:
     if device_index is None or state.recorder is None:
         await ws.send(json.dumps({"status": "error", "message": "Missing device_index or recorder not ready"}))
         return
-    try:
-        dev_info = state.loopback_capture.start(state.recorder, int(device_index))
-        loop = asyncio.get_event_loop()
-        message = json.dumps({"type": "loopback_started", "deviceName": dev_info.get("name", "")})
-        asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
-        print(
-            f"{bcolors.OKGREEN}Loopback started: "
-            f"{dev_info.get('name', '')} @ {dev_info.get('defaultSampleRate', 0)}Hz"
-            f"{bcolors.ENDC}",
-        )
-        await ws.send(json.dumps({"status": "success", "message": "Loopback started"}))
-    except Exception as e:
-        error_msg = f"Failed to start loopback (device {device_index}): {type(e).__name__}: {e}"
-        print(f"{bcolors.FAIL}{error_msg}{bcolors.ENDC}")
-        await ws.send(json.dumps({"status": "error", "message": error_msg}))
+    # loopback_capture.start() does the recorder cold-init (VAD + transcriber
+    # + diarizer + opens PyAudio loopback stream) — multi-second on cold
+    # cache. Running it inline freezes the asyncio loop -> no WS message
+    # can be processed -> the whole UI hangs (same antipattern that bit
+    # TTS, see memory). Offload to a thread and post the WS response back
+    # via run_coroutine_threadsafe, mirroring _handle_transcribe_file.
+    idx = int(device_index)
+    loop = asyncio.get_event_loop()
+    # Capture the recorder reference now that we've narrowed it above; the
+    # inner closure can't carry mypy narrowing across the function boundary.
+    recorder = state.recorder
+
+    def _start_loopback_sync() -> None:
+        try:
+            dev_info = state.loopback_capture.start(recorder, idx)
+            started = json.dumps({"type": "loopback_started", "deviceName": dev_info.get("name", "")})
+            asyncio.run_coroutine_threadsafe(state.audio_queue.put(started), loop)
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"status": "success", "message": "Loopback started"})),
+                loop,
+            )
+            print(
+                f"{bcolors.OKGREEN}Loopback started: "
+                f"{dev_info.get('name', '')} @ {dev_info.get('defaultSampleRate', 0)}Hz"
+                f"{bcolors.ENDC}",
+            )
+        except Exception as exc:
+            error_msg = f"Failed to start loopback (device {idx}): {type(exc).__name__}: {exc}"
+            print(f"{bcolors.FAIL}{error_msg}{bcolors.ENDC}")
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"status": "error", "message": error_msg})),
+                loop,
+            )
+
+    threading.Thread(target=_start_loopback_sync, daemon=True, name="loopback-start").start()
+    # Ack immediately so the renderer knows the request was accepted; the
+    # real success/error follows from the worker thread above.
+    await ws.send(json.dumps({"status": "pending", "message": "Loopback starting..."}))
 
 
 @register_command("stop_loopback")
 async def _handle_stop_loopback(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
-    if state.recorder is not None and state.loopback_capture.is_active:
-        state.loopback_capture.stop(state.recorder)
-        loop = asyncio.get_event_loop()
-        message = json.dumps({"type": "loopback_stopped"})
-        asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
-        print(f"{bcolors.OKGREEN}Loopback stopped{bcolors.ENDC}")
-    await ws.send(json.dumps({"status": "success", "message": "Loopback stopped"}))
+    # Stop should be near-instant (stream.close + thread.join), but mirror the
+    # start path's defensive offload so any rare slow PyAudio teardown never
+    # blocks the event loop either.
+    loop = asyncio.get_event_loop()
+
+    def _stop_loopback_sync() -> None:
+        try:
+            if state.recorder is not None and state.loopback_capture.is_active:
+                state.loopback_capture.stop(state.recorder)
+                asyncio.run_coroutine_threadsafe(
+                    state.audio_queue.put(json.dumps({"type": "loopback_stopped"})),
+                    loop,
+                )
+                print(f"{bcolors.OKGREEN}Loopback stopped{bcolors.ENDC}")
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"status": "success", "message": "Loopback stopped"})),
+                loop,
+            )
+        except Exception as exc:
+            error_msg = f"Failed to stop loopback: {type(exc).__name__}: {exc}"
+            print(f"{bcolors.FAIL}{error_msg}{bcolors.ENDC}")
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"status": "error", "message": error_msg})),
+                loop,
+            )
+
+    threading.Thread(target=_stop_loopback_sync, daemon=True, name="loopback-stop").start()
 
 
 @register_command("cancel_download")

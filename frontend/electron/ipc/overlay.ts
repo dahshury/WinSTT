@@ -478,3 +478,21 @@ export function __resetOverlayForTesting__(): void {
 	stopReconciler();
 	overlayWindow = null;
 }
+
+/**
+ * Test-only: directly mutate `sessionWantsOverlay`. Production callers go
+ * through `showOverlay()` / `hideOverlay()`; tests for `canShowAfterMainBlur`
+ * need to set this flag without also flipping the gating other fields the
+ * predicate reads from.
+ */
+export function __setSessionWantsOverlayForTesting__(value: boolean): void {
+	sessionWantsOverlay = value;
+}
+
+/** Test-only: aggregator exposing the private helpers exercised by the
+ *  `canShowAfterMainBlur` / `syncOverlayToMainWindow` CRAP-gate tests.
+ *  Keeping the production API surface intact while letting tests assert
+ *  branch coverage on the helpers directly. */
+export const __overlay_test_helpers__ = {
+	canShowAfterMainBlur,
+};

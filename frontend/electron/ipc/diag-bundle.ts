@@ -258,4 +258,8 @@ export const __diag_bundle_test_helpers__ = {
 	writeZipArchive,
 	handleOpenLogsFolder,
 	handleSaveBundle,
+	logGpuInfoError,
+	logRevealDialogError,
+	safeShowErrorBox,
+	reportSaveFailure,
 };

@@ -126,11 +126,12 @@ function wakeWordRestartNeeded(
 	);
 }
 
+const DISPLAY_MODES = new Set<LiveTranscriptionDisplay>(["none", "in-app", "in-pill", "both"]);
+
 function readDisplayMode(value: unknown): LiveTranscriptionDisplay {
-	if (value === "none" || value === "in-app" || value === "in-pill" || value === "both") {
-		return value;
-	}
-	return "both";
+	return DISPLAY_MODES.has(value as LiveTranscriptionDisplay)
+		? (value as LiveTranscriptionDisplay)
+		: "both";
 }
 
 function effectiveRealtime(settings: Record<string, unknown>): boolean {
@@ -254,17 +255,7 @@ function broadcastRestartRequired(setting: string): void {
 	}
 }
 
-function performRestart(changedKey: string | null): void {
-	restartTimer = null;
-	if (isShuttingDown) {
-		return;
-	}
-	if (isSttProcessRunning()) {
-		// Electron-managed server — kill and respawn with updated CLI args
-		console.log("[settings] Restarting Electron-managed STT server");
-		restartSttProcess();
-		return;
-	}
+function notifyUnmanagedServerRestart(changedKey: string | null): void {
 	// External server — cannot restart from Electron. Surface this instead
 	// of only logging: a startup-only setting silently never applying (and
 	// any UI gating on the never-arriving restart, e.g. a spinner) is
@@ -277,22 +268,49 @@ function performRestart(changedKey: string | null): void {
 	broadcastRestartRequired(changedKey ?? "a setting");
 }
 
+function restartManagedServer(): void {
+	// Electron-managed server — kill and respawn with updated CLI args
+	console.log("[settings] Restarting Electron-managed STT server");
+	restartSttProcess();
+}
+
+function performRestart(changedKey: string | null): void {
+	restartTimer = null;
+	if (isShuttingDown) {
+		return;
+	}
+	if (isSttProcessRunning()) {
+		restartManagedServer();
+		return;
+	}
+	notifyUnmanagedServerRestart(changedKey);
+}
+
 /**
  * Should a settings change actually schedule a restart? True only when a
  * restart-relevant setting changed AND the server is in a state where a
  * restart can take effect. Extracted so `checkForRestartNeeded` carries a
  * single guard branch instead of two sequential early-returns.
  */
+function hasRestartRelevantChange(
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
+): boolean {
+	return (
+		findChangedStartupKey(oldSettings, newSettings) !== null ||
+		wakeWordRestartNeeded(oldSettings, newSettings) ||
+		realtimeEffectiveChanged(oldSettings, newSettings)
+	);
+}
+
 function shouldScheduleRestart(
 	oldSettings: Record<string, unknown>,
 	newSettings: Record<string, unknown>
 ): boolean {
-	const startupKeyChanged = findChangedStartupKey(oldSettings, newSettings) !== null;
-	const restartRelevantChange =
-		startupKeyChanged ||
-		wakeWordRestartNeeded(oldSettings, newSettings) ||
-		realtimeEffectiveChanged(oldSettings, newSettings);
-	return restartRelevantChange && isRestartActionable();
+	if (!hasRestartRelevantChange(oldSettings, newSettings)) {
+		return false;
+	}
+	return isRestartActionable();
 }
 
 function wakeKeyOrNull(
@@ -389,14 +407,10 @@ function snapshotSettings(): Record<string, unknown> {
 // Always re-merge the on-disk values when persisting `general`.
 const MAIN_OWNED_GENERAL_KEYS = ["onboarded", "onboardedAt", "onboardedTrack"] as const;
 
-function preserveMainOwnedGeneral(value: unknown): unknown {
-	if (!isPlainObjectSection(value)) {
-		return value;
-	}
-	const existing = store.get("general") as unknown;
-	if (!isPlainObjectSection(existing)) {
-		return value;
-	}
+function mergeMainOwnedFields(
+	value: Record<string, unknown>,
+	existing: Record<string, unknown>
+): Record<string, unknown> {
 	const merged: Record<string, unknown> = { ...value };
 	for (const k of MAIN_OWNED_GENERAL_KEYS) {
 		merged[k] = existing[k];
@@ -404,13 +418,26 @@ function preserveMainOwnedGeneral(value: unknown): unknown {
 	return merged;
 }
 
+function preserveMainOwnedGeneral(value: unknown): unknown {
+	if (!isPlainObjectSection(value)) {
+		return value;
+	}
+	const existing = store.get("general") as unknown;
+	return isPlainObjectSection(existing) ? mergeMainOwnedFields(value, existing) : value;
+}
+
+function applySettingEntry(key: string, value: unknown): void {
+	if (!ALLOWED_SETTINGS_KEYS.has(key)) {
+		return;
+	}
+	const safeValue = key === "general" ? preserveMainOwnedGeneral(value) : value;
+	store.set(key, safeValue);
+}
+
 function applySettings(settings: Record<string, unknown>): void {
 	const toPersist = encryptSecretsForDisk(settings);
 	for (const [key, value] of Object.entries(toPersist)) {
-		if (ALLOWED_SETTINGS_KEYS.has(key)) {
-			const safeValue = key === "general" ? preserveMainOwnedGeneral(value) : value;
-			store.set(key, safeValue);
-		}
+		applySettingEntry(key, value);
 	}
 }
 
@@ -575,3 +602,26 @@ export function cleanupSettingsHandlers(): void {
 		settingsSaveListener = null;
 	}
 }
+
+// ── Test-only re-exports of internal helpers ─────────────────────────
+// Mirrors the `__llm_test_helpers__` pattern in ./llm.ts so unit tests can
+// exercise the pure pieces of the restart/persistence pipeline without going
+// through the full IPC round-trip.
+export const __settings_test_helpers__ = {
+	readDisplayMode,
+	performRestart,
+	shouldScheduleRestart,
+	hasRestartRelevantChange,
+	preserveMainOwnedGeneral,
+	mergeMainOwnedFields,
+	applySettings,
+	applySettingEntry,
+	notifyUnmanagedServerRestart,
+	restartManagedServer,
+	setShuttingDownForTest(v: boolean): void {
+		isShuttingDown = v;
+	},
+	setSttClientRefForTest(client: SttClient | null): void {
+		sttClientRef = client;
+	},
+};

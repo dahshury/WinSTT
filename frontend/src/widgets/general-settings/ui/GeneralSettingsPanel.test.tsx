@@ -1,7 +1,11 @@
 import { describe, expect, mock, test } from "bun:test";
 import { render } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import { __general_settings_panel_test_helpers__ as helpers } from "../lib/general-settings-panel-test-helpers";
+import {
+	DEFAULT_WAKE_WORD,
+	flagsToLiveDisplay,
+	__general_settings_panel_test_helpers__ as helpers,
+} from "../lib/general-settings-panel-test-helpers";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 
 describe("GeneralSettingsPanel", () => {
@@ -289,6 +293,66 @@ describe("GeneralSettingsPanel helpers — readStartupFlags", () => {
 			startMinimized: true,
 			minimizeToTray: false,
 			sendCrashReports: false,
+		});
+	});
+});
+
+describe("GeneralSettingsPanel helpers — flagsToLiveDisplay (covers internal flagsKey)", () => {
+	// Drives the 2-bit FLAGS_TO_LIVE_DISPLAY table indirectly so that every
+	// flagsKey branch ("00" | "01" | "10" | "11") is hit at least once.
+	const cases: [boolean, boolean, "none" | "in-pill" | "in-app" | "both"][] = [
+		[false, false, "none"],
+		[false, true, "in-pill"],
+		[true, false, "in-app"],
+		[true, true, "both"],
+	];
+	test.each(cases)("inApp=%s inOverlay=%s -> %s", (inApp, inOverlay, expected) => {
+		expect(flagsToLiveDisplay(inApp, inOverlay)).toBe(expected);
+	});
+});
+
+describe("GeneralSettingsPanel helpers — reconcileWakeWord", () => {
+	test("keeps a known wake word as-is", () => {
+		expect(helpers.reconcileWakeWord("jarvis")).toBe("jarvis");
+	});
+
+	test("falls back to DEFAULT_WAKE_WORD for undefined", () => {
+		expect(helpers.reconcileWakeWord(undefined)).toBe(DEFAULT_WAKE_WORD);
+	});
+
+	test("falls back to DEFAULT_WAKE_WORD for an unknown word", () => {
+		expect(helpers.reconcileWakeWord("definitely-not-a-wake-word")).toBe(DEFAULT_WAKE_WORD);
+	});
+});
+
+describe("GeneralSettingsPanel helpers — recordingModePatch (covers internal wakeWordPatch)", () => {
+	test("non-wake modes return just the recordingMode patch", () => {
+		expect(helpers.recordingModePatch("ptt", "jarvis")).toEqual({ recordingMode: "ptt" });
+		expect(helpers.recordingModePatch("toggle", undefined)).toEqual({
+			recordingMode: "toggle",
+		});
+		expect(helpers.recordingModePatch("listen", "anything")).toEqual({
+			recordingMode: "listen",
+		});
+	});
+
+	test("wakeword mode with known current word reuses it (no wakeWord patch)", () => {
+		expect(helpers.recordingModePatch("wakeword", "jarvis")).toEqual({
+			recordingMode: "wakeword",
+		});
+	});
+
+	test("wakeword mode with undefined current word reconciles to DEFAULT", () => {
+		expect(helpers.recordingModePatch("wakeword", undefined)).toEqual({
+			recordingMode: "wakeword",
+			wakeWord: DEFAULT_WAKE_WORD,
+		});
+	});
+
+	test("wakeword mode with unknown current word reconciles to DEFAULT", () => {
+		expect(helpers.recordingModePatch("wakeword", "made-up-word")).toEqual({
+			recordingMode: "wakeword",
+			wakeWord: DEFAULT_WAKE_WORD,
 		});
 	});
 });

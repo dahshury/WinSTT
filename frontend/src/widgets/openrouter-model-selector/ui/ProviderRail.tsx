@@ -349,7 +349,6 @@ function TileButton({ icon, isActive, label, onProviderClick, provider }: TileBu
 						type="button"
 					>
 						<span className="flex size-6 items-center justify-center overflow-hidden rounded bg-surface p-0.5">
-							{/** biome-ignore lint/performance/noImgElement: Provider icons are static local PNG/SVGs served from /public. Vite serves them from public/ and the renderer uses plain <img>. */}
 							<img
 								alt=""
 								className="size-full object-contain"

@@ -59,16 +59,27 @@ function slotsOf(loaded: LoadedSlots): readonly SlotEntry[] {
 	];
 }
 
+function isSlotCounted(
+	slot: SlotEntry,
+	excludeId: string | null
+): slot is SlotEntry & { id: string } {
+	return slot.id !== null && slot.id !== excludeId;
+}
+
+function hasUsableEstimate(entry: ModelStateEntry | undefined): entry is ModelStateEntry {
+	return entry !== undefined && entry.estimated_bytes > 0;
+}
+
 function slotBytes(
 	slot: SlotEntry,
 	statesById: Record<string, ModelStateEntry>,
 	excludeId: string | null
 ): number {
-	if (!slot.id || slot.id === excludeId) {
+	if (!isSlotCounted(slot, excludeId)) {
 		return 0;
 	}
 	const entry = statesById[slot.id];
-	if (!entry || entry.estimated_bytes <= 0) {
+	if (!hasUsableEstimate(entry)) {
 		return 0;
 	}
 	return estimateForQuant(entry.estimated_bytes, slot.quant);
@@ -107,6 +118,10 @@ function canUseGpu(quantization: string, live: LiveResourcesEntry): boolean {
 	return live.gpus.length > 0 && GPU_COMPATIBLE_QUANTIZATIONS.has(quantization);
 }
 
+function gpuOrCpuTarget(quantization: string, live: LiveResourcesEntry): FitTarget {
+	return canUseGpu(quantization, live) ? "gpu" : "cpu";
+}
+
 function predictedTarget(
 	quantization: string,
 	live: LiveResourcesEntry,
@@ -118,7 +133,7 @@ function predictedTarget(
 	if (requestedDevice === "cpu") {
 		return "cpu";
 	}
-	return canUseGpu(quantization, live) ? "gpu" : "cpu";
+	return gpuOrCpuTarget(quantization, live);
 }
 
 function pickBiggerGpu(
@@ -407,4 +422,5 @@ export const TEST_ONLY = {
 	largestGpu,
 	predictedTarget,
 	severityFor,
+	slotBytes,
 };

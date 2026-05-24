@@ -4,6 +4,7 @@ import {
 	assessDictationFitClient,
 	assessOllamaFitClient,
 	loadedDictationFootprint,
+	TEST_ONLY,
 } from "./fit-assessor";
 
 const GB = 1024 ** 3;
@@ -227,5 +228,75 @@ describe("loadedDictationFootprint", () => {
 			null
 		);
 		expect(total).toBe(0);
+	});
+});
+
+describe("slotBytes", () => {
+	const { slotBytes } = TEST_ONLY;
+	const states: Record<string, ModelStateEntry> = {
+		a: entryOf({ id: "a", estimated_bytes: 1 * GB }),
+		zero: entryOf({ id: "zero", estimated_bytes: 0 }),
+		neg: entryOf({ id: "neg", estimated_bytes: -1 }),
+	};
+
+	test("returns 0 when slot id is null", () => {
+		expect(slotBytes({ id: null, quant: "" }, states, null)).toBe(0);
+	});
+
+	test("returns 0 when slot id matches excludeId", () => {
+		expect(slotBytes({ id: "a", quant: "" }, states, "a")).toBe(0);
+	});
+
+	test("returns 0 when slot id is missing from statesById", () => {
+		expect(slotBytes({ id: "missing", quant: "" }, states, null)).toBe(0);
+	});
+
+	test("returns 0 when entry estimated_bytes is non-positive (zero)", () => {
+		expect(slotBytes({ id: "zero", quant: "" }, states, null)).toBe(0);
+	});
+
+	test("returns 0 when entry estimated_bytes is non-positive (negative)", () => {
+		expect(slotBytes({ id: "neg", quant: "" }, states, null)).toBe(0);
+	});
+
+	test("returns scaled estimate for a real loaded entry", () => {
+		const result = slotBytes({ id: "a", quant: "" }, states, null);
+		// "" → fp32 baseline factor 4 / fp32 baseline 4 = 1x
+		expect(result).toBe(1 * GB);
+	});
+
+	test("scales by quantization (fp16 → half the baseline)", () => {
+		const result = slotBytes({ id: "a", quant: "fp16" }, states, null);
+		// fp16 factor 2 / baseline 4 → 0.5x
+		expect(result).toBe(Math.round(1 * GB * 0.5));
+	});
+});
+
+describe("predictedTarget", () => {
+	const { predictedTarget } = TEST_ONLY;
+
+	test("returns 'neither' when host has no hardware", () => {
+		const live = liveOf({ ram_total_bytes: 0, gpus: [] });
+		expect(predictedTarget("", live, null)).toBe("neither");
+	});
+
+	test("returns 'cpu' when requestedDevice is 'cpu' (even on a GPU host)", () => {
+		const live = liveOf({ gpus: [gpuOf()] });
+		expect(predictedTarget("", live, "cpu")).toBe("cpu");
+	});
+
+	test("returns 'gpu' when GPU available and quant is GPU-compatible", () => {
+		const live = liveOf({ gpus: [gpuOf()] });
+		expect(predictedTarget("fp16", live, null)).toBe("gpu");
+	});
+
+	test("returns 'cpu' when quant is not GPU-compatible (e.g. int8)", () => {
+		const live = liveOf({ gpus: [gpuOf()] });
+		expect(predictedTarget("int8", live, null)).toBe("cpu");
+	});
+
+	test("returns 'cpu' when no GPUs but RAM exists and no device requested", () => {
+		const live = liveOf({ ram_total_bytes: 32 * GB, gpus: [] });
+		expect(predictedTarget("", live, null)).toBe("cpu");
 	});
 });

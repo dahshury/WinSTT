@@ -65,3 +65,9 @@ export function rowHint(assessment: FitAssessmentEntry | null, t: Translator): s
 		target: targetLabel(assessment.target, t),
 	});
 }
+
+export const __format_fit_test_helpers__ = {
+	hasUsableFootprint,
+	labelBytes,
+	targetLabel,
+};

@@ -88,3 +88,9 @@ export const useSystemResourcesStore = create<SystemResourcesStore>((set) => ({
 		set({ liveResources: null, isLoading: false, error: null, lastFetchedAt: null });
 	},
 }));
+
+export const __system_resources_store_test_helpers__ = {
+	errorMessage,
+	errorPatch,
+	snapshotPatch,
+};

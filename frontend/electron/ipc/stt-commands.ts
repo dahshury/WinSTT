@@ -364,9 +364,9 @@ function handleGetLiveResources(sttClient: SttClient, payload: unknown): Promise
 }
 
 interface AssessDictationFitPayload {
-	device?: string | null;
+	device: string | null;
 	modelId: string;
-	quantization?: string;
+	quantization: string;
 }
 
 function readModelIdString(payload: Record<string, unknown>): string | null {
@@ -402,11 +402,7 @@ async function safeAssessDictationFit(
 	parsed: AssessDictationFitPayload
 ): Promise<unknown> {
 	try {
-		return await sttClient.assessDictationFit(
-			parsed.modelId,
-			parsed.quantization ?? "",
-			parsed.device ?? null
-		);
+		return await sttClient.assessDictationFit(parsed.modelId, parsed.quantization, parsed.device);
 	} catch (err) {
 		console.warn("[stt:assess-dictation-fit] request failed:", err);
 		return null;
@@ -570,5 +566,6 @@ export const __stt_commands_test_helpers__ = {
 	handleAssessDictationFit,
 	handleAssessOllamaFit,
 	parseAssessDictationFitPayload,
+	safeAssessDictationFit,
 	handleAbortOperation,
 };

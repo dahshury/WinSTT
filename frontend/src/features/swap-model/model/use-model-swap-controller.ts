@@ -664,6 +664,7 @@ export const __testables = {
 	rollbackMain,
 	rollbackRealtime,
 	runConfirmPendingDownload,
+	runGateWithAssessment,
 	runHandleMainChange,
 	runHandleRealtimeChange,
 	runIssueSwap,

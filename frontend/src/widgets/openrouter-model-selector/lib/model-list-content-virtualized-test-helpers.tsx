@@ -728,7 +728,6 @@ export function MakerIcon({ maker }: { maker: string | undefined }) {
 	}
 	return (
 		<span className="flex size-4 shrink-0 items-center justify-center overflow-hidden rounded border border-border/50 bg-surface p-0.5">
-			{/** biome-ignore lint/performance/noImgElement: Provider icons are static local PNG/SVGs served from /public; Vite serves them verbatim from public/ and the renderer loads them via plain <img>. */}
 			<img
 				alt={`${formatMaker(maker)} icon`}
 				className="size-full object-contain"

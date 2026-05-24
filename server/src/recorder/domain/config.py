@@ -86,7 +86,10 @@ class RealtimeConfig(StrictMutableModel):
     enable_realtime_transcription: bool = False
     use_main_model_for_realtime: bool = False
     realtime_model_type: str = "tiny"
-    realtime_processing_pause: float = 0.2
+    # 0.1s makes the preview ~2x more responsive than the 0.2s default; the
+    # RealtimeSTT WASAPI reference uses 0.01s but that assumes ctranslate2 +
+    # tiny.en which is faster than our ONNX path, so 0.1s is the safe knee.
+    realtime_processing_pause: float = 0.1
     init_realtime_after_seconds: float = 0.2
     beam_size_realtime: int = 3
     realtime_batch_size: int = 16

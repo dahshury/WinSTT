@@ -452,7 +452,16 @@ async def main_async() -> None:
         "diarization_max_speakers": args.diarization_max_speakers,
         "spinner": False,
         "use_microphone": True,
-        "on_realtime_transcription_update": _text_detected_cb,
+        # Wire dynamic-silence classification + WS broadcast off the
+        # STABILIZED stream (RealtimeSTT-faithful, monotonic safetext + fresh
+        # tail) instead of raw Whisper output. The raw stream was thrashing
+        # the smart-endpoint classifier on every Whisper rerank, cutting
+        # users off mid-thought, and feeding the renderer's preview a flickery
+        # text that "removed big chunks and re-added them". Stabilized text
+        # keeps the safetext floor, so the preview never regresses below the
+        # confirmed prefix. The noise-repetition detector's audio-variance
+        # gate is the real safety net there, not raw text growth.
+        "on_realtime_transcription_stabilized": _text_detected_cb,
         **event_callbacks,
         "no_log_file": True,
         "use_extended_logging": args.use_extended_logging,

@@ -582,6 +582,77 @@ describe("reportSwapGateError", () => {
 	});
 });
 
+describe("runGateWithAssessment", () => {
+	test("critical assessment surfaces the fit warning and does not proceed", async () => {
+		const setFit = mock((_v: PendingFitWarning | null) => undefined);
+		const proceed = mock(() => undefined);
+		const assess = mock(() => Promise.resolve({ severity: "critical" } as FitAssessmentEntry));
+		await t.runGateWithAssessment({
+			assessDictationFitOnServer: assess as never,
+			currentQuantization: "int8",
+			deviceValue: "auto",
+			getModel: ((_id: string) => ({ displayName: "Pretty Model" })) as never,
+			kind: "main",
+			previous: "prev",
+			proceed: proceed as never,
+			quantization: undefined,
+			setPendingFitWarning: setFit as never,
+			value: "candidate",
+		});
+		expect(assess).toHaveBeenCalledWith("candidate", "int8", "auto");
+		expect(setFit).toHaveBeenCalledTimes(1);
+		expect(proceed).not.toHaveBeenCalled();
+		const warning = setFit.mock.calls[0]?.[0] as PendingFitWarning | undefined;
+		expect(warning?.candidateName).toBe("Pretty Model");
+		expect(warning?.assessment).toEqual({ severity: "critical" } as FitAssessmentEntry);
+		// next-callback bridges back to proceed once the user confirms.
+		warning?.next();
+		expect(proceed).toHaveBeenCalledWith("main", "candidate", "prev", undefined);
+	});
+
+	test("non-critical assessment proceeds with the swap without surfacing a warning", async () => {
+		const setFit = mock((_v: PendingFitWarning | null) => undefined);
+		const proceed = mock(() => undefined);
+		const assess = mock(() => Promise.resolve({ severity: "warning" } as FitAssessmentEntry));
+		await t.runGateWithAssessment({
+			assessDictationFitOnServer: assess as never,
+			currentQuantization: "int8",
+			deviceValue: "cpu",
+			getModel: ((_id: string) => undefined) as never,
+			kind: "realtime",
+			previous: "prev-rt",
+			proceed: proceed as never,
+			quantization: "fp16",
+			setPendingFitWarning: setFit as never,
+			value: "next-rt",
+		});
+		// quantization override flows through to the assessor.
+		expect(assess).toHaveBeenCalledWith("next-rt", "fp16", "cpu");
+		expect(setFit).not.toHaveBeenCalled();
+		expect(proceed).toHaveBeenCalledWith("realtime", "next-rt", "prev-rt", "fp16");
+	});
+
+	test("null/undefined assessment falls through to the proceed branch", async () => {
+		const setFit = mock((_v: PendingFitWarning | null) => undefined);
+		const proceed = mock(() => undefined);
+		const assess = mock(() => Promise.resolve(null));
+		await t.runGateWithAssessment({
+			assessDictationFitOnServer: assess as never,
+			currentQuantization: "int8",
+			deviceValue: "auto",
+			getModel: ((_id: string) => undefined) as never,
+			kind: "main",
+			previous: "prev",
+			proceed: proceed as never,
+			quantization: undefined,
+			setPendingFitWarning: setFit as never,
+			value: "m",
+		});
+		expect(setFit).not.toHaveBeenCalled();
+		expect(proceed).toHaveBeenCalledWith("main", "m", "prev", undefined);
+	});
+});
+
 // Compile-time sanity: confirm the public type surface still resolves.
 test("OnnxQuantization type still resolves", () => {
 	const q: OnnxQuantization = "int8";

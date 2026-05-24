@@ -51,10 +51,14 @@ mock.module("electron", () => ({
 
 const {
 	setOverlayWindow,
+	setMainWindow,
 	showOverlay,
 	hideOverlay,
+	syncOverlayToMainWindow,
 	setupOverlayHandlers,
 	__resetOverlayForTesting__,
+	__setSessionWantsOverlayForTesting__,
+	__overlay_test_helpers__,
 } = await import("./overlay");
 
 interface MockWin {
@@ -525,6 +529,149 @@ describe("overlay handlers", () => {
 		(storeData.general as Record<string, unknown>).recordingMode = "ptt";
 		showOverlay();
 		expect(win.calls).toContain("show");
+	});
+
+	describe("canShowAfterMainBlur (predicate)", () => {
+		// Pure predicate — exhaustive truth table over the three inputs:
+		//   sessionWantsOverlay × overlayWindow !== null × !isOverlaySuppressedBySettings
+		// Returns true ONLY when all three are true; any one false short-
+		// circuits via &&. The matrix below pins every branch.
+
+		const { canShowAfterMainBlur } = __overlay_test_helpers__;
+
+		test("returns true only when session wants pill AND window registered AND not suppressed", () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			__setSessionWantsOverlayForTesting__(true);
+			// Default settings (showRecordingOverlay=true, recordingMode=ptt) → not suppressed.
+			expect(canShowAfterMainBlur()).toBe(true);
+		});
+
+		test("returns false when sessionWantsOverlay is false (kills first `&&` short-circuit)", () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			__setSessionWantsOverlayForTesting__(false);
+			expect(canShowAfterMainBlur()).toBe(false);
+		});
+
+		test("returns false when no overlay window registered (kills `overlayWindow !== null` mutant)", () => {
+			// No setOverlayWindow call — overlayWindow stays null after reset.
+			__setSessionWantsOverlayForTesting__(true);
+			expect(canShowAfterMainBlur()).toBe(false);
+		});
+
+		test("returns false when suppressed by `showRecordingOverlay=false`", () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			__setSessionWantsOverlayForTesting__(true);
+			(storeData.general as Record<string, unknown>).showRecordingOverlay = false;
+			expect(canShowAfterMainBlur()).toBe(false);
+		});
+
+		test("returns false when suppressed by `recordingMode=listen`", () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			__setSessionWantsOverlayForTesting__(true);
+			(storeData.general as Record<string, unknown>).recordingMode = "listen";
+			expect(canShowAfterMainBlur()).toBe(false);
+		});
+	});
+
+	describe("syncOverlayToMainWindow", () => {
+		// Mirrors main-window focus state into the pill. Two branches:
+		//   1. main focused          → performHide() (pill is redundant)
+		//   2. main NOT focused AND canShowAfterMainBlur()  → doShow()
+		//   3. main NOT focused AND !canShowAfterMainBlur() → no-op
+
+		interface MockMain {
+			destroyed: boolean;
+			focused: boolean;
+			isDestroyed: () => boolean;
+			isFocused: () => boolean;
+		}
+
+		function makeMainWindow(opts: { focused?: boolean; destroyed?: boolean } = {}): MockMain {
+			const m: MockMain = {
+				focused: opts.focused ?? false,
+				destroyed: opts.destroyed ?? false,
+				isDestroyed: () => m.destroyed,
+				isFocused: () => m.focused,
+			};
+			return m;
+		}
+
+		test("main focused → hides the pill (performHide synchronous pass)", () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			// Get the pill on-screen first so the hide call has something to hide.
+			__setSessionWantsOverlayForTesting__(true);
+			win.visible = true;
+			const main = makeMainWindow({ focused: true });
+			setMainWindow(main as unknown as Parameters<typeof setMainWindow>[0]);
+			syncOverlayToMainWindow();
+			// All three hide mechanisms from `applyHide`.
+			expect(win.calls).toContain("opacity:0");
+			expect(win.calls).toContain("setPosition:-10000,-10000");
+			expect(win.calls).toContain("hide");
+		});
+
+		test("main blurred AND canShowAfterMainBlur=true → shows the pill at the computed position", () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			__setSessionWantsOverlayForTesting__(true);
+			const main = makeMainWindow({ focused: false });
+			setMainWindow(main as unknown as Parameters<typeof setMainWindow>[0]);
+			syncOverlayToMainWindow();
+			// Same position math as a normal showOverlay (floating-bottom default).
+			expect(win.calls).toContain("setPosition:560,900");
+			expect(win.calls).toContain("show");
+		});
+
+		test("main blurred AND sessionWantsOverlay=false → no-op (no show, no hide)", () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			// Session is OVER — nothing wants the pill.
+			__setSessionWantsOverlayForTesting__(false);
+			const main = makeMainWindow({ focused: false });
+			setMainWindow(main as unknown as Parameters<typeof setMainWindow>[0]);
+			syncOverlayToMainWindow();
+			// Neither branch fires.
+			expect(win.calls).toEqual([]);
+		});
+
+		test("main blurred but suppressed by settings → no-op (canShowAfterMainBlur false branch)", () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			__setSessionWantsOverlayForTesting__(true);
+			(storeData.general as Record<string, unknown>).showRecordingOverlay = false;
+			const main = makeMainWindow({ focused: false });
+			setMainWindow(main as unknown as Parameters<typeof setMainWindow>[0]);
+			syncOverlayToMainWindow();
+			expect(win.calls).toEqual([]);
+		});
+
+		test("destroyed main window is treated as NOT focused → falls through to show branch", () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			__setSessionWantsOverlayForTesting__(true);
+			// Destroyed main — `isMainWindowFocused` returns false because of the
+			// `!mainWindow.isDestroyed()` guard, NOT because isFocused() returns false.
+			const main = makeMainWindow({ focused: true, destroyed: true });
+			setMainWindow(main as unknown as Parameters<typeof setMainWindow>[0]);
+			syncOverlayToMainWindow();
+			// Falls into the "main not focused + canShow" branch → show fires.
+			expect(win.calls).toContain("show");
+		});
+
+		test("null main window is treated as NOT focused → show branch (when canShow holds)", () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			__setSessionWantsOverlayForTesting__(true);
+			// Main never registered (or cleared via setMainWindow(null)).
+			setMainWindow(null);
+			syncOverlayToMainWindow();
+			expect(win.calls).toContain("show");
+		});
 	});
 
 	test("reconciler tick re-hides sneak-visible window while still in the hidden + time-budget window (kills both `||` branches of shouldStopReconciler)", async () => {

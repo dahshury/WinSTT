@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from src.recorder.domain.model_registry import ModelInfo
     from src.recorder.domain.ports.transcriber import TranscriptionResult
 from src.recorder.application.pipeline import RecordingPipeline
+from src.recorder.application.realtime_stabilizer import RealtimeStabilizer
 from src.recorder.domain.audio_buffer import AudioBuffer
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.errors import DownloadCancelledError
@@ -35,6 +36,7 @@ from src.recorder.domain.events import (
     ModelSwapFailed,
     ModelSwapStarted,
     NoAudioDetected,
+    RealtimeTranscriptionStabilized,
     RealtimeTranscriptionUpdate,
     SpeakerSegmentsDetected,
     TranscriptionCompleted,
@@ -183,6 +185,11 @@ class RecorderService:
         # realtime worker thread.
         self._realtime_committed_text: str = ""
         self._realtime_committed_frames: int = 0
+        # RealtimeSTT-faithful text stabilizer: turns Whisper's flickery
+        # per-call output into a UI-safe monotonic stream. See
+        # ``realtime_stabilizer.py`` for the algorithm. Reset alongside
+        # ``_realtime_committed_text`` at the start of each fresh recording.
+        self._realtime_stabilizer = RealtimeStabilizer()
         # Last full text the realtime worker published (committed + fresh).
         # Survives the recording-end accumulator reset so ``text()`` can reuse
         # it as the final transcription when ``use_main_model_for_realtime`` is
@@ -1283,6 +1290,9 @@ class RecorderService:
         self._realtime_committed_frames = 0
         if clear_last:
             self._last_realtime_text = ""
+            # New recording: the stabilizer's prior safetext is irrelevant
+            # to the next utterance and would mis-anchor on stale content.
+            self._realtime_stabilizer.reset()
 
     def _realtime_step(self, state: _RealtimeLoopState) -> None:
         """One realtime-worker loop iteration (mirrors the old loop body)."""
@@ -1360,7 +1370,9 @@ class RecorderService:
         if len(commit_audio) == 0:
             return
         commit_text = self._transcribe_realtime_window(commit_audio)
-        if commit_text:
+        # commit_text is ``None`` when the realtime transcriber is mid-swap;
+        # both ``None`` and ``""`` indicate "no usable commit this tick".
+        if commit_text and commit_text.strip():
             self._append_committed_text(commit_text)
 
     def _transcribe_realtime_window(self, audio: np.ndarray[Any, Any]) -> str | None:
@@ -1400,8 +1412,13 @@ class RecorderService:
         fresh_text = self._transcribe_realtime_window(audio_array)
         if fresh_text is None:
             return
-        text = self._assemble_realtime_text(fresh_text)
-        self._publish_realtime_update(text)
+        raw_text = self._assemble_realtime_text(fresh_text)
+        # Run the assembled text through the RealtimeSTT-faithful stabilizer.
+        # The committed prefix is already monotonic (frozen older chunks); the
+        # stabilizer's commonprefix trivially keeps it and works on the fresh
+        # tail to kill Whisper-rerank flicker.
+        stabilized_text = self._realtime_stabilizer.update(raw_text)
+        self._publish_realtime_update(stabilized_text, raw_text)
 
     def _fresh_realtime_slice(self, committed_frames: int) -> np.ndarray[Any, Any] | None:
         """Audio past the watermark, or ``None`` to skip this realtime tick.
@@ -1419,16 +1436,33 @@ class RecorderService:
             return None
         return audio_array
 
-    def _publish_realtime_update(self, text: str) -> None:
-        """Emit a live-preview update, retaining the text for reuse by ``text()``.
+    def _publish_realtime_update(self, stabilized_text: str, raw_text: str) -> None:
+        """Emit live-preview updates, retaining the stabilized text for reuse.
+
+        Two events fire on every realtime tick (mirrors RealtimeSTT's
+        ``on_realtime_transcription_stabilized`` then ``..._update`` ordering
+        in audio_recorder.py:2476/2493):
+
+        * ``RealtimeTranscriptionStabilized`` — UI-safe monotonic text from
+          the stabilizer. This is what the renderer's live-preview pane and
+          the dynamic-silence classifier should consume.
+        * ``RealtimeTranscriptionUpdate`` — raw assembled Whisper output for
+          consumers that genuinely need the latest (potentially regressed)
+          text (e.g. logging, the suffix-repetition "noise break" detector).
+
+        ``_last_realtime_text`` is set to the stabilized text so the
+        ``text()`` reuse path serves the same UI-safe string the user just
+        saw — not a transient Whisper rerank.
 
         ``is_recording`` is re-checked because the user may have released PTT
         during the (potentially long) transcribe — the state machine flips to
         TRANSCRIBING and main is about to run its own pass.
         """
         if self._state_machine.is_recording:  # pragma: no branch
-            self._last_realtime_text = text
-            self._event_bus.publish(RealtimeTranscriptionUpdate(timestamp=self._clock.get_current_time(), text=text))
+            self._last_realtime_text = stabilized_text
+            ts = self._clock.get_current_time()
+            self._event_bus.publish(RealtimeTranscriptionStabilized(timestamp=ts, text=stabilized_text))
+            self._event_bus.publish(RealtimeTranscriptionUpdate(timestamp=ts, text=raw_text))
 
     def _assemble_realtime_text(self, fresh_text: str) -> str:
         committed = self._realtime_committed_text

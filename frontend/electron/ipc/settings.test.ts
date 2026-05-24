@@ -122,8 +122,12 @@ mock.module("./stt-process-deps", () => ({
 	},
 }));
 
-const { setupSettingsHandlers, cleanupSettingsHandlers, applyMainProcessSettingsPatch } =
-	await import("./settings");
+const {
+	setupSettingsHandlers,
+	cleanupSettingsHandlers,
+	applyMainProcessSettingsPatch,
+	__settings_test_helpers__,
+} = await import("./settings");
 
 function fireEvent(channel: string, sender: { id: number }, payload?: unknown): void {
 	const list = listeners.get(channel) ?? [];
@@ -690,5 +694,286 @@ describe("applyMainProcessSettingsPatch", () => {
 		applyMainProcessSettingsPatch({ "audio.webrtcSensitivity": 2 });
 		await new Promise((r) => setTimeout(r, 700));
 		expect(sttProcessState.restartCalled).toBe(1);
+	});
+});
+
+describe("readDisplayMode (helper)", () => {
+	const { readDisplayMode } = __settings_test_helpers__;
+
+	test("accepts 'none'", () => {
+		expect(readDisplayMode("none")).toBe("none");
+	});
+
+	test("accepts 'in-app'", () => {
+		expect(readDisplayMode("in-app")).toBe("in-app");
+	});
+
+	test("accepts 'in-pill'", () => {
+		expect(readDisplayMode("in-pill")).toBe("in-pill");
+	});
+
+	test("accepts 'both'", () => {
+		expect(readDisplayMode("both")).toBe("both");
+	});
+
+	test("falls back to 'both' on unknown string", () => {
+		expect(readDisplayMode("popup")).toBe("both");
+	});
+
+	test("falls back to 'both' on undefined / null / non-string", () => {
+		expect(readDisplayMode(undefined)).toBe("both");
+		expect(readDisplayMode(null)).toBe("both");
+		expect(readDisplayMode(42)).toBe("both");
+		expect(readDisplayMode({})).toBe("both");
+	});
+});
+
+describe("performRestart (helper)", () => {
+	const { performRestart, setShuttingDownForTest, setSttClientRefForTest } =
+		__settings_test_helpers__;
+
+	test("no-op when isShuttingDown is true", () => {
+		setupSettingsHandlers();
+		setShuttingDownForTest(true);
+		sttProcessState.running = true;
+		try {
+			performRestart("some.key");
+			expect(sttProcessState.restartCalled).toBe(0);
+		} finally {
+			setShuttingDownForTest(false);
+		}
+	});
+
+	test("calls restartSttProcess when STT process is managed", () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		performRestart("audio.webrtcSensitivity");
+		expect(sttProcessState.restartCalled).toBe(1);
+	});
+
+	test("broadcasts STT_RESTART_REQUIRED to all windows when unmanaged", () => {
+		setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
+			typeof setupSettingsHandlers
+		>[0]);
+		sttProcessState.running = false;
+		const eventsA: Array<{ channel: string; payload: unknown }> = [];
+		const eventsB: Array<{ channel: string; payload: unknown }> = [];
+		allWindows.push(createWindow(601, eventsA), createWindow(602, eventsB));
+		performRestart("model.realtimeModel");
+		const aHit = eventsA.find((e) => e.channel === "stt:restart-required");
+		const bHit = eventsB.find((e) => e.channel === "stt:restart-required");
+		expect(aHit).toBeTruthy();
+		expect(bHit).toBeTruthy();
+		expect((aHit?.payload as { setting: string }).setting).toBe("model.realtimeModel");
+		expect(sttProcessState.restartCalled).toBe(0);
+	});
+
+	test("falls back to 'a setting' when changedKey is null in unmanaged branch", () => {
+		setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
+			typeof setupSettingsHandlers
+		>[0]);
+		sttProcessState.running = false;
+		const events: Array<{ channel: string; payload: unknown }> = [];
+		allWindows.push(createWindow(610, events));
+		performRestart(null);
+		const hit = events.find((e) => e.channel === "stt:restart-required");
+		expect(hit).toBeTruthy();
+		expect((hit?.payload as { setting: string }).setting).toBe("a setting");
+		setSttClientRefForTest(null);
+	});
+});
+
+describe("shouldScheduleRestart (helper)", () => {
+	const { shouldScheduleRestart, hasRestartRelevantChange, setShuttingDownForTest } =
+		__settings_test_helpers__;
+
+	test("returns false when nothing restart-relevant changed", () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		const old = { general: { recordingMode: "ptt" }, audio: {}, model: {}, quality: {} };
+		const next = { general: { recordingMode: "ptt" }, audio: {}, model: {}, quality: {} };
+		expect(shouldScheduleRestart(old, next)).toBe(false);
+	});
+
+	test("returns false when relevant change exists but server is shutting down", () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		const old = { audio: { webrtcSensitivity: 1 } };
+		const next = { audio: { webrtcSensitivity: 2 } };
+		setShuttingDownForTest(true);
+		try {
+			expect(shouldScheduleRestart(old, next)).toBe(false);
+		} finally {
+			setShuttingDownForTest(false);
+		}
+	});
+
+	test("returns false when relevant change exists but no server to restart", () => {
+		setupSettingsHandlers();
+		sttProcessState.running = false;
+		const old = { audio: { webrtcSensitivity: 1 } };
+		const next = { audio: { webrtcSensitivity: 2 } };
+		expect(shouldScheduleRestart(old, next)).toBe(false);
+	});
+
+	test("returns true when startup key changed AND server is running", () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		const old = { audio: { webrtcSensitivity: 1 } };
+		const next = { audio: { webrtcSensitivity: 2 } };
+		expect(shouldScheduleRestart(old, next)).toBe(true);
+	});
+
+	test("returns true when wake-word config changed AND server is running", () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		const old = { general: { recordingMode: "wakeword", wakeWord: "jarvis" } };
+		const next = { general: { recordingMode: "wakeword", wakeWord: "alexa" } };
+		expect(shouldScheduleRestart(old, next)).toBe(true);
+	});
+
+	test("returns true when realtime-display flips AND server is running", () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		const old = { general: { liveTranscriptionDisplay: "both" } };
+		const next = { general: { liveTranscriptionDisplay: "none" } };
+		expect(shouldScheduleRestart(old, next)).toBe(true);
+	});
+
+	test("hasRestartRelevantChange covers all three OR branches independently", () => {
+		// Startup-only branch
+		expect(
+			hasRestartRelevantChange(
+				{ audio: { webrtcSensitivity: 1 } },
+				{ audio: { webrtcSensitivity: 2 } }
+			)
+		).toBe(true);
+		// Wake-word branch
+		expect(
+			hasRestartRelevantChange(
+				{ general: { recordingMode: "wakeword", wakeWord: "a" } },
+				{ general: { recordingMode: "wakeword", wakeWord: "b" } }
+			)
+		).toBe(true);
+		// Realtime-display branch
+		expect(
+			hasRestartRelevantChange(
+				{ general: { liveTranscriptionDisplay: "both" } },
+				{ general: { liveTranscriptionDisplay: "none" } }
+			)
+		).toBe(true);
+		// None
+		expect(hasRestartRelevantChange({}, {})).toBe(false);
+	});
+});
+
+describe("preserveMainOwnedGeneral (helper)", () => {
+	const { preserveMainOwnedGeneral, mergeMainOwnedFields } = __settings_test_helpers__;
+
+	test("returns value unchanged when value is not a plain object", () => {
+		expect(preserveMainOwnedGeneral(undefined)).toBeUndefined();
+		expect(preserveMainOwnedGeneral(null)).toBeNull();
+		expect(preserveMainOwnedGeneral("string")).toBe("string");
+		expect(preserveMainOwnedGeneral([1, 2, 3])).toEqual([1, 2, 3]);
+	});
+
+	test("returns value unchanged when existing store 'general' is not a plain object", () => {
+		storeData.general = null;
+		const input = { recordingMode: "ptt", onboarded: false };
+		expect(preserveMainOwnedGeneral(input)).toEqual(input);
+	});
+
+	test("overlays main-owned keys from store onto patch", () => {
+		storeData.general = {
+			recordingMode: "vad",
+			onboarded: true,
+			onboardedAt: "2025-01-01",
+			onboardedTrack: "default",
+		};
+		const renderer = { recordingMode: "ptt", onboarded: false };
+		const out = preserveMainOwnedGeneral(renderer) as Record<string, unknown>;
+		// Renderer-supplied non-main keys win
+		expect(out.recordingMode).toBe("ptt");
+		// Main-owned keys are preserved from the store
+		expect(out.onboarded).toBe(true);
+		expect(out.onboardedAt).toBe("2025-01-01");
+		expect(out.onboardedTrack).toBe("default");
+	});
+
+	test("mergeMainOwnedFields copies the 3 main-owned keys from existing into the patch", () => {
+		const merged = mergeMainOwnedFields(
+			{ recordingMode: "ptt", customField: "x" },
+			{ onboarded: true, onboardedAt: "t", onboardedTrack: "stable", noise: 1 }
+		);
+		expect(merged.recordingMode).toBe("ptt");
+		expect(merged.customField).toBe("x");
+		expect(merged.onboarded).toBe(true);
+		expect(merged.onboardedAt).toBe("t");
+		expect(merged.onboardedTrack).toBe("stable");
+		// Not a main-owned key — must NOT leak through
+		expect(merged.noise).toBeUndefined();
+	});
+});
+
+describe("applySettings (helper)", () => {
+	const { applySettings, applySettingEntry } = __settings_test_helpers__;
+
+	test("writes every allowed top-level section to the store", () => {
+		storeData = { general: {}, model: {}, audio: {}, quality: {} };
+		applySettings({
+			general: { recordingMode: "ptt" },
+			audio: { webrtcSensitivity: 7 },
+			model: { model: "tiny" },
+		});
+		expect((storeData.general as Record<string, unknown>).recordingMode).toBe("ptt");
+		expect((storeData.audio as Record<string, unknown>).webrtcSensitivity).toBe(7);
+		expect((storeData.model as Record<string, unknown>).model).toBe("tiny");
+	});
+
+	test("silently drops keys not in the allowlist", () => {
+		storeData = {};
+		applySettings({ __evil: { x: 1 }, also_not_allowed: "y" });
+		expect(storeData.__evil).toBeUndefined();
+		expect(storeData.also_not_allowed).toBeUndefined();
+	});
+
+	test("encrypts secret fields before persisting", () => {
+		storeData = {};
+		applySettings({ llm: { openrouterApiKey: "sk-or-secret" } });
+		const persisted = (storeData.llm as { openrouterApiKey: string }).openrouterApiKey;
+		expect(persisted.startsWith("enc:v1:")).toBe(true);
+		expect(persisted).not.toBe("sk-or-secret");
+	});
+
+	test("preserves main-owned general keys (onboarded family) on round-trip", () => {
+		storeData.general = { onboarded: true, onboardedAt: "2025-01-01", onboardedTrack: "stable" };
+		applySettings({ general: { recordingMode: "ptt", onboarded: false } });
+		const persisted = storeData.general as Record<string, unknown>;
+		// Renderer-supplied non-main keys win
+		expect(persisted.recordingMode).toBe("ptt");
+		// Main-owned keys survive the renderer's stale `false`
+		expect(persisted.onboarded).toBe(true);
+		expect(persisted.onboardedAt).toBe("2025-01-01");
+		expect(persisted.onboardedTrack).toBe("stable");
+	});
+
+	test("applySettingEntry early-returns for disallowed key", () => {
+		storeData = {};
+		applySettingEntry("__not_in_schema", { evil: true });
+		expect(storeData.__not_in_schema).toBeUndefined();
+	});
+
+	test("applySettingEntry routes 'general' through preserveMainOwnedGeneral", () => {
+		storeData.general = { onboarded: true, onboardedAt: "t", onboardedTrack: "k" };
+		applySettingEntry("general", { recordingMode: "vad", onboarded: false });
+		const persisted = storeData.general as Record<string, unknown>;
+		expect(persisted.recordingMode).toBe("vad");
+		expect(persisted.onboarded).toBe(true);
+	});
+
+	test("applySettingEntry writes non-'general' allowed keys directly", () => {
+		storeData = {};
+		applySettingEntry("audio", { webrtcSensitivity: 9 });
+		expect((storeData.audio as Record<string, unknown>).webrtcSensitivity).toBe(9);
 	});
 });
