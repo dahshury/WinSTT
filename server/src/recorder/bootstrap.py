@@ -282,17 +282,57 @@ def wire_all_callbacks(event_bus: EventBus, callbacks: CallbackMap) -> None:
             wire_callback(event_bus, event_type, cast(SimpleCallback, cb_func))
 
 
+_CLOUD_PROVIDER_PREFIXES: tuple[str, ...] = ("openai:", "elevenlabs:")
+
+
+def _parse_cloud_model_id(model_name: str) -> tuple[str, str] | None:
+    """Split a ``provider:model_id`` envelope into ``(provider, model_id)``.
+
+    Returns ``None`` for plain local model ids (catalog entries, HF refs)
+    so the local construction path runs unchanged. The prefix list is
+    kept narrow — only providers electron-main actually knows how to
+    forward to count as cloud here; an unknown prefix falls through to
+    the ONNX loader, where it will surface a clear download error rather
+    than be silently rerouted.
+    """
+    for prefix in _CLOUD_PROVIDER_PREFIXES:
+        if model_name.startswith(prefix):
+            provider, _, model_id = model_name.partition(":")
+            if provider and model_id:
+                return provider, model_id
+    return None
+
+
 def build_transcriber(
     model_name: str,
     config: RecorderConfig,
     *,
     download_callbacks: DownloadCallbacks | None = None,
 ) -> ITranscriber:
-    """Build the transcriber. After the torch-drop refactor (Track B step 1),
-    only the onnx-asr backend is supported — the catalog's backend marker is
-    consulted for the resolved onnx model name but the construction path is
-    uniform.
+    """Build the transcriber.
+
+    Two construction paths:
+
+    * **Cloud STT** — ``model_name`` looks like ``openai:<id>`` or
+      ``elevenlabs:<id>``: returns a :class:`RemoteTranscriber` that
+      forwards every ``transcribe()`` call to electron-main over WS RPC.
+      Holds no model weights locally; combined with the swap pipeline's
+      unload-first phase this is what frees the previous local Whisper's
+      RAM/VRAM when the user switches to a cloud source.
+
+    * **Local ONNX** — anything else: catalog lookup → quantization
+      resolution → :class:`OnnxAsrTranscriber`. This is the only locally-
+      loaded transcriber after the torch-drop refactor; the catalog's
+      ``backend`` marker is consulted for the resolved onnx model name
+      but the construction path is uniform.
     """
+    cloud = _parse_cloud_model_id(model_name)
+    if cloud is not None:
+        provider, cloud_model_id = cloud
+        from src.recorder.infrastructure.remote_transcriber import RemoteTranscriber
+
+        return RemoteTranscriber(provider=provider, model_id=cloud_model_id)
+
     from src.recorder.domain.model_registry import ModelCatalog
 
     progress_handler = download_callbacks.make_progress_handler() if download_callbacks else None
@@ -428,12 +468,24 @@ def build_realtime_transcriber(
     *,
     download_callbacks: DownloadCallbacks | None = None,
 ) -> ITranscriber:
-    """Build the realtime transcriber. Onnx-asr-only after Track B step 1."""
+    """Build the realtime transcriber.
+
+    Mirrors :func:`build_transcriber`: cloud-prefixed ids route to
+    :class:`RemoteTranscriber` (no local model weights), everything else
+    goes through the onnx-asr path.
+    """
+    model_name = config.realtime.realtime_model_type
+    cloud = _parse_cloud_model_id(model_name)
+    if cloud is not None:
+        provider, cloud_model_id = cloud
+        from src.recorder.infrastructure.remote_transcriber import RemoteTranscriber
+
+        return RemoteTranscriber(provider=provider, model_id=cloud_model_id)
+
     from src.recorder.domain.model_registry import ModelCatalog
 
     progress_handler = download_callbacks.make_progress_handler() if download_callbacks else None
 
-    model_name = config.realtime.realtime_model_type
     catalog = ModelCatalog()
     info = catalog.get(model_name)
     onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name

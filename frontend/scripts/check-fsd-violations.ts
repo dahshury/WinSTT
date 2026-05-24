@@ -63,6 +63,8 @@ interface Violation {
 interface ViolationReport {
 	appLayerSlices: Violation[];
 	artifactFiles: Violation[];
+	// Batch E — Asset & enum placement (FSD §Assets, §Types/Enums)
+	assetPlacement: Violation[];
 	// Batch B — Public API & Cross-Import Hardening
 	atxMisuse: Violation[];
 	authInEntities: Violation[];
@@ -78,6 +80,7 @@ interface ViolationReport {
 	domainBasedFileNaming: Violation[];
 	// Batch D — Framework boundaries (Electron / Vite / React-Query / routes)
 	electronBoundary: Violation[];
+	enumPlacement: Violation[];
 	excessiveSlicing: Violation[];
 	featureInfraSmuggling: Violation[];
 	forbiddenSegments: Violation[];
@@ -203,6 +206,39 @@ const RELATIVE_IMPORT_PATH_REGEX = /from\s+['"](\.\.\/)+([^'"]+)['"]/;
 // Artifact file extensions that should not exist in the codebase
 const ARTIFACT_EXTENSIONS = [".bak", ".orig", ".backup", ".old", ".tmp"] as const;
 
+// Static asset file extensions scanned by checkAssetPlacement. Covers the
+// common bundler-importable binaries: images, vector graphics, fonts, audio,
+// video, and PDF (the FSD spec's §Assets example uses an invoice-template.pdf
+// in a feature model/ segment). Sourcemaps (.map) are bundler output, not
+// assets — they are deliberately excluded. .json/.yaml are config, not assets.
+const ASSET_FILE_EXTENSIONS = [
+	".png",
+	".jpg",
+	".jpeg",
+	".gif",
+	".svg",
+	".webp",
+	".bmp",
+	".ico",
+	".avif",
+	".woff",
+	".woff2",
+	".ttf",
+	".otf",
+	".eot",
+	".mp3",
+	".wav",
+	".ogg",
+	".flac",
+	".m4a",
+	".aac",
+	".mp4",
+	".webm",
+	".mov",
+	".pdf",
+] as const;
+const ASSET_FILE_EXTENSIONS_SET = new Set<string>(ASSET_FILE_EXTENSIONS);
+
 // Generic technical-role file names forbidden inside slice segments (Rule 4-4).
 // Files should be named after the business domain they represent, not their technical role.
 // e.g., model/types.ts -> model/event.ts, lib/utils.ts -> lib/date-formatting.ts
@@ -300,6 +336,8 @@ const violations: ViolationReport = {
 	sharedLayerSlices: [],
 	domainBasedFileNaming: [],
 	businessLogicInShared: [],
+	assetPlacement: [],
+	enumPlacement: [],
 	nonCanonicalLayers: [],
 	nonCanonicalSegments: [],
 	atxMisuse: [],
@@ -2255,9 +2293,13 @@ async function checkInsignificantSlices(allFiles: readonly string[]): Promise<vo
 				(b) => new RegExp(`from\\s+['"]@/${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:['"]|/)`)
 			);
 
-			// Track which page slices import this slice (directly or via bridge)
-			const importingPageSlices = new Set<string>();
-			let usedByNonPageHigherLayer = false;
+			// Track every consumer slice (across all higher layers) that
+			// imports this slice — directly, via bridge, or relative path.
+			// Format: "<layer>/<slice>" for sliced higher layers; "app" for
+			// the app layer (no slice). The spec's "single-consumer slice
+			// should be inlined" rule applies regardless of which higher
+			// layer the consumer sits on, not just views — gap 3.
+			const importingConsumerIds = new Set<string>();
 
 			for (const filePath of allFiles) {
 				const fileLayer = getLayerFromPath(filePath);
@@ -2289,33 +2331,41 @@ async function checkInsignificantSlices(allFiles: readonly string[]): Promise<vo
 					continue; // laundering bridge, not a real consumer
 				}
 
-				if (fileLayer === "views") {
-					const pageSlice = getSliceFromPath(filePath, fileLayer);
-					if (pageSlice) {
-						importingPageSlices.add(pageSlice);
-					}
-				} else {
-					usedByNonPageHigherLayer = true;
-					break;
-				}
+				// Record the consumer as "<layer>/<slice>" for sliced layers
+				// (views/widgets/features), or just "<layer>" for app (which
+				// has no slices). Multiple files in the SAME consumer slice
+				// collapse to a single set entry — we count slices, not files.
+				const consumerSlice = getSliceFromPath(filePath, fileLayer);
+				const consumerId = consumerSlice ? `${fileLayer}/${consumerSlice}` : fileLayer;
+				importingConsumerIds.add(consumerId);
 			}
 
-			// Flag if exactly 1 page uses this slice and no widget/feature/app
-			// consumer exists. Severity stays low; the >5-file slice is reported
-			// as advisory rather than fully exempted (Riss-01: size only excuses
-			// the LOW downgrade, not the flag) — but only when the lone consumer
-			// is a single view, to keep the clean repo at baseline (single
-			// widget/feature consumers are an accepted residual, see _RESIDUALS).
-			if (!usedByNonPageHigherLayer && importingPageSlices.size === 1) {
-				const onlyPage = Array.from(importingPageSlices)[0];
+			// Flag if exactly 1 consumer slice (across ALL higher layers) uses
+			// this slice. The FSD v2.1 "Pages First" rule extends to any
+			// single-consumer relationship — a slice consumed by one widget
+			// or one feature is just as over-decomposed as one consumed by a
+			// single view. Severity stays low across the board; >5-file slices
+			// are advisory-only (Riss-01: size only excuses the LOW downgrade).
+			//
+			// We DELIBERATELY skip the case where the only consumer is the
+			// app layer: app composes everything (providers, routing) and a
+			// slice used solely by app is usually the legitimate "bootstrap
+			// the app needs this once" pattern (e.g. an IPC listener
+			// registered in IpcProvider) — inlining into app/ would create a
+			// god-bootstrap, the opposite of what FSD wants.
+			if (importingConsumerIds.size === 1) {
+				const onlyConsumer = Array.from(importingConsumerIds)[0];
+				if (onlyConsumer === "app") {
+					continue;
+				}
 				const sizeNote = isSmall
 					? `has only ${sourceFiles.length} source file(s)`
 					: `(${sourceFiles.length} source files — large, but still single-consumer)`;
 				violations.insignificantSlices.push({
 					file: sliceImportPrefix,
-					message: `Insignificant / prematurely-extracted slice: "${sliceImportPrefix}" is only consumed by views/${onlyPage} (including any laundered barrel/dynamic/relative import) and ${sizeNote}. FSD v2.1 "Pages First": single-consumer slices belong inside their consumer.`,
+					message: `Insignificant / prematurely-extracted slice: "${sliceImportPrefix}" is only consumed by ${onlyConsumer} (including any laundered barrel/dynamic/relative import) and ${sizeNote}. FSD v2.1 "Pages First": single-consumer slices belong inside their consumer.`,
 					severity: "low",
-					suggestion: `Inline ${sliceImportPrefix}/ back into its single consumer: move ui/ → views/${onlyPage}/ui/, model/ → views/${onlyPage}/model/, api/ → views/${onlyPage}/api/, then delete the slice and its index.ts. Only re-extract once a SECOND independent view/widget genuinely needs it. Adding a decoy importer, a test-only import, or a re-export bridge to fake a second consumer does not justify the slice.`,
+					suggestion: `Inline ${sliceImportPrefix}/ back into its single consumer: move ui/ → src/${onlyConsumer}/ui/, model/ → src/${onlyConsumer}/model/, api/ → src/${onlyConsumer}/api/, then delete the slice and its index.ts. Only re-extract once a SECOND independent slice genuinely needs it. Adding a decoy importer, a test-only import, or a re-export bridge to fake a second consumer does not justify the slice.`,
 				});
 			}
 		}
@@ -5804,6 +5854,400 @@ async function checkHardcodedUrlsBatchDHardening(allSrcFiles: readonly string[])
 	}
 }
 
+// ===========================================================================
+// Batch E — Asset & enum placement (FSD §Assets, §Types/Enums)
+//
+// The FSD spec dedicates two sections to placement rules that aren't import
+// edges and aren't directory shapes — they're "where does this kind of FILE
+// belong." Asset files (images/fonts/audio) follow the same colocation
+// principle as code: slice-specific assets stay inside the slice (in ui/
+// for UI assets, model/ for non-UI business assets); reusable assets live
+// in shared/ui/ alongside the component that consumes them; global assets
+// (CSS resets, fonts) live in app/styles|fonts|assets. Enum declarations
+// follow the same "close to usage" rule — an enum used by only one slice
+// belongs in that slice; one shared by many belongs in shared/; the
+// segment must match what the enum represents (UI tokens → ui/, response
+// codes → api/, domain states → model/).
+//
+// Both checks are STRUCTURAL — they only need file paths + cheap content
+// scans — so adding them does not regress runtime cost meaningfully.
+// The repo currently has zero in-src/ assets and a small enum population,
+// so the baseline stays clean.
+// ===========================================================================
+
+/**
+ * Recursively collect asset files under a directory (extensions per
+ * ASSET_FILE_EXTENSIONS_SET). Skips node_modules + build outputs.
+ */
+async function scanAssetFiles(dir: string, out: string[] = []): Promise<string[]> {
+	let entries: Dirent[];
+	try {
+		entries = await readdir(dir, { withFileTypes: true, encoding: "utf8" });
+	} catch {
+		return out;
+	}
+	for (const e of entries) {
+		if (
+			e.name.startsWith(".") ||
+			e.name === "node_modules" ||
+			e.name === "dist" ||
+			e.name === "dist-renderer"
+		) {
+			continue;
+		}
+		const full = join(dir, e.name);
+		if (e.isDirectory()) {
+			await scanAssetFiles(full, out);
+		} else if (e.isFile()) {
+			const dot = e.name.lastIndexOf(".");
+			if (dot < 0) {
+				continue;
+			}
+			const ext = e.name.slice(dot).toLowerCase();
+			if (ASSET_FILE_EXTENSIONS_SET.has(ext)) {
+				out.push(full);
+			}
+		}
+	}
+	return out;
+}
+
+/**
+ * Classify an asset path under src/ against FSD §Assets:
+ *   - shared/{ui,assets,fonts}/**            → OK
+ *   - app/{styles,fonts,assets,public}/**    → OK
+ *   - {entities,features,widgets,views}/<slice>/{ui,model}/**  → OK
+ *   - anything else under src/               → violation
+ *
+ * Returns null when the asset placement is sanctioned; otherwise returns a
+ * { reason, suggestion } pair describing the misplacement.
+ */
+function classifyAssetPlacement(rel: string): { reason: string; suggestion: string } | null {
+	const parts = rel.split("/").filter(Boolean);
+	const layer = parts[0] ?? "";
+
+	// shared/: only ui/, assets/, fonts/ subtrees host assets.
+	if (layer === "shared") {
+		const seg = parts[1] ?? "(root)";
+		if (seg === "ui" || seg === "assets" || seg === "fonts") {
+			return null;
+		}
+		return {
+			reason: `asset under "src/shared/${seg}/" — shared assets must live in shared/ui/<component>/ (colocated with the consuming UI), shared/assets/, or shared/fonts/`,
+			suggestion: `Move "src/${rel}" to src/shared/ui/<consumer>/ (next to the component that uses it), src/shared/assets/<focus>/, or src/shared/fonts/. shared/api, shared/lib, shared/config, shared/routes, and shared/i18n must contain CODE only — never binary assets.`,
+		};
+	}
+
+	// app/: assets only inside the sanctioned app subfolders.
+	if (layer === "app") {
+		const seg = parts[1] ?? "(root)";
+		if (seg === "styles" || seg === "fonts" || seg === "assets" || seg === "public") {
+			return null;
+		}
+		return {
+			reason: `asset under "src/app/${seg}/" — app-layer assets must live in app/styles/ (CSS), app/fonts/, app/assets/, or app/public/`,
+			suggestion: `Move "src/${rel}" to src/app/styles/ (global CSS reset/fonts.css), src/app/fonts/ (font files), src/app/assets/ (app-wide icons/images), or the project-root public/ folder (Vite-served as-is). Never drop binaries in app/providers/, app/layouts/, app/api-routes/, or other code-only app subdirs.`,
+		};
+	}
+
+	// Sliced layers (entities/features/widgets/views): asset must be inside
+	// a slice and inside the slice's ui/ or model/ segment.
+	if (SLICED_LAYERS_SET.has(layer)) {
+		const slice = parts[1] ?? null;
+		const seg = parts[2] ?? null;
+		if (!slice) {
+			return {
+				reason: `asset at sliced-layer root "src/${layer}/" with no slice — sliced layers require slice-then-segment`,
+				suggestion: `Move "src/${rel}" into the owning slice's segment: src/${layer}/<slice>/ui/<asset> for a UI image, or src/${layer}/<slice>/model/<asset> for a non-UI business asset (the FSD example: features/billing/model/invoice-template.pdf). If the asset is generic, move it to src/shared/ui/ or src/app/assets/ instead.`,
+			};
+		}
+		if (parts.length < 3) {
+			return {
+				reason: `asset at slice root "src/${layer}/${slice}/" — must be inside a segment (ui/ or model/)`,
+				suggestion: `Move "src/${rel}" into a segment: src/${layer}/${slice}/ui/${parts[parts.length - 1] ?? "<file>"} for a UI asset, or src/${layer}/${slice}/model/${parts[parts.length - 1] ?? "<file>"} for a non-UI business asset coupled with the slice's domain logic.`,
+			};
+		}
+		if (seg === "ui" || seg === "model") {
+			return null;
+		}
+		return {
+			reason: `asset in "src/${layer}/${slice}/${seg}/" — slice assets are only allowed in ui/ (UI display) or model/ (non-UI business assets like PDFs/templates coupled with domain logic)`,
+			suggestion: `Move "src/${rel}" to src/${layer}/${slice}/ui/ (if it's an image/icon/font rendered by the slice's components) or src/${layer}/${slice}/model/ (if it's a non-UI asset tightly coupled with the slice's domain logic, e.g. an invoice-template.pdf). api/ holds requests, lib/ holds helpers, config/ holds flags — none host binaries.`,
+		};
+	}
+
+	// entries/ — Vite renderer bootstrap location, code-only.
+	if (layer === "entries") {
+		return {
+			reason: `asset under "src/entries/" — entries/ is the Vite multi-page Electron renderer-bootstrap location, code-only (createRoot + render of an app-composed views/<view>/ page)`,
+			suggestion: `Move "src/${rel}" out of src/entries/. If it is a global asset used by every window, put it in src/app/assets/ or src/app/styles/. If it is window-specific (e.g. an overlay-only icon), move it to the slice rendered by that window (src/views/<view>/ui/) and import it from there.`,
+		};
+	}
+
+	// Loose binary directly at src/ root or in an unknown top-level dir.
+	return {
+		reason: `asset at "src/${rel}" sits outside every sanctioned FSD asset home`,
+		suggestion: `Move "src/${rel}" into a sanctioned location: a slice asset → src/{entities,features,widgets,views}/<slice>/{ui,model}/; a cross-slice reusable asset → src/shared/ui/<component>/ or src/shared/assets/; a global asset → src/app/styles/, src/app/fonts/, src/app/assets/, or the project-root public/ folder.`,
+	};
+}
+
+/**
+ * Rule FSD §Assets — flag every static asset file under src/ that is not
+ * in a sanctioned asset home. The check is conservative-by-design: no
+ * asset under src/ is currently expected (the repo keeps all binaries in
+ * frontend/public/ and frontend/build/), so any finding here is a real
+ * placement bug, not a false positive on a sanctioned pattern.
+ */
+async function checkAssetPlacement(): Promise<void> {
+	if (!existsSync(srcPath)) {
+		return;
+	}
+	const assetFiles = await scanAssetFiles(srcPath);
+	for (const filePath of assetFiles) {
+		const rel = relative(srcPath, filePath).replace(/\\/g, "/");
+		const classified = classifyAssetPlacement(rel);
+		if (!classified) {
+			continue;
+		}
+		violations.assetPlacement.push({
+			file: rel,
+			message: `Asset placement violation: "src/${rel}" — ${classified.reason} (FSD §Assets).`,
+			severity: "medium",
+			suggestion: classified.suggestion,
+		});
+	}
+}
+
+// ─── Enum placement (FSD §Types/Enums) ────────────────────────────────────────
+
+/**
+ * Matches a TypeScript `enum X` or `const enum X` declaration. Anchored to a
+ * line/block boundary so it doesn't trip on the substring "enum" inside an
+ * identifier (e.g. `useEnumValues`). The capture group is the enum's name.
+ * Used after stripCommentsAndStrings to avoid hits inside string literals or
+ * JSDoc comments that mention enums.
+ */
+const ENUM_DECL_REGEX = /(?:^|\n)\s*(?:export\s+)?(?:const\s+)?enum\s+([A-Z][A-Za-z0-9_]*)\s*\{/g;
+
+interface EnumDeclSite {
+	file: string;
+	layer: Layer | null;
+	name: string;
+	rel: string;
+	segment: string | null;
+	slice: string | null;
+}
+
+/**
+ * Locate every TypeScript `enum`/`const enum` declaration under src/.
+ * Test files are skipped (they often declare throwaway enums for fixtures).
+ * The function returns one site per declaration; re-exports are NOT collapsed
+ * to the original — checkEnumPlacement filters re-export-only files via
+ * isPureReexportFile before classifying.
+ */
+function findEnumDeclarations(allFiles: readonly string[]): EnumDeclSite[] {
+	const sites: EnumDeclSite[] = [];
+	for (const f of allFiles) {
+		if (isTestFile(f)) {
+			continue;
+		}
+		const raw = readFileSafe(f);
+		if (!raw || isPureReexportFile(raw)) {
+			continue;
+		}
+		const code = stripCommentsAndStrings(raw);
+		ENUM_DECL_REGEX.lastIndex = 0;
+		let m: RegExpExecArray | null = ENUM_DECL_REGEX.exec(code);
+		while (m !== null) {
+			const name = m[1];
+			if (name) {
+				const rel = relative(srcPath, f).replace(/\\/g, "/");
+				const parts = rel.split("/").filter(Boolean);
+				const layer = (parts[0] as Layer) ?? null;
+				const isLayer = LAYERS_SET.has(layer ?? "");
+				const isSliced = isLayer && SLICED_LAYERS_SET.has(layer);
+				sites.push({
+					file: f,
+					rel,
+					name,
+					layer: isLayer ? layer : null,
+					slice: isSliced ? (parts[1] ?? null) : null,
+					segment: isSliced ? (parts[2] ?? null) : (parts[1] ?? null),
+				});
+			}
+			m = ENUM_DECL_REGEX.exec(code);
+		}
+	}
+	return sites;
+}
+
+/**
+ * Cross-slice consumer counter for an enum. Walks every other source file
+ * and (a) confirms an import line that names the enum AND (b) targets the
+ * enum's owner slice/segment. The two-stage match is necessary because the
+ * enum name might appear in unrelated identifiers; the import-line check
+ * binds the name to a real cross-slice dependency.
+ *
+ * Returns the set of distinct "<layer>/<slice>" consumer ids (excluding the
+ * owner itself, app, and test files). `consumedByApp` is reported separately
+ * so single-shared-enum-consumed-only-by-app stays unflagged (the bootstrap
+ * convenience pattern, matching the insignificant-slice rule).
+ */
+function findEnumConsumers(
+	site: EnumDeclSite,
+	allFiles: readonly string[]
+): { consumerSlices: Set<string>; consumedByApp: boolean } {
+	const consumerSlices = new Set<string>();
+	let consumedByApp = false;
+	const nameRe = new RegExp(`\\b${site.name}\\b`);
+	const ownerIsSliced = site.layer && SLICED_LAYERS_SET.has(site.layer);
+	const ownerLayerSlice = ownerIsSliced && site.slice ? `${site.layer}/${site.slice}` : null;
+
+	for (const f of allFiles) {
+		if (f === site.file || isTestFile(f)) {
+			continue;
+		}
+		const raw = readFileSafe(f);
+		if (!raw || !nameRe.test(raw)) {
+			continue;
+		}
+
+		let imported = false;
+		for (const edge of batchBExtractEdges(raw)) {
+			if (!nameRe.test(edge.rawLine)) {
+				continue;
+			}
+			const t = batchBResolveTarget(edge.spec, f);
+			if (ownerLayerSlice && t && `${t.layer}/${t.slice}` === ownerLayerSlice) {
+				imported = true;
+				break;
+			}
+			// Shared/app owners: batchBResolveTarget returns null (no slice), so
+			// check the normalized specifier prefix directly. Match a specifier
+			// that lands inside the owner's segment (shared/<seg>/...).
+			if (!ownerLayerSlice && site.layer && site.segment) {
+				const norm = batchBNormalizeSpecifier(edge.spec).replace(/\\/g, "/");
+				const aliasRel = norm.startsWith("@/") ? norm.slice(2) : null;
+				if (aliasRel?.startsWith(`${site.layer}/${site.segment}`)) {
+					imported = true;
+					break;
+				}
+			}
+		}
+		if (!imported) {
+			continue;
+		}
+
+		const consumerLayer = getLayerFromPath(f);
+		if (!consumerLayer) {
+			continue;
+		}
+		const consumerSlice = getSliceFromPath(f, consumerLayer);
+		const consumerId = consumerSlice ? `${consumerLayer}/${consumerSlice}` : consumerLayer;
+		if (consumerId === ownerLayerSlice) {
+			continue;
+		}
+		if (consumerId === "app") {
+			consumedByApp = true;
+			continue;
+		}
+		consumerSlices.add(consumerId);
+	}
+	return { consumerSlices, consumedByApp };
+}
+
+const ENUM_SEGMENT_NAME_HINTS: Array<{ regex: RegExp; target: string; reason: string }> = [
+	{
+		regex:
+			/(?:Position|Placement|Direction|Anchor|Side|Alignment|Variant|Size|Theme|Color|Tone|Tint|Density|Spacing|Radius)$/,
+		target: "ui",
+		reason: "UI/design-token-flavored name",
+	},
+	{
+		regex:
+			/(?:HttpMethod|HttpStatus|StatusCode|ResponseCode|ApiError|RequestState|FetchState|LoadingState)$/,
+		target: "api",
+		reason: "API/request-flavored name",
+	},
+	{
+		regex:
+			/(?:Role|Permission|EntityStatus|RecordStatus|WorkflowStatus|DomainEvent|EventType|Action(?:Type)?)$/,
+		target: "model",
+		reason: "domain/state-flavored name",
+	},
+];
+
+/**
+ * Rule FSD §Types/Enums — enums close to usage; segment by what the enum
+ * represents.
+ *
+ * Statistical signals:
+ *  (a) Enum declared in src/shared/ but only one slice consumes it → flag
+ *      (LOW): colocate into that slice. (Consumption ONLY by app is treated
+ *      as a sanctioned bootstrap pattern, same exemption as
+ *      checkInsignificantSlices, and is NOT flagged.)
+ *  (b) Enum declared in a slice (entities/features/widgets/views) but ≥3
+ *      other slices import it → flag (LOW): promote to src/shared/<seg>/.
+ *  (c) Enum's name strongly suggests one segment but it sits in a different
+ *      one (e.g. ToastPosition in api/, HttpStatus in ui/) → flag (LOW)
+ *      naming-hinted segment mismatch. Conservative: only fires on a few
+ *      clear suffix patterns; everything else is undecidable from a name.
+ *
+ * The repo currently has zero TS `enum` declarations (modern TS-style
+ * `as const` object-enums are deliberately NOT scanned — too noisy to
+ * separate "enum-shaped lookup table" from "real config object"), so the
+ * baseline stays at 0 and this is a pure defensive check against drift.
+ */
+async function checkEnumPlacement(allFiles: readonly string[]): Promise<void> {
+	const sites = findEnumDeclarations(allFiles);
+	if (sites.length === 0) {
+		return;
+	}
+
+	for (const site of sites) {
+		// (c) Naming-hinted segment mismatch — independent of consumer counts,
+		// so we evaluate it first and continue regardless of what (a)/(b) say.
+		if (site.layer && site.segment) {
+			for (const hint of ENUM_SEGMENT_NAME_HINTS) {
+				if (hint.regex.test(site.name) && site.segment !== hint.target) {
+					violations.enumPlacement.push({
+						file: site.rel,
+						message: `Enum segment mismatch: "${site.name}" sits in "src/${site.layer}/${site.slice ? `${site.slice}/` : ""}${site.segment}/" but its name carries a ${hint.reason} suggesting the ${hint.target}/ segment (FSD §Types/Enums: "the choice of segment should be dictated by usage locations").`,
+						severity: "low",
+						suggestion: `Move enum ${site.name} from src/${site.rel} into the ${hint.target}/ segment of the same ${site.slice ? "slice" : "layer"} (src/${site.layer}/${site.slice ? `${site.slice}/` : ""}${hint.target}/<domain>.ts). If the name is misleading and the segment is actually correct, rename the enum to reflect what it represents.`,
+					});
+					break;
+				}
+			}
+		}
+
+		const { consumerSlices, consumedByApp } = findEnumConsumers(site, allFiles);
+
+		// (a) Shared enum with exactly one non-app consumer slice → colocate.
+		if (site.layer === "shared" && consumerSlices.size === 1 && !consumedByApp) {
+			const onlyConsumer = Array.from(consumerSlices)[0];
+			violations.enumPlacement.push({
+				file: site.rel,
+				message: `Single-consumer shared enum: "${site.name}" in src/${site.rel} is only consumed by ${onlyConsumer}. FSD §Types/Enums says enums should be defined as close to usage as possible — single-slice enums belong inside that slice.`,
+				severity: "low",
+				suggestion: `Move enum ${site.name} from src/${site.rel} into src/${onlyConsumer}/<segment>/ — choose the segment by what the enum represents: ui/ for design-system tokens (positions, variants), api/ for request/response statuses, model/ for domain state. Update the single consumer import. Keep enums in src/shared/ only when ≥2 unrelated slices actually need them.`,
+			});
+		}
+
+		// (b) Slice enum consumed by ≥3 other slices → promote to shared.
+		if (site.layer && SLICED_LAYERS_SET.has(site.layer) && site.slice && consumerSlices.size >= 3) {
+			const sample = Array.from(consumerSlices).slice(0, 4).join(", ");
+			const ellipsis = consumerSlices.size > 4 ? "…" : "";
+			violations.enumPlacement.push({
+				file: site.rel,
+				message: `Over-shared slice enum: "${site.name}" in src/${site.rel} is consumed by ${consumerSlices.size} other slices (${sample}${ellipsis}). FSD §Types/Enums says cross-slice-shared enums belong in src/shared/ (segment chosen by what the enum represents).`,
+				severity: "low",
+				suggestion: `Promote enum ${site.name} to src/shared/<segment>/ — pick the segment by what the enum represents: ui/ for design tokens, api/ for HTTP/response statuses, lib/ for generic categorical values, model/ does NOT exist in shared/ (shared has no slices). Re-export from src/shared/<segment>/index.ts and update every consumer's import. Keep only enums truly specific to ${site.layer}/${site.slice} in this slice.`,
+			});
+		}
+	}
+}
+
 /**
  * Generate summary statistics
  */
@@ -5824,6 +6268,8 @@ function generateSummary(): void {
 		violations.sharedLayerSlices.length +
 		violations.domainBasedFileNaming.length +
 		violations.businessLogicInShared.length +
+		violations.assetPlacement.length +
+		violations.enumPlacement.length +
 		violations.processesLayer.length +
 		violations.nonCanonicalLayers.length +
 		violations.nonCanonicalSegments.length +
@@ -5873,6 +6319,8 @@ function generateSummary(): void {
 		sharedLayerSlices: violations.sharedLayerSlices.length,
 		domainBasedFileNaming: violations.domainBasedFileNaming.length,
 		businessLogicInShared: violations.businessLogicInShared.length,
+		assetPlacement: violations.assetPlacement.length,
+		enumPlacement: violations.enumPlacement.length,
 		processesLayer: violations.processesLayer.length,
 		nonCanonicalLayers: violations.nonCanonicalLayers.length,
 		nonCanonicalSegments: violations.nonCanonicalSegments.length,
@@ -5923,6 +6371,8 @@ function generateSummary(): void {
 		...violations.sharedLayerSlices,
 		...violations.domainBasedFileNaming,
 		...violations.businessLogicInShared,
+		...violations.assetPlacement,
+		...violations.enumPlacement,
 		...violations.processesLayer,
 		...violations.nonCanonicalLayers,
 		...violations.nonCanonicalSegments,
@@ -6049,6 +6499,14 @@ async function writeViolationsToFiles(): Promise<void> {
 		...violations.businessLogicInShared.map((v) => ({
 			...v,
 			category: "Business Logic in Shared",
+		})),
+		...violations.assetPlacement.map((v) => ({
+			...v,
+			category: "Asset Placement",
+		})),
+		...violations.enumPlacement.map((v) => ({
+			...v,
+			category: "Enum Placement",
 		})),
 		...violations.processesLayer.map((v) => ({
 			...v,
@@ -6551,6 +7009,8 @@ function printReport(): void {
 	console.log(`  Shared Layer Slices:   ${violations.summary.byCategory.sharedLayerSlices}`);
 	console.log(`  Domain File Naming:    ${violations.summary.byCategory.domainBasedFileNaming}`);
 	console.log(`  Business in Shared:    ${violations.summary.byCategory.businessLogicInShared}`);
+	console.log(`  Asset Placement:       ${violations.summary.byCategory.assetPlacement}`);
+	console.log(`  Enum Placement:        ${violations.summary.byCategory.enumPlacement}`);
 	console.log(`  Processes Layer:       ${violations.summary.byCategory.processesLayer}`);
 	console.log(`  Non-Canonical Layers:  ${violations.summary.byCategory.nonCanonicalLayers}`);
 	console.log(`  Non-Canonical Segments:${violations.summary.byCategory.nonCanonicalSegments}`);
@@ -6813,6 +7273,48 @@ function printReport(): void {
 			if (v.suggestion) {
 				console.log(`    ${v.suggestion}`);
 			}
+		}
+	}
+
+	// Asset Placement
+	if (violations.assetPlacement.length > 0) {
+		console.log("\n\n  MEDIUM: Asset Placement Violations");
+		console.log("=".repeat(80));
+		const toShow = violations.assetPlacement.slice(0, 30);
+		for (let i = 0; i < toShow.length; i++) {
+			const v = toShow[i];
+			if (!v) {
+				continue;
+			}
+			console.log(`\n${i + 1}. ${v.file}`);
+			console.log(`   ${v.message}`);
+			if (v.suggestion) {
+				console.log(`    ${v.suggestion}`);
+			}
+		}
+		if (violations.assetPlacement.length > 30) {
+			console.log(`\n... and ${violations.assetPlacement.length - 30} more`);
+		}
+	}
+
+	// Enum Placement
+	if (violations.enumPlacement.length > 0) {
+		console.log("\n\nℹ  LOW: Enum Placement (advisory)");
+		console.log("=".repeat(80));
+		const toShow = violations.enumPlacement.slice(0, 30);
+		for (let i = 0; i < toShow.length; i++) {
+			const v = toShow[i];
+			if (!v) {
+				continue;
+			}
+			console.log(`\n${i + 1}. ${v.file}`);
+			console.log(`   ${v.message}`);
+			if (v.suggestion) {
+				console.log(`    ${v.suggestion}`);
+			}
+		}
+		if (violations.enumPlacement.length > 30) {
+			console.log(`\n... and ${violations.enumPlacement.length - 30} more`);
 		}
 	}
 
@@ -7335,6 +7837,9 @@ async function main(): Promise<void> {
 		checkGodSlices(),
 		checkBusinessLogicInShared(),
 		checkExcessiveSlicing(),
+		// Batch E — Asset placement (FSD §Assets) — structural, runs in parallel.
+		// (Enum placement runs later, after the file list is built.)
+		checkAssetPlacement(),
 		// Batch A — structural layer/segment integrity
 		checkNonCanonicalLayers(),
 		checkNestedProcessesDirs(),
@@ -7387,6 +7892,10 @@ async function main(): Promise<void> {
 	await checkRedirectOwnership(files);
 	await checkHardcodedUrlsBatchDHardening(files);
 
+	// Batch E (cont) — Enum placement needs the full file list to count
+	// cross-slice consumers of each declared enum.
+	await checkEnumPlacement(files);
+
 	// Generate summary
 	generateSummary();
 
@@ -7411,6 +7920,8 @@ async function main(): Promise<void> {
 						missingPublicApi: violations.missingPublicApi,
 						hardcodedUrls: violations.hardcodedUrls,
 						domainBasedFileNaming: violations.domainBasedFileNaming,
+						assetPlacement: violations.assetPlacement,
+						enumPlacement: violations.enumPlacement,
 						processesLayer: violations.processesLayer,
 						nonCanonicalLayers: violations.nonCanonicalLayers,
 						nonCanonicalSegments: violations.nonCanonicalSegments,

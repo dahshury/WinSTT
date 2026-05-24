@@ -31,8 +31,9 @@ export type Integrations = components["schemas"]["Integrations"];
 // LLM warmup status (main → renderer broadcast describing the latest probe
 // against the user's configured Ollama endpoint). Defined renderer-side
 // because the main-process broadcaster isn't wired yet — see
-// `frontend/src/features/llm-warmup-status/`. When OpenAPI gains a schema
-// for this payload, move it under `components["schemas"]` like the others.
+// `frontend/src/widgets/llm-settings/{api/use-warmup-status-feed,model/warmup-status-store}.ts`.
+// When OpenAPI gains a schema for this payload, move it under
+// `components["schemas"]` like the others.
 // `"loading"` is a transient outcome broadcast at the start of a warmup
 // pass (paired with `LlmWarmupStatus.inProgress === true`). Other outcomes
 // are terminal. `"unreachable"` and `"skipped"` mirror the main-process

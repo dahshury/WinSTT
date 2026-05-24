@@ -36,7 +36,6 @@ import {
 	SettingSubsection,
 	useSettingsStore,
 } from "@/entities/setting";
-import { useWarmupStatusFeed, useWarmupStatusStore } from "@/features/llm-warmup-status";
 import { HotkeyRecorder } from "@/features/record-hotkey";
 import { detectOllama, fetchOllamaModels, startOllama } from "@/shared/api/ipc-client";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
@@ -77,6 +76,8 @@ import {
 	shouldSyncOllamaModel,
 	toggleIndependent,
 } from "../lib/llm-settings-panel-test-helpers";
+import { useWarmupStatusFeed } from "../api/use-warmup-status-feed";
+import { useWarmupStatusStore } from "../model/warmup-status-store";
 import { ContextAwarenessSection } from "./ContextAwarenessSection";
 import { ContextDenyListSection } from "./ContextDenyListSection";
 import { Playground } from "./Playground";

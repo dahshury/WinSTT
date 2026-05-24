@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ipcInvoke, soundLibraryReadFile } from "@/shared/api/ipc-client";
-import { toArrayBuffer } from "@/shared/lib/use-recording-sound";
+import { toArrayBuffer } from "@/shared/lib/web-audio";
 
 interface UseSoundPreviewReturn {
 	/** Path/id of the currently-playing sound, or null when idle. */

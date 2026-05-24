@@ -1,5 +1,6 @@
 import { resolveQuantCache } from "@picker";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { providerOf } from "@/entities/cloud-stt-provider";
 import type { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import type { useSettingsStore } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
@@ -178,9 +179,18 @@ export function useModelSwapController(
 				}
 				return;
 			}
+			// Cloud model ids (`openai:…`, `elevenlabs:…`) skip the
+			// catalog/cache/assessment gates — those guard local RAM/VRAM fit
+			// and on-disk model caching, neither of which apply to a cloud
+			// transcriber. Issue the swap directly so the server's unload-first
+			// pipeline runs and frees the previous local model's memory.
+			if (providerOf(v) !== null) {
+				issueSwap("main", v, currentModel, quantization);
+				return;
+			}
 			gateWithAssessment("main", v, currentModel, quantization).catch(reportSwapGateError);
 		},
-		[gateWithAssessment, settings?.model, selectedModel, currentQuantization, update]
+		[gateWithAssessment, issueSwap, settings?.model, selectedModel, currentQuantization, update]
 	);
 
 	const handleRealtimeModelChange = useCallback(
@@ -194,9 +204,14 @@ export function useModelSwapController(
 				}
 				return;
 			}
+			// Same cloud short-circuit as the main picker. See note above.
+			if (providerOf(v) !== null) {
+				issueSwap("realtime", v, current, quantization);
+				return;
+			}
 			gateWithAssessment("realtime", v, current, quantization).catch(reportSwapGateError);
 		},
-		[gateWithAssessment, settings?.realtimeModel, currentQuantization, update]
+		[gateWithAssessment, issueSwap, settings?.realtimeModel, currentQuantization, update]
 	);
 
 	// Kick off the swap (which triggers the download) but keep the modal

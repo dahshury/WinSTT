@@ -1,5 +1,14 @@
-import { useEffect, useRef } from "react";
-import { ipcInvoke, ipcOn } from "@/shared/api/ipc-client";
+/**
+ * Domain-agnostic Web Audio helpers. These primitives know nothing about
+ * any specific feature — they wrap raw Web Audio API operations (buffer
+ * slicing, decode, resume-if-suspended, one-shot playback) so any slice
+ * that needs them imports them from here.
+ *
+ * The feature-specific hook that wires these into the recording lifecycle
+ * (subscribing to `sound:play` IPC events, decoding the recording-start
+ * WAV once at mount) lives in features/recording-sound — that hook owns
+ * the business context; the primitives below do not.
+ */
 
 /**
  * Decode-failed sentinel. Logging is split out so `decodeWav` stays at CC=1
@@ -46,49 +55,4 @@ export function playBuffer(ctx: AudioContext, buf: AudioBuffer): void {
 	source.buffer = buf;
 	source.connect(ctx.destination);
 	source.start();
-}
-
-/**
- * Fetches the recording-start WAV from the main process on mount,
- * decodes it into an AudioBuffer, and plays it via Web Audio API
- * whenever the main process sends `sound:play`.
- *
- * Latency: ~1-3ms (pre-decoded PCM played straight to hardware),
- * vs ~150-200ms with the old PowerShell approach.
- */
-export function useRecordingSound(): void {
-	const ctxRef = useRef<AudioContext | null>(null);
-	const bufRef = useRef<AudioBuffer | null>(null);
-
-	useEffect(() => {
-		const lifecycle = { disposed: false };
-
-		const load = async (data: Uint8Array | null): Promise<void> => {
-			if (lifecycle.disposed || !data) {
-				return;
-			}
-			const ctx = new AudioContext();
-			ctxRef.current = ctx;
-			bufRef.current = await decodeWav(ctx, data);
-		};
-
-		ipcInvoke<Uint8Array | null>("sound:get-data").then(load);
-
-		const tryPlay = (): void => {
-			const ctx = ctxRef.current;
-			const buf = bufRef.current;
-			if (ctx && buf) {
-				playBuffer(ctx, buf);
-			}
-		};
-		const unsub = ipcOn("sound:play", tryPlay);
-
-		return () => {
-			lifecycle.disposed = true;
-			unsub();
-			ctxRef.current?.close();
-			ctxRef.current = null;
-			bufRef.current = null;
-		};
-	}, []);
 }

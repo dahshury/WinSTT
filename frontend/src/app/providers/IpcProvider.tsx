@@ -10,11 +10,11 @@ import { useTranscriptionFeed } from "@/features/live-transcription";
 import { useLlmProcessingFeed } from "@/features/llm-processing";
 import { useDownloadListener } from "@/features/model-download";
 import { usePushToTalk } from "@/features/push-to-talk";
+import { useRecordingSound } from "@/features/recording-sound";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { useVadCalibration } from "@/features/vad-calibration";
 import { gpuGetInfo } from "@/shared/api/ipc-client";
-import { useRecordingSound } from "@/shared/lib/use-recording-sound";
 
 export function IpcProvider({ children }: { children: ReactNode }) {
 	const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
