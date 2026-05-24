@@ -7,11 +7,21 @@ let storeData: Record<string, unknown> = {};
 
 const sttProcessState = { running: false, restartCalled: 0 };
 
-const createWindow = (id: number, sentEvents: Array<{ channel: string; payload: unknown }>) => ({
+const createWindow = (
+	id: number,
+	sentEvents: Array<{ channel: string; payload: unknown }>,
+	options: { destroyed?: boolean; throwOnSend?: boolean } = {}
+) => ({
 	webContents: {
 		id,
-		send: (channel: string, payload: unknown) => sentEvents.push({ channel, payload }),
+		send: (channel: string, payload: unknown) => {
+			if (options.throwOnSend) {
+				throw new Error("renderer-hung");
+			}
+			sentEvents.push({ channel, payload });
+		},
 	},
+	isDestroyed: () => Boolean(options.destroyed),
 });
 
 const allWindows: ReturnType<typeof createWindow>[] = [];
@@ -70,6 +80,24 @@ mock.module("electron", () => ({
 
 import { storeMock } from "@test/mocks/store";
 
+function setNestedByDotPath(target: Record<string, unknown>, key: string, value: unknown): void {
+	if (!key.includes(".")) {
+		target[key] = value;
+		return;
+	}
+	const parts = key.split(".");
+	let cur = target;
+	for (let i = 0; i < parts.length - 1; i++) {
+		const part = parts[i] as string;
+		const next = cur[part];
+		if (next == null || typeof next !== "object" || Array.isArray(next)) {
+			cur[part] = {};
+		}
+		cur = cur[part] as Record<string, unknown>;
+	}
+	cur[parts.at(-1) as string] = value;
+}
+
 mock.module("../lib/store", () => {
 	const base = storeMock();
 	return {
@@ -81,7 +109,7 @@ mock.module("../lib/store", () => {
 			},
 			get: (key: string) => storeData[key],
 			set: (key: string, value: unknown) => {
-				storeData[key] = value;
+				setNestedByDotPath(storeData, key, value);
 			},
 		},
 	};
@@ -94,7 +122,8 @@ mock.module("./stt-process-deps", () => ({
 	},
 }));
 
-const { setupSettingsHandlers, cleanupSettingsHandlers } = await import("./settings");
+const { setupSettingsHandlers, cleanupSettingsHandlers, applyMainProcessSettingsPatch } =
+	await import("./settings");
 
 function fireEvent(channel: string, sender: { id: number }, payload?: unknown): void {
 	const list = listeners.get(channel) ?? [];
@@ -458,5 +487,208 @@ describe("settings:save listener", () => {
 		});
 		await new Promise((r) => setTimeout(r, 600));
 		expect(sttProcessState.restartCalled).toBe(0);
+	});
+});
+
+describe("wake-word config restart predicate", () => {
+	test("staying in wakeword mode with a changed wakeWord schedules a restart", async () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		storeData = {
+			general: { recordingMode: "wakeword", wakeWord: "jarvis" },
+			audio: {},
+			model: {},
+			quality: {},
+		};
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: {
+				general: { recordingMode: "wakeword", wakeWord: "alexa" },
+				audio: {},
+				model: {},
+				quality: {},
+			},
+		});
+		await new Promise((r) => setTimeout(r, 600));
+		// Wake-word param changed while staying in wakeword mode → wakeWordRestartNeeded()
+		// → resolveChangedKey() falls back to "general.wakeWord" → restart scheduled.
+		expect(sttProcessState.restartCalled).toBe(1);
+	});
+
+	test("staying in wakeword mode with no wake-field change does NOT restart", async () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		storeData = {
+			general: { recordingMode: "wakeword", wakeWord: "jarvis", wakeWordSensitivity: 0.5 },
+			audio: {},
+			model: {},
+			quality: {},
+		};
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: {
+				general: { recordingMode: "wakeword", wakeWord: "jarvis", wakeWordSensitivity: 0.5 },
+				audio: {},
+				model: {},
+				quality: {},
+			},
+		});
+		await new Promise((r) => setTimeout(r, 600));
+		expect(sttProcessState.restartCalled).toBe(0);
+	});
+
+	test("staying in wakeword mode with a changed wakeWordTimeout restarts (anyWakeFieldChanged loop)", async () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		storeData = {
+			general: {
+				recordingMode: "wakeword",
+				wakeWord: "jarvis",
+				wakeWordSensitivity: 0.5,
+				wakeWordTimeout: 5,
+			},
+			audio: {},
+			model: {},
+			quality: {},
+		};
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: {
+				general: {
+					recordingMode: "wakeword",
+					wakeWord: "jarvis",
+					wakeWordSensitivity: 0.5,
+					wakeWordTimeout: 10,
+				},
+				audio: {},
+				model: {},
+				quality: {},
+			},
+		});
+		await new Promise((r) => setTimeout(r, 600));
+		expect(sttProcessState.restartCalled).toBe(1);
+	});
+
+	test("flipping the live-transcription display schedules a restart (realtimeKeyOrNull)", async () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		storeData = {
+			general: { liveTranscriptionDisplay: "both" },
+			audio: {},
+			model: {},
+			quality: {},
+		};
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: {
+				general: { liveTranscriptionDisplay: "none" },
+				audio: {},
+				model: {},
+				quality: {},
+			},
+		});
+		await new Promise((r) => setTimeout(r, 600));
+		expect(sttProcessState.restartCalled).toBe(1);
+	});
+});
+
+describe("broadcastRestartRequired (unmanaged server hint)", () => {
+	test("sends STT_RESTART_REQUIRED to every alive window when restart fires unmanaged", async () => {
+		setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
+			typeof setupSettingsHandlers
+		>[0]);
+		sttProcessState.running = false;
+		const events1: Array<{ channel: string; payload: unknown }> = [];
+		const events2: Array<{ channel: string; payload: unknown }> = [];
+		const aliveA = createWindow(10, events1);
+		const aliveB = createWindow(11, events2);
+		allWindows.push(aliveA, aliveB);
+		storeData.audio = { webrtcSensitivity: 0 };
+		const sender = createWindow(1, sentEvents);
+		fireEvent("settings:save", sender.webContents, {
+			settings: { audio: { webrtcSensitivity: 1 } },
+		});
+		await new Promise((r) => setTimeout(r, 700));
+		const restartEvents1 = events1.filter((e) => e.channel === "stt:restart-required");
+		const restartEvents2 = events2.filter((e) => e.channel === "stt:restart-required");
+		expect(restartEvents1.length).toBeGreaterThanOrEqual(1);
+		expect(restartEvents2.length).toBeGreaterThanOrEqual(1);
+	});
+
+	test("skips destroyed windows so a hung renderer doesn't block others", async () => {
+		setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
+			typeof setupSettingsHandlers
+		>[0]);
+		sttProcessState.running = false;
+		const eventsDead: Array<{ channel: string; payload: unknown }> = [];
+		const eventsAlive: Array<{ channel: string; payload: unknown }> = [];
+		const dead = createWindow(20, eventsDead, { destroyed: true });
+		const alive = createWindow(21, eventsAlive);
+		allWindows.push(dead, alive);
+		storeData.audio = { webrtcSensitivity: 0 };
+		const sender = createWindow(1, sentEvents);
+		fireEvent("settings:save", sender.webContents, {
+			settings: { audio: { webrtcSensitivity: 1 } },
+		});
+		await new Promise((r) => setTimeout(r, 700));
+		const restartDead = eventsDead.filter((e) => e.channel === "stt:restart-required");
+		const restartAlive = eventsAlive.filter((e) => e.channel === "stt:restart-required");
+		expect(restartDead.length).toBe(0);
+		expect(restartAlive.length).toBeGreaterThanOrEqual(1);
+	});
+
+	test("swallows a single throwing renderer so siblings still receive the event", async () => {
+		setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
+			typeof setupSettingsHandlers
+		>[0]);
+		sttProcessState.running = false;
+		const eventsBad: Array<{ channel: string; payload: unknown }> = [];
+		const eventsAlive: Array<{ channel: string; payload: unknown }> = [];
+		const bad = createWindow(30, eventsBad, { throwOnSend: true });
+		const alive = createWindow(31, eventsAlive);
+		allWindows.push(bad, alive);
+		storeData.audio = { webrtcSensitivity: 0 };
+		const sender = createWindow(1, sentEvents);
+		fireEvent("settings:save", sender.webContents, {
+			settings: { audio: { webrtcSensitivity: 1 } },
+		});
+		await new Promise((r) => setTimeout(r, 700));
+		const restartAlive = eventsAlive.filter((e) => e.channel === "stt:restart-required");
+		expect(restartAlive.length).toBeGreaterThanOrEqual(1);
+	});
+});
+
+describe("applyMainProcessSettingsPatch", () => {
+	test("writes the patch to the store and broadcasts settings:changed to all windows", () => {
+		setupSettingsHandlers();
+		const events1: Array<{ channel: string; payload: unknown }> = [];
+		const events2: Array<{ channel: string; payload: unknown }> = [];
+		allWindows.push(createWindow(40, events1), createWindow(41, events2));
+		applyMainProcessSettingsPatch({ "general.recordingMode": "ptt" });
+		expect((storeData.general as Record<string, unknown>).recordingMode).toBe("ptt");
+		expect(events1.find((e) => e.channel === "settings:changed")).toBeTruthy();
+		expect(events2.find((e) => e.channel === "settings:changed")).toBeTruthy();
+	});
+
+	test("skips destroyed windows during settings:changed broadcast", () => {
+		setupSettingsHandlers();
+		const eventsDead: Array<{ channel: string; payload: unknown }> = [];
+		const eventsAlive: Array<{ channel: string; payload: unknown }> = [];
+		allWindows.push(
+			createWindow(50, eventsDead, { destroyed: true }),
+			createWindow(51, eventsAlive)
+		);
+		applyMainProcessSettingsPatch({ "general.recordingMode": "toggle" });
+		expect(eventsDead.find((e) => e.channel === "settings:changed")).toBeFalsy();
+		expect(eventsAlive.find((e) => e.channel === "settings:changed")).toBeTruthy();
+	});
+
+	test("triggers a restart when the patch changes a startup-only key", async () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		storeData.audio = { webrtcSensitivity: 0 };
+		applyMainProcessSettingsPatch({ "audio.webrtcSensitivity": 2 });
+		await new Promise((r) => setTimeout(r, 700));
+		expect(sttProcessState.restartCalled).toBe(1);
 	});
 });

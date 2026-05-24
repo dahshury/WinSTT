@@ -101,25 +101,49 @@ export function isDeniedByList(
 	snapshot: WindowContextSnapshot,
 	denyList: readonly string[]
 ): boolean {
-	if (!denyList || denyList.length === 0) {
+	if (denyListIsEmpty(denyList)) {
 		return false;
 	}
+	const probe = buildDenyProbe(snapshot);
+	return denyList.some((raw) => denyPatternMatchesProbe(raw, probe));
+}
+
+interface DenyProbe {
+	readonly appExe: string;
+	readonly host: string;
+}
+
+function denyListIsEmpty(denyList: readonly string[] | undefined): boolean {
+	return !denyList || denyList.length === 0;
+}
+
+function buildDenyProbe(snapshot: WindowContextSnapshot): DenyProbe {
 	const appExe = (snapshot.appExe ?? "").toLowerCase();
 	const url = (snapshot.url ?? "").toLowerCase();
-	const host = extractHost(url);
-	for (const raw of denyList) {
-		const pattern = raw.trim().toLowerCase().replace(LEADING_WILDCARD_RE, "");
-		if (!pattern) {
-			continue;
-		}
-		if (pattern.endsWith(".exe") && appExe === pattern) {
-			return true;
-		}
-		if (host && (host === pattern || host.endsWith(`.${pattern}`))) {
-			return true;
-		}
+	return { appExe, host: extractHost(url) };
+}
+
+function normaliseDenyPattern(raw: string): string {
+	return raw.trim().toLowerCase().replace(LEADING_WILDCARD_RE, "");
+}
+
+function denyPatternMatchesProbe(raw: string, probe: DenyProbe): boolean {
+	const pattern = normaliseDenyPattern(raw);
+	if (pattern === "") {
+		return false;
 	}
-	return false;
+	return matchesAppExePattern(pattern, probe.appExe) || matchesHostPattern(pattern, probe.host);
+}
+
+function matchesAppExePattern(pattern: string, appExe: string): boolean {
+	return pattern.endsWith(".exe") && appExe === pattern;
+}
+
+function matchesHostPattern(pattern: string, host: string): boolean {
+	if (host === "") {
+		return false;
+	}
+	return host === pattern || host.endsWith(`.${pattern}`);
 }
 
 /**
@@ -178,12 +202,19 @@ export function isIdeContext(snapshot: WindowContextSnapshot): boolean {
  * handles both `https://github.com/foo` and `github.com/foo`.
  */
 function extractHost(url: string): string {
-	if (!url) {
+	if (url === "") {
 		return "";
 	}
-	const noScheme = url.replace(SCHEME_PREFIX_RE, "");
+	const hostPart = sliceHostPart(url.replace(SCHEME_PREFIX_RE, ""));
+	return stripQueryAndFragment(hostPart);
+}
+
+function sliceHostPart(noScheme: string): string {
 	const slashIdx = noScheme.indexOf("/");
-	const hostPart = slashIdx === -1 ? noScheme : noScheme.slice(0, slashIdx);
+	return slashIdx === -1 ? noScheme : noScheme.slice(0, slashIdx);
+}
+
+function stripQueryAndFragment(hostPart: string): string {
 	return hostPart.split("?")[0]?.split("#")[0] ?? "";
 }
 
@@ -210,37 +241,45 @@ function extractHost(url: string): string {
  * them across lines.
  */
 export function formatContextForPrompt(snapshot: WindowContextSnapshot): string {
-	const before = (snapshot.textBefore ?? "").replace(/\n{2,}/g, "\n").trim();
-	const after = (snapshot.textAfter ?? "").replace(/\n{2,}/g, "\n").trim();
-	const caretMode = before.length > 0 || after.length > 0;
-	const axHtml = (snapshot.axHtml ?? "").trim();
-	const contentSections = caretMode
-		? [
-				{
-					value: before,
-					format: (v: string) =>
-						`Text immediately before the caret (your cleaned output will be inserted directly after this — continue it, do not repeat it):\n${v}`,
-				},
-				{
-					value: after,
-					format: (v: string) =>
-						`Text immediately after the caret (your output will sit directly before this — do not repeat it):\n${v}`,
-				},
-			]
-		: [
-				{
-					value: snapshot.focusedText.replace(/\n{2,}/g, "\n").trim(),
-					format: (v: string) => `Visible content:\n${v}`,
-				},
-			];
-	const ideMarker = isIdeContext(snapshot) ? "yes" : "";
-	const sections: readonly {
-		readonly format: (value: string) => string;
-		readonly value: string;
-	}[] = [
-		{ value: (snapshot.appExe ?? "").trim(), format: (v) => `App: ${v}` },
-		{ value: ideMarker, format: () => "IDE context: yes (treat visible content as code)" },
-		{ value: (snapshot.url ?? "").trim(), format: (v) => `URL: ${v}` },
+	const sections = buildPromptSections(snapshot);
+	return sections.filter(sectionHasValue).map(renderSection).join("\n");
+}
+
+interface PromptSection {
+	readonly format: (value: string) => string;
+	readonly value: string;
+}
+
+const BLANK_LINES_RE = /\n{2,}/g;
+
+function collapseBlankLines(raw: string | undefined): string {
+	return (raw ?? "").replace(BLANK_LINES_RE, "\n").trim();
+}
+
+function trimOrEmpty(raw: string | undefined): string {
+	return (raw ?? "").trim();
+}
+
+function sectionHasValue(section: PromptSection): boolean {
+	return section.value.length > 0;
+}
+
+function renderSection(section: PromptSection): string {
+	return section.format(section.value);
+}
+
+function ideMarkerFor(snapshot: WindowContextSnapshot): string {
+	return isIdeContext(snapshot) ? "yes" : "";
+}
+
+function buildPromptSections(snapshot: WindowContextSnapshot): readonly PromptSection[] {
+	return [
+		{ value: trimOrEmpty(snapshot.appExe), format: (v) => `App: ${v}` },
+		{
+			value: ideMarkerFor(snapshot),
+			format: () => "IDE context: yes (treat visible content as code)",
+		},
+		{ value: trimOrEmpty(snapshot.url), format: (v) => `URL: ${v}` },
 		{ value: snapshot.windowTitle.trim(), format: (v) => `Window: ${v}` },
 		{ value: snapshot.elementName.trim(), format: (v) => `Focused field: ${v}` },
 		// axHtml goes BEFORE the caret labels so the LLM sees the broader
@@ -248,13 +287,42 @@ export function formatContextForPrompt(snapshot: WindowContextSnapshot): string 
 		// point. Wrapped in a fence so the model treats the inner tags as
 		// data, not as markdown / nested instructions.
 		{
-			value: axHtml,
+			value: trimOrEmpty(snapshot.axHtml),
 			format: (v) => `Visible UI (XML — DO NOT echo, only use for reference):\n${v}`,
 		},
-		...contentSections,
+		...buildContentSections(snapshot),
 	];
-	return sections
-		.filter((section) => section.value.length > 0)
-		.map((section) => section.format(section.value))
-		.join("\n");
+}
+
+function buildContentSections(snapshot: WindowContextSnapshot): readonly PromptSection[] {
+	const before = collapseBlankLines(snapshot.textBefore);
+	const after = collapseBlankLines(snapshot.textAfter);
+	if (isCaretMode(before, after)) {
+		return buildCaretSections(before, after);
+	}
+	return [
+		{
+			value: collapseBlankLines(snapshot.focusedText),
+			format: (v) => `Visible content:\n${v}`,
+		},
+	];
+}
+
+function isCaretMode(before: string, after: string): boolean {
+	return before.length > 0 || after.length > 0;
+}
+
+function buildCaretSections(before: string, after: string): readonly PromptSection[] {
+	return [
+		{
+			value: before,
+			format: (v) =>
+				`Text immediately before the caret (your cleaned output will be inserted directly after this — continue it, do not repeat it):\n${v}`,
+		},
+		{
+			value: after,
+			format: (v) =>
+				`Text immediately after the caret (your output will sit directly before this — do not repeat it):\n${v}`,
+		},
+	];
 }

@@ -66,6 +66,24 @@ describe("LlmSettingsPanel helpers — buildToneOpts / buildLevelOpts", () => {
 	});
 });
 
+describe("LlmSettingsPanel helpers — toggleIndependent translate branch", () => {
+	test("toggleIndependent adds translate entry with the default target language", () => {
+		// Exercises makeIndependentEntry's translate branch, which carries the
+		// targetLang invariant required by the translate preset path.
+		const out = helpers.toggleIndependent([{ key: "neutral" }], "translate", true);
+		const translate = out.find((p) => p.key === "translate");
+		expect(translate).toBeDefined();
+		expect((translate as { targetLang?: string }).targetLang).toBeDefined();
+	});
+
+	test("toggleIndependent adds translate entry with a custom target language", () => {
+		// Confirms the targetLangOverride parameter threads through to the
+		// translate entry without being clobbered by the default fallback.
+		const out = helpers.toggleIndependent([], "translate", true, undefined, "fr");
+		expect(out).toContainEqual({ key: "translate", targetLang: "fr" });
+	});
+});
+
 describe("LlmSettingsPanel helpers — presets array mutators", () => {
 	test("getToneKey returns 'neutral' for empty list", () => {
 		expect(helpers.getToneKey([])).toBe("neutral");

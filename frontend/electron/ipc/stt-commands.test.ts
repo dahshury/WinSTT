@@ -21,13 +21,50 @@ mock.module("electron", () => ({
 	},
 }));
 
+// Capture markSessionAborted / abortActiveOllamaChats / hideOverlay so the
+// handleAbortOperation test can assert each side effect was invoked. Each
+// mock module replaces only the symbols we care about.
+const abortStateLog: string[] = [];
+mock.module("../lib/abort-state", () => ({
+	markSessionAborted: () => {
+		abortStateLog.push("mark");
+	},
+}));
+
+const ollamaAbortLog: string[] = [];
+mock.module("./llm", () => ({
+	abortActiveOllamaChats: (reason: string) => {
+		ollamaAbortLog.push(reason);
+	},
+}));
+
+const overlayState = { hideCalls: 0, throwOnHide: false };
+mock.module("./overlay", () => ({
+	hideOverlay: () => {
+		overlayState.hideCalls += 1;
+		if (overlayState.throwOnHide) {
+			throw new Error("overlay-hide-failed");
+		}
+	},
+}));
+
 const { setupSttCommandHandlers, __stt_commands_test_helpers__: helpers } = await import(
 	"./stt-commands"
 );
 
 interface MockSttClient {
+	assessDictationFit: (
+		modelId: string,
+		quantization: string,
+		device: string | null
+	) => Promise<unknown>;
+	assessDictationFitResult?: unknown;
+	assessOllamaFit: (sizeBytes: number) => Promise<unknown>;
+	assessOllamaFitResult?: unknown;
 	callMethod: (method: string, args?: unknown[]) => void;
 	calls: Array<{ kind: string; args: unknown[] }>;
+	getLiveResources: (force: boolean) => Promise<unknown>;
+	getLiveResourcesResult?: unknown;
 	getParameter: (parameter: string) => Promise<unknown>;
 	isConnected: boolean;
 	listInputDevices: () => Promise<unknown>;
@@ -59,6 +96,18 @@ function makeClient(connected = true): MockSttClient {
 		listModelsWithState: async () => {
 			calls.push({ kind: "listModelsWithState", args: [] });
 			return client.listModelsWithStateResult ?? null;
+		},
+		getLiveResources: async (force) => {
+			calls.push({ kind: "getLiveResources", args: [force] });
+			return client.getLiveResourcesResult ?? null;
+		},
+		assessDictationFit: async (modelId, quantization, device) => {
+			calls.push({ kind: "assessDictationFit", args: [modelId, quantization, device] });
+			return client.assessDictationFitResult ?? null;
+		},
+		assessOllamaFit: async (sizeBytes) => {
+			calls.push({ kind: "assessOllamaFit", args: [sizeBytes] });
+			return client.assessOllamaFitResult ?? null;
 		},
 		sendControl: (data) => {
 			calls.push({ kind: "sendControl", args: [data] });
@@ -648,5 +697,210 @@ describe("stt-commands pure helpers", () => {
 		const handler = handlers.get("stt:list-models-with-state");
 		const result = await handler!(undefined);
 		expect(result).toEqual({ models: [] });
+	});
+});
+
+describe("handleGetLiveResources", () => {
+	test("forwards forceRefresh=true when payload sets it", async () => {
+		const online = makeClient(true);
+		online.getLiveResourcesResult = { cpu: 0.5 };
+		const result = await helpers.handleGetLiveResources(online as unknown as SttClient, {
+			forceRefresh: true,
+		});
+		expect(result).toEqual({ cpu: 0.5 });
+		expect(online.calls).toEqual([{ kind: "getLiveResources", args: [true] }]);
+	});
+
+	test("defaults forceRefresh to false when payload is missing the field", async () => {
+		const online = makeClient(true);
+		await helpers.handleGetLiveResources(online as unknown as SttClient, {});
+		expect(online.calls).toEqual([{ kind: "getLiveResources", args: [false] }]);
+	});
+
+	test("defaults forceRefresh to false when payload is not a record", async () => {
+		const online = makeClient(true);
+		await helpers.handleGetLiveResources(online as unknown as SttClient, null);
+		await helpers.handleGetLiveResources(online as unknown as SttClient, "nope");
+		await helpers.handleGetLiveResources(online as unknown as SttClient, 42);
+		expect(online.calls).toEqual([
+			{ kind: "getLiveResources", args: [false] },
+			{ kind: "getLiveResources", args: [false] },
+			{ kind: "getLiveResources", args: [false] },
+		]);
+	});
+
+	test("returns null when the underlying call rejects", async () => {
+		const online = makeClient(true);
+		online.getLiveResources = async () => {
+			throw new Error("server crashed");
+		};
+		const result = await helpers.handleGetLiveResources(online as unknown as SttClient, {});
+		expect(result).toBeNull();
+	});
+});
+
+describe("parseAssessDictationFitPayload", () => {
+	test("returns null for non-record payloads", () => {
+		expect(helpers.parseAssessDictationFitPayload(null)).toBeNull();
+		expect(helpers.parseAssessDictationFitPayload(undefined)).toBeNull();
+		expect(helpers.parseAssessDictationFitPayload("nope")).toBeNull();
+		expect(helpers.parseAssessDictationFitPayload(42)).toBeNull();
+	});
+
+	test("returns null when modelId is missing, empty, or non-string", () => {
+		expect(helpers.parseAssessDictationFitPayload({})).toBeNull();
+		expect(helpers.parseAssessDictationFitPayload({ modelId: "" })).toBeNull();
+		expect(helpers.parseAssessDictationFitPayload({ modelId: 42 })).toBeNull();
+	});
+
+	test("defaults quantization to '' and device to null when omitted", () => {
+		expect(helpers.parseAssessDictationFitPayload({ modelId: "tiny" })).toEqual({
+			modelId: "tiny",
+			quantization: "",
+			device: null,
+		});
+	});
+
+	test("preserves string quantization and device when present", () => {
+		expect(
+			helpers.parseAssessDictationFitPayload({
+				modelId: "base",
+				quantization: "int8",
+				device: "cuda",
+			})
+		).toEqual({ modelId: "base", quantization: "int8", device: "cuda" });
+	});
+
+	test("falls back to '' / null when quantization or device are not strings", () => {
+		expect(
+			helpers.parseAssessDictationFitPayload({ modelId: "x", quantization: 7, device: 9 })
+		).toEqual({ modelId: "x", quantization: "", device: null });
+	});
+});
+
+describe("handleAssessDictationFit", () => {
+	test("returns null when the payload is invalid", async () => {
+		const online = makeClient(true);
+		expect(await helpers.handleAssessDictationFit(online as unknown as SttClient, null)).toBeNull();
+		expect(
+			await helpers.handleAssessDictationFit(online as unknown as SttClient, { modelId: "" })
+		).toBeNull();
+		expect(online.calls).toEqual([]);
+	});
+
+	test("forwards modelId + quantization + device when valid", async () => {
+		const online = makeClient(true);
+		online.assessDictationFitResult = { fits: true };
+		const result = await helpers.handleAssessDictationFit(online as unknown as SttClient, {
+			modelId: "tiny",
+			quantization: "int8",
+			device: "cuda",
+		});
+		expect(result).toEqual({ fits: true });
+		expect(online.calls).toEqual([{ kind: "assessDictationFit", args: ["tiny", "int8", "cuda"] }]);
+	});
+
+	test("returns null when the underlying call rejects", async () => {
+		const online = makeClient(true);
+		online.assessDictationFit = async () => {
+			throw new Error("server crashed");
+		};
+		const result = await helpers.handleAssessDictationFit(online as unknown as SttClient, {
+			modelId: "tiny",
+		});
+		expect(result).toBeNull();
+	});
+});
+
+describe("handleAssessOllamaFit", () => {
+	test("returns null when payload is not a record", async () => {
+		const online = makeClient(true);
+		expect(await helpers.handleAssessOllamaFit(online as unknown as SttClient, null)).toBeNull();
+		expect(await helpers.handleAssessOllamaFit(online as unknown as SttClient, "nope")).toBeNull();
+		expect(online.calls).toEqual([]);
+	});
+
+	test("returns null when sizeBytes is missing or invalid", async () => {
+		const online = makeClient(true);
+		expect(await helpers.handleAssessOllamaFit(online as unknown as SttClient, {})).toBeNull();
+		expect(
+			await helpers.handleAssessOllamaFit(online as unknown as SttClient, { sizeBytes: "nope" })
+		).toBeNull();
+		expect(
+			await helpers.handleAssessOllamaFit(online as unknown as SttClient, { sizeBytes: -1 })
+		).toBeNull();
+		expect(
+			await helpers.handleAssessOllamaFit(online as unknown as SttClient, {
+				sizeBytes: Number.POSITIVE_INFINITY,
+			})
+		).toBeNull();
+		expect(online.calls).toEqual([]);
+	});
+
+	test("floors sizeBytes and forwards it when valid", async () => {
+		const online = makeClient(true);
+		online.assessOllamaFitResult = { fits: false };
+		const result = await helpers.handleAssessOllamaFit(online as unknown as SttClient, {
+			sizeBytes: 12_345.9,
+		});
+		expect(result).toEqual({ fits: false });
+		expect(online.calls).toEqual([{ kind: "assessOllamaFit", args: [12_345] }]);
+	});
+
+	test("accepts a zero size (locks in the >= 0 guard, not > 0)", async () => {
+		const online = makeClient(true);
+		await helpers.handleAssessOllamaFit(online as unknown as SttClient, { sizeBytes: 0 });
+		expect(online.calls).toEqual([{ kind: "assessOllamaFit", args: [0] }]);
+	});
+
+	test("returns null when the underlying call rejects", async () => {
+		const online = makeClient(true);
+		online.assessOllamaFit = async () => {
+			throw new Error("server crashed");
+		};
+		const result = await helpers.handleAssessOllamaFit(online as unknown as SttClient, {
+			sizeBytes: 100,
+		});
+		expect(result).toBeNull();
+	});
+});
+
+describe("handleAbortOperation", () => {
+	function resetAbortMocks(): void {
+		abortStateLog.length = 0;
+		ollamaAbortLog.length = 0;
+		overlayState.hideCalls = 0;
+		overlayState.throwOnHide = false;
+	}
+
+	test("marks the session aborted, cancels Ollama, calls server abort+clear, and hides overlay", () => {
+		resetAbortMocks();
+		const online = makeClient(true);
+		helpers.handleAbortOperation(online as unknown as SttClient);
+		expect(abortStateLog).toEqual(["mark"]);
+		expect(ollamaAbortLog).toEqual(["user-cancelled-from-hotkey"]);
+		expect(online.calls).toEqual([
+			{ kind: "call", args: ["abort", undefined] },
+			{ kind: "call", args: ["clear_audio_queue", undefined] },
+		]);
+		expect(overlayState.hideCalls).toBe(1);
+	});
+
+	test("skips the server abort/clear calls when the client is disconnected", () => {
+		resetAbortMocks();
+		const offline = makeClient(false);
+		helpers.handleAbortOperation(offline as unknown as SttClient);
+		expect(abortStateLog).toEqual(["mark"]);
+		expect(ollamaAbortLog).toEqual(["user-cancelled-from-hotkey"]);
+		expect(offline.calls).toEqual([]);
+		expect(overlayState.hideCalls).toBe(1);
+	});
+
+	test("swallows hideOverlay errors without throwing", () => {
+		resetAbortMocks();
+		overlayState.throwOnHide = true;
+		const online = makeClient(true);
+		expect(() => helpers.handleAbortOperation(online as unknown as SttClient)).not.toThrow();
+		expect(abortStateLog).toEqual(["mark"]);
 	});
 });

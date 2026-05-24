@@ -113,9 +113,88 @@ function readPersisted(store: CreateOptions["store"], key: string): Transcriptio
 	return raw.filter(isEntry);
 }
 
+function shouldKeepOriginalText(
+	trimmedOriginal: string | undefined,
+	trimmedText: string,
+	llmRan: boolean | undefined
+): trimmedOriginal is string {
+	// "Copy Original" is meaningful whenever the LLM was actually
+	// invoked — even when the model returned the input unchanged
+	// (e.g. a reasoning model exhausted its budget on thought
+	// tokens, or the user picked a preset that happened to be a
+	// no-op for this input). Without the `llmRan` signal we'd hide
+	// the affordance for any LLM run that didn't strictly transform
+	// the text, which the user reads as "the LLM never ran."
+	// When LLM didn't run, fall back to the legacy diff gate so
+	// dictionary-only entries don't carry a redundant originalText.
+	if (!trimmedOriginal) {
+		return false;
+	}
+	return llmRan === true || trimmedOriginal !== trimmedText;
+}
+
+function applyOriginalText(
+	entry: TranscriptionHistoryEntry,
+	trimmedOriginal: string | undefined,
+	trimmedText: string,
+	llmRan: boolean | undefined
+): void {
+	if (shouldKeepOriginalText(trimmedOriginal, trimmedText, llmRan)) {
+		entry.originalText = trimmedOriginal;
+	}
+}
+
+function applyLlmModel(
+	entry: TranscriptionHistoryEntry,
+	llmModel: string | undefined,
+	llmRan: boolean | undefined
+): void {
+	// Record which model produced the post-processing. Tied to the
+	// `llmRan` signal (not text-equality) for the same reason as
+	// `originalText`: a no-op LLM run still used a model worth
+	// surfacing in the history.
+	const trimmedModel = llmModel?.trim();
+	if (llmRan === true && trimmedModel) {
+		entry.llmModel = trimmedModel;
+	}
+}
+
+interface EntryBuilderDeps {
+	makeId: () => string;
+	now: () => number;
+}
+
+function buildEntry(
+	trimmedText: string,
+	durationMs: number,
+	originalText: string | undefined,
+	llmRan: boolean | undefined,
+	llmModel: string | undefined,
+	deps: EntryBuilderDeps
+): TranscriptionHistoryEntry {
+	const entry: TranscriptionHistoryEntry = {
+		id: deps.makeId(),
+		timestamp: deps.now(),
+		text: trimmedText,
+		wordCount: countWords(trimmedText),
+		durationMs: Math.max(0, Math.floor(durationMs)),
+	};
+	applyOriginalText(entry, originalText?.trim(), trimmedText, llmRan);
+	applyLlmModel(entry, llmModel, llmRan);
+	return entry;
+}
+
+function trimToMax(entries: TranscriptionHistoryEntry[], maxEntries: number): void {
+	if (entries.length > maxEntries) {
+		entries.splice(0, entries.length - maxEntries);
+	}
+}
+
 export function createTranscriptionHistoryStore(options: CreateOptions): TranscriptionHistoryStore {
-	const now = options.now ?? Date.now;
-	const makeId = options.makeId ?? (() => globalThis.crypto.randomUUID());
+	const deps: EntryBuilderDeps = {
+		now: options.now ?? Date.now,
+		makeId: options.makeId ?? (() => globalThis.crypto.randomUUID()),
+	};
 	const maxEntries = Math.max(1, options.maxEntries);
 	const entries: TranscriptionHistoryEntry[] = readPersisted(options.store, options.storeKey);
 
@@ -129,41 +208,9 @@ export function createTranscriptionHistoryStore(options: CreateOptions): Transcr
 			if (trimmed.length === 0) {
 				return null;
 			}
-			const trimmedOriginal = originalText?.trim();
-			const entry: TranscriptionHistoryEntry = {
-				id: makeId(),
-				timestamp: now(),
-				text: trimmed,
-				wordCount: countWords(trimmed),
-				durationMs: Math.max(0, Math.floor(durationMs)),
-			};
-			// "Copy Original" is meaningful whenever the LLM was actually
-			// invoked — even when the model returned the input unchanged
-			// (e.g. a reasoning model exhausted its budget on thought
-			// tokens, or the user picked a preset that happened to be a
-			// no-op for this input). Without the `llmRan` signal we'd hide
-			// the affordance for any LLM run that didn't strictly transform
-			// the text, which the user reads as "the LLM never ran."
-			// When LLM didn't run, fall back to the legacy diff gate so
-			// dictionary-only entries don't carry a redundant originalText.
-			const shouldKeepOriginal = trimmedOriginal
-				? llmRan === true || trimmedOriginal !== trimmed
-				: false;
-			if (trimmedOriginal && shouldKeepOriginal) {
-				entry.originalText = trimmedOriginal;
-			}
-			// Record which model produced the post-processing. Tied to the
-			// `llmRan` signal (not text-equality) for the same reason as
-			// `originalText`: a no-op LLM run still used a model worth
-			// surfacing in the history.
-			const trimmedModel = llmModel?.trim();
-			if (llmRan === true && trimmedModel) {
-				entry.llmModel = trimmedModel;
-			}
+			const entry = buildEntry(trimmed, durationMs, originalText, llmRan, llmModel, deps);
 			entries.push(entry);
-			if (entries.length > maxEntries) {
-				entries.splice(0, entries.length - maxEntries);
-			}
+			trimToMax(entries, maxEntries);
 			persist();
 			return entry;
 		},

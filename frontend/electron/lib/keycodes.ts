@@ -289,16 +289,79 @@ const DIGIT_RE = /^[0-9]$/;
 const FKEY_RE = /^F([1-9]|1[0-9]|2[0-4])$/;
 const NUMPAD_RE = /^Num([0-9])$/;
 
+function isPassthroughKey(name: string): boolean {
+	return LETTER_RE.test(name) || DIGIT_RE.test(name) || FKEY_RE.test(name);
+}
+
+function numpadToken(name: string): string | null {
+	const match = NUMPAD_RE.exec(name);
+	return match ? `num${match[1]}` : null;
+}
+
+function aliasToken(name: string): string | null {
+	return ELECTRON_KEY_ALIAS[name] ?? null;
+}
+
 /** Resolve a single non-modifier uiohook name to its Electron token, or null. */
 export function electronKeyToken(name: string): string | null {
-	if (LETTER_RE.test(name) || DIGIT_RE.test(name) || FKEY_RE.test(name)) {
+	if (isPassthroughKey(name)) {
 		return name;
 	}
-	const numpad = NUMPAD_RE.exec(name);
-	if (numpad) {
-		return `num${numpad[1]}`;
+	return numpadToken(name) ?? aliasToken(name);
+}
+
+interface AcceleratorParts {
+	key: string | null;
+	modifiers: Set<string>;
+}
+
+/** Try to add `part` to `parts` as a modifier; returns true if it was a modifier. */
+function tryAbsorbModifier(part: string, parts: AcceleratorParts): boolean {
+	const modifier = ELECTRON_MODIFIER[part];
+	if (modifier === undefined) {
+		return false;
 	}
-	return ELECTRON_KEY_ALIAS[name] ?? null;
+	parts.modifiers.add(modifier);
+	return true;
+}
+
+/**
+ * Try to set `part` as the (single) non-modifier key. Returns false when
+ * the token is unmappable OR a key was already set (second non-modifier).
+ */
+function trySetKey(part: string, parts: AcceleratorParts): boolean {
+	const token = electronKeyToken(part);
+	if (token === null) {
+		return false;
+	}
+	if (parts.key !== null) {
+		return false;
+	}
+	parts.key = token;
+	return true;
+}
+
+function absorbAcceleratorPart(rawPart: string, parts: AcceleratorParts): boolean {
+	const part = rawPart.trim();
+	return tryAbsorbModifier(part, parts) || trySetKey(part, parts);
+}
+
+function parseAcceleratorParts(trimmed: string): AcceleratorParts | null {
+	const parts: AcceleratorParts = { modifiers: new Set<string>(), key: null };
+	for (const rawPart of trimmed.split("+")) {
+		if (!absorbAcceleratorPart(rawPart, parts)) {
+			return null;
+		}
+	}
+	return parts;
+}
+
+function emitElectronAccelerator(parts: AcceleratorParts): string | null {
+	if (parts.key === null) {
+		return null;
+	}
+	const orderedModifiers = MODIFIER_EMIT_ORDER.filter((m) => parts.modifiers.has(m));
+	return [...orderedModifiers, parts.key].join("+");
 }
 
 /**
@@ -312,26 +375,6 @@ export function uiohookAcceleratorToElectron(accelerator: string): string | null
 	if (trimmed === "") {
 		return null;
 	}
-	const modifiers = new Set<string>();
-	let key: string | null = null;
-	for (const rawPart of trimmed.split("+")) {
-		const part = rawPart.trim();
-		const modifier = ELECTRON_MODIFIER[part];
-		if (modifier) {
-			modifiers.add(modifier);
-			continue;
-		}
-		const token = electronKeyToken(part);
-		if (token === null || key !== null) {
-			// Unmappable token, or a second non-modifier key (Electron
-			// accelerators allow exactly one) — bail.
-			return null;
-		}
-		key = token;
-	}
-	if (key === null) {
-		return null;
-	}
-	const orderedModifiers = MODIFIER_EMIT_ORDER.filter((m) => modifiers.has(m));
-	return [...orderedModifiers, key].join("+");
+	const parts = parseAcceleratorParts(trimmed);
+	return parts === null ? null : emitElectronAccelerator(parts);
 }

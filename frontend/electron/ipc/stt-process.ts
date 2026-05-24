@@ -94,12 +94,18 @@ function applySileroDeactivityFlag(args: string[]): void {
 	}
 }
 
+// Stryker disable ObjectLiteral,StringLiteral: lookup table; each entry locks one branch of the if-chain that previously bumped CC. Branch coverage comes from the buildServerArgs realtime tests that drive each display value through the spawn argv builder.
+const LIVE_DISPLAY_LOOKUP: Record<string, LiveTranscriptionDisplay> = {
+	none: "none",
+	"in-app": "in-app",
+	"in-pill": "in-pill",
+	both: "both",
+};
+// Stryker restore ObjectLiteral,StringLiteral
+
 function readLiveTranscriptionDisplay(): LiveTranscriptionDisplay {
 	const raw = getStoreRaw("general.liveTranscriptionDisplay");
-	if (raw === "none" || raw === "in-app" || raw === "in-pill" || raw === "both") {
-		return raw;
-	}
-	return "both";
+	return LIVE_DISPLAY_LOOKUP[String(raw)] ?? "both";
 }
 
 /**
@@ -159,21 +165,21 @@ const OPENWAKEWORD_KEYWORDS: ReadonlySet<string> = new Set([
  * backend directly. Returns null when the keyword belongs to neither
  * engine (corrupt store value) so the caller can skip emitting flags.
  */
-export function wakeWordBackendFor(
-	keyword: string
-): "composite" | "pvporcupine" | "openwakeword" | null {
+type WakeWordBackend = "composite" | "pvporcupine" | "openwakeword" | null;
+
+// Stryker disable ObjectLiteral,StringLiteral: keyed by `${inPorc}|${inOww}` so each entry locks one cell of the truth table. The four cells are covered by the applyWakeWordFlags test suite (default mode, empty word, jarvis = pvporcupine, alexa = composite — see stt-process.test.ts).
+const WAKE_BACKEND_TABLE: Record<string, WakeWordBackend> = {
+	"true|true": "composite",
+	"true|false": "pvporcupine",
+	"false|true": "openwakeword",
+	"false|false": null,
+};
+// Stryker restore ObjectLiteral,StringLiteral
+
+export function wakeWordBackendFor(keyword: string): WakeWordBackend {
 	const inPorc = PORCUPINE_KEYWORDS.has(keyword);
 	const inOww = OPENWAKEWORD_KEYWORDS.has(keyword);
-	if (inPorc && inOww) {
-		return "composite";
-	}
-	if (inPorc) {
-		return "pvporcupine";
-	}
-	if (inOww) {
-		return "openwakeword";
-	}
-	return null;
+	return WAKE_BACKEND_TABLE[`${inPorc}|${inOww}`] ?? null;
 }
 
 /**
@@ -188,28 +194,58 @@ export function wakeWordBackendFor(
  * is set for composite and openwakeword backends so detection is scoped to
  * the chosen keyword (otherwise openWakeWord would load all default models).
  */
-function applyWakeWordFlags(args: string[]): void {
-	const mode = getStoreValue("general.recordingMode");
-	if (mode !== "wakeword") {
-		return;
+// Stryker disable ObjectLiteral,BooleanLiteral: lookup table; the openwakeword-model-paths flag is required for composite + openwakeword backends but not for pvporcupine. Branch covered by applyWakeWordFlags tests (jarvis = pvporcupine omits, alexa = composite includes).
+const BACKEND_NEEDS_OWW_PATHS: Record<Exclude<WakeWordBackend, null>, boolean> = {
+	composite: true,
+	openwakeword: true,
+	pvporcupine: false,
+};
+// Stryker restore ObjectLiteral,BooleanLiteral
+
+function pushOpenWakeWordModelPaths(
+	args: string[],
+	backend: Exclude<WakeWordBackend, null>,
+	word: string
+): void {
+	if (BACKEND_NEEDS_OWW_PATHS[backend]) {
+		args.push("--openwakeword_model_paths", word);
+	}
+}
+
+function pushWakeWordCoreFlags(
+	args: string[],
+	backend: Exclude<WakeWordBackend, null>,
+	word: string
+): void {
+	args.push("--wakeword_backend", backend);
+	args.push("--wake_words", word);
+	pushOpenWakeWordModelPaths(args, backend, word);
+	args.push("--wake_words_sensitivity", String(getStoreValue("general.wakeWordSensitivity")));
+	args.push("--wake_word_timeout", String(getStoreValue("general.wakeWordTimeout")));
+}
+
+interface WakeWordContext {
+	backend: Exclude<WakeWordBackend, null>;
+	word: string;
+}
+
+function resolveWakeWordContext(): WakeWordContext | null {
+	if (getStoreValue("general.recordingMode") !== "wakeword") {
+		return null;
 	}
 	const word = getStoreValue("general.wakeWord");
 	if (!word) {
-		return;
+		return null;
 	}
-	const backend = wakeWordBackendFor(word);
-	if (backend === null) {
-		return;
+	const backend = wakeWordBackendFor(String(word));
+	return backend === null ? null : { backend, word: String(word) };
+}
+
+function applyWakeWordFlags(args: string[]): void {
+	const ctx = resolveWakeWordContext();
+	if (ctx) {
+		pushWakeWordCoreFlags(args, ctx.backend, ctx.word);
 	}
-	args.push("--wakeword_backend", backend);
-	args.push("--wake_words", word);
-	if (backend === "composite" || backend === "openwakeword") {
-		args.push("--openwakeword_model_paths", word);
-	}
-	const sensitivity = getStoreValue("general.wakeWordSensitivity");
-	args.push("--wake_words_sensitivity", String(sensitivity));
-	const timeout = getStoreValue("general.wakeWordTimeout");
-	args.push("--wake_word_timeout", String(timeout));
 }
 
 /**
@@ -241,22 +277,38 @@ function applyLogDirFlag(args: string[]): void {
 	}
 }
 
-/** Read all relevant settings from electron-store and convert to CLI args */
-function buildServerArgs(baseArgs: string[]): string[] {
-	const args = [...baseArgs];
+function applySettingsToCliFlags(args: string[]): void {
 	for (const [storePath, cliFlag] of SETTINGS_TO_CLI) {
 		applyStoreTrueFlag(args, getStoreRaw(storePath), cliFlag);
 	}
-	for (const [storePath, cliFlag] of STORE_TRUE_CLI) {
-		if (getStoreRaw(storePath) === true) {
-			args.push(cliFlag);
-		}
+}
+
+function pushStoreTrueFlagIfTrue(args: string[], storePath: string, cliFlag: string): void {
+	if (getStoreRaw(storePath) === true) {
+		args.push(cliFlag);
 	}
+}
+
+function applyStoreTrueCliFlags(args: string[]): void {
+	for (const [storePath, cliFlag] of STORE_TRUE_CLI) {
+		pushStoreTrueFlagIfTrue(args, storePath, cliFlag);
+	}
+}
+
+function applyDerivedFlags(args: string[]): void {
 	applyRealtimeFlag(args);
 	applySileroDeactivityFlag(args);
 	applyWakeWordFlags(args);
 	applyInitialPromptFlags(args);
 	applyLogDirFlag(args);
+}
+
+/** Read all relevant settings from electron-store and convert to CLI args */
+function buildServerArgs(baseArgs: string[]): string[] {
+	const args = [...baseArgs];
+	applySettingsToCliFlags(args);
+	applyStoreTrueCliFlags(args);
+	applyDerivedFlags(args);
 	return args;
 }
 
@@ -303,54 +355,85 @@ function resolveSpawnArgs(serverDir: string): { command: string; args: string[] 
  * The `proc` reference is captured so that stale exit/error handlers
  * from a killed process cannot clobber a newly spawned replacement.
  */
+function isOwningProcess(proc: ChildProcess): boolean {
+	return sttProcess === proc;
+}
+
+function maybeMarkRunning(proc: ChildProcess, text: string): void {
+	// Match the server's backend-agnostic ready marker (see
+	// server/src/stt_server/server.py "Recorder initialized"). Must stay
+	// in sync with the server-side string. This only flips the spawned-
+	// process status — the renderer's "ready" check goes through the
+	// server_ready WebSocket message instead.
+	if (text.includes("Recorder initialized") && isOwningProcess(proc)) {
+		status = "running";
+	}
+}
+
+function handleStdoutData(proc: ChildProcess, data: Buffer): void {
+	const text = data.toString();
+	console.log("[stt-server]", text.trimEnd());
+	maybeMarkRunning(proc, text);
+}
+
+function handleStderrData(data: Buffer): void {
+	console.error("[stt-server]", data.toString().trimEnd());
+}
+
+function normalizeExitCode(code: number | null): number {
+	return typeof code === "number" ? code : -1;
+}
+
+function exitBreadcrumbSeverity(exitCode: number): "info" | "warning" {
+	return exitCode === 0 || exitCode === -1 ? "info" : "warning";
+}
+
+function clearOwningProcess(proc: ChildProcess): void {
+	if (isOwningProcess(proc)) {
+		sttProcess = null;
+		status = "idle";
+	}
+}
+
+function handleProcessExit(proc: ChildProcess, code: number | null, signal: string | null): void {
+	const exitCode = normalizeExitCode(code);
+	breadcrumb(
+		"process",
+		"stt-server exited",
+		{ code: exitCode, signal: signal ?? "" },
+		exitBreadcrumbSeverity(exitCode)
+	);
+	clearOwningProcess(proc);
+}
+
+function reportSpawnError(proc: ChildProcess, err: Error): void {
+	const spawnError = new ProcessSpawnError(
+		`Failed to spawn STT server: ${getErrorMessage(err)}`,
+		proc.spawnfile ?? "unknown",
+		undefined,
+		{ originalError: err, pid: proc.pid }
+	);
+	console.error("[stt-server] ProcessSpawnError:", spawnError.toJSON());
+	setErrorState();
+}
+
+function handleProcessError(proc: ChildProcess, err: Error): void {
+	console.error("[stt-server] Spawn error:", getErrorMessage(err));
+	if (isOwningProcess(proc)) {
+		reportSpawnError(proc, err);
+	}
+}
+
 function attachProcessHandlers(proc: ChildProcess) {
 	// Stryker disable next-line OptionalChaining: equivalent mutant — `proc.stdout` is always non-null in our test environment (the spawn mock always provides an EventEmitter); the optional chain is a defensive guard against ChildProcess instances spawned with stdio: 'ignore'.
-	proc.stdout?.on("data", (data: Buffer) => {
-		const text = data.toString();
-		console.log("[stt-server]", text.trimEnd());
-		// Match the server's backend-agnostic ready marker (see
-		// server/src/stt_server/server.py "Recorder initialized").  Must
-		// stay in sync with the server-side string.  This only flips the
-		// spawned-process status — the renderer's "ready" check goes
-		// through the server_ready WebSocket message instead.
-		if (text.includes("Recorder initialized") && sttProcess === proc) {
-			status = "running";
-		}
-	});
+	proc.stdout?.on("data", (data: Buffer) => handleStdoutData(proc, data));
 
 	// Stryker disable next-line OptionalChaining: equivalent mutant — same reasoning as the proc.stdout?.on disable above; the test environment always provides a stderr EventEmitter.
-	proc.stderr?.on("data", (data: Buffer) => {
-		console.error("[stt-server]", data.toString().trimEnd());
-	});
+	proc.stderr?.on("data", handleStderrData);
 
-	proc.on("exit", (code, signal) => {
-		const exitCode = typeof code === "number" ? code : -1;
-		const exitSignal = signal ?? "";
-		breadcrumb(
-			"process",
-			"stt-server exited",
-			{ code: exitCode, signal: exitSignal },
-			exitCode === 0 || exitCode === -1 ? "info" : "warning"
-		);
-		if (sttProcess === proc) {
-			sttProcess = null;
-			status = "idle";
-		}
-	});
+	proc.on("exit", (code, signal) => handleProcessExit(proc, code, signal));
 
-	proc.on("error", (err) => {
-		console.error("[stt-server] Spawn error:", getErrorMessage(err));
-		if (sttProcess === proc) {
-			const spawnError = new ProcessSpawnError(
-				`Failed to spawn STT server: ${getErrorMessage(err)}`,
-				proc.spawnfile ?? "unknown",
-				undefined,
-				{ originalError: err, pid: proc.pid }
-			);
-			console.error("[stt-server] ProcessSpawnError:", spawnError.toJSON());
-			setErrorState();
-		}
-	});
+	proc.on("error", (err: Error) => handleProcessError(proc, err));
 }
 
 /**

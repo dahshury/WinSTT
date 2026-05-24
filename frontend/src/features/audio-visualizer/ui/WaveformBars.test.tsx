@@ -4,21 +4,23 @@ import { __waveform_test_helpers__ } from "../lib/waveform-bars-test-helpers";
 import { WaveformBars } from "./WaveformBars";
 
 const {
-	computeTargetAmp,
-	computeRenderParams,
+	activeWaveAmp,
+	buildWavePoints,
 	computeActivityTarget,
-	hasAudioInput,
-	isAudioActive,
-	getDpr,
+	computeRenderParams,
+	computeTargetAmp,
+	computeWaveY,
+	drawBaseline,
+	drawFilledRegion,
+	drawWavePath,
 	ensureCanvasSize,
 	getCanvasMetrics,
-	drawBaseline,
-	tracePath,
-	computeWaveY,
-	buildWavePoints,
-	drawWavePath,
-	drawFilledRegion,
+	getDpr,
+	hasAudioInput,
+	isAudioActive,
 	lerpColor,
+	tracePath,
+	vadAmpBoost,
 } = __waveform_test_helpers__;
 
 describe("WaveformBars", () => {
@@ -89,6 +91,28 @@ describe("computeTargetAmp", () => {
 		const ampNoPulse = computeTargetAmp(true, false, 0.1, 0);
 		const ampWithPulse = computeTargetAmp(true, false, 0.1, 0.5);
 		expect(ampWithPulse).toBeGreaterThan(ampNoPulse);
+	});
+});
+
+describe("vadAmpBoost", () => {
+	test("returns 0.04 when speaking", () => {
+		expect(vadAmpBoost(true)).toBe(0.04);
+	});
+	test("returns 0 when not speaking", () => {
+		expect(vadAmpBoost(false)).toBe(0);
+	});
+});
+
+describe("activeWaveAmp", () => {
+	test("is monotonic in audioLevel", () => {
+		expect(activeWaveAmp(0.5, false, 0)).toBeGreaterThan(activeWaveAmp(0.1, false, 0));
+	});
+	test("is monotonic in sentencePulse", () => {
+		expect(activeWaveAmp(0.1, false, 0.5)).toBeGreaterThan(activeWaveAmp(0.1, false, 0));
+	});
+	test("speaking shifts the amp by the VAD boost", () => {
+		const diff = activeWaveAmp(0.1, true, 0) - activeWaveAmp(0.1, false, 0);
+		expect(diff).toBeCloseTo(0.04, 5);
 	});
 });
 

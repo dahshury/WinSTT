@@ -48,7 +48,12 @@ mock.module("@/shared/api/ipc-client", () => ({
 const { useModelSwapStore, initModelSwapStore } = await import("./model-swap-store");
 
 function resetStore(): void {
-	useModelSwapStore.setState({ activeMain: null, activeRealtime: null });
+	useModelSwapStore.setState({
+		activeMain: null,
+		activeRealtime: null,
+		fromMain: null,
+		fromRealtime: null,
+	});
 }
 
 // The zustand store is a singleton across the bun:test process, so leftover
@@ -86,6 +91,49 @@ describe("useModelSwapStore.setActive / clear", () => {
 		const s = useModelSwapStore.getState();
 		expect(s.activeMain).toBeNull();
 		expect(s.activeRealtime).toBe("tiny");
+	});
+
+	test("beginSwap('main') records from→to on the main slot only", () => {
+		resetStore();
+		useModelSwapStore.getState().beginSwap("main", "tiny", "large-v2");
+		const s = useModelSwapStore.getState();
+		expect(s.activeMain).toBe("large-v2");
+		expect(s.fromMain).toBe("tiny");
+		// Realtime slot remains untouched.
+		expect(s.activeRealtime).toBeNull();
+		expect(s.fromRealtime).toBeNull();
+		expect(s.isSwapping("main")).toBe(true);
+		expect(s.isSwapping("realtime")).toBe(false);
+	});
+
+	test("beginSwap('realtime') records from→to on the realtime slot only", () => {
+		resetStore();
+		useModelSwapStore.getState().beginSwap("realtime", "small", "base");
+		const s = useModelSwapStore.getState();
+		expect(s.activeRealtime).toBe("base");
+		expect(s.fromRealtime).toBe("small");
+		// Main slot remains untouched.
+		expect(s.activeMain).toBeNull();
+		expect(s.fromMain).toBeNull();
+		expect(s.isSwapping("realtime")).toBe(true);
+	});
+
+	test("clear('realtime') wipes both the active and from fields on the realtime slot", () => {
+		resetStore();
+		useModelSwapStore.getState().beginSwap("realtime", "tiny", "base");
+		useModelSwapStore.getState().clear("realtime");
+		const s = useModelSwapStore.getState();
+		expect(s.activeRealtime).toBeNull();
+		expect(s.fromRealtime).toBeNull();
+	});
+
+	test("clear('main') wipes both the active and from fields on the main slot", () => {
+		resetStore();
+		useModelSwapStore.getState().beginSwap("main", "tiny", "large-v2");
+		useModelSwapStore.getState().clear("main");
+		const s = useModelSwapStore.getState();
+		expect(s.activeMain).toBeNull();
+		expect(s.fromMain).toBeNull();
 	});
 });
 

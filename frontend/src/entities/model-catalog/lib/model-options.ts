@@ -141,6 +141,23 @@ export function needsModelFallback(
 	return !models.some((m) => m.id === modelId);
 }
 
+/**
+ * Pick the smallest model id from a list, using the `statesById` byte
+ * estimate as the sort key. Returns null when the list is empty. Extracted
+ * from `pickDefaultSttModel` so the outer function stays CC ≤ 3.
+ */
+function smallestModelId(
+	candidates: readonly ModelInfo[],
+	statesById: Record<string, ModelStateEntry>
+): string | null {
+	const bySize = (a: ModelInfo, b: ModelInfo): number => {
+		const sa = statesById[a.id]?.estimated_bytes ?? Number.POSITIVE_INFINITY;
+		const sb = statesById[b.id]?.estimated_bytes ?? Number.POSITIVE_INFINITY;
+		return sa - sb;
+	};
+	return candidates.toSorted(bySize)[0]?.id ?? null;
+}
+
 /** Resolve a sensible default STT model when the user's saved selection is
  *  invalid. Prefers something already cached on disk (zero-friction enable,
  *  no surprise download), then falls back to the smallest in the catalog.
@@ -152,17 +169,7 @@ export function pickDefaultSttModel(
 	filter: (m: ModelInfo) => boolean = () => true
 ): string | null {
 	const eligible = models.filter(filter);
-	if (eligible.length === 0) {
-		return null;
-	}
-	const bySize = (a: ModelInfo, b: ModelInfo): number => {
-		const sa = statesById[a.id]?.estimated_bytes ?? Number.POSITIVE_INFINITY;
-		const sb = statesById[b.id]?.estimated_bytes ?? Number.POSITIVE_INFINITY;
-		return sa - sb;
-	};
 	const cached = eligible.filter((m) => statesById[m.id]?.cache.state === "cached");
-	if (cached.length > 0) {
-		return cached.toSorted(bySize)[0]?.id ?? null;
-	}
-	return eligible.toSorted(bySize)[0]?.id ?? null;
+	const preferred = cached.length > 0 ? cached : eligible;
+	return smallestModelId(preferred, statesById);
 }

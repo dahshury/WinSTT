@@ -22,6 +22,20 @@ export function shouldSendOnChange<V>(
 }
 
 /**
+ * True when the recording mode short-circuits all silence-driven endpoint
+ * detection (PTT: key release defines the boundary; toggle+manualToggleStop:
+ * second press defines the boundary). CC 3 — one ternary, one short-circuit.
+ */
+export function silenceEndpointBypassed(mode: string, manualToggleStop = false): boolean {
+	return mode === "ptt" || (mode === "toggle" && manualToggleStop);
+}
+
+/** True when the mode implies a continuously-listening pipeline (CC 2). */
+function modeImpliesContinuousListening(mode: string): boolean {
+	return mode === "toggle" || mode === "listen";
+}
+
+/**
  * Whether the STT "silence_timing" flag should be active.
  * PTT defines the boundary with the key release, so Smart Endpoint never
  * applies there. Otherwise: on when smart endpoint is enabled or when the
@@ -36,13 +50,10 @@ export function computeSilenceTiming(
 	mode: string,
 	manualToggleStop = false
 ): boolean {
-	if (mode === "ptt") {
+	if (silenceEndpointBypassed(mode, manualToggleStop)) {
 		return false;
 	}
-	if (mode === "toggle" && manualToggleStop) {
-		return false;
-	}
-	return smartEndpoint || mode === "toggle" || mode === "listen";
+	return smartEndpoint || modeImpliesContinuousListening(mode);
 }
 
 /**
@@ -53,13 +64,16 @@ export function computeSilenceTiming(
  *   - Otherwise: on (VAD silence ends the utterance).
  */
 export function computeSilenceEndpointEnabled(mode: string, manualToggleStop = false): boolean {
-	if (mode === "ptt") {
-		return false;
-	}
-	if (mode === "toggle" && manualToggleStop) {
-		return false;
-	}
-	return true;
+	return !silenceEndpointBypassed(mode, manualToggleStop);
+}
+
+/** True when the recording mode changed (or this is the initial sync). */
+function modeChanged(
+	isInitial: boolean,
+	recordingMode: string | undefined,
+	prevRecordingMode: string | undefined
+): boolean {
+	return isInitial || recordingMode !== prevRecordingMode;
 }
 
 /**
@@ -77,10 +91,10 @@ export function silenceTimingNeedsUpdate(
 	manualToggleStop = false,
 	prevManualToggleStop = false
 ): boolean {
-	const modeChanged = isInitial || recordingMode !== prevRecordingMode;
-	return (
-		modeChanged || smartEndpoint !== prevSmartEndpoint || manualToggleStop !== prevManualToggleStop
-	);
+	if (modeChanged(isInitial, recordingMode, prevRecordingMode)) {
+		return true;
+	}
+	return smartEndpoint !== prevSmartEndpoint || manualToggleStop !== prevManualToggleStop;
 }
 
 /**

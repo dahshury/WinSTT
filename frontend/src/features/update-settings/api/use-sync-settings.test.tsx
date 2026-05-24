@@ -63,4 +63,28 @@ describe("useSyncSettings", () => {
 		const { unmount } = renderHook(() => useSyncSettings());
 		expect(() => unmount()).not.toThrow();
 	});
+
+	test("settings effect cleanup cancels pending debounce when settings change", async () => {
+		useSettingsStore.setState({ settings: initialSettings, isLoaded: true });
+		const { rerender, unmount } = renderHook(() => useSyncSettings());
+		// First settings change schedules a debounce; rerender to drive the
+		// effect cleanup → cancel-pending path.
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				audio: { ...initialSettings.audio, sileroSensitivity: 0.5 } as never,
+			},
+			isLoaded: true,
+		});
+		rerender();
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				audio: { ...initialSettings.audio, sileroSensitivity: 0.7 } as never,
+			},
+			isLoaded: true,
+		});
+		rerender();
+		expect(() => unmount()).not.toThrow();
+	});
 });

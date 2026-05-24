@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type MutableRefObject, useEffect, useRef, useState } from "react";
 import {
 	onTtsChunk,
 	onTtsCompleted,
@@ -22,6 +22,83 @@ export interface TtsPlaybackState {
 	status: TtsStatus;
 }
 
+const INITIAL_STATE: TtsPlaybackState = {
+	status: "idle",
+	error: null,
+	requestId: null,
+};
+
+/**
+ * Subscribe to a server ``tts:chunk``: record the active id (so the
+ * later id-less ``onEnd`` can name the request to main) and forward
+ * the payload into the playback queue.
+ */
+export function handleTtsChunkPayload(
+	queue: TtsPlaybackQueue,
+	activeIdRef: MutableRefObject<string | null>,
+	payload: TtsChunkPayload
+): void {
+	if (payload.requestId) {
+		activeIdRef.current = payload.requestId;
+	}
+	queue.enqueue({
+		requestId: payload.requestId,
+		sampleRate: payload.sampleRate,
+		channels: payload.channels,
+		format: payload.format,
+		pcm: payload.pcm,
+	});
+}
+
+/**
+ * Handle a server ``tts:complete``. Mark the queue so it can fire
+ * onEnd once the last buffered source drains; if the request was
+ * cancelled, abort playback immediately.
+ */
+export function handleTtsCompletedPayload(
+	queue: TtsPlaybackQueue,
+	payload: TtsCompletedPayload
+): void {
+	// `tts_complete` only means generation finished — buffered audio
+	// is usually still playing. Let the queue play out; `onEnd`
+	// fires once the last scheduled source actually stops.
+	queue.markComplete(payload.requestId);
+	if (payload.cancelled) {
+		queue.stop();
+	}
+}
+
+/**
+ * Build the ``onEnd`` callback for the queue. Reports the truly-ended
+ * id to main and only collapses the local state back to ``idle`` from
+ * a ``speaking`` baseline so a concurrent ``error`` isn't clobbered.
+ */
+export function makeQueueEndHandler(
+	activeIdRef: MutableRefObject<string | null>,
+	setState: (updater: (prev: TtsPlaybackState) => TtsPlaybackState) => void
+): () => void {
+	return () => {
+		const endedId = activeIdRef.current;
+		activeIdRef.current = null;
+		setState(reduceQueueEnd);
+		// Tell every window that audio truly stopped. Always emit (even
+		// with an empty id) so a wildcard listener can reset.
+		ttsReportPlaybackEnded(endedId ?? "");
+	};
+}
+
+/**
+ * Pure state reducer for the queue-end transition: collapse a
+ * ``speaking`` state to idle, leave any other status (``error``)
+ * untouched so the user can still see why playback failed.
+ */
+export function reduceQueueEnd(prev: TtsPlaybackState): TtsPlaybackState {
+	if (prev.status === "speaking") {
+		return INITIAL_STATE;
+	}
+	return prev;
+}
+
 /**
  * Globally-mounted hook that owns the Web Audio playback queue and the
  * IPC chunk / complete / failed subscriptions. It routes payloads into
@@ -39,50 +116,19 @@ export function useTtsPlayback(): TtsPlaybackState {
 	// The id whose audio is currently scheduled — needed so `onEnd` (which
 	// carries no id) can tell main *which* request finished.
 	const activeIdRef = useRef<string | null>(null);
-	const [state, setState] = useState<TtsPlaybackState>({
-		status: "idle",
-		error: null,
-		requestId: null,
-	});
-
-	const ensureQueue = useCallback((): TtsPlaybackQueue => {
-		if (queueRef.current == null) {
-			queueRef.current = new TtsPlaybackQueue();
-		}
-		return queueRef.current;
-	}, []);
+	const [state, setState] = useState<TtsPlaybackState>(INITIAL_STATE);
 
 	useEffect(() => {
-		const queue = ensureQueue();
+		queueRef.current ??= new TtsPlaybackQueue();
+		const queue = queueRef.current;
 
 		const onStarted = (payload: TtsStartedPayload) => {
 			activeIdRef.current = payload.requestId;
 			setState({ status: "speaking", error: null, requestId: payload.requestId });
 		};
-
-		const onChunk = (payload: TtsChunkPayload) => {
-			if (payload.requestId) {
-				activeIdRef.current = payload.requestId;
-			}
-			queue.enqueue({
-				requestId: payload.requestId,
-				sampleRate: payload.sampleRate,
-				channels: payload.channels,
-				format: payload.format,
-				pcm: payload.pcm,
-			});
-		};
-
-		const onCompleted = (payload: TtsCompletedPayload) => {
-			// `tts_complete` only means generation finished — buffered audio
-			// is usually still playing. Let the queue play out; `onEnd`
-			// fires once the last scheduled source actually stops.
-			queue.markComplete(payload.requestId);
-			if (payload.cancelled) {
-				queue.stop();
-			}
-		};
-
+		const onChunk = (payload: TtsChunkPayload) =>
+			handleTtsChunkPayload(queue, activeIdRef, payload);
+		const onCompleted = (payload: TtsCompletedPayload) => handleTtsCompletedPayload(queue, payload);
 		const onFailed = (payload: TtsFailedPayload) => {
 			queue.stop();
 			activeIdRef.current = null;
@@ -92,18 +138,7 @@ export function useTtsPlayback(): TtsPlaybackState {
 		const unStart = queue.onStart(() => {
 			ttsReportPlaybackStarted(activeIdRef.current ?? "");
 		});
-
-		const unEnd = queue.onEnd(() => {
-			const endedId = activeIdRef.current;
-			activeIdRef.current = null;
-			setState((prev) =>
-				prev.status === "speaking" ? { status: "idle", error: null, requestId: null } : prev
-			);
-			// Tell every window that audio truly stopped. Always emit (even
-			// with an empty id) so a wildcard listener can reset.
-			ttsReportPlaybackEnded(endedId ?? "");
-		});
-
+		const unEnd = queue.onEnd(makeQueueEndHandler(activeIdRef, setState));
 		const unStarted = onTtsStarted(onStarted);
 		const unChunk = onTtsChunk(onChunk);
 		const unCompleted = onTtsCompleted(onCompleted);
@@ -117,7 +152,7 @@ export function useTtsPlayback(): TtsPlaybackState {
 			unStart();
 			unEnd();
 		};
-	}, [ensureQueue]);
+	}, []);
 
 	useEffect(
 		() => () => {

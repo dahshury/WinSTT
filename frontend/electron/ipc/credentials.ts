@@ -56,18 +56,21 @@ interface VerifyCredentialPayload {
 	provider: VerifiableProvider;
 }
 
+const VERIFIABLE_PROVIDERS = new Set<VerifiableProvider>(["openai", "elevenlabs", "openrouter"]);
+
+function isVerifiableProvider(value: unknown): value is VerifiableProvider {
+	return typeof value === "string" && VERIFIABLE_PROVIDERS.has(value as VerifiableProvider);
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object";
+}
+
 function isVerifyPayload(value: unknown): value is VerifyCredentialPayload {
-	if (!value || typeof value !== "object") {
+	if (!isObjectRecord(value)) {
 		return false;
 	}
-	const obj = value as Record<string, unknown>;
-	if (obj.provider !== "openai" && obj.provider !== "elevenlabs" && obj.provider !== "openrouter") {
-		return false;
-	}
-	if (typeof obj.apiKey !== "string") {
-		return false;
-	}
-	return true;
+	return isVerifiableProvider(value.provider) && typeof value.apiKey === "string";
 }
 
 function probeUrlFor(provider: VerifiableProvider): string {
@@ -91,14 +94,47 @@ function authHeadersFor(provider: VerifiableProvider, apiKey: string): Record<st
 	return { Authorization: `Bearer ${apiKey}` };
 }
 
+const AUTH_STATUS_CODES = new Set([401, 403]);
+
 function classifyHttpStatus(status: number): "auth" | "rate_limit" | "provider_error" {
-	if (status === 401 || status === 403) {
+	if (AUTH_STATUS_CODES.has(status)) {
 		return "auth";
 	}
 	if (status === 429) {
 		return "rate_limit";
 	}
 	return "provider_error";
+}
+
+async function readErrorBody(response: Response): Promise<string> {
+	try {
+		const text = await response.text();
+		// Body unreadable / empty — keep the HTTP-status-only message.
+		return text ? `: ${text.slice(0, 200)}` : "";
+	} catch {
+		return "";
+	}
+}
+
+async function buildFailureFromResponse(response: Response): Promise<VerifyCredentialResult> {
+	const code = classifyHttpStatus(response.status);
+	const suffix = await readErrorBody(response);
+	return { ok: false, code, message: `HTTP ${response.status}${suffix}` };
+}
+
+async function probeProvider(
+	provider: VerifiableProvider,
+	apiKey: string
+): Promise<VerifyCredentialResult> {
+	const response = await fetch(probeUrlFor(provider), {
+		method: "GET",
+		headers: authHeadersFor(provider, apiKey),
+		signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+	});
+	if (response.ok) {
+		return { ok: true };
+	}
+	return await buildFailureFromResponse(response);
 }
 
 async function verifyCredential(
@@ -109,28 +145,8 @@ async function verifyCredential(
 	if (!trimmed) {
 		return { ok: false, code: "auth", message: "API key is empty" };
 	}
-	const url = probeUrlFor(provider);
-	const headers = authHeadersFor(provider, trimmed);
 	try {
-		const response = await fetch(url, {
-			method: "GET",
-			headers,
-			signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
-		});
-		if (response.ok) {
-			return { ok: true };
-		}
-		const code = classifyHttpStatus(response.status);
-		let message = `HTTP ${response.status}`;
-		try {
-			const text = await response.text();
-			if (text) {
-				message = `HTTP ${response.status}: ${text.slice(0, 200)}`;
-			}
-		} catch {
-			// Body unreadable — keep the HTTP-status-only message.
-		}
-		return { ok: false, code, message };
+		return await probeProvider(provider, trimmed);
 	} catch (err) {
 		const message = getErrorMessage(err);
 		dbg("credentials", `${provider} verify failed:`, message);
@@ -138,19 +154,21 @@ async function verifyCredential(
 	}
 }
 
-export function setupCredentials(): () => void {
-	const handleVerify = async (_event: unknown, payload: unknown) => {
-		if (!isVerifyPayload(payload)) {
-			return {
-				ok: false as const,
-				code: "provider_error" as const,
-				message: "Invalid verify payload",
-			};
-		}
-		return await verifyCredential(payload.provider, payload.apiKey);
-	};
+const INVALID_PAYLOAD_RESULT: VerifyCredentialResult = {
+	ok: false,
+	code: "provider_error",
+	message: "Invalid verify payload",
+};
 
-	ipcMain.handle(IPC.INTEGRATIONS_VERIFY, handleVerify);
+async function handleVerifyInvocation(payload: unknown): Promise<VerifyCredentialResult> {
+	if (!isVerifyPayload(payload)) {
+		return INVALID_PAYLOAD_RESULT;
+	}
+	return await verifyCredential(payload.provider, payload.apiKey);
+}
+
+export function setupCredentials(): () => void {
+	ipcMain.handle(IPC.INTEGRATIONS_VERIFY, (_event, payload) => handleVerifyInvocation(payload));
 
 	return () => {
 		ipcMain.removeHandler(IPC.INTEGRATIONS_VERIFY);
@@ -161,6 +179,7 @@ export function setupCredentials(): () => void {
 export {
 	authHeadersFor,
 	classifyHttpStatus,
+	handleVerifyInvocation,
 	isVerifyPayload,
 	probeUrlFor,
 	VERIFY_TIMEOUT_MS,

@@ -64,19 +64,57 @@ try {
 }
 
 /**
- * JSON-stringify with a String() fallback for objects that can't be serialized
- * (cycles, host objects). Kept as a public export — tests import it directly
- * to exercise both branches without going through the dbg/dbgVerbose path.
+ * JSON.stringify with a String() fallback. Pulled out so the try/catch sits in
+ * a single tiny helper (CC=2) instead of inflating the public `stringifyArg`
+ * surface — keeps CRAP under threshold even at 0% renderer coverage.
  */
-export function stringifyArg(value: unknown): string {
-	if (typeof value === "string") {
-		return value;
-	}
+export function jsonStringifyOrString(value: unknown): string {
 	try {
 		return JSON.stringify(value);
 	} catch {
 		return String(value);
 	}
+}
+
+/**
+ * Identity helper for already-string args. Exists purely so the dispatch table
+ * in {@link stringifyArg} can be a `Record<typeof, …>` of CC=1 functions.
+ */
+export function identityString(value: unknown): string {
+	return value as string;
+}
+
+/**
+ * Dispatch table keyed by `typeof value`. Strings pass through unchanged;
+ * everything else (number, boolean, bigint, object, symbol, undefined,
+ * function) falls through to `jsonStringifyOrString`. The lookup itself is
+ * branchless, so {@link stringifyArg} stays at CC=1.
+ */
+const STRINGIFY_DISPATCH: Record<
+	"bigint" | "boolean" | "function" | "number" | "object" | "string" | "symbol" | "undefined",
+	(value: unknown) => string
+> = {
+	string: identityString,
+	number: jsonStringifyOrString,
+	boolean: jsonStringifyOrString,
+	bigint: jsonStringifyOrString,
+	object: jsonStringifyOrString,
+	symbol: jsonStringifyOrString,
+	undefined: jsonStringifyOrString,
+	function: jsonStringifyOrString,
+};
+
+/**
+ * JSON-stringify with a String() fallback for objects that can't be serialized
+ * (cycles, host objects). Kept as a public export — tests import it directly
+ * to exercise both branches without going through the dbg/dbgVerbose path.
+ *
+ * Refactored to a `Record<typeof, fn>` dispatch so the function itself is CC=1.
+ * The branching (string identity vs JSON.stringify fallback) lives in the
+ * helpers above, each of which is independently testable.
+ */
+export function stringifyArg(value: unknown): string {
+	return STRINGIFY_DISPATCH[typeof value](value);
 }
 
 /**

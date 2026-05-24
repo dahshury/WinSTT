@@ -73,6 +73,23 @@ class MockWebSocket {
 mock.module("../lib/debug-log", () => ({
 	dbg: () => undefined,
 	dbgVerbose: () => undefined,
+	getLogger: () => ({
+		error: () => undefined,
+		warn: () => undefined,
+		info: () => undefined,
+		debug: () => undefined,
+	}),
+}));
+
+// `electron/lib/sentry-main` statically imports `app` from electron, which
+// happy-dom + bun:test can't resolve. Stub it so the SUT (and the pure
+// helpers exported alongside it) can be imported locally without the
+// "Export named 'app' not found" failure.
+mock.module("../lib/sentry-main", () => ({
+	breadcrumb: () => undefined,
+}));
+mock.module("electron", () => ({
+	app: { getPath: () => "" },
 }));
 
 const {
@@ -81,6 +98,11 @@ const {
 	controlMessagePreview,
 	parseControlMessage,
 	resolveSttClientOptions,
+	decodeBinaryFrame,
+	classifyDataFrame,
+	tryParseJsonAsArray,
+	buildTtsSynthesizeAction,
+	emitBinaryFrame,
 } = await import("./stt-client");
 
 describe("dataMessagePreview", () => {
@@ -637,5 +659,173 @@ describe("controlMessagePreview", () => {
 		const out = controlMessagePreview(long);
 		expect(out.length).toBe(201);
 		expect(out.endsWith("…")).toBe(true);
+	});
+});
+
+describe("tryParseJsonAsArray", () => {
+	test("returns [value] for valid JSON", () => {
+		expect(tryParseJsonAsArray('{"a":1}')).toEqual([{ a: 1 }]);
+	});
+	test("returns [] for malformed JSON (no throw)", () => {
+		expect(tryParseJsonAsArray("not-json")).toEqual([]);
+	});
+});
+
+describe("decodeBinaryFrame", () => {
+	function makeFrame(headerObj: Record<string, unknown>, pcm: Buffer): Buffer {
+		const headerJson = Buffer.from(JSON.stringify(headerObj), "utf8");
+		const prefix = Buffer.alloc(4);
+		prefix.writeUInt32LE(headerJson.length, 0);
+		return Buffer.concat([prefix, headerJson, pcm]);
+	}
+
+	test("decodes [u32 LE meta_len][JSON][PCM] into {header, pcm}", () => {
+		const pcm = Buffer.from([1, 2, 3, 4]);
+		const buf = makeFrame({ request_id: "abc", final: false }, pcm);
+		const out = decodeBinaryFrame(buf);
+		expect(out).toHaveLength(1);
+		expect(out[0]?.header).toEqual({ request_id: "abc", final: false });
+		expect(Buffer.compare(out[0]?.pcm ?? Buffer.alloc(0), pcm)).toBe(0);
+	});
+
+	test("returns [] when the buffer is shorter than the 4-byte length prefix", () => {
+		expect(decodeBinaryFrame(Buffer.alloc(0))).toEqual([]);
+		expect(decodeBinaryFrame(Buffer.from([1, 2, 3]))).toEqual([]);
+	});
+
+	test("returns [] when meta_len is zero", () => {
+		const buf = Buffer.alloc(8);
+		buf.writeUInt32LE(0, 0);
+		expect(decodeBinaryFrame(buf)).toEqual([]);
+	});
+
+	test("returns [] when meta_len overflows the buffer", () => {
+		const buf = Buffer.alloc(8);
+		buf.writeUInt32LE(999_999, 0);
+		expect(decodeBinaryFrame(buf)).toEqual([]);
+	});
+
+	test("returns [] when the metadata slice is not valid JSON", () => {
+		const garbage = Buffer.from("not-json", "utf8");
+		const prefix = Buffer.alloc(4);
+		prefix.writeUInt32LE(garbage.length, 0);
+		const buf = Buffer.concat([prefix, garbage, Buffer.from([9, 9])]);
+		expect(decodeBinaryFrame(buf)).toEqual([]);
+	});
+
+	test("yields an empty PCM payload when the buffer ends at the header", () => {
+		const buf = makeFrame({ k: "v" }, Buffer.alloc(0));
+		const out = decodeBinaryFrame(buf);
+		expect(out).toHaveLength(1);
+		expect(out[0]?.pcm.length).toBe(0);
+	});
+});
+
+describe("classifyDataFrame", () => {
+	test("routes Node Buffer payloads to the binary handler", () => {
+		const buffers: Buffer[] = [];
+		const texts: string[] = [];
+		const buf = Buffer.from([1, 2, 3]);
+		classifyDataFrame(buf, {
+			binary: (b) => buffers.push(b),
+			text: (t) => texts.push(t),
+		});
+		expect(buffers).toEqual([buf]);
+		expect(texts).toEqual([]);
+	});
+
+	test("routes ArrayBuffer payloads to the binary handler (converted to Buffer)", () => {
+		const buffers: Buffer[] = [];
+		const ab = new ArrayBuffer(3);
+		new Uint8Array(ab).set([4, 5, 6]);
+		classifyDataFrame(ab, {
+			binary: (b) => buffers.push(b),
+			text: () => undefined,
+		});
+		expect(buffers).toHaveLength(1);
+		expect(Array.from(buffers[0] ?? Buffer.alloc(0))).toEqual([4, 5, 6]);
+	});
+
+	test("routes string payloads to the text handler", () => {
+		const texts: string[] = [];
+		classifyDataFrame("hello", {
+			binary: () => undefined,
+			text: (t) => texts.push(t),
+		});
+		expect(texts).toEqual(["hello"]);
+	});
+
+	test("ignores payloads that are neither Buffer, ArrayBuffer, nor string", () => {
+		let binaryCount = 0;
+		let textCount = 0;
+		classifyDataFrame(
+			{ unknown: "shape" },
+			{
+				binary: () => binaryCount++,
+				text: () => textCount++,
+			}
+		);
+		classifyDataFrame(null, {
+			binary: () => binaryCount++,
+			text: () => textCount++,
+		});
+		classifyDataFrame(undefined, {
+			binary: () => binaryCount++,
+			text: () => textCount++,
+		});
+		expect(binaryCount).toBe(0);
+		expect(textCount).toBe(0);
+	});
+});
+
+describe("emitBinaryFrame", () => {
+	test("emits 'data-binary' when frame is defined", () => {
+		const { EventEmitter } = require("node:events") as typeof import("node:events");
+		const emitter = new EventEmitter();
+		const seen: unknown[] = [];
+		emitter.on("data-binary", (f: unknown) => seen.push(f));
+		emitBinaryFrame(emitter, { header: { k: "v" }, pcm: Buffer.from([1, 2]) });
+		expect(seen).toHaveLength(1);
+	});
+
+	test("is a no-op when frame is undefined", () => {
+		const { EventEmitter } = require("node:events") as typeof import("node:events");
+		const emitter = new EventEmitter();
+		let count = 0;
+		emitter.on("data-binary", () => count++);
+		emitBinaryFrame(emitter, undefined);
+		expect(count).toBe(0);
+	});
+});
+
+describe("buildTtsSynthesizeAction", () => {
+	test("applies defaults for voice='', lang='', speed=1.0 when omitted", () => {
+		expect(buildTtsSynthesizeAction({ requestId: "r1", text: "hello world" })).toEqual({
+			command: "tts_synthesize",
+			request_id: "r1",
+			text: "hello world",
+			voice: "",
+			lang: "",
+			speed: 1.0,
+		});
+	});
+
+	test("preserves caller-supplied voice/lang/speed values", () => {
+		expect(
+			buildTtsSynthesizeAction({
+				requestId: "r2",
+				text: "bonjour",
+				voice: "af_bella",
+				lang: "fr",
+				speed: 1.25,
+			})
+		).toEqual({
+			command: "tts_synthesize",
+			request_id: "r2",
+			text: "bonjour",
+			voice: "af_bella",
+			lang: "fr",
+			speed: 1.25,
+		});
 	});
 });

@@ -117,34 +117,75 @@ export function readFeatureSnapshot(
 	return { ...DEFAULT_FEATURE, ...(incoming ?? {}) };
 }
 
+function isNonEmptyPresetList(value: unknown): value is readonly BuiltinPresetEntry[] {
+	return Array.isArray(value) && value.length > 0;
+}
+
+function resolvePresets(src: Partial<PresetCarrier>): readonly BuiltinPresetEntry[] {
+	return isNonEmptyPresetList(src.presets) ? src.presets : DEFAULT_PRESET_CARRIER.presets;
+}
+
+function resolveCustomModifiers(src: Partial<PresetCarrier>): readonly CustomModifier[] {
+	return Array.isArray(src.customModifiers)
+		? (src.customModifiers as readonly CustomModifier[])
+		: DEFAULT_PRESET_CARRIER.customModifiers;
+}
+
 export function readPresetCarrier(
 	incoming: Partial<PresetCarrier> | null | undefined
 ): PresetCarrier {
 	const src = incoming ?? {};
-	const presets =
-		Array.isArray(src.presets) && src.presets.length > 0
-			? (src.presets as readonly BuiltinPresetEntry[])
-			: DEFAULT_PRESET_CARRIER.presets;
-	const customModifiers = Array.isArray(src.customModifiers)
-		? (src.customModifiers as readonly CustomModifier[])
-		: DEFAULT_PRESET_CARRIER.customModifiers;
-	return { presets, customModifiers };
+	return {
+		presets: resolvePresets(src),
+		customModifiers: resolveCustomModifiers(src),
+	};
+}
+
+function readHotkey(transformsIn: Partial<LlmTransforms>): string {
+	return typeof transformsIn.hotkey === "string" ? transformsIn.hotkey : "";
+}
+
+function readDictationDraft(dictationIn: Partial<LlmDictation>): LlmFeatureDraft & PresetCarrier {
+	return { ...readFeatureSnapshot(dictationIn), ...readPresetCarrier(dictationIn) };
+}
+
+function readTransformsDraft(
+	transformsIn: Partial<LlmTransforms>
+): LlmFeatureDraft & PresetCarrier & { hotkey: string } {
+	return {
+		...readFeatureSnapshot(transformsIn),
+		...readPresetCarrier(transformsIn),
+		hotkey: readHotkey(transformsIn),
+	};
+}
+
+function readEndpoint(incoming: Partial<LlmSettings>): string {
+	return incoming.endpoint ?? DEFAULT_LLM.endpoint;
+}
+
+function readOpenrouterApiKey(incoming: Partial<LlmSettings>): string {
+	return incoming.openrouterApiKey ?? DEFAULT_LLM.openrouterApiKey;
+}
+
+function unwrapLlm(llm: Partial<LlmSettings> | null | undefined): Partial<LlmSettings> {
+	return llm ?? {};
+}
+
+function unwrapDictation(incoming: Partial<LlmSettings>): Partial<LlmDictation> {
+	return (incoming.dictation ?? {}) as Partial<LlmDictation>;
+}
+
+function unwrapTransforms(incoming: Partial<LlmSettings>): Partial<LlmTransforms> {
+	return (incoming.transforms ?? {}) as Partial<LlmTransforms>;
 }
 
 export function readLlmSnapshot(llm: Partial<LlmSettings> | null | undefined): LlmDraftSnapshot {
-	const incoming = llm ?? {};
-	const dictationIn = (incoming.dictation ?? {}) as Partial<LlmDictation>;
-	const transformsIn = (incoming.transforms ?? {}) as Partial<LlmTransforms>;
-	const hotkey = typeof transformsIn.hotkey === "string" ? transformsIn.hotkey : "";
+	const incoming = unwrapLlm(llm);
 	return {
-		endpoint: incoming.endpoint ?? DEFAULT_LLM.endpoint,
-		openrouterApiKey: incoming.openrouterApiKey ?? DEFAULT_LLM.openrouterApiKey,
-		dictation: { ...readFeatureSnapshot(dictationIn), ...readPresetCarrier(dictationIn) },
-		transforms: {
-			...readFeatureSnapshot(transformsIn),
-			...readPresetCarrier(transformsIn),
-			hotkey,
-		},
+		endpoint: readEndpoint(incoming),
+		openrouterApiKey: readOpenrouterApiKey(incoming),
+		dictation: readDictationDraft(unwrapDictation(incoming)),
+		transforms: readTransformsDraft(unwrapTransforms(incoming)),
 	};
 }
 
@@ -160,12 +201,15 @@ export function isIndependentEnabled(
 	return presets.some((p) => p.key === key);
 }
 
+function readEntryLevel(entry: BuiltinPresetEntry | undefined): PresetLevel {
+	return entry?.level ?? DEFAULT_LEVEL;
+}
+
 export function getLevel(
 	presets: readonly BuiltinPresetEntry[],
 	key: (typeof INDEPENDENT_PRESETS)[number]
 ): PresetLevel {
-	const entry = presets.find((p) => p.key === key);
-	return entry?.level ?? DEFAULT_LEVEL;
+	return readEntryLevel(presets.find((p) => p.key === key));
 }
 
 export function setTone(
@@ -176,18 +220,56 @@ export function setTone(
 	return [{ key: tone }, ...withoutTone];
 }
 
+type IndependentKey = (typeof INDEPENDENT_PRESETS)[number];
+
+type EntryShape = "translate" | "leveled" | "plain";
+
+interface EntryOverrides {
+	readonly level: PresetLevel | undefined;
+	readonly targetLang: string | undefined;
+}
+
+type EntryBuilder = (key: IndependentKey, overrides: EntryOverrides) => BuiltinPresetEntry;
+
+function buildTranslateEntry(key: IndependentKey, overrides: EntryOverrides): BuiltinPresetEntry {
+	return { key, targetLang: overrides.targetLang ?? DEFAULT_TARGET_LANG };
+}
+
+function buildLeveledEntry(key: IndependentKey, overrides: EntryOverrides): BuiltinPresetEntry {
+	return { key, level: overrides.level ?? DEFAULT_LEVEL };
+}
+
+function buildPlainEntry(key: IndependentKey): BuiltinPresetEntry {
+	return { key };
+}
+
+const ENTRY_BUILDERS: Readonly<Record<EntryShape, EntryBuilder>> = {
+	translate: buildTranslateEntry,
+	leveled: buildLeveledEntry,
+	plain: buildPlainEntry,
+};
+
+function isLeveledPreset(key: IndependentKey): boolean {
+	return (PRESETS_WITH_LEVELS as readonly string[]).includes(key);
+}
+
+function leveledOrPlain(key: IndependentKey): EntryShape {
+	return isLeveledPreset(key) ? "leveled" : "plain";
+}
+
+function entryShapeOf(key: IndependentKey): EntryShape {
+	return key === "translate" ? "translate" : leveledOrPlain(key);
+}
+
 export function makeIndependentEntry(
-	key: (typeof INDEPENDENT_PRESETS)[number],
+	key: IndependentKey,
 	levelOverride?: PresetLevel,
 	targetLangOverride?: string
 ): BuiltinPresetEntry {
-	if (key === "translate") {
-		return { key, targetLang: targetLangOverride ?? DEFAULT_TARGET_LANG };
-	}
-	if ((PRESETS_WITH_LEVELS as readonly string[]).includes(key)) {
-		return { key, level: levelOverride ?? DEFAULT_LEVEL };
-	}
-	return { key };
+	return ENTRY_BUILDERS[entryShapeOf(key)](key, {
+		level: levelOverride,
+		targetLang: targetLangOverride,
+	});
 }
 
 export function toggleIndependent(
@@ -291,20 +373,23 @@ type ApplyFeaturePatch = (patch: Partial<LlmFeatureDraft>) => void;
 
 export const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash-lite";
 
+function modelSize(model: OllamaModel): number {
+	return model.size ?? 0;
+}
+
+function smallerOf(a: OllamaModel, b: OllamaModel): OllamaModel {
+	return modelSize(b) < modelSize(a) ? b : a;
+}
+
+function reduceToSmallest(models: readonly OllamaModel[]): OllamaModel | undefined {
+	return models.reduce<OllamaModel | undefined>(
+		(acc, current) => (acc === undefined ? current : smallerOf(acc, current)),
+		undefined
+	);
+}
+
 export function pickSmallestInstalledOllama(models: readonly OllamaModel[]): string | null {
-	if (models.length === 0) {
-		return null;
-	}
-	let smallest = models[0];
-	if (!smallest) {
-		return null;
-	}
-	for (const m of models) {
-		if ((m.size ?? 0) < (smallest.size ?? 0)) {
-			smallest = m;
-		}
-	}
-	return smallest.name;
+	return reduceToSmallest(models)?.name ?? null;
 }
 
 export interface FeatureToggleDeps {
@@ -323,43 +408,101 @@ export interface FeatureToggleDeps {
 	setShowOllamaDialog: (v: boolean) => void;
 }
 
-export async function tryEnableOllamaForFeature(deps: FeatureToggleDeps): Promise<void> {
-	const reachable = await deps.checkOllamaReachable();
-	if (!reachable) {
-		deps.setShowOllamaDialog(true);
-		return;
-	}
+function isCurrentOllamaModelInstalled(deps: FeatureToggleDeps): boolean {
+	const installed = deps.ollamaModels.some((m) => m.name === deps.currentOllamaModel);
+	return installed && deps.currentOllamaModel.length > 0;
+}
+
+function maybeScanOllama(deps: FeatureToggleDeps): void {
 	if (!deps.ollamaLoaded) {
 		deps.scanOllama();
 	}
-	const currentValid =
-		deps.currentOllamaModel.length > 0 &&
-		deps.ollamaModels.some((m) => m.name === deps.currentOllamaModel);
-	if (currentValid) {
-		deps.apply({ enabled: true });
-		return;
-	}
+}
+
+function applyOllamaModel(deps: FeatureToggleDeps, model: string): void {
+	deps.apply({ model, enabled: true });
+}
+
+function applyReplacementOrShowDialog(deps: FeatureToggleDeps): void {
 	const smallest = pickSmallestInstalledOllama(deps.ollamaModels);
-	if (smallest) {
-		deps.apply({ model: smallest, enabled: true });
+	if (smallest === null) {
+		deps.setShowOllamaDialog(true);
 		return;
 	}
+	applyOllamaModel(deps, smallest);
+}
+
+function enableOllamaForExistingModel(deps: FeatureToggleDeps): void {
+	deps.apply({ enabled: true });
+}
+
+function continueOllamaEnable(deps: FeatureToggleDeps): void {
+	const paths: Readonly<Record<"keep" | "replace", (d: FeatureToggleDeps) => void>> = {
+		keep: enableOllamaForExistingModel,
+		replace: applyReplacementOrShowDialog,
+	};
+	paths[isCurrentOllamaModelInstalled(deps) ? "keep" : "replace"](deps);
+}
+
+function runReachableOllamaFlow(deps: FeatureToggleDeps): void {
+	maybeScanOllama(deps);
+	continueOllamaEnable(deps);
+}
+
+function showOllamaNotReachable(deps: FeatureToggleDeps): void {
 	deps.setShowOllamaDialog(true);
 }
 
-export function tryEnableOpenRouterForFeature(deps: FeatureToggleDeps): void {
-	if (!deps.openrouterApiKey) {
-		deps.setShowApiKeyDialog(true);
-		return;
-	}
+export async function tryEnableOllamaForFeature(deps: FeatureToggleDeps): Promise<void> {
+	const reachable = await deps.checkOllamaReachable();
+	const flows: Readonly<Record<"reachable" | "unreachable", (d: FeatureToggleDeps) => void>> = {
+		reachable: runReachableOllamaFlow,
+		unreachable: showOllamaNotReachable,
+	};
+	flows[reachable ? "reachable" : "unreachable"](deps);
+}
+
+function maybeScanOpenRouter(deps: FeatureToggleDeps): void {
 	if (!deps.openrouterLoaded) {
 		deps.scanOpenRouter();
 	}
-	if (deps.currentOpenRouterModel.length > 0) {
-		deps.apply({ enabled: true });
-		return;
-	}
+}
+
+function enableOpenRouterWithExistingModel(deps: FeatureToggleDeps): void {
+	deps.apply({ enabled: true });
+}
+
+function enableOpenRouterWithDefaultModel(deps: FeatureToggleDeps): void {
 	deps.apply({ openrouterModel: DEFAULT_OPENROUTER_MODEL, enabled: true });
+}
+
+function hasOpenRouterModel(deps: FeatureToggleDeps): boolean {
+	return deps.currentOpenRouterModel.length > 0;
+}
+
+function continueOpenRouterEnable(deps: FeatureToggleDeps): void {
+	maybeScanOpenRouter(deps);
+	const paths: Readonly<Record<"existing" | "default", (d: FeatureToggleDeps) => void>> = {
+		existing: enableOpenRouterWithExistingModel,
+		default: enableOpenRouterWithDefaultModel,
+	};
+	paths[hasOpenRouterModel(deps) ? "existing" : "default"](deps);
+}
+
+function showOpenRouterApiKeyDialog(deps: FeatureToggleDeps): void {
+	deps.setShowApiKeyDialog(true);
+}
+
+function hasOpenRouterApiKey(deps: FeatureToggleDeps): boolean {
+	return Boolean(deps.openrouterApiKey);
+}
+
+export function tryEnableOpenRouterForFeature(deps: FeatureToggleDeps): void {
+	const flows: Readonly<Record<"hasKey" | "noKey", (d: FeatureToggleDeps) => void>> = {
+		hasKey: continueOpenRouterEnable,
+		noKey: showOpenRouterApiKeyDialog,
+	};
+	flows[hasOpenRouterApiKey(deps) ? "hasKey" : "noKey"](deps);
 }
 
 export async function performFeatureToggle(next: boolean, deps: FeatureToggleDeps): Promise<void> {

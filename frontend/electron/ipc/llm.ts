@@ -18,6 +18,7 @@ import { parseModelSelection } from "../../src/shared/lib/openrouter-model-selec
 import {
 	buildSystemPrompt,
 	type CustomModifier,
+	type CustomModifierEntry,
 	isCustomEntry,
 	mergePresetsWithCustomModifiers,
 	type PresetEntry,
@@ -374,6 +375,77 @@ function withContextPrefix(systemPrompt: string, context: string): string {
  * Folded in when the dictation LLM is enabled, replacing the algorithmic
  * post-processor — see relay.ts handleFullSentence flow.
  */
+function buildDictionaryBlock(dictionary: readonly string[]): string {
+	return [
+		"The list below is ONLY a spelling reference. Use it solely to fix a",
+		"word the speaker actually said but that was mis-transcribed: replace",
+		"a dictated word with a listed term ONLY when that word is an",
+		"unmistakable near-miss of it — essentially the same sounds and",
+		"length, differing only by a homophone or a few dropped, added, or",
+		'swapped letters (e.g. "oh llama" → "ollama", "base you eye" →',
+		'"baseui").',
+		"Hard limits — violating these is worse than missing a correction:",
+		"- NEVER insert a listed term that has no clearly corresponding",
+		"  similar-sounding word in the speech. If nothing in the dictation",
+		"  closely matches, output it unchanged.",
+		"- NEVER replace a common function word (it, is, the, will, this,",
+		"  that, a, to, and, pronouns, …) with a listed term.",
+		"- NEVER add a term as new content, and never rephrase or pad the",
+		"  sentence so a term fits. Only the words actually spoken may appear.",
+		'  (e.g. "Will it transcribe the text cleanly?" stays exactly that —',
+		'  it does NOT become "Will Ollama BaseUI transcribe …".)',
+		"- When in doubt, leave the original word as dictated.",
+		"",
+		"<preferred-terms>",
+		...dictionary.map((t) => `- ${t}`),
+		"</preferred-terms>",
+		"",
+	].join("\n");
+}
+
+function buildReplacementPairsBlock(replacementPairs: readonly ReplacementPair[]): string {
+	return [
+		"The pairs below are DETERMINISTIC find-and-replace rules. When the",
+		"dictation contains a whole-word match of the FIND side (case-",
+		'insensitive, e.g. dictating "github" or "GitHub" or "GITHUB"),',
+		"replace it verbatim with the REPLACE side preserving the exact",
+		"casing shown. This is mechanical — apply without judgement, do not",
+		"second-guess the user's casing or punctuation choice.",
+		"",
+		"<replacement-pairs>",
+		...replacementPairs.map(
+			(p) => `- find "${p.term}" -> "${p.replacement.replaceAll("\n", "\\n")}"`
+		),
+		"</replacement-pairs>",
+		"",
+	].join("\n");
+}
+
+function buildSnippetsBlock(snippets: readonly { trigger: string; expansion: string }[]): string {
+	return [
+		"The user has the following snippet shortcuts. When the dictated text",
+		"contains a phrase that matches a trigger (allow minor phonetic /",
+		"spelling variation — e.g. a missing letter, a homophone), replace the",
+		"ENTIRE matched phrase with the corresponding expansion verbatim.",
+		"Preserve any punctuation that immediately surrounds the matched phrase.",
+		"",
+		"<snippets>",
+		...snippets.map((s) => `- "${s.trigger}" -> ${s.expansion.replaceAll("\n", "\\n")}`),
+		"</snippets>",
+		"",
+	].join("\n");
+}
+
+function pushBlockIfNonEmpty<T>(
+	blocks: string[],
+	items: readonly T[],
+	builder: (items: readonly T[]) => string
+): void {
+	if (items.length > 0) {
+		blocks.push(builder(items));
+	}
+}
+
 function withVocabPrefix(
 	systemPrompt: string,
 	vocab: {
@@ -383,70 +455,9 @@ function withVocabPrefix(
 	}
 ): string {
 	const blocks: string[] = [];
-	if (vocab.dictionary.length > 0) {
-		blocks.push(
-			[
-				"The list below is ONLY a spelling reference. Use it solely to fix a",
-				"word the speaker actually said but that was mis-transcribed: replace",
-				"a dictated word with a listed term ONLY when that word is an",
-				"unmistakable near-miss of it — essentially the same sounds and",
-				"length, differing only by a homophone or a few dropped, added, or",
-				'swapped letters (e.g. "oh llama" → "ollama", "base you eye" →',
-				'"baseui").',
-				"Hard limits — violating these is worse than missing a correction:",
-				"- NEVER insert a listed term that has no clearly corresponding",
-				"  similar-sounding word in the speech. If nothing in the dictation",
-				"  closely matches, output it unchanged.",
-				"- NEVER replace a common function word (it, is, the, will, this,",
-				"  that, a, to, and, pronouns, …) with a listed term.",
-				"- NEVER add a term as new content, and never rephrase or pad the",
-				"  sentence so a term fits. Only the words actually spoken may appear.",
-				'  (e.g. "Will it transcribe the text cleanly?" stays exactly that —',
-				'  it does NOT become "Will Ollama BaseUI transcribe …".)',
-				"- When in doubt, leave the original word as dictated.",
-				"",
-				"<preferred-terms>",
-				...vocab.dictionary.map((t) => `- ${t}`),
-				"</preferred-terms>",
-				"",
-			].join("\n")
-		);
-	}
-	if (vocab.replacementPairs.length > 0) {
-		blocks.push(
-			[
-				"The pairs below are DETERMINISTIC find-and-replace rules. When the",
-				"dictation contains a whole-word match of the FIND side (case-",
-				'insensitive, e.g. dictating "github" or "GitHub" or "GITHUB"),',
-				"replace it verbatim with the REPLACE side preserving the exact",
-				"casing shown. This is mechanical — apply without judgement, do not",
-				"second-guess the user's casing or punctuation choice.",
-				"",
-				"<replacement-pairs>",
-				...vocab.replacementPairs.map(
-					(p) => `- find "${p.term}" -> "${p.replacement.replaceAll("\n", "\\n")}"`
-				),
-				"</replacement-pairs>",
-				"",
-			].join("\n")
-		);
-	}
-	if (vocab.snippets.length > 0) {
-		blocks.push(
-			[
-				"The user has the following snippet shortcuts. When the dictated text",
-				"contains a phrase that matches a trigger (allow minor phonetic /",
-				"spelling variation — e.g. a missing letter, a homophone), replace the",
-				"ENTIRE matched phrase with the corresponding expansion verbatim.",
-				"Preserve any punctuation that immediately surrounds the matched phrase.",
-				"",
-				"<snippets>",
-				...vocab.snippets.map((s) => `- "${s.trigger}" -> ${s.expansion.replaceAll("\n", "\\n")}`),
-				"</snippets>",
-				"",
-			].join("\n")
-		);
-	}
+	pushBlockIfNonEmpty(blocks, vocab.dictionary, buildDictionaryBlock);
+	pushBlockIfNonEmpty(blocks, vocab.replacementPairs, buildReplacementPairsBlock);
+	pushBlockIfNonEmpty(blocks, vocab.snippets, buildSnippetsBlock);
 	if (blocks.length === 0) {
 		return systemPrompt;
 	}
@@ -521,18 +532,31 @@ function assertValidEndpoint(endpoint: string): string {
 	return normalized;
 }
 
+function describeCustomPreset(p: CustomModifierEntry): string {
+	return p.level ? `custom:${p.id}:${p.level}` : `custom:${p.id}`;
+}
+
+function describeTranslatePreset(p: PresetEntry): string {
+	const lang = (p as { targetLang?: string }).targetLang ?? "English";
+	return `translate:${lang}`;
+}
+
+function describeBuiltinPreset(p: PresetEntry): string {
+	return p.level ? `${p.key}:${p.level}` : p.key;
+}
+
+function describePreset(p: PresetEntry): string {
+	if (isCustomEntry(p)) {
+		return describeCustomPreset(p);
+	}
+	if (p.key === "translate") {
+		return describeTranslatePreset(p);
+	}
+	return describeBuiltinPreset(p);
+}
+
 function describePresets(presets: readonly PresetEntry[]): string {
-	return presets
-		.map((p) => {
-			if (isCustomEntry(p)) {
-				return p.level ? `custom:${p.id}:${p.level}` : `custom:${p.id}`;
-			}
-			if (p.key === "translate") {
-				return `translate:${p.targetLang ?? "English"}`;
-			}
-			return p.level ? `${p.key}:${p.level}` : p.key;
-		})
-		.join(",");
+	return presets.map(describePreset).join(",");
 }
 
 async function safeFetch(
@@ -567,23 +591,54 @@ function mapOllamaTagsModels(
 	return parsedModels.map(toOllamaModel);
 }
 
+function resolveOllamaModifiedAt(item: z.infer<typeof ollamaTagsModelSchema>): string {
+	return item.modifiedAt ?? item.modified_at ?? "";
+}
+
+function nullishToUndefined<T>(value: T | null | undefined): T | undefined {
+	return value ?? undefined;
+}
+
+function buildOllamaDetailsFromRaw(
+	d: NonNullable<z.infer<typeof ollamaTagsModelSchema>["details"]>
+): OllamaModelDetails {
+	return llmOmitUndefined({
+		format: nullishToUndefined(d.format),
+		family: nullishToUndefined(d.family),
+		families: nullishToUndefined(d.families),
+		parameterSize: nullishToUndefined(d.parameter_size),
+		quantizationLevel: nullishToUndefined(d.quantization_level),
+	});
+}
+
+function extractOllamaDetails(
+	d: z.infer<typeof ollamaTagsModelSchema>["details"]
+): OllamaModelDetails | undefined {
+	if (!d) {
+		return;
+	}
+	return buildOllamaDetailsFromRaw(d);
+}
+
+function hasAnyDetailField(details: OllamaModelDetails | undefined): boolean {
+	if (!details) {
+		return false;
+	}
+	return Object.values(details).some(isDefined);
+}
+
+function isDefined<T>(v: T | undefined): v is T {
+	return v !== undefined;
+}
+
 function toOllamaModel(item: z.infer<typeof ollamaTagsModelSchema>): OllamaModel {
-	const modifiedAt = item.modifiedAt ?? item.modified_at ?? "";
-	const d = item.details;
-	// Normalize details: drop the wrapper entirely when every field is absent
-	// so consumers can `if (model.details)` for "we have something to render".
-	const details: OllamaModelDetails | undefined = d
-		? llmOmitUndefined({
-				format: d.format ?? undefined,
-				family: d.family ?? undefined,
-				families: d.families ?? undefined,
-				parameterSize: d.parameter_size ?? undefined,
-				quantizationLevel: d.quantization_level ?? undefined,
-			})
-		: undefined;
-	const hasAny = details && Object.values(details).some((v) => v !== undefined);
+	const modifiedAt = resolveOllamaModifiedAt(item);
+	const details = extractOllamaDetails(item.details);
 	const base = { name: item.name, size: item.size, modifiedAt };
-	return hasAny && details ? { ...base, details } : base;
+	if (hasAnyDetailField(details) && details) {
+		return { ...base, details };
+	}
+	return base;
 }
 
 function llmOmitUndefined<T extends Record<string, unknown>>(
@@ -687,17 +742,21 @@ function unregisterChatController(controller: AbortController): void {
 	activeChatControllers.delete(controller);
 }
 
+function tryAbortController(controller: AbortController, reason: string): void {
+	try {
+		controller.abort(reason);
+	} catch (err) {
+		dbg("llm", "AbortController abort failed:", getErrorMessage(err));
+	}
+}
+
 export function abortActiveOllamaChats(reason: string): void {
 	if (activeChatControllers.size === 0) {
 		return;
 	}
 	dbg("llm", `Aborting ${activeChatControllers.size} active Ollama chat(s): ${reason}`);
 	for (const controller of activeChatControllers) {
-		try {
-			controller.abort(reason);
-		} catch (err) {
-			dbg("llm", "AbortController abort failed:", getErrorMessage(err));
-		}
+		tryAbortController(controller, reason);
 	}
 	activeChatControllers.clear();
 }
@@ -770,52 +829,85 @@ function extractPartialStructuredText(content: string): string | null {
 		.replace(/\\\\/g, "\\");
 }
 
+function applyThinkingChunk(state: OllamaChatStreamState, thinking: string | undefined): void {
+	if (!thinking) {
+		return;
+	}
+	state.thinking += thinking;
+	broadcastReasoningDelta(thinking);
+}
+
+function resolveVisibleContent(content: string): string | null {
+	// Two content shapes:
+	//
+	//  - Structured output (Ollama honored `format`): content is a JSON
+	//    envelope `{"text":"…"}`. ONLY the inner `text` value is human
+	//    output. Stream it via the partial extractor; until the field
+	//    opens, `partial` is null and we stream nothing — that's by
+	//    design and is what keeps the `{"text": "` scaffold (which the
+	//    user otherwise saw as a literal `text:{…}` prefix) out of the
+	//    visible reasoning band.
+	//  - Raw passthrough (older Ollama, or a model that ignored
+	//    `format` and emitted prose directly): stream the content as-is.
+	//
+	// The envelope is detected by a leading `{` on the trimmed buffer —
+	// the first non-whitespace char never changes as content grows, so
+	// this stays stable for the whole stream and a partial-extract miss
+	// no longer falls back to leaking the raw JSON.
+	const isStructuredEnvelope = content.trimStart().startsWith("{");
+	if (isStructuredEnvelope) {
+		return extractPartialStructuredText(content);
+	}
+	return content;
+}
+
+function broadcastContentDelta(state: OllamaChatStreamState): void {
+	const visible = resolveVisibleContent(state.content);
+	if (visible === null) {
+		return;
+	}
+	if (visible.length <= state.contentStreamCursor) {
+		return;
+	}
+	const delta = visible.slice(state.contentStreamCursor);
+	state.contentStreamCursor = visible.length;
+	broadcastReasoningDelta(delta);
+}
+
+function applyContentChunk(state: OllamaChatStreamState, content: string | undefined): void {
+	if (!content) {
+		return;
+	}
+	state.content += content;
+	// Stream the natural-prose answer to the pill — never the JSON
+	// scaffolding.
+	broadcastContentDelta(state);
+}
+
+function applyDoneFlag(
+	state: OllamaChatStreamState,
+	done: boolean | undefined,
+	doneReason: string | undefined
+): void {
+	if (!done) {
+		return;
+	}
+	state.done = true;
+	if (doneReason) {
+		state.doneReason = doneReason;
+	}
+}
+
 function applyChatStreamChunk(
 	state: OllamaChatStreamState,
 	chunk: z.infer<typeof ollamaChatStreamChunkSchema>
 ): void {
-	const message = chunk.message;
-	if (message?.thinking) {
-		state.thinking += message.thinking;
-		broadcastReasoningDelta(message.thinking);
-	}
-	if (message?.content) {
-		state.content += message.content;
-		// Stream the natural-prose answer to the pill — never the JSON
-		// scaffolding. Two content shapes:
-		//
-		//  - Structured output (Ollama honored `format`): content is a JSON
-		//    envelope `{"text":"…"}`. ONLY the inner `text` value is human
-		//    output. Stream it via the partial extractor; until the field
-		//    opens, `partial` is null and we stream nothing — that's by
-		//    design and is what keeps the `{"text": "` scaffold (which the
-		//    user otherwise saw as a literal `text:{…}` prefix) out of the
-		//    visible reasoning band.
-		//  - Raw passthrough (older Ollama, or a model that ignored
-		//    `format` and emitted prose directly): stream the content as-is.
-		//
-		// The envelope is detected by a leading `{` on the trimmed buffer —
-		// the first non-whitespace char never changes as content grows, so
-		// this stays stable for the whole stream and a partial-extract miss
-		// no longer falls back to leaking the raw JSON.
-		const isStructuredEnvelope = state.content.trimStart().startsWith("{");
-		const partial = extractPartialStructuredText(state.content);
-		const visible = isStructuredEnvelope ? partial : state.content;
-		if (visible !== null && visible.length > state.contentStreamCursor) {
-			const delta = visible.slice(state.contentStreamCursor);
-			state.contentStreamCursor = visible.length;
-			broadcastReasoningDelta(delta);
-		}
-	}
+	applyThinkingChunk(state, chunk.message?.thinking);
+	applyContentChunk(state, chunk.message?.content);
 	if (chunk.error) {
 		state.error = chunk.error;
 	}
-	if (chunk.done) {
-		state.done = true;
-		if (chunk.done_reason) {
-			state.doneReason = chunk.done_reason;
-		}
-	}
+	applyDoneFlag(state, chunk.done, chunk.done_reason);
 }
 
 function consumeChatStreamLines(state: OllamaChatStreamState): void {
@@ -903,26 +995,42 @@ function splitInlineThinking(content: string): { thinking: string; answer: strin
  * already seen most of it in the pill via `message.thinking`, but
  * surfacing the rest as a reasoning delta closes the gap.
  */
-function extractBoxedAnswer(content: string): { thinking: string; answer: string } | null {
-	const matches = Array.from(content.matchAll(BOXED_RE));
-	if (matches.length === 0) {
-		return null;
-	}
+function isUsableMatch(match: RegExpMatchArray | undefined): match is RegExpMatchArray {
+	return match !== undefined && match.index !== undefined;
+}
+
+function pickLastIndexedMatch(matches: readonly RegExpMatchArray[]): RegExpMatchArray | null {
 	const last = matches.at(-1);
-	if (!last || last.index === undefined) {
-		return null;
-	}
-	const answer = (last[1] ?? "").trim();
-	if (!answer) {
-		return null;
-	}
-	const before = content.slice(0, last.index).trim();
-	const after = content.slice(last.index + last[0].length).trim();
+	return isUsableMatch(last) ? last : null;
+}
+
+function buildBoxedThinking(content: string, last: RegExpMatchArray): string {
+	const index = last.index as number;
+	const before = content.slice(0, index).trim();
+	const after = content.slice(index + last[0].length).trim();
 	// Anything after the boxed answer (typical Qwen-Math epilogue:
 	// "This has N words…") is also chain-of-thought — fold it into the
 	// reasoning trace rather than emitting it as part of the answer.
-	const thinking = [before, after].filter(Boolean).join("\n\n");
-	return { thinking, answer };
+	return [before, after].filter(Boolean).join("\n\n");
+}
+
+function readMatchGroupTrimmed(match: RegExpMatchArray, group: number): string {
+	const raw = match[group];
+	return raw ? raw.trim() : "";
+}
+
+function buildBoxedResultIfAnswerable(
+	content: string,
+	last: RegExpMatchArray
+): { thinking: string; answer: string } | null {
+	const answer = readMatchGroupTrimmed(last, 1);
+	return answer ? { thinking: buildBoxedThinking(content, last), answer } : null;
+}
+
+function extractBoxedAnswer(content: string): { thinking: string; answer: string } | null {
+	const matches = Array.from(content.matchAll(BOXED_RE));
+	const last = pickLastIndexedMatch(matches);
+	return last ? buildBoxedResultIfAnswerable(content, last) : null;
 }
 
 /**
@@ -933,23 +1041,34 @@ function extractBoxedAnswer(content: string): { thinking: string; answer: string
  * final<|message|>…<|end|>` in `content`. Returns `null` when no
  * harmony delimiters are present.
  */
+function isNonEmptyString(s: string): s is string {
+	return s.length > 0;
+}
+
+function collectHarmonyAnalysisChunks(content: string): string[] {
+	return Array.from(content.matchAll(HARMONY_ANALYSIS_RE))
+		.map((m) => readMatchGroupTrimmed(m, 1))
+		.filter(isNonEmptyString);
+}
+
+function buildHarmonyResult(content: string, answer: string): { thinking: string; answer: string } {
+	return {
+		thinking: collectHarmonyAnalysisChunks(content).join("\n\n"),
+		answer,
+	};
+}
+
+function buildHarmonyResultIfAnswerable(
+	content: string,
+	finalMatch: RegExpMatchArray
+): { thinking: string; answer: string } | null {
+	const answer = readMatchGroupTrimmed(finalMatch, 1);
+	return answer ? buildHarmonyResult(content, answer) : null;
+}
+
 function extractHarmonyAnswer(content: string): { thinking: string; answer: string } | null {
 	const finalMatch = content.match(HARMONY_FINAL_RE);
-	if (!finalMatch) {
-		return null;
-	}
-	const answer = (finalMatch[1] ?? "").trim();
-	if (!answer) {
-		return null;
-	}
-	const analysisChunks: string[] = [];
-	for (const m of content.matchAll(HARMONY_ANALYSIS_RE)) {
-		const text = (m[1] ?? "").trim();
-		if (text) {
-			analysisChunks.push(text);
-		}
-	}
-	return { thinking: analysisChunks.join("\n\n"), answer };
+	return finalMatch ? buildHarmonyResultIfAnswerable(content, finalMatch) : null;
 }
 
 /** Resolve the JSON string escapes a model emits through Ollama's
@@ -974,22 +1093,29 @@ function unescapeJsonStringBody(s: string): string {
  *  brace, or ran out of tokens mid-string. Without this the raw
  *  `{ "text": "…\n…"}` (escapes and all) leaks straight into the paste —
  *  exactly the failure users hit when a model substitutes “ for ". */
-function salvageStructuredText(content: string): string | null {
-	const m = content.match(PARTIAL_STRUCTURED_TEXT_RE);
-	if (!m) {
-		return null;
-	}
-	const body = (m[1] ?? "")
-		// A truncated tail can end on a lone escape backslash — drop it so
-		// the unescape pass below doesn't eat the next real character.
-		.replace(TRAILING_BACKSLASH_RE, "")
-		// Peel the trailing scaffold the broken JSON left behind: an
-		// optional closing brace and/or one closing quote (straight OR the
-		// smart quote that broke `JSON.parse` in the first place).
-		.replace(TRAILING_BRACE_RE, "")
-		.replace(TRAILING_QUOTE_RE, "");
+function peelSalvageScaffold(rawBody: string): string {
+	return (
+		rawBody
+			// A truncated tail can end on a lone escape backslash — drop it so
+			// the unescape pass below doesn't eat the next real character.
+			.replace(TRAILING_BACKSLASH_RE, "")
+			// Peel the trailing scaffold the broken JSON left behind: an
+			// optional closing brace and/or one closing quote (straight OR the
+			// smart quote that broke `JSON.parse` in the first place).
+			.replace(TRAILING_BRACE_RE, "")
+			.replace(TRAILING_QUOTE_RE, "")
+	);
+}
+
+function salvageFromMatch(m: RegExpMatchArray): string | null {
+	const body = peelSalvageScaffold(m[1] ?? "");
 	const out = unescapeJsonStringBody(body).trim();
 	return out.length > 0 ? out : null;
+}
+
+function salvageStructuredText(content: string): string | null {
+	const m = content.match(PARTIAL_STRUCTURED_TEXT_RE);
+	return m ? salvageFromMatch(m) : null;
 }
 
 /**
@@ -1001,44 +1127,78 @@ function salvageStructuredText(content: string): string | null {
  * occasionally over-emits; we don't want a single bad cleanup turning
  * into a dictionary spam attack.
  */
-function extractLearnedProperNouns(content: string): readonly string[] {
-	const trimmed = content
+function stripMarkdownFences(content: string): string {
+	return content
 		.trim()
 		.replace(MARKDOWN_FENCE_OPEN_RE, "")
 		.replace(MARKDOWN_FENCE_CLOSE_RE, "")
 		.trim();
+}
+
+function tryParseJson(input: string): unknown {
+	try {
+		return JSON.parse(input);
+	} catch {
+		return null;
+	}
+}
+
+function isParsedObjectWithNouns(parsed: unknown): parsed is { learned_proper_nouns: unknown } {
+	return (
+		Boolean(parsed) && typeof parsed === "object" && "learned_proper_nouns" in (parsed as object)
+	);
+}
+
+function readRawNounsArray(parsed: unknown): unknown[] | null {
+	if (!isParsedObjectWithNouns(parsed)) {
+		return null;
+	}
+	const raw = parsed.learned_proper_nouns;
+	return Array.isArray(raw) ? raw : null;
+}
+
+function isAcceptableNounString(item: unknown): item is string {
+	if (typeof item !== "string") {
+		return false;
+	}
+	const value = item.trim();
+	if (value.length === 0) {
+		return false;
+	}
+	return value.length <= 60;
+}
+
+const MAX_LEARNED_NOUNS = 10;
+
+function appendCleanedNoun(cleaned: string[], item: unknown): boolean {
+	if (!isAcceptableNounString(item)) {
+		return false;
+	}
+	cleaned.push(item.trim());
+	return cleaned.length >= MAX_LEARNED_NOUNS;
+}
+
+function cleanupRawNouns(raw: readonly unknown[]): string[] {
+	const cleaned: string[] = [];
+	for (const item of raw) {
+		if (appendCleanedNoun(cleaned, item)) {
+			break;
+		}
+	}
+	return cleaned;
+}
+
+function extractLearnedProperNouns(content: string): readonly string[] {
+	const trimmed = stripMarkdownFences(content);
 	if (!trimmed.startsWith("{")) {
 		return [];
 	}
-	try {
-		const parsed = JSON.parse(trimmed) as unknown;
-		if (
-			parsed &&
-			typeof parsed === "object" &&
-			"learned_proper_nouns" in parsed &&
-			Array.isArray((parsed as { learned_proper_nouns: unknown }).learned_proper_nouns)
-		) {
-			const raw = (parsed as { learned_proper_nouns: unknown[] }).learned_proper_nouns;
-			const cleaned: string[] = [];
-			for (const item of raw) {
-				if (typeof item !== "string") {
-					continue;
-				}
-				const value = item.trim();
-				if (value.length === 0 || value.length > 60) {
-					continue;
-				}
-				cleaned.push(value);
-				if (cleaned.length >= 10) {
-					break;
-				}
-			}
-			return cleaned;
-		}
-	} catch {
-		// Truncated or malformed JSON — accept the nounless answer.
+	const parsed = tryParseJson(trimmed);
+	const raw = readRawNounsArray(parsed);
+	if (!raw) {
+		return [];
 	}
-	return [];
+	return cleanupRawNouns(raw);
 }
 
 /**
@@ -1050,34 +1210,110 @@ function extractLearnedProperNouns(content: string): readonly string[] {
  * (smart-quote close, missing brace, truncation) is salvaged rather than
  * leaked verbatim.
  */
+function isParsedObjectWithText(parsed: unknown): parsed is { text: unknown } {
+	return Boolean(parsed) && typeof parsed === "object" && "text" in (parsed as object);
+}
+
+function readEnvelopeText(parsed: unknown): string | null {
+	if (!isParsedObjectWithText(parsed)) {
+		return null;
+	}
+	const candidate = parsed.text;
+	return typeof candidate === "string" ? candidate : null;
+}
+
 function extractStructuredFinalText(content: string): string | null {
-	const trimmed = content
-		.trim()
-		.replace(MARKDOWN_FENCE_OPEN_RE, "")
-		.replace(MARKDOWN_FENCE_CLOSE_RE, "")
-		.trim();
+	const trimmed = stripMarkdownFences(content);
 	if (!trimmed.startsWith("{")) {
 		return null;
 	}
-	try {
-		const parsed = JSON.parse(trimmed) as unknown;
-		if (
-			parsed &&
-			typeof parsed === "object" &&
-			"text" in parsed &&
-			typeof (parsed as { text: unknown }).text === "string"
-		) {
-			// Surface the proper nouns as a side effect — the cleanup
-			// call's return type stays a single string (compatible with
-			// every existing caller) but Phase 3b's dictionary auto-add
-			// pipeline reads from the broadcast channel.
-			broadcastLearnedProperNouns(extractLearnedProperNouns(trimmed));
-			return (parsed as { text: string }).text;
-		}
-	} catch {
-		// Truncated or malformed JSON — fall through to salvage.
+	const parsed = tryParseJson(trimmed);
+	const envelopeText = readEnvelopeText(parsed);
+	if (envelopeText !== null) {
+		// Surface the proper nouns as a side effect — the cleanup
+		// call's return type stays a single string (compatible with
+		// every existing caller) but Phase 3b's dictionary auto-add
+		// pipeline reads from the broadcast channel.
+		broadcastLearnedProperNouns(extractLearnedProperNouns(trimmed));
+		return envelopeText;
 	}
 	return salvageStructuredText(trimmed);
+}
+
+function tryStructuredAnswer(content: string): string | null {
+	const structured = extractStructuredFinalText(content);
+	if (structured === null) {
+		return null;
+	}
+	const trimmedStructured = structured.trim();
+	return trimmedStructured || null;
+}
+
+function broadcastIfPresent(value: string): void {
+	if (value) {
+		broadcastReasoningDelta(value);
+	}
+}
+
+function tryLeakageAnswerVia(
+	answer: string,
+	extractor: (s: string) => { thinking: string; answer: string } | null
+): string | null {
+	const extracted = extractor(answer);
+	if (!extracted) {
+		return null;
+	}
+	broadcastIfPresent(extracted.thinking);
+	return extracted.answer;
+}
+
+function logTruncationIfNonStop(doneReason: string | undefined): void {
+	if (doneReason && doneReason !== "stop") {
+		dbg("llm", `Ollama chat answer ok but done_reason=${doneReason} (possible truncation)`);
+	}
+}
+
+function logEmptyContentReason(state: OllamaChatStreamState): void {
+	if (state.doneReason === "length") {
+		dbg(
+			"llm",
+			`Ollama chat exhausted num_predict before producing content (thinking=${state.thinking.length} chars). Raise the num_predict floor.`
+		);
+		return;
+	}
+	dbg(
+		"llm",
+		`Empty content from Ollama chat stream (done_reason=${state.doneReason ?? "unknown"}), using original text`
+	);
+}
+
+// Chain-of-thought leakage extractors, tried in priority order. Each returns
+// the answer when its convention matched, or null to fall through.
+const LEAKAGE_EXTRACTORS: ReadonlyArray<
+	(s: string) => { thinking: string; answer: string } | null
+> = [extractHarmonyAnswer, extractBoxedAnswer];
+
+function tryAnyLeakageAnswer(answer: string): string | null {
+	for (const extractor of LEAKAGE_EXTRACTORS) {
+		const result = tryLeakageAnswerVia(answer, extractor);
+		if (result !== null) {
+			return result;
+		}
+	}
+	return null;
+}
+
+function finalizeAnswerOrFallback(
+	answer: string,
+	state: OllamaChatStreamState,
+	fallback: string
+): string {
+	if (answer) {
+		logTruncationIfNonStop(state.doneReason);
+		return answer;
+	}
+	logEmptyContentReason(state);
+	return fallback;
 }
 
 function finalizeChatAnswer(state: OllamaChatStreamState, fallback: string): string {
@@ -1085,59 +1321,23 @@ function finalizeChatAnswer(state: OllamaChatStreamState, fallback: string): str
 	// to emit `{ "text": "..." }`. Parsing the envelope is the cheapest,
 	// most reliable extraction — no regex, no heuristics, no per-model
 	// special-casing required.
-	const structured = extractStructuredFinalText(state.content);
+	const structured = tryStructuredAnswer(state.content);
 	if (structured !== null) {
-		const trimmedStructured = structured.trim();
-		if (trimmedStructured) {
-			return trimmedStructured;
-		}
+		return structured;
 	}
 	const { thinking: inlineThinking, answer } = splitInlineThinking(state.content);
-	if (inlineThinking) {
-		broadcastReasoningDelta(inlineThinking);
-	}
+	broadcastIfPresent(inlineThinking);
 	// Chain-of-thought leakage paths: Ollama recognizes the model as
 	// supporting thinking and we set `think: true`, but the runtime parser
 	// for this specific checkpoint doesn't strip the reasoning — it all
 	// lands in `content`. Apply known final-answer conventions here so
 	// Qwen-Math / DeepSeek-Math / unrecognized gpt-oss outputs paste the
 	// final answer instead of the whole reasoning trace.
-	const harmony = extractHarmonyAnswer(answer);
-	if (harmony) {
-		if (harmony.thinking) {
-			broadcastReasoningDelta(harmony.thinking);
-		}
-		return harmony.answer;
+	const leakageAnswer = tryAnyLeakageAnswer(answer);
+	if (leakageAnswer !== null) {
+		return leakageAnswer;
 	}
-	const boxed = extractBoxedAnswer(answer);
-	if (boxed) {
-		if (boxed.thinking) {
-			broadcastReasoningDelta(boxed.thinking);
-		}
-		return boxed.answer;
-	}
-	if (answer) {
-		if (state.doneReason && state.doneReason !== "stop") {
-			dbg("llm", `Ollama chat answer ok but done_reason=${state.doneReason} (possible truncation)`);
-		}
-		return answer;
-	}
-	// Most common cause of an empty-content terminal state for reasoning
-	// models: the chain-of-thought exhausted num_predict before the model
-	// emitted a `content` token. done_reason === "length" confirms it; the
-	// fix is to raise num_predict in buildOllamaChatBody.
-	if (state.doneReason === "length") {
-		dbg(
-			"llm",
-			`Ollama chat exhausted num_predict before producing content (thinking=${state.thinking.length} chars). Raise the num_predict floor.`
-		);
-	} else {
-		dbg(
-			"llm",
-			`Empty content from Ollama chat stream (done_reason=${state.doneReason ?? "unknown"}), using original text`
-		);
-	}
-	return fallback;
+	return finalizeAnswerOrFallback(answer, state, fallback);
 }
 
 async function assertOllamaResponseOk(
@@ -1324,15 +1524,15 @@ function enrichOpenRouterModel(m: z.infer<typeof openRouterModelSchema>): OpenRo
 	return llmOmitUndefined({
 		id: m.id,
 		name: m.name,
-		description: m.description ?? undefined,
-		context_length: m.context_length ?? undefined,
-		pricing: m.pricing ?? undefined,
+		description: nullishToUndefined(m.description),
+		context_length: nullishToUndefined(m.context_length),
+		pricing: nullishToUndefined(m.pricing),
 		provider: "openrouter",
 		maker,
 		model_name,
 		variant,
-		supported_parameters: m.supported_parameters ?? undefined,
-		architecture: m.architecture ?? undefined,
+		supported_parameters: nullishToUndefined(m.supported_parameters),
+		architecture: nullishToUndefined(m.architecture),
 	}) as OpenRouterScanModel;
 }
 
@@ -1342,6 +1542,50 @@ function enrichOpenRouterModel(m: z.infer<typeof openRouterModelSchema>): OpenRo
  * detail returns the full description. Prefer the longer one — and if both
  * look truncated, prefer the one without a trailing ellipsis.
  */
+function endsWithEllipsis(value: string): boolean {
+	return value.endsWith("...") || value.endsWith("…");
+}
+
+type EllipsisPair = "both" | "neither" | "a-only" | "b-only";
+
+const ELLIPSIS_PAIR_LOOKUP: Record<string, EllipsisPair> = {
+	"false,false": "neither",
+	"true,false": "a-only",
+	"false,true": "b-only",
+	"true,true": "both",
+};
+
+function classifyEllipsisPair(a: string, b: string): EllipsisPair {
+	const key = `${endsWithEllipsis(a)},${endsWithEllipsis(b)}`;
+	return ELLIPSIS_PAIR_LOOKUP[key] as EllipsisPair;
+}
+
+function pickLongerOfTwo(a: string, b: string, listing: string, detail: string): string {
+	return b.length > a.length ? detail : listing;
+}
+
+function pickByEllipsisOrLength(
+	pair: EllipsisPair,
+	a: string,
+	b: string,
+	listing: string,
+	detail: string
+): string {
+	const lookup: Record<EllipsisPair, () => string> = {
+		"a-only": () => detail,
+		"b-only": () => listing,
+		both: () => pickLongerOfTwo(a, b, listing, detail),
+		neither: () => pickLongerOfTwo(a, b, listing, detail),
+	};
+	return lookup[pair]();
+}
+
+function pickWhenBothPresent(listing: string, detail: string): string {
+	const a = listing.trimEnd();
+	const b = detail.trimEnd();
+	return pickByEllipsisOrLength(classifyEllipsisPair(a, b), a, b, listing, detail);
+}
+
 function pickLongerDescription(
 	listing: string | undefined,
 	detail: string | undefined
@@ -1352,17 +1596,7 @@ function pickLongerDescription(
 	if (!detail) {
 		return listing;
 	}
-	const a = listing.trimEnd();
-	const b = detail.trimEnd();
-	const aEllipsis = a.endsWith("...") || a.endsWith("…");
-	const bEllipsis = b.endsWith("...") || b.endsWith("…");
-	if (aEllipsis && !bEllipsis) {
-		return detail;
-	}
-	if (!aEllipsis && bEllipsis) {
-		return listing;
-	}
-	return b.length > a.length ? detail : listing;
+	return pickWhenBothPresent(listing, detail);
 }
 
 /**
@@ -1371,20 +1605,36 @@ function pickLongerDescription(
  * when the id doesn't carry both an author and a slug — those models
  * (synthetic `openrouter/auto`, malformed ids) simply have no detail page.
  */
-function parseModelIdForDetail(modelId: string): { author: string; slug: string } | null {
+function splitAuthorSlug(modelId: string): string | null {
 	const [authorSlug] = modelId.split(":");
-	if (!authorSlug) {
-		return null;
-	}
+	return authorSlug || null;
+}
+
+function isValidAuthorSlugTuple(author: string | undefined, slugParts: string[]): author is string {
+	return Boolean(author) && slugParts.length > 0;
+}
+
+function splitAuthorAndSlugParts(
+	authorSlug: string
+): { author: string; slugParts: string[] } | null {
 	const parts = authorSlug.split("/");
 	if (parts.length < 2) {
 		return null;
 	}
 	const [author, ...slugParts] = parts;
-	if (!author || slugParts.length === 0) {
+	return isValidAuthorSlugTuple(author, slugParts) ? { author, slugParts } : null;
+}
+
+function parseModelIdForDetail(modelId: string): { author: string; slug: string } | null {
+	const authorSlug = splitAuthorSlug(modelId);
+	if (!authorSlug) {
 		return null;
 	}
-	return { author, slug: slugParts.join("/") };
+	const parts = splitAuthorAndSlugParts(authorSlug);
+	if (!parts) {
+		return null;
+	}
+	return { author: parts.author, slug: parts.slugParts.join("/") };
 }
 
 /**
@@ -1393,14 +1643,47 @@ function parseModelIdForDetail(modelId: string): { author: string; slug: string 
  * fails or the payload doesn't match the schema — callers fall back to the
  * un-enriched model in that case so a single failure doesn't poison the list.
  */
-async function fetchModelEndpoints(
-	modelId: string,
-	apiKey: string
-): Promise<{ description?: string; endpoints: z.infer<typeof openRouterEndpointSchema>[] } | null> {
-	const parsed = parseModelIdForDetail(modelId);
-	if (!parsed) {
+async function tryReadJson(response: Response): Promise<unknown> {
+	try {
+		return await response.json();
+	} catch {
 		return null;
 	}
+}
+
+function isResponseUsable(response: Response | { error: string }): response is Response {
+	if (isFetchError(response)) {
+		return false;
+	}
+	return response.ok;
+}
+
+function parseEndpointsPayload(
+	json: unknown
+): z.infer<typeof openRouterEndpointsDetailSchema> | null {
+	const parsedJson = openRouterEndpointsResponseSchema.safeParse(json);
+	if (!parsedJson.success) {
+		return null;
+	}
+	return parsedJson.data.data ?? null;
+}
+
+function buildEndpointsResult(data: z.infer<typeof openRouterEndpointsDetailSchema>): {
+	description?: string;
+	endpoints: z.infer<typeof openRouterEndpointSchema>[];
+} {
+	const endpoints = data.endpoints ?? [];
+	if (data.description === undefined) {
+		return { endpoints };
+	}
+	return { description: data.description, endpoints };
+}
+
+async function fetchModelEndpointsResponse(
+	modelId: string,
+	parsed: { author: string; slug: string },
+	apiKey: string
+): Promise<Response | null> {
 	const url = `https://openrouter.ai/api/v1/models/${parsed.author}/${parsed.slug}/endpoints`;
 	const response = await safeFetch(
 		url,
@@ -1411,27 +1694,38 @@ async function fetchModelEndpoints(
 		},
 		`OpenRouter /endpoints for ${modelId}`
 	);
-	if (isFetchError(response) || !response.ok) {
+	if (!isResponseUsable(response)) {
 		return null;
 	}
-	let json: unknown;
-	try {
-		json = await response.json();
-	} catch {
+	return response;
+}
+
+async function fetchAndParseEndpointsData(
+	response: Response
+): Promise<z.infer<typeof openRouterEndpointsDetailSchema> | null> {
+	const json = await tryReadJson(response);
+	return json === null ? null : parseEndpointsPayload(json);
+}
+
+async function fetchModelEndpointsResolved(
+	modelId: string,
+	parsed: { author: string; slug: string },
+	apiKey: string
+): Promise<{ description?: string; endpoints: z.infer<typeof openRouterEndpointSchema>[] } | null> {
+	const response = await fetchModelEndpointsResponse(modelId, parsed, apiKey);
+	if (!response) {
 		return null;
 	}
-	const parsedJson = openRouterEndpointsResponseSchema.safeParse(json);
-	if (!parsedJson.success) {
-		return null;
-	}
-	const data = parsedJson.data.data;
-	if (!data) {
-		return null;
-	}
-	const endpoints = data.endpoints ?? [];
-	return data.description === undefined
-		? { endpoints }
-		: { description: data.description, endpoints };
+	const data = await fetchAndParseEndpointsData(response);
+	return data ? buildEndpointsResult(data) : null;
+}
+
+async function fetchModelEndpoints(
+	modelId: string,
+	apiKey: string
+): Promise<{ description?: string; endpoints: z.infer<typeof openRouterEndpointSchema>[] } | null> {
+	const parsed = parseModelIdForDetail(modelId);
+	return parsed ? await fetchModelEndpointsResolved(modelId, parsed, apiKey) : null;
 }
 
 /**
@@ -1472,28 +1766,41 @@ async function mapWithConcurrency<T, R>(
  */
 const OPENROUTER_ENRICHMENT_CONCURRENCY = 10;
 
+function applyEndpointDetailToModel(
+	model: OpenRouterScanModel,
+	detail: { description?: string; endpoints: z.infer<typeof openRouterEndpointSchema>[] }
+): OpenRouterScanModel {
+	const description = pickLongerDescription(model.description, detail.description);
+	const { description: _omitted, ...rest } = model;
+	if (description === undefined) {
+		return { ...rest, endpoints: detail.endpoints };
+	}
+	return { ...rest, endpoints: detail.endpoints, description };
+}
+
+async function enrichSingleOpenRouterModel(
+	model: OpenRouterScanModel,
+	apiKey: string
+): Promise<OpenRouterScanModel> {
+	try {
+		const detail = await fetchModelEndpoints(model.id, apiKey);
+		if (!detail) {
+			return model;
+		}
+		return applyEndpointDetailToModel(model, detail);
+	} catch (err) {
+		dbg("llm", `Failed to enrich ${model.id}:`, getErrorMessage(err));
+		return model;
+	}
+}
+
 function enrichOpenRouterModelsWithEndpoints(
 	models: readonly OpenRouterScanModel[],
 	apiKey: string
 ): Promise<OpenRouterScanModel[]> {
-	return mapWithConcurrency(models, OPENROUTER_ENRICHMENT_CONCURRENCY, async (model) => {
-		try {
-			const detail = await fetchModelEndpoints(model.id, apiKey);
-			if (!detail) {
-				return model;
-			}
-			const description = pickLongerDescription(model.description, detail.description);
-			const { description: _omitted, ...rest } = model;
-			const enriched: OpenRouterScanModel =
-				description === undefined
-					? { ...rest, endpoints: detail.endpoints }
-					: { ...rest, endpoints: detail.endpoints, description };
-			return enriched;
-		} catch (err) {
-			dbg("llm", `Failed to enrich ${model.id}:`, getErrorMessage(err));
-			return model;
-		}
-	});
+	return mapWithConcurrency(models, OPENROUTER_ENRICHMENT_CONCURRENCY, (model) =>
+		enrichSingleOpenRouterModel(model, apiKey)
+	);
 }
 
 function parseOpenRouterModelsOrFail(json: unknown): OpenRouterScanResult {
@@ -1546,6 +1853,70 @@ function getCachedCapabilities(endpoint: string, model: string): readonly string
 	return cached.caps;
 }
 
+async function requestOllamaShow(
+	normalizedEndpoint: string,
+	model: string
+): Promise<Response | null> {
+	const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/show"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ model }),
+		signal: AbortSignal.timeout(5000),
+	});
+	if (!response.ok) {
+		dbg("llm", `Ollama /api/show ${model} → HTTP ${response.status}`);
+		return null;
+	}
+	return response;
+}
+
+function parseShowResponseCaps(json: unknown, model: string): readonly string[] | null {
+	const parsed = ollamaShowResponseSchema.safeParse(json);
+	if (!parsed.success) {
+		dbg("llm", `Ollama /api/show ${model} schema mismatch`);
+		return null;
+	}
+	return Object.freeze(parsed.data.capabilities ?? []);
+}
+
+function cacheCapabilities(endpoint: string, model: string, caps: readonly string[]): void {
+	capabilitiesCache.set(capabilitiesCacheKey(endpoint, model), {
+		at: Date.now(),
+		caps,
+	});
+}
+
+async function tryLoadOllamaCapabilitiesOrEmpty(
+	normalizedEndpoint: string,
+	endpoint: string,
+	model: string
+): Promise<readonly string[]> {
+	const response = await requestOllamaShow(normalizedEndpoint, model);
+	if (!response) {
+		return [];
+	}
+	const json: unknown = await response.json();
+	const caps = parseShowResponseCaps(json, model);
+	if (!caps) {
+		return [];
+	}
+	cacheCapabilities(endpoint, model, caps);
+	return caps;
+}
+
+async function loadOllamaCapabilities(
+	normalizedEndpoint: string,
+	endpoint: string,
+	model: string
+): Promise<readonly string[]> {
+	try {
+		return await tryLoadOllamaCapabilitiesOrEmpty(normalizedEndpoint, endpoint, model);
+	} catch (err) {
+		dbg("llm", `Ollama /api/show ${model} failed:`, getErrorMessage(err));
+		return [];
+	}
+}
+
 async function fetchOllamaCapabilities(
 	endpoint: string,
 	model: string
@@ -1558,33 +1929,7 @@ async function fetchOllamaCapabilities(
 	if (!normalizedEndpoint) {
 		return [];
 	}
-	try {
-		const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/show"), {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ model }),
-			signal: AbortSignal.timeout(5000),
-		});
-		if (!response.ok) {
-			dbg("llm", `Ollama /api/show ${model} → HTTP ${response.status}`);
-			return [];
-		}
-		const json: unknown = await response.json();
-		const parsed = ollamaShowResponseSchema.safeParse(json);
-		if (!parsed.success) {
-			dbg("llm", `Ollama /api/show ${model} schema mismatch`);
-			return [];
-		}
-		const caps = Object.freeze(parsed.data.capabilities ?? []);
-		capabilitiesCache.set(capabilitiesCacheKey(endpoint, model), {
-			at: Date.now(),
-			caps,
-		});
-		return caps;
-	} catch (err) {
-		dbg("llm", `Ollama /api/show ${model} failed:`, getErrorMessage(err));
-		return [];
-	}
+	return await loadOllamaCapabilities(normalizedEndpoint, endpoint, model);
 }
 
 async function modelSupportsThinking(endpoint: string, model: string): Promise<boolean> {
@@ -1632,6 +1977,14 @@ export async function scanOllamaModels(endpoint: string): Promise<OllamaScanResu
 	return { ...result, models: enriched };
 }
 
+function buildOllamaDictationMessages(systemPrompt: string, text: string): OllamaChatMessage[] {
+	const userPrompt = `Transform the following text according to the style guide above. Return ONLY the transformed text with no additional commentary, explanations, or JSON formatting. Just the plain transformed text.\n\nText to transform:\n${text}`;
+	return [
+		{ role: "system", content: systemPrompt },
+		{ role: "user", content: userPrompt },
+	];
+}
+
 async function processWithOllama(
 	text: string,
 	model: string,
@@ -1645,12 +1998,7 @@ async function processWithOllama(
 	const normalizedEndpoint = assertValidEndpoint(endpoint);
 
 	const systemPrompt = buildDictationSystemPrompt(presets, context);
-	const userPrompt = `Transform the following text according to the style guide above. Return ONLY the transformed text with no additional commentary, explanations, or JSON formatting. Just the plain transformed text.\n\nText to transform:\n${text}`;
-
-	const messages: OllamaChatMessage[] = [
-		{ role: "system", content: systemPrompt },
-		{ role: "user", content: userPrompt },
-	];
+	const messages = buildOllamaDictationMessages(systemPrompt, text);
 
 	// Client-side timeout DISABLED — local LLMs (Ollama) routinely exceed
 	// 30s on cold start, and a silent abort + original-text paste is
@@ -1662,33 +2010,18 @@ async function processWithOllama(
 	const controller = new AbortController();
 	registerChatController(controller);
 	const supportsThinking = await modelSupportsThinking(normalizedEndpoint, model);
-	const effort = thinkingEffort;
 	try {
-		const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/chat"), {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: buildOllamaChatBody(model, messages, text.length, { supportsThinking, effort }),
-			signal: controller.signal,
-		});
-
-		await assertOllamaResponseOk(response, {
-			endpoint: normalizedEndpoint,
+		return await executeOllamaChatRequest(
+			normalizedEndpoint,
 			model,
-			presets: describePresets(presets),
-		});
-
-		if (!response.body) {
-			dbg("llm", "Ollama chat response had no body; falling back to original text");
-			return text;
-		}
-		const state = await readOllamaChatStream(response.body);
-		return finalizeChatAnswer(state, text);
+			messages,
+			text,
+			{ supportsThinking, effort: thinkingEffort },
+			describePresets(presets),
+			controller
+		);
 	} catch (err) {
-		if (controller.signal.aborted) {
-			dbg("llm", `Ollama chat aborted: ${String(controller.signal.reason ?? "")}`);
-			return text;
-		}
-		throw err;
+		return handleOllamaChatAbort(err, controller, "Ollama chat", text);
 	} finally {
 		unregisterChatController(controller);
 	}
@@ -1738,16 +2071,9 @@ function parseMakerAndName(modelId: string): {
 	return buildMakerName(parts, variant);
 }
 
-export async function scanOpenRouterModels(apiKey: string): Promise<OpenRouterScanResult> {
-	const response = await safeFetch(
-		"https://openrouter.ai/api/v1/models",
-		{
-			method: "GET",
-			headers: buildAuthHeaders(apiKey),
-			signal: AbortSignal.timeout(15_000),
-		},
-		"OpenRouter /models"
-	);
+function openRouterModelsFetchErrorToResult(
+	response: Response | { error: string }
+): OpenRouterScanResult | null {
 	if (isFetchError(response)) {
 		return { models: [], reachable: false, error: response.error };
 	}
@@ -1756,15 +2082,20 @@ export async function scanOpenRouterModels(apiKey: string): Promise<OpenRouterSc
 		dbg("llm", message);
 		return { models: [], reachable: true, error: message };
 	}
-	const json: unknown = await response.json();
-	const baseResult = parseOpenRouterModelsOrFail(json);
-	if (baseResult.error || baseResult.models.length === 0) {
-		return baseResult;
+	return null;
+}
+
+function isOpenRouterResultEnrichable(baseResult: OpenRouterScanResult): boolean {
+	if (baseResult.error) {
+		return false;
 	}
-	// Fan out per-model `/endpoints` fetches in parallel (concurrency capped)
-	// to enrich each model with its infrastructure providers. The provider
-	// rail, per-provider pricing, quantization chips, tool/structured-output
-	// icons, and reasoning chips all read off this enriched data.
+	return baseResult.models.length > 0;
+}
+
+async function safeEnrichOpenRouterResult(
+	baseResult: OpenRouterScanResult,
+	apiKey: string
+): Promise<OpenRouterScanResult> {
 	try {
 		const enriched = await enrichOpenRouterModelsWithEndpoints(baseResult.models, apiKey);
 		return { ...baseResult, models: enriched };
@@ -1777,36 +2108,109 @@ export async function scanOpenRouterModels(apiKey: string): Promise<OpenRouterSc
 	}
 }
 
-async function processWithOpenRouter(
-	text: string,
-	apiKey: string,
-	modelSelection: string,
-	presets: readonly PresetEntry[],
-	_timeout: number,
-	context: string
-): Promise<string> {
+async function tryEnrichOpenRouterResult(
+	baseResult: OpenRouterScanResult,
+	apiKey: string
+): Promise<OpenRouterScanResult> {
+	if (!isOpenRouterResultEnrichable(baseResult)) {
+		return baseResult;
+	}
+	return await safeEnrichOpenRouterResult(baseResult, apiKey);
+}
+
+export async function scanOpenRouterModels(apiKey: string): Promise<OpenRouterScanResult> {
+	const response = await safeFetch(
+		"https://openrouter.ai/api/v1/models",
+		{
+			method: "GET",
+			headers: buildAuthHeaders(apiKey),
+			signal: AbortSignal.timeout(15_000),
+		},
+		"OpenRouter /models"
+	);
+	const errorResult = openRouterModelsFetchErrorToResult(response);
+	if (errorResult) {
+		return errorResult;
+	}
+	const json: unknown = await (response as Response).json();
+	const baseResult = parseOpenRouterModelsOrFail(json);
+	// Fan out per-model `/endpoints` fetches in parallel (concurrency capped)
+	// to enrich each model with its infrastructure providers. The provider
+	// rail, per-provider pricing, quantization chips, tool/structured-output
+	// icons, and reasoning chips all read off this enriched data.
+	return await tryEnrichOpenRouterResult(baseResult, apiKey);
+}
+
+function assertOpenRouterApiKey(apiKey: string): void {
 	if (!apiKey) {
 		throw new ValidationError("OpenRouter API key is required", "apiKey");
 	}
-	const { modelId, providerSlug } = parseModelSelection(modelSelection);
-	const effectiveModelId = resolveOpenRouterModelId(modelId);
+}
 
-	const systemPrompt = buildDictationSystemPrompt(presets, context);
-	const userPrompt = `Transform the following text according to the style guide above. ${STRUCTURED_OUTPUT_DESCRIPTION}\n\nText to transform:\n${text}`;
-
-	const openrouter = createOpenRouter({
+function buildOpenRouterClient(apiKey: string) {
+	return createOpenRouter({
 		apiKey,
 		headers: {
 			"HTTP-Referer": "https://github.com/dahshury/winstt",
 			"X-Title": "WinSTT",
 		},
 	});
+}
 
-	const model = openrouter.chat(effectiveModelId, buildModelOptions(providerSlug));
+function isAcceptableUniqueNoun(value: string, seen: Set<string>): boolean {
+	if (value.length === 0) {
+		return false;
+	}
+	if (value.length > 60) {
+		return false;
+	}
+	return !seen.has(value);
+}
 
-	// Client-side timeout DISABLED — `_timeout` is wired through for
-	// settings compatibility but the model runs to completion.
-	const result = await generateObject({
+function normalizeNounCandidate(raw: unknown): string {
+	if (typeof raw !== "string") {
+		return "";
+	}
+	return raw.trim();
+}
+
+function appendUniqueOpenRouterNoun(
+	cleanedNouns: string[],
+	seen: Set<string>,
+	raw: unknown
+): boolean {
+	const value = normalizeNounCandidate(raw);
+	if (!isAcceptableUniqueNoun(value, seen)) {
+		return false;
+	}
+	seen.add(value);
+	cleanedNouns.push(value);
+	return cleanedNouns.length >= MAX_LEARNED_NOUNS;
+}
+
+function cleanOpenRouterNouns(rawNouns: readonly unknown[]): string[] {
+	const seen = new Set<string>();
+	const cleanedNouns: string[] = [];
+	for (const raw of rawNouns) {
+		if (appendUniqueOpenRouterNoun(cleanedNouns, seen, raw)) {
+			break;
+		}
+	}
+	return cleanedNouns;
+}
+
+const OPENROUTER_DICTATION_PROVIDER_OPTIONS = {
+	openrouter: {
+		plugins: [{ id: "response-healing" }],
+	},
+};
+
+async function runOpenRouterGenerate(
+	model: ReturnType<ReturnType<typeof createOpenRouter>["chat"]>,
+	systemPrompt: string,
+	userPrompt: string
+) {
+	return await generateObject({
 		model,
 		system: systemPrompt,
 		prompt: userPrompt,
@@ -1818,12 +2222,31 @@ async function processWithOpenRouter(
 		// `response-healing` plugin handles this server-side; this fallback
 		// repairs anything that still slips through.
 		experimental_repairText: ({ text: raw }) => Promise.resolve(repairOpenRouterText(raw)),
-		providerOptions: {
-			openrouter: {
-				plugins: [{ id: "response-healing" }],
-			},
-		},
+		providerOptions: OPENROUTER_DICTATION_PROVIDER_OPTIONS,
 	});
+}
+
+async function processWithOpenRouter(
+	text: string,
+	apiKey: string,
+	modelSelection: string,
+	presets: readonly PresetEntry[],
+	_timeout: number,
+	context: string
+): Promise<string> {
+	assertOpenRouterApiKey(apiKey);
+	const { modelId, providerSlug } = parseModelSelection(modelSelection);
+	const effectiveModelId = resolveOpenRouterModelId(modelId);
+
+	const systemPrompt = buildDictationSystemPrompt(presets, context);
+	const userPrompt = `Transform the following text according to the style guide above. ${STRUCTURED_OUTPUT_DESCRIPTION}\n\nText to transform:\n${text}`;
+
+	const openrouter = buildOpenRouterClient(apiKey);
+	const model = openrouter.chat(effectiveModelId, buildModelOptions(providerSlug));
+
+	// Client-side timeout DISABLED — `_timeout` is wired through for
+	// settings compatibility but the model runs to completion.
+	const result = await runOpenRouterGenerate(model, systemPrompt, userPrompt);
 
 	// Surface any proper nouns the model identified — same channel the
 	// Ollama path uses, so the dictionary auto-add UI doesn't care which
@@ -1832,20 +2255,7 @@ async function processWithOpenRouter(
 	// whitespace, occasional dupes) are cheaper to handle here than in
 	// every consumer.
 	const rawNouns = result.object.learned_proper_nouns ?? [];
-	const seen = new Set<string>();
-	const cleanedNouns: string[] = [];
-	for (const raw of rawNouns) {
-		const value = typeof raw === "string" ? raw.trim() : "";
-		if (value.length === 0 || value.length > 60 || seen.has(value)) {
-			continue;
-		}
-		seen.add(value);
-		cleanedNouns.push(value);
-		if (cleanedNouns.length >= 10) {
-			break;
-		}
-	}
-	broadcastLearnedProperNouns(cleanedNouns);
+	broadcastLearnedProperNouns(cleanOpenRouterNouns(rawNouns));
 
 	return returnTextIfEmpty(result.object.text.trim(), text);
 }
@@ -1948,29 +2358,27 @@ interface FeatureLlmConfig {
 	thinkingEffort: ThinkingEffort;
 }
 
-function readFeatureLlmConfig(feature: LlmFeature): FeatureLlmConfig {
-	if (feature === "transforms") {
-		return {
-			provider: getStoreValue("llm.transforms.provider"),
-			model: getStoreValue("llm.transforms.model"),
-			openrouterModel: getStoreValue("llm.transforms.openrouterModel"),
-			openrouterFallbackModel: getStoreValue("llm.transforms.openrouterFallbackModel"),
-			thinkingEffort:
-				(getStoreValue("llm.transforms.thinkingEffort") as ThinkingEffort | undefined) ?? "medium",
-			presets: getStoreValue("llm.transforms.presets") as readonly PresetEntry[],
-			customModifiers: getStoreValue("llm.transforms.customModifiers") as readonly CustomModifier[],
-		};
-	}
+function readFeatureLlmConfigFor(feature: LlmFeature): FeatureLlmConfig {
+	const providerKey = `llm.${feature}.provider` as const;
+	const modelKey = `llm.${feature}.model` as const;
+	const openrouterModelKey = `llm.${feature}.openrouterModel` as const;
+	const openrouterFallbackKey = `llm.${feature}.openrouterFallbackModel` as const;
+	const thinkingEffortKey = `llm.${feature}.thinkingEffort` as const;
+	const presetsKey = `llm.${feature}.presets` as const;
+	const customModifiersKey = `llm.${feature}.customModifiers` as const;
 	return {
-		provider: getStoreValue("llm.dictation.provider"),
-		model: getStoreValue("llm.dictation.model"),
-		openrouterModel: getStoreValue("llm.dictation.openrouterModel"),
-		openrouterFallbackModel: getStoreValue("llm.dictation.openrouterFallbackModel"),
-		thinkingEffort:
-			(getStoreValue("llm.dictation.thinkingEffort") as ThinkingEffort | undefined) ?? "medium",
-		presets: getStoreValue("llm.dictation.presets") as readonly PresetEntry[],
-		customModifiers: getStoreValue("llm.dictation.customModifiers") as readonly CustomModifier[],
+		provider: getStoreValue(providerKey),
+		model: getStoreValue(modelKey),
+		openrouterModel: getStoreValue(openrouterModelKey),
+		openrouterFallbackModel: getStoreValue(openrouterFallbackKey),
+		thinkingEffort: (getStoreValue(thinkingEffortKey) as ThinkingEffort | undefined) ?? "medium",
+		presets: getStoreValue(presetsKey) as readonly PresetEntry[],
+		customModifiers: getStoreValue(customModifiersKey) as readonly CustomModifier[],
 	};
+}
+
+function readFeatureLlmConfig(feature: LlmFeature): FeatureLlmConfig {
+	return readFeatureLlmConfigFor(feature);
 }
 
 function runOpenRouterPath(
@@ -2079,6 +2487,61 @@ export async function processText(
 // error mapping and structured output (OpenRouter) behave identically.
 // Neither path imposes a client-side timeout — the LLM runs to completion.
 
+function buildOllamaCustomMessages(systemPrompt: string, text: string): OllamaChatMessage[] {
+	const userPrompt = `Apply the system instructions above to the following text. Return ONLY the transformed text with no commentary, explanations, or JSON formatting.\n\nText:\n${text}`;
+	return [
+		{ role: "system", content: systemPrompt },
+		{ role: "user", content: userPrompt },
+	];
+}
+
+function readTransformsThinkingEffort(): ThinkingEffort {
+	return (getStoreValue("llm.transforms.thinkingEffort") as ThinkingEffort | undefined) ?? "medium";
+}
+
+async function executeOllamaChatRequest(
+	normalizedEndpoint: string,
+	model: string,
+	messages: OllamaChatMessage[],
+	text: string,
+	options: { supportsThinking: boolean; effort: ThinkingEffort },
+	presetsLabel: string,
+	controller: AbortController
+): Promise<string> {
+	const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/chat"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: buildOllamaChatBody(model, messages, text.length, options),
+		signal: controller.signal,
+	});
+
+	await assertOllamaResponseOk(response, {
+		endpoint: normalizedEndpoint,
+		model,
+		presets: presetsLabel,
+	});
+
+	if (!response.body) {
+		dbg("llm", "Ollama custom chat response had no body; falling back to original text");
+		return text;
+	}
+	const state = await readOllamaChatStream(response.body);
+	return finalizeChatAnswer(state, text);
+}
+
+function handleOllamaChatAbort(
+	err: unknown,
+	controller: AbortController,
+	label: string,
+	fallbackText: string
+): string {
+	if (controller.signal.aborted) {
+		dbg("llm", `${label} aborted: ${String(controller.signal.reason ?? "")}`);
+		return fallbackText;
+	}
+	throw err;
+}
+
 async function processWithOllamaCustom(
 	text: string,
 	model: string,
@@ -2089,11 +2552,7 @@ async function processWithOllamaCustom(
 	assertNonEmptyString(model, "Ollama model is required", "model");
 	const normalizedEndpoint = assertValidEndpoint(endpoint);
 
-	const userPrompt = `Apply the system instructions above to the following text. Return ONLY the transformed text with no commentary, explanations, or JSON formatting.\n\nText:\n${text}`;
-	const messages: OllamaChatMessage[] = [
-		{ role: "system", content: systemPrompt },
-		{ role: "user", content: userPrompt },
-	];
+	const messages = buildOllamaCustomMessages(systemPrompt, text);
 
 	// Client-side timeout DISABLED (see processWithOllama for rationale).
 	// `_timeout` is wired through for settings/test compatibility.
@@ -2101,34 +2560,19 @@ async function processWithOllamaCustom(
 	const controller = new AbortController();
 	registerChatController(controller);
 	const supportsThinking = await modelSupportsThinking(normalizedEndpoint, model);
-	const effort =
-		(getStoreValue("llm.transforms.thinkingEffort") as ThinkingEffort | undefined) ?? "medium";
+	const effort = readTransformsThinkingEffort();
 	try {
-		const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/chat"), {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: buildOllamaChatBody(model, messages, text.length, { supportsThinking, effort }),
-			signal: controller.signal,
-		});
-
-		await assertOllamaResponseOk(response, {
-			endpoint: normalizedEndpoint,
+		return await executeOllamaChatRequest(
+			normalizedEndpoint,
 			model,
-			presets: "custom",
-		});
-
-		if (!response.body) {
-			dbg("llm", "Ollama custom chat response had no body; falling back to original text");
-			return text;
-		}
-		const state = await readOllamaChatStream(response.body);
-		return finalizeChatAnswer(state, text);
+			messages,
+			text,
+			{ supportsThinking, effort },
+			"custom",
+			controller
+		);
 	} catch (err) {
-		if (controller.signal.aborted) {
-			dbg("llm", `Ollama custom chat aborted: ${String(controller.signal.reason ?? "")}`);
-			return text;
-		}
-		throw err;
+		return handleOllamaChatAbort(err, controller, "Ollama custom chat", text);
 	} finally {
 		unregisterChatController(controller);
 	}
@@ -2954,31 +3398,34 @@ let lastAutoStartAttemptMs = 0;
  * false otherwise. Callers should skip Ollama work when false — there's
  * nothing useful to do.
  */
-async function ensureOllamaReachable(endpoint: string): Promise<boolean> {
-	if (await pingOllama(endpoint)) {
-		return true;
-	}
-	if (!isLoopbackEndpoint(endpoint)) {
-		dbg("llm", `Ollama unreachable at ${endpoint}; remote endpoint — cannot auto-start`);
-		return false;
-	}
-	const now = Date.now();
-	if (now - lastAutoStartAttemptMs < OLLAMA_AUTO_START_THROTTLE_MS) {
-		dbg("llm", "Ollama unreachable; auto-start throttled (recent attempt)");
-		return false;
-	}
-	lastAutoStartAttemptMs = now;
+function isAutoStartThrottled(now: number): boolean {
+	return now - lastAutoStartAttemptMs < OLLAMA_AUTO_START_THROTTLE_MS;
+}
+
+async function ensureOllamaInstalled(): Promise<boolean> {
 	const detected = await detectOllama();
 	if (isOllamaUnavailable(detected)) {
 		dbg("llm", "Ollama unreachable and not installed — dictation will be skipped");
 		return false;
 	}
+	return true;
+}
+
+function describeStartFailure(error: string | undefined): string {
+	return error ?? "unknown";
+}
+
+async function spawnOllamaOrLog(): Promise<boolean> {
 	dbg("llm", "Ollama unreachable — attempting auto-start");
 	const result = await startOllama();
 	if (!result.started) {
-		dbg("llm", `Ollama auto-start failed: ${result.error ?? "unknown"}`);
+		dbg("llm", `Ollama auto-start failed: ${describeStartFailure(result.error)}`);
 		return false;
 	}
+	return true;
+}
+
+async function waitForOllamaOrLog(endpoint: string): Promise<boolean> {
 	const up = await waitForOllama(endpoint, OLLAMA_BOOT_WAIT_MS);
 	if (!up) {
 		dbg("llm", `Ollama auto-started but didn't bind within ${OLLAMA_BOOT_WAIT_MS}ms`);
@@ -2986,6 +3433,55 @@ async function ensureOllamaReachable(endpoint: string): Promise<boolean> {
 	}
 	dbg("llm", "Ollama auto-start succeeded");
 	return true;
+}
+
+async function tryAutoStartAndWait(endpoint: string): Promise<boolean> {
+	if (!(await ensureOllamaInstalled())) {
+		return false;
+	}
+	if (!(await spawnOllamaOrLog())) {
+		return false;
+	}
+	return await waitForOllamaOrLog(endpoint);
+}
+
+function isRemoteEndpointBail(endpoint: string): boolean {
+	if (isLoopbackEndpoint(endpoint)) {
+		return false;
+	}
+	dbg("llm", `Ollama unreachable at ${endpoint}; remote endpoint — cannot auto-start`);
+	return true;
+}
+
+function isThrottledBail(now: number): boolean {
+	if (!isAutoStartThrottled(now)) {
+		return false;
+	}
+	dbg("llm", "Ollama unreachable; auto-start throttled (recent attempt)");
+	return true;
+}
+
+async function tryStartIfNotThrottled(endpoint: string): Promise<boolean> {
+	const now = Date.now();
+	if (isThrottledBail(now)) {
+		return false;
+	}
+	lastAutoStartAttemptMs = now;
+	return await tryAutoStartAndWait(endpoint);
+}
+
+async function ensureOllamaReachableUnpinged(endpoint: string): Promise<boolean> {
+	if (isRemoteEndpointBail(endpoint)) {
+		return false;
+	}
+	return await tryStartIfNotThrottled(endpoint);
+}
+
+async function ensureOllamaReachable(endpoint: string): Promise<boolean> {
+	if (await pingOllama(endpoint)) {
+		return true;
+	}
+	return await ensureOllamaReachableUnpinged(endpoint);
 }
 
 /**
@@ -3029,7 +3525,58 @@ interface WarmupModelResult {
 	outcome: WarmupOutcome;
 }
 
-async function warmupOllamaModel(endpoint: string, model: string): Promise<WarmupModelResult> {
+function logWarmupFailure(
+	outcome: WarmupOutcome,
+	model: string,
+	status: number,
+	body: string
+): void {
+	if (outcome === "model-not-found") {
+		dbg(
+			"llm",
+			`Ollama warmup: model "${model}" not installed — pull it from the Ollama panel. ${body}`
+		);
+		return;
+	}
+	dbg(
+		"llm",
+		`Ollama warmup: model "${model}" failed to load (HTTP ${status}) — file may be corrupted, incompatible, or out of memory. ${body}`
+	);
+}
+
+async function performWarmupRequest(
+	normalizedEndpoint: string,
+	model: string
+): Promise<WarmupModelResult> {
+	// /api/generate with empty prompt loads the model into VRAM/RAM
+	// without producing output. Cheaper than a real chat round-trip.
+	const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/generate"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			model,
+			prompt: "",
+			stream: false,
+			keep_alive: OLLAMA_KEEP_ALIVE,
+		}),
+		// Generous timeout — a cold model load can easily take 30s+ on first
+		// run. Bail at 2 min so a hung Ollama doesn't pin a forever-running
+		// fetch on the warmup interval.
+		signal: AbortSignal.timeout(120_000),
+	});
+	if (!response.ok) {
+		const body = await readErrorText(response);
+		const outcome = classifyWarmupResponse(response.status);
+		logWarmupFailure(outcome, model, response.status, body);
+		return { model, outcome, errorBody: body };
+	}
+	// Drain the body so the socket can be reused.
+	await response.json().catch(() => undefined);
+	dbg("llm", `Ollama warmup OK: ${model}`);
+	return { model, outcome: "ok" };
+}
+
+function resolveWarmupEndpointOrSkip(endpoint: string, model: string): string | WarmupModelResult {
 	if (!model) {
 		return { model, outcome: "skipped" };
 	}
@@ -3037,43 +3584,16 @@ async function warmupOllamaModel(endpoint: string, model: string): Promise<Warmu
 	if (!normalizedEndpoint) {
 		return { model, outcome: "skipped" };
 	}
+	return normalizedEndpoint;
+}
+
+async function warmupOllamaModel(endpoint: string, model: string): Promise<WarmupModelResult> {
+	const resolved = resolveWarmupEndpointOrSkip(endpoint, model);
+	if (typeof resolved !== "string") {
+		return resolved;
+	}
 	try {
-		// /api/generate with empty prompt loads the model into VRAM/RAM
-		// without producing output. Cheaper than a real chat round-trip.
-		const response = await fetch(buildOllamaApiUrl(normalizedEndpoint, "/api/generate"), {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				model,
-				prompt: "",
-				stream: false,
-				keep_alive: OLLAMA_KEEP_ALIVE,
-			}),
-			// Generous timeout — a cold model load can easily take 30s+ on first
-			// run. Bail at 2 min so a hung Ollama doesn't pin a forever-running
-			// fetch on the warmup interval.
-			signal: AbortSignal.timeout(120_000),
-		});
-		if (!response.ok) {
-			const body = await readErrorText(response);
-			const outcome = classifyWarmupResponse(response.status);
-			if (outcome === "model-not-found") {
-				dbg(
-					"llm",
-					`Ollama warmup: model "${model}" not installed — pull it from the Ollama panel. ${body}`
-				);
-			} else {
-				dbg(
-					"llm",
-					`Ollama warmup: model "${model}" failed to load (HTTP ${response.status}) — file may be corrupted, incompatible, or out of memory. ${body}`
-				);
-			}
-			return { model, outcome, errorBody: body };
-		}
-		// Drain the body so the socket can be reused.
-		await response.json().catch(() => undefined);
-		dbg("llm", `Ollama warmup OK: ${model}`);
-		return { model, outcome: "ok" };
+		return await performWarmupRequest(resolved, model);
 	} catch (err) {
 		const message = getErrorMessage(err);
 		dbg("llm", `Ollama warmup failed for ${model}:`, message);
@@ -3081,26 +3601,34 @@ async function warmupOllamaModel(endpoint: string, model: string): Promise<Warmu
 	}
 }
 
+function isOllamaFeatureActive(feature: LlmFeature): boolean {
+	const enabledKey = `llm.${feature}.enabled` as const;
+	const providerKey = `llm.${feature}.provider` as const;
+	if (getStoreValue(enabledKey) !== true) {
+		return false;
+	}
+	return getStoreValue(providerKey) === "ollama";
+}
+
+function getOllamaModelForFeature(feature: LlmFeature): string {
+	const modelKey = `llm.${feature}.model` as const;
+	return getStoreValue(modelKey);
+}
+
+function addEnabledOllamaModel(out: Set<string>, feature: LlmFeature): void {
+	if (!isOllamaFeatureActive(feature)) {
+		return;
+	}
+	const model = getOllamaModelForFeature(feature);
+	if (model) {
+		out.add(model);
+	}
+}
+
 function collectEnabledOllamaModels(): string[] {
 	const out = new Set<string>();
-	if (
-		getStoreValue("llm.dictation.enabled") === true &&
-		getStoreValue("llm.dictation.provider") === "ollama"
-	) {
-		const model = getStoreValue("llm.dictation.model");
-		if (model) {
-			out.add(model);
-		}
-	}
-	if (
-		getStoreValue("llm.transforms.enabled") === true &&
-		getStoreValue("llm.transforms.provider") === "ollama"
-	) {
-		const model = getStoreValue("llm.transforms.model");
-		if (model) {
-			out.add(model);
-		}
-	}
+	addEnabledOllamaModel(out, "dictation");
+	addEnabledOllamaModel(out, "transforms");
 	return Array.from(out);
 }
 
@@ -3265,6 +3793,23 @@ let warmupDebounceTimer: ReturnType<typeof setTimeout> | null = null;
  */
 let lastWarmupSignature: string | null = null;
 
+interface WarmupFeatureSignature {
+	enabled: boolean;
+	model: string;
+	provider: string;
+}
+
+function readWarmupFeatureSignature(feature: LlmFeature): WarmupFeatureSignature {
+	const enabledKey = `llm.${feature}.enabled` as const;
+	const providerKey = `llm.${feature}.provider` as const;
+	const modelKey = `llm.${feature}.model` as const;
+	return {
+		enabled: getStoreValue(enabledKey) === true,
+		provider: getStoreValue(providerKey) ?? "",
+		model: getStoreValue(modelKey) ?? "",
+	};
+}
+
 function computeWarmupSignature(): string {
 	// Stable JSON ordering — these are the inputs to `collectEnabledOllamaModels`
 	// plus the endpoint that `warmupOllamaModel` POSTs to. Anything outside this
@@ -3272,16 +3817,8 @@ function computeWarmupSignature(): string {
 	// up, so a save that only touches those keys is correctly a no-op.
 	return JSON.stringify({
 		endpoint: getStoreValue("llm.endpoint") ?? "",
-		dictation: {
-			enabled: getStoreValue("llm.dictation.enabled") === true,
-			provider: getStoreValue("llm.dictation.provider") ?? "",
-			model: getStoreValue("llm.dictation.model") ?? "",
-		},
-		transforms: {
-			enabled: getStoreValue("llm.transforms.enabled") === true,
-			provider: getStoreValue("llm.transforms.provider") ?? "",
-			model: getStoreValue("llm.transforms.model") ?? "",
-		},
+		dictation: readWarmupFeatureSignature("dictation"),
+		transforms: readWarmupFeatureSignature("transforms"),
 	});
 }
 
@@ -3333,19 +3870,31 @@ export function setupLlmWarmup(): () => void {
 	return cleanupLlmWarmup;
 }
 
-function cleanupLlmWarmup(): void {
+function clearWarmupInterval(): void {
 	if (warmupInterval) {
 		clearInterval(warmupInterval);
 		warmupInterval = null;
 	}
+}
+
+function clearWarmupStoreUnsub(): void {
 	if (warmupStoreUnsub) {
 		warmupStoreUnsub();
 		warmupStoreUnsub = null;
 	}
+}
+
+function clearWarmupDebounceTimer(): void {
 	if (warmupDebounceTimer) {
 		clearTimeout(warmupDebounceTimer);
 		warmupDebounceTimer = null;
 	}
+}
+
+function cleanupLlmWarmup(): void {
+	clearWarmupInterval();
+	clearWarmupStoreUnsub();
+	clearWarmupDebounceTimer();
 	lastWarmupSignature = null;
 }
 

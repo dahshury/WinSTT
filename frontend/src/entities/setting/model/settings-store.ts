@@ -4,6 +4,29 @@ import { type AppSettingsOutput, appSettingsSchema } from "@/shared/config/setti
 
 const DEFAULTS: AppSettingsOutput = appSettingsSchema.parse({});
 
+type Integrations = AppSettingsOutput["integrations"];
+interface IntegrationPatch {
+	elevenlabs?: Partial<Integrations["elevenlabs"]>;
+	openai?: Partial<Integrations["openai"]>;
+}
+
+/**
+ * Shallow-merge each provider patch into the current integrations record.
+ * Pulled out of the store callback so the closure stays CC ≤ 1 (the
+ * per-provider conditional spread inflated the closure's complexity
+ * past the CRAP threshold).
+ *
+ * Spreading `undefined` is a no-op in ES, so we don't need a guard.
+ */
+function mergeIntegrations(settings: AppSettingsOutput, patch: IntegrationPatch): Integrations {
+	const current = settings.integrations;
+	return {
+		...current,
+		openai: { ...current.openai, ...patch.openai },
+		elevenlabs: { ...current.elevenlabs, ...patch.elevenlabs },
+	};
+}
+
 interface SettingsState {
 	isLoaded: boolean;
 	resetSettings: () => void;
@@ -127,23 +150,7 @@ export const useSettingsStore = create<SettingsState>()(
 				})),
 			updateIntegrations: (patch) =>
 				set((state) => ({
-					settings: {
-						...state.settings,
-						integrations: {
-							...state.settings.integrations,
-							...(patch.openai
-								? { openai: { ...state.settings.integrations.openai, ...patch.openai } }
-								: {}),
-							...(patch.elevenlabs
-								? {
-										elevenlabs: {
-											...state.settings.integrations.elevenlabs,
-											...patch.elevenlabs,
-										},
-									}
-								: {}),
-						},
-					},
+					settings: { ...state.settings, integrations: mergeIntegrations(state.settings, patch) },
 				})),
 			resetSettings: () =>
 				set((state) => ({

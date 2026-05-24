@@ -40,33 +40,48 @@ const BYTES_PER_PARAM_BY_QUANT: Record<string, number> = {
 
 const GPU_COMPATIBLE_QUANTIZATIONS: ReadonlySet<string> = new Set(["", "fp32", "fp16"]);
 
+interface LoadedSlots {
+	mainId: string | null;
+	mainQuant: string;
+	realtimeId: string | null;
+	realtimeQuant: string;
+}
+
+interface SlotEntry {
+	id: string | null;
+	quant: string;
+}
+
+function slotsOf(loaded: LoadedSlots): readonly SlotEntry[] {
+	return [
+		{ id: loaded.mainId, quant: loaded.mainQuant },
+		{ id: loaded.realtimeId, quant: loaded.realtimeQuant },
+	];
+}
+
+function slotBytes(
+	slot: SlotEntry,
+	statesById: Record<string, ModelStateEntry>,
+	excludeId: string | null
+): number {
+	if (!slot.id || slot.id === excludeId) {
+		return 0;
+	}
+	const entry = statesById[slot.id];
+	if (!entry || entry.estimated_bytes <= 0) {
+		return 0;
+	}
+	return estimateForQuant(entry.estimated_bytes, slot.quant);
+}
+
 /** Sum of currently-loaded dictation footprints, excluding ``excludeId``
  * when the candidate is replacing an already-loaded slot. */
 export function loadedDictationFootprint(
 	statesById: Record<string, ModelStateEntry>,
-	loaded: {
-		mainId: string | null;
-		mainQuant: string;
-		realtimeId: string | null;
-		realtimeQuant: string;
-	},
+	loaded: LoadedSlots,
 	excludeId: string | null
 ): number {
-	let total = 0;
-	for (const { id, quant } of [
-		{ id: loaded.mainId, quant: loaded.mainQuant },
-		{ id: loaded.realtimeId, quant: loaded.realtimeQuant },
-	]) {
-		if (!id || id === excludeId) {
-			continue;
-		}
-		const entry = statesById[id];
-		if (!entry || entry.estimated_bytes <= 0) {
-			continue;
-		}
-		total += estimateForQuant(entry.estimated_bytes, quant);
-	}
-	return total;
+	return slotsOf(loaded).reduce((total, slot) => total + slotBytes(slot, statesById, excludeId), 0);
 }
 
 // fp32 is the reference baseline; "" maps to it. Captured as a constant so
@@ -84,24 +99,33 @@ function estimateForQuant(estimatedBytes: number, quant: string): number {
 	return Math.round(estimatedBytes * (factor / BYTES_PER_PARAM_BASELINE));
 }
 
+function hasNoHardware(live: LiveResourcesEntry): boolean {
+	return live.ram_total_bytes <= 0 && live.gpus.length === 0;
+}
+
+function canUseGpu(quantization: string, live: LiveResourcesEntry): boolean {
+	return live.gpus.length > 0 && GPU_COMPATIBLE_QUANTIZATIONS.has(quantization);
+}
+
 function predictedTarget(
 	quantization: string,
 	live: LiveResourcesEntry,
 	requestedDevice: string | null
 ): FitTarget {
-	if (live.ram_total_bytes <= 0 && live.gpus.length === 0) {
+	if (hasNoHardware(live)) {
 		return "neither";
 	}
 	if (requestedDevice === "cpu") {
 		return "cpu";
 	}
-	if (live.gpus.length === 0) {
-		return "cpu";
-	}
-	if (!GPU_COMPATIBLE_QUANTIZATIONS.has(quantization)) {
-		return "cpu";
-	}
-	return "gpu";
+	return canUseGpu(quantization, live) ? "gpu" : "cpu";
+}
+
+function pickBiggerGpu(
+	a: LiveResourcesEntry["gpus"][number],
+	b: LiveResourcesEntry["gpus"][number]
+): LiveResourcesEntry["gpus"][number] {
+	return b.total_vram_bytes > a.total_vram_bytes ? b : a;
 }
 
 function largestGpu(live: LiveResourcesEntry): { total: number; free: number } {
@@ -109,59 +133,60 @@ function largestGpu(live: LiveResourcesEntry): { total: number; free: number } {
 	if (!first) {
 		return { total: 0, free: 0 };
 	}
-	let biggest = first;
-	for (const gpu of live.gpus) {
-		if (gpu.total_vram_bytes > biggest.total_vram_bytes) {
-			biggest = gpu;
-		}
-	}
+	const biggest = live.gpus.reduce(pickBiggerGpu, first);
 	return { total: biggest.total_vram_bytes, free: biggest.free_vram_bytes };
 }
 
+function isCriticalFit(required: number, available: number): boolean {
+	return available <= 0 || required > available;
+}
+
 function severityFor(required: number, available: number): FitSeverity {
-	if (available <= 0) {
+	if (isCriticalFit(required, available)) {
 		return "critical";
 	}
-	if (required > available) {
-		return "critical";
-	}
-	if (required > available * WARNING_THRESHOLD) {
-		return "warning";
-	}
-	return "ok";
+	return required > available * WARNING_THRESHOLD ? "warning" : "ok";
 }
 
 interface AssessContext {
 	candidateQuant: string;
 	live: LiveResourcesEntry;
-	loaded: {
-		mainId: string | null;
-		mainQuant: string;
-		realtimeId: string | null;
-		realtimeQuant: string;
-	};
+	loaded: LoadedSlots;
 	requestedDevice: string | null;
 	statesById: Record<string, ModelStateEntry>;
 }
 
+const VRAM_REASON_BY_SEVERITY: Record<FitSeverity, FitReason> = {
+	critical: "exceeds_vram",
+	warning: "tight_vram",
+	ok: "ok",
+};
+
+const RAM_REASON_BY_SEVERITY: Record<FitSeverity, FitReason> = {
+	critical: "exceeds_ram",
+	warning: "tight_ram",
+	ok: "ok",
+};
+
 function vramReasonFor(severity: FitSeverity): FitReason {
-	if (severity === "critical") {
-		return "exceeds_vram";
-	}
-	if (severity === "warning") {
-		return "tight_vram";
-	}
-	return "ok";
+	return VRAM_REASON_BY_SEVERITY[severity];
 }
 
 function ramReasonFor(severity: FitSeverity): FitReason {
-	if (severity === "critical") {
-		return "exceeds_ram";
+	return RAM_REASON_BY_SEVERITY[severity];
+}
+
+function gpuAvailableBytes(total: number, free: number): number {
+	if (free > 0) {
+		return free;
 	}
-	if (severity === "warning") {
-		return "tight_ram";
+	return total;
+}
+
+function pushIfPositive(reasons: FitReason[], value: number, reason: FitReason): void {
+	if (value > 0) {
+		reasons.push(reason);
 	}
-	return "ok";
 }
 
 function assessGpuFit(
@@ -171,16 +196,18 @@ function assessGpuFit(
 	reasons: FitReason[]
 ): FitAssessmentEntry {
 	const { total, free } = largestGpu(live);
-	let available = free;
-	if (loadedOther > 0) {
-		reasons.push("stt_already_uses_gpu");
-	}
-	if (available <= 0 && total > 0) {
-		available = total;
-	}
+	const available = gpuAvailableBytes(total, free);
+	pushIfPositive(reasons, loadedOther, "stt_already_uses_gpu");
 	const severity = severityFor(required, available);
 	reasons.push(vramReasonFor(severity));
 	return { severity, target: "gpu", required_bytes: required, available_bytes: available, reasons };
+}
+
+function cpuBudgetBytes(live: LiveResourcesEntry, loadedOther: number): number {
+	const usableTotal = Math.floor(live.ram_total_bytes * RAM_USABLE_FRACTION);
+	const liveAvail = live.ram_available_bytes;
+	const budget = liveAvail > 0 ? Math.min(liveAvail, usableTotal) : usableTotal;
+	return Math.max(0, budget - loadedOther);
 }
 
 function assessCpuFit(
@@ -189,16 +216,77 @@ function assessCpuFit(
 	live: LiveResourcesEntry,
 	reasons: FitReason[]
 ): FitAssessmentEntry {
-	const usableTotal = Math.floor(live.ram_total_bytes * RAM_USABLE_FRACTION);
-	const liveAvail = live.ram_available_bytes;
-	const budget = liveAvail > 0 ? Math.min(liveAvail, usableTotal) : usableTotal;
-	const available = Math.max(0, budget - loadedOther);
-	if (loadedOther > 0) {
-		reasons.push("stt_already_uses_ram");
-	}
+	const available = cpuBudgetBytes(live, loadedOther);
+	pushIfPositive(reasons, loadedOther, "stt_already_uses_ram");
 	const severity = severityFor(required, available);
 	reasons.push(ramReasonFor(severity));
 	return { severity, target: "cpu", required_bytes: required, available_bytes: available, reasons };
+}
+
+function neitherFit(required: number): FitAssessmentEntry {
+	return {
+		severity: "critical",
+		target: "neither",
+		required_bytes: required,
+		available_bytes: 0,
+		reasons: ["exceeds_ram"],
+	};
+}
+
+function unknownFootprintFit(target: FitTarget): FitAssessmentEntry {
+	return {
+		severity: "ok",
+		target,
+		required_bytes: 0,
+		available_bytes: 0,
+		reasons: ["unknown_footprint"],
+	};
+}
+
+function gpuMismatchReason(quant: string, live: LiveResourcesEntry): FitReason | null {
+	if (live.gpus.length > 0 && !GPU_COMPATIBLE_QUANTIZATIONS.has(quant)) {
+		return "requires_cpu_quant";
+	}
+	return null;
+}
+
+function missingGpuReason(
+	live: LiveResourcesEntry,
+	requestedDevice: string | null
+): FitReason | null {
+	if (live.gpus.length === 0 && requestedDevice !== "cpu") {
+		return "no_gpu_available";
+	}
+	return null;
+}
+
+function pushIfPresent<T>(arr: T[], value: T | null): void {
+	if (value !== null) {
+		arr.push(value);
+	}
+}
+
+function collectDictationReasons(ctx: AssessContext): FitReason[] {
+	const reasons: FitReason[] = [];
+	pushIfPresent(reasons, gpuMismatchReason(ctx.candidateQuant, ctx.live));
+	pushIfPresent(reasons, missingGpuReason(ctx.live, ctx.requestedDevice));
+	return reasons;
+}
+
+function dispatchFit(
+	target: FitTarget,
+	required: number,
+	loadedOther: number,
+	live: LiveResourcesEntry,
+	reasons: FitReason[]
+): FitAssessmentEntry {
+	if (target === "gpu") {
+		return assessGpuFit(required, loadedOther, live, reasons);
+	}
+	if (target === "cpu") {
+		return assessCpuFit(required, loadedOther, live, reasons);
+	}
+	return neitherFit(required);
 }
 
 /** Pure client-side mirror of ``assess_dictation_fit`` for instant
@@ -210,109 +298,106 @@ export function assessDictationFitClient(
 ): FitAssessmentEntry {
 	const entry = ctx.statesById[candidateId];
 	if (!entry || entry.estimated_bytes <= 0) {
-		return {
-			severity: "ok",
-			target: predictedTarget(ctx.candidateQuant, ctx.live, ctx.requestedDevice),
-			required_bytes: 0,
-			available_bytes: 0,
-			reasons: ["unknown_footprint"],
-		};
+		return unknownFootprintFit(predictedTarget(ctx.candidateQuant, ctx.live, ctx.requestedDevice));
 	}
 	const required = estimateForQuant(entry.estimated_bytes, ctx.candidateQuant);
 	const target = predictedTarget(ctx.candidateQuant, ctx.live, ctx.requestedDevice);
-	const reasons: FitReason[] = [];
-
-	if (ctx.live.gpus.length > 0 && !GPU_COMPATIBLE_QUANTIZATIONS.has(ctx.candidateQuant)) {
-		reasons.push("requires_cpu_quant");
-	}
-	if (ctx.live.gpus.length === 0 && ctx.requestedDevice !== "cpu") {
-		reasons.push("no_gpu_available");
-	}
-
+	const reasons = collectDictationReasons(ctx);
 	const loadedOther = loadedDictationFootprint(ctx.statesById, ctx.loaded, candidateId);
+	return dispatchFit(target, required, loadedOther, ctx.live, reasons);
+}
 
-	if (target === "gpu") {
-		return assessGpuFit(required, loadedOther, ctx.live, reasons);
-	}
+type OllamaCtx = Omit<AssessContext, "candidateQuant" | "requestedDevice">;
 
-	if (target === "cpu") {
-		return assessCpuFit(required, loadedOther, ctx.live, reasons);
-	}
+function ollamaRequiredBytes(sizeBytes: number): number {
+	return Math.round(sizeBytes * OLLAMA_SIZE_HEADROOM_FACTOR) + OLLAMA_OVERHEAD_BYTES;
+}
 
+function ollamaUnknownFootprint(): FitAssessmentEntry {
 	return {
-		severity: "critical",
+		severity: "ok",
 		target: "neither",
-		required_bytes: required,
+		required_bytes: 0,
 		available_bytes: 0,
-		reasons: ["exceeds_ram"],
+		reasons: ["unknown_footprint"],
+	};
+}
+
+function ollamaGpuSeverity(required: number, available: number): FitSeverity {
+	if (required > available) {
+		return "critical";
+	}
+	return required > available * WARNING_THRESHOLD ? "warning" : "ok";
+}
+
+const OLLAMA_GPU_REASON_BY_SEVERITY: Record<FitSeverity, FitReason> = {
+	critical: "exceeds_vram",
+	warning: "tight_vram",
+	ok: "ok",
+};
+
+const OLLAMA_GPU_TARGET_BY_SEVERITY: Record<FitSeverity, FitTarget> = {
+	critical: "neither",
+	warning: "gpu",
+	ok: "gpu",
+};
+
+function assessOllamaGpu(
+	required: number,
+	loadedOther: number,
+	live: LiveResourcesEntry
+): FitAssessmentEntry {
+	const { total, free } = largestGpu(live);
+	const available = gpuAvailableBytes(total, free);
+	const reasons: FitReason[] = [];
+	pushIfPositive(reasons, loadedOther, "stt_already_uses_gpu");
+	const severity = ollamaGpuSeverity(required, available);
+	reasons.push(OLLAMA_GPU_REASON_BY_SEVERITY[severity]);
+	return {
+		severity,
+		target: OLLAMA_GPU_TARGET_BY_SEVERITY[severity],
+		required_bytes: required,
+		available_bytes: available,
+		reasons,
+	};
+}
+
+const OLLAMA_CPU_TARGET_BY_SEVERITY: Record<FitSeverity, FitTarget> = {
+	critical: "neither",
+	warning: "cpu",
+	ok: "cpu",
+};
+
+function assessOllamaCpu(
+	required: number,
+	loadedOther: number,
+	live: LiveResourcesEntry
+): FitAssessmentEntry {
+	const available = cpuBudgetBytes(live, loadedOther);
+	const reasons: FitReason[] = [];
+	pushIfPositive(reasons, loadedOther, "stt_already_uses_ram");
+	const severity = severityFor(required, available);
+	reasons.push(ramReasonFor(severity));
+	return {
+		severity,
+		target: OLLAMA_CPU_TARGET_BY_SEVERITY[severity],
+		required_bytes: required,
+		available_bytes: available,
+		reasons,
 	};
 }
 
 /** Client-side mirror of ``assess_ollama_fit``. */
-export function assessOllamaFitClient(
-	sizeBytes: number,
-	ctx: Omit<AssessContext, "candidateQuant" | "requestedDevice">
-): FitAssessmentEntry {
+export function assessOllamaFitClient(sizeBytes: number, ctx: OllamaCtx): FitAssessmentEntry {
 	if (sizeBytes <= 0) {
-		return {
-			severity: "ok",
-			target: "neither",
-			required_bytes: 0,
-			available_bytes: 0,
-			reasons: ["unknown_footprint"],
-		};
+		return ollamaUnknownFootprint();
 	}
-	const required = Math.round(sizeBytes * OLLAMA_SIZE_HEADROOM_FACTOR) + OLLAMA_OVERHEAD_BYTES;
+	const required = ollamaRequiredBytes(sizeBytes);
 	const loadedOther = loadedDictationFootprint(ctx.statesById, ctx.loaded, null);
-	const reasons: FitReason[] = [];
-
 	if (ctx.live.gpus.length > 0) {
-		const { total, free } = largestGpu(ctx.live);
-		const available = free > 0 ? free : total;
-		if (loadedOther > 0) {
-			reasons.push("stt_already_uses_gpu");
-		}
-		if (required <= available) {
-			const severity: FitSeverity = required > available * WARNING_THRESHOLD ? "warning" : "ok";
-			reasons.push(severity === "warning" ? "tight_vram" : "ok");
-			return {
-				severity,
-				target: "gpu",
-				required_bytes: required,
-				available_bytes: available,
-				reasons,
-			};
-		}
-		reasons.push("exceeds_vram");
-		return {
-			severity: "critical",
-			target: "neither",
-			required_bytes: required,
-			available_bytes: available,
-			reasons,
-		};
+		return assessOllamaGpu(required, loadedOther, ctx.live);
 	}
-
-	const usableTotal = Math.floor(ctx.live.ram_total_bytes * RAM_USABLE_FRACTION);
-	const liveAvail = ctx.live.ram_available_bytes;
-	const budget = liveAvail > 0 ? Math.min(liveAvail, usableTotal) : usableTotal;
-	const available = Math.max(0, budget - loadedOther);
-	if (loadedOther > 0) {
-		reasons.push("stt_already_uses_ram");
-	}
-	const severity = severityFor(required, available);
-	let target: FitTarget;
-	if (severity === "critical") {
-		reasons.push("exceeds_ram");
-		target = "neither";
-	} else if (severity === "warning") {
-		reasons.push("tight_ram");
-		target = "cpu";
-	} else {
-		reasons.push("ok");
-		target = "cpu";
-	}
-	return { severity, target, required_bytes: required, available_bytes: available, reasons };
+	return assessOllamaCpu(required, loadedOther, ctx.live);
 }
 
 export const TEST_ONLY = {

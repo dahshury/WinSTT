@@ -82,11 +82,17 @@ export function notifyHotkeyPressed(): void {
  * stays open across the silence-driven stop/restart cycles until the
  * user presses to close it.
  */
+function isToggleAuthorised(mode: string): boolean {
+	return mode === "toggle" && toggleSessionActive;
+}
+
+function isStartAuthorised(mode: string): boolean {
+	return isServerDrivenMode(mode) || signaledIntent || isToggleAuthorised(mode);
+}
+
 export function consumeRecordingStart(): boolean {
 	const mode = getStoreValue("general.recordingMode");
-	const toggleAuthorised = mode === "toggle" && toggleSessionActive;
-	const authorised = isServerDrivenMode(mode) || signaledIntent || toggleAuthorised;
-	if (!authorised) {
+	if (!isStartAuthorised(mode)) {
 		return false;
 	}
 	signaledIntent = false;

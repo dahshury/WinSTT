@@ -133,16 +133,22 @@ export const OPENWAKEWORD_KEYWORDS = [
 
 type WakeWordEngine = "porcupine" | "openwakeword" | "composite";
 
+const PORCUPINE_KEYWORD_SET: ReadonlySet<string> = new Set<string>(PORCUPINE_FREE_KEYWORDS);
+const OPENWAKEWORD_KEYWORD_SET: ReadonlySet<string> = new Set<string>(OPENWAKEWORD_KEYWORDS);
+
+function classifyEngine(inPorc: boolean, inOww: boolean): WakeWordEngine {
+	const key = `${inPorc ? "1" : "0"}${inOww ? "1" : "0"}` as "00" | "01" | "10" | "11";
+	const table: Record<"00" | "01" | "10" | "11", WakeWordEngine> = {
+		"00": "porcupine",
+		"01": "openwakeword",
+		"10": "porcupine",
+		"11": "composite",
+	};
+	return table[key];
+}
+
 export function engineForKeyword(word: string): WakeWordEngine {
-	const inPorc = (PORCUPINE_FREE_KEYWORDS as readonly string[]).includes(word);
-	const inOww = (OPENWAKEWORD_KEYWORDS as readonly string[]).includes(word);
-	if (inPorc && inOww) {
-		return "composite";
-	}
-	if (inOww) {
-		return "openwakeword";
-	}
-	return "porcupine";
+	return classifyEngine(PORCUPINE_KEYWORD_SET.has(word), OPENWAKEWORD_KEYWORD_SET.has(word));
 }
 
 export function formatWakeWordLabel(word: string): string {
@@ -185,25 +191,30 @@ export function buildWakeWordOptions(): SelectOption[] {
 	}));
 }
 
+function isKnownWakeWord(word: string | undefined): word is string {
+	return word !== undefined && ALL_WAKE_WORDS.includes(word);
+}
+
 export function reconcileWakeWord(currentWord: string | undefined): string {
-	if (currentWord && ALL_WAKE_WORDS.includes(currentWord)) {
-		return currentWord;
-	}
-	return DEFAULT_WAKE_WORD;
+	return isKnownWakeWord(currentWord) ? currentWord : DEFAULT_WAKE_WORD;
+}
+
+function wakeWordPatch(
+	currentWakeWord: string | undefined,
+	reconciled: string
+): Partial<GeneralSettings> {
+	return reconciled === currentWakeWord
+		? { recordingMode: "wakeword" }
+		: { recordingMode: "wakeword", wakeWord: reconciled };
 }
 
 export function recordingModePatch(
 	value: "ptt" | "toggle" | "listen" | "wakeword",
 	currentWakeWord: string | undefined
 ): Partial<GeneralSettings> {
-	if (value !== "wakeword") {
-		return { recordingMode: value };
-	}
-	const reconciled = reconcileWakeWord(currentWakeWord);
-	if (reconciled === currentWakeWord) {
-		return { recordingMode: value };
-	}
-	return { recordingMode: value, wakeWord: reconciled };
+	return value === "wakeword"
+		? wakeWordPatch(currentWakeWord, reconcileWakeWord(currentWakeWord))
+		: { recordingMode: value };
 }
 
 export function pickLocale(value: string, setLocale: (locale: Locale) => void): void {
@@ -283,10 +294,17 @@ export function computeDisplayFlags(
 
 export type LiveTranscriptionDisplayValue = "none" | "in-app" | "in-pill" | "both";
 
+const LIVE_TRANSCRIPTION_DISPLAY_VALUES: Record<LiveTranscriptionDisplayValue, true> = {
+	none: true,
+	"in-app": true,
+	"in-pill": true,
+	both: true,
+};
+
 export function isLiveTranscriptionDisplayValue(
 	value: string
 ): value is LiveTranscriptionDisplayValue {
-	return value === "none" || value === "in-app" || value === "in-pill" || value === "both";
+	return Object.hasOwn(LIVE_TRANSCRIPTION_DISPLAY_VALUES, value);
 }
 
 export function liveOverlayDisabled(general: GeneralSettings | undefined): boolean {
@@ -304,18 +322,27 @@ export function effectiveLiveDisplay(
 	return overlayDisabled && needsOverlay(value) ? "in-app" : value;
 }
 
+function overlayEnablePatch(): Partial<GeneralSettings> {
+	return { showRecordingOverlay: true };
+}
+
+function overlayDisablePatchForLive(
+	current: LiveTranscriptionDisplayValue
+): Partial<GeneralSettings> {
+	return needsOverlay(current)
+		? { showRecordingOverlay: false, liveTranscriptionDisplay: "in-app" }
+		: { showRecordingOverlay: false };
+}
+
+function currentLiveDisplay(general: GeneralSettings | undefined): LiveTranscriptionDisplayValue {
+	return general?.liveTranscriptionDisplay ?? "both";
+}
+
 export function overlayTogglePatch(
 	enabled: boolean,
 	general: GeneralSettings | undefined
 ): Partial<GeneralSettings> {
-	if (enabled) {
-		return { showRecordingOverlay: true };
-	}
-	const current: LiveTranscriptionDisplayValue = general?.liveTranscriptionDisplay ?? "both";
-	if (needsOverlay(current)) {
-		return { showRecordingOverlay: false, liveTranscriptionDisplay: "in-app" };
-	}
-	return { showRecordingOverlay: false };
+	return enabled ? overlayEnablePatch() : overlayDisablePatchForLive(currentLiveDisplay(general));
 }
 
 export function checkedOrFalseIfDisabled(disabled: boolean, value: boolean): boolean {
@@ -355,20 +382,24 @@ export function liveDisplayToFlags(value: LiveTranscriptionDisplayValue): {
 	};
 }
 
+type FlagsKey = "00" | "01" | "10" | "11";
+
+const FLAGS_TO_LIVE_DISPLAY: Record<FlagsKey, LiveTranscriptionDisplayValue> = {
+	"00": "none",
+	"01": "in-pill",
+	"10": "in-app",
+	"11": "both",
+};
+
+function flagsKey(inApp: boolean, inOverlay: boolean): FlagsKey {
+	return `${inApp ? "1" : "0"}${inOverlay ? "1" : "0"}` as FlagsKey;
+}
+
 export function flagsToLiveDisplay(
 	inApp: boolean,
 	inOverlay: boolean
 ): LiveTranscriptionDisplayValue {
-	if (inApp && inOverlay) {
-		return "both";
-	}
-	if (inApp) {
-		return "in-app";
-	}
-	if (inOverlay) {
-		return "in-pill";
-	}
-	return "none";
+	return FLAGS_TO_LIVE_DISPLAY[flagsKey(inApp, inOverlay)];
 }
 
 export function pickVisualizerType(value: string, update: UpdateFn): void {

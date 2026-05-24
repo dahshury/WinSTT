@@ -38,28 +38,48 @@ const MAX_VOCAB_TERMS = 100;
  * of replacement pairs — both kinds are mis-transcription targets so
  * priming Whisper with them is equally useful.
  */
+interface VocabAccumulator {
+	out: string[];
+	seen: Set<string>;
+}
+
+function trimmedTerm(entry: RawDictEntry): string {
+	return typeof entry.term === "string" ? entry.term.trim() : "";
+}
+
+function tryAddTerm(entry: RawDictEntry, acc: VocabAccumulator): boolean {
+	const term = trimmedTerm(entry);
+	if (term.length === 0) {
+		return false;
+	}
+	const key = term.toLowerCase();
+	if (acc.seen.has(key)) {
+		return false;
+	}
+	acc.seen.add(key);
+	acc.out.push(term);
+	return acc.out.length >= MAX_VOCAB_TERMS;
+}
+
+function dictionaryIsEmpty(dictionary: readonly RawDictEntry[] | undefined): boolean {
+	return !dictionary || dictionary.length === 0;
+}
+
+function fillVocab(dictionary: readonly RawDictEntry[], acc: VocabAccumulator): void {
+	for (const entry of dictionary) {
+		if (tryAddTerm(entry, acc)) {
+			return;
+		}
+	}
+}
+
 export function collectDictionaryTerms(dictionary: readonly RawDictEntry[] | undefined): string[] {
-	if (!dictionary || dictionary.length === 0) {
+	if (dictionaryIsEmpty(dictionary)) {
 		return [];
 	}
-	const seen = new Set<string>();
-	const out: string[] = [];
-	for (const entry of dictionary) {
-		const term = typeof entry.term === "string" ? entry.term.trim() : "";
-		if (term.length === 0) {
-			continue;
-		}
-		const key = term.toLowerCase();
-		if (seen.has(key)) {
-			continue;
-		}
-		seen.add(key);
-		out.push(term);
-		if (out.length >= MAX_VOCAB_TERMS) {
-			break;
-		}
-	}
-	return out;
+	const acc: VocabAccumulator = { seen: new Set<string>(), out: [] };
+	fillVocab(dictionary as readonly RawDictEntry[], acc);
+	return acc.out;
 }
 
 /**
@@ -84,13 +104,26 @@ export function collectDictionaryTerms(dictionary: readonly RawDictEntry[] | und
  * otherwise crowd it out — the vocab is more load-bearing for ASR
  * quality than the freeform prefix.
  */
-export function composeInitialPrompt(userPrefix: string, dictTerms: readonly string[]): string {
-	const prefix = userPrefix.trim();
-	if (dictTerms.length === 0) {
-		return prefix.length > MAX_PROMPT_CHARS ? prefix.slice(0, MAX_PROMPT_CHARS) : prefix;
-	}
-	const glossary = `Glossary: ${dictTerms.join(", ")}.`;
-	const composed = prefix.length === 0 ? glossary : `${prefix}\n\n${glossary}`;
+function clipPrefixOnly(prefix: string): string {
+	return prefix.length > MAX_PROMPT_CHARS ? prefix.slice(0, MAX_PROMPT_CHARS) : prefix;
+}
+
+function joinPrefixWithGlossary(prefix: string, glossary: string): string {
+	return prefix.length === 0 ? glossary : `${prefix}\n\n${glossary}`;
+}
+
+function clipOversizedGlossary(glossary: string): string {
+	const tail = glossary.slice(0, MAX_PROMPT_CHARS);
+	const lastComma = tail.lastIndexOf(",");
+	return lastComma === -1 ? tail : `${tail.slice(0, lastComma)}.`;
+}
+
+function clipPrefixToFitGlossary(prefix: string, glossary: string): string {
+	const room = MAX_PROMPT_CHARS - glossary.length - 2; // "\n\n"
+	return `${prefix.slice(0, room)}\n\n${glossary}`;
+}
+
+function fitComposedWithinCap(prefix: string, glossary: string, composed: string): string {
 	if (composed.length <= MAX_PROMPT_CHARS) {
 		return composed;
 	}
@@ -99,12 +132,19 @@ export function composeInitialPrompt(userPrefix: string, dictTerms: readonly str
 	// cap, fall back to clipping the glossary's TAIL so we always end on
 	// a complete term.
 	if (glossary.length > MAX_PROMPT_CHARS) {
-		const tail = glossary.slice(0, MAX_PROMPT_CHARS);
-		const lastComma = tail.lastIndexOf(",");
-		return lastComma === -1 ? tail : `${tail.slice(0, lastComma)}.`;
+		return clipOversizedGlossary(glossary);
 	}
-	const room = MAX_PROMPT_CHARS - glossary.length - 2; // "\n\n"
-	return `${prefix.slice(0, room)}\n\n${glossary}`;
+	return clipPrefixToFitGlossary(prefix, glossary);
+}
+
+export function composeInitialPrompt(userPrefix: string, dictTerms: readonly string[]): string {
+	const prefix = userPrefix.trim();
+	if (dictTerms.length === 0) {
+		return clipPrefixOnly(prefix);
+	}
+	const glossary = `Glossary: ${dictTerms.join(", ")}.`;
+	const composed = joinPrefixWithGlossary(prefix, glossary);
+	return fitComposedWithinCap(prefix, glossary, composed);
 }
 
 /**

@@ -1,13 +1,5 @@
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
-import {
-	buildHeatmap,
-	formatWpm,
-	intensityLevel,
-	type TranscriptionHistoryEntry,
-	toDayKey,
-	wordsPerMinute,
-} from "@/entities/transcription-history";
 import { cn } from "@/shared/lib/cn";
 import {
 	buildDefaultCalendarPresets,
@@ -17,6 +9,14 @@ import {
 	type DateRange,
 } from "@/shared/ui/calendar-heatmap";
 import { Select } from "@/shared/ui/select";
+import {
+	buildHeatmap,
+	formatWpm,
+	intensityLevel,
+	toDayKey,
+	wordsPerMinute,
+} from "../lib/word-stats";
+import type { TranscriptionHistoryEntry } from "../model/history-store";
 
 interface ActivityHeatmapProps {
 	entries: TranscriptionHistoryEntry[];

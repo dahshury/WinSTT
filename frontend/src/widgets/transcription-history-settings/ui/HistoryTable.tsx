@@ -1,16 +1,12 @@
 import { ContextMenu } from "@base-ui/react/context-menu";
 import { useTranslations } from "next-intl";
 import { VList } from "virtua";
-import {
-	formatDuration,
-	formatWpm,
-	type TranscriptionHistoryEntry,
-	wordsPerMinute,
-} from "@/entities/transcription-history";
 import { clipboardWriteText } from "@/shared/api/ipc-client";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceClasses, surfaceHighlightedBg } from "@/shared/lib/surface";
+import { formatDuration, formatWpm, wordsPerMinute } from "../lib/word-stats";
+import type { TranscriptionHistoryEntry } from "../model/history-store";
 
 interface HistoryTableProps {
 	entries: TranscriptionHistoryEntry[];

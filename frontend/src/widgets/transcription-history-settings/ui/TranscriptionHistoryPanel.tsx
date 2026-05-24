@@ -3,16 +3,13 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { SettingSection } from "@/entities/setting";
-import {
-	aggregate,
-	filterEntriesByDateRange,
-	useTranscriptionHistoryStore,
-} from "@/entities/transcription-history";
-import { useTranscriptionHistorySync } from "@/features/sync-transcription-history";
 import { clearTranscriptionHistory } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
 import type { DateRange } from "@/shared/ui/calendar-heatmap";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+import { useTranscriptionHistorySync } from "../api/use-history-sync";
+import { aggregate, filterEntriesByDateRange } from "../lib/word-stats";
+import { useTranscriptionHistoryStore } from "../model/history-store";
 import { ActivityHeatmap } from "./ActivityHeatmap";
 import { HistorySummary } from "./HistorySummary";
 import { HistoryTable } from "./HistoryTable";

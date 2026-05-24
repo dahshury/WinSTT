@@ -12,6 +12,12 @@ import type { SttClient } from "../ws/stt-client";
 
 const MAX_COMBO_KEYS = 3;
 
+/** Recording modes whose UX intentionally never chimes on hotkey press —
+ *  listen-mode is fully passive and wake-word listens for a verbal trigger
+ *  instead of a key. Set lookup keeps `shouldPlayRecordingSound` at CC ≤ 3. */
+type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword";
+const SILENT_RECORDING_MODES = new Set<RecordingMode>(["listen", "wakeword"]);
+
 /**
  * Power-user shortcuts triggered while the global hotkey is actively held.
  *
@@ -259,8 +265,14 @@ export function setupHotkeyHandlers(
 		// Stryker restore StringLiteral,LogicalOperator,ArrayDeclaration,ArrowFunction
 	};
 
+	const isSilentRecordingMode = (mode: unknown): boolean =>
+		SILENT_RECORDING_MODES.has(mode as RecordingMode);
+
+	const isToggleClosingPress = (mode: unknown): boolean =>
+		mode === "toggle" && !isToggleSessionActive();
+
 	const shouldPlayRecordingSound = (mode: unknown): boolean => {
-		if (mode === "listen" || mode === "wakeword" || !sttClient.isConnected) {
+		if (isSilentRecordingMode(mode) || !sttClient.isConnected) {
 			return false;
 		}
 		// Toggle mode is one press to start, another to stop. Only the
@@ -268,10 +280,7 @@ export function setupHotkeyHandlers(
 		// flipped the session flag by the time this runs, so an inactive
 		// session here means this press just CLOSED the session — stay
 		// silent. (ptt never opens a session, so this never suppresses it.)
-		if (mode === "toggle" && !isToggleSessionActive()) {
-			return false;
-		}
-		return true;
+		return !isToggleClosingPress(mode);
 	};
 
 	const canActivateCombo = (): boolean => !isActive && comboFullyReleased && checkCombo();
@@ -324,6 +333,43 @@ export function setupHotkeyHandlers(
 		updateComboReleaseState();
 	};
 
+	const resolveComboActionIfArmed = (code: number): HotkeyComboAction | null => {
+		if (!isActive) {
+			return null;
+		}
+		return lookupComboAction(code);
+	};
+
+	/**
+	 * Second-key combo dispatch. When the hotkey is actively held and a
+	 * recognised second key (Backspace/ArrowUp) goes down, fire the configured
+	 * onCombo callback and report whether the keypress was consumed. The
+	 * caller falls through to `tryActivateCombo()` only when this returns
+	 * false (combo not active, no callback registered, or unrecognised key).
+	 */
+	const tryHandleComboAction = (code: number): boolean => {
+		const action = resolveComboActionIfArmed(code);
+		if (!(action && options.onCombo)) {
+			return false;
+		}
+		// Stryker disable next-line StringLiteral: dbg() message is informational only
+		dbg("hotkey", `combo action: ${action}`);
+		options.onCombo(action);
+		return true;
+	};
+
+	/**
+	 * Post-paste-guard dispatch for a tracked keycode. Returns true if the
+	 * keydown was fully handled (combo action consumed it) or if the press
+	 * triggered/attempted activation. Keeps onKeyDown at CC ≤ 3.
+	 */
+	const dispatchTrackedKeyDown = (code: number) => {
+		if (tryHandleComboAction(code)) {
+			return;
+		}
+		tryActivateCombo();
+	};
+
 	const onKeyDown = (e: { keycode: number }) => {
 		const code = e.keycode;
 		if (isRecording) {
@@ -341,21 +387,7 @@ export function setupHotkeyHandlers(
 			onPasteGuardLifted = evalOnLift;
 			return;
 		}
-		// Second-key combos while the hotkey is actively held — cancel
-		// the in-flight transcription, or switch recording mode without
-		// releasing the hotkey. The arrow / backspace keypress is
-		// consumed by the callback; we do NOT fall through to
-		// `tryActivateCombo()` because the combo is already active.
-		if (isActive && options.onCombo) {
-			const action = lookupComboAction(code);
-			if (action) {
-				// Stryker disable next-line StringLiteral: dbg() message is informational only
-				dbg("hotkey", `combo action: ${action}`);
-				options.onCombo(action);
-				return;
-			}
-		}
-		tryActivateCombo();
+		dispatchTrackedKeyDown(code);
 	};
 
 	const handleRecordingKeyUp = (code: number) => {

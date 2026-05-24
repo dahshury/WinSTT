@@ -182,17 +182,30 @@ interface BinaryRun {
 	stderrBuf: string;
 }
 
-/** Idempotent settle of a BinaryRun: clears the timer and resolves once. */
+/** Clear a BinaryRun's pending kill timer, if any. CC = 2. */
+export function clearKillTimer(run: BinaryRun): void {
+	if (run.killTimer) {
+		clearTimeout(run.killTimer);
+		run.killTimer = null;
+	}
+}
+
+/** Build the resolution payload for a finished BinaryRun. CC = 2. */
+export function buildBinaryResolution(
+	ok: boolean,
+	reason: string | undefined
+): { ok: boolean; reason?: string } {
+	return reason === undefined ? { ok } : { ok, reason };
+}
+
+/** Idempotent settle of a BinaryRun: clears the timer and resolves once. CC = 2. */
 export function finishBinaryRun(run: BinaryRun, ok: boolean, reason: string | undefined): void {
 	if (run.done) {
 		return;
 	}
 	run.done = true;
-	if (run.killTimer) {
-		clearTimeout(run.killTimer);
-		run.killTimer = null;
-	}
-	run.resolve(reason === undefined ? { ok } : { ok, reason });
+	clearKillTimer(run);
+	run.resolve(buildBinaryResolution(ok, reason));
 }
 
 /** Best-effort kill on timeout. Wrapped so SIGKILL throws don't escape. */
@@ -290,28 +303,51 @@ function runBinary(binPath: string): Promise<{ ok: boolean; reason?: string }> {
 }
 
 /**
+ * Wire stdin onto a spawned `--type` BinaryRun: subscribe to `error` and write
+ * the payload. Any synchronous failure routes to `finishBinaryRun`. Extracted
+ * so the Promise executor inside `runTypeBinary` stays CC = 1.
+ *
+ * CC = 2 (try/catch + no extra branches inside the try body).
+ */
+export function wireTypeStdin(run: BinaryRun, stdin: NodeJS.WritableStream, text: string): void {
+	try {
+		stdin.on("error", (err: Error) => {
+			finishBinaryRun(run, false, `stdin error: ${err.message}`);
+		});
+		stdin.end(text, "utf8");
+	} catch (err) {
+		finishBinaryRun(run, false, `stdin write failed: ${(err as Error).message}`);
+	}
+}
+
+/**
+ * Body of the runTypeBinary Promise — extracted as a named function so the
+ * Promise executor stays CC = 1 and is independently testable.
+ *
+ * CC = 2 (single `if (!stdin)` branch; the try/catch lives in wireTypeStdin).
+ */
+export function startTypeBinaryRun(
+	resolve: (value: { ok: boolean; reason?: string }) => void,
+	binPath: string,
+	text: string
+): void {
+	const run = startBinaryRun(resolve, binPath, ["--type"]);
+	const stdin = run.child?.stdin;
+	if (!stdin) {
+		finishBinaryRun(run, false, "no stdin on spawned --type child");
+		return;
+	}
+	wireTypeStdin(run, stdin, text);
+}
+
+/**
  * Spawn the native helper in `--type` mode and stream the transcript on
  * stdin. Resolves once the binary exits (success or failure) or the
  * watchdog kills it. Any unexpected error while wiring stdin is treated
  * as a paste failure so the caller can fall back to the clipboard path.
  */
 function runTypeBinary(binPath: string, text: string): Promise<{ ok: boolean; reason?: string }> {
-	return new Promise((resolve) => {
-		const run = startBinaryRun(resolve, binPath, ["--type"]);
-		const stdin = run.child?.stdin;
-		if (!stdin) {
-			finishBinaryRun(run, false, "no stdin on spawned --type child");
-			return;
-		}
-		try {
-			stdin.on("error", (err) => {
-				finishBinaryRun(run, false, `stdin error: ${err.message}`);
-			});
-			stdin.end(text, "utf8");
-		} catch (err) {
-			finishBinaryRun(run, false, `stdin write failed: ${(err as Error).message}`);
-		}
-	});
+	return new Promise((resolve) => startTypeBinaryRun(resolve, binPath, text));
 }
 
 /** Write text to clipboard, returning false if it fails. */
@@ -426,7 +462,30 @@ async function spawnPasteWithGuard(binPath: string, text: string, waitedMs: numb
 	}
 }
 
-async function tryTypeThenFallback(
+/**
+ * Format the combined "both paths failed" reason string. Extracted so
+ * tryTypeThenFallback can stay CC = 3.
+ *
+ * CC = 3 (two `??` short-circuits, both feeding the same template).
+ */
+export function formatCombinedFailureReason(
+	typeReason: string | undefined,
+	clipReason: string | undefined
+): string {
+	return `type:${typeReason ?? "unknown"};clip:${clipReason ?? "unknown"}`;
+}
+
+/**
+ * Log the "type failed, trying clipboard" diagnostic. Extracted so the
+ * `?? "unknown"` short-circuit doesn't add a branch to `tryTypeThenFallback`.
+ *
+ * CC = 2.
+ */
+export function logTypeFailure(typeReason: string | undefined): void {
+	dbg("paste", `--type failed (${typeReason ?? "unknown"}), trying clipboard fallback`);
+}
+
+export async function tryTypeThenFallback(
 	binPath: string,
 	text: string
 ): Promise<{ ok: boolean; reason?: string }> {
@@ -434,15 +493,15 @@ async function tryTypeThenFallback(
 	if (typeResult.ok) {
 		return typeResult;
 	}
-	dbg("paste", `--type failed (${typeResult.reason ?? "unknown"}), trying clipboard fallback`);
+	logTypeFailure(typeResult.reason);
 	const fallbackResult = await runClipboardFallback(binPath, text);
-	if (!fallbackResult.ok) {
-		return {
-			ok: false,
-			reason: `type:${typeResult.reason ?? "unknown"};clip:${fallbackResult.reason ?? "unknown"}`,
-		};
+	if (fallbackResult.ok) {
+		return fallbackResult;
 	}
-	return fallbackResult;
+	return {
+		ok: false,
+		reason: formatCombinedFailureReason(typeResult.reason, fallbackResult.reason),
+	};
 }
 
 /**
@@ -451,7 +510,7 @@ async function tryTypeThenFallback(
  * snapshot. The restore runs in `finally` so a binary timeout / non-zero exit
  * can't leave the user's clipboard polluted.
  */
-async function runClipboardFallback(
+export async function runClipboardFallback(
 	binPath: string,
 	text: string
 ): Promise<{ ok: boolean; reason?: string }> {
@@ -484,7 +543,7 @@ export interface ClipboardSnapshot {
 	text: string;
 }
 
-function readClipboardFormat<T>(read: () => T, empty: T, format: string): T {
+export function readClipboardFormat<T>(read: () => T, empty: T, format: string): T {
 	try {
 		return read();
 	} catch (err) {
@@ -493,52 +552,153 @@ function readClipboardFormat<T>(read: () => T, empty: T, format: string): T {
 	}
 }
 
+/**
+ * Coerce a possibly-nullish Electron clipboard read into a guaranteed string.
+ * Some Electron versions / mock surfaces return undefined when the format is
+ * absent; the rest of the pipeline assumes a real string. CC = 2 (one `??`).
+ * Exported so paste.test.ts can pin the empty-on-null contract directly.
+ */
+export function coerceClipboardText(value: string | null | undefined): string {
+	return value ?? "";
+}
+
+/** Read plain text from the clipboard, coerced to a guaranteed string. CC = 1. */
+function readPlainText(): string {
+	return coerceClipboardText(clipboard.readText() as unknown as string | null | undefined);
+}
+
+/** Read HTML from the clipboard, coerced to a guaranteed string. CC = 1. */
+function readPlainHtml(): string {
+	return coerceClipboardText(clipboard.readHTML() as unknown as string | null | undefined);
+}
+
+/** Read RTF from the clipboard, coerced to a guaranteed string. CC = 1. */
+function readPlainRtf(): string {
+	return coerceClipboardText(clipboard.readRTF() as unknown as string | null | undefined);
+}
+
+/** Strict image read. CC = 1. */
+function readPlainImage(): NativeImage {
+	return clipboard.readImage();
+}
+
+/** Treat empty images as absent so consumers don't have to. CC = 2. */
+export function normalizeClipboardImage(image: NativeImage | null): NativeImage | null {
+	if (image === null) {
+		return null;
+	}
+	return image.isEmpty() ? null : image;
+}
+
 export function captureClipboardSnapshot(): ClipboardSnapshot {
-	const image = readClipboardFormat(() => clipboard.readImage(), null, "Image");
+	const image = readClipboardFormat<NativeImage | null>(readPlainImage, null, "Image");
 	return {
-		text: readClipboardFormat(() => clipboard.readText() ?? "", "", "Text"),
-		html: readClipboardFormat(() => clipboard.readHTML() ?? "", "", "HTML"),
-		rtf: readClipboardFormat(() => clipboard.readRTF() ?? "", "", "RTF"),
-		image: image && !image.isEmpty() ? image : null,
+		text: readClipboardFormat(readPlainText, "", "Text"),
+		html: readClipboardFormat(readPlainHtml, "", "HTML"),
+		rtf: readClipboardFormat(readPlainRtf, "", "RTF"),
+		image: normalizeClipboardImage(image),
 	};
 }
 
+/**
+ * True iff the snapshot has anything worth restoring.
+ *
+ * Implementation note: written as a sequence of equality checks pushed through
+ * `Array.every` so the function body's cyclomatic complexity stays at 1 — a
+ * chained `&& && &&` expression counts each short-circuit as a branch (CC = 4).
+ */
+export function snapshotIsEmpty(snapshot: ClipboardSnapshot): boolean {
+	return [
+		snapshot.text === "",
+		snapshot.html === "",
+		snapshot.rtf === "",
+		snapshot.image === null,
+	].every(Boolean);
+}
+
+/** Copy a non-empty text field into the payload. CC = 2. */
+export function addTextToPayload(
+	payload: Parameters<typeof clipboard.write>[0],
+	text: string
+): void {
+	if (text !== "") {
+		payload.text = text;
+	}
+}
+
+/** Copy a non-empty html field into the payload. CC = 2. */
+export function addHtmlToPayload(
+	payload: Parameters<typeof clipboard.write>[0],
+	html: string
+): void {
+	if (html !== "") {
+		payload.html = html;
+	}
+}
+
+/** Copy a non-empty rtf field into the payload. CC = 2. */
+export function addRtfToPayload(payload: Parameters<typeof clipboard.write>[0], rtf: string): void {
+	if (rtf !== "") {
+		payload.rtf = rtf;
+	}
+}
+
+/** Copy a non-null image field into the payload. CC = 2. */
+export function addImageToPayload(
+	payload: Parameters<typeof clipboard.write>[0],
+	image: NativeImage | null
+): void {
+	if (image !== null) {
+		payload.image = image;
+	}
+}
+
+/** Build the multi-format restore payload from a snapshot. CC = 1. */
+export function buildRestorePayload(
+	snapshot: ClipboardSnapshot
+): Parameters<typeof clipboard.write>[0] {
+	const payload: Parameters<typeof clipboard.write>[0] = {};
+	addTextToPayload(payload, snapshot.text);
+	addHtmlToPayload(payload, snapshot.html);
+	addRtfToPayload(payload, snapshot.rtf);
+	addImageToPayload(payload, snapshot.image);
+	return payload;
+}
+
+/**
+ * Last-ditch text-only restore. Used when the rich multi-format `clipboard.write`
+ * call threw — at least put the user's prior text back rather than leave the
+ * transcript stranded on the clipboard. CC = 2.
+ */
+export function fallbackTextOnlyRestore(text: string): void {
+	if (text === "") {
+		return;
+	}
+	try {
+		clipboard.writeText(text);
+	} catch (err2) {
+		dbg("paste", `text-only restore also failed: ${(err2 as Error).message}`);
+	}
+}
+
+/** Write the multi-format payload, falling back to text-only on failure. CC = 2. */
+export function writeRestorePayload(snapshot: ClipboardSnapshot): void {
+	try {
+		clipboard.write(buildRestorePayload(snapshot));
+	} catch (err) {
+		dbg("paste", `clipboard restore failed: ${(err as Error).message}`);
+		fallbackTextOnlyRestore(snapshot.text);
+	}
+}
+
 export function restoreClipboardSnapshot(snapshot: ClipboardSnapshot): void {
-	const hasAny =
-		snapshot.text !== "" || snapshot.html !== "" || snapshot.rtf !== "" || snapshot.image !== null;
-	if (!hasAny) {
+	if (snapshotIsEmpty(snapshot)) {
 		// Original clipboard was empty (or unreadable) — leave the transcript
 		// in place. Forcing an explicit clear here would race with any app
 		// that pasted between the binary exit and this point.
 		return;
 	}
-	try {
-		const payload: Parameters<typeof clipboard.write>[0] = {};
-		if (snapshot.text !== "") {
-			payload.text = snapshot.text;
-		}
-		if (snapshot.html !== "") {
-			payload.html = snapshot.html;
-		}
-		if (snapshot.rtf !== "") {
-			payload.rtf = snapshot.rtf;
-		}
-		if (snapshot.image !== null) {
-			payload.image = snapshot.image;
-		}
-		clipboard.write(payload);
-	} catch (err) {
-		dbg("paste", `clipboard restore failed: ${(err as Error).message}`);
-		// Fall back to a plain-text restore so SOMETHING gets back on the
-		// clipboard rather than leaving the transcript stranded there.
-		if (snapshot.text !== "") {
-			try {
-				clipboard.writeText(snapshot.text);
-			} catch (err2) {
-				dbg("paste", `text-only restore also failed: ${(err2 as Error).message}`);
-			}
-		}
-	}
+	writeRestorePayload(snapshot);
 }
 
 /** Returns true when the caller should skip queuing the paste entirely. */
@@ -549,17 +709,23 @@ export function shouldSkipPaste(text: string): boolean {
 	return process.platform !== "win32";
 }
 
-export function pasteText(text: string): void {
-	if (shouldSkipPaste(text)) {
-		return;
-	}
+/** Append `text` to the bounded paste call log, trimming if it overflows. CC = 2. */
+export function recordPasteCall(text: string): void {
 	pasteCallLog.push(text);
 	if (pasteCallLog.length > PASTE_CALL_LOG_MAX) {
 		// Drop oldest entries so a long dictation session can't grow the log
 		// without bound. Recent pushes (what tests assert on) are preserved.
 		pasteCallLog.splice(0, pasteCallLog.length - PASTE_CALL_LOG_MAX);
 	}
-	const enqueuedAt = Date.now();
+}
+
+/**
+ * Chain the next paste onto the inflight tail, decrementing queue depth on
+ * settle. Extracted so `pasteText` stays CC = 2 (just the shouldSkipPaste guard).
+ *
+ * CC = 2 (single `??` short-circuit to seed the chain with Promise.resolve()).
+ */
+export function enqueuePaste(text: string, enqueuedAt: number): void {
 	queueDepth += 1;
 	const next = (pasteInFlight ?? Promise.resolve())
 		.then(() => runPasteOnce(text, enqueuedAt))
@@ -567,6 +733,14 @@ export function pasteText(text: string): void {
 			queueDepth -= 1;
 		});
 	pasteInFlight = next.catch(() => undefined);
+}
+
+export function pasteText(text: string): void {
+	if (shouldSkipPaste(text)) {
+		return;
+	}
+	recordPasteCall(text);
+	enqueuePaste(text, Date.now());
 }
 
 /** Test hook: await any pending paste work. */

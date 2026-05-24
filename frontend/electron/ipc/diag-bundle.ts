@@ -60,38 +60,51 @@ interface GpuInfoBasic {
 	[key: string]: unknown;
 }
 
+function logGpuInfoError(err: unknown): void {
+	dbg("diag-bundle", "getGPUInfo failed:", err instanceof Error ? err.message : String(err));
+}
+
+function formatGpuInfo(info: GpuInfoBasic | GpuFeatureStatus | undefined): string {
+	return info ? JSON.stringify(info) : "unavailable";
+}
+
 async function collectGpuInfoText(): Promise<string> {
 	try {
 		const info = (await app.getGPUInfo("basic")) as GpuInfoBasic | GpuFeatureStatus | undefined;
-		if (!info) {
-			return "unavailable";
-		}
-		return JSON.stringify(info);
+		return formatGpuInfo(info);
 	} catch (err) {
-		dbg("diag-bundle", "getGPUInfo failed:", err instanceof Error ? err.message : String(err));
+		logGpuInfoError(err);
 		return "unavailable";
 	}
 }
 
-async function buildSystemInfo(): Promise<string> {
+function orUnknown(value: string | undefined): string {
+	return value ?? "unknown";
+}
+
+function buildSystemInfoLines(gpuInfo: string): string[] {
 	const cpus = os.cpus();
 	const firstCpu = cpus[0];
-	const gpuInfo = await collectGpuInfoText();
-	const lines: string[] = [
+	return [
 		`Generated at: ${new Date().toISOString()}`,
 		`WinSTT version: ${app.getVersion()}`,
-		`Electron version: ${process.versions.electron ?? "unknown"}`,
-		`Node version: ${process.versions.node ?? "unknown"}`,
-		`Chrome version: ${process.versions.chrome ?? "unknown"}`,
+		`Electron version: ${orUnknown(process.versions.electron)}`,
+		`Node version: ${orUnknown(process.versions.node)}`,
+		`Chrome version: ${orUnknown(process.versions.chrome)}`,
 		`Platform: ${process.platform}`,
 		`Arch: ${process.arch}`,
 		`OS release: ${os.release()}`,
 		`Total RAM (MB): ${bytesToMB(os.totalmem())}`,
 		`Free RAM (MB): ${bytesToMB(os.freemem())}`,
-		`CPU model: ${firstCpu?.model ?? "unknown"}`,
+		`CPU model: ${orUnknown(firstCpu?.model)}`,
 		`CPU count: ${cpus.length}`,
 		`GPU info: ${gpuInfo}`,
 	];
+}
+
+async function buildSystemInfo(): Promise<string> {
+	const gpuInfo = await collectGpuInfoText();
+	const lines = buildSystemInfoLines(gpuInfo);
 	return `${lines.join("\n")}\n`;
 }
 
@@ -145,59 +158,83 @@ async function writeZipArchive(
 	return { bytes: stats.size };
 }
 
+function logRevealDialogError(err: unknown): void {
+	dbg("diag-bundle", "Post-save dialog failed:", err instanceof Error ? err.message : String(err));
+}
+
+async function promptRevealChoice(outPath: string): Promise<number> {
+	const choice = await dialog.showMessageBox({
+		type: "info",
+		title: "Diagnostic bundle saved",
+		message: `Saved to ${outPath}`,
+		buttons: ["Open folder", "OK"],
+		defaultId: 1,
+		cancelId: 1,
+	});
+	return choice.response;
+}
+
 async function maybeRevealInExplorer(outPath: string): Promise<void> {
 	try {
-		const choice = await dialog.showMessageBox({
-			type: "info",
-			title: "Diagnostic bundle saved",
-			message: `Saved to ${outPath}`,
-			buttons: ["Open folder", "OK"],
-			defaultId: 1,
-			cancelId: 1,
-		});
-		if (choice.response === 0) {
+		const response = await promptRevealChoice(outPath);
+		if (response === 0) {
 			shell.showItemInFolder(outPath);
 		}
 	} catch (err) {
-		dbg(
-			"diag-bundle",
-			"Post-save dialog failed:",
-			err instanceof Error ? err.message : String(err)
-		);
+		logRevealDialogError(err);
 	}
+}
+
+async function promptSaveLocation(): Promise<string | null> {
+	const defaultPath = buildDefaultPath();
+	const saveResult = await dialog.showSaveDialog({
+		title: "Save diagnostic bundle",
+		defaultPath,
+		filters: [{ name: "Zip", extensions: ["zip"] }],
+	});
+	if (saveResult.canceled || !saveResult.filePath) {
+		return null;
+	}
+	return saveResult.filePath;
+}
+
+async function buildBundleAt(outPath: string): Promise<DiagSaveResult> {
+	const logsDir = getLogsFolder();
+	const logFiles = collectExistingLogFiles(logsDir);
+	const systemInfo = await buildSystemInfo();
+	dbg("diag-bundle", "Building diagnostic bundle:", outPath, "logFiles:", logFiles.length);
+	const { bytes } = await writeZipArchive(outPath, logFiles, systemInfo);
+	dbg("diag-bundle", "Wrote diagnostic bundle:", outPath, "bytes:", bytes);
+	breadcrumb("tray", "diagnostic bundle saved", { bytes, files: logFiles.length });
+	await maybeRevealInExplorer(outPath);
+	return { ok: true, path: outPath };
+}
+
+function safeShowErrorBox(message: string): void {
+	try {
+		dialog.showErrorBox("Diagnostic bundle failed", message);
+	} catch {
+		// ignore — main concern is logging the underlying error above
+	}
+}
+
+function reportSaveFailure(err: unknown): DiagSaveResult {
+	const message = err instanceof Error ? err.message : String(err);
+	dbg("diag-bundle", "Bundle save failed:", message);
+	captureMainException(err, { source: "diag-bundle" });
+	safeShowErrorBox(message);
+	return { ok: false, error: message };
 }
 
 async function handleSaveBundle(): Promise<DiagSaveResult> {
 	try {
-		const defaultPath = buildDefaultPath();
-		const saveResult = await dialog.showSaveDialog({
-			title: "Save diagnostic bundle",
-			defaultPath,
-			filters: [{ name: "Zip", extensions: ["zip"] }],
-		});
-		if (saveResult.canceled || !saveResult.filePath) {
+		const outPath = await promptSaveLocation();
+		if (!outPath) {
 			return { ok: false, cancelled: true };
 		}
-		const outPath = saveResult.filePath;
-		const logsDir = getLogsFolder();
-		const logFiles = collectExistingLogFiles(logsDir);
-		const systemInfo = await buildSystemInfo();
-		dbg("diag-bundle", "Building diagnostic bundle:", outPath, "logFiles:", logFiles.length);
-		const { bytes } = await writeZipArchive(outPath, logFiles, systemInfo);
-		dbg("diag-bundle", "Wrote diagnostic bundle:", outPath, "bytes:", bytes);
-		breadcrumb("tray", "diagnostic bundle saved", { bytes, files: logFiles.length });
-		await maybeRevealInExplorer(outPath);
-		return { ok: true, path: outPath };
+		return await buildBundleAt(outPath);
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		dbg("diag-bundle", "Bundle save failed:", message);
-		captureMainException(err, { source: "diag-bundle" });
-		try {
-			dialog.showErrorBox("Diagnostic bundle failed", message);
-		} catch {
-			// ignore — main concern is logging the underlying error above
-		}
-		return { ok: false, error: message };
+		return reportSaveFailure(err);
 	}
 }
 

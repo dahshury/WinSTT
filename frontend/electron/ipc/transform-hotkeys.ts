@@ -62,14 +62,20 @@ function isComboHeld(target: Set<number>): boolean {
 	return true;
 }
 
+function isComboReady(target: Set<number> | null): target is Set<number> {
+	return target !== null && !firedThisHold && isComboHeld(target);
+}
+
+function logApplyError(err: unknown): void {
+	dbg("transform-hotkeys", `apply failed: ${err instanceof Error ? err.message : String(err)}`);
+}
+
 function maybeFireCombo(): void {
-	if (!combo || firedThisHold || !isComboHeld(combo)) {
+	if (!isComboReady(combo)) {
 		return;
 	}
 	firedThisHold = true;
-	applyTransform().catch((err: unknown) => {
-		dbg("transform-hotkeys", `apply failed: ${err instanceof Error ? err.message : String(err)}`);
-	});
+	applyTransform().catch(logApplyError);
 }
 
 function handleKeyDown(event: { keycode: number }): void {
@@ -84,6 +90,10 @@ function handleKeyDown(event: { keycode: number }): void {
 	maybeFireCombo();
 }
 
+function shouldRearmCombo(target: Set<number> | null): target is Set<number> {
+	return firedThisHold && target !== null && !isComboHeld(target);
+}
+
 function handleKeyUp(event: { keycode: number }): void {
 	// See handleKeyDown — skip synthetic events from the paste binary so
 	// the per-char flood doesn't churn the `pressed` set.
@@ -94,7 +104,7 @@ function handleKeyUp(event: { keycode: number }): void {
 	// Clear the fired-flag once any combo key is released so a re-press
 	// can re-fire. Without this guard, a user holding Ctrl+Shift+T forever
 	// fires once but never re-arms.
-	if (firedThisHold && combo && !isComboHeld(combo)) {
+	if (shouldRearmCombo(combo)) {
 		firedThisHold = false;
 	}
 }

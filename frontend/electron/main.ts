@@ -1225,8 +1225,14 @@ function createWindow() {
 		}
 	});
 
-	mainWindow.once("ready-to-show", () => {
-		dbg("window", "ready-to-show");
+	// Use `did-finish-load` rather than `ready-to-show` as the renderer-ready
+	// signal. In Vite dev, `ready-to-show` fires after the empty HTML shell
+	// paints — before modules are compiled and React mounts — so showing then
+	// surfaces a 5–10 s black window (the `backgroundColor`). `did-finish-load`
+	// waits for the page + JS subresources to finish loading, which keeps the
+	// window hidden until there's actually something to paint.
+	mainWindow.webContents.once("did-finish-load", () => {
+		dbg("window", "did-finish-load");
 		const startMinimized = getStoreValue("general.startMinimized");
 		if (startMinimized) {
 			// User has opted in to tray-only launch: skip the show entirely
@@ -1254,6 +1260,10 @@ function createWindow() {
 			shown = true;
 			dbg("window", `showing main window (${reason})`);
 			mainWindow.show();
+			// Explicit focus — the onboarding window was just torn down and
+			// Windows may otherwise hand focus to whichever app the user had
+			// open behind it rather than to us.
+			mainWindow.focus();
 		};
 		// Server may already be ready (parallel-warmup path) — don't wait.
 		if (serverReadyFiredOnce) {

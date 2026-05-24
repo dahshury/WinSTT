@@ -1,5 +1,23 @@
 import type { AudioDevice } from "@/entities/audio-device";
 
+/** True when the device list hasn't enumerated yet (CC 1). */
+function devicesEmpty(devices: readonly AudioDevice[]): boolean {
+	return devices.length === 0;
+}
+
+/** Name of the system-default device, or null when unknown (CC 1). */
+function defaultDeviceName(defaultDevice: AudioDevice | null): string | null {
+	return defaultDevice?.name ?? null;
+}
+
+/** Name of the device whose index matches, or null when not found (CC 1). */
+function deviceNameByIndex(
+	devices: readonly AudioDevice[],
+	inputDeviceIndex: number
+): string | null {
+	return devices.find((d) => d.index === inputDeviceIndex)?.name ?? null;
+}
+
 /**
  * Resolve the currently active input-device name from the saved index plus
  * the live device list. Returns ``null`` while devices haven't enumerated
@@ -14,13 +32,28 @@ export function resolveCurrentDeviceName(
 	devices: readonly AudioDevice[],
 	defaultDevice: AudioDevice | null
 ): string | null {
-	if (devices.length === 0) {
+	if (devicesEmpty(devices)) {
 		return null;
 	}
-	if (inputDeviceIndex == null) {
-		return defaultDevice?.name ?? null;
-	}
-	return devices.find((d) => d.index === inputDeviceIndex)?.name ?? null;
+	return inputDeviceIndex == null
+		? defaultDeviceName(defaultDevice)
+		: deviceNameByIndex(devices, inputDeviceIndex);
+}
+
+/** Read the persisted sensitivity for a device, or null when absent (CC 1). */
+function persistedSensitivityFor(
+	deviceName: string,
+	map: Readonly<Record<string, number>> | undefined
+): number | null {
+	return map?.[deviceName] ?? null;
+}
+
+/** True when the persisted value should be applied as a change (CC 1). */
+function persistedDiffers(
+	persisted: number | null,
+	currentSensitivity: number | undefined
+): persisted is number {
+	return persisted != null && persisted !== currentSensitivity;
 }
 
 /**
@@ -37,12 +70,6 @@ export function nextSensitivityForDevice(
 	if (deviceName == null) {
 		return null;
 	}
-	const persisted = map?.[deviceName];
-	if (persisted == null) {
-		return null;
-	}
-	if (persisted === currentSensitivity) {
-		return null;
-	}
-	return persisted;
+	const persisted = persistedSensitivityFor(deviceName, map);
+	return persistedDiffers(persisted, currentSensitivity) ? persisted : null;
 }

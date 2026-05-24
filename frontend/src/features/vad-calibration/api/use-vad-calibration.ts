@@ -2,10 +2,31 @@ import { useEffect, useRef } from "react";
 import { useInputDevices } from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";
 import { onVadSensitivityAdapted, settingsSave } from "@/shared/api/ipc-client";
+import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import {
 	nextSensitivityForDevice,
 	resolveCurrentDeviceName,
 } from "../lib/vad-calibration-sensitivity";
+
+type AudioPatch = Partial<AppSettingsOutput["audio"]>;
+
+/** Build the audio-settings patch for an adapt event (CC 1). */
+function buildAdaptPatch(
+	deviceName: string | null,
+	currentMap: Record<string, number> | undefined,
+	newSensitivity: number
+): AudioPatch {
+	if (deviceName == null) {
+		// Unknown device — bump live value only, don't poison the map.
+		return { sileroSensitivity: newSensitivity };
+	}
+	const map = { ...(currentMap ?? {}) };
+	map[deviceName] = newSensitivity;
+	return {
+		sileroSensitivity: newSensitivity,
+		sileroSensitivityByDeviceName: map,
+	};
+}
 
 /**
  * Wires up cross-utterance adaptive Silero VAD sensitivity persistence.
@@ -45,21 +66,8 @@ export function useVadCalibration(): void {
 	// Persist on adapt — single subscription for the component's lifetime.
 	useEffect(() => {
 		const unsub = onVadSensitivityAdapted(({ newSensitivity }) => {
-			const name = deviceNameRef.current;
-			if (name == null) {
-				// No idea which device this belongs to — bump the live value
-				// only, skip the map. Adaptation re-fires on the next
-				// recording, so a permanent miss isn't possible.
-				updateAudio({ sileroSensitivity: newSensitivity });
-				settingsSave(useSettingsStore.getState().settings);
-				return;
-			}
-			const map = { ...(mapRef.current ?? {}) };
-			map[name] = newSensitivity;
-			updateAudio({
-				sileroSensitivity: newSensitivity,
-				sileroSensitivityByDeviceName: map,
-			});
+			const patch = buildAdaptPatch(deviceNameRef.current, mapRef.current, newSensitivity);
+			updateAudio(patch);
 			settingsSave(useSettingsStore.getState().settings);
 		});
 		return unsub;
@@ -70,10 +78,7 @@ export function useVadCalibration(): void {
 	// fight useSyncSettings on every render.
 	const lastAppliedNameRef = useRef<string | null>(null);
 	useEffect(() => {
-		if (deviceName == null) {
-			return;
-		}
-		if (deviceName === lastAppliedNameRef.current) {
+		if (!shouldRunDeviceSwitch(deviceName, lastAppliedNameRef.current)) {
 			return;
 		}
 		lastAppliedNameRef.current = deviceName;
@@ -82,9 +87,19 @@ export function useVadCalibration(): void {
 			audio?.sileroSensitivity,
 			audio?.sileroSensitivityByDeviceName
 		);
-		if (next == null) {
-			return;
+		if (next != null) {
+			updateAudio({ sileroSensitivity: next });
 		}
-		updateAudio({ sileroSensitivity: next });
 	}, [deviceName, audio?.sileroSensitivity, audio?.sileroSensitivityByDeviceName, updateAudio]);
+}
+
+/**
+ * True when the device-switch effect should advance: the device is known and
+ * differs from the last value we applied this hook lifetime (CC 1).
+ */
+function shouldRunDeviceSwitch(
+	deviceName: string | null,
+	lastAppliedName: string | null
+): deviceName is string {
+	return deviceName != null && deviceName !== lastAppliedName;
 }

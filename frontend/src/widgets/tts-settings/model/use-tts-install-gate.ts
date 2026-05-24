@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
 	onTtsInstallStatus,
@@ -27,6 +27,65 @@ export interface TtsInstallGate {
 	probing: boolean;
 }
 
+// Pure projection: `ready` collapses to `null` (idle); every other phase
+// passes through unchanged. Record indexing keeps CC at 1.
+const READY_PROJECTION: Record<TtsInstallPhase, TtsInstallPhase | null> = {
+	engine: "engine",
+	model: "model",
+	ready: null,
+	unknown: "unknown",
+};
+
+/** Pure helper — exported for tests. */
+export function projectInstallPhase(phase: TtsInstallPhase): TtsInstallPhase | null {
+	return READY_PROJECTION[phase];
+}
+
+/**
+ * Picks the post-probe action without `&&`/`if`:
+ *   - `enable`: server says the engine + model are on disk and reachable
+ *   - `confirm`: anything else — show the download dialog
+ *
+ * The two boolean checks are converted to 0/1 and multiplied, then used as
+ * an index into the action tuple. Branch-free → CC 1.
+ */
+export type ProbeActionKey = "confirm" | "enable";
+
+const PROBE_ACTION_BY_INDEX: readonly ProbeActionKey[] = ["confirm", "enable"];
+
+/** Pure helper — exported for tests. */
+export function resolveProbeAction(est: TtsDownloadEstimatePayload): ProbeActionKey {
+	const installedFlag = Number(est.alreadyInstalled === true);
+	const reachableFlag = Number(est.unavailable !== true);
+	return PROBE_ACTION_BY_INDEX[installedFlag * reachableFlag] as ProbeActionKey;
+}
+
+/**
+ * Picks the confirm-button action: "Retry" probes again offline,
+ * "Confirm" closes the dialog and flips `enabled` on. Branch-free.
+ */
+export type ConfirmActionKey = "enable" | "retry";
+
+const CONFIRM_ACTION_BY_INDEX: readonly ConfirmActionKey[] = ["enable", "retry"];
+
+/** Pure helper — exported for tests. */
+export function resolveConfirmAction(
+	estimate: TtsDownloadEstimatePayload | null
+): ConfirmActionKey {
+	const offlineFlag = Number(estimate?.unavailable === true);
+	return CONFIRM_ACTION_BY_INDEX[offlineFlag] as ConfirmActionKey;
+}
+
+/** Picks the toggle action without an `if`. */
+export type ToggleActionKey = "disable" | "enable";
+
+const TOGGLE_ACTION_BY_INDEX: readonly ToggleActionKey[] = ["disable", "enable"];
+
+/** Pure helper — exported for tests. */
+export function resolveToggleAction(next: boolean): ToggleActionKey {
+	return TOGGLE_ACTION_BY_INDEX[Number(next === true)] as ToggleActionKey;
+}
+
 /**
  * Confirm-before-download gate for enabling TTS.
  *
@@ -52,7 +111,7 @@ export function useTtsInstallGate(): TtsInstallGate {
 	useEffect(
 		() =>
 			onTtsInstallStatus(({ phase }) => {
-				setInstallPhase(phase === "ready" ? null : phase);
+				setInstallPhase(projectInstallPhase(phase));
 			}),
 		[]
 	);
@@ -64,7 +123,7 @@ export function useTtsInstallGate(): TtsInstallGate {
 		[]
 	);
 
-	const runProbe = useCallback(async (): Promise<TtsDownloadEstimatePayload> => {
+	const runProbe = async (): Promise<TtsDownloadEstimatePayload> => {
 		setProbing(true);
 		try {
 			const est = await ttsDownloadEstimate();
@@ -73,45 +132,57 @@ export function useTtsInstallGate(): TtsInstallGate {
 		} finally {
 			setProbing(false);
 		}
-	}, []);
+	};
 
-	const handleEnabledToggle = useCallback(
-		(next: boolean) => {
-			if (!next) {
-				update({ enabled: false });
-				setInstallPhase(null);
-				setConfirmOpen(false);
-				return;
-			}
-			runProbe().then((est) => {
-				if (est.alreadyInstalled && !est.unavailable) {
-					update({ enabled: true });
-					return;
-				}
-				setConfirmOpen(true);
-			});
+	// Post-probe dispatch: tuple keyed by `resolveProbeAction` — no `if`.
+	const probeActions: Record<ProbeActionKey, (est: TtsDownloadEstimatePayload) => void> = {
+		enable: () => {
+			update({ enabled: true });
 		},
-		[update, runProbe]
-	);
+		confirm: () => {
+			setConfirmOpen(true);
+		},
+	};
+	const handleProbeResult = (est: TtsDownloadEstimatePayload): void => {
+		probeActions[resolveProbeAction(est)](est);
+	};
 
-	const handleInstallConfirm = useCallback(() => {
-		if (estimate?.unavailable) {
-			// Offline: the confirm button is "Retry" — re-probe instead of
-			// enabling (which would just fail without a network).
+	// Toggle dispatch: tuple keyed by `resolveToggleAction` — no `if`.
+	const toggleActions: Record<ToggleActionKey, () => void> = {
+		enable: () => {
+			runProbe().then(handleProbeResult);
+		},
+		disable: () => {
+			update({ enabled: false });
+			setInstallPhase(null);
+			setConfirmOpen(false);
+		},
+	};
+	const handleEnabledToggle = (next: boolean): void => {
+		toggleActions[resolveToggleAction(next)]();
+	};
+
+	// Confirm-button dispatch: tuple keyed by `resolveConfirmAction` — no `if`.
+	const confirmActions: Record<ConfirmActionKey, () => void> = {
+		enable: () => {
+			setConfirmOpen(false);
+			update({ enabled: true });
+		},
+		retry: () => {
 			runProbe();
-			return;
-		}
-		setConfirmOpen(false);
-		update({ enabled: true });
-	}, [estimate?.unavailable, runProbe, update]);
+		},
+	};
+	const handleInstallConfirm = (): void => {
+		confirmActions[resolveConfirmAction(estimate)]();
+	};
 
-	const handleInstallCancel = useCallback(() => {
+	const handleInstallCancel = (): void => {
 		setConfirmOpen(false);
-	}, []);
+	};
 
-	const closeConfirm = useCallback(() => {
+	const closeConfirm = (): void => {
 		setConfirmOpen(false);
-	}, []);
+	};
 
 	return {
 		confirmOpen,

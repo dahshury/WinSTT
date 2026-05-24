@@ -33,6 +33,39 @@ export interface SystemResourcesStore {
 	reset: () => void;
 }
 
+type Setter = (
+	partial:
+		| Partial<SystemResourcesStore>
+		| ((state: SystemResourcesStore) => Partial<SystemResourcesStore>)
+) => void;
+
+function snapshotPatch(snapshot: LiveResourcesEntry | null): Partial<SystemResourcesStore> {
+	return {
+		liveResources: snapshot,
+		isLoading: false,
+		lastFetchedAt: Date.now(),
+		error: snapshot === null ? "no-snapshot" : null,
+	};
+}
+
+function errorMessage(err: unknown): string {
+	return err instanceof Error ? err.message : "unknown";
+}
+
+function errorPatch(err: unknown): Partial<SystemResourcesStore> {
+	return { isLoading: false, error: errorMessage(err) };
+}
+
+async function performRefresh(set: Setter, forceRefresh: boolean): Promise<void> {
+	set({ isLoading: true, error: null });
+	try {
+		const snapshot = await fetchLiveResources(forceRefresh);
+		set(snapshotPatch(snapshot));
+	} catch (err) {
+		set(errorPatch(err));
+	}
+}
+
 export const useSystemResourcesStore = create<SystemResourcesStore>((set) => ({
 	liveResources: null,
 	isLoading: false,
@@ -40,21 +73,7 @@ export const useSystemResourcesStore = create<SystemResourcesStore>((set) => ({
 	lastFetchedAt: null,
 
 	async refresh(forceRefresh = false) {
-		set({ isLoading: true, error: null });
-		try {
-			const snapshot = await fetchLiveResources(forceRefresh);
-			set({
-				liveResources: snapshot,
-				isLoading: false,
-				lastFetchedAt: Date.now(),
-				error: snapshot === null ? "no-snapshot" : null,
-			});
-		} catch (err) {
-			set({
-				isLoading: false,
-				error: err instanceof Error ? err.message : "unknown",
-			});
-		}
+		await performRefresh(set, forceRefresh);
 	},
 
 	async assessDictationFitOnServer(modelId, quantization = "", device = null) {

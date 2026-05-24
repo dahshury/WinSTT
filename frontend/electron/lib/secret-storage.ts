@@ -58,17 +58,11 @@ export function encryptSecret(plain: string): string {
  * to). Returns "" on decryption failure (corrupt blob, wrong user) so the
  * UI just shows an empty field and the user can re-enter their key.
  */
-export function decryptSecret(stored: unknown): string {
-	if (typeof stored !== "string" || stored === "") {
-		return "";
-	}
-	if (!isEncryptedSecret(stored)) {
-		return stored;
-	}
-	if (!safeStorage.isEncryptionAvailable()) {
-		console.warn("[secret-storage] safeStorage unavailable — cannot decrypt");
-		return "";
-	}
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === "string" && value !== "";
+}
+
+function safelyDecryptEnvelope(stored: string): string {
 	try {
 		const buf = Buffer.from(stored.slice(ENC_PREFIX.length), "base64");
 		return safeStorage.decryptString(buf);
@@ -76,4 +70,22 @@ export function decryptSecret(stored: unknown): string {
 		console.warn("[secret-storage] decryption failed:", err);
 		return "";
 	}
+}
+
+function decryptEncryptedEnvelope(stored: string): string {
+	if (!safeStorage.isEncryptionAvailable()) {
+		console.warn("[secret-storage] safeStorage unavailable — cannot decrypt");
+		return "";
+	}
+	return safelyDecryptEnvelope(stored);
+}
+
+export function decryptSecret(stored: unknown): string {
+	if (!isNonEmptyString(stored)) {
+		return "";
+	}
+	if (!isEncryptedSecret(stored)) {
+		return stored;
+	}
+	return decryptEncryptedEnvelope(stored);
 }

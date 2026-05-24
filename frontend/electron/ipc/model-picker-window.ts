@@ -64,56 +64,105 @@ let desiredSize = { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
 let suppressBlurUntil = 0;
 let lastHiddenAt = 0;
 
+// --- Window aliveness ---------------------------------------------------
+
+function isNonNullWindow(win: BrowserWindow | null): win is BrowserWindow {
+	return win !== null;
+}
+
 function isWindowAlive(win: BrowserWindow | null): win is BrowserWindow {
-	return win !== null && !win.isDestroyed();
+	return isNonNullWindow(win) && !win.isDestroyed();
+}
+
+// --- Fade timer ---------------------------------------------------------
+
+function stopFadeInterval(): void {
+	clearInterval(fadeTimer as ReturnType<typeof setInterval>);
 }
 
 function clearFadeTimer(): void {
-	if (fadeTimer) {
-		clearInterval(fadeTimer);
+	if (fadeTimer === null) {
+		return;
 	}
+	stopFadeInterval();
 	fadeTimer = null;
 }
+
+// --- Off-screen parking -------------------------------------------------
 
 function moveOffscreen(win: BrowserWindow): void {
 	win.setOpacity(0);
 	win.setPosition(OFFSCREEN, OFFSCREEN);
 }
 
-function hideAliveWindow(win: BrowserWindow | null): void {
-	if (!isWindowAlive(win)) {
-		return;
-	}
-	// Already parked (or mid fade-out): nothing to do, and don't reset the
-	// toggle timestamp — otherwise a stray blur would extend the dead-zone.
-	const [, posY] = win.getPosition();
-	if (posY === OFFSCREEN) {
-		return;
-	}
+function getWindowY(win: BrowserWindow): number {
+	const [, y] = win.getPosition();
+	return y as number;
+}
+
+function isParkedOffscreen(win: BrowserWindow): boolean {
+	return getWindowY(win) === OFFSCREEN;
+}
+
+// --- Hide flow ----------------------------------------------------------
+
+function markHidden(): void {
 	lastHiddenAt = Date.now();
+}
+
+function beginFadeOut(win: BrowserWindow): void {
+	markHidden();
 	// Ease-in fade-out, THEN park it off-screen — the close mirrors the
 	// open instead of vanishing instantly.
 	animateOpacity(win, 0, easeInCubic, () => moveOffscreen(win));
 }
 
+function hideOnscreenWindow(win: BrowserWindow): void {
+	// Already parked (or mid fade-out): nothing to do, and don't reset the
+	// toggle timestamp — otherwise a stray blur would extend the dead-zone.
+	if (isParkedOffscreen(win)) {
+		return;
+	}
+	beginFadeOut(win);
+}
+
+function hideAliveWindow(win: BrowserWindow | null): void {
+	if (!isWindowAlive(win)) {
+		return;
+	}
+	hideOnscreenWindow(win);
+}
+
+// --- Blur / focus handling ---------------------------------------------
+
+function isBlurSuppressed(): boolean {
+	return Date.now() < suppressBlurUntil;
+}
+
 // The renderer backdrop catches in-app clicks; blur only covers leaving to
 // another app entirely (alt-tab) — a useful secondary close.
 function handleBlur(): void {
-	if (Date.now() < suppressBlurUntil) {
+	if (isBlurSuppressed()) {
 		return;
 	}
 	hideAliveWindow(pickerWindow);
 }
 
-function applyPickerStyles(win: BrowserWindow | null | undefined): void {
-	win?.webContents.insertCSS(
-		"html, body { background: transparent !important; overflow: hidden !important; " +
-			"height: 100% !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }"
-	);
-	win?.showInactive();
+// --- Picker styles + load handlers -------------------------------------
+
+const PICKER_CSS =
+	"html, body { background: transparent !important; overflow: hidden !important; " +
+	"height: 100% !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }";
+
+function applyPickerStyles(win: BrowserWindow): void {
+	win.webContents.insertCSS(PICKER_CSS);
+	win.showInactive();
 }
 
 function handleDidFinishLoad(): void {
+	if (!isWindowAlive(pickerWindow)) {
+		return;
+	}
 	applyPickerStyles(pickerWindow);
 	pageLoaded = true;
 }
@@ -125,20 +174,29 @@ function handleWillNavigate(event: Electron.Event, url: string): void {
 	event.preventDefault();
 }
 
+// biome-ignore lint/suspicious/noEmptyBlockStatements: intentional no-op error handler
+function ignoreOpenExternalError(): void {}
+
+function openExternalSafely(url: string): void {
+	shell.openExternal(url).catch(ignoreOpenExternalError);
+}
+
 function handleWindowOpen({ url }: { url: string }): { action: "deny" } {
 	if (isHttpUrl(url)) {
-		// biome-ignore lint/suspicious/noEmptyBlockStatements: intentional no-op error handler
-		shell.openExternal(url).catch(() => {});
+		openExternalSafely(url);
 	}
 	return { action: "deny" };
 }
 
+function describeLoadError(error: unknown): string {
+	if (error instanceof Error) {
+		return error.message;
+	}
+	return String(error);
+}
+
 function logPickerLoadError(error: unknown): void {
-	dbg(
-		"model-picker",
-		"Failed to load model picker window:",
-		error instanceof Error ? error.message : String(error)
-	);
+	dbg("model-picker", "Failed to load model picker window:", describeLoadError(error));
 }
 
 function buildPickerWindow(): BrowserWindow {
@@ -171,14 +229,20 @@ function attachPickerListeners(win: BrowserWindow): void {
 	win.on("blur", handleBlur);
 }
 
-export function createModelPickerWindow(): BrowserWindow {
-	if (isWindowAlive(pickerWindow)) {
-		return pickerWindow;
-	}
+function instantiatePickerWindow(): BrowserWindow {
 	pickerWindow = buildPickerWindow();
 	attachPickerListeners(pickerWindow);
 	return pickerWindow;
 }
+
+export function createModelPickerWindow(): BrowserWindow {
+	if (isWindowAlive(pickerWindow)) {
+		return pickerWindow;
+	}
+	return instantiatePickerWindow();
+}
+
+// --- Easing -------------------------------------------------------------
 
 // Entrance: arrive fast, settle gently (ease-out). Exit: start gently,
 // build momentum, then leave (ease-in). Both are cubic so neither fade is
@@ -188,6 +252,49 @@ export function easeOutCubic(t: number): number {
 }
 export function easeInCubic(t: number): number {
 	return t ** 3;
+}
+
+// --- Opacity tween ------------------------------------------------------
+
+interface TweenFrame {
+	easing: (t: number) => number;
+	from: number;
+	onComplete: (() => void) | undefined;
+	start: number;
+	to: number;
+	win: BrowserWindow;
+}
+
+function tweenProgress(start: number): number {
+	return Math.min(1, (Date.now() - start) / FADE_MS);
+}
+
+function interpolateOpacity(frame: TweenFrame, p: number): number {
+	return frame.from + (frame.to - frame.from) * frame.easing(p);
+}
+
+function finalizeTween(frame: TweenFrame): void {
+	frame.win.setOpacity(frame.to);
+	clearFadeTimer();
+	frame.onComplete?.();
+}
+
+function tickTween(frame: TweenFrame): void {
+	const p = tweenProgress(frame.start);
+	frame.win.setOpacity(interpolateOpacity(frame, p));
+	if (p < 1) {
+		return;
+	}
+	finalizeTween(frame);
+}
+
+function snapOpacity(win: BrowserWindow, to: number, onComplete?: () => void): void {
+	win.setOpacity(to);
+	onComplete?.();
+}
+
+function startTween(frame: TweenFrame): void {
+	fadeTimer = setInterval(() => tickTween(frame), FADE_TICK_MS);
 }
 
 /** Time-based opacity tween with easing. Cancels any in-flight fade first,
@@ -203,31 +310,70 @@ function animateOpacity(
 	clearFadeTimer();
 	const from = win.getOpacity();
 	if (from === to) {
-		win.setOpacity(to);
-		onComplete?.();
+		snapOpacity(win, to, onComplete);
 		return;
 	}
-	const start = Date.now();
-	fadeTimer = setInterval(() => {
-		const p = Math.min(1, (Date.now() - start) / FADE_MS);
-		win.setOpacity(from + (to - from) * easing(p));
-		if (p >= 1) {
-			win.setOpacity(to);
-			clearFadeTimer();
-			onComplete?.();
-		}
-	}, FADE_TICK_MS);
+	startTween({ easing, from, onComplete, start: Date.now(), to, win });
 }
 
 function fadeIn(win: BrowserWindow): void {
 	animateOpacity(win, 1, easeOutCubic);
 }
 
+// --- Geometry / placement ----------------------------------------------
+
 interface PickerBounds {
 	height: number;
 	width: number;
 	x: number;
 	y: number;
+}
+
+interface YAxisLayout {
+	height: number;
+	y: number;
+}
+
+function fitAbove(
+	anchor: Anchor,
+	desiredHeight: number,
+	room: number,
+	ceiling: number
+): YAxisLayout {
+	// Enough space above: keep the bottom glued to the chip, shrink the
+	// top down to the screen edge if the full height won't fit.
+	const height = Math.min(desiredHeight, room, ceiling);
+	return { height, y: anchor.screenTopY - height - ANCHOR_GAP };
+}
+
+function pinToTop(desiredHeight: number, ceiling: number, workAreaY: number): YAxisLayout {
+	// Chip is basically flush with the screen top — there's nowhere to
+	// put a usable panel above it. Pin to the top edge (never above it)
+	// and accept overlapping the chip as the last resort.
+	return { height: Math.min(desiredHeight, ceiling), y: workAreaY };
+}
+
+function computeYAxis(
+	anchor: Anchor,
+	desiredHeight: number,
+	workArea: { y: number; height: number }
+): YAxisLayout {
+	const room = anchor.screenTopY - workArea.y - ANCHOR_GAP;
+	const ceiling = workArea.height - TASKBAR_MARGIN;
+	if (room >= MIN_HEIGHT) {
+		return fitAbove(anchor, desiredHeight, room, ceiling);
+	}
+	return pinToTop(desiredHeight, ceiling, workArea.y);
+}
+
+function computeXAxis(
+	anchor: Anchor,
+	width: number,
+	workArea: { x: number; width: number }
+): number {
+	const desiredX = anchor.screenRight - width;
+	const maxX = workArea.x + workArea.width - width;
+	return Math.min(Math.max(desiredX, workArea.x), Math.max(workArea.x, maxX));
 }
 
 /**
@@ -243,25 +389,8 @@ export function computePickerPosition(
 	workArea: { x: number; y: number; width: number; height: number }
 ): PickerBounds {
 	const width = Math.min(size.width, workArea.width);
-	const room = anchor.screenTopY - workArea.y - ANCHOR_GAP;
-	const ceiling = workArea.height - TASKBAR_MARGIN;
-	let height: number;
-	let y: number;
-	if (room >= MIN_HEIGHT) {
-		// Enough space above: keep the bottom glued to the chip, shrink the
-		// top down to the screen edge if the full height won't fit.
-		height = Math.min(size.height, room, ceiling);
-		y = anchor.screenTopY - height - ANCHOR_GAP;
-	} else {
-		// Chip is basically flush with the screen top — there's nowhere to
-		// put a usable panel above it. Pin to the top edge (never above it)
-		// and accept overlapping the chip as the last resort.
-		height = Math.min(size.height, ceiling);
-		y = workArea.y;
-	}
-	const desiredX = anchor.screenRight - width;
-	const maxX = workArea.x + workArea.width - width;
-	const x = Math.min(Math.max(desiredX, workArea.x), Math.max(workArea.x, maxX));
+	const { height, y } = computeYAxis(anchor, size.height, workArea);
+	const x = computeXAxis(anchor, width, workArea);
 	return { x, y: Math.max(y, workArea.y), width, height };
 }
 
@@ -277,18 +406,11 @@ function sendAnchor(win: BrowserWindow, panel: PickerBounds, workArea: { x: numb
 	});
 }
 
-function placeAndShowPicker(win: BrowserWindow): void {
-	if (!lastAnchor) {
-		return;
-	}
-	const display = screen.getDisplayNearestPoint({
-		x: lastAnchor.screenLeft,
-		y: lastAnchor.screenTopY,
-	});
-	const { workArea } = display;
-	// The window fills the whole work area; the visible panel is positioned
-	// within it by the renderer, everything else is a transparent backdrop.
-	const panel = computePickerPosition(lastAnchor, desiredSize, workArea);
+function showWindowAtWorkArea(
+	win: BrowserWindow,
+	workArea: { x: number; y: number; width: number; height: number },
+	panel: PickerBounds
+): void {
 	win.setOpacity(0);
 	win.setBounds(workArea);
 	sendAnchor(win, panel, workArea);
@@ -300,7 +422,31 @@ function placeAndShowPicker(win: BrowserWindow): void {
 	win.focus();
 }
 
+function renderPickerAt(win: BrowserWindow, anchor: Anchor): void {
+	const display = screen.getDisplayNearestPoint({
+		x: anchor.screenLeft,
+		y: anchor.screenTopY,
+	});
+	const { workArea } = display;
+	// The window fills the whole work area; the visible panel is positioned
+	// within it by the renderer, everything else is a transparent backdrop.
+	const panel = computePickerPosition(anchor, desiredSize, workArea);
+	showWindowAtWorkArea(win, workArea, panel);
+}
+
+function placeAndShowPicker(win: BrowserWindow): void {
+	if (lastAnchor === null) {
+		return;
+	}
+	renderPickerAt(win, lastAnchor);
+}
+
 let pendingDeferredShow = false;
+
+function onDeferredLoadComplete(win: BrowserWindow): void {
+	pendingDeferredShow = false;
+	placeAndShowPicker(win);
+}
 
 function deferShowUntilLoaded(win: BrowserWindow): void {
 	// Repeated chip clicks before the route finishes loading must not stack
@@ -310,20 +456,20 @@ function deferShowUntilLoaded(win: BrowserWindow): void {
 		return;
 	}
 	pendingDeferredShow = true;
-	win.webContents.once("did-finish-load", () => {
-		pendingDeferredShow = false;
+	win.webContents.once("did-finish-load", () => onDeferredLoadComplete(win));
+}
+
+function showWhenReady(win: BrowserWindow): void {
+	if (pageLoaded) {
 		placeAndShowPicker(win);
-	});
+		return;
+	}
+	deferShowUntilLoaded(win);
 }
 
 export function showModelPickerAtAnchor(anchor: Anchor): void {
 	lastAnchor = anchor;
-	const win = createModelPickerWindow();
-	if (!pageLoaded) {
-		deferShowUntilLoaded(win);
-		return;
-	}
-	placeAndShowPicker(win);
+	showWhenReady(createModelPickerWindow());
 }
 
 export function hideModelPicker(): void {
@@ -331,13 +477,18 @@ export function hideModelPicker(): void {
 	lastAnchor = null;
 }
 
+function isPickerNullOrDestroyed(): boolean {
+	return !isWindowAlive(pickerWindow);
+}
+
 function isPickerVisible(): boolean {
-	if (!isWindowAlive(pickerWindow)) {
+	if (isPickerNullOrDestroyed()) {
 		return false;
 	}
-	const [, posY] = pickerWindow.getPosition();
-	return posY !== OFFSCREEN;
+	return !isParkedOffscreen(pickerWindow as BrowserWindow);
 }
+
+// --- Resize -------------------------------------------------------------
 
 function normalizeResizePayload(payload: { width: number; height: number }): {
 	width: number;
@@ -356,18 +507,29 @@ function sizeUnchanged(
 	return current.width === next.width && current.height === next.height;
 }
 
+function isVisibleAlivePicker(): boolean {
+	return isWindowAlive(pickerWindow) && isPickerVisible();
+}
+
+function reanchorIfVisible(): void {
+	// Re-anchor so the (re-sized) picker stays glued above the chip; if it's
+	// not on screen yet the new desiredSize is just used on the next open.
+	if (!isVisibleAlivePicker()) {
+		return;
+	}
+	placeAndShowPicker(pickerWindow as BrowserWindow);
+}
+
 export function applyResize(payload: { width: number; height: number }): void {
 	const next = normalizeResizePayload(payload);
 	if (sizeUnchanged(desiredSize, next)) {
 		return;
 	}
 	desiredSize = next;
-	// Re-anchor so the (re-sized) picker stays glued above the chip; if it's
-	// not on screen yet the new desiredSize is just used on the next open.
-	if (isWindowAlive(pickerWindow) && isPickerVisible()) {
-		placeAndShowPicker(pickerWindow);
-	}
+	reanchorIfVisible();
 }
+
+// --- Payload guards -----------------------------------------------------
 
 interface OpenRect {
 	height: number;
@@ -376,68 +538,120 @@ interface OpenRect {
 	y: number;
 }
 
-function isSizePayload(value: unknown): value is { width: number; height: number } {
-	if (typeof value !== "object" || value === null) {
+function hasNumericWH(r: Record<string, unknown>): boolean {
+	return typeof r.width === "number" && typeof r.height === "number";
+}
+
+function hasNumericXY(r: Record<string, unknown>): boolean {
+	return typeof r.x === "number" && typeof r.y === "number";
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	if (value === null) {
 		return false;
 	}
-	const r = value as Record<string, unknown>;
-	return typeof r.width === "number" && typeof r.height === "number";
+	return typeof value === "object";
+}
+
+function isSizePayload(value: unknown): value is { width: number; height: number } {
+	if (!isObjectRecord(value)) {
+		return false;
+	}
+	return hasNumericWH(value);
 }
 
 function isOpenPayload(value: unknown): value is OpenRect {
 	if (!isSizePayload(value)) {
 		return false;
 	}
-	const r = value as Record<string, unknown>;
-	return typeof r.x === "number" && typeof r.y === "number";
+	return hasNumericXY(value as Record<string, unknown>);
+}
+
+// --- Open / close handlers ---------------------------------------------
+
+function isInToggleDeadzone(): boolean {
+	return Date.now() - lastHiddenAt < TOGGLE_DEADZONE_MS;
+}
+
+function consumeToggleIfOpen(): boolean {
+	if (!isPickerVisible()) {
+		return false;
+	}
+	// Chip is a toggle. If the picker is up, this click closes it.
+	hideModelPicker();
+	return true;
+}
+
+function anchorFromRect(senderWin: BrowserWindow, payload: OpenRect): Anchor {
+	// Payload is the chip's rect in renderer viewport coords. Convert to
+	// screen space via the requesting window's bounds.
+	const b = senderWin.getBounds();
+	const screenLeft = b.x + payload.x;
+	return {
+		screenLeft,
+		screenRight: screenLeft + payload.width,
+		screenTopY: b.y + payload.y,
+	};
+}
+
+function tryOpenForSender(event: Electron.IpcMainEvent, payload: OpenRect): void {
+	const senderWin = BrowserWindow.fromWebContents(event.sender);
+	if (!isWindowAlive(senderWin)) {
+		return;
+	}
+	showModelPickerAtAnchor(anchorFromRect(senderWin, payload));
+}
+
+function processOpen(event: Electron.IpcMainEvent, payload: OpenRect): void {
+	if (consumeToggleIfOpen()) {
+		return;
+	}
+	// If it was just hidden (the same click first blurred it away), swallow
+	// the OPEN so it doesn't bounce straight back open.
+	if (isInToggleDeadzone()) {
+		return;
+	}
+	tryOpenForSender(event, payload);
 }
 
 function handleOpen(event: Electron.IpcMainEvent, payload: unknown): void {
 	if (!isOpenPayload(payload)) {
 		return;
 	}
-	// Chip is a toggle. If the picker is up, this click closes it. If it was
-	// just hidden (the same click first blurred it away), swallow the OPEN so
-	// it doesn't bounce straight back open.
-	if (isPickerVisible()) {
-		hideModelPicker();
-		return;
-	}
-	if (Date.now() - lastHiddenAt < TOGGLE_DEADZONE_MS) {
-		return;
-	}
-	// Payload is the chip's rect in renderer viewport coords. Convert to
-	// screen space via the requesting window's bounds.
-	const senderWin = BrowserWindow.fromWebContents(event.sender);
-	if (!isWindowAlive(senderWin)) {
-		return;
-	}
-	const b = senderWin.getBounds();
-	const screenLeft = b.x + payload.x;
-	showModelPickerAtAnchor({
-		screenLeft,
-		screenRight: screenLeft + payload.width,
-		screenTopY: b.y + payload.y,
-	});
+	processOpen(event, payload);
 }
 
 function handleResize(_event: Electron.IpcMainEvent, payload: unknown): void {
-	if (isSizePayload(payload)) {
-		applyResize(payload);
+	if (!isSizePayload(payload)) {
+		return;
 	}
+	applyResize(payload);
 }
 
 function handleClose(): void {
 	hideModelPicker();
 }
 
-function destroyPickerWindow(): void {
-	if (isWindowAlive(pickerWindow)) {
-		pickerWindow.destroy();
+function destroyAlivePickerWindow(): void {
+	if (!isWindowAlive(pickerWindow)) {
+		return;
 	}
+	pickerWindow.destroy();
+}
+
+function destroyPickerWindow(): void {
+	destroyAlivePickerWindow();
 	pickerWindow = null;
 	pageLoaded = false;
 	pendingDeferredShow = false;
+}
+
+function teardownModelPickerHandlers(): void {
+	ipcMain.off("model-picker:open", handleOpen);
+	ipcMain.off("model-picker:resize", handleResize);
+	ipcMain.off("model-picker:close", handleClose);
+	clearFadeTimer();
+	destroyPickerWindow();
 }
 
 export function setupModelPickerHandlers(): () => void {
@@ -448,33 +662,128 @@ export function setupModelPickerHandlers(): () => void {
 	ipcMain.on("model-picker:resize", handleResize);
 	ipcMain.on("model-picker:close", handleClose);
 
-	return () => {
-		ipcMain.off("model-picker:open", handleOpen);
-		ipcMain.off("model-picker:resize", handleResize);
-		ipcMain.off("model-picker:close", handleClose);
-		clearFadeTimer();
-		destroyPickerWindow();
-	};
+	return teardownModelPickerHandlers;
+}
+
+// Test-only setters to drive internal state without booting a real
+// BrowserWindow. Mirrors the device-picker test surface.
+function __setPickerWindow(win: BrowserWindow | null): void {
+	pickerWindow = win;
+}
+
+function __setLastAnchor(anchor: Anchor | null): void {
+	lastAnchor = anchor;
+}
+
+function __setPageLoaded(v: boolean): void {
+	pageLoaded = v;
+}
+
+function __setPendingDeferredShow(v: boolean): void {
+	pendingDeferredShow = v;
+}
+
+function __setFadeTimer(t: ReturnType<typeof setInterval> | null): void {
+	fadeTimer = t;
+}
+
+function __setDesiredSize(s: { width: number; height: number }): void {
+	desiredSize = s;
+}
+
+function __setLastHiddenAt(ts: number): void {
+	lastHiddenAt = ts;
+}
+
+function __setSuppressBlurUntil(ts: number): void {
+	suppressBlurUntil = ts;
+}
+
+function __getFadeTimer(): ReturnType<typeof setInterval> | null {
+	return fadeTimer;
+}
+
+function __getPendingDeferredShow(): boolean {
+	return pendingDeferredShow;
 }
 
 export const __model_picker_window_test_helpers__ = {
 	isWindowAlive,
+	isNonNullWindow,
 	clearFadeTimer,
+	stopFadeInterval,
 	moveOffscreen,
+	isParkedOffscreen,
+	getWindowY,
 	hideAliveWindow,
+	hideOnscreenWindow,
+	beginFadeOut,
+	markHidden,
+	isBlurSuppressed,
+	handleBlur,
 	isHttpUrl,
 	isSameOrigin,
 	handleWindowOpen,
+	openExternalSafely,
+	ignoreOpenExternalError,
+	describeLoadError,
+	applyPickerStyles,
+	handleDidFinishLoad,
 	computePickerPosition,
+	computeXAxis,
+	computeYAxis,
+	fitAbove,
+	pinToTop,
 	easeOutCubic,
 	easeInCubic,
+	tweenProgress,
+	interpolateOpacity,
+	finalizeTween,
+	tickTween,
+	snapOpacity,
+	fadeIn,
 	normalizeResizePayload,
 	sizeUnchanged,
+	isVisibleAlivePicker,
+	reanchorIfVisible,
 	handleWillNavigate,
 	logPickerLoadError,
+	isPickerNullOrDestroyed,
 	isPickerVisible,
 	applyResize,
 	handleResize,
+	handleClose,
+	handleOpen,
+	processOpen,
+	tryOpenForSender,
+	anchorFromRect,
+	consumeToggleIfOpen,
+	isInToggleDeadzone,
+	isObjectRecord,
+	isSizePayload,
 	isOpenPayload,
+	hasNumericWH,
+	hasNumericXY,
+	hideModelPicker,
+	showModelPickerAtAnchor,
+	showWhenReady,
+	deferShowUntilLoaded,
+	onDeferredLoadComplete,
+	placeAndShowPicker,
+	renderPickerAt,
+	showWindowAtWorkArea,
+	sendAnchor,
 	destroyPickerWindow,
+	destroyAlivePickerWindow,
+	teardownModelPickerHandlers,
+	__setPickerWindow,
+	__setLastAnchor,
+	__setPageLoaded,
+	__setPendingDeferredShow,
+	__setFadeTimer,
+	__setDesiredSize,
+	__setLastHiddenAt,
+	__setSuppressBlurUntil,
+	__getFadeTimer,
+	__getPendingDeferredShow,
 };

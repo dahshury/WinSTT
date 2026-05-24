@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 const noop = () => undefined;
 
@@ -7,10 +7,35 @@ mock.module("electron", () => ({
 }));
 mock.module("../lib/debug-log", () => ({ dbg: noop, dbgVerbose: noop }));
 
-const { __ollama_registry_test_helpers__ } = await import("./ollama-registry");
+const { __ollama_registry_test_helpers__, setupOllamaRegistry } = await import("./ollama-registry");
 
-const { parseSearchPage, parseTagsPage, parseSize, parseQuantization, parseParameterSize } =
-	__ollama_registry_test_helpers__;
+const {
+	parseSearchPage,
+	parseTagsPage,
+	parseSize,
+	parseQuantization,
+	parseParameterSize,
+	assertSearchPayload,
+	assertTagsPayload,
+	searchOllamaLibrary,
+	fetchOllamaLibraryCatalog,
+	fetchOllamaLibraryTags,
+	resetCachesForTests,
+} = __ollama_registry_test_helpers__;
+
+const ORIGINAL_FETCH = globalThis.fetch;
+
+function mockFetch(impl: (input: RequestInfo | URL) => Promise<Response>): void {
+	globalThis.fetch = impl as typeof fetch;
+}
+
+function htmlResponse(body: string): Response {
+	return new Response(body, { status: 200, headers: { "Content-Type": "text/html" } });
+}
+
+function errorResponse(status: number): Response {
+	return new Response("oops", { status });
+}
 
 describe("parseSize", () => {
 	it("parses GB labels into bytes", () => {
@@ -45,6 +70,10 @@ describe("parseQuantization", () => {
 	it("returns undefined when no quantization marker present", () => {
 		expect(parseQuantization("gemma3:4b")).toBeUndefined();
 	});
+
+	it("returns undefined for a tag with no suffix segment", () => {
+		expect(parseQuantization("gemma3:")).toBeUndefined();
+	});
 });
 
 describe("parseParameterSize", () => {
@@ -58,6 +87,14 @@ describe("parseParameterSize", () => {
 
 	it("extracts 270m from a million-parameter tag", () => {
 		expect(parseParameterSize("gemma3:270m")).toBe("270M");
+	});
+
+	it("returns undefined when there's no suffix segment", () => {
+		expect(parseParameterSize("gemma3:")).toBeUndefined();
+	});
+
+	it("returns undefined for tags with no param marker", () => {
+		expect(parseParameterSize("gemma3:foo")).toBeUndefined();
 	});
 });
 
@@ -96,6 +133,20 @@ describe("parseSearchPage", () => {
 		`;
 		expect(parseSearchPage(html)).toHaveLength(0);
 	});
+
+	it("captures capability spans alongside metadata", () => {
+		const html = `
+			<a href="/library/llava" class="group w-full">
+				<div title="llava">
+					<p class="max-w-lg">Multimodal</p>
+					<span class="capability">vision</span>
+					<span class="capability">tools</span>
+				</div>
+			</a>
+		`;
+		const [hit] = parseSearchPage(html);
+		expect(hit?.capabilities).toEqual(["vision", "tools"]);
+	});
 });
 
 describe("parseTagsPage", () => {
@@ -133,5 +184,190 @@ describe("parseTagsPage", () => {
 			</a>
 		`;
 		expect(parseTagsPage("gemma3", html)).toHaveLength(1);
+	});
+
+	it("preserves scrape order when no `latest` row is present", () => {
+		const html = `
+			<a href="/library/foo:1" class="md:hidden flex flex-col"><span>foo:1</span></a>
+			<a href="/library/foo:2" class="md:hidden flex flex-col"><span>foo:2</span></a>
+		`;
+		const tags = parseTagsPage("foo", html);
+		expect(tags.map((t) => t.name)).toEqual(["foo:1", "foo:2"]);
+	});
+});
+
+describe("assertSearchPayload", () => {
+	it("accepts a payload with a string `query`", () => {
+		expect(() => assertSearchPayload({ query: "hello" })).not.toThrow();
+	});
+
+	it("rejects non-object payloads", () => {
+		expect(() => assertSearchPayload(null)).toThrow(/must be an object/);
+		expect(() => assertSearchPayload("nope")).toThrow(/must be an object/);
+	});
+
+	it("rejects payloads missing the `query` field", () => {
+		expect(() => assertSearchPayload({})).toThrow(/missing string `query`/);
+	});
+});
+
+describe("assertTagsPayload", () => {
+	it("accepts a payload with a string `model`", () => {
+		expect(() => assertTagsPayload({ model: "gemma3" })).not.toThrow();
+	});
+
+	it("rejects non-object payloads", () => {
+		expect(() => assertTagsPayload(undefined)).toThrow(/must be an object/);
+	});
+
+	it("rejects payloads missing the `model` field", () => {
+		expect(() => assertTagsPayload({ query: "x" })).toThrow(/missing string `model`/);
+	});
+});
+
+describe("searchOllamaLibrary", () => {
+	beforeEach(() => {
+		resetCachesForTests();
+	});
+	afterEach(() => {
+		globalThis.fetch = ORIGINAL_FETCH;
+		resetCachesForTests();
+	});
+
+	it("returns an empty result when the query is blank", async () => {
+		const result = await searchOllamaLibrary("   ", 0);
+		expect(result.hits).toEqual([]);
+		expect(result.hasMore).toBe(false);
+		expect(result.query).toBe("");
+	});
+
+	it("scrapes the search page and caches the result", async () => {
+		let callCount = 0;
+		mockFetch(async () => {
+			callCount++;
+			return htmlResponse(`
+				<a href="/library/foo" class="group w-full">
+					<div title="foo"><p class="max-w-lg">Foo desc</p></div>
+				</a>
+			`);
+		});
+		const first = await searchOllamaLibrary("foo", 0);
+		const second = await searchOllamaLibrary("foo", 0);
+		expect(first.hits).toHaveLength(1);
+		expect(first.hits[0]?.name).toBe("foo");
+		expect(second).toEqual(first);
+		expect(callCount).toBe(1);
+	});
+
+	it("uses the paged search URL when page > 0", async () => {
+		let receivedUrl = "";
+		mockFetch(async (url) => {
+			receivedUrl = url.toString();
+			return htmlResponse("");
+		});
+		await searchOllamaLibrary("bar", 2);
+		expect(receivedUrl).toContain("&p=2");
+	});
+
+	it("records a failure result when fetch throws", async () => {
+		mockFetch(async () => {
+			throw new Error("network down");
+		});
+		const result = await searchOllamaLibrary("baz", 0);
+		expect(result.hits).toEqual([]);
+		expect(result.error).toBe("network down");
+	});
+
+	it("records a failure result on HTTP error", async () => {
+		mockFetch(async () => errorResponse(500));
+		const result = await searchOllamaLibrary("qux", 0);
+		expect(result.error).toContain("HTTP 500");
+	});
+
+	it("falls back to a generic error message for non-Error rejections", async () => {
+		mockFetch(() => Promise.reject("string rejection"));
+		const result = await searchOllamaLibrary("zap", 0);
+		expect(result.error).toBe("Failed to reach ollama.com");
+	});
+});
+
+describe("fetchOllamaLibraryCatalog", () => {
+	beforeEach(() => {
+		resetCachesForTests();
+	});
+	afterEach(() => {
+		globalThis.fetch = ORIGINAL_FETCH;
+		resetCachesForTests();
+	});
+
+	it("returns scraped hits and caches the catalog", async () => {
+		let callCount = 0;
+		mockFetch(async () => {
+			callCount++;
+			return htmlResponse(`
+				<a href="/library/alpha" class="group w-full"><div title="alpha"></div></a>
+			`);
+		});
+		const first = await fetchOllamaLibraryCatalog();
+		const second = await fetchOllamaLibraryCatalog();
+		expect(first.hits).toHaveLength(1);
+		expect(second).toEqual(first);
+		expect(callCount).toBe(1);
+	});
+
+	it("returns an error result when the fetch fails", async () => {
+		mockFetch(async () => {
+			throw new Error("offline");
+		});
+		const result = await fetchOllamaLibraryCatalog();
+		expect(result.hits).toEqual([]);
+		expect(result.error).toBe("offline");
+	});
+});
+
+describe("fetchOllamaLibraryTags", () => {
+	beforeEach(() => {
+		resetCachesForTests();
+	});
+	afterEach(() => {
+		globalThis.fetch = ORIGINAL_FETCH;
+		resetCachesForTests();
+	});
+
+	it("returns an empty result for a blank model", async () => {
+		const result = await fetchOllamaLibraryTags("   ");
+		expect(result.model).toBe("");
+		expect(result.tags).toEqual([]);
+	});
+
+	it("scrapes tag listings and caches them", async () => {
+		let callCount = 0;
+		mockFetch(async () => {
+			callCount++;
+			return htmlResponse(`
+				<a href="/library/foo:1" class="md:hidden flex flex-col"><span>foo:1</span></a>
+			`);
+		});
+		const first = await fetchOllamaLibraryTags("foo");
+		const second = await fetchOllamaLibraryTags("foo");
+		expect(first.tags).toHaveLength(1);
+		expect(second).toEqual(first);
+		expect(callCount).toBe(1);
+	});
+
+	it("returns an error result when the fetch fails", async () => {
+		mockFetch(async () => {
+			throw new Error("dns failure");
+		});
+		const result = await fetchOllamaLibraryTags("foo");
+		expect(result.error).toBe("dns failure");
+	});
+});
+
+describe("setupOllamaRegistry", () => {
+	it("returns a teardown function that does not throw", () => {
+		const teardown = setupOllamaRegistry();
+		expect(typeof teardown).toBe("function");
+		expect(() => teardown()).not.toThrow();
 	});
 });

@@ -1,9 +1,10 @@
 import { TextIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
-import { AutoAddSuggestions, DictionaryTable } from "@/features/manage-dictionary";
 import type { DictionaryEntry } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";
+import { AutoAddSuggestions } from "./AutoAddSuggestions";
+import { DictionaryTable } from "./DictionaryTable";
 
 export function DictionarySettingsPanel() {
 	const dictionary = useSettingsStore((s) => s.settings.dictionary) ?? [];

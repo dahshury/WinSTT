@@ -35,6 +35,17 @@ function rectFromElement(el: HTMLElement, container: DOMRect): ProximityRect {
 	};
 }
 
+/**
+ * True iff `localY` falls inside `rect`'s vertical span widened by
+ * `ITEM_BUFFER_PX` on each end. Extracted so `findActiveIndex` is a flat
+ * `for+return` loop body (CC stays low).
+ */
+function isWithinBufferedRange(localY: number, rect: ProximityRect): boolean {
+	const lower = rect.top - ITEM_BUFFER_PX;
+	const upper = rect.top + rect.height + ITEM_BUFFER_PX;
+	return localY >= lower && localY < upper;
+}
+
 export function useProximityHover(containerRef: RefObject<HTMLElement | null>): UseProximityHover {
 	const [activeIndex, setActiveIndex] = useState<number | null>(null);
 	const [itemRects, setItemRects] = useState<Record<number, ProximityRect>>({});
@@ -89,7 +100,7 @@ export function useProximityHover(containerRef: RefObject<HTMLElement | null>): 
 	function findActiveIndex(localY: number): number | null {
 		const rects = rectsRef.current;
 		for (const [key, rect] of Object.entries(rects)) {
-			if (localY >= rect.top - ITEM_BUFFER_PX && localY < rect.top + rect.height + ITEM_BUFFER_PX) {
+			if (isWithinBufferedRange(localY, rect)) {
 				return Number(key);
 			}
 		}

@@ -68,10 +68,22 @@ export function providerOf(modelId: string): CloudSttProvider | null {
 	return null;
 }
 
+/**
+ * Resolve the chosen default model in a provider's catalog: the entry flagged
+ * `isDefault`, or the first entry as a fallback. Returns `null` when the
+ * catalog is empty — `defaultCloudModelId` turns that into a thrown error.
+ */
+export function pickDefaultCloudModel(catalog: readonly CloudModel[]): CloudModel | null {
+	const explicit = catalog.find((m) => m.isDefault);
+	if (explicit !== undefined) {
+		return explicit;
+	}
+	return catalog[0] ?? null;
+}
+
 export function defaultCloudModelId(provider: CloudSttProvider): string {
-	const catalog = CLOUD_CATALOG[provider];
-	const def = catalog.find((m) => m.isDefault) ?? catalog[0];
-	if (!def) {
+	const def = pickDefaultCloudModel(CLOUD_CATALOG[provider]);
+	if (def === null) {
 		throw new Error(`No models defined for cloud provider ${provider}`);
 	}
 	return `${provider}:${def.id}`;

@@ -1,8 +1,8 @@
 import { Note01Icon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "next-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
-import { SnippetsTable } from "@/features/manage-snippets";
 import { generateId } from "@/shared/lib/generate-id";
+import { SnippetsTable } from "./SnippetsTable";
 
 export function SnippetsSettingsPanel() {
 	const snippets = useSettingsStore((s) => s.settings.snippets) ?? [];

@@ -80,7 +80,8 @@ mock.module("electron-log/main", () => ({
 mock.module("electron", () => electronMock());
 
 const debugLogModule = await import("./debug-log");
-const { dbg, dbgVerbose, stringifyArg, getLogger } = debugLogModule;
+const { dbg, dbgVerbose, stringifyArg, getLogger, jsonStringifyOrString, identityString } =
+	debugLogModule;
 
 // Bun's `mock.module(...)` is process-global. When the full suite runs, other
 // test files (relay.test.ts, hotkey.test.ts, etc.) install their own
@@ -224,5 +225,44 @@ describe("debug-log module", () => {
 		expect(() => dbgVerbose("smoke", "verbose")).not.toThrow();
 		expect(stringifyArg("hello")).toBe("hello");
 		expect(stringifyArg(42)).toBe("42");
+	});
+
+	// ---- Dispatch-table helpers (post-refactor) --------------------------
+
+	test("jsonStringifyOrString returns JSON for serializable values", () => {
+		expect(jsonStringifyOrString({ x: 1 })).toBe('{"x":1}');
+		expect(jsonStringifyOrString([1, 2, 3])).toBe("[1,2,3]");
+		expect(jsonStringifyOrString(42)).toBe("42");
+		expect(jsonStringifyOrString(true)).toBe("true");
+		expect(jsonStringifyOrString(null)).toBe("null");
+	});
+
+	test("jsonStringifyOrString falls back to String() on JSON failure", () => {
+		const cyc: Record<string, unknown> = {};
+		cyc.self = cyc;
+		expect(jsonStringifyOrString(cyc)).toBe("[object Object]");
+		// BigInt also throws inside JSON.stringify
+		expect(jsonStringifyOrString(BigInt(123))).toBe("123");
+	});
+
+	test("identityString returns the value untouched (string cast)", () => {
+		expect(identityString("abc")).toBe("abc");
+		expect(identityString("")).toBe("");
+	});
+
+	test("stringifyArg dispatches to identityString for typeof === 'string'", () => {
+		// If the dispatch lookup is wrong, JSON.stringify would wrap "abc" as
+		// '"abc"' (with quotes). The identity path returns the bare string.
+		expect(stringifyArg("abc")).toBe("abc");
+	});
+
+	test("stringifyArg dispatches non-string typeof through jsonStringifyOrString", () => {
+		expect(stringifyArg(0)).toBe("0");
+		expect(stringifyArg(false)).toBe("false");
+		// `JSON.stringify(undefined)` is spec-defined to return undefined (NOT a
+		// string). The original `stringifyArg` had the same quirk; we preserve it.
+		expect(stringifyArg(undefined as unknown)).toBeUndefined();
+		expect(() => stringifyArg(Symbol("s"))).not.toThrow();
+		expect(() => stringifyArg(() => 0)).not.toThrow();
 	});
 });

@@ -22,6 +22,72 @@ interface OllamaLibraryStoreState {
 	tagsByModel: Readonly<Record<string, TagsState>>;
 }
 
+interface CatalogReadyState {
+	catalog: readonly OllamaLibraryHit[];
+	error: string | null;
+	isLoaded: boolean;
+	isLoading: boolean;
+}
+
+/** Normalize the model name into a stable cache key — empty string signals
+ *  "skip the request" to the caller. */
+export function tagsCacheKey(model: string): string {
+	return model.trim().toLowerCase();
+}
+
+/** True when an in-flight catalog request would overlap an existing one or
+ *  a previously-resolved one — used to gate `loadCatalog` against the
+ *  multi-mount thundering herd. */
+export function shouldSkipCatalogLoad(state: { isLoaded: boolean; isLoading: boolean }): boolean {
+	return state.isLoaded || state.isLoading;
+}
+
+/** True when there is a non-error cached tag list — used to gate `fetchTags`
+ *  so the picker doesn't re-hit ollama-registry for every accordion expand. */
+export function shouldSkipTagsFetch(existing: TagsState | undefined): boolean {
+	return Boolean(existing?.tags.length && !existing.error);
+}
+
+function buildCatalogReadyState(result: {
+	hits: readonly OllamaLibraryHit[];
+	error?: string;
+}): CatalogReadyState {
+	return {
+		catalog: result.hits,
+		isLoaded: true,
+		isLoading: false,
+		error: result.error ?? null,
+	};
+}
+
+/** Build the optimistic in-flight tags entry for a model — preserves any
+ *  previously-fetched tags so the UI doesn't flash empty during refresh. */
+function buildPendingTagsEntry(existing: TagsState | undefined): TagsState {
+	return {
+		isLoading: true,
+		error: null,
+		tags: existing?.tags ?? [],
+	};
+}
+
+/** Build the settled tags entry once the IPC result arrives. */
+function buildSettledTagsEntry(result: OllamaLibraryTagsResult): TagsState {
+	return {
+		isLoading: false,
+		error: result.error ?? null,
+		tags: result.tags,
+	};
+}
+
+/** Upsert a tags entry into the per-model map (immutable). */
+function upsertTagsByModel(
+	tagsByModel: Readonly<Record<string, TagsState>>,
+	key: string,
+	entry: TagsState
+): Readonly<Record<string, TagsState>> {
+	return { ...tagsByModel, [key]: entry };
+}
+
 /**
  * Holds the full Ollama library scraped from `ollama.com/library` (currently
  * ~230 models), plus per-model tag-scrape state. The catalog is pulled once
@@ -37,45 +103,29 @@ export const useOllamaLibraryStore = create<OllamaLibraryStoreState>((set, get) 
 	tagsByModel: {},
 
 	loadCatalog: async () => {
-		const state = get();
-		if (state.isLoaded || state.isLoading) {
+		if (shouldSkipCatalogLoad(get())) {
 			return;
 		}
 		set({ isLoading: true, error: null });
 		const result = await fetchOllamaLibraryCatalog();
-		set({
-			catalog: result.hits,
-			isLoaded: true,
-			isLoading: false,
-			error: result.error ?? null,
-		});
+		set(buildCatalogReadyState(result));
 	},
 
 	fetchTags: async (model: string) => {
-		const key = model.trim().toLowerCase();
+		const key = tagsCacheKey(model);
 		if (!key) {
 			return;
 		}
 		const existing = get().tagsByModel[key];
-		if (existing?.tags.length && !existing.error) {
+		if (shouldSkipTagsFetch(existing)) {
 			return;
 		}
 		set((s) => ({
-			tagsByModel: {
-				...s.tagsByModel,
-				[key]: { isLoading: true, error: null, tags: existing?.tags ?? [] },
-			},
+			tagsByModel: upsertTagsByModel(s.tagsByModel, key, buildPendingTagsEntry(existing)),
 		}));
 		const result: OllamaLibraryTagsResult = await fetchOllamaLibraryTags(model);
 		set((s) => ({
-			tagsByModel: {
-				...s.tagsByModel,
-				[key]: {
-					isLoading: false,
-					error: result.error ?? null,
-					tags: result.tags,
-				},
-			},
+			tagsByModel: upsertTagsByModel(s.tagsByModel, key, buildSettledTagsEntry(result)),
 		}));
 	},
 }));

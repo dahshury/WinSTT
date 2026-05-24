@@ -46,6 +46,46 @@ import { useSettingsStore } from "@/entities/setting";
  * ``true → false`` transition on ``model_swap_completed`` does NOT
  * re-fire the effect against still-stale ``runtimeModel``.
  */
+/** True when the server is the authoritative reporter of model state. */
+function serverIsAuthoritative(
+	isLoaded: boolean,
+	serverStatus: string,
+	runtimeModel: string | null
+): runtimeModel is string {
+	return isLoaded && serverStatus === "running" && runtimeModel !== null;
+}
+
+/** True when no main swap is in flight and runtime differs from settings. */
+function reconciliationWouldChangeSettings(
+	runtimeModel: string,
+	settingsModel: string | null,
+	activeMain: string | null
+): boolean {
+	return activeMain === null && runtimeModel !== settingsModel;
+}
+
+/**
+ * True only when the renderer should adopt the server's runtime-reported
+ * model. Composed from two narrow predicates so each stays low-CC and the
+ * rule is reusable in tests.
+ *
+ * Reads ``activeMain`` from the swap store via getState() rather than a
+ * subscription so the cleared-on-completion transition does NOT re-fire
+ * the effect against a still-stale ``runtimeModel`` push.
+ */
+function shouldAdoptRuntimeModel(
+	isLoaded: boolean,
+	serverStatus: string,
+	runtimeModel: string | null,
+	settingsModel: string | null,
+	activeMain: string | null
+): runtimeModel is string {
+	if (!serverIsAuthoritative(isLoaded, serverStatus, runtimeModel)) {
+		return false;
+	}
+	return reconciliationWouldChangeSettings(runtimeModel, settingsModel, activeMain);
+}
+
 export function useSyncActiveModel(): void {
 	const serverStatus = useConnectionStore((s) => s.serverStatus);
 	const runtimeModel = useConnectionStore((s) => s.runtimeInfo?.model ?? null);
@@ -54,15 +94,9 @@ export function useSyncActiveModel(): void {
 	const updateModelSettings = useSettingsStore((s) => s.updateModelSettings);
 
 	useEffect(() => {
-		if (!isLoaded || serverStatus !== "running" || !runtimeModel) {
-			return;
+		const activeMain = useModelSwapStore.getState().activeMain;
+		if (shouldAdoptRuntimeModel(isLoaded, serverStatus, runtimeModel, settingsModel, activeMain)) {
+			updateModelSettings({ model: runtimeModel });
 		}
-		if (useModelSwapStore.getState().activeMain !== null) {
-			return;
-		}
-		if (runtimeModel === settingsModel) {
-			return;
-		}
-		updateModelSettings({ model: runtimeModel });
 	}, [isLoaded, serverStatus, runtimeModel, settingsModel, updateModelSettings]);
 }

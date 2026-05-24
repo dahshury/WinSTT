@@ -41,37 +41,56 @@ const searchCache = new Map<string, CacheEntry<OllamaLibrarySearchResult>>();
 const tagsCache = new Map<string, CacheEntry<OllamaLibraryTagsResult>>();
 let catalogCache: CacheEntry<OllamaLibraryCatalogResult> | null = null;
 
+// ── Cache helpers ─────────────────────────────────────────────────────
+
+function isExpired<T>(entry: CacheEntry<T>): boolean {
+	return entry.expiresAt < Date.now();
+}
+
+function dropAndReturnNull<T>(map: Map<string, CacheEntry<T>>, key: string): null {
+	map.delete(key);
+	return null;
+}
+
+function unwrapEntry<T>(
+	map: Map<string, CacheEntry<T>>,
+	key: string,
+	entry: CacheEntry<T>
+): T | null {
+	return isExpired(entry) ? dropAndReturnNull(map, key) : entry.value;
+}
+
 function cacheGet<T>(map: Map<string, CacheEntry<T>>, key: string): T | null {
 	const hit = map.get(key);
-	if (!hit) {
-		return null;
-	}
-	if (hit.expiresAt < Date.now()) {
-		map.delete(key);
-		return null;
-	}
-	return hit.value;
+	return hit ? unwrapEntry(map, key, hit) : null;
 }
 
 function cacheSet<T>(map: Map<string, CacheEntry<T>>, key: string, value: T): void {
 	map.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
+// ── HTTP fetcher ──────────────────────────────────────────────────────
+
+function abortAfter(controller: AbortController, ms: number): ReturnType<typeof setTimeout> {
+	return setTimeout(() => controller.abort(), ms);
+}
+
+async function readOk(res: Response): Promise<string> {
+	return res.ok ? await res.text() : throwHttpError(res.status);
+}
+
+function throwHttpError(status: number): never {
+	throw new Error(`Ollama returned HTTP ${status}`);
+}
+
 async function fetchHtml(url: string): Promise<string> {
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-	try {
-		const res = await fetch(url, {
-			headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
-			signal: controller.signal,
-		});
-		if (!res.ok) {
-			throw new Error(`Ollama returned HTTP ${res.status}`);
-		}
-		return await res.text();
-	} finally {
-		clearTimeout(timer);
-	}
+	const timer = abortAfter(controller, REQUEST_TIMEOUT_MS);
+	const fetched = fetch(url, {
+		headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
+		signal: controller.signal,
+	}).then(readOk);
+	return await fetched.finally(() => clearTimeout(timer));
 }
 
 // ── Search-page parser ────────────────────────────────────────────────
@@ -97,15 +116,56 @@ function stripTags(s: string): string {
 	return decodeEntities(s.replace(/<[^>]+>/g, "")).trim();
 }
 
+function capabilityFromMatch(match: RegExpMatchArray): string {
+	return stripTags(match[1] ?? "");
+}
+
+function isNonEmpty(s: string): boolean {
+	return s.length > 0;
+}
+
+function nonEmptyOrUndefined<T>(arr: T[]): T[] | undefined {
+	return arr.length > 0 ? arr : undefined;
+}
+
 function parseCapabilities(block: string): string[] | undefined {
-	const capabilities: string[] = [];
-	for (const capMatch of block.matchAll(CAPABILITY_RE)) {
-		const cap = stripTags(capMatch[1] ?? "");
-		if (cap) {
-			capabilities.push(cap);
-		}
+	const matches = [...block.matchAll(CAPABILITY_RE)];
+	const caps = matches.map(capabilityFromMatch).filter(isNonEmpty);
+	return nonEmptyOrUndefined(caps);
+}
+
+function firstGroup(match: RegExpMatchArray | null): string | undefined {
+	return match ? stripTags(match[1] ?? "") : undefined;
+}
+
+function nameFromTitle(match: RegExpMatchArray | null, slug: string): string {
+	return match?.[1] ?? slug;
+}
+
+function assignDefined<T>(target: T, source: Record<string, unknown>): T {
+	for (const [key, value] of Object.entries(source)) {
+		applyIfDefined(target as Record<string, unknown>, key, value);
 	}
-	return capabilities.length > 0 ? capabilities : undefined;
+	return target;
+}
+
+function applyIfDefined(target: Record<string, unknown>, key: string, value: unknown): void {
+	const apply = applierFor(value);
+	apply(target, key, value);
+}
+
+function applierFor(
+	value: unknown
+): (target: Record<string, unknown>, key: string, value: unknown) => void {
+	return value === undefined ? noopApply : setProp;
+}
+
+function setProp(target: Record<string, unknown>, key: string, value: unknown): void {
+	target[key] = value;
+}
+
+function noopApply(_target: Record<string, unknown>, _key: string, _value: unknown): void {
+	return;
 }
 
 function parseSearchHit(block: string, slug: string): OllamaLibraryHit {
@@ -113,44 +173,63 @@ function parseSearchHit(block: string, slug: string): OllamaLibraryHit {
 	const descMatch = block.match(DESCRIPTION_RE);
 	const pullsMatch = block.match(PULLS_RE);
 	const updatedMatch = block.match(UPDATED_RE);
-	const hit: OllamaLibraryHit = { name: titleMatch?.[1] ?? slug };
-	const description = descMatch ? stripTags(descMatch[1] ?? "") : undefined;
-	if (description !== undefined) {
-		hit.description = description;
-	}
-	const pulls = pullsMatch ? stripTags(pullsMatch[1] ?? "") : undefined;
-	if (pulls !== undefined) {
-		hit.pulls = pulls;
-	}
-	const updated = updatedMatch ? stripTags(updatedMatch[1] ?? "") : undefined;
-	if (updated !== undefined) {
-		hit.updated = updated;
-	}
-	const capabilities = parseCapabilities(block);
-	if (capabilities !== undefined) {
-		hit.capabilities = capabilities;
-	}
-	return hit;
+	const base: OllamaLibraryHit = { name: nameFromTitle(titleMatch, slug) };
+	const extras: Record<string, unknown> = {
+		description: firstGroup(descMatch),
+		pulls: firstGroup(pullsMatch),
+		updated: firstGroup(updatedMatch),
+		capabilities: parseCapabilities(block),
+	};
+	return assignDefined(base, extras);
+}
+
+function isValidSlug(slug: string): boolean {
+	return slug.length > 0 && !(slug.includes(":") || slug.includes("/"));
+}
+
+function slugFrom(match: RegExpMatchArray): string {
+	return match[1] ?? "";
+}
+
+function startIndex(match: RegExpMatchArray): number {
+	return match.index ?? 0;
+}
+
+function endIndexFrom(next: RegExpMatchArray | undefined, fallback: number): number {
+	return next ? startIndex(next) : fallback;
+}
+
+interface AnchorSpan {
+	end: number;
+	match: RegExpMatchArray;
+	slug: string;
+	start: number;
+}
+
+function spanFor(
+	match: RegExpMatchArray,
+	next: RegExpMatchArray | undefined,
+	end: number
+): AnchorSpan {
+	return { match, slug: slugFrom(match), start: startIndex(match), end: endIndexFrom(next, end) };
+}
+
+function isValidSpan(span: AnchorSpan): boolean {
+	return isValidSlug(span.slug);
+}
+
+function spansFromAnchors(anchors: RegExpMatchArray[], htmlLength: number): AnchorSpan[] {
+	return anchors.map((match, i) => spanFor(match, anchors[i + 1], htmlLength));
+}
+
+function hitFromSpan(html: string): (span: AnchorSpan) => OllamaLibraryHit {
+	return (span) => parseSearchHit(html.slice(span.start, span.end), span.slug);
 }
 
 function parseSearchPage(html: string): OllamaLibraryHit[] {
-	const hits: OllamaLibraryHit[] = [];
 	const anchors = [...html.matchAll(SEARCH_HIT_RE)];
-	for (let i = 0; i < anchors.length; i++) {
-		const match = anchors[i];
-		if (!match) {
-			continue;
-		}
-		const slug = match[1] ?? "";
-		if (!slug || slug.includes(":") || slug.includes("/")) {
-			continue;
-		}
-		const start = match.index ?? 0;
-		const end = anchors[i + 1]?.index ?? html.length;
-		const block = html.slice(start, end);
-		hits.push(parseSearchHit(block, slug));
-	}
-	return hits;
+	const spans = spansFromAnchors(anchors, html.length).filter(isValidSpan);
+	return spans.map(hitFromSpan(html));
 }
 
 // ── Tag-page parser ───────────────────────────────────────────────────
@@ -169,144 +248,256 @@ const QUANT_TOKEN_RE = /(?:^|[-:_])(q\d[a-z0-9_]*|fp\d+|int\d+|bf\d+)(?=$|[-:_])
 const PARAM_TOKEN_RE = /(?:^|[-:_])(\d+(?:\.\d+)?[mMbB])(?=$|[-:_])/;
 const LATEST_TAG_RE = /text-blue-600[^>]*>latest</i;
 
-function parseSize(raw: string): { bytes: number; label: string } | null {
+interface SizeInfo {
+	bytes: number;
+	label: string;
+}
+
+function parseValue(match: RegExpMatchArray): number {
+	return Number.parseFloat(match[1] ?? "0");
+}
+
+function parseUnit(match: RegExpMatchArray): string {
+	return (match[2] ?? "").toUpperCase();
+}
+
+function multiplierFor(unit: string): number {
+	return SIZE_UNITS[unit] ?? 1;
+}
+
+function sizeInfoFor(match: RegExpMatchArray): SizeInfo | null {
+	const value = parseValue(match);
+	const unit = parseUnit(match);
+	const multiplier = multiplierFor(unit);
+	return finalizeSize(value, multiplier, match[1] ?? "", unit);
+}
+
+function isValidSizeBase(value: number, multiplier: number): boolean {
+	return Number.isFinite(value) && multiplier > 0;
+}
+
+function finalizeSize(
+	value: number,
+	multiplier: number,
+	rawValue: string,
+	unit: string
+): SizeInfo | null {
+	return isValidSizeBase(value, multiplier)
+		? { bytes: Math.round(value * multiplier), label: `${rawValue}${unit}` }
+		: null;
+}
+
+function parseSize(raw: string): SizeInfo | null {
 	const match = raw.match(SIZE_RE);
-	if (!match) {
-		return null;
-	}
-	const value = Number.parseFloat(match[1] ?? "0");
-	const unit = (match[2] ?? "").toUpperCase();
-	const multiplier = SIZE_UNITS[unit] ?? 1;
-	if (!Number.isFinite(value) || multiplier === 0) {
-		return null;
-	}
-	return { bytes: Math.round(value * multiplier), label: `${match[1]}${unit}` };
+	return match ? sizeInfoFor(match) : null;
+}
+
+function suffixSegment(tag: string): string {
+	return tag.includes(":") ? (tag.split(":")[1] ?? "") : tag;
+}
+
+function upperCaseGroup1(match: RegExpMatchArray | null): string | undefined {
+	return match?.[1]?.toUpperCase();
 }
 
 function parseQuantization(tag: string): string | undefined {
-	const segment = tag.includes(":") ? tag.split(":")[1] : tag;
-	if (!segment) {
-		return;
-	}
-	const match = segment.match(QUANT_TOKEN_RE);
-	if (!match) {
-		return;
-	}
-	return match[1]?.toUpperCase();
+	const segment = suffixSegment(tag);
+	return upperCaseGroup1(segment.match(QUANT_TOKEN_RE));
 }
 
 function parseParameterSize(tag: string): string | undefined {
-	const segment = tag.includes(":") ? tag.split(":")[1] : tag;
-	if (!segment) {
-		return;
-	}
-	const match = segment.match(PARAM_TOKEN_RE);
-	if (!match) {
-		return;
-	}
-	return match[1]?.toUpperCase();
+	const segment = suffixSegment(tag);
+	return upperCaseGroup1(segment.match(PARAM_TOKEN_RE));
+}
+
+function contextWindowFrom(block: string): string | undefined {
+	const match = block.match(CONTEXT_RE);
+	return match?.[1];
+}
+
+function isLatest(block: string): true | undefined {
+	return LATEST_TAG_RE.test(block) ? true : undefined;
+}
+
+function bytesFrom(sizeInfo: SizeInfo | null): number | undefined {
+	return sizeInfo?.bytes;
+}
+
+function labelFrom(sizeInfo: SizeInfo | null): string | undefined {
+	return sizeInfo?.label;
 }
 
 function buildLibraryTag(name: string, block: string): OllamaLibraryTag {
 	const sizeInfo = parseSize(block);
-	const ctxMatch = block.match(CONTEXT_RE);
-	const isLatest = LATEST_TAG_RE.test(block);
-	const quant = parseQuantization(name);
-	const paramSize = parseParameterSize(name);
-	const tag: OllamaLibraryTag = { name };
-	if (sizeInfo?.bytes !== undefined) {
-		tag.sizeBytes = sizeInfo.bytes;
-	}
-	if (sizeInfo?.label !== undefined) {
-		tag.sizeLabel = sizeInfo.label;
-	}
-	if (ctxMatch?.[1] !== undefined) {
-		tag.contextWindow = ctxMatch[1];
-	}
-	if (quant !== undefined) {
-		tag.quantization = quant;
-	}
-	if (paramSize !== undefined) {
-		tag.parameterSize = paramSize;
-	}
-	if (isLatest) {
-		tag.isLatest = true;
-	}
-	return tag;
+	const extras: Record<string, unknown> = {
+		sizeBytes: bytesFrom(sizeInfo),
+		sizeLabel: labelFrom(sizeInfo),
+		contextWindow: contextWindowFrom(block),
+		quantization: parseQuantization(name),
+		parameterSize: parseParameterSize(name),
+		isLatest: isLatest(block),
+	};
+	return assignDefined({ name } as OllamaLibraryTag, extras);
+}
+
+interface TagSpan {
+	end: number;
+	name: string;
+	start: number;
+}
+
+function tagSpanFor(
+	match: RegExpMatchArray,
+	next: RegExpMatchArray | undefined,
+	end: number
+): TagSpan {
+	return { name: match[1] ?? "", start: startIndex(match), end: endIndexFrom(next, end) };
+}
+
+function tagSpansFromAnchors(anchors: RegExpMatchArray[], htmlLength: number): TagSpan[] {
+	return anchors.map((match, i) => tagSpanFor(match, anchors[i + 1], htmlLength));
+}
+
+function dedupByName(spans: TagSpan[]): TagSpan[] {
+	const seen = new Set<string>();
+	return spans.filter((span) => acceptIfFirst(span, seen));
+}
+
+function acceptIfFirst(span: TagSpan, seen: Set<string>): boolean {
+	const accept = span.name.length > 0 && !seen.has(span.name);
+	return accept ? markAndAccept(span.name, seen) : false;
+}
+
+function markAndAccept(name: string, seen: Set<string>): true {
+	seen.add(name);
+	return true;
+}
+
+function tagFromSpan(html: string): (span: TagSpan) => OllamaLibraryTag {
+	return (span) => buildLibraryTag(span.name, html.slice(span.start, span.end));
+}
+
+// Ollama's tag page renders each row twice (mobile + desktop). We dedup
+// by tag name above, but the page also starts with a `:latest` alias
+// pointing at a canonical tag. If `<model>:latest` was seen, surface it
+// first; otherwise preserve scrape order.
+function latestRank(tag: OllamaLibraryTag): number {
+	return tag.isLatest ? 0 : 1;
+}
+
+function byLatestFirst(a: OllamaLibraryTag, b: OllamaLibraryTag): number {
+	return latestRank(a) - latestRank(b);
 }
 
 function parseTagsPage(_model: string, html: string): OllamaLibraryTag[] {
-	const tags: OllamaLibraryTag[] = [];
-	const seen = new Set<string>();
-	// Each tag block starts at the matching anchor; we grab the surrounding
-	// text up to the next anchor or end of file to scan for size / context.
 	const anchors = [...html.matchAll(TAG_ANCHOR_RE)];
-	for (let i = 0; i < anchors.length; i++) {
-		const match = anchors[i];
-		if (!match) {
-			continue;
-		}
-		const name = match[1] ?? "";
-		if (!name || seen.has(name)) {
-			continue;
-		}
-		seen.add(name);
-		const start = match.index ?? 0;
-		const end = anchors[i + 1]?.index ?? html.length;
-		tags.push(buildLibraryTag(name, html.slice(start, end)));
-	}
-	// Ollama's tag page renders each row twice (mobile + desktop). We dedup
-	// by tag name above, but the page also starts with a `:latest` alias
-	// pointing at a canonical tag. If `<model>:latest` was seen, surface it
-	// first; otherwise preserve scrape order.
-	tags.sort((a, b) => {
-		if (a.isLatest && !b.isLatest) {
-			return -1;
-		}
-		if (!a.isLatest && b.isLatest) {
-			return 1;
-		}
-		return 0;
-	});
+	const spans = dedupByName(tagSpansFromAnchors(anchors, html.length));
+	const tags = spans.map(tagFromSpan(html));
+	tags.sort(byLatestFirst);
 	return tags;
 }
 
 // ── Public scrape entry points ────────────────────────────────────────
+
+function emptySearchResult(page: number, query: string, error?: string): OllamaLibrarySearchResult {
+	const base: OllamaLibrarySearchResult = { hits: [], hasMore: false, page, query };
+	return assignDefined(base, { error });
+}
+
+function describeError(err: unknown, fallback: string): string {
+	return err instanceof Error ? err.message : fallback;
+}
+
+function searchUrlFor(query: string, page: number): string {
+	const pageSuffix = page > 0 ? `&p=${page}` : "";
+	return `${OLLAMA_BASE}/search?q=${encodeURIComponent(query)}${pageSuffix}`;
+}
+
+function sliceHits(allHits: OllamaLibraryHit[], page: number): OllamaLibrarySearchResult["hits"] {
+	const start = page * PAGE_SIZE;
+	return allHits.slice(start, start + PAGE_SIZE);
+}
+
+function hasMoreAfter(allHits: OllamaLibraryHit[], page: number): boolean {
+	return (page + 1) * PAGE_SIZE < allHits.length;
+}
+
+async function scrapeSearch(
+	query: string,
+	page: number,
+	cacheKey: string
+): Promise<OllamaLibrarySearchResult> {
+	const html = await fetchHtml(searchUrlFor(query, page));
+	const allHits = parseSearchPage(html);
+	const result: OllamaLibrarySearchResult = {
+		hits: sliceHits(allHits, page),
+		hasMore: hasMoreAfter(allHits, page),
+		page,
+		query,
+	};
+	cacheSet(searchCache, cacheKey, result);
+	return result;
+}
+
+async function searchOrFail(
+	query: string,
+	page: number,
+	cacheKey: string
+): Promise<OllamaLibrarySearchResult> {
+	return await scrapeSearch(query, page, cacheKey).catch((err: unknown) =>
+		recordSearchFailure(query, page, err)
+	);
+}
+
+function recordSearchFailure(query: string, page: number, err: unknown): OllamaLibrarySearchResult {
+	const message = describeError(err, "Failed to reach ollama.com");
+	dbg("ollama-registry: search failed", { query, page, error: message });
+	return emptySearchResult(page, query, message);
+}
+
+function searchCacheKey(query: string, page: number): string {
+	return `${query.toLowerCase()}::${page}`;
+}
+
+async function searchOrCached(trimmed: string, page: number): Promise<OllamaLibrarySearchResult> {
+	const cacheKey = searchCacheKey(trimmed, page);
+	const cached = cacheGet(searchCache, cacheKey);
+	return cached ?? (await searchOrFail(trimmed, page, cacheKey));
+}
 
 export async function searchOllamaLibrary(
 	query: string,
 	page = 0
 ): Promise<OllamaLibrarySearchResult> {
 	const trimmed = query.trim();
-	if (!trimmed) {
-		return { hits: [], hasMore: false, page, query: trimmed };
-	}
-	const cacheKey = `${trimmed.toLowerCase()}::${page}`;
-	const cached = cacheGet(searchCache, cacheKey);
-	if (cached) {
-		return cached;
-	}
-	const url = `${OLLAMA_BASE}/search?q=${encodeURIComponent(trimmed)}${page > 0 ? `&p=${page}` : ""}`;
-	try {
-		const html = await fetchHtml(url);
-		const allHits = parseSearchPage(html);
-		// Ollama's search returns the full result set on one HTML page; we
-		// paginate client-side to keep the UI responsive on large queries.
-		const sliceStart = page * PAGE_SIZE;
-		const hits = allHits.slice(sliceStart, sliceStart + PAGE_SIZE);
-		const result: OllamaLibrarySearchResult = {
-			hits,
-			hasMore: sliceStart + PAGE_SIZE < allHits.length,
-			page,
-			query: trimmed,
-		};
-		cacheSet(searchCache, cacheKey, result);
-		return result;
-	} catch (err) {
-		const message = err instanceof Error ? err.message : "Failed to reach ollama.com";
-		dbg("ollama-registry: search failed", { query: trimmed, page, error: message });
-		return { hits: [], hasMore: false, page, query: trimmed, error: message };
-	}
+	return trimmed.length > 0
+		? await searchOrCached(trimmed, page)
+		: emptySearchResult(page, trimmed);
+}
+
+function emptyCatalogResult(error?: string): OllamaLibraryCatalogResult {
+	return assignDefined({ hits: [] } as OllamaLibraryCatalogResult, { error });
+}
+
+async function scrapeCatalog(): Promise<OllamaLibraryCatalogResult> {
+	const html = await fetchHtml(`${OLLAMA_BASE}/library`);
+	const result: OllamaLibraryCatalogResult = { hits: parseSearchPage(html) };
+	catalogCache = { value: result, expiresAt: Date.now() + CATALOG_TTL_MS };
+	return result;
+}
+
+function recordCatalogFailure(err: unknown): OllamaLibraryCatalogResult {
+	const message = describeError(err, "Failed to reach ollama.com");
+	dbg("ollama-registry: catalog fetch failed", { error: message });
+	return emptyCatalogResult(message);
+}
+
+async function catalogOrFail(): Promise<OllamaLibraryCatalogResult> {
+	return await scrapeCatalog().catch(recordCatalogFailure);
+}
+
+function liveCatalogCache(): OllamaLibraryCatalogResult | null {
+	return catalogCache && !isExpired(catalogCache) ? catalogCache.value : null;
 }
 
 /**
@@ -316,45 +507,40 @@ export async function searchOllamaLibrary(
  * filtering. Cached for {@link CATALOG_TTL_MS} since the library only grows.
  */
 export async function fetchOllamaLibraryCatalog(): Promise<OllamaLibraryCatalogResult> {
-	if (catalogCache && catalogCache.expiresAt >= Date.now()) {
-		return catalogCache.value;
-	}
-	const url = `${OLLAMA_BASE}/library`;
-	try {
-		const html = await fetchHtml(url);
-		const hits = parseSearchPage(html);
-		const result: OllamaLibraryCatalogResult = { hits };
-		catalogCache = { value: result, expiresAt: Date.now() + CATALOG_TTL_MS };
-		return result;
-	} catch (err) {
-		const message = err instanceof Error ? err.message : "Failed to reach ollama.com";
-		dbg("ollama-registry: catalog fetch failed", { error: message });
-		return { hits: [], error: message };
-	}
+	return liveCatalogCache() ?? (await catalogOrFail());
+}
+
+function emptyTagsResult(model: string, error?: string): OllamaLibraryTagsResult {
+	const base: OllamaLibraryTagsResult = { model, tags: [] };
+	return assignDefined(base, { error });
+}
+
+async function scrapeTags(model: string, cacheKey: string): Promise<OllamaLibraryTagsResult> {
+	const html = await fetchHtml(`${OLLAMA_BASE}/library/${encodeURIComponent(model)}/tags`);
+	const result: OllamaLibraryTagsResult = { model, tags: parseTagsPage(model, html) };
+	cacheSet(tagsCache, cacheKey, result);
+	return result;
+}
+
+function recordTagsFailure(model: string, err: unknown): OllamaLibraryTagsResult {
+	const message = describeError(err, "Failed to reach ollama.com");
+	dbg("ollama-registry: tags fetch failed", { model, error: message });
+	return emptyTagsResult(model, message);
+}
+
+async function tagsOrFail(model: string, cacheKey: string): Promise<OllamaLibraryTagsResult> {
+	return await scrapeTags(model, cacheKey).catch((err: unknown) => recordTagsFailure(model, err));
+}
+
+async function tagsOrCached(trimmed: string): Promise<OllamaLibraryTagsResult> {
+	const cacheKey = trimmed.toLowerCase();
+	const cached = cacheGet(tagsCache, cacheKey);
+	return cached ?? (await tagsOrFail(trimmed, cacheKey));
 }
 
 export async function fetchOllamaLibraryTags(model: string): Promise<OllamaLibraryTagsResult> {
 	const trimmed = model.trim();
-	if (!trimmed) {
-		return { model: trimmed, tags: [] };
-	}
-	const cacheKey = trimmed.toLowerCase();
-	const cached = cacheGet(tagsCache, cacheKey);
-	if (cached) {
-		return cached;
-	}
-	const url = `${OLLAMA_BASE}/library/${encodeURIComponent(trimmed)}/tags`;
-	try {
-		const html = await fetchHtml(url);
-		const tags = parseTagsPage(trimmed, html);
-		const result: OllamaLibraryTagsResult = { model: trimmed, tags };
-		cacheSet(tagsCache, cacheKey, result);
-		return result;
-	} catch (err) {
-		const message = err instanceof Error ? err.message : "Failed to reach ollama.com";
-		dbg("ollama-registry: tags fetch failed", { model: trimmed, error: message });
-		return { model: trimmed, tags: [], error: message };
-	}
+	return trimmed.length > 0 ? await tagsOrCached(trimmed) : emptyTagsResult(trimmed);
 }
 
 // ── IPC wiring ────────────────────────────────────────────────────────
@@ -368,30 +554,49 @@ interface TagsPayload {
 	model: string;
 }
 
+function isObjectRecord(payload: unknown): payload is Record<string, unknown> {
+	return Boolean(payload) && typeof payload === "object";
+}
+
+function assertObject(payload: unknown, label: string): asserts payload is Record<string, unknown> {
+	requireTrue(isObjectRecord(payload), `${label} payload must be an object`);
+}
+
+function requireTrue(condition: boolean, message: string): asserts condition {
+	const enforce = condition ? noopAssert : throwAssert;
+	enforce(message);
+}
+
+function noopAssert(_message: string): void {
+	return;
+}
+
+function throwAssert(message: string): never {
+	throw new Error(message);
+}
+
+function assertStringField(candidate: Record<string, unknown>, field: string, label: string): void {
+	requireTrue(typeof candidate[field] === "string", `${label} payload missing string \`${field}\``);
+}
+
 function assertSearchPayload(payload: unknown): asserts payload is SearchPayload {
-	if (!(payload && typeof payload === "object")) {
-		throw new Error("search payload must be an object");
-	}
-	const candidate = payload as Record<string, unknown>;
-	if (typeof candidate.query !== "string") {
-		throw new Error("search payload missing string `query`");
-	}
+	assertObject(payload, "search");
+	assertStringField(payload, "query", "search");
 }
 
 function assertTagsPayload(payload: unknown): asserts payload is TagsPayload {
-	if (!(payload && typeof payload === "object")) {
-		throw new Error("tags payload must be an object");
-	}
-	const candidate = payload as Record<string, unknown>;
-	if (typeof candidate.model !== "string") {
-		throw new Error("tags payload missing string `model`");
-	}
+	assertObject(payload, "tags");
+	assertStringField(payload, "model", "tags");
+}
+
+function pageOf(payload: SearchPayload): number {
+	return payload.page ?? 0;
 }
 
 export function setupOllamaRegistry(): () => void {
 	const handleSearch = async (_event: unknown, payload: unknown) => {
 		assertSearchPayload(payload);
-		return await searchOllamaLibrary(payload.query, payload.page ?? 0);
+		return await searchOllamaLibrary(payload.query, pageOf(payload));
 	};
 
 	const handleCatalog = async () => fetchOllamaLibraryCatalog();
@@ -415,6 +620,12 @@ export function setupOllamaRegistry(): () => void {
 	};
 }
 
+function resetCachesForTests(): void {
+	searchCache.clear();
+	tagsCache.clear();
+	catalogCache = null;
+}
+
 // Test-only exports for the parser internals — pure functions, no IPC.
 export const __ollama_registry_test_helpers__ = {
 	parseSearchPage,
@@ -422,4 +633,10 @@ export const __ollama_registry_test_helpers__ = {
 	parseSize,
 	parseQuantization,
 	parseParameterSize,
+	assertSearchPayload,
+	assertTagsPayload,
+	searchOllamaLibrary,
+	fetchOllamaLibraryCatalog,
+	fetchOllamaLibraryTags,
+	resetCachesForTests,
 };

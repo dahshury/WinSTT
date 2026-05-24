@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
 	authHeadersFor,
 	classifyHttpStatus,
+	handleVerifyInvocation,
 	isVerifyPayload,
 	probeUrlFor,
 	verifyCredential,
@@ -162,5 +163,43 @@ describe("verifyCredential", () => {
 		if (!result.ok) {
 			expect(result.code).toBe("network");
 		}
+	});
+});
+
+describe("handleVerifyInvocation", () => {
+	let originalFetch: typeof fetch;
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	test("returns invalid-payload error when payload shape is wrong", async () => {
+		const result = await handleVerifyInvocation({ provider: "bad", apiKey: 42 });
+		expect(result).toEqual({
+			ok: false,
+			code: "provider_error",
+			message: "Invalid verify payload",
+		});
+	});
+
+	test("returns invalid-payload error when payload is null", async () => {
+		const result = await handleVerifyInvocation(null);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.code).toBe("provider_error");
+		}
+	});
+
+	test("delegates to verifyCredential when payload is valid", async () => {
+		globalThis.fetch = mock(() =>
+			Promise.resolve(new Response("ok", { status: 200 }))
+		) as unknown as typeof fetch;
+		const result = await handleVerifyInvocation({
+			provider: "openai",
+			apiKey: "sk-good",
+		});
+		expect(result.ok).toBe(true);
 	});
 });

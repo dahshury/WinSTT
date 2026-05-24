@@ -1163,6 +1163,29 @@ export function isNewScrollNonce(lastNonce: number | null, nonce: number): boole
 	return lastNonce !== nonce;
 }
 
+/** Resolves the next active maker for a non-empty virtualized list. */
+function resolveNextActiveMaker(
+	handle: { getItemOffset: (i: number) => number; getItemSize: (i: number) => number },
+	virtualItems: VirtualizedItem[],
+	offset: number
+): string | null {
+	const activeIdx = findActiveVirtualIndex(handle, virtualItems.length, offset);
+	return resolveActiveMaker(virtualItems, activeIdx);
+}
+
+/** Notifies the listener iff the maker changed, returning the new tracked value. */
+function notifyMakerIfChanged(
+	nextMaker: string | null,
+	lastNotifiedMaker: string | null,
+	onActiveMakerChange: ((maker: string | null) => void) | undefined
+): string | null {
+	if (shouldNotifyMaker(nextMaker, lastNotifiedMaker)) {
+		onActiveMakerChange?.(nextMaker);
+		return nextMaker;
+	}
+	return lastNotifiedMaker;
+}
+
 /**
  * Pure: applies a virtual-scroll offset to the active-maker tracking state.
  * Returns the next maker string, or null when the list is empty / no change
@@ -1176,16 +1199,30 @@ export function applyVirtualScrollMakerUpdate(
 	lastNotifiedMaker: string | null,
 	onActiveMakerChange: ((maker: string | null) => void) | undefined
 ): string | null {
-	if (!handle || virtualItems.length === 0) {
+	if (!handle) {
 		return lastNotifiedMaker;
 	}
-	const activeIdx = findActiveVirtualIndex(handle, virtualItems.length, offset);
-	const nextMaker = resolveActiveMaker(virtualItems, activeIdx);
-	if (shouldNotifyMaker(nextMaker, lastNotifiedMaker)) {
-		onActiveMakerChange?.(nextMaker);
-		return nextMaker;
+	if (virtualItems.length === 0) {
+		return lastNotifiedMaker;
 	}
-	return lastNotifiedMaker;
+	const nextMaker = resolveNextActiveMaker(handle, virtualItems, offset);
+	return notifyMakerIfChanged(nextMaker, lastNotifiedMaker, onActiveMakerChange);
+}
+
+/**
+ * Resolves the scroll target and invokes the scroll callback when valid.
+ * Returns the new nonce that should be tracked by the caller.
+ */
+function performScrollToMaker(
+	scrollToMakerRequest: ScrollRequest,
+	virtualItems: VirtualizedItem[],
+	scrollToIndex: ((index: number, opts?: ScrollToIndexOpts) => void) | undefined
+): number {
+	const targetIndex = findScrollTargetIndex(virtualItems, scrollToMakerRequest);
+	if (targetIndex >= 0) {
+		scrollToIndex?.(targetIndex, { align: "start" } satisfies ScrollToIndexOpts);
+	}
+	return scrollToMakerRequest.nonce;
 }
 
 /**
@@ -1204,11 +1241,7 @@ export function applyScrollToMakerRequest(
 	if (!isNewScrollNonce(lastNonce, scrollToMakerRequest.nonce)) {
 		return lastNonce;
 	}
-	const targetIndex = findScrollTargetIndex(virtualItems, scrollToMakerRequest);
-	if (targetIndex >= 0) {
-		scrollToIndex?.(targetIndex, { align: "start" } satisfies ScrollToIndexOpts);
-	}
-	return scrollToMakerRequest.nonce;
+	return performScrollToMaker(scrollToMakerRequest, virtualItems, scrollToIndex);
 }
 
 export function getEmptyStateLabel(hasActiveFilters: boolean): string {

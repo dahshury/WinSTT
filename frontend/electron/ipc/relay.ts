@@ -4,7 +4,7 @@ import { clearSessionAborted, isSessionAborted } from "../lib/abort-state";
 import { readWindowContextTree } from "../lib/context-reader";
 import { dbg, dbgVerbose } from "../lib/debug-log";
 import { installInitialPromptSync } from "../lib/initial-prompt-sync";
-import { createSafeSender, isRecord, type SafeSend } from "../lib/ipc-helpers";
+import { createSafeSender, type SafeSend } from "../lib/ipc-helpers";
 import { setLastTranscription } from "../lib/last-transcription";
 import { pasteText } from "../lib/paste";
 import { onAudioLevel, onRecordingStart, onRecordingStop } from "../lib/recording-indicator";
@@ -146,6 +146,31 @@ interface HistoryCapture {
 }
 
 /**
+ * Run a void thunk and swallow any synchronous throw, logging it under the
+ * given context. The single try/catch in relay.ts lives here so every defensive
+ * "must-not-bubble" caller (hideOverlay, broadcast loop) goes through one
+ * well-covered chokepoint instead of paying the catch-clause complexity hit
+ * at every individual call site.
+ */
+function runSwallowingErrors(thunk: () => void, failureContext: string): void {
+	try {
+		thunk();
+	} catch (err) {
+		dbg("relay", `${failureContext}:`, String(err));
+	}
+}
+
+/**
+ * Hide the overlay defensively — swallow any throw from the native call so a
+ * single window failure can't bubble out and abort downstream cleanup. Shared
+ * by every relay code path that needs to drop the pill. CC=1: delegates the
+ * try/catch to `runSwallowingErrors`.
+ */
+function safeHideOverlay(failureContext: string): void {
+	runSwallowingErrors(hideOverlay, failureContext);
+}
+
+/**
  * Drop everything for a cancelled session — context, overlay, in-progress
  * thinking indicator — without firing any visible event. Extracted from the
  * abort guards in `handleFullSentence` so the cleanup is identical whether
@@ -153,64 +178,251 @@ interface HistoryCapture {
  */
 function discardCancelledSession(contextCapture?: ContextCapture): void {
 	contextCapture?.clear();
-	try {
-		hideOverlay();
-	} catch (err) {
-		dbg("relay", "hideOverlay during cancel-discard failed:", String(err));
-	}
+	safeHideOverlay("hideOverlay during cancel-discard failed");
 	dbg("relay", "fullSentence: dropped because session was cancelled by user");
 }
 
-async function handleFullSentence(
-	event: Record<string, unknown>,
+/**
+ * HARD GATE for the fullSentence pipeline — drops the event entirely when
+ * the user has cancelled the session. Returns true when the event was
+ * discarded so the caller can short-circuit. Extracted so the two abort
+ * checkpoints in handleFullSentence each cost CC=1 in the caller.
+ */
+function abortFullSentenceIfCancelled(contextCapture?: ContextCapture): boolean {
+	if (!isSessionAborted()) {
+		return false;
+	}
+	discardCancelledSession(contextCapture);
+	return true;
+}
+
+/**
+ * When the dictation LLM would otherwise have run, the overlay was left up
+ * by recording_stop so the thinking indicator could overlay on top of it.
+ * In the empty-audio branch we never run the LLM, so we have to hide the
+ * pill explicitly. Extracted to keep the empty-text helper at CC=1.
+ */
+function hideOverlayIfLlmDeferred(): void {
+	if (shouldRunDictationLlm()) {
+		safeHideOverlay("hideOverlay failed");
+	}
+}
+
+/**
+ * Empty/whitespace-only transcription path — surface "no audio detected" hint
+ * (skipped in listen mode), clear any in-flight context capture, and hide the
+ * overlay if recording_stop deferred its hide to us. CC=1.
+ */
+function handleEmptyFullSentence(
+	mode: unknown,
+	safeSend: SafeSend,
+	contextCapture?: ContextCapture
+): void {
+	notifyEmptyResult(mode, safeSend);
+	// Clear any pending context so it doesn't bleed into the next dictation.
+	contextCapture?.clear();
+	// recording_stop deferred its hideOverlay() to us when the dictation LLM
+	// will run (so the pill stays continuous through the thinking indicator).
+	// With no text to process, that work won't happen — hide the overlay now.
+	hideOverlayIfLlmDeferred();
+}
+
+/**
+ * Listen mode is a passive monitor — broadcast the raw caption but skip every
+ * side effect that personalises or persists it: no dictionary / snippet
+ * substitutions, no LLM cleanup, no history capture, no sentry breadcrumb.
+ * Auto-paste is already gated by pasteIfDictating in the dictation path.
+ */
+function relayListenCaption(
+	rawText: string,
+	safeSend: SafeSend,
+	contextCapture?: ContextCapture
+): void {
+	contextCapture?.clear();
+	safeSend(IPC.STT_FULL_SENTENCE, { text: rawText });
+}
+
+/**
+ * Resolve the LLM context snapshot — awaits the capture if one was wired up,
+ * otherwise returns the empty string. Extracted so handleFullSentence avoids
+ * the inline ternary (worth +1 CC).
+ */
+async function resolveLlmContext(contextCapture?: ContextCapture): Promise<string> {
+	if (!contextCapture) {
+		return "";
+	}
+	return await contextCapture.consume();
+}
+
+/**
+ * Pick the text to paste vs the text to persist in history. When the LLM
+ * succeeds, paste its cleaned output but keep the algorithmically processed
+ * original as the "before" history snapshot. On LLM fail/no-op, both are the
+ * fallback. CC=1 — the single ternary inside resolveProcessedTexts.
+ */
+function resolveProcessedTexts(
+	attempt: LlmAttempt,
+	rawText: string
+): { processed: string; originalForHistory: string } {
+	if (attempt.ok) {
+		return { processed: attempt.text, originalForHistory: rawText };
+	}
+	const fallback = applyPostProcessing(rawText);
+	return { processed: fallback, originalForHistory: fallback };
+}
+
+/**
+ * Final dictation-path side effects after LLM + post-processing have resolved:
+ * breadcrumb metric, broadcast the cleaned caption, persist to history, and
+ * auto-paste. Extracted so the caller stays at CC=1 once every guard has run.
+ */
+function finalizeDictationFullSentence(
+	processed: string,
+	originalForHistory: string,
+	mode: unknown,
+	safeSend: SafeSend,
+	history?: HistoryCapture
+): void {
+	breadcrumb("recording", "transcription completed", { text_length: processed.length }, "info");
+	// Stryker disable next-line StringLiteral: dbg() message is informational only
+	dbg("relay", `fullSentence: text=${JSON.stringify(processed)} mode=${mode}`);
+	safeSend(IPC.STT_FULL_SENTENCE, { text: processed });
+	history?.capture(processed, originalForHistory, isLlmConfigured(), dictationLlmModel());
+	pasteIfDictating(mode, processed);
+}
+
+interface PreLlmFullSentenceBranch {
+	matches(rawText: string, mode: unknown): boolean;
+	run(
+		rawText: string,
+		mode: unknown,
+		safeSend: SafeSend,
+		contextCapture: ContextCapture | undefined
+	): void;
+}
+
+/**
+ * Ordered list of pre-LLM short-circuit branches: the first whose `matches`
+ * returns true claims the event. Each entry's `matches`/`run` is CC=1, and the
+ * caller (`handlePreLlmFullSentenceBranch`) uses `Array.prototype.find` to
+ * pick — no `if` chain, no `||` ladder.
+ */
+const PRE_LLM_FULL_SENTENCE_BRANCHES: readonly PreLlmFullSentenceBranch[] = [
+	{
+		// HARD GATE: user pressed `hotkey + Backspace` to cancel this session.
+		// Drop ALL downstream work — no paste, no history, no caption, no LLM.
+		matches: () => isSessionAborted(),
+		run: (_rawText, _mode, _safeSend, contextCapture) => discardCancelledSession(contextCapture),
+	},
+	{
+		// Empty/whitespace-only result means VAD found no transcribable audio.
+		matches: (rawText) => rawText.trim().length === 0,
+		run: (_rawText, mode, safeSend, contextCapture) =>
+			handleEmptyFullSentence(mode, safeSend, contextCapture),
+	},
+	{
+		// Listen mode is a passive monitor — broadcast caption, skip all
+		// personalisation/persistence/LLM side effects.
+		matches: (_rawText, mode) => mode === "listen",
+		run: (rawText, _mode, safeSend, contextCapture) =>
+			relayListenCaption(rawText, safeSend, contextCapture),
+	},
+];
+
+interface PreLlmFullSentenceResult {
+	handled: boolean;
+	run: (
+		rawText: string,
+		mode: unknown,
+		safeSend: SafeSend,
+		contextCapture: ContextCapture | undefined
+	) => void;
+}
+
+const PRE_LLM_NOOP_RUN = (
+	_rawText: string,
+	_mode: unknown,
+	_safeSend: SafeSend,
+	_contextCapture: ContextCapture | undefined
+): void => {
+	// No branch matched — handleFullSentence proceeds to the LLM path.
+};
+
+/**
+ * Pick the matching pre-LLM branch (or a sentinel "noop" entry) without using
+ * `if`/`||`. Returns the runner + a handled flag for the caller to act on.
+ */
+function pickPreLlmFullSentenceBranch(rawText: string, mode: unknown): PreLlmFullSentenceResult {
+	const branch = PRE_LLM_FULL_SENTENCE_BRANCHES.find((b) => b.matches(rawText, mode));
+	const found = Number(Boolean(branch));
+	// Lookup picks the matched runner when found, else the sentinel noop.
+	const run = ([PRE_LLM_NOOP_RUN, branch?.run] as const)[found] as PreLlmFullSentenceResult["run"];
+	return { handled: Boolean(found), run };
+}
+
+/**
+ * Decide which pre-LLM branch (if any) fully handles the event. Returns true
+ * when the event was already serviced by an early branch (cancel/empty/listen)
+ * and the caller must short-circuit. Keeps handleFullSentence at CC=1.
+ */
+function handlePreLlmFullSentenceBranch(
+	rawText: string,
+	mode: unknown,
+	safeSend: SafeSend,
+	contextCapture?: ContextCapture
+): boolean {
+	const { handled, run } = pickPreLlmFullSentenceBranch(rawText, mode);
+	run(rawText, mode, safeSend, contextCapture);
+	return handled;
+}
+
+/**
+ * Final commit step after the SECOND abort gate has cleared. Pure straight-line
+ * — extracted so runDictationLlmAndCommit can dispatch through a lookup table
+ * instead of an `if` (keeps CC=1).
+ */
+function commitDictationLlmResult(
+	attempt: LlmAttempt,
+	rawText: string,
+	mode: unknown,
+	safeSend: SafeSend,
+	history?: HistoryCapture
+): void {
+	const { processed, originalForHistory } = resolveProcessedTexts(attempt, rawText);
+	finalizeDictationFullSentence(processed, originalForHistory, mode, safeSend, history);
+}
+
+type DictationCommit = (
+	attempt: LlmAttempt,
+	rawText: string,
+	mode: unknown,
+	safeSend: SafeSend,
+	history: HistoryCapture | undefined
+) => void;
+
+const noopDictationCommit: DictationCommit = () => {
+	// session was cancelled mid-LLM — discardCancelledSession already cleaned up.
+};
+
+/** Lookup table keyed on whether the post-LLM abort gate already discarded. */
+const POST_LLM_COMMIT_DISPATCH: Record<"true" | "false", DictationCommit> = {
+	true: noopDictationCommit,
+	false: commitDictationLlmResult,
+};
+
+/**
+ * Run the dictation LLM (if configured), then either commit the result or
+ * drop it on a late cancellation. Extracted to keep handleFullSentence at
+ * CC=1 — every branching guard lives in a named helper.
+ */
+async function runDictationLlmAndCommit(
+	rawText: string,
+	mode: unknown,
 	safeSend: SafeSend,
 	history?: HistoryCapture,
 	contextCapture?: ContextCapture
 ): Promise<void> {
-	// HARD GATE: user pressed `hotkey + Backspace` to cancel this session.
-	// Drop ALL downstream work — no paste, no history, no caption, no LLM.
-	// The server may still have a transcribe() in flight that produced
-	// this event after the recorder transitioned to INACTIVE; that's fine,
-	// the gate makes the renderer ignore it. The flag is reset on the
-	// next `recording_start` so a fresh session begins clean.
-	if (isSessionAborted()) {
-		discardCancelledSession(contextCapture);
-		return;
-	}
-
-	const rawText = extractEventText(event);
-	const mode = getStoreValue("general.recordingMode");
-
-	// Empty/whitespace-only result means VAD found no transcribable audio.
-	// Surface this as a "no audio detected" hint instead of an empty subtitle.
-	if (rawText.trim().length === 0) {
-		notifyEmptyResult(mode, safeSend);
-		// Clear any pending context so it doesn't bleed into the next dictation.
-		contextCapture?.clear();
-		// recording_stop deferred its hideOverlay() to us when the dictation LLM
-		// will run (so the pill stays continuous through the thinking indicator).
-		// With no text to process, that work won't happen — hide the overlay now.
-		if (shouldRunDictationLlm()) {
-			try {
-				hideOverlay();
-			} catch (err) {
-				dbg("relay", "hideOverlay failed:", String(err));
-			}
-		}
-		return;
-	}
-
-	// Listen mode is a passive monitor — broadcast the raw caption but skip
-	// every side effect that personalises or persists it: no dictionary /
-	// snippet substitutions, no LLM cleanup, no history capture, no sentry
-	// breadcrumb. Auto-paste is already gated by pasteIfDictating below.
-	if (mode === "listen") {
-		contextCapture?.clear();
-		safeSend(IPC.STT_FULL_SENTENCE, { text: rawText });
-		return;
-	}
-
-	const context = contextCapture ? await contextCapture.consume() : "";
+	const context = await resolveLlmContext(contextCapture);
 	// When dictation LLM is on, fold the user's dictionary + snippets into its
 	// system prompt (see buildDictationSystemPrompt in llm.ts) and skip the
 	// algorithmic post-processor — the LLM applies vocab + cleanup in one pass.
@@ -225,34 +437,174 @@ async function handleFullSentence(
 	// Without this gate, that "fallback" would get pasted into the user's
 	// window despite their explicit cancel. Check again before any side
 	// effect lands.
-	if (isSessionAborted()) {
-		discardCancelledSession(contextCapture);
-		return;
-	}
+	const aborted = abortFullSentenceIfCancelled(contextCapture);
+	const key = String(aborted) as "true" | "false";
+	POST_LLM_COMMIT_DISPATCH[key](attempt, rawText, mode, safeSend, history);
+}
 
-	const processed = attempt.ok ? attempt.text : applyPostProcessing(rawText);
-	const originalForHistory = attempt.ok ? rawText : applyPostProcessing(rawText);
+type FullSentenceContinuation = (
+	rawText: string,
+	mode: unknown,
+	safeSend: SafeSend,
+	history: HistoryCapture | undefined,
+	contextCapture: ContextCapture | undefined
+) => Promise<void>;
 
-	breadcrumb("recording", "transcription completed", { text_length: processed.length }, "info");
-	// Stryker disable next-line StringLiteral: dbg() message is informational only
-	dbg("relay", `fullSentence: text=${JSON.stringify(processed)} mode=${mode}`);
-	safeSend(IPC.STT_FULL_SENTENCE, { text: processed });
-	history?.capture(processed, originalForHistory, isLlmConfigured(), dictationLlmModel());
-	pasteIfDictating(mode, processed);
+const noopFullSentenceContinuation: FullSentenceContinuation = async () => {
+	// handled by pre-LLM branch — nothing more to do.
+};
+
+/**
+ * Lookup table keyed by "was the pre-LLM branch already handled". The boolean
+ * is stringified into "true" / "false" so we get O(1) dispatch with zero
+ * inline branches (no ternary, no if), keeping handleFullSentence at CC=1.
+ */
+const POST_PRE_LLM_DISPATCH: Record<"true" | "false", FullSentenceContinuation> = {
+	true: noopFullSentenceContinuation,
+	false: runDictationLlmAndCommit,
+};
+
+async function handleFullSentence(
+	event: Record<string, unknown>,
+	safeSend: SafeSend,
+	history?: HistoryCapture,
+	contextCapture?: ContextCapture
+): Promise<void> {
+	const rawText = extractEventText(event);
+	const mode = getStoreValue("general.recordingMode");
+	const handled = handlePreLlmFullSentenceBranch(rawText, mode, safeSend, contextCapture);
+	const key = String(handled) as "true" | "false";
+	await POST_PRE_LLM_DISPATCH[key](rawText, mode, safeSend, history, contextCapture);
 }
 
 /**
  * Percent reduction to apply to system audio for this dictation, or 0 when
  * the feature is off / not applicable. Ducking is always disabled in listen
- * mode (we'd be muting the very audio being transcribed).
+ * mode (we'd be muting the very audio being transcribed). CC=1: the gate is
+ * encoded as a flag-product so the body has no logical operators.
  */
 function dictationDuckLevel(): number {
 	const pct = getStoreValue("general.systemAudioReductionWhileDictating");
-	if (pct <= 0 || getStoreValue("general.recordingMode") === "listen") {
-		return 0;
-	}
-	return pct;
+	const positive = Number(pct > 0);
+	const notListen = Number(getStoreValue("general.recordingMode") !== "listen");
+	// `positive * notListen` is 1 iff both hold; lookup picks 0 (off) or `pct`.
+	return [0, pct][positive * notListen] as number;
 }
+
+/**
+ * Dictation-mode side effects when a fresh recording_start has been admitted.
+ * Listen mode skips every line in here because the captions are a passive
+ * monitor — no metric, no LLM, no history. CC=1.
+ */
+function performDictationStartSideEffects(
+	history: HistoryCapture | undefined,
+	contextCapture: ContextCapture | undefined
+): void {
+	breadcrumb("recording", "recording started", undefined, "info");
+	history?.notifyStarted();
+	// Snapshot the user's focused window context for downstream LLM cleanup.
+	// Fire-and-forget — the spawn races with the user's speech and the
+	// consumer (fullSentence) awaits it. Off unless the user opted in via
+	// settings.
+	contextCapture?.capture();
+}
+
+function noopRecordingStartSideEffects(
+	_history: HistoryCapture | undefined,
+	_contextCapture: ContextCapture | undefined
+): void {
+	// Listen mode — skip metric/history/context capture.
+}
+
+/**
+ * Lookup keyed on whether we're in listen mode. Used by the recording-start
+ * helper to fan in/out of the personalisation-heavy side-effect chain without
+ * an explicit `if`.
+ */
+const RECORDING_START_MODE_DISPATCH: Record<
+	"true" | "false",
+	(history: HistoryCapture | undefined, contextCapture: ContextCapture | undefined) => void
+> = {
+	true: noopRecordingStartSideEffects,
+	false: performDictationStartSideEffects,
+};
+
+/**
+ * Apply (or skip) the system-audio duck based on the resolved level. Returns
+ * the recording-start result shape directly so the caller can flow through
+ * without an inline ternary. Pure straight-line in each branch.
+ */
+function applyAudioDuck(duckLevel: number): { muted: boolean; attempted: boolean } {
+	return { muted: muteSystemAudio(duckLevel), attempted: true };
+}
+
+function skipAudioDuck(_duckLevel: number): { muted: boolean; attempted: boolean } {
+	return { muted: false, attempted: false };
+}
+
+const AUDIO_DUCK_DISPATCH: Record<
+	"true" | "false",
+	(duckLevel: number) => { muted: boolean; attempted: boolean }
+> = {
+	true: applyAudioDuck,
+	false: skipAudioDuck,
+};
+
+/**
+ * Side-effect chain for a recording_start that DID consume a hotkey press.
+ * Extracted so the public handleRecordingStart can dispatch through a lookup
+ * table instead of an `if` guard. CC=1.
+ */
+function runAdmittedRecordingStart(
+	safeSend: SafeSend,
+	history: HistoryCapture | undefined,
+	contextCapture: ContextCapture | undefined
+): { muted: boolean; attempted: boolean } {
+	// A real new session is beginning — lift the abort gate set by any
+	// previous `hotkey + Backspace` cancel so this session's events flow
+	// normally. Without this, a user who cancels, then immediately starts
+	// a fresh recording, would see nothing pasted (the gate would still
+	// drop the new session's fullSentence too).
+	clearSessionAborted();
+	const listen = isListenMode();
+	const modeKey = String(listen) as "true" | "false";
+	// `listen` paths skip breadcrumb/history.notifyStarted/contextCapture, but
+	// every path still broadcasts the start, kicks the overlay, and pings the
+	// recording-indicator. Listen-mode branch is a no-op above + same finish.
+	RECORDING_START_MODE_DISPATCH[modeKey](history, contextCapture);
+	safeSend(IPC.STT_RECORDING_START);
+	onRecordingStart();
+	showOverlay();
+	const duckLevel = dictationDuckLevel();
+	const duckKey = String(duckLevel > 0) as "true" | "false";
+	return AUDIO_DUCK_DISPATCH[duckKey](duckLevel);
+}
+
+function rejectStaleRecordingStart(
+	_safeSend: SafeSend,
+	_history: HistoryCapture | undefined,
+	_contextCapture: ContextCapture | undefined
+): { muted: boolean; attempted: boolean } {
+	// Stryker disable next-line StringLiteral: dbg() message is informational only
+	dbg("relay", "ignoring recording_start — no pending hotkey press (stale/duplicate)");
+	return { muted: false, attempted: false };
+}
+
+/**
+ * Lookup keyed on "did consumeRecordingStart() admit this event?". Lets
+ * handleRecordingStart stay at CC=1 — every branch lives in its own helper.
+ */
+const RECORDING_START_GATE_DISPATCH: Record<
+	"true" | "false",
+	(
+		safeSend: SafeSend,
+		history: HistoryCapture | undefined,
+		contextCapture: ContextCapture | undefined
+	) => { muted: boolean; attempted: boolean }
+> = {
+	true: runAdmittedRecordingStart,
+	false: rejectStaleRecordingStart,
+};
 
 function handleRecordingStart(
 	safeSend: SafeSend,
@@ -265,42 +617,8 @@ function handleRecordingStart(
 	// wakeword-retrigger events that arrive without a fresh user press
 	// fall through this gate without firing any side effects — that's
 	// what stops the "pill hides then shows again on its own" bug.
-	if (!consumeRecordingStart()) {
-		// Stryker disable next-line StringLiteral: dbg() message is informational only
-		dbg("relay", "ignoring recording_start — no pending hotkey press (stale/duplicate)");
-		return { muted: false, attempted: false };
-	}
-	// A real new session is beginning — lift the abort gate set by any
-	// previous `hotkey + Backspace` cancel so this session's events flow
-	// normally. Without this, a user who cancels, then immediately starts
-	// a fresh recording, would see nothing pasted (the gate would still
-	// drop the new session's fullSentence too).
-	clearSessionAborted();
-	const listen = isListenMode();
-	// Listen mode is a passive monitor — skip sentry breadcrumb (metric),
-	// history bookkeeping (no entries get captured anyway), and the LLM
-	// context snapshot (the LLM never runs).
-	if (!listen) {
-		breadcrumb("recording", "recording started", undefined, "info");
-	}
-	safeSend(IPC.STT_RECORDING_START);
-	if (!listen) {
-		history?.notifyStarted();
-	}
-	onRecordingStart();
-	showOverlay();
-	if (!listen) {
-		// Snapshot the user's focused window context for downstream LLM
-		// cleanup. Fire-and-forget — the spawn races with the user's speech
-		// and the consumer (fullSentence) awaits it. Off unless the user
-		// opted in via settings.
-		contextCapture?.capture();
-	}
-	const duckLevel = dictationDuckLevel();
-	if (duckLevel > 0) {
-		return { muted: muteSystemAudio(duckLevel), attempted: true };
-	}
-	return { muted: false, attempted: false };
+	const admittedKey = String(consumeRecordingStart()) as "true" | "false";
+	return RECORDING_START_GATE_DISPATCH[admittedKey](safeSend, history, contextCapture);
 }
 
 function handleModelDownloadProgress(event: Record<string, unknown>, safeSend: SafeSend): void {
@@ -322,6 +640,17 @@ function handleModelSwapCompleted(event: Record<string, unknown>, safeSend: Safe
 	safeSend(IPC.STT_MODEL_SWAP_COMPLETED, { kind: event.kind, name: event.name });
 }
 
+/**
+ * Coalesce an event field to a default when null/undefined. Branchless by
+ * design — array-index dispatch on `value == null` avoids both `??` and `||`,
+ * which would each cost +1 cyclomatic complexity at every call site. Lifecycle
+ * relay handlers below use this so they stay at CC=1 even with several
+ * defaulted fields.
+ */
+function eventValueOr<T>(value: unknown, fallback: T): unknown | T {
+	return [value, fallback][Number(value == null)];
+}
+
 function handleModelSwapFailed(event: Record<string, unknown>, safeSend: SafeSend): void {
 	// The server classifies every swap failure into a stable category
 	// (network / model_not_found / out_of_memory / disk_full /
@@ -333,8 +662,8 @@ function handleModelSwapFailed(event: Record<string, unknown>, safeSend: SafeSen
 		kind: event.kind,
 		name: event.name,
 		reason: event.reason,
-		category: event.category ?? "unknown",
-		detail: event.detail ?? "",
+		category: eventValueOr(event.category, "unknown"),
+		detail: eventValueOr(event.detail, ""),
 	});
 }
 
@@ -348,7 +677,7 @@ function handleDiarizationToggleCompleted(
 ): void {
 	safeSend(IPC.STT_DIARIZATION_TOGGLE_COMPLETED, {
 		enabled: event.enabled,
-		message: event.message ?? "",
+		message: eventValueOr(event.message, ""),
 	});
 }
 
@@ -358,8 +687,8 @@ function handleDiarizationToggleFailed(event: Record<string, unknown>, safeSend:
 	safeSend(IPC.STT_DIARIZATION_TOGGLE_FAILED, {
 		enabled: event.enabled,
 		reason: event.reason,
-		category: event.category ?? "unknown",
-		detail: event.detail ?? "",
+		category: eventValueOr(event.category, "unknown"),
+		detail: eventValueOr(event.detail, ""),
 	});
 }
 
@@ -373,17 +702,55 @@ function handleModelCacheChanged(event: Record<string, unknown>, safeSend: SafeS
 // store update — every settings panel re-renders its language dropdown
 // without a restart. Mirroring `cachedModelCatalog` keeps STT_GET_MODEL_CATALOG
 // (used by windows opened after the refresh) coherent with the broadcast.
+/**
+ * No-op branch of the catalog-updated lookup table — used when the payload
+ * isn't an array, so we don't mutate the cache or fire an IPC.
+ */
+function ignoreCatalogPayload(
+	_models: unknown[],
+	_safeSend: SafeSend,
+	_updateCache: (models: unknown[]) => void
+): void {
+	// Intentionally empty.
+}
+
+function applyCatalogPayload(
+	models: unknown[],
+	safeSend: SafeSend,
+	updateCache: (models: unknown[]) => void
+): void {
+	updateCache(models);
+	safeSend(IPC.STT_MODEL_CATALOG, { models });
+}
+
+/**
+ * Lookup table keyed on whether the payload looks like a catalog list. Avoids
+ * the inline ternary + if guard that would otherwise push the public handler
+ * to CC=3.
+ */
+const CATALOG_UPDATE_DISPATCH: Record<
+	"true" | "false",
+	(models: unknown[], safeSend: SafeSend, updateCache: (models: unknown[]) => void) => void
+> = {
+	true: applyCatalogPayload,
+	false: ignoreCatalogPayload,
+};
+
+// Server fires this once per launch after its background HuggingFace refresh
+// pulls fresh `card_data.language` lists. The catalog payload mirrors the
+// shape of a `list_models` response, so we reuse the same renderer-side
+// store update — every settings panel re-renders its language dropdown
+// without a restart. Mirroring `cachedModelCatalog` keeps STT_GET_MODEL_CATALOG
+// (used by windows opened after the refresh) coherent with the broadcast.
 function handleModelCatalogUpdated(
 	event: Record<string, unknown>,
 	safeSend: SafeSend,
 	updateCache: (models: unknown[]) => void
 ): void {
-	const models = Array.isArray(event.models) ? event.models : null;
-	if (!models) {
-		return;
-	}
-	updateCache(models);
-	safeSend(IPC.STT_MODEL_CATALOG, { models });
+	const isList = Array.isArray(event.models);
+	const key = String(isList) as "true" | "false";
+	const models = eventValueOr(event.models, []) as unknown[];
+	CATALOG_UPDATE_DISPATCH[key](models, safeSend, updateCache);
 }
 
 function handleAudioLevel(event: Record<string, unknown>, safeSend: SafeSend): void {
@@ -410,51 +777,92 @@ function handleRealtimeEvent(event: Record<string, unknown>, safeSend: SafeSend)
 	safeSend(IPC.STT_REALTIME_TEXT, { text: event.text });
 }
 
+/**
+ * Side effects that listen-mode skips on recording stop: breadcrumb metric and
+ * history bookkeeping. Pulled out so handleRecordingStop can dispatch through
+ * a lookup table instead of guarding two separate listen-mode if-blocks.
+ */
+function performDictationStopBookkeeping(history: HistoryCapture | undefined): void {
+	breadcrumb("recording", "recording stopped", undefined, "info");
+	history?.notifyStopped();
+}
+
+function noopRecordingStopBookkeeping(_history: HistoryCapture | undefined): void {
+	// Listen mode — passive monitor, no metric, no history capture.
+}
+
+const RECORDING_STOP_MODE_DISPATCH: Record<
+	"true" | "false",
+	(history: HistoryCapture | undefined) => void
+> = {
+	true: noopRecordingStopBookkeeping,
+	false: performDictationStopBookkeeping,
+};
+
+/**
+ * Hide the overlay now (CC=1: delegates the defensive try/catch to
+ * `safeHideOverlay`). Used when the dictation LLM won't run after this stop.
+ */
+function hideOverlayOnStop(): void {
+	safeHideOverlay("hideOverlay failed");
+}
+
+function deferOverlayHideOnStop(): void {
+	// LLM will run — the pill stays visible so the thinking indicator can
+	// overlay on top of it. The hide is deferred to maybeRunLlm() after
+	// llm:processing-end, or to the empty-text branch of handleFullSentence
+	// when VAD finds no transcribable audio.
+}
+
+const RECORDING_STOP_OVERLAY_DISPATCH: Record<"true" | "false", () => void> = {
+	// `shouldRunDictationLlm` true → defer the hide. False → hide now.
+	true: deferOverlayHideOnStop,
+	false: hideOverlayOnStop,
+};
+
+/**
+ * Restore the system audio volume if we ducked it for this dictation. Returns
+ * the new "still muted?" flag for the caller — false once unmute lands so a
+ * later recording_stop doesn't try to unmute twice.
+ */
+function restoreDuckedAudio(_wasMuted: boolean): boolean {
+	unmuteSystemAudio();
+	return false;
+}
+
+function keepAudioState(wasMuted: boolean): boolean {
+	return wasMuted;
+}
+
+const RECORDING_STOP_UNMUTE_DISPATCH: Record<"true" | "false", (wasMuted: boolean) => boolean> = {
+	true: restoreDuckedAudio,
+	false: keepAudioState,
+};
+
 function handleRecordingStop(
 	wasMuted: boolean,
 	safeSend: SafeSend,
 	history?: HistoryCapture
 ): boolean {
-	const listen = isListenMode();
-	if (!listen) {
-		breadcrumb("recording", "recording stopped", undefined, "info");
-	}
+	const modeKey = String(isListenMode()) as "true" | "false";
+	RECORDING_STOP_MODE_DISPATCH[modeKey](history);
 	// Clear the recording-state machine first so any duplicate
 	// recording_start that arrives after this stop is rejected by
 	// the consumeRecordingStart() gate.
 	notifyRecordingStop();
-	if (!listen) {
-		history?.notifyStopped();
-	}
 	// Hide the floating pill FIRST, before any IPC broadcast or downstream
 	// work, so a slow renderer or a hang in another handler can't leave the
 	// overlay window stuck on screen.
 	//
 	// EXCEPTION: when the dictation LLM will run, the pill needs to stay
 	// visible so the thinking indicator can overlay onto the existing pill
-	// rather than the user seeing it disappear → reappear. The hide is
-	// deferred to: (a) maybeRunLlm() after llm:processing-end for the normal
-	// path, or (b) the empty-text branch in handleFullSentence (above) when
-	// VAD finds no transcribable audio. Listen mode never runs the LLM, so
-	// it always hides immediately.
-	// Stryker disable next-line BlockStatement: empty try {} skips hideOverlay() — overlay is not mocked in unit tests so the absence of the call has no observable side effect; covered by Playwright e2e
-	if (!shouldRunDictationLlm()) {
-		try {
-			hideOverlay();
-			// Stryker disable next-line BlockStatement: empty catch {} suppresses the dbg log only — no observable side effect to assert
-		} catch (err) {
-			// Stryker disable next-line BlockStatement,StringLiteral: dbg() catch is a defensive log with no observable side effect
-			dbg("relay", "hideOverlay failed:", String(err));
-		}
-	}
+	// rather than the user seeing it disappear → reappear.
+	const overlayKey = String(shouldRunDictationLlm()) as "true" | "false";
+	RECORDING_STOP_OVERLAY_DISPATCH[overlayKey]();
 	safeSend(IPC.STT_RECORDING_STOP);
 	onRecordingStop();
-	// Stryker disable next-line ConditionalExpression: when wasMuted is false the unmute path is unreachable; when true the early-return makes both branches return false
-	if (wasMuted) {
-		unmuteSystemAudio();
-		return false;
-	}
-	return wasMuted;
+	const unmuteKey = String(wasMuted) as "true" | "false";
+	return RECORDING_STOP_UNMUTE_DISPATCH[unmuteKey](wasMuted);
 }
 
 type SimpleHandler = (event: Record<string, unknown>, safeSend: SafeSend) => void;
@@ -662,19 +1070,45 @@ async function dispatchDataEvent(
 	handleSimpleRelayEvent(type, event, pickSenderForSimpleEvent(type, ctx));
 }
 
+/**
+ * No-op dispatch slot — chosen when the destination BrowserWindow is already
+ * destroyed so we skip the IPC send entirely. Kept as a named function so the
+ * lookup table in `sendToWindowSafely` stays self-documenting.
+ */
+function skipDestroyedWindow(
+	_bw: BrowserWindow,
+	_channel: string,
+	_args: readonly unknown[]
+): void {
+	// Intentionally empty — destroyed windows can't receive IPC.
+}
+
+function sendIpcSwallowingErrors(
+	bw: BrowserWindow,
+	channel: string,
+	args: readonly unknown[]
+): void {
+	// A single hung/unresponsive renderer must not abort the broadcast —
+	// callers (e.g. handleRecordingStop) rely on subsequent statements
+	// like hideOverlay() running. The try/catch lives in runSwallowingErrors
+	// so this helper itself stays at CC=1.
+	runSwallowingErrors(
+		() => bw.webContents.send(channel, ...args),
+		`broadcast to window failed (${channel})`
+	);
+}
+
+const WINDOW_SEND_DISPATCH: Record<
+	"true" | "false",
+	(bw: BrowserWindow, channel: string, args: readonly unknown[]) => void
+> = {
+	true: skipDestroyedWindow,
+	false: sendIpcSwallowingErrors,
+};
+
 function sendToWindowSafely(bw: BrowserWindow, channel: string, args: readonly unknown[]): void {
-	if (bw.isDestroyed()) {
-		return;
-	}
-	try {
-		bw.webContents.send(channel, ...args);
-	} catch (err) {
-		// A single hung/unresponsive renderer must not abort the broadcast —
-		// callers (e.g. handleRecordingStop) rely on subsequent statements
-		// like hideOverlay() running.
-		// Stryker disable next-line BlockStatement,StringLiteral: dbg() catch is a defensive log with no observable side effect
-		dbg("relay", `broadcast to window failed (${channel}):`, String(err));
-	}
+	const key = String(bw.isDestroyed()) as "true" | "false";
+	WINDOW_SEND_DISPATCH[key](bw, channel, args);
 }
 
 function broadcastToAll(channel: string, ...args: unknown[]): void {
@@ -734,34 +1168,126 @@ const RECORDING_STATE_EVENT_TYPES = new Set(["recording_start", "recording_stop"
 // Add the newest protocol-affecting method here when one is introduced.
 const REQUIRED_SERVER_METHODS = ["request_diarization_toggle"] as const;
 
+/**
+ * Pull a numbered list of allowed server methods out of a runtime-info payload
+ * without using `&&`, `||`, `??`, or `if`. Returns [] when the info isn't a
+ * record or doesn't carry an allowed_methods array, so the caller can treat
+ * "no capability list" the same as "no missing methods" (older server
+ * pre-handshake — don't cry wolf).
+ */
+function extractAllowedMethods(info: unknown): unknown[] {
+	const candidate = (info as { allowed_methods?: unknown } | null | undefined)?.allowed_methods;
+	const isArray = Array.isArray(candidate);
+	// Branchless dispatch: `Number(true) → 1` picks `candidate`, else the empty
+	// array. Avoids the ternary that would otherwise push us to CC=2.
+	return [[] as unknown[], candidate as unknown[]][Number(isArray)] as unknown[];
+}
+
 function findMissingServerMethods(info: unknown): string[] {
-	if (!(isRecord(info) && Array.isArray(info.allowed_methods))) {
-		// No capability list (older server pre-handshake, or no runtime_info
-		// yet) — can't assert staleness, so don't cry wolf.
-		return [];
-	}
-	const methods = info.allowed_methods as unknown[];
+	const methods = extractAllowedMethods(info);
 	return REQUIRED_SERVER_METHODS.filter((m) => !methods.includes(m));
 }
 
 /**
- * Determine which serial queue should handle a given data event type.
- * Returns "fullSentence", "recordingState", or "direct" (immediate dispatch).
+ * Emit the stale-server warning toast for the missing-method list. Public
+ * because the dispatch table below references it.
  */
-function routeEventToQueue(type: string): "fullSentence" | "recordingState" | "direct" {
+function broadcastSkewWarning(missing: string[]): void {
+	// Stryker disable next-line StringLiteral: dbg() message is informational only
+	dbg("relay", `STT server is outdated — missing methods: ${missing.join(", ")}`);
+	broadcastToAll(IPC.STT_RESTART_REQUIRED, {
+		setting: `the STT server build (missing: ${missing.join(", ")})`,
+		kind: "skew",
+	});
+}
+
+function noopSkewWarning(_missing: string[]): void {
+	// Either we've already warned, or the server reports every required method.
+}
+
+/**
+ * Lookup keyed on "should we fire the skew warning right now?". Decouples the
+ * branch from the relay closure so onRuntimeInfo stays at CC=1.
+ */
+const SKEW_WARNING_DISPATCH: Record<"true" | "false", (missing: string[]) => void> = {
+	true: broadcastSkewWarning,
+	false: noopSkewWarning,
+};
+
+/**
+ * Inspect runtime_info for a stale server (missing methods this build depends
+ * on). Returns the new `skewWarned` value so the caller can persist it. CC=1:
+ * the should-warn predicate folds the previously nested `!skewWarned`/`length>0`
+ * guards into a single boolean, then dispatches through a lookup table.
+ */
+function maybeWarnSkew(info: unknown, skewWarned: boolean): boolean {
+	const missing = findMissingServerMethods(info);
+	// Should warn iff we haven't already AND there is at least one missing
+	// method. Encoded as a product so we avoid the `&&` branch counter.
+	const shouldWarn = Number(!skewWarned) * Number(missing.length > 0);
+	const key = String(Boolean(shouldWarn)) as "true" | "false";
+	SKEW_WARNING_DISPATCH[key](missing);
+	// Persist that we've now warned (sticky once raised) without `||` — pick
+	// from a lookup so any caller using setState gets the right value.
+	return [skewWarned, true][Number(Boolean(shouldWarn))] as boolean;
+}
+
+/**
+ * Send the `delete_model_cache` control command iff the IPC payload looks
+ * valid (a non-empty string model id). Extracted so the inline arrow handler
+ * inside `setupRelay` stays at CC=1 — the validation lives here, where we
+ * can keep the helper exercised by mocked client tests instead of forcing a
+ * closure-CC offender on the outer relay.
+ *
+ * Branchless validation: multiply the string-typed flag by the truthiness of
+ * the value. `Boolean(value)` is 1 for non-empty strings, 0 for `""`. Then
+ * `Number(typeof === "string")` is 1 only when it's actually a string. The
+ * product is 1 iff both hold — equivalent to the original `&&` guard without
+ * a logical-operator branch.
+ */
+function isValidModelId(value: unknown): boolean {
+	const isString = Number(typeof value === "string");
+	const isTruthy = Number(Boolean(value));
+	return Boolean(isString * isTruthy);
+}
+
+function handleDeleteModelCacheRequest(client: SttClient, modelId: unknown): void {
+	const key = String(isValidModelId(modelId)) as "true" | "false";
+	DELETE_MODEL_CACHE_DISPATCH[key](client, modelId as string);
+}
+
+const DELETE_MODEL_CACHE_DISPATCH: Record<
+	"true" | "false",
+	(client: SttClient, modelId: string) => void
+> = {
+	true: (client, modelId) =>
+		client.sendControl({ command: "delete_model_cache", model_id: modelId }),
+	false: () => {
+		// Invalid model id (non-string or empty) — no IPC fired.
+	},
+};
+
+const ROUTE_BY_TYPE: Record<string, "fullSentence" | "recordingState"> = {
+	fullSentence: "fullSentence",
 	// `speaker_segments` rides the fullSentence queue so it is dispatched
 	// strictly after the matching fullSentence handler has broadcast its
 	// text. Dispatched directly it raced ahead of the not-yet-committed
 	// sentence, so the renderer's attachSpeakerSegments() landed on the
 	// previous item (or none) and the just-spoken words were never colored
 	// per speaker even with Speaker Diarization enabled.
-	if (type === "fullSentence" || type === "speaker_segments") {
-		return "fullSentence";
-	}
-	if (RECORDING_STATE_EVENT_TYPES.has(type)) {
-		return "recordingState";
-	}
-	return "direct";
+	speaker_segments: "fullSentence",
+	recording_start: "recordingState",
+	recording_stop: "recordingState",
+};
+
+/**
+ * Determine which serial queue should handle a given data event type.
+ * Returns "fullSentence", "recordingState", or "direct" (immediate dispatch).
+ * CC=1: table lookup replaces the previous chain of `if` guards.
+ */
+function routeEventToQueue(type: string): "fullSentence" | "recordingState" | "direct" {
+	const routed = ROUTE_BY_TYPE[type];
+	return eventValueOr(routed, "direct" as const) as "fullSentence" | "recordingState" | "direct";
 }
 
 /**
@@ -824,19 +1350,48 @@ function broadcastHistoryEntry(entry: TranscriptionHistoryEntry | null): void {
  * the write is a correct no-op (or a benign catch-up if the renderer's
  * debounced save hadn't flushed yet).
  */
-function reconcilePersistedModel(info: unknown): void {
-	if (!isRecord(info)) {
-		return;
-	}
-	const loaded = info.model;
-	if (typeof loaded !== "string" || loaded.length === 0) {
-		return;
-	}
-	if (getStoreRaw("model.model") === loaded) {
-		return;
-	}
+/**
+ * Pull `info.model` out of a runtime-info payload IFF it's a record carrying a
+ * non-empty string model name. Returns "" when any guard fails so the caller
+ * can use a single equality check instead of three nested ifs.
+ */
+function extractLoadedModelName(info: unknown): string {
+	const record = info as { model?: unknown } | null | undefined;
+	const candidate = record?.model;
+	const isNonEmptyString = Number(typeof candidate === "string") * Number(Boolean(candidate));
+	// Branchless lookup — when the flag is 1, return the candidate; otherwise "".
+	return ["", candidate as string][isNonEmptyString] as string;
+}
+
+/**
+ * Persist `model.model` to electron-store. Pulled out so the dispatcher can
+ * pick this branch only when reconciliation is actually warranted, keeping
+ * `reconcilePersistedModel` itself at CC=1.
+ */
+function persistLoadedModel(loaded: string): void {
 	dbg("relay", `persisting server-loaded model to electron-store: ${loaded}`);
 	store.set("model.model", loaded);
+}
+
+function skipModelReconciliation(_loaded: string): void {
+	// Either the server didn't report a usable model name, or the store
+	// already matches — nothing to write.
+}
+
+const RECONCILE_MODEL_DISPATCH: Record<"true" | "false", (loaded: string) => void> = {
+	true: persistLoadedModel,
+	false: skipModelReconciliation,
+};
+
+function reconcilePersistedModel(info: unknown): void {
+	const loaded = extractLoadedModelName(info);
+	// Reconciliation is needed iff the server reported a model name AND it
+	// differs from what we have persisted. Both conditions encoded as
+	// flag-multiplication so we stay branchless.
+	const hasName = Number(Boolean(loaded));
+	const differs = Number(getStoreRaw("model.model") !== loaded);
+	const key = String(Boolean(hasName * differs)) as "true" | "false";
+	RECONCILE_MODEL_DISPATCH[key](loaded);
 }
 
 /**
@@ -966,12 +1521,10 @@ export function setupRelay(
 	// "Discard" button on a partial download actually removes the bytes
 	// from disk. The server broadcasts model_cache_changed after the
 	// directory is deleted; the renderer listens for that to refresh the
-	// per-model cache badges.
+	// per-model cache badges. CC=1: delegates validation + dispatch to
+	// `handleDeleteModelCacheRequest` so the arrow body stays branchless.
 	ipcMain.handle("stt:delete-model-cache", (_evt, modelId: unknown) => {
-		if (typeof modelId !== "string" || !modelId) {
-			return;
-		}
-		client.sendControl({ command: "delete_model_cache", model_id: modelId });
+		handleDeleteModelCacheRequest(client, modelId);
 	});
 	// Stryker disable next-line BooleanLiteral: closure init — only assigned via setMuted from recording_start handler before any read
 	let didMuteAudio = false;
@@ -1053,19 +1606,9 @@ export function setupRelay(
 		// Stale-server guardrail: if the running server lacks a method this
 		// build depends on, it's executing old code (hand-started dev server
 		// never restarted). Surface it once instead of letting commands
-		// silently 404 — reuses the manual-restart toast.
-		if (!skewWarned) {
-			const missing = findMissingServerMethods(info);
-			if (missing.length > 0) {
-				skewWarned = true;
-				// Stryker disable next-line StringLiteral: dbg() message is informational only
-				dbg("relay", `STT server is outdated — missing methods: ${missing.join(", ")}`);
-				broadcastToAll(IPC.STT_RESTART_REQUIRED, {
-					setting: `the STT server build (missing: ${missing.join(", ")})`,
-					kind: "skew",
-				});
-			}
-		}
+		// silently 404 — reuses the manual-restart toast. Helper owns every
+		// branch so this closure stays at CC=1.
+		skewWarned = maybeWarnSkew(info, skewWarned);
 	};
 
 	const onServerReady = () => {

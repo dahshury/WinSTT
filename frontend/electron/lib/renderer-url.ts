@@ -80,25 +80,45 @@ export function loadRendererPage(win: BrowserWindow, page: RendererPage): Promis
  * under the packaged renderer root (defence in depth — prevents a
  * compromised renderer from loading `file:///C:/Windows/...`).
  */
-export function isAllowedRendererUrl(url: string): boolean {
-	try {
-		const parsed = new URL(url);
-		if (!app.isPackaged) {
-			return parsed.origin === DEV_BASE_URL;
-		}
-		if (parsed.protocol !== "file:") {
-			return false;
-		}
-		// On Windows the URL host is empty and the pathname starts with `/C:/…`;
-		// normalize before the prefix check.
-		const rendererRoot = path.normalize(getRendererRoot()).toLowerCase();
-		const pageDir = path
-			.normalize(path.dirname(decodeURIComponent(parsed.pathname).replace(LEADING_SLASHES_RE, "")))
-			.toLowerCase();
-		return pageDir === rendererRoot || pageDir.startsWith(`${rendererRoot}${path.sep}`);
-	} catch {
+function isAllowedDevUrl(parsed: URL): boolean {
+	return parsed.origin === DEV_BASE_URL;
+}
+
+function normalisedRendererRoot(): string {
+	return path.normalize(getRendererRoot()).toLowerCase();
+}
+
+function normalisedPageDir(parsed: URL): string {
+	return path
+		.normalize(path.dirname(decodeURIComponent(parsed.pathname).replace(LEADING_SLASHES_RE, "")))
+		.toLowerCase();
+}
+
+function isAllowedPackagedFileUrl(parsed: URL): boolean {
+	if (parsed.protocol !== "file:") {
 		return false;
 	}
+	// On Windows the URL host is empty and the pathname starts with `/C:/…`;
+	// normalize before the prefix check.
+	const rendererRoot = normalisedRendererRoot();
+	const pageDir = normalisedPageDir(parsed);
+	return pageDir === rendererRoot || pageDir.startsWith(`${rendererRoot}${path.sep}`);
+}
+
+function parseUrlOrNull(url: string): URL | null {
+	try {
+		return new URL(url);
+	} catch {
+		return null;
+	}
+}
+
+export function isAllowedRendererUrl(url: string): boolean {
+	const parsed = parseUrlOrNull(url);
+	if (parsed === null) {
+		return false;
+	}
+	return app.isPackaged ? isAllowedPackagedFileUrl(parsed) : isAllowedDevUrl(parsed);
 }
 
 /** Used by the navigation-guard's same-origin check inside detached windows. */

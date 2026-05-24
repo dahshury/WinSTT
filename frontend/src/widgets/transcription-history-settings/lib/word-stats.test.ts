@@ -3,6 +3,8 @@ import type { TranscriptionHistoryEntry } from "../model/history-store";
 import {
 	aggregate,
 	buildHeatmap,
+	dayRangeBounds,
+	filterEntriesByDateRange,
 	formatDuration,
 	formatWpm,
 	intensityLevel,
@@ -42,6 +44,78 @@ describe("wordsPerMinute", () => {
 	test("uses the configured 500ms floor as the cutoff (boundary)", () => {
 		// At exactly 500ms we should compute, not bail.
 		expect(wordsPerMinute(5, 500)).toBe(600);
+	});
+});
+
+describe("dayRangeBounds", () => {
+	test("returns null when either bound is null (unbounded range)", () => {
+		// Mirrors the "selection in progress" UX — picker shouldn't collapse
+		// the table while the user is still clicking the second endpoint.
+		expect(dayRangeBounds(null, null)).toBeNull();
+		expect(dayRangeBounds(new Date(2026, 0, 1), null)).toBeNull();
+		expect(dayRangeBounds(null, new Date(2026, 0, 1))).toBeNull();
+	});
+
+	test("expands `from` to local midnight and `to` to end-of-day 23:59:59.999", () => {
+		const from = new Date(2026, 4, 10, 17, 0, 0); // afternoon
+		const to = new Date(2026, 4, 12, 3, 0, 0); // early morning
+		const bounds = dayRangeBounds(from, to);
+		expect(bounds).not.toBeNull();
+		// fromTs is midnight of the from-day.
+		const fromTs = new Date(bounds?.fromTs ?? 0);
+		expect(fromTs.getFullYear()).toBe(2026);
+		expect(fromTs.getMonth()).toBe(4);
+		expect(fromTs.getDate()).toBe(10);
+		expect(fromTs.getHours()).toBe(0);
+		expect(fromTs.getMinutes()).toBe(0);
+		// toTs is the last millisecond of the to-day.
+		const toTs = new Date(bounds?.toTs ?? 0);
+		expect(toTs.getFullYear()).toBe(2026);
+		expect(toTs.getMonth()).toBe(4);
+		expect(toTs.getDate()).toBe(12);
+		expect(toTs.getHours()).toBe(23);
+		expect(toTs.getMinutes()).toBe(59);
+		expect(toTs.getSeconds()).toBe(59);
+		expect(toTs.getMilliseconds()).toBe(999);
+	});
+});
+
+describe("filterEntriesByDateRange", () => {
+	test("returns the input unchanged when the range is unbounded", () => {
+		const entries: TranscriptionHistoryEntry[] = [
+			makeEntry({ id: "a", timestamp: 1 }),
+			makeEntry({ id: "b", timestamp: 2 }),
+		];
+		expect(filterEntriesByDateRange(entries, null, null)).toBe(entries);
+		expect(filterEntriesByDateRange(entries, new Date(), null)).toBe(entries);
+		expect(filterEntriesByDateRange(entries, null, new Date())).toBe(entries);
+	});
+
+	test("keeps only entries whose timestamps fall inside the inclusive day range", () => {
+		const inside = new Date(2026, 4, 11, 12, 0, 0).getTime();
+		const beforeStart = new Date(2026, 4, 9, 23, 59, 59).getTime();
+		const afterEnd = new Date(2026, 4, 13, 0, 0, 0).getTime();
+		// Boundaries: start-of-day on the `from` side, end-of-day on `to` side.
+		const atStart = new Date(2026, 4, 10, 0, 0, 0).getTime();
+		const atEnd = new Date(2026, 4, 12, 23, 59, 59, 999).getTime();
+
+		const entries: TranscriptionHistoryEntry[] = [
+			makeEntry({ id: "before", timestamp: beforeStart }),
+			makeEntry({ id: "atStart", timestamp: atStart }),
+			makeEntry({ id: "inside", timestamp: inside }),
+			makeEntry({ id: "atEnd", timestamp: atEnd }),
+			makeEntry({ id: "after", timestamp: afterEnd }),
+		];
+		const out = filterEntriesByDateRange(
+			entries,
+			new Date(2026, 4, 10, 12, 0, 0),
+			new Date(2026, 4, 12, 12, 0, 0)
+		);
+		expect(out.map((e) => e.id)).toEqual(["atStart", "inside", "atEnd"]);
+	});
+
+	test("empty input stays empty under any range", () => {
+		expect(filterEntriesByDateRange([], new Date(2026, 0, 1), new Date(2026, 0, 2))).toEqual([]);
 	});
 });
 

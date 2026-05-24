@@ -346,8 +346,11 @@ async function handleListModelsWithState(sttClient: SttClient): Promise<unknown>
 	}
 }
 
-async function handleGetLiveResources(sttClient: SttClient, payload: unknown): Promise<unknown> {
-	const force = Boolean(isRecord(payload) && payload.forceRefresh === true);
+function readForceRefresh(payload: unknown): boolean {
+	return Boolean(isRecord(payload) && payload.forceRefresh === true);
+}
+
+async function safeGetLiveResources(sttClient: SttClient, force: boolean): Promise<unknown> {
 	try {
 		return await sttClient.getLiveResources(force);
 	} catch (err) {
@@ -356,30 +359,48 @@ async function handleGetLiveResources(sttClient: SttClient, payload: unknown): P
 	}
 }
 
+function handleGetLiveResources(sttClient: SttClient, payload: unknown): Promise<unknown> {
+	return safeGetLiveResources(sttClient, readForceRefresh(payload));
+}
+
 interface AssessDictationFitPayload {
 	device?: string | null;
 	modelId: string;
 	quantization?: string;
 }
 
+function readModelIdString(payload: Record<string, unknown>): string | null {
+	const modelId = payload.modelId;
+	return typeof modelId === "string" && modelId ? modelId : null;
+}
+
+function readOptionalString(value: unknown, fallback: string): string {
+	return typeof value === "string" ? value : fallback;
+}
+
+function readOptionalStringOrNull(value: unknown): string | null {
+	return typeof value === "string" ? value : null;
+}
+
 function parseAssessDictationFitPayload(payload: unknown): AssessDictationFitPayload | null {
 	if (!isRecord(payload)) {
 		return null;
 	}
-	const modelId = payload.modelId;
-	if (typeof modelId !== "string" || !modelId) {
+	const modelId = readModelIdString(payload);
+	if (!modelId) {
 		return null;
 	}
-	const quantization = typeof payload.quantization === "string" ? payload.quantization : "";
-	const device = typeof payload.device === "string" ? payload.device : null;
-	return { modelId, quantization, device };
+	return {
+		modelId,
+		quantization: readOptionalString(payload.quantization, ""),
+		device: readOptionalStringOrNull(payload.device),
+	};
 }
 
-async function handleAssessDictationFit(sttClient: SttClient, payload: unknown): Promise<unknown> {
-	const parsed = parseAssessDictationFitPayload(payload);
-	if (!parsed) {
-		return null;
-	}
+async function safeAssessDictationFit(
+	sttClient: SttClient,
+	parsed: AssessDictationFitPayload
+): Promise<unknown> {
 	try {
 		return await sttClient.assessDictationFit(
 			parsed.modelId,
@@ -390,6 +411,11 @@ async function handleAssessDictationFit(sttClient: SttClient, payload: unknown):
 		console.warn("[stt:assess-dictation-fit] request failed:", err);
 		return null;
 	}
+}
+
+function handleAssessDictationFit(sttClient: SttClient, payload: unknown): Promise<unknown> {
+	const parsed = parseAssessDictationFitPayload(payload);
+	return parsed ? safeAssessDictationFit(sttClient, parsed) : Promise.resolve(null);
 }
 
 /**
@@ -420,12 +446,7 @@ async function handleAssessDictationFit(sttClient: SttClient, payload: unknown):
  * Safe to call when nothing is in flight — every step short-circuits
  * silently if there's nothing to cancel.
  */
-export function handleAbortOperation(sttClient: SttClient): void {
-	dbg("stt-cmd", "abort-operation: user-triggered cancel");
-	// Mark first — even if the awaits below take time to land, any
-	// fullSentence / realtime event arriving in the meantime is dropped.
-	markSessionAborted();
-	abortActiveOllamaChats("user-cancelled-from-hotkey");
+function abortServerRecorderIfConnected(sttClient: SttClient): void {
 	if (sttClient.isConnected) {
 		// `abort` stops the state machine; `clear_audio_queue` drops any
 		// already-buffered frames so the next text() call doesn't churn
@@ -433,6 +454,9 @@ export function handleAbortOperation(sttClient: SttClient): void {
 		sttClient.callMethod("abort");
 		sttClient.callMethod("clear_audio_queue");
 	}
+}
+
+function safeHideOverlay(): void {
 	try {
 		hideOverlay();
 	} catch (err) {
@@ -440,20 +464,40 @@ export function handleAbortOperation(sttClient: SttClient): void {
 	}
 }
 
-async function handleAssessOllamaFit(sttClient: SttClient, payload: unknown): Promise<unknown> {
+export function handleAbortOperation(sttClient: SttClient): void {
+	dbg("stt-cmd", "abort-operation: user-triggered cancel");
+	// Mark first — even if the awaits below take time to land, any
+	// fullSentence / realtime event arriving in the meantime is dropped.
+	markSessionAborted();
+	abortActiveOllamaChats("user-cancelled-from-hotkey");
+	abortServerRecorderIfConnected(sttClient);
+	safeHideOverlay();
+}
+
+function isValidNonNegativeFiniteNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function parseAssessOllamaFitSize(payload: unknown): number | null {
 	if (!isRecord(payload)) {
 		return null;
 	}
 	const sizeBytes = payload.sizeBytes;
-	if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes < 0) {
-		return null;
-	}
+	return isValidNonNegativeFiniteNumber(sizeBytes) ? Math.floor(sizeBytes) : null;
+}
+
+async function safeAssessOllamaFit(sttClient: SttClient, sizeBytes: number): Promise<unknown> {
 	try {
-		return await sttClient.assessOllamaFit(Math.floor(sizeBytes));
+		return await sttClient.assessOllamaFit(sizeBytes);
 	} catch (err) {
 		console.warn("[stt:assess-ollama-fit] request failed:", err);
 		return null;
 	}
+}
+
+function handleAssessOllamaFit(sttClient: SttClient, payload: unknown): Promise<unknown> {
+	const size = parseAssessOllamaFitSize(payload);
+	return size === null ? Promise.resolve(null) : safeAssessOllamaFit(sttClient, size);
 }
 
 export function setupSttCommandHandlers(sttClient: SttClient): void {

@@ -70,45 +70,60 @@ function asString(value: unknown): string {
 	return typeof value === "string" ? value : "";
 }
 
-function parseSnapshot(raw: string): WindowContextSnapshot {
+function parseJsonOrNull(raw: string): unknown {
 	try {
-		const parsed: unknown = JSON.parse(raw);
-		if (!isPlainObject(parsed)) {
-			return EMPTY_CONTEXT;
-		}
-		// Build the snapshot field-by-field, attaching each optional
-		// enrichment only when it carries non-empty content. Keeping the
-		// minimum shape exactly 3-field when nothing was captured means
-		// `toEqual(EMPTY_CONTEXT)` assertions throughout the test suite
-		// stay valid and the deny-list filter can return a redacted
-		// snapshot that's indistinguishable from "nothing captured."
-		const snapshot: WindowContextSnapshot = {
-			windowTitle: asString(parsed.windowTitle),
-			elementName: asString(parsed.elementName),
-			focusedText: asString(parsed.focusedText),
-		};
-		const textBefore = asString(parsed.textBefore);
-		const textAfter = asString(parsed.textAfter);
-		if (textBefore.length > 0 || textAfter.length > 0) {
-			snapshot.textBefore = textBefore;
-			snapshot.textAfter = textAfter;
-		}
-		const appExe = asString(parsed.appExe);
-		if (appExe.length > 0) {
-			snapshot.appExe = appExe;
-		}
-		const url = asString(parsed.url);
-		if (url.length > 0) {
-			snapshot.url = url;
-		}
-		const axHtml = asString(parsed.axHtml);
-		if (axHtml.length > 0) {
-			snapshot.axHtml = axHtml;
-		}
-		return snapshot;
+		return JSON.parse(raw);
 	} catch {
+		return null;
+	}
+}
+
+function attachCaretFields(snapshot: WindowContextSnapshot, parsed: Record<string, unknown>): void {
+	const textBefore = asString(parsed.textBefore);
+	const textAfter = asString(parsed.textAfter);
+	if (textBefore.length === 0 && textAfter.length === 0) {
+		return;
+	}
+	snapshot.textBefore = textBefore;
+	snapshot.textAfter = textAfter;
+}
+
+function attachIfNonEmpty(
+	snapshot: WindowContextSnapshot,
+	parsed: Record<string, unknown>,
+	field: "appExe" | "url" | "axHtml"
+): void {
+	const value = asString(parsed[field]);
+	if (value.length > 0) {
+		snapshot[field] = value;
+	}
+}
+
+function buildSnapshotFromParsed(parsed: Record<string, unknown>): WindowContextSnapshot {
+	// Build the snapshot field-by-field, attaching each optional
+	// enrichment only when it carries non-empty content. Keeping the
+	// minimum shape exactly 3-field when nothing was captured means
+	// `toEqual(EMPTY_CONTEXT)` assertions throughout the test suite
+	// stay valid and the deny-list filter can return a redacted
+	// snapshot that's indistinguishable from "nothing captured."
+	const snapshot: WindowContextSnapshot = {
+		windowTitle: asString(parsed.windowTitle),
+		elementName: asString(parsed.elementName),
+		focusedText: asString(parsed.focusedText),
+	};
+	attachCaretFields(snapshot, parsed);
+	attachIfNonEmpty(snapshot, parsed, "appExe");
+	attachIfNonEmpty(snapshot, parsed, "url");
+	attachIfNonEmpty(snapshot, parsed, "axHtml");
+	return snapshot;
+}
+
+function parseSnapshot(raw: string): WindowContextSnapshot {
+	const parsed = parseJsonOrNull(raw);
+	if (!isPlainObject(parsed)) {
 		return EMPTY_CONTEXT;
 	}
+	return buildSnapshotFromParsed(parsed);
 }
 
 /**

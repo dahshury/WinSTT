@@ -7,7 +7,7 @@ import {
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { type AggregateStats, formatDuration, formatWpm } from "@/entities/transcription-history";
+import { type AggregateStats, formatDuration, formatWpm } from "../lib/word-stats";
 
 interface HistorySummaryProps {
 	stats: AggregateStats;

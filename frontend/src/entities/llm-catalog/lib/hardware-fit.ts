@@ -53,6 +53,77 @@ function hasGpu(sys: SystemInfoEntry): boolean {
 	return sys.gpus.length > 0;
 }
 
+function gpuFits(available: number, required: number): boolean {
+	return available >= required;
+}
+
+/** Early-exit assessment for zero size or missing system info — caller has
+ *  no enough data to flag a problem, so we report "fits" with undefined target. */
+function unknownAssessment(sizeBytes: number): OllamaFitAssessment {
+	return {
+		fits: true,
+		target: undefined,
+		shortfall: sizeBytes <= 0 ? undefined : "unknown",
+		requiredBytes: 0,
+		availableBytes: 0,
+	};
+}
+
+/** Assess the GPU branch — fits if VRAM covers requirement, otherwise flags
+ *  VRAM shortfall (we don't silently fall back to RAM because Ollama would
+ *  partially offload with a major speed cliff that the warning is meant to flag). */
+function assessOnGpu(required: number, vram: number): OllamaFitAssessment {
+	if (gpuFits(vram, required)) {
+		return {
+			fits: true,
+			target: "gpu",
+			shortfall: undefined,
+			requiredBytes: required,
+			availableBytes: vram,
+		};
+	}
+	return {
+		fits: false,
+		target: undefined,
+		shortfall: "vram",
+		requiredBytes: required,
+		availableBytes: vram,
+	};
+}
+
+/** Assess the CPU branch — fits if 70% of total RAM covers requirement,
+ *  otherwise flags RAM shortfall. */
+function assessOnCpu(required: number, ramBudget: number): OllamaFitAssessment {
+	if (ramBudget >= required) {
+		return {
+			fits: true,
+			target: "cpu",
+			shortfall: undefined,
+			requiredBytes: required,
+			availableBytes: ramBudget,
+		};
+	}
+	return {
+		fits: false,
+		target: undefined,
+		shortfall: "ram",
+		requiredBytes: required,
+		availableBytes: ramBudget,
+	};
+}
+
+function cpuRamBudget(sys: SystemInfoEntry): number {
+	return Math.floor(sys.total_ram_bytes * CPU_RAM_USABLE_FRACTION);
+}
+
+/** Pick GPU vs CPU strategy for a host with known system info. */
+function assessOnHost(required: number, systemInfo: SystemInfoEntry): OllamaFitAssessment {
+	if (hasGpu(systemInfo)) {
+		return assessOnGpu(required, largestGpuVramBytes(systemInfo));
+	}
+	return assessOnCpu(required, cpuRamBudget(systemInfo));
+}
+
 /**
  * Decide whether `sizeBytes` of Ollama model will run comfortably on `systemInfo`.
  *
@@ -72,54 +143,9 @@ export function assessOllamaFit(
 	systemInfo: SystemInfoEntry | null
 ): OllamaFitAssessment {
 	if (sizeBytes <= 0 || systemInfo === null) {
-		return {
-			fits: true,
-			target: undefined,
-			shortfall: sizeBytes <= 0 ? undefined : "unknown",
-			requiredBytes: 0,
-			availableBytes: 0,
-		};
+		return unknownAssessment(sizeBytes);
 	}
-	const required = requiredRuntimeBytes(sizeBytes);
-	if (hasGpu(systemInfo)) {
-		const vram = largestGpuVramBytes(systemInfo);
-		if (vram >= required) {
-			return {
-				fits: true,
-				target: "gpu",
-				shortfall: undefined,
-				requiredBytes: required,
-				availableBytes: vram,
-			};
-		}
-		// GPU is present but too small; report VRAM shortfall rather than
-		// silently falling back to RAM — Ollama would offload partially to
-		// CPU but with a major speed cliff that the warning is meant to flag.
-		return {
-			fits: false,
-			target: undefined,
-			shortfall: "vram",
-			requiredBytes: required,
-			availableBytes: vram,
-		};
-	}
-	const ramBudget = Math.floor(systemInfo.total_ram_bytes * CPU_RAM_USABLE_FRACTION);
-	if (ramBudget >= required) {
-		return {
-			fits: true,
-			target: "cpu",
-			shortfall: undefined,
-			requiredBytes: required,
-			availableBytes: ramBudget,
-		};
-	}
-	return {
-		fits: false,
-		target: undefined,
-		shortfall: "ram",
-		requiredBytes: required,
-		availableBytes: ramBudget,
-	};
+	return assessOnHost(requiredRuntimeBytes(sizeBytes), systemInfo);
 }
 
 /** Convenience predicate matching the STT selector's `isUncomfortable` shape. */

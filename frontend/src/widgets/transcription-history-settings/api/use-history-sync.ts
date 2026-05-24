@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { useTranscriptionHistoryStore } from "@/entities/transcription-history";
 import { fetchTranscriptionHistory, onTranscriptionHistoryAdded } from "@/shared/api/ipc-client";
+import { useTranscriptionHistoryStore } from "../model/history-store";
 
 export function useTranscriptionHistorySync(): void {
 	const setAll = useTranscriptionHistoryStore((s) => s.setAll);

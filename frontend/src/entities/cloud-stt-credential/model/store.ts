@@ -54,18 +54,58 @@ let lastKeys: Record<CloudSttProvider, string> = {
 	elevenlabs: "",
 };
 
-function syncOnSettingsChange(): void {
-	const settings = useSettingsStore.getState().settings;
-	const next: Record<CloudSttProvider, string> = {
+/**
+ * Snapshot of the per-provider API-key pair carried in settings. Pulled out
+ * so `syncOnSettingsChange` doesn't have to construct it inline.
+ */
+function readApiKeySnapshot(settings: {
+	integrations: {
+		elevenlabs: { apiKey: string };
+		openai: { apiKey: string };
+	};
+}): Record<CloudSttProvider, string> {
+	return {
 		openai: settings.integrations.openai.apiKey,
 		elevenlabs: settings.integrations.elevenlabs.apiKey,
 	};
-	const store = useCredentialStatusStore.getState();
-	for (const provider of ["openai", "elevenlabs"] as CloudSttProvider[]) {
-		if (next[provider] !== lastKeys[provider] && store.byProvider[provider].status !== "idle") {
+}
+
+const CLOUD_PROVIDERS: readonly CloudSttProvider[] = ["openai", "elevenlabs"];
+
+/**
+ * True when `provider`'s key changed since the last sync AND its previous
+ * status wasn't already `idle` — i.e. a freshly typed key shouldn't keep
+ * masquerading as "verified" against the previous value.
+ */
+function providerNeedsReset(
+	provider: CloudSttProvider,
+	next: Record<CloudSttProvider, string>,
+	prev: Record<CloudSttProvider, string>,
+	store: CredentialStatusState
+): boolean {
+	return next[provider] !== prev[provider] && store.byProvider[provider].status !== "idle";
+}
+
+/**
+ * Reset every provider whose key changed since the last tick, but only when
+ * its current status is not already `idle`. Pulled out of
+ * `syncOnSettingsChange` so the subscriber stays trivially branchy.
+ */
+function resetProvidersWithChangedKeys(
+	next: Record<CloudSttProvider, string>,
+	prev: Record<CloudSttProvider, string>,
+	store: CredentialStatusState
+): void {
+	for (const provider of CLOUD_PROVIDERS) {
+		if (providerNeedsReset(provider, next, prev, store)) {
 			store.reset(provider);
 		}
 	}
+}
+
+function syncOnSettingsChange(): void {
+	const next = readApiKeySnapshot(useSettingsStore.getState().settings);
+	resetProvidersWithChangedKeys(next, lastKeys, useCredentialStatusStore.getState());
 	lastKeys = next;
 }
 

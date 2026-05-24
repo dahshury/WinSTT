@@ -20,12 +20,20 @@ function asRecord(payload: unknown, label: string): Record<string, unknown> {
 	return payload;
 }
 
+const VALID_PREVIEW_FEATURES = new Set(["dictation", "transforms"] as const);
+
+function isValidPreviewFeature(value: unknown): value is PreviewPayload["feature"] {
+	return (
+		typeof value === "string" && VALID_PREVIEW_FEATURES.has(value as "dictation" | "transforms")
+	);
+}
+
 function assertPreviewPayload(payload: unknown): asserts payload is PreviewPayload {
 	const obj = asRecord(payload, "LLM preview");
 	if (typeof obj.text !== "string") {
 		throw new ValidationError("LLM preview payload.text must be a string", "text");
 	}
-	if (obj.feature !== "dictation" && obj.feature !== "transforms") {
+	if (!isValidPreviewFeature(obj.feature)) {
 		throw new ValidationError(
 			"LLM preview payload.feature must be 'dictation' or 'transforms'",
 			"feature"

@@ -118,4 +118,43 @@ describe("useTranscriptionStore", () => {
 		useTranscriptionStore.getState().clearAll();
 		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
 	});
+
+	test("attachSpeakerSegments is a no-op when the live feed is empty", () => {
+		// Cold start: no items yet, so the segments push has nothing to attach to.
+		// Snapshot the state and assert it didn't mutate (kills the "still calls
+		// set with new items" mutation that would dirty an empty feed).
+		const before = useTranscriptionStore.getState().items;
+		useTranscriptionStore.getState().attachSpeakerSegments([{ start: 0, end: 1, speaker: 0 }]);
+		const after = useTranscriptionStore.getState().items;
+		expect(after).toBe(before);
+		expect(after).toHaveLength(0);
+	});
+
+	test("attachSpeakerSegments stamps the segments onto the most recent item only", () => {
+		useTranscriptionStore.getState().addFinalSentence("first");
+		useTranscriptionStore.getState().addFinalSentence("second");
+		const segments = [
+			{ start: 0, end: 0.5, speaker: 0 },
+			{ start: 0.5, end: 1.2, speaker: 1 },
+		];
+		useTranscriptionStore.getState().attachSpeakerSegments(segments);
+		const items = useTranscriptionStore.getState().items;
+		expect(items).toHaveLength(2);
+		// Previous item is untouched (no speakerSegments field added).
+		expect(items[0]?.speakerSegments).toBeUndefined();
+		// Latest item carries the new segments verbatim.
+		expect(items[1]?.speakerSegments).toEqual(segments);
+		// Text on both is preserved.
+		expect(items.map((i) => i.text)).toEqual(["first", "second"]);
+	});
+
+	test("attachSpeakerSegments replaces the previous speakerSegments on re-emit", () => {
+		// The server can emit speaker_segments more than once per utterance as
+		// the diarizer settles; the latest emit should win.
+		useTranscriptionStore.getState().addFinalSentence("only");
+		useTranscriptionStore.getState().attachSpeakerSegments([{ start: 0, end: 1, speaker: 0 }]);
+		useTranscriptionStore.getState().attachSpeakerSegments([{ start: 0, end: 1, speaker: 5 }]);
+		const items = useTranscriptionStore.getState().items;
+		expect(items[0]?.speakerSegments).toEqual([{ start: 0, end: 1, speaker: 5 }]);
+	});
 });

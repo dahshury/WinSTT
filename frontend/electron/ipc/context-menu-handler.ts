@@ -82,21 +82,28 @@ function parseCoordinate(value: unknown, axis: "x" | "y"): number | undefined {
 	return value;
 }
 
+function hasTemplateArray(payload: unknown): payload is Record<string, unknown> & {
+	template: unknown[];
+} {
+	return isRecord(payload) && Array.isArray(payload.template);
+}
+
+function assignCoordinate(request: ContextMenuIpcRequest, axis: "x" | "y", value: unknown): void {
+	const parsed = parseCoordinate(value, axis);
+	if (parsed !== undefined) {
+		request[axis] = parsed;
+	}
+}
+
 function parseContextMenuRequest(payload: unknown): ContextMenuIpcRequest {
-	if (!(isRecord(payload) && Array.isArray(payload.template))) {
+	if (!hasTemplateArray(payload)) {
 		throw new Error("Context menu request must contain a template array.");
 	}
 	const request: ContextMenuIpcRequest = {
 		template: payload.template as ContextMenuTemplateItem[],
 	};
-	const x = parseCoordinate(payload.x, "x");
-	if (x !== undefined) {
-		request.x = x;
-	}
-	const y = parseCoordinate(payload.y, "y");
-	if (y !== undefined) {
-		request.y = y;
-	}
+	assignCoordinate(request, "x", payload.x);
+	assignCoordinate(request, "y", payload.y);
 	return request;
 }
 

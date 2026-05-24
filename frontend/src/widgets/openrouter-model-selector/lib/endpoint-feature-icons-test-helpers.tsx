@@ -148,10 +148,10 @@ export interface ChipChromeOptions {
 	shouldShowLabel: boolean;
 }
 
-/** Encodes 3 boolean flags into a ternary key for O(1) lookup. */
+/** Encodes 3 boolean flags into a 3-bit key for O(1) lookup. Branch-free. */
 export function chipSizeKey(showLabel: boolean, flat: boolean, isSmall: boolean): number {
 	// biome-ignore lint/suspicious/noBitwiseOperators: intentional bit packing for stable O(1) lookup key
-	return (showLabel ? 4 : 0) | (flat ? 2 : 0) | (isSmall ? 1 : 0);
+	return (Number(showLabel) << 2) | (Number(flat) << 1) | Number(isSmall);
 }
 
 const CHIP_SIZE_CLASS_MAP: Record<number, string> = {
@@ -215,6 +215,18 @@ export function resolveParamFeature(
 	return FEATURE_ICONS[param] ?? null;
 }
 
+/** Pushes a single param's feature entry when supported (no-op otherwise). */
+function tryAppendParamFeature(
+	features: Array<{ key: string; config: FeatureIconConfig }>,
+	param: string,
+	supportedParamsSet: Set<string>
+): void {
+	const config = resolveParamFeature(param, supportedParamsSet);
+	if (config) {
+		features.push({ key: param, config });
+	}
+}
+
 export function appendSupportedParams(
 	features: Array<{ key: string; config: FeatureIconConfig }>,
 	supportedParamsSet: Set<string>,
@@ -224,10 +236,7 @@ export function appendSupportedParams(
 		if (features.length >= maxIcons) {
 			break;
 		}
-		const config = resolveParamFeature(param, supportedParamsSet);
-		if (config) {
-			features.push({ key: param, config });
-		}
+		tryAppendParamFeature(features, param, supportedParamsSet);
 	}
 }
 

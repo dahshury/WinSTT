@@ -11,6 +11,23 @@ export interface AggregateStats {
 }
 
 /**
+ * Local-time inclusive day bounds: `[start-of-day(from), end-of-day(to)]`
+ * as epoch millis. Returns `null` when either bound is missing so the
+ * caller can short-circuit to "unbounded".
+ */
+export function dayRangeBounds(
+	from: Date | null,
+	to: Date | null
+): { fromTs: number; toTs: number } | null {
+	if (from === null || to === null) {
+		return null;
+	}
+	const fromTs = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
+	const toTs = new Date(to.getFullYear(), to.getMonth(), to.getDate(), 23, 59, 59, 999).getTime();
+	return { fromTs, toTs };
+}
+
+/**
  * Returns the subset of entries whose timestamps fall on or between the
  * inclusive local-day bounds [from, to]. When either bound is missing the
  * range is treated as unbounded and the input is returned unchanged — this
@@ -22,11 +39,11 @@ export function filterEntriesByDateRange(
 	from: Date | null,
 	to: Date | null
 ): TranscriptionHistoryEntry[] {
-	if (!(from && to)) {
+	const bounds = dayRangeBounds(from, to);
+	if (bounds === null) {
 		return entries;
 	}
-	const fromTs = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
-	const toTs = new Date(to.getFullYear(), to.getMonth(), to.getDate(), 23, 59, 59, 999).getTime();
+	const { fromTs, toTs } = bounds;
 	return entries.filter((e) => e.timestamp >= fromTs && e.timestamp <= toTs);
 }
 

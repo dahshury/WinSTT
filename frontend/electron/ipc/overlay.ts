@@ -312,16 +312,29 @@ function doShow(): void {
  * pill is hidden is a no-op (the next `showOverlay()` will read the new
  * mode through `doShow()`).
  */
+function getAliveOverlayWindow(): BrowserWindow | null {
+	if (overlayWindow && !overlayWindow.isDestroyed()) {
+		return overlayWindow;
+	}
+	return null;
+}
+
+function isOverlayLiveAndVisible(): boolean {
+	const win = getAliveOverlayWindow();
+	return win !== null && desired === "shown" && win.isVisible();
+}
+
 function repositionIfVisible(): void {
-	if (!overlayWindow || overlayWindow.isDestroyed()) {
+	if (!isOverlayLiveAndVisible()) {
 		return;
 	}
-	if (desired !== "shown" || !overlayWindow.isVisible()) {
+	const win = getAliveOverlayWindow();
+	if (!win) {
 		return;
 	}
-	const [winWidth = 800, winHeight = 120] = overlayWindow.getSize();
+	const [winWidth = 800, winHeight = 120] = win.getSize();
 	const { x, y } = computeOverlayPosition(resolveOverlayMode(), winWidth, winHeight);
-	safeCall(() => overlayWindow?.setPosition(x, y));
+	safeCall(() => win.setPosition(x, y));
 }
 
 /**
@@ -334,9 +347,19 @@ function repositionIfVisible(): void {
  * `syncOverlayToMainWindow` can bring the pill back if the main window
  * loses focus before the session ends.
  */
+const SHOW_OVERLAY_GATES: ReadonlyArray<() => boolean> = [
+	() => !overlayWindow,
+	isOverlaySuppressedBySettings,
+	isMainWindowFocused,
+];
+
+function isOverlayShowGated(): boolean {
+	return SHOW_OVERLAY_GATES.some((gate) => gate());
+}
+
 export function showOverlay(): void {
 	sessionWantsOverlay = true;
-	if (!overlayWindow || isOverlaySuppressedBySettings() || isMainWindowFocused()) {
+	if (isOverlayShowGated()) {
 		return;
 	}
 	doShow();
@@ -394,12 +417,16 @@ export function hideOverlay(): void {
  * - Main window not focused, session still wants the pill, not otherwise
  *   suppressed → bring the pill back so the live feed isn't lost.
  */
+function canShowAfterMainBlur(): boolean {
+	return sessionWantsOverlay && overlayWindow !== null && !isOverlaySuppressedBySettings();
+}
+
 export function syncOverlayToMainWindow(): void {
 	if (isMainWindowFocused()) {
 		performHide();
 		return;
 	}
-	if (sessionWantsOverlay && overlayWindow && !isOverlaySuppressedBySettings()) {
+	if (canShowAfterMainBlur()) {
 		doShow();
 	}
 }

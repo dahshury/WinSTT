@@ -52,6 +52,7 @@ import type { SelectOption } from "@/shared/ui/select";
 import { Switcher } from "@/shared/ui/switcher";
 import { PasswordField, TextField } from "@/shared/ui/text-field";
 import { Toggle } from "@/shared/ui/toggle";
+import { useWarmupStatusFeed } from "../api/use-warmup-status-feed";
 import {
 	buildLevelOpts,
 	buildProviderOpts,
@@ -76,7 +77,6 @@ import {
 	shouldSyncOllamaModel,
 	toggleIndependent,
 } from "../lib/llm-settings-panel-test-helpers";
-import { useWarmupStatusFeed } from "../api/use-warmup-status-feed";
 import { useWarmupStatusStore } from "../model/warmup-status-store";
 import { ContextAwarenessSection } from "./ContextAwarenessSection";
 import { ContextDenyListSection } from "./ContextDenyListSection";

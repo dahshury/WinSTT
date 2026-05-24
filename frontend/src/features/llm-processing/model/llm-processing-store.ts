@@ -21,23 +21,45 @@ interface LlmProcessingState {
 	thinkingText: string;
 }
 
+/** Patch for `setThinking(true)`: preserve an existing start so the timer is
+ * monotonic across duplicate START events (CC 1). */
+export function nextThinkingStart(
+	currentStart: number | null,
+	now: number = Date.now()
+): { isThinking: true; thinkingStartedAt: number } {
+	return {
+		isThinking: true,
+		thinkingStartedAt: currentStart ?? now,
+	};
+}
+
+/** Patch for `setThinking(false)`: clear both flags (CC 1). */
+export function thinkingStopPatch(): { isThinking: false; thinkingStartedAt: null } {
+	return { isThinking: false, thinkingStartedAt: null };
+}
+
+/** Pick the right patch for a `setThinking(value)` call (CC 1). */
+export function thinkingPatch(
+	value: boolean,
+	currentStart: number | null
+): { isThinking: boolean; thinkingStartedAt: number | null } {
+	return value ? nextThinkingStart(currentStart) : thinkingStopPatch();
+}
+
+/** Patch for `appendThinking(chunk)`: empty chunks are no-ops (CC 1). */
+export function appendThinkingPatch(
+	currentText: string,
+	chunk: string
+): { thinkingText: string } | null {
+	return chunk ? { thinkingText: currentText + chunk } : null;
+}
+
 export const useLlmProcessingStore = create<LlmProcessingState>()((set) => ({
 	isThinking: false,
 	thinkingStartedAt: null,
 	thinkingText: "",
-	setThinking: (value) =>
-		set((state) => {
-			if (value) {
-				return {
-					isThinking: true,
-					// Don't reset on a no-op true→true; keep the original start
-					// so the timer is monotonic even if start fires twice.
-					thinkingStartedAt: state.thinkingStartedAt ?? Date.now(),
-				};
-			}
-			return { isThinking: false, thinkingStartedAt: null };
-		}),
+	setThinking: (value) => set((state) => thinkingPatch(value, state.thinkingStartedAt)),
 	appendThinking: (chunk) =>
-		set((state) => (chunk ? { thinkingText: state.thinkingText + chunk } : state)),
+		set((state) => appendThinkingPatch(state.thinkingText, chunk) ?? state),
 	clearThinking: () => set({ thinkingText: "" }),
 }));

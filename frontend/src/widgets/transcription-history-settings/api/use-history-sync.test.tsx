@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { useTranscriptionHistoryStore } from "@/entities/transcription-history";
 import { IPC } from "@/shared/api/ipc-channels";
+import { useTranscriptionHistoryStore } from "../model/history-store";
 import { useTranscriptionHistorySync } from "./use-history-sync";
 
 const originalApi = window.electronAPI;

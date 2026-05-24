@@ -74,6 +74,33 @@ function modeCrossesWakeword(oldMode: unknown, newMode: unknown): boolean {
 // reconfigure path on the server side.
 const WAKEWORD_CONFIG_FIELDS = ["wakeWord", "wakeWordSensitivity", "wakeWordTimeout"] as const;
 
+function staysInWakeword(oldMode: unknown, newMode: unknown): boolean {
+	return oldMode === "wakeword" && newMode === "wakeword";
+}
+
+function wakeFieldDiffers(
+	field: string,
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
+): boolean {
+	return (
+		readNestedValue(oldSettings, "general", field) !==
+		readNestedValue(newSettings, "general", field)
+	);
+}
+
+function anyWakeFieldChanged(
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
+): boolean {
+	for (const field of WAKEWORD_CONFIG_FIELDS) {
+		if (wakeFieldDiffers(field, oldSettings, newSettings)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /** Did any wake-word CLI param change while staying in wakeword mode? */
 function wakeConfigChangedWhileInWakeword(
 	oldMode: unknown,
@@ -81,18 +108,10 @@ function wakeConfigChangedWhileInWakeword(
 	oldSettings: Record<string, unknown>,
 	newSettings: Record<string, unknown>
 ): boolean {
-	const staysInWakeword = oldMode === "wakeword" && newMode === "wakeword";
-	if (!staysInWakeword) {
+	if (!staysInWakeword(oldMode, newMode)) {
 		return false;
 	}
-	for (const field of WAKEWORD_CONFIG_FIELDS) {
-		const oldVal = readNestedValue(oldSettings, "general", field);
-		const newVal = readNestedValue(newSettings, "general", field);
-		if (oldVal !== newVal) {
-			return true;
-		}
-	}
-	return false;
+	return anyWakeFieldChanged(oldSettings, newSettings);
 }
 
 function wakeWordRestartNeeded(
@@ -215,15 +234,23 @@ function isRestartActionable(): boolean {
 	return hasServerToRestart();
 }
 
+function sendRestartRequiredToWindow(win: Electron.BrowserWindow, setting: string): void {
+	try {
+		win.webContents.send(IPC.STT_RESTART_REQUIRED, { setting, kind: "unmanaged" });
+	} catch {
+		// A single hung renderer must not block the others.
+	}
+}
+
+function broadcastRestartRequiredIfAlive(win: Electron.BrowserWindow, setting: string): void {
+	if (!win.isDestroyed()) {
+		sendRestartRequiredToWindow(win, setting);
+	}
+}
+
 function broadcastRestartRequired(setting: string): void {
 	for (const win of BrowserWindow.getAllWindows()) {
-		if (!win.isDestroyed()) {
-			try {
-				win.webContents.send(IPC.STT_RESTART_REQUIRED, { setting, kind: "unmanaged" });
-			} catch {
-				// A single hung renderer must not block the others.
-			}
-		}
+		broadcastRestartRequiredIfAlive(win, setting);
 	}
 }
 
@@ -268,6 +295,46 @@ function shouldScheduleRestart(
 	return restartRelevantChange && isRestartActionable();
 }
 
+function wakeKeyOrNull(
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
+): string | null {
+	return wakeWordRestartNeeded(oldSettings, newSettings) ? "general.wakeWord" : null;
+}
+
+function realtimeKeyOrNull(
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
+): string | null {
+	return realtimeEffectiveChanged(oldSettings, newSettings)
+		? "general.liveTranscriptionDisplay"
+		: null;
+}
+
+/**
+ * Capture which key forced the restart so the manual-restart notice can name
+ * it. Falls back to the wake-word group when the change was a wake-word param
+ * (those route through wakeWordRestartNeeded, which findChangedStartupKey
+ * doesn't cover), and to the realtime-gate group when the change came from
+ * the overlay/pill flipping effective realtime.
+ */
+function resolveChangedKey(
+	oldSettings: Record<string, unknown>,
+	newSettings: Record<string, unknown>
+): string | null {
+	return (
+		findChangedStartupKey(oldSettings, newSettings) ??
+		wakeKeyOrNull(oldSettings, newSettings) ??
+		realtimeKeyOrNull(oldSettings, newSettings)
+	);
+}
+
+function scheduleDebouncedRestart(changedKey: string | null): void {
+	// Debounce restart so rapid changes don't cause multiple restarts
+	clearRestartTimer();
+	restartTimer = setTimeout(() => performRestart(changedKey), 500);
+}
+
 /** Check if any startup-only settings changed between old and new, trigger restart if so. */
 function checkForRestartNeeded(
 	oldSettings: Record<string, unknown>,
@@ -276,20 +343,7 @@ function checkForRestartNeeded(
 	if (!shouldScheduleRestart(oldSettings, newSettings)) {
 		return;
 	}
-	// Capture which key forced the restart so the manual-restart notice
-	// can name it. Falls back to the wake-word group when the change was
-	// a wake-word param (those route through wakeWordRestartNeeded, which
-	// findChangedStartupKey doesn't cover), and to the realtime-gate group
-	// when the change came from the overlay/pill flipping effective realtime.
-	const changedKey =
-		findChangedStartupKey(oldSettings, newSettings) ??
-		(wakeWordRestartNeeded(oldSettings, newSettings) ? "general.wakeWord" : null) ??
-		(realtimeEffectiveChanged(oldSettings, newSettings)
-			? "general.liveTranscriptionDisplay"
-			: null);
-	// Debounce restart so rapid changes don't cause multiple restarts
-	clearRestartTimer();
-	restartTimer = setTimeout(() => performRestart(changedKey), 500);
+	scheduleDebouncedRestart(resolveChangedKey(oldSettings, newSettings));
 }
 
 export function setupSettingsHandlers(sttClient?: SttClient): void {
@@ -327,12 +381,66 @@ function snapshotSettings(): Record<string, unknown> {
 	return decryptSecretsForRenderer(out);
 }
 
+// First-run onboarding fields live under `general.*` but are owned by the main
+// process (set via the ONBOARDING_FINISH IPC, never by a UI control). The
+// renderer hydrates them into its settings store, so a save round-trip from any
+// renderer-side change would otherwise clobber the just-written `onboarded:true`
+// with the renderer's stale `false` — re-showing the wizard on next launch.
+// Always re-merge the on-disk values when persisting `general`.
+const MAIN_OWNED_GENERAL_KEYS = ["onboarded", "onboardedAt", "onboardedTrack"] as const;
+
+function preserveMainOwnedGeneral(value: unknown): unknown {
+	if (!isPlainObjectSection(value)) {
+		return value;
+	}
+	const existing = store.get("general") as unknown;
+	if (!isPlainObjectSection(existing)) {
+		return value;
+	}
+	const merged: Record<string, unknown> = { ...value };
+	for (const k of MAIN_OWNED_GENERAL_KEYS) {
+		merged[k] = existing[k];
+	}
+	return merged;
+}
+
 function applySettings(settings: Record<string, unknown>): void {
 	const toPersist = encryptSecretsForDisk(settings);
 	for (const [key, value] of Object.entries(toPersist)) {
 		if (ALLOWED_SETTINGS_KEYS.has(key)) {
-			store.set(key, value);
+			const safeValue = key === "general" ? preserveMainOwnedGeneral(value) : value;
+			store.set(key, safeValue);
 		}
+	}
+}
+
+function parseSecretDotPath(dotPath: string): { section: string; field: string } | null {
+	const [section, field] = dotPath.split(".");
+	if (!(section && field)) {
+		return null;
+	}
+	return { section, field };
+}
+
+function isPlainObjectSection(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function resolveSecretSection(
+	settings: Record<string, unknown>,
+	section: string
+): Record<string, unknown> | null {
+	const sectionVal = settings[section];
+	return isPlainObjectSection(sectionVal) ? sectionVal : null;
+}
+
+function applyTransformIfPresent(
+	obj: Record<string, unknown>,
+	field: string,
+	transform: (v: unknown) => unknown
+): void {
+	if (field in obj) {
+		obj[field] = transform(obj[field]);
 	}
 }
 
@@ -341,19 +449,14 @@ function walkSecretField(
 	dotPath: string,
 	transform: (v: unknown) => unknown
 ): void {
-	const [section, field] = dotPath.split(".");
-	if (!(section && field)) {
+	const parsed = parseSecretDotPath(dotPath);
+	if (!parsed) {
 		return;
 	}
-	const sectionVal = settings[section];
-	if (!sectionVal || typeof sectionVal !== "object" || Array.isArray(sectionVal)) {
-		return;
+	const section = resolveSecretSection(settings, parsed.section);
+	if (section) {
+		applyTransformIfPresent(section, parsed.field, transform);
 	}
-	const obj = sectionVal as Record<string, unknown>;
-	if (!(field in obj)) {
-		return;
-	}
-	obj[field] = transform(obj[field]);
 }
 
 /**
@@ -407,18 +510,33 @@ function broadcastSettingsToOtherWindows(
  * check as the save path so e.g. a hotkey switch into wakeword mode kicks
  * the server restart that brings the wake-word detector online.
  */
-export function applyMainProcessSettingsPatch(patch: Record<string, unknown>): void {
-	const oldSnapshot = snapshotSettings();
+function writePatchToStore(patch: Record<string, unknown>): void {
 	for (const [dotPath, value] of Object.entries(patch)) {
 		store.set(dotPath, value);
 	}
+}
+
+function sendSettingsChangedToWindow(
+	win: Electron.BrowserWindow,
+	settings: Record<string, unknown>
+): void {
+	if (!win.isDestroyed()) {
+		win.webContents.send("settings:changed", { settings });
+	}
+}
+
+function broadcastSettingsChangedToAllWindows(settings: Record<string, unknown>): void {
+	for (const win of BrowserWindow.getAllWindows()) {
+		sendSettingsChangedToWindow(win, settings);
+	}
+}
+
+export function applyMainProcessSettingsPatch(patch: Record<string, unknown>): void {
+	const oldSnapshot = snapshotSettings();
+	writePatchToStore(patch);
 	const newSnapshot = snapshotSettings();
 	checkForRestartNeeded(oldSnapshot, newSnapshot);
-	for (const win of BrowserWindow.getAllWindows()) {
-		if (!win.isDestroyed()) {
-			win.webContents.send("settings:changed", { settings: newSnapshot });
-		}
-	}
+	broadcastSettingsChangedToAllWindows(newSnapshot);
 }
 
 function validateSettingsObject(settings: unknown): void {

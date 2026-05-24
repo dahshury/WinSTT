@@ -39,29 +39,41 @@ let cachedSnippets: Array<{ trigger: string; expansion: string }> = [];
 let _store: typeof StoreType;
 let disposeWatchers: (() => void) | null = null;
 
-function rebuildDictTerms() {
+interface RebuildBuckets {
+	pairs: ReplacementPair[];
+	vocab: PhoneticTerm[];
+}
+
+function trimmedStringField(raw: unknown): string {
+	return typeof raw === "string" ? raw.trim() : "";
+}
+
+function readDictionaryRaw(): RawDictEntry[] {
 	const dictionary = _store.get("dictionary") as RawDictEntry[] | undefined;
-	if (!dictionary?.length) {
-		cachedDictTerms = [];
-		cachedReplacementPairs = [];
+	return dictionary?.length ? dictionary : [];
+}
+
+function addDictEntryToBuckets(entry: RawDictEntry, buckets: RebuildBuckets): void {
+	const term = trimmedStringField(entry.term);
+	if (term.length === 0) {
 		return;
 	}
-	const vocab: PhoneticTerm[] = [];
-	const pairs: ReplacementPair[] = [];
-	for (const e of dictionary) {
-		const term = typeof e.term === "string" ? e.term.trim() : "";
-		if (term.length === 0) {
-			continue;
-		}
-		const replacement = typeof e.replacement === "string" ? e.replacement.trim() : "";
-		if (replacement.length > 0) {
-			pairs.push({ term, replacement });
-		} else {
-			vocab.push(buildPhoneticTerm(term));
-		}
+	const replacement = trimmedStringField(entry.replacement);
+	if (replacement.length > 0) {
+		buckets.pairs.push({ term, replacement });
+		return;
 	}
-	cachedDictTerms = vocab;
-	cachedReplacementPairs = pairs;
+	buckets.vocab.push(buildPhoneticTerm(term));
+}
+
+function rebuildDictTerms() {
+	const dictionary = readDictionaryRaw();
+	const buckets: RebuildBuckets = { vocab: [], pairs: [] };
+	for (const entry of dictionary) {
+		addDictEntryToBuckets(entry, buckets);
+	}
+	cachedDictTerms = buckets.vocab;
+	cachedReplacementPairs = buckets.pairs;
 }
 
 function rebuildSnippets() {
@@ -141,23 +153,27 @@ function escapeRegExp(s: string): string {
  * relies on to guarantee the corrections fire regardless of what the LLM
  * actually produced.
  */
+function applyOnePair(text: string, pair: ReplacementPair): string {
+	const escaped = escapeRegExp(pair.term);
+	// `\b` anchors avoid touching identifiers / substrings; the `gi`
+	// flags make it case-insensitive global (one find replaces every
+	// matching occurrence regardless of the user's chosen casing).
+	const re = new RegExp(`\\b${escaped}\\b`, "gi");
+	return text.replace(re, pair.replacement);
+}
+
+function pairsShortCircuit(text: string, pairs: readonly ReplacementPair[]): boolean {
+	return text === "" || pairs.length === 0;
+}
+
 export function applyReplacementPairs(
 	text: string,
 	pairs: readonly ReplacementPair[] = cachedReplacementPairs
 ): string {
-	if (!text || pairs.length === 0) {
+	if (pairsShortCircuit(text, pairs)) {
 		return text;
 	}
-	let out = text;
-	for (const { term, replacement } of pairs) {
-		const escaped = escapeRegExp(term);
-		// `\b` anchors avoid touching identifiers / substrings; the `gi`
-		// flags make it case-insensitive global (one find replaces every
-		// matching occurrence regardless of the user's chosen casing).
-		const re = new RegExp(`\\b${escaped}\\b`, "gi");
-		out = out.replace(re, replacement);
-	}
-	return out;
+	return pairs.reduce(applyOnePair, text);
 }
 
 /**

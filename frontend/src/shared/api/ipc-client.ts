@@ -44,6 +44,31 @@ function isElectron(): boolean {
 }
 
 /**
+ * True when `arg` is the kind of value that should go through a JSON
+ * round-trip (object/array) versus a primitive that JSON.stringify would
+ * silently mangle (`undefined` → `undefined` then `JSON.parse("undefined")`
+ * throws) or that doesn't carry the non-cloneable garbage we're trying to
+ * strip (numbers, strings, booleans, null).
+ */
+function isObjectArg(arg: unknown): arg is object {
+	return arg !== null && typeof arg === "object";
+}
+
+/**
+ * Single-argument JSON round-trip: primitives pass through unchanged, objects
+ * are JSON-stringified and re-parsed so non-cloneable garbage (functions,
+ * Proxies, class prototypes) is stripped. Extracted from `toCloneableArgs`
+ * so the inner closure stays CC ≤ 2 (the chained guards inflated the score
+ * past the CRAP threshold).
+ *
+ * `null` is the only object value for which `typeof === "object"` and JSON
+ * handles it natively — guarding on it keeps `isObjectArg` clean.
+ */
+function jsonRoundTripArg(arg: unknown): unknown {
+	return isObjectArg(arg) ? JSON.parse(JSON.stringify(arg)) : arg;
+}
+
+/**
  * Make IPC arguments safe to cross the Electron `contextBridge`.
  *
  * `ipcRenderer.send`/`invoke` run every argument through the HTML
@@ -70,11 +95,7 @@ function toCloneableArgs(channel: string, args: unknown[]): unknown[] {
 	} catch {
 		try {
 			console.warn(`[ipc] non-cloneable payload on "${channel}" — sanitizing via JSON round-trip`);
-			return args.map((arg) =>
-				arg === undefined || typeof arg !== "object" || arg === null
-					? arg
-					: JSON.parse(JSON.stringify(arg))
-			);
+			return args.map(jsonRoundTripArg);
 		} catch {
 			// Circular / wholly unserialisable — drop to empty args rather than
 			// throwing and crashing the renderer.

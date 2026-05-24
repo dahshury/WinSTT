@@ -173,19 +173,27 @@ interface RenderParams {
 	targetAmp: number;
 }
 
+/** Pure amplitude contribution from VAD speech-detected flag (CC 1). */
+function vadAmpBoost(isSpeaking: boolean): number {
+	return isSpeaking ? 0.04 : 0;
+}
+
+/** Active wave amplitude when at least one input signal is present (CC 1). */
+function activeWaveAmp(audioLevel: number, isSpeaking: boolean, sentencePulse: number): number {
+	return (
+		IDLE_AMP + audioLevel * SPEECH_AMP + vadAmpBoost(isSpeaking) + sentencePulse * PULSE_EXTRA_AMP
+	);
+}
+
 function computeTargetAmp(
 	isRecording: boolean,
 	isSpeaking: boolean,
 	audioLevel: number,
 	sentencePulse: number
 ): number {
-	if (!(isRecording || audioLevel > 0)) {
-		return 0;
-	}
-	const speechContrib = audioLevel * SPEECH_AMP;
-	const vadBoost = isSpeaking ? 0.04 : 0;
-	const pulseContrib = sentencePulse * PULSE_EXTRA_AMP;
-	return IDLE_AMP + speechContrib + vadBoost + pulseContrib;
+	return hasAudioInput(isRecording, audioLevel)
+		? activeWaveAmp(audioLevel, isSpeaking, sentencePulse)
+		: 0;
 }
 
 function computeRenderParams(
@@ -300,6 +308,7 @@ export type { CanvasMetrics, RenderParams };
 export {
 	ACTIVITY_SMOOTHING,
 	AMP_SMOOTHING,
+	activeWaveAmp,
 	buildWavePoints,
 	computeActivityTarget,
 	computeRenderParams,
@@ -316,24 +325,27 @@ export {
 	isAudioActive,
 	lerpColor,
 	tracePath,
+	vadAmpBoost,
 };
 
 // Test-only exports — pure helpers extracted from the render loop. Not part
 // of the public surface; consumers should use the WaveformBars component.
 export const __waveform_test_helpers__ = {
-	computeTargetAmp,
-	computeRenderParams,
+	activeWaveAmp,
+	buildWavePoints,
 	computeActivityTarget,
-	hasAudioInput,
-	isAudioActive,
-	getDpr,
+	computeRenderParams,
+	computeTargetAmp,
+	computeWaveY,
+	drawBaseline,
+	drawFilledRegion,
+	drawWavePath,
 	ensureCanvasSize,
 	getCanvasMetrics,
-	drawBaseline,
-	tracePath,
-	computeWaveY,
-	buildWavePoints,
-	drawWavePath,
-	drawFilledRegion,
+	getDpr,
+	hasAudioInput,
+	isAudioActive,
 	lerpColor,
+	tracePath,
+	vadAmpBoost,
 };

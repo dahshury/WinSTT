@@ -84,6 +84,118 @@ function makeScanSuccessState(result: {
 	};
 }
 
+interface PullSlices {
+	pausedPulls: Record<string, PausedPullState>;
+	pulls: Record<string, PullState>;
+}
+
+/** Drop an entry from a record without mutating the original. */
+function withoutKey<V>(record: Record<string, V>, key: string): Record<string, V> {
+	const next = { ...record };
+	delete next[key];
+	return next;
+}
+
+/** Build the next paused-pulls map when a pull is cancelled — snapshot the
+ *  last known active progress so the UI can render "I was at 60% before stopping". */
+function recordPausedSnapshot(
+	pausedPulls: Record<string, PausedPullState>,
+	model: string,
+	progress: OllamaPullProgress
+): Record<string, PausedPullState> {
+	return {
+		...pausedPulls,
+		[model]: { progress, pausedAt: Date.now() },
+	};
+}
+
+/** State transition for a cancelled status — preserve the last known progress
+ *  in pausedPulls so the UI can offer Resume. */
+function applyCancelled(slices: PullSlices, progress: OllamaPullProgress): Partial<PullSlices> {
+	const existing = slices.pulls[progress.model];
+	const nextPulls = withoutKey(slices.pulls, progress.model);
+	if (!existing) {
+		return { pulls: nextPulls };
+	}
+	return {
+		pulls: nextPulls,
+		pausedPulls: recordPausedSnapshot(slices.pausedPulls, progress.model, existing.progress),
+	};
+}
+
+/** State transition for terminal success/error — clear the active pull and
+ *  any paused state for the same model (partial bytes are consumed or moot). */
+function applyTerminalClear(slices: PullSlices, model: string): Partial<PullSlices> {
+	return {
+		pulls: withoutKey(slices.pulls, model),
+		pausedPulls: withoutKey(slices.pausedPulls, model),
+	};
+}
+
+/** State transition for any non-terminal progress — upsert the active pull
+ *  entry (preserving startedAt) and drop any paused entry so the UI doesn't
+ *  show both bars. */
+function applyActiveProgress(
+	slices: PullSlices,
+	progress: OllamaPullProgress
+): Partial<PullSlices> {
+	const existing = slices.pulls[progress.model];
+	const nextPulls = {
+		...slices.pulls,
+		[progress.model]: {
+			progress,
+			startedAt: existing?.startedAt ?? Date.now(),
+		},
+	};
+	const hadPaused = slices.pausedPulls[progress.model] != null;
+	if (!hadPaused) {
+		return { pulls: nextPulls };
+	}
+	return {
+		pulls: nextPulls,
+		pausedPulls: withoutKey(slices.pausedPulls, progress.model),
+	};
+}
+
+/** Pick the right state transition for a given progress frame. */
+function nextPullSlices(slices: PullSlices, progress: OllamaPullProgress): Partial<PullSlices> {
+	if (!isTerminalStatus(progress.status)) {
+		return applyActiveProgress(slices, progress);
+	}
+	if (progress.status === "cancelled") {
+		return applyCancelled(slices, progress);
+	}
+	return applyTerminalClear(slices, progress.model);
+}
+
+/** Build the seed progress for a fresh or resumed pull — when resuming from
+ *  a paused entry, preserve the last known percent so the bar doesn't flash
+ *  back to 0% before the server's first progress frame arrives. */
+function seedPullProgress(model: string, paused: PausedPullState | undefined): OllamaPullProgress {
+	if (paused) {
+		return { ...paused.progress, status: "pulling", statusText: "resuming" };
+	}
+	return { model, status: "pulling", statusText: "starting" };
+}
+
+/** State delta to apply when starting a pull — installs the seeded entry in
+ *  `pulls` and clears any paused entry being resumed. */
+function buildStartPullState(slices: PullSlices, model: string): Partial<PullSlices> {
+	const paused = slices.pausedPulls[model];
+	const seededProgress = seedPullProgress(model, paused);
+	const nextPulls = {
+		...slices.pulls,
+		[model]: { progress: seededProgress, startedAt: Date.now() },
+	};
+	if (!paused) {
+		return { pulls: nextPulls };
+	}
+	return {
+		pulls: nextPulls,
+		pausedPulls: withoutKey(slices.pausedPulls, model),
+	};
+}
+
 export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	// Stryker disable next-line ArrayDeclaration: equivalent — `setModels` (the
 	// only public mutation) overwrites this initial array, and tests reset state
@@ -107,49 +219,7 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	setError: (error) => set({ error, isLoaded: true }),
 	setPullProgress: (progress) => {
 		const { pulls, pausedPulls } = get();
-		const existing = pulls[progress.model];
-		if (isTerminalStatus(progress.status)) {
-			const nextPulls = { ...pulls };
-			delete nextPulls[progress.model];
-			// On a "cancelled" terminal status, preserve the last known
-			// progress so the UI can offer Resume + show where we stopped.
-			// On "success" or "error", clear any paused state for the same
-			// model — the partial bytes are either consumed or moot.
-			if (progress.status === "cancelled" && existing) {
-				set({
-					pulls: nextPulls,
-					pausedPulls: {
-						...pausedPulls,
-						[progress.model]: {
-							progress: existing.progress,
-							pausedAt: Date.now(),
-						},
-					},
-				});
-				return;
-			}
-			const nextPaused = { ...pausedPulls };
-			delete nextPaused[progress.model];
-			set({ pulls: nextPulls, pausedPulls: nextPaused });
-			return;
-		}
-		// Any non-terminal progress means we're actively transferring — drop
-		// any paused state for this model so the UI doesn't show both bars.
-		const nextPaused = { ...pausedPulls };
-		const hadPaused = nextPaused[progress.model] != null;
-		if (hadPaused) {
-			delete nextPaused[progress.model];
-		}
-		set({
-			pulls: {
-				...pulls,
-				[progress.model]: {
-					progress,
-					startedAt: pulls[progress.model]?.startedAt ?? Date.now(),
-				},
-			},
-			...(hadPaused ? { pausedPulls: nextPaused } : {}),
-		});
+		set(nextPullSlices({ pulls, pausedPulls }, progress));
 	},
 	scanModels: async () => {
 		if (get().isScanning) {
@@ -168,26 +238,7 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 		if (pulls[model]) {
 			return { success: false, error: "Already pulling" };
 		}
-		// Resume path: when this `pullModel` call is actually a resume of a
-		// previously-cancelled pull, seed the optimistic "starting" entry with
-		// the last known percent so the bar doesn't flash back to 0% before
-		// the server's first progress frame arrives. The paused entry is
-		// cleared below as part of the same atomic set.
-		const paused = pausedPulls[model];
-		const seededProgress: OllamaPullProgress = paused
-			? { ...paused.progress, status: "pulling", statusText: "resuming" }
-			: { model, status: "pulling", statusText: "starting" };
-		const nextPaused = { ...pausedPulls };
-		if (paused) {
-			delete nextPaused[model];
-		}
-		set({
-			pulls: {
-				...pulls,
-				[model]: { progress: seededProgress, startedAt: Date.now() },
-			},
-			...(paused ? { pausedPulls: nextPaused } : {}),
-		});
+		set(buildStartPullState({ pulls, pausedPulls }, model));
 		const result = await pullOllamaModel(model);
 		if (result.success) {
 			await get().scanModels();
@@ -210,9 +261,7 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 		if (!pausedPulls[model]) {
 			return;
 		}
-		const next = { ...pausedPulls };
-		delete next[model];
-		set({ pausedPulls: next });
+		set({ pausedPulls: withoutKey(pausedPulls, model) });
 	},
 	deleteModel: async (model) => {
 		const result = await deleteOllamaModel(model);

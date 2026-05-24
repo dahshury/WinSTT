@@ -9,162 +9,21 @@ import {
 	sttRequestDiarizationToggle,
 	sttSetParameter,
 } from "@/shared/api/ipc-client";
-import type { AllowedParameter } from "@/shared/api/models";
 import { decodeSettingsPayload } from "@/shared/api/settings-codec";
 import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
+import { type SyncDeps, syncToServer } from "../lib/sync-actions";
 import {
 	advanceSkipRefs,
-	autoStartChanged,
-	computeSilenceTiming,
-	getManualToggleStop,
-	getPrevManualToggleStop,
-	getPrevSmartEndpoint,
-	getRecordingMode,
-	getSmartEndpoint,
 	isModeChanged,
 	scheduleSave,
-	shouldSendInitial,
-	shouldSendOnChange,
 	shouldSyncOnConnect,
-	silenceTimingNeedsUpdate,
 } from "../lib/sync-helpers";
 
-/** camelCase → snake_case mapping for audio parameters sent to the STT server */
-const AUDIO_PARAM_MAP: Record<string, AllowedParameter> = {
-	sileroSensitivity: "silero_sensitivity",
-	postSpeechSilenceDuration: "post_speech_silence_duration",
-	wakeWordActivationDelay: "wake_word_activation_delay",
-	inputDeviceIndex: "input_device_index",
+const DEPS: SyncDeps = {
+	autostartSet,
+	sttRequestDiarizationToggle,
+	sttSetParameter,
 };
-
-/** Send a parameter only when it changed (incremental) or is non-null (initial). */
-function sendIfChanged<V>(
-	value: V | undefined | null,
-	prevValue: V | undefined | null,
-	param: AllowedParameter,
-	isInitial: boolean
-) {
-	const shouldSend = isInitial ? shouldSendInitial(value) : shouldSendOnChange(value, prevValue);
-	if (shouldSend) {
-		sttSetParameter(param, value);
-	}
-}
-
-function syncAudioParams(settings: AppSettings, prev: AppSettings | undefined) {
-	const audio = settings.audio;
-	if (!audio) {
-		return;
-	}
-	const prevAudio = prev?.audio;
-	const isInitial = !prev;
-	for (const [camelKey, snakeKey] of Object.entries(AUDIO_PARAM_MAP)) {
-		const key = camelKey as keyof typeof audio;
-		sendIfChanged(audio[key], prevAudio?.[key], snakeKey, isInitial);
-	}
-}
-
-function syncModelParams(settings: AppSettings, prev: AppSettings | undefined) {
-	const model = settings.model;
-	const prevModel = prev?.model;
-	const isInitial = !prev;
-	sendIfChanged(model?.language, prevModel?.language, "language", isInitial);
-	// Intentionally NOT syncing `model.model` via set_parameter: every model
-	// change in the UI goes through `sttReloadModel` (stt:reload-model), which
-	// is the canonical swap path. Mirroring it here would fire a second swap
-	// — the recorder's `model.setter` spawns its own swap thread — and the two
-	// races produce duplicate downloads, duplicate Loading logs, and the
-	// download-cancel/revert dance we saw in production.
-}
-
-function syncQualityParams(settings: AppSettings, prev: AppSettings | undefined) {
-	const smartEndpoint = getSmartEndpoint(settings);
-	const prevSmartEndpoint = getPrevSmartEndpoint(prev);
-	const mode = getRecordingMode(settings);
-	const manualToggleStop = getManualToggleStop(settings);
-	const prevManualToggleStop = getPrevManualToggleStop(prev);
-	const isInitial = !prev;
-
-	if (
-		silenceTimingNeedsUpdate(
-			smartEndpoint,
-			prevSmartEndpoint,
-			settings.general?.recordingMode,
-			prev?.general?.recordingMode,
-			isInitial,
-			manualToggleStop,
-			prevManualToggleStop
-		)
-	) {
-		sttSetParameter("silence_timing", computeSilenceTiming(smartEndpoint, mode, manualToggleStop));
-	}
-
-	const quality = settings.quality;
-	const prevQuality = prev?.quality;
-	sendIfChanged(
-		quality?.smartEndpoint,
-		prevQuality?.smartEndpoint,
-		"smart_endpoint_enabled",
-		isInitial
-	);
-	sendIfChanged(
-		quality?.smartEndpointSpeed,
-		prevQuality?.smartEndpointSpeed,
-		"detection_speed",
-		isInitial
-	);
-	sendIfChanged(
-		quality?.endOfSentenceDetectionPause,
-		prevQuality?.endOfSentenceDetectionPause,
-		"end_of_sentence_detection_pause",
-		isInitial
-	);
-	sendIfChanged(
-		quality?.midSentenceDetectionPause,
-		prevQuality?.midSentenceDetectionPause,
-		"mid_sentence_detection_pause",
-		isInitial
-	);
-	sendIfChanged(
-		quality?.unknownSentenceDetectionPause,
-		prevQuality?.unknownSentenceDetectionPause,
-		"unknown_sentence_detection_pause",
-		isInitial
-	);
-}
-
-function syncSystemParams(settings: AppSettings, prev: AppSettings | undefined) {
-	if (!prev) {
-		return;
-	}
-	if (autoStartChanged(settings, prev)) {
-		autostartSet(settings.general!.autoStart!);
-	}
-}
-
-/**
- * Sync settings to the STT server (and Electron system settings).
- *
- * - If `prev` is undefined → initial connect: push all non-null settings.
- * - If `prev` is provided → incremental: push only changed keys.
- */
-function syncDiarizationParams(settings: AppSettings, prev: AppSettings | undefined) {
-	const enabled = settings.general?.speakerDiarization ?? false;
-	const prevEnabled = prev?.general?.speakerDiarization ?? false;
-	// Initial connect: push the persisted state so a server that started
-	// without the diarizer builds it now (and one that has it can drop it).
-	// Incremental: only on an actual flip. Runtime command — never a restart.
-	if (!prev || enabled !== prevEnabled) {
-		sttRequestDiarizationToggle(enabled);
-	}
-}
-
-function syncToServer(settings: AppSettings, prev?: AppSettings) {
-	syncAudioParams(settings, prev);
-	syncModelParams(settings, prev);
-	syncQualityParams(settings, prev);
-	syncDiarizationParams(settings, prev);
-	syncSystemParams(settings, prev);
-}
 
 export function useSyncSettings(): void {
 	const settings = useSettingsStore((s) => s.settings);
@@ -203,7 +62,7 @@ export function useSyncSettings(): void {
 	useEffect(() => {
 		if (shouldSyncOnConnect(serverStatus, isLoaded, hasSyncedOnConnect.current)) {
 			hasSyncedOnConnect.current = true;
-			syncToServer(latestSettingsRef.current);
+			syncToServer(DEPS, latestSettingsRef.current);
 		}
 		// Reset flag when server is not running so settings are re-synced next time
 		if (serverStatus === "idle") {
@@ -213,13 +72,7 @@ export function useSyncSettings(): void {
 
 	// Flush any pending debounced save on window close or unmount
 	useEffect(() => {
-		const flush = () => {
-			if (debounceRef.current) {
-				clearTimeout(debounceRef.current);
-				debounceRef.current = null;
-				settingsSave(latestSettingsRef.current);
-			}
-		};
+		const flush = () => flushPendingSave(debounceRef, latestSettingsRef);
 		window.addEventListener("beforeunload", flush);
 		return () => {
 			window.removeEventListener("beforeunload", flush);
@@ -247,18 +100,37 @@ export function useSyncSettings(): void {
 		}
 
 		// Sync changed parameters to STT server and system settings (immediate)
-		syncToServer(settings, prev);
+		syncToServer(DEPS, settings, prev);
 
 		// Save to electron-store: flush immediately for recording mode changes
 		// so the broadcast reaches other windows without delay.
 		// Debounce everything else to avoid rapid writes from sliders.
 		scheduleSave(settings, isModeChanged(settings, prev), debounceRef, settingsSave, 300);
 
-		return () => {
-			if (debounceRef.current) {
-				clearTimeout(debounceRef.current);
-				debounceRef.current = null;
-			}
-		};
+		return () => cancelPendingSave(debounceRef);
 	}, [settings, isLoaded]);
+}
+
+/** Cancel any pending debounced save (called from effect-cleanup, CC 2). */
+function cancelPendingSave(debounceRef: { current: ReturnType<typeof setTimeout> | null }): void {
+	if (debounceRef.current) {
+		clearTimeout(debounceRef.current);
+		debounceRef.current = null;
+	}
+}
+
+/**
+ * Cancel any pending debounced save AND immediately flush the latest settings
+ * to electron-store. Used on window close / unmount so a fast-close doesn't
+ * lose changes that hadn't been written yet (CC 2).
+ */
+function flushPendingSave(
+	debounceRef: { current: ReturnType<typeof setTimeout> | null },
+	latestSettingsRef: { current: AppSettings }
+): void {
+	if (debounceRef.current) {
+		clearTimeout(debounceRef.current);
+		debounceRef.current = null;
+		settingsSave(latestSettingsRef.current);
+	}
 }

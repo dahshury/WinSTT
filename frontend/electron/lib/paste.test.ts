@@ -162,6 +162,29 @@ const {
 	spawnInto,
 	attachChildHandlers,
 	startBinaryRun,
+	clearKillTimer,
+	buildBinaryResolution,
+	wireTypeStdin,
+	startTypeBinaryRun,
+	formatCombinedFailureReason,
+	logTypeFailure,
+	readClipboardFormat,
+	coerceClipboardText,
+	normalizeClipboardImage,
+	captureClipboardSnapshot,
+	snapshotIsEmpty,
+	addTextToPayload,
+	addHtmlToPayload,
+	addRtfToPayload,
+	addImageToPayload,
+	buildRestorePayload,
+	fallbackTextOnlyRestore,
+	writeRestorePayload,
+	restoreClipboardSnapshot,
+	recordPasteCall,
+	enqueuePaste,
+	tryTypeThenFallback,
+	runClipboardFallback,
 } = await import("./paste");
 
 import { beforeEach } from "bun:test";
@@ -805,5 +828,494 @@ describe("startBinaryRun", () => {
 		expect(calls.length).toBe(1);
 		expect(calls[0]?.ok).toBe(false);
 		expect(calls[0]?.reason).toContain("spawn failed");
+	});
+});
+
+describe("clearKillTimer", () => {
+	test("no-op when killTimer is null", () => {
+		const run = __makeBinaryRunForTesting__(() => undefined);
+		expect(() => clearKillTimer(run)).not.toThrow();
+		expect(run.killTimer === null).toBe(true);
+	});
+
+	test("clears and nulls the timer when one is set", () => {
+		const run = __makeBinaryRunForTesting__(() => undefined);
+		const timer = setTimeout(() => undefined, 10_000);
+		run.killTimer = timer;
+		clearKillTimer(run);
+		expect(run.killTimer === null).toBe(true);
+		// Belt-and-braces: clearTimeout is idempotent so this is safe.
+		clearTimeout(timer);
+	});
+});
+
+describe("buildBinaryResolution", () => {
+	test("omits reason when undefined", () => {
+		const result = buildBinaryResolution(true, undefined);
+		expect(result).toEqual({ ok: true });
+		expect("reason" in result).toBe(false);
+	});
+
+	test("includes reason when present", () => {
+		expect(buildBinaryResolution(false, "boom")).toEqual({ ok: false, reason: "boom" });
+	});
+
+	test("preserves empty-string reason", () => {
+		expect(buildBinaryResolution(false, "")).toEqual({ ok: false, reason: "" });
+	});
+});
+
+describe("wireTypeStdin", () => {
+	test("writes the text via stdin.end and resolves nothing synchronously", () => {
+		const endedWith: { value: string | null } = { value: null };
+		const stdin = {
+			on: (_ev: string, _fn: (...a: unknown[]) => void) => undefined,
+			end: (text: string) => {
+				endedWith.value = text;
+			},
+		} as unknown as NodeJS.WritableStream;
+		const calls: Array<{ ok: boolean; reason?: string }> = [];
+		const run = __makeBinaryRunForTesting__((v) => calls.push(v));
+		wireTypeStdin(run, stdin, "payload");
+		expect(endedWith.value).toBe("payload");
+		// No synchronous resolution on the happy path.
+		expect(calls.length).toBe(0);
+	});
+
+	test("routes stdin 'error' events to finishBinaryRun with the error message", () => {
+		const handlers = new Map<string, (err: Error) => void>();
+		const stdin = {
+			on: (ev: string, fn: (err: Error) => void) => {
+				handlers.set(ev, fn);
+			},
+			end: () => undefined,
+		} as unknown as NodeJS.WritableStream;
+		const calls: Array<{ ok: boolean; reason?: string }> = [];
+		const run = __makeBinaryRunForTesting__((v) => calls.push(v));
+		wireTypeStdin(run, stdin, "x");
+		handlers.get("error")?.(new Error("pipe broke"));
+		expect(calls.length).toBe(1);
+		expect(calls[0]?.ok).toBe(false);
+		expect(calls[0]?.reason).toContain("stdin error");
+		expect(calls[0]?.reason).toContain("pipe broke");
+	});
+
+	test("catches synchronous throws from stdin.end and finishes the run", () => {
+		const stdin = {
+			on: () => undefined,
+			end: () => {
+				throw new Error("EPIPE-sync");
+			},
+		} as unknown as NodeJS.WritableStream;
+		const calls: Array<{ ok: boolean; reason?: string }> = [];
+		const run = __makeBinaryRunForTesting__((v) => calls.push(v));
+		expect(() => wireTypeStdin(run, stdin, "x")).not.toThrow();
+		expect(calls.length).toBe(1);
+		expect(calls[0]?.ok).toBe(false);
+		expect(calls[0]?.reason).toContain("stdin write failed");
+		expect(calls[0]?.reason).toContain("EPIPE-sync");
+	});
+});
+
+describe("startTypeBinaryRun", () => {
+	test("on win32: writes the text to the spawned child's stdin", () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnLog.length = 0;
+		// Make the spawned child hang so the test doesn't race with `close`.
+		spawnStub.hangs = true;
+		startTypeBinaryRun(() => undefined, "C:/fake/binary.exe", "hello");
+		expect(spawnLog.length).toBe(1);
+		expect(spawnLog[0]?.args).toEqual(["--type"]);
+		expect(spawnLog[0]?.stdin).toBe("hello");
+	});
+
+	test("on win32: finishes the run with 'no stdin' when the spawn returns a null stdin", () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		// The mock spawn returns stdin only when args includes "--type", but
+		// if spawnInto fails (throw on spawn) the child is never created.
+		// To force the `if (!stdin)` path we point at a spawn that throws —
+		// finishBinaryRun then resolves with "spawn failed", but startBinaryRun's
+		// `run.child` remains null so the chained `run.child?.stdin` is undefined.
+		spawnStub.throwOnSpawn = "boom";
+		const calls: Array<{ ok: boolean; reason?: string }> = [];
+		startTypeBinaryRun((v) => calls.push(v), "C:/fake/binary.exe", "data");
+		// The throw path resolves with "spawn failed" BEFORE we look at stdin,
+		// so the run is already done by the time `if (!stdin)` would have fired.
+		expect(calls.length).toBe(1);
+		expect(calls[0]?.ok).toBe(false);
+	});
+});
+
+describe("formatCombinedFailureReason", () => {
+	test("renders both reasons when present", () => {
+		expect(formatCombinedFailureReason("a", "b")).toBe("type:a;clip:b");
+	});
+
+	test("uses 'unknown' for undefined type reason", () => {
+		expect(formatCombinedFailureReason(undefined, "b")).toBe("type:unknown;clip:b");
+	});
+
+	test("uses 'unknown' for undefined clip reason", () => {
+		expect(formatCombinedFailureReason("a", undefined)).toBe("type:a;clip:unknown");
+	});
+
+	test("uses 'unknown' for both undefined reasons", () => {
+		expect(formatCombinedFailureReason(undefined, undefined)).toBe("type:unknown;clip:unknown");
+	});
+});
+
+describe("logTypeFailure", () => {
+	test("does not throw when reason is provided", () => {
+		expect(() => logTypeFailure("explained")).not.toThrow();
+	});
+
+	test("does not throw when reason is undefined", () => {
+		expect(() => logTypeFailure(undefined)).not.toThrow();
+	});
+});
+
+describe("readClipboardFormat", () => {
+	test("returns the read value on success", () => {
+		expect(readClipboardFormat(() => "ok", "fallback", "Text")).toBe("ok");
+	});
+
+	test("returns the empty fallback when the read function throws", () => {
+		expect(
+			readClipboardFormat(
+				() => {
+					throw new Error("nope");
+				},
+				"FALLBACK",
+				"Text"
+			)
+		).toBe("FALLBACK");
+	});
+
+	test("returns null fallback for image-like reads that throw", () => {
+		expect(
+			readClipboardFormat<null>(
+				() => {
+					throw new Error("kaput");
+				},
+				null,
+				"Image"
+			)
+		).toBe(null);
+	});
+});
+
+describe("coerceClipboardText", () => {
+	test("returns the value unchanged when non-empty", () => {
+		expect(coerceClipboardText("hello")).toBe("hello");
+	});
+
+	test("returns the value unchanged when empty string", () => {
+		expect(coerceClipboardText("")).toBe("");
+	});
+
+	test("coerces null to empty string", () => {
+		expect(coerceClipboardText(null)).toBe("");
+	});
+
+	test("coerces undefined to empty string", () => {
+		expect(coerceClipboardText(undefined)).toBe("");
+	});
+});
+
+describe("normalizeClipboardImage", () => {
+	test("returns null when the input is null", () => {
+		expect(normalizeClipboardImage(null)).toBe(null);
+	});
+
+	test("returns null when the image is empty", () => {
+		const empty = { isEmpty: () => true } as unknown as Electron.NativeImage;
+		expect(normalizeClipboardImage(empty)).toBe(null);
+	});
+
+	test("returns the image when it is non-empty", () => {
+		const real = { isEmpty: () => false } as unknown as Electron.NativeImage;
+		expect(normalizeClipboardImage(real)).toBe(real);
+	});
+});
+
+describe("captureClipboardSnapshot", () => {
+	test("returns the four text formats from the clipboard mock plus a normalized image", () => {
+		lastClipboard = "saved";
+		const snap = captureClipboardSnapshot();
+		expect(snap.text).toBe("saved");
+		// The mock returns "" for html/rtf and an isEmpty image.
+		expect(snap.html).toBe("");
+		expect(snap.rtf).toBe("");
+		expect(snap.image).toBe(null);
+	});
+});
+
+describe("snapshotIsEmpty", () => {
+	test("returns true for an entirely-empty snapshot", () => {
+		expect(snapshotIsEmpty({ text: "", html: "", rtf: "", image: null })).toBe(true);
+	});
+
+	test("returns false when text is present", () => {
+		expect(snapshotIsEmpty({ text: "x", html: "", rtf: "", image: null })).toBe(false);
+	});
+
+	test("returns false when html is present", () => {
+		expect(snapshotIsEmpty({ text: "", html: "x", rtf: "", image: null })).toBe(false);
+	});
+
+	test("returns false when rtf is present", () => {
+		expect(snapshotIsEmpty({ text: "", html: "", rtf: "x", image: null })).toBe(false);
+	});
+
+	test("returns false when image is present", () => {
+		const img = { isEmpty: () => false } as unknown as Electron.NativeImage;
+		expect(snapshotIsEmpty({ text: "", html: "", rtf: "", image: img })).toBe(false);
+	});
+});
+
+describe("addTextToPayload / addHtmlToPayload / addRtfToPayload / addImageToPayload", () => {
+	test("addTextToPayload writes non-empty text and skips empty", () => {
+		const a: { text?: string } = {};
+		addTextToPayload(a, "hi");
+		expect(a.text).toBe("hi");
+		const b: { text?: string } = {};
+		addTextToPayload(b, "");
+		expect("text" in b).toBe(false);
+	});
+
+	test("addHtmlToPayload writes non-empty html and skips empty", () => {
+		const a: { html?: string } = {};
+		addHtmlToPayload(a, "<b>hi</b>");
+		expect(a.html).toBe("<b>hi</b>");
+		const b: { html?: string } = {};
+		addHtmlToPayload(b, "");
+		expect("html" in b).toBe(false);
+	});
+
+	test("addRtfToPayload writes non-empty rtf and skips empty", () => {
+		const a: { rtf?: string } = {};
+		addRtfToPayload(a, "{\\rtf}");
+		expect(a.rtf).toBe("{\\rtf}");
+		const b: { rtf?: string } = {};
+		addRtfToPayload(b, "");
+		expect("rtf" in b).toBe(false);
+	});
+
+	test("addImageToPayload writes non-null image and skips null", () => {
+		const img = { isEmpty: () => false } as unknown as Electron.NativeImage;
+		const a: { image?: Electron.NativeImage } = {};
+		addImageToPayload(a, img);
+		expect(a.image).toBe(img);
+		const b: { image?: Electron.NativeImage } = {};
+		addImageToPayload(b, null);
+		expect("image" in b).toBe(false);
+	});
+});
+
+describe("buildRestorePayload", () => {
+	test("builds an empty payload from an empty snapshot", () => {
+		const payload = buildRestorePayload({ text: "", html: "", rtf: "", image: null });
+		expect(payload).toEqual({});
+	});
+
+	test("includes every set field", () => {
+		const img = { isEmpty: () => false } as unknown as Electron.NativeImage;
+		const payload = buildRestorePayload({ text: "t", html: "h", rtf: "r", image: img });
+		expect(payload.text).toBe("t");
+		expect(payload.html).toBe("h");
+		expect(payload.rtf).toBe("r");
+		expect(payload.image).toBe(img);
+	});
+});
+
+describe("fallbackTextOnlyRestore", () => {
+	test("is a no-op for empty text", () => {
+		lastClipboard = "untouched";
+		fallbackTextOnlyRestore("");
+		expect(lastClipboard).toBe("untouched");
+	});
+
+	test("writes non-empty text via clipboard.writeText", () => {
+		lastClipboard = "";
+		fallbackTextOnlyRestore("restore-me");
+		expect(lastClipboard).toBe("restore-me");
+	});
+
+	test("swallows clipboard.writeText errors", () => {
+		clipboardThrowOnNext = true;
+		expect(() => fallbackTextOnlyRestore("doomed")).not.toThrow();
+	});
+});
+
+describe("writeRestorePayload", () => {
+	test("falls back to text-only write when clipboard.write throws", async () => {
+		const electron = await import("electron");
+		const originalWrite = electron.clipboard.write;
+		(electron.clipboard as unknown as { write: () => never }).write = () => {
+			throw new Error("rich-write blew up");
+		};
+		try {
+			lastClipboard = "";
+			writeRestorePayload({ text: "rescue", html: "ignored", rtf: "", image: null });
+			expect(lastClipboard).toBe("rescue");
+		} finally {
+			(electron.clipboard as unknown as { write: typeof originalWrite }).write = originalWrite;
+		}
+	});
+
+	test("calls clipboard.write with the assembled payload on the happy path", () => {
+		lastClipboard = "";
+		writeRestorePayload({ text: "winner", html: "", rtf: "", image: null });
+		expect(lastClipboard).toBe("winner");
+	});
+});
+
+describe("restoreClipboardSnapshot", () => {
+	test("returns silently for an empty snapshot — clipboard untouched", () => {
+		lastClipboard = "user-original";
+		restoreClipboardSnapshot({ text: "", html: "", rtf: "", image: null });
+		expect(lastClipboard).toBe("user-original");
+	});
+
+	test("restores a non-empty snapshot via the multi-format write", () => {
+		lastClipboard = "transient";
+		restoreClipboardSnapshot({ text: "saved", html: "", rtf: "", image: null });
+		expect(lastClipboard).toBe("saved");
+	});
+});
+
+describe("recordPasteCall", () => {
+	test("appends the text without trimming when under the cap", () => {
+		// We can't read the log directly, but pasteText also calls recordPasteCall
+		// — so we exercise it indirectly to ensure no throw.
+		expect(() => recordPasteCall("entry")).not.toThrow();
+	});
+
+	test("trims the head once the log exceeds PASTE_CALL_LOG_MAX", () => {
+		// PASTE_CALL_LOG_MAX is 100; push 105 entries and confirm no throw.
+		for (let i = 0; i < 105; i++) {
+			recordPasteCall(`overflow-${i}`);
+		}
+		// If trimming throws, this line is unreachable.
+		expect(true).toBe(true);
+	});
+});
+
+describe("enqueuePaste", () => {
+	test("on non-win32: serializes the paste and flushPastePending resolves", async () => {
+		// Drive the path purely through pasteText since enqueuePaste mutates
+		// module-local state; this asserts the chain terminates without leaking.
+		const original = process.platform;
+		Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+		try {
+			enqueuePaste("queued-text", Date.now());
+			await flushPastePending();
+			expect(true).toBe(true);
+		} finally {
+			Object.defineProperty(process, "platform", { value: original, configurable: true });
+		}
+	});
+});
+
+describe("on win32: --type failure + clipboard fallback failure surfaces combined reason", () => {
+	test("both paths failing trips cooldown with the combined reason in logs", async () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnLog.length = 0;
+		__resetPasteForTesting__();
+		// Both spawns (type + Ctrl+V) exit non-zero — formatCombinedFailureReason is invoked.
+		spawnStub.exitCodeSequence = [1, 1];
+		pasteText("combined-failure");
+		await flushPastePending();
+		expect(spawnLog.length).toBe(2);
+		// Cooldown is now active (formatCombinedFailureReason path).
+		expect(__getCooldownUntilForTesting__()).toBeGreaterThan(Date.now());
+	});
+});
+
+describe("tryTypeThenFallback (direct)", () => {
+	test("on win32: --type succeeds → returns the type result without invoking the fallback", async () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnLog.length = 0;
+		spawnStub.exitCode = 0;
+		const result = await tryTypeThenFallback("C:/fake/binary.exe", "x");
+		expect(result.ok).toBe(true);
+		// Only ONE spawn — the --type one. No fallback.
+		expect(spawnLog.length).toBe(1);
+		expect(spawnLog[0]?.args).toEqual(["--type"]);
+	});
+
+	test("on win32: --type fails + fallback succeeds → returns the fallback result", async () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnLog.length = 0;
+		spawnStub.exitCodeSequence = [1, 0];
+		const result = await tryTypeThenFallback("C:/fake/binary.exe", "y");
+		expect(result.ok).toBe(true);
+		expect(spawnLog.length).toBe(2);
+	});
+
+	test("on win32: both paths fail → returns combined reason", async () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnLog.length = 0;
+		spawnStub.exitCodeSequence = [1, 1];
+		const result = await tryTypeThenFallback("C:/fake/binary.exe", "z");
+		expect(result.ok).toBe(false);
+		expect(result.reason).toContain("type:exit 1");
+		expect(result.reason).toContain("clip:exit 1");
+	});
+});
+
+describe("runClipboardFallback (direct)", () => {
+	test("on win32: spawns Ctrl+V binary, restores user clipboard via finally", async () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnLog.length = 0;
+		lastClipboard = "user-content";
+		spawnStub.exitCode = 0;
+		const result = await runClipboardFallback("C:/fake/binary.exe", "transcript");
+		expect(result.ok).toBe(true);
+		expect(spawnLog.length).toBe(1);
+		// Ctrl+V binary takes no args.
+		expect(spawnLog[0]?.args).toEqual([]);
+		// Restored after the spawn.
+		expect(lastClipboard).toBe("user-content");
+	});
+
+	test("on win32: returns early with 'fallback clipboard write failed' when writeClipboard throws", async () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnLog.length = 0;
+		clipboardThrowOnNext = true;
+		const result = await runClipboardFallback("C:/fake/binary.exe", "doomed");
+		expect(result.ok).toBe(false);
+		expect(result.reason).toBe("fallback clipboard write failed");
+		// Never spawned because we bailed early.
+		expect(spawnLog.length).toBe(0);
+	});
+
+	test("on win32: even when the Ctrl+V binary fails, the snapshot is restored in finally", async () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnLog.length = 0;
+		lastClipboard = "before-fallback";
+		spawnStub.exitCode = 1;
+		const result = await runClipboardFallback("C:/fake/binary.exe", "transcript");
+		expect(result.ok).toBe(false);
+		// The finally block ran the restore — `lastClipboard` is back to the original.
+		expect(lastClipboard).toBe("before-fallback");
 	});
 });

@@ -29,6 +29,24 @@ interface TranscriptionState {
 	showEphemeral: (text: string) => void;
 }
 
+/**
+ * Build the next `items` array with `segments` attached to the most recent
+ * entry, or return null when there's nothing to attach to. Pulled out of
+ * `attachSpeakerSegments` so the store callback stays CC ≤ 1.
+ */
+function withSpeakerSegmentsApplied(
+	items: readonly TranscriptionItem[],
+	segments: SpeakerSegment[]
+): TranscriptionItem[] | null {
+	const lastIndex = items.length - 1;
+	const last = items[lastIndex];
+	if (last === undefined) {
+		return null;
+	}
+	const updatedLast: TranscriptionItem = { ...last, speakerSegments: segments };
+	return [...items.slice(0, lastIndex), updatedLast];
+}
+
 export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 	items: [],
 	currentRealtime: "",
@@ -48,23 +66,14 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 			return { items: trimmed, currentRealtime: "" };
 		});
 	},
+	// The server emits ``speaker_segments`` right after the matching
+	// ``fullSentence`` event (same utterance), so the most recent item
+	// is the correct target. Returning the same state when the live feed is
+	// empty avoids dropping an undefined that would still trigger a re-render.
 	attachSpeakerSegments: (segments) => {
-		// The server emits ``speaker_segments`` right after the matching
-		// ``fullSentence`` event (same utterance), so the most recent item
-		// is the correct target. Guard against an empty list to avoid
-		// dropping an undefined that would still trigger a re-render.
 		set((state) => {
-			if (state.items.length === 0) {
-				return state;
-			}
-			const lastIndex = state.items.length - 1;
-			const last = state.items[lastIndex];
-			if (last === undefined) {
-				return state;
-			}
-			const updatedLast: TranscriptionItem = { ...last, speakerSegments: segments };
-			const items = [...state.items.slice(0, lastIndex), updatedLast];
-			return { items };
+			const items = withSpeakerSegmentsApplied(state.items, segments);
+			return items === null ? state : { items };
 		});
 	},
 	setRealtimeText: (text) => set({ currentRealtime: text }),
