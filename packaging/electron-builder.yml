@@ -66,7 +66,13 @@ portable:
   splashImage: build/splash.bmp
 publish:
   - provider: github
-    # Prereleases (e.g. v0.1.0-alpha.0) ship to the same GitHub Release page
-    # but are flagged as prerelease. electron-updater consumes them when the
-    # runtime sets `autoUpdater.allowPrerelease = true` (see main.ts).
+    # Repo is inferred from the workflow context (dahshury/WinSTT) — no
+    # explicit owner/repo override needed since installer + asset releases
+    # both live on the same public repo. electron-updater fetches them
+    # anonymously at runtime; CI publishes them via the default
+    # `secrets.GITHUB_TOKEN`.
+    #
+    # Prereleases (e.g. v0.1.0-alpha.0) ship as GitHub prereleases.
+    # electron-updater consumes them when the runtime sets
+    # `autoUpdater.allowPrerelease = true` (see main.ts).
     releaseType: prerelease

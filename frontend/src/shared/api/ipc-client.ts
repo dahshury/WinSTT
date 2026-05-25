@@ -702,9 +702,22 @@ export const clipboardClear = () =>
 	);
 
 export interface UpdaterStatusEntry {
+	/** Only present when status === "downloading". Pass-through from
+	 *  electron-updater's `download-progress` payload. */
+	bytesPerSecond?: number;
 	message?: string;
-	status: "idle" | "checking" | "available" | "not-available" | "downloaded" | "error";
+	percent?: number;
+	status:
+		| "idle"
+		| "checking"
+		| "available"
+		| "downloading"
+		| "not-available"
+		| "downloaded"
+		| "error";
 	timestamp: number;
+	total?: number;
+	transferred?: number;
 	version?: string;
 }
 
@@ -724,6 +737,23 @@ export interface UpdaterCheckNowResult {
 
 export const updaterCheckNow = () =>
 	invokeOrDefault<UpdaterCheckNowResult>(IPC.UPDATER_CHECK_NOW, { triggered: false });
+
+export interface UpdaterQuitAndInstallResult {
+	reason?: string;
+	triggered: boolean;
+}
+
+/**
+ * Tell the main process to relaunch into the downloaded update. The promise
+ * resolves with `{ triggered: true }` immediately before quitAndInstall fires;
+ * the actual quit happens asynchronously on the main side, so the renderer
+ * may never see this resolve in practice. Falsy `triggered` means the updater
+ * wasn't initialized (dev mode / disabled).
+ */
+export const updaterQuitAndInstall = () =>
+	invokeOrDefault<UpdaterQuitAndInstallResult>(IPC.UPDATER_QUIT_AND_INSTALL, {
+		triggered: false,
+	});
 
 export interface WindowTelemetryPayload {
 	bounds: { x: number; y: number; width: number; height: number };

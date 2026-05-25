@@ -140,11 +140,26 @@ const isDev = !app.isPackaged;
  *      user toggles "Receive pre-release updates" — no restart required.
  * Stays `null` in dev / when auto-updates are disabled by env var.
  */
+interface DownloadProgressPayload {
+	bytesPerSecond?: number;
+	percent?: number;
+	total?: number;
+	transferred?: number;
+}
+
 interface AutoUpdaterHandle {
 	allowPrerelease: boolean;
 	autoDownload: boolean;
 	checkForUpdatesAndNotify: () => Promise<unknown>;
 	on: (event: string, listener: (...args: unknown[]) => void) => void;
+	/**
+	 * Restart the app to apply a downloaded update.
+	 *  - `isSilent`: pass `true` only for NSIS; portable & macOS ignore it.
+	 *  - `isForceRunAfter`: relaunch after install (the user expects this).
+	 * Idempotent if there is no downloaded update — electron-updater logs
+	 * and no-ops, so we don't need to gate the IPC handler on state.
+	 */
+	quitAndInstall: (isSilent?: boolean, isForceRunAfter?: boolean) => void;
 }
 let autoUpdaterRef: AutoUpdaterHandle | null = null;
 let disposeUpdaterSettingsWatcher: (() => void) | null = null;
@@ -437,6 +452,21 @@ async function initAutoUpdater(): Promise<void> {
 			const version = getUpdateVersion(info);
 			dbg("updater", "Update downloaded:", version);
 			recordUpdaterStatus({ status: "downloaded", version });
+		});
+		// `download-progress` fires every ~250ms while the new artifact streams
+		// in. Pass-through; the renderer formats the bytes / rate for display.
+		// Note: the payload's `percent` is a float 0–100, not 0–1.
+		autoUpdater.on("download-progress", (payload: unknown) => {
+			const progress = (payload ?? {}) as DownloadProgressPayload;
+			recordUpdaterStatus({
+				status: "downloading",
+				...(typeof progress.percent === "number" ? { percent: progress.percent } : {}),
+				...(typeof progress.transferred === "number" ? { transferred: progress.transferred } : {}),
+				...(typeof progress.total === "number" ? { total: progress.total } : {}),
+				...(typeof progress.bytesPerSecond === "number"
+					? { bytesPerSecond: progress.bytesPerSecond }
+					: {}),
+			});
 		});
 
 		// Live-update `allowPrerelease` whenever the user toggles "Receive
@@ -847,6 +877,7 @@ function setupUpdaterStatusHandlers(): () => void {
 	ipcMain.removeHandler(IPC.UPDATER_GET_STATUS_HISTORY);
 	ipcMain.removeHandler(IPC.UPDATER_CLEAR_STATUS_HISTORY);
 	ipcMain.removeHandler(IPC.UPDATER_CHECK_NOW);
+	ipcMain.removeHandler(IPC.UPDATER_QUIT_AND_INSTALL);
 
 	ipcMain.handle(IPC.UPDATER_GET_STATUS_HISTORY, () => updaterStatusHistory.getHistory());
 	ipcMain.handle(IPC.UPDATER_CLEAR_STATUS_HISTORY, () => {
@@ -871,11 +902,33 @@ function setupUpdaterStatusHandlers(): () => void {
 			return { triggered: false, reason: message };
 		}
 	});
+	// Restart-to-install: defer the actual quit a tick so the IPC reply
+	// reaches the renderer before Electron tears the BrowserWindow down.
+	// Otherwise the renderer never sees the "triggered" ack and the button
+	// stays spinning right up until the app dies.
+	ipcMain.handle(IPC.UPDATER_QUIT_AND_INSTALL, () => {
+		if (!autoUpdaterRef) {
+			return { triggered: false, reason: "updater-unavailable" };
+		}
+		setImmediate(() => {
+			try {
+				// isSilent=false: NSIS shows its UI (no-op for portable target).
+				// isForceRunAfter=true: relaunch after the swap completes.
+				autoUpdaterRef?.quitAndInstall(false, true);
+			} catch (error) {
+				const message = toErrorMessage(error);
+				dbg("updater", "quitAndInstall failed:", message);
+				recordUpdaterStatus({ status: "error", message });
+			}
+		});
+		return { triggered: true };
+	});
 
 	return () => {
 		ipcMain.removeHandler(IPC.UPDATER_GET_STATUS_HISTORY);
 		ipcMain.removeHandler(IPC.UPDATER_CLEAR_STATUS_HISTORY);
 		ipcMain.removeHandler(IPC.UPDATER_CHECK_NOW);
+		ipcMain.removeHandler(IPC.UPDATER_QUIT_AND_INSTALL);
 	};
 }
 

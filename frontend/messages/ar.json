@@ -73,9 +73,13 @@
     "updatesStatusIdle": "لم يتم التحقق من التحديثات بعد.",
     "updatesStatusChecking": "جارٍ التحقق من التحديثات…",
     "updatesStatusAvailable": "تحديث متاح: {version}",
+    "updatesStatusDownloading": "جارٍ تنزيل التحديث…",
     "updatesStatusUpToDate": "أنت تستخدم أحدث إصدار.",
     "updatesStatusDownloaded": "تم تنزيل التحديث {version} — أعد التشغيل للتثبيت.",
-    "updatesStatusError": "فشل التحقق من التحديث: {message}"
+    "updatesStatusError": "فشل التحقق من التحديث: {message}",
+    "updatesDownloading": "جارٍ التنزيل…",
+    "updatesDownloadingPercent": "{percent}% — جارٍ تنزيل التحديث",
+    "updatesRestartToInstall": "أعد التشغيل للتثبيت"
   },
   "history": {
     "summaryTitle": "إحصائيات إجمالية",

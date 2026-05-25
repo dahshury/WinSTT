@@ -2,15 +2,28 @@ import { describe, expect, test } from "bun:test";
 import {
 	ALL_PRESET_KEYS,
 	buildSystemPrompt,
+	type CustomModifier,
 	getPresetPrompt,
 	hasLevels,
 	INDEPENDENT_PRESETS,
 	isToneKey,
+	mergePresetsWithCustomModifiers,
 	PRESET_LEVELS,
 	PRESETS_WITH_LEVELS,
 	type PresetKey,
 	TONE_GROUP,
 } from "@/shared/lib/preset-prompts";
+
+function makeCustomModifier(overrides: Partial<CustomModifier> = {}): CustomModifier {
+	return {
+		id: "id-1",
+		name: "My Style",
+		prompt: "Wrap output in <result>…</result>.",
+		enabled: true,
+		levelsEnabled: false,
+		...overrides,
+	};
+}
 
 describe("preset-prompts", () => {
 	test("ALL_PRESET_KEYS contains the eleven canonical presets", () => {
@@ -191,5 +204,87 @@ describe("preset-prompts", () => {
 		expect(out).toContain(`- ${getPresetPrompt("reorder")}`);
 		// Explicit anti-numbered-list check: no "1." / "2." / "3." prefixes.
 		expect(out).not.toMatch(/^\s*1\./m);
+	});
+
+	describe("mergePresetsWithCustomModifiers", () => {
+		const builtin = [{ key: "formal" }] as const;
+
+		test("returns presets unchanged when customModifiers is null/undefined", () => {
+			expect(mergePresetsWithCustomModifiers([...builtin], null)).toEqual([...builtin]);
+			expect(mergePresetsWithCustomModifiers([...builtin], undefined)).toEqual([...builtin]);
+		});
+
+		test("returns presets unchanged when customModifiers is empty", () => {
+			expect(mergePresetsWithCustomModifiers([...builtin], [])).toEqual([...builtin]);
+		});
+
+		test("appends enabled, non-blank modifiers as custom entries", () => {
+			const mod = makeCustomModifier({ id: "m1", prompt: "Be witty." });
+			const result = mergePresetsWithCustomModifiers([...builtin], [mod]);
+			expect(result).toHaveLength(2);
+			// Built-in preset is preserved first.
+			expect(result[0]).toEqual({ key: "formal" });
+			// Custom modifier becomes a CUSTOM_MODIFIER_KEY-keyed entry.
+			const custom = result[1];
+			expect(custom).toBeDefined();
+			if (!(custom && "id" in custom)) {
+				throw new Error("expected custom entry with id");
+			}
+			expect(custom.id).toBe("m1");
+			expect(custom.prompt).toBe("Be witty.");
+			// levelsEnabled=false ⇒ no level carried through (resolveCustomPrompt
+			// uses this branch to apply the prompt verbatim, no hint).
+			expect(custom.level).toBeUndefined();
+		});
+
+		test("drops disabled modifiers", () => {
+			const mod = makeCustomModifier({ enabled: false });
+			expect(mergePresetsWithCustomModifiers([...builtin], [mod])).toEqual([...builtin]);
+		});
+
+		test("drops modifiers with blank/whitespace-only prompts", () => {
+			const blank = makeCustomModifier({ id: "blank", prompt: "   " });
+			const empty = makeCustomModifier({ id: "empty", prompt: "" });
+			expect(mergePresetsWithCustomModifiers([...builtin], [blank, empty])).toEqual([...builtin]);
+		});
+
+		test("carries level through when levelsEnabled is true (defaults to medium)", () => {
+			const explicit = makeCustomModifier({
+				id: "explicit",
+				levelsEnabled: true,
+				level: "high",
+			});
+			const defaultLevel = makeCustomModifier({
+				id: "default",
+				levelsEnabled: true,
+				// level intentionally omitted — `customModifierToEntry` falls
+				// back to DEFAULT_LEVEL ("medium").
+			});
+			const result = mergePresetsWithCustomModifiers([], [explicit, defaultLevel]);
+			expect(result).toHaveLength(2);
+			const first = result[0];
+			const second = result[1];
+			if (!(first && "id" in first && second && "id" in second)) {
+				throw new Error("expected two custom entries");
+			}
+			expect(first.level).toBe("high");
+			expect(second.level).toBe("medium");
+		});
+
+		test("custom modifier prompts are folded into the composed system prompt", () => {
+			// End-to-end smoke through buildSystemPrompt → resolveEntryPrompt →
+			// resolveCustomPrompt. The authored text + level hint must appear,
+			// followed by the schema clamp the resolver always appends.
+			const mod = makeCustomModifier({
+				prompt: "Add a sparkle emoji at the end.",
+				levelsEnabled: true,
+				level: "light",
+			});
+			const merged = mergePresetsWithCustomModifiers([], [mod]);
+			const out = buildSystemPrompt([...merged]);
+			expect(out).toContain("Add a sparkle emoji at the end.");
+			// Light-tier hint from CUSTOM_LEVEL_HINT.
+			expect(out).toContain("Apply this lightly");
+		});
 	});
 });

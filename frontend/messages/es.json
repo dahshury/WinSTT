@@ -73,9 +73,13 @@
     "updatesStatusIdle": "Aún no se ha comprobado ninguna actualización.",
     "updatesStatusChecking": "Buscando actualizaciones…",
     "updatesStatusAvailable": "Actualización disponible: {version}",
+    "updatesStatusDownloading": "Descargando actualización…",
     "updatesStatusUpToDate": "Ya tienes la última versión.",
     "updatesStatusDownloaded": "Actualización {version} descargada — reinicia para instalar.",
-    "updatesStatusError": "La comprobación de actualizaciones ha fallado: {message}"
+    "updatesStatusError": "La comprobación de actualizaciones ha fallado: {message}",
+    "updatesDownloading": "Descargando…",
+    "updatesDownloadingPercent": "{percent}% — Descargando actualización",
+    "updatesRestartToInstall": "Reiniciar para instalar"
   },
   "history": {
     "summaryTitle": "Estadísticas Generales",

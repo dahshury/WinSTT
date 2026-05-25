@@ -1,8 +1,22 @@
-type UpdaterStatus = "idle" | "checking" | "available" | "not-available" | "downloaded" | "error";
+type UpdaterStatus =
+	| "idle"
+	| "checking"
+	| "available"
+	| "downloading"
+	| "not-available"
+	| "downloaded"
+	| "error";
 
 export interface UpdaterStatusEntryInput {
+	/** Only present when status === "downloading". From electron-updater's
+	 *  `download-progress` payload — all four fields are numeric and exposed
+	 *  unmodified so the renderer can format them however suits the UI. */
+	bytesPerSecond?: number;
 	message?: string;
+	percent?: number;
 	status: UpdaterStatus;
+	total?: number;
+	transferred?: number;
 	version?: string;
 }
 
@@ -22,17 +36,36 @@ export interface UpdaterStatusHistory {
 }
 
 /**
- * Build an {@link UpdaterStatusEntry} from an input + timestamp. Lifted to
- * module scope so the conditional spreads (which each add a branch to the
- * cyclomatic counter) don't inflate the `record` method's CRAP score.
+ * Optional fields stripped via `assignDefined` so `buildEntry` stays
+ * branch-free (CRAP gate is strict about cyclomatic complexity). `number`
+ * keys honor 0 (the first download-progress tick); string keys drop empties.
  */
+const OPTIONAL_NUMBER_KEYS = ["percent", "transferred", "total", "bytesPerSecond"] as const;
+const OPTIONAL_STRING_KEYS = ["version", "message"] as const;
+
+function copyDefinedNumbers(target: UpdaterStatusEntry, source: UpdaterStatusEntryInput): void {
+	for (const key of OPTIONAL_NUMBER_KEYS) {
+		const value = source[key];
+		if (typeof value === "number") {
+			target[key] = value;
+		}
+	}
+}
+
+function copyDefinedStrings(target: UpdaterStatusEntry, source: UpdaterStatusEntryInput): void {
+	for (const key of OPTIONAL_STRING_KEYS) {
+		const value = source[key];
+		if (value) {
+			target[key] = value;
+		}
+	}
+}
+
 function buildEntry(entry: UpdaterStatusEntryInput, timestamp: number): UpdaterStatusEntry {
-	return {
-		status: entry.status,
-		timestamp,
-		...(entry.version ? { version: entry.version } : {}),
-		...(entry.message ? { message: entry.message } : {}),
-	};
+	const result: UpdaterStatusEntry = { status: entry.status, timestamp };
+	copyDefinedNumbers(result, entry);
+	copyDefinedStrings(result, entry);
+	return result;
 }
 
 export function createUpdaterStatusHistory(

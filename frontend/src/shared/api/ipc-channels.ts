@@ -257,6 +257,10 @@ export const IPC = {
 	// the real outcome arrives asynchronously over UPDATER_STATUS like the
 	// periodic check. See setupUpdaterStatusHandlers in electron/main.ts.
 	UPDATER_CHECK_NOW: "updater:check-now",
+	// Restart the app to apply a downloaded update (renderer → main). Calls
+	// electron-updater's `quitAndInstall`. The renderer wires this to the
+	// "Restart to install" button shown once status === "downloaded".
+	UPDATER_QUIT_AND_INSTALL: "updater:quit-and-install",
 	WINDOW_TELEMETRY: "window:telemetry",
 	SECURE_GET_KEY: "secure:get-key",
 	SECURE_INVOKE: "secure:invoke",
@@ -494,6 +498,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.UPDATER_CLEAR_STATUS_HISTORY]: ["invoke", "secure"],
 	[IPC.UPDATER_STATUS]: ["on"],
 	[IPC.UPDATER_CHECK_NOW]: ["invoke"],
+	[IPC.UPDATER_QUIT_AND_INSTALL]: ["invoke"],
 
 	// Window telemetry
 	[IPC.WINDOW_TELEMETRY]: ["on"],

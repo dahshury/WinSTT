@@ -73,9 +73,13 @@
     "updatesStatusIdle": "No updates checked yet.",
     "updatesStatusChecking": "Checking for updates…",
     "updatesStatusAvailable": "Update available: {version}",
+    "updatesStatusDownloading": "Downloading update…",
     "updatesStatusUpToDate": "You're on the latest version.",
     "updatesStatusDownloaded": "Update {version} downloaded — restart to install.",
-    "updatesStatusError": "Update check failed: {message}"
+    "updatesStatusError": "Update check failed: {message}",
+    "updatesDownloading": "Downloading…",
+    "updatesDownloadingPercent": "{percent}% — Downloading update",
+    "updatesRestartToInstall": "Restart to install"
   },
   "history": {
     "summaryTitle": "Overall Stats",

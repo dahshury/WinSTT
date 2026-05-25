@@ -73,9 +73,13 @@
     "updatesStatusIdle": "尚未检查更新。",
     "updatesStatusChecking": "正在检查更新…",
     "updatesStatusAvailable": "可用更新：{version}",
+    "updatesStatusDownloading": "正在下载更新…",
     "updatesStatusUpToDate": "已是最新版本。",
     "updatesStatusDownloaded": "更新 {version} 已下载 — 重启以安装。",
-    "updatesStatusError": "更新检查失败：{message}"
+    "updatesStatusError": "更新检查失败：{message}",
+    "updatesDownloading": "正在下载…",
+    "updatesDownloadingPercent": "{percent}% — 正在下载更新",
+    "updatesRestartToInstall": "重启以安装"
   },
   "history": {
     "summaryTitle": "总体统计",

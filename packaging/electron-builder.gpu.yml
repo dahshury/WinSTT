@@ -85,7 +85,12 @@ portable:
   splashImage: build/splash.bmp
 publish:
   - provider: github
-    # Prereleases (e.g. v0.1.0-alpha.0) ship to the same GitHub Release page
-    # but are flagged as prerelease. electron-updater consumes them when the
-    # runtime sets `autoUpdater.allowPrerelease = true` (see main.ts).
+    # Repo is inferred from the workflow context (dahshury/WinSTT) — no
+    # explicit owner/repo override needed. CPU and GPU flavors upload to
+    # the same per-tag release; their distinct `artifactName` keeps the
+    # `.exe` filenames from colliding.
+    #
+    # Prereleases (e.g. v0.1.0-alpha.0) ship as GitHub prereleases.
+    # electron-updater consumes them when the runtime sets
+    # `autoUpdater.allowPrerelease = true` (see main.ts).
     releaseType: prerelease

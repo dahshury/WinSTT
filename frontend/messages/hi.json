@@ -73,9 +73,13 @@
     "updatesStatusIdle": "अभी तक कोई अपडेट जाँच नहीं हुई।",
     "updatesStatusChecking": "अपडेट की जाँच हो रही है…",
     "updatesStatusAvailable": "अपडेट उपलब्ध: {version}",
+    "updatesStatusDownloading": "अपडेट डाउनलोड हो रहा है…",
     "updatesStatusUpToDate": "आप नवीनतम संस्करण पर हैं।",
     "updatesStatusDownloaded": "अपडेट {version} डाउनलोड हो गया — इंस्टॉल करने के लिए पुनः आरंभ करें।",
-    "updatesStatusError": "अपडेट जाँच विफल: {message}"
+    "updatesStatusError": "अपडेट जाँच विफल: {message}",
+    "updatesDownloading": "डाउनलोड हो रहा है…",
+    "updatesDownloadingPercent": "{percent}% — अपडेट डाउनलोड हो रहा है",
+    "updatesRestartToInstall": "इंस्टॉल करने के लिए पुनः आरंभ करें"
   },
   "history": {
     "summaryTitle": "कुल आँकड़े",

@@ -1377,7 +1377,9 @@ class RecorderService:
         )
         if len(commit_audio) == 0:
             return
-        commit_text = self._transcribe_realtime_window(commit_audio)
+        self._maybe_append_commit_text(self._transcribe_realtime_window(commit_audio))
+
+    def _maybe_append_commit_text(self, commit_text: str | None) -> None:
         # commit_text is ``None`` when the realtime transcriber is mid-swap;
         # both ``None`` and ``""`` indicate "no usable commit this tick".
         if commit_text and commit_text.strip():

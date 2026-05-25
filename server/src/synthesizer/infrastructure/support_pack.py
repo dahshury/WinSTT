@@ -48,11 +48,9 @@ logger = logging.getLogger(__name__)
 #: Kokoro model URLs. Override the whole URL with ``WINSTT_TTS_PACK_URL``
 #: (and optionally ``WINSTT_TTS_PACK_SHA256_URL``) for testing / mirrors.
 #:
-#: Hosted on the PUBLIC ``dahshury/winstt-assets`` repo, NOT the private
-#: ``dahshury/winstt2`` app repo: ``download_with_progress`` uses tokenless
-#: urllib, and GitHub returns HTTP 404 for asset URLs on private repos to
-#: unauthenticated clients. See ``project_private_repo_breaks_pack_distribution``.
-_PACK_RELEASE_BASE = "https://github.com/dahshury/winstt-assets/releases/download/tts-pack-v1"
+#: Hosted on the PUBLIC ``dahshury/WinSTT`` app repo. ``download_with_progress``
+#: uses tokenless urllib; the repo is public so anonymous fetches work.
+_PACK_RELEASE_BASE = "https://github.com/dahshury/WinSTT/releases/download/tts-pack-v1"
 
 #: Approximate confirm-dialog total: engine pack (~29 MB compressed) +
 #: Kokoro fp16 model (~163 MB) + voicepacks (~27 MB). Live progress bars

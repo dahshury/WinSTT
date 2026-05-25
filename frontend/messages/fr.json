@@ -73,9 +73,13 @@
     "updatesStatusIdle": "Aucune mise à jour vérifiée pour l'instant.",
     "updatesStatusChecking": "Recherche de mises à jour…",
     "updatesStatusAvailable": "Mise à jour disponible : {version}",
+    "updatesStatusDownloading": "Téléchargement de la mise à jour…",
     "updatesStatusUpToDate": "Vous utilisez la dernière version.",
     "updatesStatusDownloaded": "Mise à jour {version} téléchargée — redémarrez pour installer.",
-    "updatesStatusError": "Échec de la recherche de mise à jour : {message}"
+    "updatesStatusError": "Échec de la recherche de mise à jour : {message}",
+    "updatesDownloading": "Téléchargement…",
+    "updatesDownloadingPercent": "{percent} % — Téléchargement de la mise à jour",
+    "updatesRestartToInstall": "Redémarrer pour installer"
   },
   "history": {
     "summaryTitle": "Statistiques Globales",

@@ -17,7 +17,7 @@ Windows speech-to-text desktop application with optional AI text enhancement and
 
 ## Download (end users)
 
-Each release publishes two NSIS installers on the [GitHub Releases](https://github.com/dahshury/winstt2/releases) page:
+Each release publishes two NSIS installers on the [GitHub Releases](https://github.com/dahshury/WinSTT/releases) page:
 
 | Installer | Size | Use when |
 |-----------|------|----------|

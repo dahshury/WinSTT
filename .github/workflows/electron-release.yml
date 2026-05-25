@@ -9,11 +9,15 @@ permissions:
   contents: write
 
 # Build CPU and GPU flavors as parallel jobs. Both publish to the same GitHub
-# Release on this tag — electron-builder appends each artifact under its
-# distinct ``artifactName`` (set in electron-builder.{cpu,gpu}.yml), so the
-# Release page ends up with two installers side by side. electron-updater
-# treats them as separate update channels: a user installed via CPU gets
-# only CPU updates, GPU users get GPU.
+# Release on this repo (`dahshury/WinSTT`, public). electron-builder appends
+# each artifact under its distinct ``artifactName`` (set in
+# electron-builder.{cpu,gpu}.yml), so the release page ends up with two
+# installers side by side. electron-updater treats them as separate update
+# channels: a user installed via CPU gets only CPU updates, GPU users get GPU.
+#
+# The TTS support pack also publishes here (under the version-independent
+# `tts-pack-v1` tag), keyed to the URL the server reads in
+# server/src/synthesizer/infrastructure/support_pack.py.
 jobs:
   build:
     name: Build (${{ matrix.flavor }})
@@ -80,6 +84,11 @@ jobs:
         if: matrix.flavor == 'cpu'
         shell: pwsh
         working-directory: server
+        # `gh` defaults to the workflow's own repo (dahshury/WinSTT). No
+        # `--repo` override needed since the support_pack.py URL points here
+        # too. CPU job only: the pack is python/arch-specific, not flavor-
+        # specific, so doing it in both matrix legs would race to upload an
+        # identical artifact.
         run: |
           uv run python packaging/build_tts_pack.py --out packaging/dist-tts
           $tag = "tts-pack-v1"
