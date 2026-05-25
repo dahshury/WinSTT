@@ -146,7 +146,13 @@ requires-dist = [
 ]
 
 [tool.uv.sources]
-onnx-asr = { path = "../examples/onnx-asr", editable = true }
+# onnx-asr lives at https://github.com/dahshury/onnx-asr (WinSTT-side fork of
+# istupakov/onnx-asr) — pinned to a specific commit on feat/lifecycle-close
+# for reproducibility. uv resolves & caches it like any other git dependency,
+# so no local checkout is required for ``uv sync``. To hack on onnx-asr
+# alongside WinSTT, clone the fork as a sibling folder and temporarily swap
+# this entry for ``{ path = "../../onnx-asr", editable = true }``.
+onnx-asr = { git = "https://github.com/dahshury/onnx-asr.git", rev = "44685a815fb69cfa763dcc139cbf17b8914b9a34" }
 
 [project.scripts]
 stt-server = "src.stt_server.server:main"

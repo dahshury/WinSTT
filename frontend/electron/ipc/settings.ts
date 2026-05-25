@@ -580,8 +580,22 @@ function settingsSaveImpl(
 		validateSettingsObject(settings);
 		const oldSettings = snapshotSettings();
 		applySettings(settings);
+		// Broadcast the post-apply disk SNAPSHOT, not the renderer's raw
+		// payload. Two reasons:
+		//   1. Callers like `useVadCalibration` / `useDeviceSwitchFeedback`
+		//      legitimately send only `{ audio: ... }`. Forwarding that raw
+		//      partial to other renderers would make `decodeSettingsPayload`
+		//      fill DEFAULTS for the missing top-level sections (general,
+		//      model, …) and stomp every customized field there on receivers.
+		//   2. The snapshot is the canonical truth — every receiver ends up
+		//      with the same view as the one electron-store just persisted.
+		//
+		// Restart detection still compares against `settings` (the renderer's
+		// payload) because that's the change set the user actually requested;
+		// snapshotting again here would diff against itself and miss restarts.
+		const newSnapshot = snapshotSettings();
 		checkForRestartNeeded(oldSettings, settings);
-		broadcastSettingsToOtherWindows(event.sender.id, settings);
+		broadcastSettingsToOtherWindows(event.sender.id, newSnapshot);
 	} catch (error) {
 		console.error("[settings] Failed to save settings:", getErrorMessage(error));
 		// Settings save is fire-and-forget (ipcMain.on), can't return error to renderer

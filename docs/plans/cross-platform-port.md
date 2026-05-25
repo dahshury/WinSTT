@@ -56,7 +56,7 @@
 | Context (AT-SPI) | Python helper `winstt-context-linux` using `pyatspi` to read focused-text element; spawned same way as the Windows `.exe` | `electron/native/src/`, `electron/lib/context-reader.ts` switch | Launch `gedit` in xvfb, type text, assert helper returns context |
 | Global hotkey | `uiohook-napi` already supports X11 — verify prebuilt is shipped | `electron/ipc/hotkey.ts` (no changes) | Xvfb + xdotool to fake key events, assert IPC fires |
 | Auto-launch | `~/.config/autostart/winstt.desktop` writer in `autostart.ts` | `electron/ipc/autostart.ts:4` (drop Linux exclusion) | Unit test: assert desktop file written correctly with `Exec=` and `X-GNOME-Autostart-enabled=true` |
-| Packaging | Add `linux:` block to `electron-builder.cpu.yml`/`.gpu.yml`: targets `AppImage`, `deb` | `frontend/electron-builder.*.yml` | CI artifact upload check |
+| Packaging | Add `linux:` block to `electron-builder.cpu.yml`/`.gpu.yml`: targets `AppImage`, `deb` | `packaging/electron-builder.*.yml` | CI artifact upload check |
 | Console signals | Remove Windows-only `ctypes.windll` path; use `signal.SIGINT`/`SIGTERM` on POSIX | `server/src/stt_server/server.py:277-303` | Existing tests + new POSIX signal-delivery test |
 
 **Linux test environment:** ubuntu-22.04 GitHub runner, `xvfb-run` for any GUI, `pulseaudio --start` in CI, dummy mic via `pacmd load-module module-null-sink`.
@@ -79,7 +79,7 @@
 | Global hotkey | `uiohook-napi` works; add first-run flow that opens System Settings → Privacy → Accessibility | `electron/ipc/hotkey.ts`, new onboarding modal | Manual TCC verification doc + automated check that helper detects missing permission and emits warning |
 | Auto-launch | Already supported by Electron `setLoginItemSettings` | `autostart.ts:4` (already covers darwin) | Existing |
 | GPU | **Skipped Phase 1.** CPU-only build. Document MLX backend as Phase 2. | `device.py` early-return on darwin | N/A |
-| Packaging | electron-builder `mac:` block → DMG, hardened runtime + entitlements (`com.apple.security.device.audio-input`, `com.apple.security.automation.apple-events`); notarize via `notarytool` | `frontend/electron-builder.*.yml`, new `build/entitlements.mac.plist` | CI: notarization status polled; smoke install via `hdiutil attach` on macos-14 |
+| Packaging | electron-builder `mac:` block → DMG, hardened runtime + entitlements (`com.apple.security.device.audio-input`, `com.apple.security.automation.apple-events`); notarize via `notarytool` | `packaging/electron-builder.*.yml`, new `frontend/build/entitlements.mac.plist` | CI: notarization status polled; smoke install via `hdiutil attach` on macos-14 |
 | PyInstaller | Add `.app` bundle output or onefile; codesign Python helpers with same Developer ID | `server/packaging/stt-server.spec` | Verify `codesign --verify --deep` passes |
 | Console signals | Same POSIX path as Linux | `server/src/stt_server/server.py` | Shared |
 

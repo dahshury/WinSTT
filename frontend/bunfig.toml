@@ -3,3 +3,13 @@ preload = ["./test/preload.ts"]
 coverage = true
 coverageReporter = ["text", "lcov"]
 coverageDir = "coverage"
+# Regression floor — Bun 1.3+ native coverage gate. Below these and `bun test
+# --coverage` exits non-zero. Set slightly below the current overall numbers
+# (91.65% lines / 86.96% functions as of the last green run) so transient flake
+# in a single file doesn't trip the gate; bump up over time as coverage climbs.
+# Values are fractions of 1, not percentages.
+# Note: Bun 1.3+ supports a native `coverageThreshold` here, but it shares
+# `bun test`'s exit code with the test-pass status — so a single flaky test
+# would mask a coverage regression and vice-versa. We gate coverage in a
+# separate step via `scripts/coverage-gate.ts`, which reads `coverage/lcov.info`
+# after the run. Floors live in that script.

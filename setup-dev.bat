@@ -1,11 +1,47 @@
 @echo off
 setlocal enabledelayedexpansion
 
+:: ─────────────────────────────────────────────────────────────
+::  WinSTT — Dev Environment Setup (Windows)
+::
+::  Usage:
+::    setup-dev.bat                  Auto-detect GPU vs CPU (nvidia-smi → gpu)
+::    setup-dev.bat --flavor gpu     Force GPU runtime (NVIDIA CUDA wheels)
+::    setup-dev.bat --flavor cpu     Force CPU-only runtime
+::
+::  Prereqs handled automatically:
+::    * uv         (Astral's Python toolchain)         — installed if missing
+::    * Bun        (JS runtime + package manager)      — installed if missing
+::    * Python 3.11 (managed by uv)
+::
+::  Prereqs you must already have:
+::    * Git
+::
+::  No MSVC / Visual Studio Build Tools needed — the only native pieces
+::  (uiohook-napi prebuilt NAPI binary + winstt-paste / winstt-context
+::  helpers committed under frontend/electron/native/bin/) ship prebuilt.
+:: ─────────────────────────────────────────────────────────────
+
 echo.
 echo  ============================================
 echo   WinSTT Dev Environment Setup
 echo  ============================================
 echo.
+
+:: ── Parse args ─────────────────────────────────
+set "FLAVOR="
+:parse_args
+if "%~1"=="" goto args_done
+if /i "%~1"=="--flavor" (
+    set "FLAVOR=%~2"
+    shift
+    shift
+    goto parse_args
+)
+echo  [ERROR] Unknown argument: %~1
+echo  Usage: setup-dev.bat [--flavor cpu^|gpu]
+exit /b 1
+:args_done
 
 :: ── Check Git ──────────────────────────────────
 where git >nul 2>&1
@@ -15,10 +51,29 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: ── Check / Install uv ─────────────────────────
+:: ── Detect flavor (GPU if nvidia-smi present, otherwise CPU) ─
+if not defined FLAVOR (
+    where nvidia-smi >nul 2>&1
+    if !errorlevel! equ 0 (
+        set "FLAVOR=gpu"
+        echo  Detected NVIDIA GPU ^(nvidia-smi found^). Using GPU runtime.
+    ) else (
+        set "FLAVOR=cpu"
+        echo  No NVIDIA GPU detected. Using CPU runtime.
+    )
+) else (
+    if /i not "%FLAVOR%"=="cpu" if /i not "%FLAVOR%"=="gpu" (
+        echo  [ERROR] --flavor must be 'cpu' or 'gpu', got '%FLAVOR%'
+        exit /b 1
+    )
+    echo  Manual flavor override: %FLAVOR%
+)
+echo.
+
+:: ── uv ─────────────────────────────────────────
 where uv >nul 2>&1
 if %errorlevel% neq 0 (
-    echo  [1/6] Installing uv...
+    echo  [1/5] Installing uv...
     powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
     set "PATH=%USERPROFILE%\.local\bin;%PATH%"
     where uv >nul 2>&1
@@ -29,13 +84,13 @@ if %errorlevel% neq 0 (
     )
     echo  uv installed.
 ) else (
-    echo  [1/6] uv already installed.
+    echo  [1/5] uv already installed.
 )
 
-:: ── Check / Install Bun ────────────────────────
+:: ── Bun ────────────────────────────────────────
 where bun >nul 2>&1
 if %errorlevel% neq 0 (
-    echo  [2/6] Installing Bun...
+    echo  [2/5] Installing Bun...
     powershell -ExecutionPolicy ByPass -c "irm https://bun.sh/install.ps1 | iex"
     set "PATH=%USERPROFILE%\.bun\bin;%PATH%"
     where bun >nul 2>&1
@@ -46,14 +101,14 @@ if %errorlevel% neq 0 (
     )
     echo  Bun installed.
 ) else (
-    echo  [2/6] Bun already installed.
+    echo  [2/5] Bun already installed.
 )
 
-:: ── Provision Python 3.11 ──────────────────────
+:: ── Python 3.11 via uv ─────────────────────────
 :: requires-python is ">=3.11" but the project is developed and tested on
-:: 3.11; pin it so uv (and later `uv run stt-server`) don't grab a newer
+:: 3.11; pin it so uv (and ``uv run stt-server``) don't grab a newer
 :: interpreter that lacks matching onnxruntime / torch wheels.
-echo  [3/6] Provisioning Python 3.11 via uv...
+echo  [3/5] Provisioning Python 3.11 via uv...
 uv python install 3.11
 if %errorlevel% neq 0 (
     echo  [ERROR] Failed to install Python 3.11 via uv.
@@ -62,30 +117,12 @@ if %errorlevel% neq 0 (
 )
 uv python pin 3.11 --directory "%~dp0server" >nul 2>&1
 
-:: ── Clone onnx-asr if missing ──────────────────
-:: Editable path dependency of the server (../examples/onnx-asr); must
-:: exist before `uv sync` or resolution fails.
-echo  [4/6] Checking onnx-asr dependency...
-if not exist "%~dp0examples\onnx-asr\pyproject.toml" (
-    if not exist "%~dp0examples" mkdir "%~dp0examples"
-    echo  Cloning onnx-asr into examples\onnx-asr...
-    git clone https://github.com/istupakov/onnx-asr.git "%~dp0examples\onnx-asr"
-    if !errorlevel! neq 0 (
-        echo  [ERROR] Failed to clone onnx-asr.
-        pause
-        exit /b 1
-    )
-) else (
-    echo  onnx-asr already present.
-)
-
-:: ── Install server deps ────────────────────────
-echo  [5/6] Installing server dependencies (Python 3.11 + ONNX packages)...
-echo  Installing the CPU runtime by default. For NVIDIA GPU acceleration,
-echo  re-run later with: cd server ^&^& uv sync --extra gpu
-echo.
+:: ── Server deps ────────────────────────────────
+:: onnx-asr is resolved as a git URL from dahshury/onnx-asr (see
+:: server/pyproject.toml [tool.uv.sources]) — no separate clone step.
+echo  [4/5] Installing server dependencies (%FLAVOR%)...
 pushd "%~dp0server"
-uv sync --python 3.11 --extra cpu
+uv sync --python 3.11 --extra %FLAVOR%
 if %errorlevel% neq 0 (
     echo  [ERROR] Server dependency installation failed.
     popd
@@ -95,21 +132,12 @@ if %errorlevel% neq 0 (
 popd
 echo  Server dependencies installed.
 
-:: ── Install frontend deps ──────────────────────
-echo  [6/6] Installing frontend dependencies...
+:: ── Frontend + root deps ───────────────────────
+echo  [5/5] Installing frontend + root dependencies...
 pushd "%~dp0frontend"
 call bun install
 if %errorlevel% neq 0 (
-    echo.
     echo  [ERROR] Frontend dependency installation failed.
-    echo.
-    echo  The most common cause is the native postinstall step
-    echo  ^(electron-rebuild / uiohook-napi^) failing because a C/C++
-    echo  toolchain is missing. Install "Visual Studio Build Tools"
-    echo  with the "Desktop development with C++" workload, then
-    echo  re-run this script:
-    echo    https://visualstudio.microsoft.com/visual-cpp-build-tools/
-    echo.
     popd
     pause
     exit /b 1
@@ -126,29 +154,40 @@ if not exist "node_modules\electron\dist\electron.exe" (
         exit /b 1
     )
 )
-:: Regenerate TS types from the OpenAPI spec so a fresh checkout's
-:: generated schema matches spec/openapi.yaml. Non-fatal: the file is
-:: committed, so a failure here doesn't block development.
+:: Regenerate TS types from the OpenAPI spec — non-fatal.
 echo  Generating TypeScript types from OpenAPI spec...
 call bun run generate
 if %errorlevel% neq 0 (
     echo  [WARN] `bun generate` failed; using the committed schema.d.ts.
 )
 popd
-echo  Frontend dependencies installed.
+
+:: Root install wires up husky pre-commit hooks (block ``git stash``,
+:: etc) and installs electron-builder for `bun run electron:build:*`.
+pushd "%~dp0"
+call bun install
+if %errorlevel% neq 0 (
+    echo  [WARN] Root `bun install` failed; husky hooks and the .exe
+    echo         packaging scripts at repo root won't be available.
+)
+popd
+echo  Dependencies installed.
 
 :: ── Done ───────────────────────────────────────
 echo.
 echo  ============================================
-echo   Setup complete!
+echo   Setup complete!  Flavor: %FLAVOR%
 echo  ============================================
 echo.
-echo   Start the server:
+echo   Start the dev app:
+echo     cd frontend
+echo     bun electron:dev
+echo.
+echo   Or run the server standalone:
 echo     cd server
 echo     uv run stt-server
 echo.
-echo   Start the Electron app (separate terminal):
-echo     cd frontend
-echo     bun electron:dev
+echo   Build a release installer ^(from repo root^):
+echo     bun run electron:build:%FLAVOR%
 echo.
 pause

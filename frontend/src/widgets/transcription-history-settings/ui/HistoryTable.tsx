@@ -12,12 +12,14 @@ interface HistoryTableProps {
 	entries: TranscriptionHistoryEntry[];
 }
 
-const MAX_BODY_HEIGHT_PX = 480;
 // Hint only — virtua re-measures every mounted row.
 const ROW_HEIGHT_HINT_PX = 36;
+// Cap the visible body at ~10 rows; anything beyond scrolls.
+const VISIBLE_ROW_COUNT = 10;
+const MAX_BODY_HEIGHT_PX = VISIBLE_ROW_COUNT * ROW_HEIGHT_HINT_PX;
 // Below this row count, render directly (cheaper than VList's bookkeeping);
 // at/above it, virtualize so the ContextMenu.Root count stays bounded.
-const VIRTUALIZE_THRESHOLD = 30;
+const VIRTUALIZE_THRESHOLD = 50;
 // Each track is `minmax(min, max)` so columns shrink gracefully when the
 // settings sidebar expands. Without this, fixed widths summed to 534px and
 // squeezed the text column to ~0 inside the 700px settings window.

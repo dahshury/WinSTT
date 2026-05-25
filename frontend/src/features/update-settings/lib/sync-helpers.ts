@@ -6,6 +6,7 @@
  * unit-testable.
  */
 
+import { decodeSettingsPayload } from "@/shared/api/settings-codec";
 import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
 
 /** True when a parameter must be sent on an initial (post-connect) flush. */
@@ -233,4 +234,95 @@ export function scheduleSave(
 			debounceRef.current = null;
 		}, delayMs);
 	}
+}
+
+/** Cheap structural equality. JSON.stringify is sufficient for the settings
+ *  shape: every value is a primitive, plain object, or array of primitives /
+ *  plain objects, and key ordering is stable across Zod parses on a given
+ *  schema (it walks the shape definition in declaration order). */
+function settingsSectionsEqual(a: unknown, b: unknown): boolean {
+	if (a === b) {
+		return true;
+	}
+	return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Merge a broadcast `settings:changed` payload with the current zustand state
+ * so user-dirty top-level sections (those that differ from the last-saved
+ * baseline) survive the broadcast.
+ *
+ * Without this, an unrelated save in another window (e.g. `useVadCalibration`
+ * pushing a new silero sensitivity) lands at the settings panel right in the
+ * middle of the 300ms debounce after the user clicked a toggle, the broadcast
+ * `setSettings(decoded)` overwrites the just-clicked value with whatever the
+ * broadcast snapshot had, and the resulting `[settings, isLoaded]` cleanup
+ * cancels the pending save — silently discarding the click.
+ *
+ * Returns the merged settings plus a `preserved` flag indicating whether any
+ * section was kept from `current`. Callers use the flag to decide whether to
+ * mark `fromBroadcastRef` (pure broadcasts skip the next save effect) or let
+ * the effect re-schedule a save for the merged state (so user-dirty fields
+ * actually persist).
+ *
+ * Falls back to identity (use the broadcast) when there's no `lastSaved`
+ * baseline yet — that's the path on the very first broadcast before
+ * `settingsLoad` has resolved, where any local difference can't be
+ * distinguished from "we haven't synced with disk yet" and accepting the
+ * broadcast is the safer default.
+ */
+function pickSection(
+	decodedValue: unknown,
+	currentValue: unknown,
+	lastSavedValue: unknown
+): { value: unknown; preserved: boolean } {
+	return settingsSectionsEqual(currentValue, lastSavedValue)
+		? { value: decodedValue, preserved: false }
+		: { value: currentValue, preserved: true };
+}
+
+function mergeSections(
+	decoded: AppSettings,
+	current: AppSettings,
+	lastSaved: AppSettings
+): { merged: AppSettings; preserved: boolean } {
+	let preserved = false;
+	const result: Record<string, unknown> = {};
+	const currentRec = current as unknown as Record<string, unknown>;
+	const lastSavedRec = lastSaved as unknown as Record<string, unknown>;
+	for (const [key, decodedValue] of Object.entries(decoded)) {
+		const picked = pickSection(decodedValue, currentRec[key], lastSavedRec[key]);
+		result[key] = picked.value;
+		preserved = preserved || picked.preserved;
+	}
+	return { merged: result as AppSettings, preserved };
+}
+
+export function mergeBroadcastPreservingUserDirty(
+	decoded: AppSettings,
+	current: AppSettings,
+	lastSaved: AppSettings | undefined
+): { merged: AppSettings; preserved: boolean } {
+	return lastSaved
+		? mergeSections(decoded, current, lastSaved)
+		: { merged: decoded, preserved: false };
+}
+
+/**
+ * Pure projection of the broadcast handler in `useSyncSettings`. Decodes the
+ * incoming snapshot, merges it against the local user-dirty state, and decides
+ * whether the next render should mark `fromBroadcast` (so the save effect
+ * doesn't echo the broadcast back to disk).
+ *
+ * Living here lets unit tests cover the handler without rendering the hook.
+ */
+export function deriveBroadcastUpdate(
+	incoming: AppSettings,
+	current: AppSettings,
+	lastSaved: AppSettings | undefined,
+	fromBroadcastNow: boolean
+): { merged: AppSettings; nextFromBroadcast: boolean } {
+	const decoded = decodeSettingsPayload(incoming);
+	const { merged, preserved } = mergeBroadcastPreservingUserDirty(decoded, current, lastSaved);
+	return { merged, nextFromBroadcast: !preserved || fromBroadcastNow };
 }

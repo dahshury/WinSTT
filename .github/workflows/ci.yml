@@ -95,6 +95,15 @@ jobs:
             exit 1
           }
 
+      # Coverage regression gate — parses coverage/lcov.info and fails if
+      # overall line or function coverage drops below the floor in
+      # scripts/coverage-gate.ts. Independent of test-pass status so a flaky
+      # test doesn't mask a coverage regression (and vice-versa).
+      - name: Coverage gate
+        if: hashFiles('frontend/coverage/lcov.info') != ''
+        working-directory: frontend
+        run: bun run coverage:gate
+
       # CRAP analyzer — cyclomatic-complexity × inverse-coverage score per
       # function. Refreshes coverage internally, but we ran tests above
       # already; --skip-coverage reuses the lcov we just produced.
@@ -103,6 +112,39 @@ jobs:
         working-directory: frontend
         continue-on-error: true
         run: bun run scripts/crap.ts --skip-coverage
+
+      # Visual regression — pixel-diff each renderer window against a
+      # committed PNG baseline (see frontend/e2e/visual-regression.e2e.ts).
+      # First we need the renderer build the `vite preview` webServer hook
+      # serves from; then install the chromium binary Playwright drives.
+      # continue-on-error: true because pixel-diffs are inherently picky
+      # (font hinting, GPU layer composition); we want signal, not bricks.
+      # Diff artifacts are uploaded so reviewers can compare side-by-side.
+      - name: Build renderer (for visual regression)
+        working-directory: frontend
+        continue-on-error: true
+        run: bun run build
+
+      - name: Install Playwright chromium (for visual regression)
+        working-directory: frontend
+        continue-on-error: true
+        run: bunx playwright install chromium
+
+      - name: Visual regression
+        id: visual_regression
+        working-directory: frontend
+        continue-on-error: true
+        run: bun run test:visual
+
+      - name: Upload visual regression diff artifacts
+        if: always() && steps.visual_regression.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-diff
+          path: |
+            frontend/test-results/**/*.png
+            frontend/playwright-report/
+          if-no-files-found: ignore
 
       - name: Upload coverage artifact
         if: always() && hashFiles('frontend/coverage/lcov.info') != ''
@@ -150,9 +192,9 @@ jobs:
       # Sync the dev group only — pytest, mypy, ruff, hypothesis. Domain
       # tests use Fake adapters from tests/fakes/ and the infrastructure
       # layer is excluded from coverage, so we don't pull torch/ORT here.
-      # Server depends on the editable onnx-asr at ../examples/onnx-asr;
-      # uv resolves that path automatically because checkout fetched the
-      # whole tree.
+      # onnx-asr is resolved by uv from the dahshury/onnx-asr git URL
+      # (pinned commit in server/pyproject.toml [tool.uv.sources]); no
+      # local checkout needed.
       - name: Install dependencies
         run: uv sync --group dev
 
@@ -174,9 +216,28 @@ jobs:
       # model_registry.py (env-dependent catalog branches — see
       # memory/project_server_coverage_preexisting_gap.md). Override to
       # 99% here so the gate still catches real regressions without
-      # blocking on the pre-existing gap.
+      # blocking on the pre-existing gap. Also emit a JSON coverage
+      # report into reports/crap-coverage.json so the CRAP step below
+      # can reuse it via --skip-coverage instead of re-running pytest.
       - name: Pytest
-        run: uv run pytest --tb=short --cov-fail-under=99
+        run: uv run pytest --tb=short --cov-fail-under=99 --cov-report=json:reports/crap-coverage.json
+
+      # CRAP analyzer — Python port of the frontend's scripts/crap.ts.
+      # Cyclomatic-complexity × inverse-coverage score per function.
+      # continue-on-error: informational; the artifact upload below
+      # captures the report regardless of any over-threshold finding.
+      - name: Run CRAP analyzer
+        if: hashFiles('server/scripts/crap.py') != ''
+        continue-on-error: true
+        run: uv run python scripts/crap.py --skip-coverage
+
+      - name: Upload CRAP report
+        if: always() && hashFiles('server/reports/crap.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-crap
+          path: server/reports/crap.json
+          if-no-files-found: ignore
 
   # Informational rollup. Never fails; useful as a single required check
   # in branch-protection rules that aggregates the parallel jobs.
@@ -193,11 +254,18 @@ jobs:
           path: artifacts/coverage
         continue-on-error: true
 
-      - name: Download CRAP artifact
+      - name: Download frontend CRAP artifact
         uses: actions/download-artifact@v4
         with:
           name: frontend-crap
           path: artifacts/crap
+        continue-on-error: true
+
+      - name: Download server CRAP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: server-crap
+          path: artifacts/server-crap
         continue-on-error: true
 
       - name: Emit summary
@@ -213,5 +281,8 @@ jobs:
             echo "- frontend lcov.info: ${lines} lines" >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ -f artifacts/crap/crap.json ]; then
-            echo "- CRAP report: present" >> "$GITHUB_STEP_SUMMARY"
+            echo "- frontend CRAP report: present" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f artifacts/server-crap/crap.json ]; then
+            echo "- server CRAP report: present" >> "$GITHUB_STEP_SUMMARY"
           fi

@@ -44,26 +44,17 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 		formState: { errors },
 	} = useForm<AddDictionaryEntry>({
 		resolver: zodResolver(addDictionaryEntrySchema),
-		defaultValues: { term: "", replacement: "" },
+		defaultValues: { term: "" },
 	});
 
 	const termValue = watch("term");
 
 	const onSubmit = (data: AddDictionaryEntry) => {
-		// Trim replacement and only pass it through when non-empty; the
-		// matcher treats absent and empty-string identically (both mean
-		// "vocab word, no replacement"), but persisting `""` would
-		// pollute the store with noise so we drop it at the form edge.
-		const replacement = data.replacement?.trim();
-		onAdd({
-			term: data.term.trim(),
-			...(replacement ? { replacement } : {}),
-		});
+		onAdd({ term: data.term.trim() });
 		reset();
 	};
 
 	const termReg = register("term");
-	const replacementReg = register("replacement");
 	const isAddDisabled = !termValue?.trim();
 
 	return (
@@ -81,17 +72,6 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 						/>
 					</FormControl>
 				</div>
-				<div className="flex-1">
-					<FormControl caption={t("replacementCaption")} label={t("replacement")}>
-						<TextField
-							name={replacementReg.name}
-							onBlur={replacementReg.onBlur}
-							onChange={replacementReg.onChange}
-							placeholder={t("replacementPlaceholder")}
-							ref={replacementReg.ref}
-						/>
-					</FormControl>
-				</div>
 				<Button
 					className="mb-3 h-8 rounded-md bg-accent px-3 font-medium text-black text-body transition-colors duration-150 hover:bg-accent-hover"
 					disabled={isAddDisabled}
@@ -104,18 +84,16 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 				<TableHeader>
 					<TableRow>
 						<TableHead>{t("term")}</TableHead>
-						<TableHead>{t("replacement")}</TableHead>
 						<TableHead className="w-10" />
 					</TableRow>
 				</TableHeader>
 				<TableBody>
 					{entries.length === 0 ? (
-						<TableEmpty colSpan={3}>{t("emptyState")}</TableEmpty>
+						<TableEmpty colSpan={2}>{t("emptyState")}</TableEmpty>
 					) : (
 						entries.map((entry, idx) => (
 							<TableRow index={idx} key={entry.id}>
 								<TableCell className="text-foreground">{entry.term}</TableCell>
-								<TableCell className="text-foreground-muted">{entry.replacement ?? "—"}</TableCell>
 								<TableCell className="w-10 text-right">
 									<Tooltip content={tc("delete")}>
 										<Button

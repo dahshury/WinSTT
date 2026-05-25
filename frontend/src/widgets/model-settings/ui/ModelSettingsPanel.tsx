@@ -3,8 +3,10 @@ import {
 	AiMagicIcon,
 	AiSettingIcon,
 	CpuIcon,
+	LockIcon,
 	SpeechToTextIcon,
 } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { isRealtimeViable, SttModelSelector } from "@picker";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
@@ -22,6 +24,7 @@ import {
 	SettingResetButton,
 	SettingSection,
 	useSettingsStore,
+	useSettingsTabStore,
 } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
 import { DownloadConfirmationDialog } from "@/features/model-download";
@@ -95,24 +98,47 @@ function MainModelSection({
 	handleModelChange,
 }: MainModelSectionProps): ReactNode {
 	const tIntegrations = useTranslations("integrations");
+	const integrations = useSettingsStore((s) => s.settings.integrations);
+	const hasAnyCloudKey =
+		integrations.openai.apiKey.trim().length > 0 ||
+		integrations.elevenlabs.apiKey.trim().length > 0;
 	const isCloud = providerOf(selectedModel) !== null;
+	// The Cloud tab is only reachable when at least one provider key is
+	// configured. Persisted cloud selections without a key are flipped back
+	// to the local picker — the cloud-key-removal banner already tells the
+	// user what's broken.
+	const effectiveSourceIsCloud = isCloud && hasAnyCloudKey;
 
 	// Local-only UI state for which picker is on screen. Initialised from the
 	// persisted model (cloud `provider:*` id → "cloud", otherwise "local") so
 	// the user lands on the picker that matches what's currently selected.
 	// Toggling the source does NOT touch persisted settings — the persisted
 	// model only changes when the user picks a row from the visible picker.
-	const [source, setSource] = useState<"local" | "cloud">(isCloud ? "cloud" : "local");
+	const [source, setSource] = useState<"local" | "cloud">(
+		effectiveSourceIsCloud ? "cloud" : "local"
+	);
 	// Re-sync if the persisted model changes underneath us (e.g. another
-	// window picked a model). Without this, opening this panel after a
-	// cross-window swap could leave the wrong picker visible.
+	// window picked a model) or the API-key availability flips.
 	useEffect(() => {
-		setSource(isCloud ? "cloud" : "local");
-	}, [isCloud]);
+		setSource(effectiveSourceIsCloud ? "cloud" : "local");
+	}, [effectiveSourceIsCloud]);
 
+	const goToIntegrations = useSettingsTabStore((s) => s.setActiveTab);
 	const sourceOpts: SwitcherOption<"local" | "cloud">[] = [
 		{ value: "local", label: tIntegrations("sourceLocal"), icon: CpuIcon },
-		{ value: "cloud", label: tIntegrations("sourceCloud"), icon: AiCloud01Icon },
+		{
+			value: "cloud",
+			label: tIntegrations("sourceCloud"),
+			icon: AiCloud01Icon,
+			disabled: !hasAnyCloudKey,
+			...(hasAnyCloudKey
+				? {}
+				: {
+						badgeIcon: LockIcon,
+						badgeTooltip: tIntegrations("cloudDisabledHint"),
+						onBadgeClick: () => goToIntegrations("integrations"),
+					}),
+		},
 	];
 
 	return (
@@ -124,9 +150,26 @@ function MainModelSection({
 						label={tIntegrations("sourceLabel")}
 						tooltip={tIntegrations("sourceTooltip")}
 					>
-						<ElevatedSurface>
-							<Switcher onChange={(v) => setSource(v)} options={sourceOpts} value={source} />
-						</ElevatedSurface>
+						<div className="flex flex-col gap-1.5">
+							<ElevatedSurface>
+								<Switcher onChange={(v) => setSource(v)} options={sourceOpts} value={source} />
+							</ElevatedSurface>
+							{hasAnyCloudKey ? null : (
+								<button
+									className="inline-flex w-fit cursor-pointer items-center gap-1 bg-transparent text-2xs text-foreground-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
+									onClick={() => goToIntegrations("integrations")}
+									type="button"
+								>
+									<HugeiconsIcon
+										aria-hidden="true"
+										className="shrink-0"
+										icon={LockIcon}
+										size={10}
+									/>
+									{tIntegrations("cloudDisabledHint")}
+								</button>
+							)}
+						</div>
 					</FormControl>
 				</div>
 				<div className="col-span-2">

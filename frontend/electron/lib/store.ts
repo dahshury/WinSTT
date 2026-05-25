@@ -1,5 +1,7 @@
+import { setMaxListeners } from "node:events";
 import Store from "electron-store";
 import { z } from "zod";
+import { normalizePersistedHotkeys } from "./normalize-hotkeys";
 import {
 	decryptSecret,
 	encryptSecret,
@@ -193,7 +195,10 @@ const storeValueSchemas = {
 	"tts.voice": z.string().catch("af_heart"),
 	"tts.lang": z.string().catch("en-us"),
 	"tts.speed": z.number().min(0.5).max(2.0).catch(1.0),
-	"tts.hotkey": z.string().catch(""),
+	// Must be non-empty: matches the renderer-side `ttsSettingsSchema.hotkey`
+	// rule. An empty persisted value falls through `.min(1)` to `.catch()` and
+	// rehydrates to the canonical default, keeping the binding always present.
+	"tts.hotkey": z.string().min(1).catch("LMeta+LShift+E"),
 	"tts.device": z.enum(["auto", "cuda", "cpu"]).catch("auto"),
 	// schema version (internal)
 	_schemaVersion: z.number().optional().catch(undefined),
@@ -370,7 +375,12 @@ export const store = new Store({
 			voice: "af_heart",
 			lang: "en-us",
 			speed: 1.0,
-			hotkey: "",
+			// Must match the renderer-side schema default — keeping these in sync
+			// matters for first-run + conflict-detection invariants: a non-empty
+			// hotkey is required so the recorder UI always has something to render
+			// and the conflict checker has a value to compare against. The feature
+			// stays gated by `tts.enabled`, not by the hotkey string.
+			hotkey: "LMeta+LShift+E",
 			device: "auto" as const,
 		},
 		integrations: {
@@ -388,6 +398,15 @@ export const store = new Store({
 		windowBounds: null as { x: number; y: number; width: number; height: number } | null,
 	},
 });
+
+// conf v15 routes every onDidChange/onDidAnyChange subscription through a
+// single shared EventTarget (store.events). We wire ~14 process-lifetime
+// listeners across electron/ipc/* and electron/lib/* (general, llm, tts,
+// dictionary, snippets, overlay settings, repaste hotkey, etc.) — well past
+// Node's default cap of 10, which triggers a MaxListenersExceededWarning at
+// startup. Raise the per-target cap so the legitimate boot-time fan-out
+// stays silent while still flagging a genuine runaway leak.
+setMaxListeners(50, store.events);
 
 // ── One-time migration for stale persisted values ────────────────────
 // electron-store defaults only apply when a key is missing. If old defaults
@@ -636,6 +655,17 @@ const currentVersion = getStoreValue("_schemaVersion") ?? 1;
 applyStoreMigration(currentVersion, getStoreValue, (key, value) => {
 	store.set(key, value);
 });
+
+// Sanity pass: enforce the no-conflict rule across the three globally-
+// registered hotkeys (PTT, repaste, TTS). See `normalize-hotkeys.ts` for the
+// policy. Runs at module load so every later reader sees clean values.
+const hotkeyRewrites = normalizePersistedHotkeys(
+	(key) => store.get(key),
+	(key, value) => store.set(key, value)
+);
+if (hotkeyRewrites.length > 0) {
+	console.log(`[store] Reset conflicting hotkey(s) to defaults: ${hotkeyRewrites.join(", ")}`);
+}
 
 /**
  * Write a plaintext value to a secret-at-rest field. Encrypts via the

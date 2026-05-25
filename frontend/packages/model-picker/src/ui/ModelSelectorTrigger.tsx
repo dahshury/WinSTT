@@ -42,7 +42,6 @@ function MakerBadge({ maker }: { maker: string | undefined }) {
 		<Badge className="shrink-0 gap-1.5 text-2xs" variant="secondary">
 			{providerIcon ? (
 				<span className="flex size-3 shrink-0 items-center justify-center overflow-hidden rounded border border-border/50 bg-surface p-0.5">
-					{/** biome-ignore lint/performance/noImgElement: Provider icons are static local PNG/SVGs served from /public. Vite serves them from public/ and the renderer uses plain <img>. */}
 					<img
 						alt=""
 						className="size-full object-contain"

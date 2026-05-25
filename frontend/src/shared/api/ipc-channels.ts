@@ -221,6 +221,10 @@ export const IPC = {
 	// Install-phase ping (engine pack → voice model → ready) so the
 	// progress UI can label which part of the on-demand install is running.
 	TTS_INSTALL_STATUS: "tts:install-status",
+	// Eager warm-up failed (engine pack download / ONNX session load went
+	// south). Distinct from TTS_FAILED, which is per-utterance. Drives the
+	// install-error banner in the Settings → TTS section.
+	TTS_INSTALL_FAILED: "tts:install-failed",
 
 	// LLM events (main → renderer)
 	LLM_CATALOG: "llm:catalog",
@@ -471,6 +475,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_MODEL_DOWNLOAD_PROGRESS]: ["on"],
 	[IPC.TTS_MODEL_DOWNLOAD_COMPLETE]: ["on"],
 	[IPC.TTS_INSTALL_STATUS]: ["on"],
+	[IPC.TTS_INSTALL_FAILED]: ["on"],
 
 	// LLM events (main → renderer)
 	[IPC.LLM_CATALOG]: ["on"],

@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
+import { electronMock } from "@test/mocks/electron";
 
-const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
 let dialogResult: { canceled: boolean; filePaths: string[] } = {
 	canceled: true,
 	filePaths: [],
@@ -15,13 +15,18 @@ let lastShowOpenDialogOptions: Electron.OpenDialogOptions | null = null;
 const captured = (): Electron.OpenDialogOptions =>
 	lastShowOpenDialogOptions as Electron.OpenDialogOptions;
 
+// Spread `electronMock()` so the process-global mock leak this installs
+// is semantically complete — partial shims (only `ipcMain` + `dialog`)
+// would make every later test importing `app` / `BrowserWindow` / etc.
+// from `electron` throw "Export named X not found". The default ipcMain
+// already exposes `_handlers` so we can read captured handlers from it.
+const base = electronMock();
+const handlers = base.ipcMain._handlers;
+
 mock.module("electron", () => ({
-	ipcMain: {
-		handle: (channel: string, listener: (event: unknown, ...args: unknown[]) => unknown) => {
-			handlers.set(channel, listener);
-		},
-	},
+	...base,
 	dialog: {
+		...base.dialog,
 		showOpenDialog: async (options: Electron.OpenDialogOptions) => {
 			lastShowOpenDialogOptions = options;
 			return dialogResult;

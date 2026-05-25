@@ -8,6 +8,7 @@ import type { OnnxQuantization } from "@/shared/config/defaults";
 import { GroupRail, type GroupRailItem } from "../../core/GroupRail";
 import { ModelPicker } from "../../core/ModelPicker";
 import { useRailScrollSpy } from "../../core/use-rail-scroll-spy";
+import { STT_PICKER_WIDTH_CLASS } from "../lib/dimensions";
 import {
 	buildModelSearchCorpus,
 	type FamilyKey,
@@ -59,7 +60,10 @@ export interface SttModelSelectorProps {
 }
 
 const DEFAULT_STT_POPUP_HEIGHT = "h-[min(620px,var(--available-height))]";
-const DEFAULT_STT_POPUP_WIDTH = "w-[max(580px,var(--anchor-width))]";
+// Pinned, NOT `max(..., var(--anchor-width))`: the detached BrowserWindow and
+// the settings popup must render at the exact same pixel width, so we ignore
+// the trigger's measured width and use the shared constant verbatim.
+const DEFAULT_STT_POPUP_WIDTH = STT_PICKER_WIDTH_CLASS;
 
 function applyPrefilter(
 	models: readonly ModelInfo[],
@@ -135,7 +139,6 @@ export function SttModelSelector({
 					label: `${getAuthorLabel(group.value)} · ${cfg.label}`,
 					badge: group.items.length,
 					icon: cfg.logoSrc ? (
-						// biome-ignore lint/performance/noImgElement: tiny rail thumb, static local asset
 						<img
 							alt=""
 							className="size-5 rounded-[3px] object-cover"

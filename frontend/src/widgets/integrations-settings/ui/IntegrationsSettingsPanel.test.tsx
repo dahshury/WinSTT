@@ -55,11 +55,11 @@ describe("IntegrationsSettingsPanel", () => {
 		}
 	});
 
-	test("typing in the OpenRouter key field does NOT persist until verification succeeds", () => {
-		// Auto-validate behavior: typing only updates the local input value
-		// and schedules a debounced verify probe. The settings store stays
-		// untouched until the probe completes — synchronously, right after
-		// the change event, settings.llm.openrouterApiKey is still empty.
+	test("typing in the OpenRouter key field persists immediately, before verification", () => {
+		// Persistence is no longer gated on verification — every keystroke
+		// writes through to settings.llm.openrouterApiKey so a tab switch
+		// before the debounced verify completes can never lose the key.
+		// The verify probe (debounced) only drives the status pill.
 		const { container } = render(
 			<IntlProvider>
 				<IntegrationsSettingsPanel />
@@ -73,9 +73,8 @@ describe("IntegrationsSettingsPanel", () => {
 			fireEvent.change(keyInput, { target: { value: "sk-or-new-key" } });
 			// Local input reflects the typed value (controlled).
 			expect(keyInput.value).toBe("sk-or-new-key");
-			// Settings store is NOT yet written — verify probe is debounced
-			// and hasn't fired (let alone resolved).
-			expect(useSettingsStore.getState().settings.llm.openrouterApiKey).toBe("");
+			// Settings store reflects the typed value synchronously.
+			expect(useSettingsStore.getState().settings.llm.openrouterApiKey).toBe("sk-or-new-key");
 		}
 	});
 });

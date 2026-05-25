@@ -669,4 +669,28 @@ describe("tray-menu-window deeper state", () => {
 		// genuine code calls win?.showInactive() inside applyTrayMenuStyles.
 		expect(win._showInactiveCalls).toBeGreaterThan(0);
 	});
+
+	test("isTrayMenuVisible reflects underlying isMenuVisible state", () => {
+		helpers.destroyTrayMenuWindow();
+		expect(trayMenuWindow.isTrayMenuVisible()).toBe(false);
+		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		win._position = [100, 200];
+		expect(trayMenuWindow.isTrayMenuVisible()).toBe(true);
+	});
+
+	test("getTrayMenuBounds returns null when no menu is visible", () => {
+		helpers.destroyTrayMenuWindow();
+		expect(trayMenuWindow.getTrayMenuBounds()).toBeNull();
+	});
+
+	test("getTrayMenuBounds returns window bounds when menu is visible", () => {
+		helpers.destroyTrayMenuWindow();
+		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		win._position = [120, 240];
+		win._size = [260, 290];
+		const bounds = trayMenuWindow.getTrayMenuBounds();
+		expect(bounds).not.toBeNull();
+		expect(bounds?.width).toBe(260);
+		expect(bounds?.height).toBe(290);
+	});
 });

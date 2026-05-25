@@ -3,7 +3,7 @@
 # Pipeline:
 #   1. dotnet publish the .NET 8 self-contained launcher (PortableLauncher.exe,
 #      ~12 MB compressed single-file).
-#   2. 7z a the entire frontend/stt-server-dist-<flavor>/ tree into bundle.7z
+#   2. 7z a the entire <repo>/packaging/stt-server-dist/<flavor>/ tree into bundle.7z
 #      (LZMA2 -mx=7, ~2 GB for the GPU build).
 #   3. Concat [launcher.exe][bundle.7z][24-byte footer] → final .exe. The
 #      footer encodes the archive's offset and length so the launcher can
@@ -20,7 +20,7 @@
 #   pwsh server/packaging/build-portable.ps1 -Flavor cpu
 #
 # Requires:
-#   - The onedir bundle at frontend/stt-server-dist-<flavor>/ (run build.ps1 first)
+#   - The onedir bundle at <repo>/packaging/stt-server-dist/<flavor>/ (run build.ps1 first)
 #   - .NET 8 SDK or newer (`dotnet --list-sdks`)
 #   - 7-Zip at C:\Program Files\7-Zip\7z.exe (or `7z` on PATH)
 
@@ -36,11 +36,10 @@ $ErrorActionPreference = "Stop"
 $ScriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ServerDir     = Resolve-Path (Join-Path $ScriptDir "..")
 $RepoRoot      = Resolve-Path (Join-Path $ServerDir "..")
-$FrontendDir   = Resolve-Path (Join-Path $RepoRoot "frontend")
-$SourceDir     = Join-Path $FrontendDir "stt-server-dist-$Flavor"
+$SourceDir     = Join-Path $RepoRoot "packaging\stt-server-dist\$Flavor"
 $LauncherProj  = Join-Path $ScriptDir "portable-launcher-dotnet"
 $FlavorUpper   = $Flavor.ToUpper()
-$OutFile       = Join-Path $FrontendDir "WinSTT-STT-Server-$FlavorUpper-Portable.exe"
+$OutFile       = Join-Path $RepoRoot "WinSTT-STT-Server-$FlavorUpper-Portable.exe"
 $WorkDir       = Join-Path $ServerDir "dist/portable-$Flavor"
 $PublishDir    = Join-Path $WorkDir "publish"
 $ArchiveFile   = Join-Path $WorkDir "bundle.7z"

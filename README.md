@@ -46,7 +46,7 @@ Run the setup script from the repo root:
 setup-dev.bat
 ```
 
-This installs uv (if missing), Python 3.11, clones the `onnx-asr` dependency, and installs all packages for both server and frontend.
+This installs uv (if missing), Python 3.11, all server + frontend deps. It auto-detects an NVIDIA GPU and picks the matching runtime; override with `setup-dev.bat --flavor cpu` or `--flavor gpu`.
 
 ## Manual Setup
 
@@ -58,16 +58,9 @@ irm https://astral.sh/uv/install.ps1 | iex
 
 Add `C:\Users\<you>\.local\bin` to your PATH, then restart your terminal.
 
-### 2. Clone onnx-asr (local dependency)
+### 2. Install server dependencies
 
-```bash
-mkdir examples
-git clone https://github.com/istupakov/onnx-asr.git examples/onnx-asr
-```
-
-### 3. Install server dependencies
-
-Pick a GPU story via the `cpu` or `gpu` extra:
+`onnx-asr` is fetched directly from `github.com/dahshury/onnx-asr` (pinned commit in `server/pyproject.toml`); no separate clone step needed. Pick a GPU story via the `cpu` or `gpu` extra:
 
 ```bash
 cd server
@@ -78,7 +71,7 @@ uv sync --extra gpu          # onnxruntime-gpu + full NVIDIA CUDA wheels (~2 GB)
 
 Optional extras can be combined: `--extra tts` (Kokoro text-to-speech), `--extra sentence-classifier` (Smart Endpoint, pulls PyTorch).
 
-### 4. Install frontend dependencies
+### 3. Install frontend dependencies
 
 ```bash
 cd frontend
@@ -143,12 +136,14 @@ Opens at http://localhost:3000.
 
 WinSTT ships in two flavors per release. Build the server first, then the matching installer:
 
+Run from the **repo root**. All packaging configs and intermediate bundles live under `packaging/` (`electron-builder.{cpu,gpu}.yml`, `stt-server-dist/{cpu,gpu}/`); the final installer lands at `<repo>/dist/`.
+
 | Command | Description |
 |---------|-------------|
-| `pwsh server/packaging/build.ps1 -Flavor cpu` | Build the CPU `stt-server.exe` → `frontend/stt-server-dist-cpu/` |
-| `pwsh server/packaging/build.ps1 -Flavor gpu` | Build the GPU `stt-server.exe` → `frontend/stt-server-dist-gpu/` |
-| `bun run electron:build:cpu` | Build the CPU installer |
-| `bun run electron:build:gpu` | Build the GPU installer |
+| `pwsh server/packaging/build.ps1 -Flavor cpu` | Build the CPU `stt-server.exe` → `packaging/stt-server-dist/cpu/` |
+| `pwsh server/packaging/build.ps1 -Flavor gpu` | Build the GPU `stt-server.exe` → `packaging/stt-server-dist/gpu/` |
+| `bun run electron:build:cpu` | Build the CPU installer (output: `<repo>/dist/`) |
+| `bun run electron:build:gpu` | Build the GPU installer (output: `<repo>/dist/`) |
 
 Tagging a release (`git tag v0.X.0 && git push --tags`) runs the CPU + GPU jobs as a matrix and publishes both installers to the same GitHub Release.
 

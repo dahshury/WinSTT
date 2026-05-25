@@ -13,7 +13,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
-import { useSettingsStore } from "@/entities/setting";
+import { useSettingsStore, useSettingsTabStore } from "@/entities/setting";
 import { useDownloadListener } from "@/features/model-download";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
@@ -50,6 +50,10 @@ export function SettingsPage() {
 	// an unloadable user choice. Idempotent when the two already agree.
 	useSyncActiveModel();
 	const t = useTranslations("settings");
+	// Controlled tab state so siblings (e.g. the Cloud-disabled badge in
+	// ModelSettingsPanel) can navigate the sidebar by calling setActiveTab.
+	const activeTab = useSettingsTabStore((s) => s.activeTab);
+	const setActiveTab = useSettingsTabStore((s) => s.setActiveTab);
 
 	const links: SidebarLink[] = [
 		{
@@ -159,8 +163,9 @@ export function SettingsPage() {
 				{isLoaded ? (
 					<Tabs.Root
 						className="flex flex-1 overflow-hidden"
-						defaultValue="general"
+						onValueChange={(v) => setActiveTab(String(v))}
 						orientation="vertical"
+						value={activeTab}
 					>
 						<SettingsSidebar links={links} />
 						{/* Content viewport — lifts to surface-2 so section cards (offset 2) read at surface-4 */}

@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { electronMock } from "@test/mocks/electron";
 import { electronStoreMock } from "../../test/mocks/electron-store";
 
 // store.ts has heavy module-load side effects:
@@ -11,9 +12,12 @@ import { electronStoreMock } from "../../test/mocks/electron-store";
 mock.module("electron-store", () => electronStoreMock());
 
 // `./secret-storage` (imported transitively by store.ts) pulls in `electron`
-// for safeStorage. Provide a no-op DPAPI shim so the module can load — the
-// secret-storage logic is exercised directly in its own test file.
+// for safeStorage. Spread `electronMock()` so the process-global mock leak
+// this installs is semantically complete — partial shims would make every
+// later test importing `app` / `BrowserWindow` / etc. from `electron` throw
+// "Export named X not found". Only `safeStorage` needs a custom impl here.
 mock.module("electron", () => ({
+	...electronMock(),
 	safeStorage: {
 		isEncryptionAvailable: () => true,
 		encryptString: (s: string) => Buffer.from(`E(${s})`, "utf8"),

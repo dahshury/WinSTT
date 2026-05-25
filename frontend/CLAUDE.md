@@ -344,33 +344,44 @@ app/
 
 This project is a Vite multi-page app — there is no router. Each Electron
 BrowserWindow loads its own HTML entry directly via `file://` in production
-and via the Vite dev server (`http://localhost:3000/<page>.html`) in dev.
+and via the Vite dev server (`http://localhost:3000/` for main,
+`http://localhost:3000/windows/<page>.html` for secondaries) in dev.
 
 **Structure:**
 
 ```
 frontend/
-├── index.html, settings.html, overlay.html,        # one HTML per window
-│   tray-menu.html, model-picker.html,
-│   device-picker.html
+├── index.html                 # main window (stays at root — Vite dev-root
+│                              #   convention; serves at "/")
+├── windows/                   # secondary windows (one HTML per BrowserWindow)
+│   ├── settings.html
+│   ├── overlay.html
+│   ├── tray-menu.html
+│   ├── model-picker.html
+│   ├── device-picker.html
+│   └── onboarding.html
 ├── src/
-│   ├── entries/             # one .tsx per HTML entry (createRoot here)
+│   ├── entries/               # one .tsx per HTML entry (createRoot here)
 │   │   ├── main.tsx
 │   │   ├── settings.tsx
 │   │   ├── overlay.tsx
 │   │   ├── tray-menu.tsx
 │   │   ├── model-picker.tsx
-│   │   └── device-picker.tsx
+│   │   ├── device-picker.tsx
+│   │   └── onboarding.tsx
 │   └── ... (FSD layers — unchanged)
-└── vite.config.ts          # rollupOptions.input lists all 6 entries
+└── vite.config.ts            # rollupOptions.input lists all 7 entries
 ```
 
 **Adding a new window:**
 
-1. Create `<window-name>.html` at frontend root (copy an existing one).
+1. Create `windows/<window-name>.html` (copy an existing one). New windows go
+   under `windows/`; only the main entry lives at the frontend root.
 2. Create `src/entries/<window-name>.tsx` with `createRoot(...).render(<View />)`.
-3. Add the entry to `vite.config.ts` `rollupOptions.input`.
-4. Add the page key to `PAGE_TO_FILE` in `electron/lib/renderer-url.ts`.
+3. Add the entry to `vite.config.ts` `rollupOptions.input` as
+   `resolve(rootDir, "windows/<window-name>.html")`.
+4. Add the page key to `PAGE_TO_FILE` in `electron/lib/renderer-url.ts` as
+   `"windows/<window-name>.html"`.
 5. In Electron main, call `loadRendererPage(win, "<window-name>")`.
 
 ### SvelteKit

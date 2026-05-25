@@ -3995,6 +3995,8 @@ export const __llm_test_helpers__ = {
 	isAcceptableNounString,
 	appendCleanedNoun,
 	cleanupRawNouns,
+	endsWithEllipsis,
+	classifyEllipsisPair,
 	pickLongerOfTwo,
 	pickLongerDescription,
 	buildEndpointsResult,

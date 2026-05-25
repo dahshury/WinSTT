@@ -1,7 +1,41 @@
 import { afterEach } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import log from "electron-log/main";
 
 GlobalRegistrator.register();
+
+// ── electron-log test setup ──────────────────────────────────────────
+// Production code calls `dbg()` / `dbgVerbose()` (see electron/lib/debug-log.ts)
+// which routes through electron-log. Under bun:test two things break by default:
+//
+// 1. The IPC transport (main→renderer log broadcast) calls
+//    `electron.BrowserWindow.getAllWindows()` on every log line. Most tests
+//    don't mock `electron` (electron-log captures whatever was resolved at its
+//    own module load), so each dbg() call throws an "Unhandled electron-log
+//    error" into stderr and pollutes the run.
+//
+// 2. The console transport calls `console.info`/`console.warn`/etc. using
+//    references captured at electron-log module load time, so any test that
+//    patches `console.*` after that point can never observe the calls.
+//
+// Fix both centrally: silence the IPC transport, and replace the console
+// transport with a function transport that pushes every formatted log line
+// into a globally-accessible array. Tests that need to assert on dbg() output
+// read from `globalThis.__testLogLines` (or import `testLogLines` from this
+// preload) and reset it in their own beforeEach.
+if (log.transports.ipc) {
+	log.transports.ipc.level = false;
+}
+export const testLogLines: string[] = [];
+(globalThis as { __testLogLines?: string[] }).__testLogLines = testLogLines;
+// Format each line as `(<scope>) <message>` so test assertions can check for
+// the tag (matches the production electron-log console format closely enough).
+log.transports.console = ((msg: { data: unknown[]; scope?: string }) => {
+	const scopePrefix = msg.scope ? `(${msg.scope}) ` : "";
+	testLogLines.push(scopePrefix + msg.data.map((arg) => String(arg)).join(" "));
+	return msg;
+}) as unknown as typeof log.transports.console;
+log.transports.console.level = "verbose";
 
 // happy-dom does not implement the Web Animations API. Base UI's ScrollArea
 // viewport schedules a deferred `viewport.getAnimations({ subtree: true })`

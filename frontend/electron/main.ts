@@ -357,6 +357,7 @@ async function initAutoUpdater(): Promise<void> {
 		// `module.<name>` and sometimes at `module.default.<name>` depending on
 		// how esbuild wraps the original CJS module — accept both.
 		interface AutoUpdater {
+			allowPrerelease: boolean;
 			autoDownload: boolean;
 			checkForUpdatesAndNotify: () => Promise<unknown>;
 			on: (event: string, listener: (...args: unknown[]) => void) => void;
@@ -378,6 +379,11 @@ async function initAutoUpdater(): Promise<void> {
 		};
 
 		autoUpdater.autoDownload = true;
+		// While the app ships as a pre-release (0.x.y-alpha.*), opt into the
+		// GitHub prerelease channel — otherwise electron-updater only sees
+		// stable releases and never serves alpha→alpha updates. Drop this back
+		// to false (or gate behind a setting) once we cut the first stable.
+		autoUpdater.allowPrerelease = true;
 		autoUpdater.on("checking-for-update", () => {
 			dbg("updater", "Checking for updates");
 			recordUpdaterStatus({ status: "checking" });
@@ -536,7 +542,17 @@ if (gotTheLock) {
 			// kicked off (stt-server, WS client, IPC handlers) keep running in
 			// the meantime — by the time the user lands in the main window,
 			// the server is already warm.
-			const isOnboarded = getStoreValue("general.onboarded") === true;
+			// Diagnostic override: `WINSTT_FORCE_ONBOARDING=1` always shows the
+			// wizard on launch, regardless of the persisted flag. Lets us re-run
+			// setup to debug wizard flows without hand-editing
+			// `winstt-settings.json`. The wizard's normal finish still flips
+			// `general.onboarded` to true on disk; the override only suppresses
+			// the *read* of that flag for this run.
+			const forceOnboarding = process.env.WINSTT_FORCE_ONBOARDING === "1";
+			const isOnboarded = !forceOnboarding && getStoreValue("general.onboarded") === true;
+			if (forceOnboarding) {
+				phase("WINSTT_FORCE_ONBOARDING=1 — forcing wizard regardless of stored flag");
+			}
 			if (isOnboarded) {
 				createWindow();
 				phase("createWindow returned (window created hidden)");

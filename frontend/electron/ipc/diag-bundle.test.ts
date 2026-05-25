@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { debugLogMock } from "@test/mocks/debug-log";
 import { electronMock } from "@test/mocks/electron";
 
 interface ShowSaveDialogResult {
@@ -49,16 +50,15 @@ const sentryState: {
 	exceptions: [],
 };
 
+// Spread `debugLogMock()` so the process-global mock leak this installs is
+// semantically complete + behavior-faithful — `stringifyArg` / `getLogger`
+// etc. still work correctly when this mock leaks into `debug-log.test.ts`
+// (bun 1.3.6 lacks per-file mock isolation). Only `dbg` needs a custom impl
+// here so the test can capture log calls.
 mock.module("../lib/debug-log", () => ({
+	...debugLogMock(),
 	dbg: (scope: string, ...args: unknown[]) => {
 		debugLogState.calls.push({ scope, args });
-	},
-}));
-
-mock.module("../lib/sentry-main", () => ({
-	breadcrumb: () => undefined,
-	captureMainException: (err: unknown, context?: unknown) => {
-		sentryState.exceptions.push({ err, context });
 	},
 }));
 
@@ -116,6 +116,22 @@ mock.module("electron", () => {
 		},
 	};
 });
+
+// Spy on `captureMainException` via the real sentry-main module's namespace
+// instead of `mock.module(...)`. mock.module would install a process-global
+// replacement (bun 1.3.6 lacks per-file mock isolation) that would poison
+// `electron/lib/sentry-main.test.ts` — that file tests the real exports and
+// would crash with `helpers.classifyScrubValue is not a function` once the
+// stubbed namespace leaks in. spyOn(namespace, name) flips the binding only
+// for THIS module's lifetime. The dynamic import has to come AFTER the
+// `mock.module("electron", ...)` call above so sentry-main's static `import
+// { app } from "electron"` resolves through the mock.
+const sentryMainNs = await import("../lib/sentry-main");
+const captureMainExceptionSpy = spyOn(sentryMainNs, "captureMainException").mockImplementation(
+	(err: unknown, context?: unknown) => {
+		sentryState.exceptions.push({ err, context });
+	}
+);
 
 const { setupDiagBundleHandler, __diag_bundle_test_helpers__ } = await import("./diag-bundle");
 
@@ -418,4 +434,14 @@ describe("reportSaveFailure", () => {
 
 afterEach(() => {
 	handlers.clear();
+});
+
+// Restore the captureMainException spy so later test files (notably
+// `electron/lib/sentry-main.test.ts`) see the real implementation when they
+// invoke the function directly through the namespace binding. Bun shares
+// module bindings across test files, so without an explicit restore the
+// stubbed impl would persist and break `captureMainException > forwards to
+// captureException ...` etc.
+afterAll(() => {
+	captureMainExceptionSpy.mockRestore();
 });

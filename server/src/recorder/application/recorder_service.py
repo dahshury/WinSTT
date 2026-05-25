@@ -29,7 +29,7 @@ from src.recorder.application.pipeline import RecordingPipeline
 from src.recorder.application.realtime_stabilizer import RealtimeStabilizer
 from src.recorder.domain.audio_buffer import AudioBuffer
 from src.recorder.domain.config import RecorderConfig
-from src.recorder.domain.errors import DownloadCancelledError
+from src.recorder.domain.errors import DownloadCancelledError, InvalidStateTransition
 from src.recorder.domain.events import (
     DownloadProgress,
     ModelSwapCompleted,
@@ -408,7 +408,15 @@ class RecorderService:
         )
 
     def start(self) -> RecorderService:
-        self._pipeline.request_start()
+        # Property-test finding (test_recorder_service_stateful): start() during
+        # TRANSCRIBING (or any other non-startable state) races a pending
+        # transcription. PTT callers expect this to be a quiet no-op rather than
+        # crash with the lower-level InvalidStateTransition leaking out.
+        current_state = self._state_machine.state
+        try:
+            self._pipeline.request_start()
+        except InvalidStateTransition:
+            logger.info("start() ignored: pipeline busy (state=%s)", current_state.name)
         return self
 
     def stop(

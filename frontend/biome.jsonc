@@ -41,9 +41,7 @@
       "!!spec/generated",
       "!!reports",
       "!!coverage",
-      "!!playwright-report",
-      "!!stt-server-dist-cpu",
-      "!!stt-server-dist-gpu"
+      "!!playwright-report"
     ]
   },
   // Third-party adapted code — too many lint violations to fix without diverging from upstream
@@ -63,6 +61,8 @@
       //  - `import * as foo` for bulk-mocking modules
       //  - template-curly inside expectation strings
       //  - <img> tags (no DOM/runtime dependency checks in tests)
+      //  - fast-check Command classes use `constructor(readonly x: T)` parameter properties
+      //  - `void promise` for fire-and-forget assertions
       "includes": ["**/*.test.ts", "**/*.test.tsx", "e2e/**", "test/**"],
       "linter": {
         "rules": {
@@ -77,6 +77,12 @@
           "suspicious": {
             "useAwait": "off",
             "noTemplateCurlyInString": "off"
+          },
+          "style": {
+            "noParameterProperties": "off"
+          },
+          "complexity": {
+            "noVoid": "off"
           }
         }
       }

@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { debugLogMock } from "@test/mocks/debug-log";
+import { electronMock } from "@test/mocks/electron";
 
 const noop = () => undefined;
-mock.module("../lib/debug-log", () => ({ dbg: noop, dbgVerbose: noop }));
+mock.module("../lib/debug-log", () => debugLogMock());
 
 // ── Controllable electron globalShortcut mock ──────────────────────
 interface RegisteredShortcut {
@@ -15,7 +17,13 @@ let unregisterThrows = false;
 const registerCalls: string[] = [];
 const unregisterCalls: string[] = [];
 
+// Spread `electronMock()` so the process-global mock leak this installs is
+// semantically complete — partial shims would make every later test importing
+// `app` / `BrowserWindow` / etc. from `electron` throw "Export named X not
+// found". Only `globalShortcut` needs a custom impl here.
+const base = electronMock();
 mock.module("electron", () => ({
+	...base,
 	globalShortcut: {
 		register: (accelerator: string, handler: () => void): boolean => {
 			registerCalls.push(accelerator);
@@ -41,12 +49,20 @@ mock.module("electron", () => ({
 }));
 
 // ── Controllable store mock (only what repaste-hotkey reads) ────────
+// Spread `storeMock()` so the process-global mock leak this installs is
+// semantically complete — partial shims would make every later test
+// importing `getStoreValue` / `setStoreSecret` / etc. from `../lib/store`
+// throw "Export named X not found". Only `store.get` / `store.onDidChange`
+// need a custom impl here so the test can drive the hotkey value.
+const baseStore = (await import("@test/mocks/store")).storeMock();
 let repasteHotkeyValue = "LCtrl+LShift+V";
 let storeChangeCb: (() => void) | null = null;
 mock.module("../lib/store", () => ({
+	...baseStore,
 	store: {
+		...baseStore.store,
 		get: (key: string): unknown =>
-			key === "general.repasteHotkey" ? repasteHotkeyValue : undefined,
+			key === "general.repasteHotkey" ? repasteHotkeyValue : baseStore.store.get(key),
 		onDidChange: (_key: string, cb: () => void) => {
 			storeChangeCb = cb;
 			return () => {
@@ -57,12 +73,18 @@ mock.module("../lib/store", () => ({
 }));
 
 // ── pasteText capture ──────────────────────────────────────────────
+// Spy on the real `pasteText` rather than mock-module-replacing the whole
+// `../lib/paste` file. mock.module would install a process-global
+// replacement that bun 1.3.6 can't isolate per file, poisoning
+// `electron/lib/paste.test.ts` — that file imports the real `./paste` SUT
+// and would crash with the stubbed `pasteText` instead of the real one.
+// spyOn on the namespace flips the binding only for THIS file's lifetime
+// and is restored in afterAll below.
 const pasteCalls: string[] = [];
-mock.module("../lib/paste", () => ({
-	pasteText: (text: string) => {
-		pasteCalls.push(text);
-	},
-}));
+const pasteNs = await import("../lib/paste");
+const pasteTextSpy = spyOn(pasteNs, "pasteText").mockImplementation((text: string) => {
+	pasteCalls.push(text);
+});
 
 const { setupRepasteHotkey } = await import("./repaste-hotkey");
 const { setLastTranscription, __resetLastTranscriptionForTesting__ } = await import(
@@ -190,4 +212,11 @@ describe("setupRepasteHotkey", () => {
 		again.dispose();
 		handle = null;
 	});
+});
+
+// Restore the spy so `electron/lib/paste.test.ts` sees the real `pasteText`
+// when it imports its SUT — bun shares module bindings across test files,
+// so without this the stubbed impl would persist and break the paste suite.
+afterAll(() => {
+	pasteTextSpy.mockRestore();
 });

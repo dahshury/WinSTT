@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { useSettingsStore } from "@/entities/setting";
+import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import {
+	initTts,
+	onTtsInstallFailed,
 	onTtsInstallStatus,
 	onTtsModelDownloadComplete,
 	type TtsDownloadEstimatePayload,
@@ -21,10 +23,14 @@ export interface TtsInstallGate {
 	handleInstallCancel: () => void;
 	/** Dialog accept. Enables (or re-probes when offline). */
 	handleInstallConfirm: () => void;
+	/** Classified install-failure reason, or null when no error is showing. */
+	installError: string | null;
 	/** Current install phase, or null when idle / ready. */
 	installPhase: TtsInstallPhase | null;
 	/** True while the estimate is in flight. */
 	probing: boolean;
+	/** Re-trigger init_tts after a failure — clears the banner and re-runs warm-up. */
+	retryInstall: () => void;
 }
 
 // Pure projection: `ready` collapses to `null` (idle); every other phase
@@ -87,6 +93,23 @@ export function resolveToggleAction(next: boolean): ToggleActionKey {
 }
 
 /**
+ * Pure helper — exported for tests. Decides whether to fold the default
+ * "Speak selection" hotkey into the enabled-edge patch. Existing users may
+ * have a persisted empty hotkey from when "" was the schema default; folding
+ * the default in alongside `enabled: true` guarantees the combo is always
+ * armed once TTS is on (see memory: capability-must-have-model).
+ */
+export function buildTtsEnablePatch(
+	currentHotkey: string,
+	defaultHotkey: string
+): { enabled: true; hotkey?: string } {
+	return currentHotkey.trim() ? { enabled: true } : { enabled: true, hotkey: defaultHotkey };
+}
+
+const selectTtsHotkey = (s: ReturnType<typeof useSettingsStore.getState>): string =>
+	s.settings.tts?.hotkey ?? "";
+
+/**
  * Confirm-before-download gate for enabling TTS.
  *
  * The settings store's `tts.enabled` flag is what actually triggers the
@@ -99,19 +122,26 @@ export function resolveToggleAction(next: boolean): ToggleActionKey {
  */
 export function useTtsInstallGate(): TtsInstallGate {
 	const update = useSettingsStore((s) => s.updateTtsSettings);
+	const currentHotkey = useSettingsStore(selectTtsHotkey);
 
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [estimate, setEstimate] = useState<TtsDownloadEstimatePayload | null>(null);
 	const [probing, setProbing] = useState(false);
 	const [installPhase, setInstallPhase] = useState<TtsInstallPhase | null>(null);
+	const [installError, setInstallError] = useState<string | null>(null);
+
+	const enablePatch = (): Partial<{ enabled: true; hotkey: string }> =>
+		buildTtsEnablePatch(currentHotkey, DEFAULT_SETTINGS.tts.hotkey);
 
 	// Install-phase ping (engine pack → voice model → ready) labels the
 	// progress UI; cleared once the engine reports ready or the download
-	// finishes.
+	// finishes. Any phase ping is also proof a fresh attempt is in flight,
+	// so clear any stale install-error banner from a prior failure.
 	useEffect(
 		() =>
 			onTtsInstallStatus(({ phase }) => {
 				setInstallPhase(projectInstallPhase(phase));
+				setInstallError(null);
 			}),
 		[]
 	);
@@ -119,6 +149,18 @@ export function useTtsInstallGate(): TtsInstallGate {
 		() =>
 			onTtsModelDownloadComplete(() => {
 				setInstallPhase(null);
+			}),
+		[]
+	);
+	// A failed eager warm-up clears the progress UI and surfaces the
+	// classified reason via the section's error banner. The toggle stays
+	// `enabled: true` so the user's choice is preserved; recovery is the
+	// Retry button (which re-dispatches `init_tts`).
+	useEffect(
+		() =>
+			onTtsInstallFailed(({ reason }) => {
+				setInstallPhase(null);
+				setInstallError(reason);
 			}),
 		[]
 	);
@@ -137,7 +179,7 @@ export function useTtsInstallGate(): TtsInstallGate {
 	// Post-probe dispatch: tuple keyed by `resolveProbeAction` — no `if`.
 	const probeActions: Record<ProbeActionKey, (est: TtsDownloadEstimatePayload) => void> = {
 		enable: () => {
-			update({ enabled: true });
+			update(enablePatch());
 		},
 		confirm: () => {
 			setConfirmOpen(true);
@@ -166,7 +208,7 @@ export function useTtsInstallGate(): TtsInstallGate {
 	const confirmActions: Record<ConfirmActionKey, () => void> = {
 		enable: () => {
 			setConfirmOpen(false);
-			update({ enabled: true });
+			update(enablePatch());
 		},
 		retry: () => {
 			runProbe();
@@ -184,14 +226,25 @@ export function useTtsInstallGate(): TtsInstallGate {
 		setConfirmOpen(false);
 	};
 
+	// Re-trigger the eager warm-up. Clears any prior error so the banner
+	// disappears immediately; the next failure (or `ready` status ping) is
+	// what reinstates it / dismisses it for real.
+	const retryInstall = (): void => {
+		setInstallError(null);
+		setInstallPhase("engine");
+		initTts();
+	};
+
 	return {
 		confirmOpen,
 		estimate,
 		probing,
 		installPhase,
+		installError,
 		handleEnabledToggle,
 		handleInstallConfirm,
 		handleInstallCancel,
 		closeConfirm,
+		retryInstall,
 	};
 }

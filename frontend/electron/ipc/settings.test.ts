@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { electronMock } from "@test/mocks/electron";
 
-const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
-const listeners = new Map<string, Array<(event: unknown, ...args: unknown[]) => void>>();
 const appListeners = new Map<string, Array<() => void>>();
 let storeData: Record<string, unknown> = {};
 
@@ -27,8 +26,20 @@ const createWindow = (
 const allWindows: ReturnType<typeof createWindow>[] = [];
 const sentEvents: Array<{ channel: string; payload: unknown }> = [];
 
+// Spread `electronMock()` so the process-global mock leak this installs is
+// semantically complete — partial shims would make every later test importing
+// `Tray`/`Menu`/etc. from `electron` throw "Export named X not found".
+// Override only the surfaces this test needs to drive: `app.on/off` to capture
+// before-quit listeners, `BrowserWindow.getAllWindows` to feed the broadcast
+// path, and `safeStorage` for round-trip secret encryption.
+const base = electronMock();
+const handlers = base.ipcMain._handlers;
+const listeners = base.ipcMain._listeners;
+
 mock.module("electron", () => ({
+	...base,
 	app: {
+		...base.app,
 		on: (event: string, cb: () => void) => {
 			const list = appListeners.get(event) ?? [];
 			list.push(cb);
@@ -42,26 +53,8 @@ mock.module("electron", () => ({
 		},
 	},
 	BrowserWindow: {
+		...base.BrowserWindow,
 		getAllWindows: () => allWindows,
-	},
-	ipcMain: {
-		handle: (channel: string, listener: (event: unknown, ...args: unknown[]) => unknown) => {
-			handlers.set(channel, listener);
-		},
-		removeHandler: (channel: string) => {
-			handlers.delete(channel);
-		},
-		on: (channel: string, listener: (event: unknown, ...args: unknown[]) => void) => {
-			const list = listeners.get(channel) ?? [];
-			list.push(listener);
-			listeners.set(channel, list);
-		},
-		off: (channel: string, listener: (event: unknown, ...args: unknown[]) => void) => {
-			listeners.set(
-				channel,
-				(listeners.get(channel) ?? []).filter((x) => x !== listener)
-			);
-		},
 	},
 	// settings.ts imports `../lib/secret-storage`, which uses `safeStorage`.
 	// The shim round-trips strings so encrypt(plain) → decrypt → plain.

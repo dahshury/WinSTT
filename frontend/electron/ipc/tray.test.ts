@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, spyOn, test } from "bun:test";
+import * as realFs from "node:fs";
 import { electronMock } from "@test/mocks/electron";
 
 type TrayHandler = (...args: unknown[]) => void;
@@ -48,19 +49,28 @@ mock.module("electron", () => ({
 	} as unknown as typeof import("electron").Tray,
 }));
 
+// Spread `realFs` so sibling tests that share bun's process-global mock
+// registry still see real readFileSync/readdirSync/etc — without it, any
+// later test that imports `node:fs` and calls anything besides existsSync
+// gets `undefined` and crashes (see z-index-discipline.test.ts).
 mock.module("node:fs", () => ({
-	default: {
-		existsSync: () => existsSyncReturn,
-	},
+	...realFs,
+	default: { ...realFs, existsSync: () => existsSyncReturn },
 	existsSync: () => existsSyncReturn,
 }));
 
 const showTrayMenuCalls: Array<{ x: number; y: number }> = [];
-mock.module("./tray-menu-window", () => ({
-	showTrayMenuAt: (x: number, y: number) => {
+// Spy on the real `showTrayMenuAt` rather than mock-module-replacing the
+// whole `./tray-menu-window` file. mock.module would install a process-
+// global replacement that bun 1.3.6 can't isolate per file, poisoning
+// `tray-menu-window.test.ts`. spyOn on the namespace flips the binding
+// only for THIS file's lifetime and is restored in afterAll below.
+const trayMenuWindowNs = await import("./tray-menu-window");
+const showTrayMenuAtSpy = spyOn(trayMenuWindowNs, "showTrayMenuAt").mockImplementation(
+	(x: number, y: number) => {
 		showTrayMenuCalls.push({ x, y });
-	},
-}));
+	}
+);
 
 const { setupTray } = await import("./tray");
 
@@ -130,4 +140,12 @@ describe("setupTray", () => {
 		const tray = setupTray(win as unknown as Electron.BrowserWindow);
 		expect(tray).toBeDefined();
 	});
+});
+
+// Restore the spy so `electron/ipc/tray-menu-window.test.ts` sees the real
+// `showTrayMenuAt` when it imports its SUT — bun shares module bindings
+// across test files, so without this the stubbed impl would persist and
+// break the tray-menu-window suite.
+afterAll(() => {
+	showTrayMenuAtSpy.mockRestore();
 });

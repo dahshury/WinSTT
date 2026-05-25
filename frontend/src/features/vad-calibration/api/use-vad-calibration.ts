@@ -64,11 +64,20 @@ export function useVadCalibration(): void {
 	mapRef.current = audio?.sileroSensitivityByDeviceName;
 
 	// Persist on adapt — single subscription for the component's lifetime.
+	//
+	// IMPORTANT: send only the `audio` section, not the full settings. A full
+	// save here would broadcast this renderer's *stale* `general`/`model`/etc.
+	// to every other window, and in particular would clobber any setting the
+	// user just changed in the settings panel that's still inside its 300ms
+	// debounce window (overlayMode, recording-mode toggle, etc.) by both
+	// overwriting it on disk and racing a `settings:changed` broadcast back at
+	// the panel — whose `useSyncSettings` effect cleanup would then cancel the
+	// pending save before it fires. Audio is the only section this hook owns.
 	useEffect(() => {
 		const unsub = onVadSensitivityAdapted(({ newSensitivity }) => {
 			const patch = buildAdaptPatch(deviceNameRef.current, mapRef.current, newSensitivity);
 			updateAudio(patch);
-			settingsSave(useSettingsStore.getState().settings);
+			settingsSave({ audio: useSettingsStore.getState().settings.audio });
 		});
 		return unsub;
 	}, [updateAudio]);

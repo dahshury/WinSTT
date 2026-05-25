@@ -30,12 +30,19 @@ release/
 *.dmg
 *.AppImage
 
+# Tiny native paste/context helpers (~150 KB each) shipped prebuilt so a
+# fresh checkout doesn't need MSVC just to run `bun electron:dev`. Rebuild
+# from source via `bun --cwd frontend run native:build` if you modify the
+# .c sources alongside.
+!frontend/electron/native/bin/winstt-paste.exe
+!frontend/electron/native/bin/winstt-context.exe
+
 # Packaged STT server bundles — produced by server/packaging/build.ps1
 # from a PyInstaller spec. Each is multi-GB (especially the GPU flavor)
-# and rebuilt fresh per release tag.
-stt-server-dist/
-stt-server-dist-cpu/
-stt-server-dist-gpu/
+# and rebuilt fresh per release tag. cpu/ and gpu/ live under
+# packaging/stt-server-dist/, which the root electron-builder.*.yml
+# read via ``extraResources``.
+packaging/stt-server-dist/
 
 # Vendored offline base model (whisper-tiny q4) — downloaded at build
 # time by server/packaging/seed_models.py, bundled into the exe, never
@@ -85,9 +92,19 @@ trace.out
 crap-*.json
 frontend/reports/crap-*.json
 frontend/reports/mutation/
+# Server CRAP outputs: coverage JSON (refreshed by pytest) + crap.json
+# (the analyzer's per-function report). Both are reproducible from a
+# pytest run; never committed.
+server/reports/
 test-skip.test.ts
 
 # Local agent skill installs (machine-specific)
 .claude/skills/
 .agents/skills/
 skills-lock.json
+
+# Docs build output (Nitro/Fumadocs)
+docs/.output/
+
+# Scratch
+frontend/scripts/wip.txt

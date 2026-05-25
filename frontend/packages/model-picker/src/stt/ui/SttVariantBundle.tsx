@@ -137,14 +137,13 @@ export function SttVariantBundle({
 		// families without derivatives look unchanged.
 		return <SttModelCard {...sharedCardProps} model={primary} state={statesById[primary.id]} />;
 	}
+	// Wrapper is a layout-only Fragment so the primary card keeps its own
+	// `mx-2 my-1` outer margins — every SttModelCard in the list (singleton
+	// or bundle primary) now resolves to the same `parent − 16px` width.
+	// The bundle affordance lives in the chevron + "+N variants" chip in
+	// the card's actions slot, plus the indented siblings panel below.
 	return (
-		<div
-			className={cn(
-				"mx-2 my-1 rounded-md border border-border/60 bg-surface-secondary/20",
-				expanded && "ring-1 ring-accent/15"
-			)}
-			data-bundle-base={bundle.baseId}
-		>
+		<>
 			<SttModelCard
 				{...sharedCardProps}
 				actions={
@@ -159,7 +158,11 @@ export function SttVariantBundle({
 				model={primary}
 				state={statesById[primary.id]}
 			/>
-			<Collapsible className="px-2" data-slot="stt-variant-siblings" isOpen={expanded}>
+			<Collapsible
+				className={cn("px-2", expanded && "pb-1")}
+				data-slot="stt-variant-siblings"
+				isOpen={expanded}
+			>
 				<div
 					className="ml-1 flex flex-col border-border/60 border-l-2 pl-1"
 					id={`bundle-siblings-${bundle.baseId}`}
@@ -169,6 +172,6 @@ export function SttVariantBundle({
 					))}
 				</div>
 			</Collapsible>
-		</div>
+		</>
 	);
 }

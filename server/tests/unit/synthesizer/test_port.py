@@ -53,6 +53,7 @@ def test_minimal_concrete_implementation_satisfies_protocol() -> None:
         def __init__(self) -> None:
             self._ready = True
             self._shutdown_calls = 0
+            self._warm_up_calls = 0
 
         def synthesize_stream(
             self,
@@ -77,11 +78,16 @@ def test_minimal_concrete_implementation_satisfies_protocol() -> None:
         def is_ready(self) -> bool:
             return self._ready
 
+        def warm_up(self) -> None:
+            self._warm_up_calls += 1
+
         def shutdown(self) -> None:
             self._shutdown_calls += 1
 
     synth = _FakeSynth()
     assert synth.is_ready() is True
     assert synth.list_voices() == []
+    synth.warm_up()
+    assert synth._warm_up_calls == 1
     synth.shutdown()
     assert synth._shutdown_calls == 1

@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { PNG } from "pngjs";
+import { debugLogMock } from "../../test/mocks/debug-log";
 import { electronMock } from "../../test/mocks/electron";
 import { storeMock } from "../../test/mocks/store";
 
@@ -33,10 +34,7 @@ mock.module("electron", () => {
 
 // debug-log.ts has its own module-load side effects (createWriteStream, etc.).
 // Stub it out so importing recording-indicator doesn't pull in real fs/electron.
-mock.module("./debug-log", () => ({
-	dbg: () => undefined,
-	dbgVerbose: () => undefined,
-}));
+mock.module("./debug-log", () => debugLogMock());
 
 // recording-indicator reads `general.recordingMode` from the shared electron-
 // store wrapper on each onRecordingStart. Use the complete shared store mock

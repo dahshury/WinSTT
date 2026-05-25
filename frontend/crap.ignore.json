@@ -8,6 +8,7 @@
     "src/app/**",
     "test/**",
     "spec/generated/**",
-    "electron/native/bin/**"
+    "electron/native/bin/**",
+    "electron/lib/stringify-arg.ts"
   ]
 }

@@ -37,13 +37,14 @@ const VERIFY_DEBOUNCE_MS = 600;
  * cloud provider. Used in `IntegrationsSettingsPanel` so OpenAI and
  * ElevenLabs each get a self-contained block with identical mechanics.
  *
- * Validation is automatic: the typed value is held in local component
- * state and only written to `settings.integrations[provider].apiKey`
- * once the provider's auth endpoint accepts it. A clearly-invalid key
- * never reaches disk. A network failure during verification is
- * indistinguishable from a valid key behind a flaky connection, so we
- * persist optimistically in that case and surface a "could not verify"
- * pill so the user can retry by re-typing.
+ * Persistence is immediate: every keystroke writes the typed value to
+ * `settings.integrations[provider].apiKey` so a tab switch (Base UI's
+ * Tabs.Panel unmounts inactive panels) can never lose the key. The
+ * provider auth probe runs in the background, debounced from the last
+ * keystroke, and only drives the status pill plus the `verified` /
+ * `lastVerifiedAt` metadata — it never gates persistence, so an
+ * auth-rejected key stays in the field with an "invalid" pill the user
+ * can fix without re-typing.
  *
  * The dialog gate fires only when the user is about to remove a key
  * whose provider is the active main STT model — yanking it out from
@@ -65,8 +66,8 @@ export function ProviderIntegrationSection({
 	const [dialogOpen, setDialogOpen] = useState(false);
 	// Local typed value. Mirrors the persisted key on mount and whenever the
 	// store changes externally (e.g. cross-window sync, Remove confirmed).
-	// Diverges from persisted only while the user is mid-edit; never persisted
-	// until verification confirms (or a network error makes us optimistic).
+	// Stays in lock-step with the persisted value while typing because
+	// handleChange writes through on every keystroke.
 	const [localKey, setLocalKey] = useState(persistedApiKey);
 	const debounceRef = useRef<number | null>(null);
 	const reqIdRef = useRef(0);
@@ -80,6 +81,10 @@ export function ProviderIntegrationSection({
 			if (debounceRef.current !== null) {
 				window.clearTimeout(debounceRef.current);
 			}
+			// Bump the request-id so any in-flight verify resolves into the
+			// stale-check branch and can't mutate verified/lastVerifiedAt or
+			// the credential-status store from an unmounted instance.
+			reqIdRef.current++;
 		},
 		[]
 	);
@@ -90,10 +95,6 @@ export function ProviderIntegrationSection({
 
 		const trimmed = key.trim();
 		if (trimmed.length === 0) {
-			// User cleared the field — persist the clear (intentional removal).
-			updateIntegrations({
-				[provider]: { apiKey: "", verified: null, lastVerifiedAt: null },
-			});
 			credStore.setStatus(provider, { status: "idle" });
 			return;
 		}
@@ -110,13 +111,10 @@ export function ProviderIntegrationSection({
 				return;
 			}
 			const message = err instanceof Error ? err.message : String(err);
-			// IPC transport failure — same semantics as `code: "network"`: the
-			// key may be valid, we just couldn't reach the provider. Persist
-			// optimistically so the user isn't stuck unable to save during an
-			// outage, and surface the "could not verify" pill so they know.
-			updateIntegrations({
-				[provider]: { apiKey: key, verified: null, lastVerifiedAt: null },
-			});
+			// IPC transport failure — same semantics as `code: "network"`:
+			// the key may be valid, we just couldn't reach the provider. The
+			// key is already persisted (handleChange wrote through on
+			// keystroke); just surface the "could not verify" pill.
 			credStore.setStatus(provider, { status: "offline", lastError: message });
 			return;
 		}
@@ -127,29 +125,35 @@ export function ProviderIntegrationSection({
 
 		if (response.ok) {
 			updateIntegrations({
-				[provider]: { apiKey: key, verified: true, lastVerifiedAt: Date.now() },
+				[provider]: { verified: true, lastVerifiedAt: Date.now() },
 			});
 			credStore.setStatus(provider, { status: "verified" });
 			return;
 		}
 
 		if (response.code === "network") {
-			updateIntegrations({
-				[provider]: { apiKey: key, verified: null, lastVerifiedAt: null },
-			});
 			credStore.setStatus(provider, { status: "offline", lastError: response.message });
 			return;
 		}
 
 		// Anything else (auth failure, malformed key, key_missing) — the
-		// provider has explicitly rejected this value. Do NOT persist; keep
-		// the typed garbage visible in the local input so the user can fix
-		// it without re-typing from scratch.
+		// provider has explicitly rejected this value. The key stays
+		// persisted so the user can fix it without re-typing, but verified
+		// flips to false so the rest of the app doesn't treat it as valid.
+		updateIntegrations({
+			[provider]: { verified: false, lastVerifiedAt: Date.now() },
+		});
 		credStore.setStatus(provider, { status: "invalid", lastError: response.message });
 	};
 
 	const handleChange = (value: string) => {
 		setLocalKey(value);
+		// Persist on every keystroke. The verify probe scheduled below only
+		// drives the status pill (and verified/lastVerifiedAt metadata) — it
+		// never gates persistence, so a quick tab switch can't lose the key.
+		updateIntegrations({
+			[provider]: { apiKey: value, verified: null, lastVerifiedAt: null },
+		});
 		// Cancel any pending probe so we don't fire stale verifications
 		// against intermediate keystrokes.
 		if (debounceRef.current !== null) {

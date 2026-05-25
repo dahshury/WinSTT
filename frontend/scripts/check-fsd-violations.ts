@@ -5009,9 +5009,10 @@ function checkHardenedCircularImports(allFiles: readonly string[]): void {
 /** frontend/ root (sibling of src/, electron/). srcPath may be a fixture. */
 const BATCH_D_FRONTEND_ROOT = join(srcPath, "..");
 const BATCH_D_ELECTRON_DIR = join(BATCH_D_FRONTEND_ROOT, "electron");
-// frontend/ now hosts per-window HTML files at its root (index.html,
-// settings.html, overlay.html, tray-menu.html, model-picker.html,
-// device-picker.html, onboarding.html) which Vite consumes as
+// frontend/ hosts the main window's HTML at the root (index.html — Vite's
+// dev-root convention) and the 6 secondary windows under frontend/windows/
+// (settings.html, overlay.html, tray-menu.html, model-picker.html,
+// device-picker.html, onboarding.html), which Vite consumes as
 // rollupOptions.input entries. Each pairs with a src/entries/<name>.tsx
 // bootstrap (createRoot + render of an app-layer-composed views/<view>/
 // page). There is no router framework on disk after the Vite migration —

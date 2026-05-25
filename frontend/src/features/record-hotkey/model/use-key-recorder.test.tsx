@@ -112,6 +112,55 @@ describe("useKeyRecorder", () => {
 		expect(result.current.key).toBeNull();
 	});
 
+	test("clicking Stop then receiving the done reply still commits the recorded combo", async () => {
+		const recorded: string[] = [];
+		const { result } = renderHook(() => useKeyRecorder({ onKeyRecorded: (k) => recorded.push(k) }));
+
+		act(() => result.current.startRecording());
+		// Simulate live keypresses captured in main, then user clicks Stop.
+		act(() => fire(IPC.HOTKEY_RECORDING_UPDATE, { keys: ["LCtrl", "T"] }));
+		act(() => result.current.stopRecording());
+		// Main responds to hotkey:stop-recording with the captured combo.
+		act(() => fire(IPC.HOTKEY_RECORDING_DONE, { combo: "LCtrl+T" }));
+
+		await waitFor(() => {
+			expect(result.current.key).toBe("LCtrl+T");
+		});
+		expect(recorded).toEqual(["LCtrl+T"]);
+		expect(result.current.recording).toBe(false);
+	});
+
+	test("recording-done only fires onKeyRecorded on the instance that started recording", async () => {
+		const pttCalled: string[] = [];
+		const ttsCalled: string[] = [];
+		const ptt = {
+			called: pttCalled,
+			fn: (k: string) => {
+				pttCalled.push(k);
+			},
+		};
+		const tts = {
+			called: ttsCalled,
+			fn: (k: string) => {
+				ttsCalled.push(k);
+			},
+		};
+
+		const pttHook = renderHook(() => useKeyRecorder({ onKeyRecorded: ptt.fn }));
+		const ttsHook = renderHook(() => useKeyRecorder({ onKeyRecorded: tts.fn }));
+
+		// Only TTS starts recording — PTT is idle but still has its listener mounted.
+		act(() => ttsHook.result.current.startRecording());
+		act(() => fire(IPC.HOTKEY_RECORDING_DONE, { combo: "LCtrl+T" }));
+
+		await waitFor(() => {
+			expect(ttsHook.result.current.key).toBe("LCtrl+T");
+		});
+		expect(tts.called).toEqual(["LCtrl+T"]);
+		expect(ptt.called).toEqual([]);
+		expect(pttHook.result.current.key).toBeNull();
+	});
+
 	test("unmount unsubscribes both listeners", () => {
 		const { unmount } = renderHook(() => useKeyRecorder());
 		unmount();

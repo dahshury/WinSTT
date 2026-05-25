@@ -53,11 +53,18 @@ export function useKeyRecorder({
 }: UseKeyRecorderOptions = {}): UseKeyRecorderReturn {
 	const [state, dispatch] = useReducer(recorderReducer, INITIAL_STATE);
 	const recordingRef = useRef(false);
+	// Separate from `recordingRef` so the Stop button can flip the UI out of
+	// "recording" immediately without losing the done-event reply that the main
+	// process emits after `hotkey:stop-recording`. Multiple HotkeyRecorder
+	// instances share the global IPC channel, so this also identifies which
+	// instance owns the next done event.
+	const pendingDoneRef = useRef(false);
 	const onKeyRecordedRef = useRef(onKeyRecorded);
 	onKeyRecordedRef.current = onKeyRecorded;
 
 	const startRecording = useCallback(() => {
 		recordingRef.current = true;
+		pendingDoneRef.current = true;
 		dispatch({ type: "start" });
 		hotkeyStartRecording();
 	}, []);
@@ -65,6 +72,9 @@ export function useKeyRecorder({
 	const stopRecording = useCallback(() => {
 		if (recordingRef.current) {
 			recordingRef.current = false;
+			// pendingDoneRef stays true — main process will emit
+			// `hotkey:recording-done` in response to the stop IPC, and the
+			// done handler still needs to consume it on this instance.
 			dispatch({ type: "stop" });
 			hotkeyStopRecording();
 		}
@@ -78,6 +88,14 @@ export function useKeyRecorder({
 		});
 
 		const unsubDone = onHotkeyRecordingDone((combo) => {
+			// Multiple HotkeyRecorder instances share this global IPC channel.
+			// Only the instance that initiated the recording owns the done
+			// event; otherwise every mounted recorder would overwrite its
+			// setting with the same combo on a single keypress.
+			if (!pendingDoneRef.current) {
+				return;
+			}
+			pendingDoneRef.current = false;
 			recordingRef.current = false;
 			dispatch({ type: "done", combo });
 			if (combo) {

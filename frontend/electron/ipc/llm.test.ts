@@ -1,19 +1,16 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { debugLogMock } from "@test/mocks/debug-log";
+import { electronMock } from "@test/mocks/electron";
 
 const noop = () => undefined;
 
-// Stub electron + electron-bound modules so importing llm.ts doesn't pull in the real Electron runtime.
-mock.module("electron", () => ({
-	ipcMain: {
-		handle: noop,
-		removeHandler: noop,
-	},
-	app: { getPath: () => "." },
-	BrowserWindow: {
-		getAllWindows: () => [],
-	},
-}));
-mock.module("../lib/debug-log", () => ({ dbg: noop, dbgVerbose: noop }));
+// Stub electron + electron-bound modules so importing llm.ts doesn't pull in
+// the real Electron runtime. Use the complete `electronMock()` factory so the
+// process-global mock leak this installs is semantically complete — partial
+// shims would make every later test importing `Tray`/`Menu`/etc. from
+// `electron` throw "Export named X not found".
+mock.module("electron", () => electronMock());
+mock.module("../lib/debug-log", () => debugLogMock());
 
 import { storeMock } from "@test/mocks/store";
 

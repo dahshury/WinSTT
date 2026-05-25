@@ -18,6 +18,7 @@ import { captureSelection } from "../lib/selection-capture";
 import { store } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
 import { isPasteGuardActive } from "./hotkey";
+import { isAnyHotkeyRecording } from "./recording-mode";
 import { triggerTtsCancelAll } from "./tts";
 
 /** uiohook keycode for Backspace — the "stop reading" modifier on the combo. */
@@ -141,7 +142,15 @@ function handleKeyDown(event: { keycode: number }): void {
 	if (isPasteGuardActive()) {
 		return;
 	}
+	// While the user is recording a NEW hotkey in the settings UI, the keys
+	// they're pressing must not accidentally trigger this listener's fire path
+	// — otherwise pressing the current TTS combo to record a sibling hotkey
+	// would also speak the active selection. Still track `pressed` so combo
+	// state stays consistent the moment recording ends.
 	pressed.add(event.keycode);
+	if (isAnyHotkeyRecording()) {
+		return;
+	}
 	if (maybeStop()) {
 		return;
 	}
@@ -153,6 +162,9 @@ function handleKeyUp(event: { keycode: number }): void {
 		return;
 	}
 	pressed.delete(event.keycode);
+	if (isAnyHotkeyRecording()) {
+		return;
+	}
 	if (firedThisHold && currentCombo && !isComboHeld(currentCombo)) {
 		firedThisHold = false;
 	}

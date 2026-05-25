@@ -1,21 +1,17 @@
 import { describe, expect, mock, test } from "bun:test";
+import { electronMock } from "@test/mocks/electron";
 import type { SttClient } from "../ws/stt-client";
 
-const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
-const listeners = new Map<string, Array<(event: unknown, ...args: unknown[]) => void>>();
+// Use the complete `electronMock()` factory so the process-global mock leak
+// this installs is semantically complete — partial shims would make every
+// later test importing `app` / `BrowserWindow` / etc. from `electron` throw
+// "Export named X not found". The default ipcMain captures handlers in
+// `_handlers` and listeners in `_listeners`.
+const base = electronMock();
+const handlers = base.ipcMain._handlers;
+const listeners = base.ipcMain._listeners;
 
-mock.module("electron", () => ({
-	ipcMain: {
-		handle: (channel: string, listener: (event: unknown, ...args: unknown[]) => unknown) => {
-			handlers.set(channel, listener);
-		},
-		on: (channel: string, listener: (event: unknown, ...args: unknown[]) => void) => {
-			const list = listeners.get(channel) ?? [];
-			list.push(listener);
-			listeners.set(channel, list);
-		},
-	},
-}));
+mock.module("electron", () => base);
 
 const { setupLoopbackHandlers } = await import("./loopback");
 

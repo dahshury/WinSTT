@@ -12,6 +12,7 @@ import { ConnectionError, getErrorMessage, TimeoutError } from "../../src/shared
 import { dbgVerbose } from "../lib/debug-log";
 import { isRecord } from "../lib/ipc-helpers";
 import { breadcrumb } from "../lib/sentry-main";
+import { validateServerEvent, type WsServerEvent } from "./contract";
 
 // ── Zod schemas for WebSocket message validation ─────────────────────
 
@@ -533,6 +534,12 @@ export class SttClient extends EventEmitter {
 			return;
 		}
 
+		// Runtime contract check — signal only. Mismatches log once per
+		// (type, error-message) pair and never block the dispatch below; the
+		// schema is narrow on purpose and we don't want a partial spec to
+		// silently drop legitimate events in production.
+		runContractValidation(json);
+
 		this.emit("data-event", parsed.data);
 	}
 
@@ -622,6 +629,111 @@ function warnDataMessageInvalid(json: unknown, errorMessage: string): void {
 		errorMessage,
 		dataMessagePreview(json)
 	);
+}
+
+// ── Runtime contract validator wiring ────────────────────────────────
+//
+// Defense-in-depth: every data-channel event passes through
+// {@link validateServerEvent} (in `./contract.ts`) BEFORE dispatch. The
+// validator's schemas are deliberately narrow — they cover the most-trafficked
+// event types in `spec/openapi.yaml` and intentionally don't mirror every
+// optional/nullable extra. Because of that, the wiring here is a SIGNAL ONLY:
+// validation failure logs a warning and continues with the original dispatch
+// path. Disable via `WINSTT_CONTRACT_VALIDATION=off` if a partial schema
+// causes false-positive log noise in production.
+
+/**
+ * Read on every call (not captured at module-load) so tests can flip the gate
+ * via `process.env.WINSTT_CONTRACT_VALIDATION` without having to re-import the
+ * module. Default ON.
+ */
+function isContractValidationEnabled(): boolean {
+	return process.env.WINSTT_CONTRACT_VALIDATION !== "off";
+}
+
+/** Module-private cache so the same shape mismatch logs at most once per process lifetime. */
+const seenContractMismatches = new Set<string>();
+
+function hasTypedKey(json: unknown): json is Record<string, unknown> {
+	return typeof json === "object" && json !== null && "type" in (json as Record<string, unknown>);
+}
+
+function eventTypeOf(json: unknown): string {
+	return hasTypedKey(json) ? String(json.type) : "<no-type>";
+}
+
+function logContractMismatch(json: unknown): void {
+	const type = eventTypeOf(json);
+	if (seenContractMismatches.has(type)) {
+		return;
+	}
+	seenContractMismatches.add(type);
+	console.warn(
+		`[stt-client] Contract mismatch (type=${type}) — payload accepted but failed runtime contract; downstream dispatch unaffected.`,
+		dataMessagePreview(json)
+	);
+}
+
+function runContractValidation(json: unknown): void {
+	runValidationAndMaybeLog(json);
+}
+
+/**
+ * Test-only helper that runs JSON parse + the schema gate + the contract
+ * validator hook the way {@link SttClient.handleDataMessage} does, without
+ * needing a live WebSocket. Returns whatever the call site would see:
+ *   - `parsed`: the parsed JSON (`undefined` if malformed)
+ *   - `dispatched`: the value that would be emitted on `data-event`
+ *     (`null` if the dataMessageSchema rejected it)
+ *   - `validated`: the contract-validator result (typed event or `null`)
+ *
+ * This is exported solely so the integration tests can drive the wiring
+ * deterministically; production code never imports it.
+ */
+function tryParseJson(raw: string): { parsed: unknown; ok: boolean } {
+	try {
+		return { parsed: JSON.parse(raw), ok: true };
+	} catch {
+		return { parsed: undefined, ok: false };
+	}
+}
+
+function maybeLogTypedMismatch(parsed: unknown): void {
+	if (hasTypedKey(parsed)) {
+		logContractMismatch(parsed);
+	}
+}
+
+function runValidationAndMaybeLog(parsed: unknown): WsServerEvent | null {
+	if (!isContractValidationEnabled()) {
+		return null;
+	}
+	const validated = validateServerEvent(parsed);
+	if (validated === null) {
+		maybeLogTypedMismatch(parsed);
+	}
+	return validated;
+}
+
+export function _testHandleDataMessage(raw: string): {
+	parsed: unknown;
+	dispatched: unknown;
+	validated: WsServerEvent | null;
+} {
+	const { parsed, ok } = tryParseJson(raw);
+	if (!ok) {
+		return { parsed: undefined, dispatched: null, validated: null };
+	}
+	const gate = dataMessageSchema.safeParse(parsed);
+	if (!gate.success) {
+		return { parsed, dispatched: null, validated: null };
+	}
+	return { parsed, dispatched: gate.data, validated: runValidationAndMaybeLog(parsed) };
+}
+
+/** Test-only: clear the once-per-process mismatch cache between assertions. */
+export function _testResetContractMismatchCache(): void {
+	seenContractMismatches.clear();
 }
 
 // ── Control-channel helpers (extracted to keep class methods at CC ≤ 3) ───────

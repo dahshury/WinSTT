@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { debugLogMock } from "@test/mocks/debug-log";
 import { electronMock } from "@test/mocks/electron";
 import { APICallError } from "ai";
 import { IPC } from "../../src/shared/api/ipc-channels";
@@ -18,9 +19,7 @@ mock.module("../lib/store", () => ({
 // production. The default mock works but explicit silencing keeps test output
 // clean and makes the failure-classification branches assertable without
 // noise.
-mock.module("../lib/debug-log", () => ({
-	dbg: () => undefined,
-}));
+mock.module("../lib/debug-log", () => debugLogMock());
 
 const sttCloud = await import("./stt-cloud");
 const {

@@ -27,6 +27,7 @@ import { uiohookAcceleratorToElectron } from "../lib/keycodes";
 import { getLastTranscription } from "../lib/last-transcription";
 import { pasteText } from "../lib/paste";
 import { store } from "../lib/store";
+import { isAnyHotkeyRecording, onHotkeyRecordingChange } from "./recording-mode";
 
 interface ListenerHandle {
 	dispose: () => void;
@@ -36,6 +37,7 @@ let listenerInstalled = false;
 /** The Electron accelerator currently registered, or null when none. */
 let registeredAccelerator: string | null = null;
 let storeUnsubscribe: (() => void) | null = null;
+let recordingUnsubscribe: (() => void) | null = null;
 
 function loadHotkey(): string {
 	const raw = store.get("general.repasteHotkey");
@@ -75,27 +77,39 @@ function unregisterCurrent(): void {
  * the previous registration first so a rebind doesn't leave the old combo
  * hijacked. Tolerates an empty/unconvertible setting (feature off) and a
  * failed `register` (combo already owned by the OS / another app).
+ *
+ * When the user is recording a NEW hotkey in the settings UI, we keep the
+ * shortcut UNREGISTERED for the duration: globalShortcut.register swallows
+ * the accelerator system-wide, so leaving it armed would intercept the user's
+ * recording keystrokes and paste the last transcription instead. The edge
+ * subscriber (`onHotkeyRecordingChange`) re-invokes `rebuild()` when the user
+ * stops recording, which then re-registers normally.
  */
-function rebuild(): void {
-	unregisterCurrent();
+function resolveAccelerator(): string | null {
 	const hotkey = loadHotkey();
 	if (hotkey === "") {
 		dbg("repaste-hotkey", "no hotkey configured — re-paste shortcut disabled");
-		return;
+		return null;
 	}
 	const accelerator = uiohookAcceleratorToElectron(hotkey);
 	if (accelerator === null) {
 		dbg("repaste-hotkey", `"${hotkey}" is not a valid Electron accelerator — not registered`);
-		return;
+		return null;
 	}
-	let ok = false;
+	return accelerator;
+}
+
+function tryRegister(accelerator: string): boolean {
 	try {
-		ok = globalShortcut.register(accelerator, handleTrigger);
+		return globalShortcut.register(accelerator, handleTrigger);
 	} catch (err) {
 		dbg("repaste-hotkey", `register threw for "${accelerator}": ${(err as Error).message}`);
-		return;
+		return false;
 	}
-	if (!ok) {
+}
+
+function armAccelerator(accelerator: string): void {
+	if (!tryRegister(accelerator)) {
 		dbg(
 			"repaste-hotkey",
 			`register failed for "${accelerator}" — combo likely owned by the OS or another app`
@@ -103,7 +117,19 @@ function rebuild(): void {
 		return;
 	}
 	registeredAccelerator = accelerator;
-	dbg("repaste-hotkey", `armed exclusive re-paste shortcut "${hotkey}" → "${accelerator}"`);
+	dbg("repaste-hotkey", `armed exclusive re-paste shortcut → "${accelerator}"`);
+}
+
+function rebuild(): void {
+	unregisterCurrent();
+	if (isAnyHotkeyRecording()) {
+		dbg("repaste-hotkey", "hotkey-recording-in-progress — re-paste shortcut held down");
+		return;
+	}
+	const accelerator = resolveAccelerator();
+	if (accelerator !== null) {
+		armAccelerator(accelerator);
+	}
 }
 
 function cleanup(): void {
@@ -111,6 +137,10 @@ function cleanup(): void {
 	if (storeUnsubscribe) {
 		storeUnsubscribe();
 		storeUnsubscribe = null;
+	}
+	if (recordingUnsubscribe) {
+		recordingUnsubscribe();
+		recordingUnsubscribe = null;
 	}
 	listenerInstalled = false;
 }
@@ -134,6 +164,14 @@ export function setupRepasteHotkey(): ListenerHandle {
 			return;
 		}
 		lastFingerprint = next;
+		rebuild();
+	});
+
+	// Edge-driven rebuild: when the user enters/exits hotkey-recording in the
+	// settings UI, swap the exclusive registration. Without this, recording any
+	// hotkey while the re-paste combo is armed would re-paste the last
+	// transcription instead of letting the recorder capture the keystrokes.
+	recordingUnsubscribe = onHotkeyRecordingChange(() => {
 		rebuild();
 	});
 

@@ -113,6 +113,7 @@ class KokoroSynthesizer(ISpeechSynthesizer):
         from src.synthesizer.infrastructure.support_pack import (
             activate,
             ensure_support_pack,
+            repair_and_reinstall,
             resolve_runtime_dir,
         )
 
@@ -149,10 +150,26 @@ class KokoroSynthesizer(ISpeechSynthesizer):
 
             self._kokoro = Kokoro(str(model_path), str(voices_path))
         except ImportError as exc:
-            raise RuntimeError(
-                "TTS engine pack did not provide kokoro_onnx — the support pack may be corrupt. "
-                "Disable and re-enable TTS to re-download it."
-            ) from exc
+            # Almost always a corrupt runtime — wipe sentinel, evict
+            # namespace-package caches from this failed attempt, re-fetch
+            # the pack, re-activate, and retry once before giving up.
+            logger.warning("TTS import failed (%s); auto-repairing corrupt support pack", exc)
+            self._emit_status("engine")
+            repair_and_reinstall(
+                runtime_dir,
+                on_progress=self._on_progress,  # type: ignore[arg-type]
+                should_cancel=self._should_cancel,  # type: ignore[arg-type]
+            )
+            activate(runtime_dir)
+            try:
+                from kokoro_onnx import Kokoro
+
+                self._kokoro = Kokoro(str(model_path), str(voices_path))
+            except ImportError as exc2:
+                raise RuntimeError(
+                    "TTS engine pack is corrupt and auto-repair did not resolve it. "
+                    "Delete %LOCALAPPDATA%/winstt/tts/runtime/ and restart the app."
+                ) from exc2
         except Exception:
             # CUDA EP can fail to come up (missing CUDA DLLs, driver mismatch).
             # Retry pinned to CPU so TTS still works — mirrors the STT side's
@@ -244,6 +261,13 @@ class KokoroSynthesizer(ISpeechSynthesizer):
     @override
     def is_ready(self) -> bool:
         return self._ready
+
+    @override
+    def warm_up(self) -> None:
+        # Serialize with synth requests — concurrent loads racing on the
+        # ORT session would double-download and re-construct the engine.
+        with self._synth_lock:
+            self._ensure_loaded()
 
     @override
     def shutdown(self) -> None:

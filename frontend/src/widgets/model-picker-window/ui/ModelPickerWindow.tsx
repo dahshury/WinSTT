@@ -1,4 +1,4 @@
-import { SttModelSelector } from "@picker";
+import { STT_PICKER_WIDTH_PX, SttModelSelector } from "@picker";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { providerOf } from "@/entities/cloud-stt-provider";
@@ -19,11 +19,14 @@ import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 // Desired footprint reported once to the main process. Main caps the height
 // to whatever fits above the chip (never spilling over the screen top) and
 // sends back the exact panel rect; the panel fills that absolutely-positioned
-// box (h-full/w-full) and scrolls internally if it ends up shorter.
-const DESIRED_WIDTH = 600;
+// box (h-full) and scrolls internally if it ends up shorter.
+//
+// Width comes from the shared `STT_PICKER_WIDTH_PX` constant so this window
+// is sized to exactly the same pixel width the settings popup renders at —
+// both surfaces always look identical.
+const DESIRED_WIDTH = STT_PICKER_WIDTH_PX;
 const DESIRED_HEIGHT = 560;
 const PANEL_HEIGHT = "h-full";
-const PANEL_WIDTH = "w-full";
 
 // Window-local rect (CSS px) for the visible panel inside the full-screen
 // backdrop window. Null until the main process reports it.
@@ -158,8 +161,10 @@ export function ModelPickerWindow() {
 		>
 			{panel && (
 				<div
-					// `[&>*]:size-full` stretches the picker's own flex wrapper to
-					// this box so its inner `h-full`/`w-full` panel resolves.
+					// `[&>:last-child]:size-full` stretches the picker to fill the
+					// panel rect, which is already sized to `STT_PICKER_WIDTH_PX`
+					// (see `DESIRED_WIDTH` above) so the inline picker ends up at
+					// exactly the same pixel width the settings popup uses.
 					className="absolute flex flex-col gap-2 [&>:last-child]:size-full"
 					style={{
 						left: panel.x,
@@ -177,7 +182,6 @@ export function ModelPickerWindow() {
 						models={catalogModels}
 						onChange={handleChange}
 						popupHeightClass={PANEL_HEIGHT}
-						popupWidthClass={PANEL_WIDTH}
 						statesById={statesById}
 						systemInfo={systemInfo}
 						value={providerOf(currentModel ?? "") === null ? (currentModel ?? "") : ""}

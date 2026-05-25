@@ -63,26 +63,9 @@ try {
 	// no-op: tests with incomplete electron mocks
 }
 
-/**
- * JSON.stringify with a String() fallback. Pulled out so the try/catch sits in
- * a single tiny helper (CC=2) instead of inflating the public `stringifyArg`
- * surface — keeps CRAP under threshold even at 0% renderer coverage.
- */
-export function jsonStringifyOrString(value: unknown): string {
-	try {
-		return JSON.stringify(value);
-	} catch {
-		return String(value);
-	}
-}
+export { identityString, jsonStringifyOrString } from "./stringify-arg";
 
-/**
- * Identity helper for already-string args. Exists purely so the dispatch table
- * in {@link stringifyArg} can be a `Record<typeof, …>` of CC=1 functions.
- */
-export function identityString(value: unknown): string {
-	return value as string;
-}
+import { identityString, jsonStringifyOrString } from "./stringify-arg";
 
 /**
  * Dispatch table keyed by `typeof value`. Strings pass through unchanged;

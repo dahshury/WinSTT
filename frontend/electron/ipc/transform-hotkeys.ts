@@ -3,6 +3,7 @@ import { dbg } from "../lib/debug-log";
 import { parseAccelerator } from "../lib/keycodes";
 import { store } from "../lib/store";
 import { isPasteGuardActive } from "./hotkey";
+import { isAnyHotkeyRecording } from "./recording-mode";
 import { applyTransform } from "./transforms";
 
 /**
@@ -87,6 +88,13 @@ function handleKeyDown(event: { keycode: number }): void {
 		return;
 	}
 	pressed.add(event.keycode);
+	// Same rationale as the TTS / re-paste listeners: while the user is
+	// recording a NEW hotkey in the settings UI, the keystrokes they're
+	// pressing must NOT also fire this listener's pipeline (which would run
+	// the LLM transform on the active selection mid-recording).
+	if (isAnyHotkeyRecording()) {
+		return;
+	}
 	maybeFireCombo();
 }
 

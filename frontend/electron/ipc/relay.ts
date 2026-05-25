@@ -1703,4 +1703,8 @@ export const __relay_test_helpers__ = {
 	sendToWindowSafely,
 	SIMPLE_RELAY_HANDLERS,
 	tryLlmProcess,
+	// Server-skew detection helpers (exposed for property/unit tests).
+	REQUIRED_SERVER_METHODS,
+	extractAllowedMethods,
+	findMissingServerMethods,
 };

@@ -167,6 +167,7 @@ Located in [`frontend/e2e/`](frontend/e2e/), configured by
 | `settings-window.e2e.ts`          | chromium   | Settings entry HTML                         |
 | `tray-menu.e2e.ts`                | chromium   | Tray menu entry HTML                        |
 | `overlay-pill.electron.e2e.ts`    | electron   | Real Electron — transparent overlay timing  |
+| `visual-regression.e2e.ts`        | chromium   | Pixel-diff each window vs committed baseline (`bun run test:visual`; update with `bun run test:visual:update`). Overlay + onboarding skipped — see file header. |
 
 The `chromium` project drives a static `vite preview` of `dist-renderer/`. The
 `electron` project uses `playwright-core`'s `_electron.launch()` and bypasses
@@ -184,6 +185,7 @@ the web server (`PW_SKIP_WEBSERVER=1`).
 | `bun test <path>`             | Single file                                               |
 | `bun test --watch`            | Watch mode                                                |
 | `bun test --coverage`         | With lcov coverage to `coverage/lcov.info`                |
+| `bun run coverage:gate`       | Fail if overall coverage drops below the floor (see `frontend/scripts/coverage-gate.ts`); CI enforces, local-ci runs soft |
 | `bun run test:e2e`            | Playwright `chromium` project (renderer)                  |
 | `bun run test:e2e:electron`   | Playwright `electron` project (real Electron)             |
 | `bunx stryker run`            | Mutation testing (slow — usually nightly only)            |
@@ -255,9 +257,6 @@ with a brief justification rather than silently ignoring it.
 
 Be aware of the gaps before relying on green CI as a complete signal:
 
-- **Visual regression.** No pixel-diff harness against the Electron windows.
-  Playwright takes screenshots only on failure — they aren't compared to a
-  baseline.
 - **Contract tests.** [`spec/openapi.yaml`](spec/openapi.yaml) is the single
   source of truth for shared types, and `bun generate` produces compile-time
   TypeScript types from it. There is **no runtime validation** wired into the
@@ -274,7 +273,7 @@ Be aware of the gaps before relying on green CI as a complete signal:
   pipeline isn't tracked across commits. Manual perf checks via
   `server/scratch/` only.
 
-These are tracked as ongoing work — contributions in any of the four are
+These are tracked as ongoing work — contributions in any of the three are
 welcome.
 
 ---

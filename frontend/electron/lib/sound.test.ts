@@ -17,11 +17,19 @@ mock.module("electron", () => sharedElectron);
 mock.module("electron-store", () => electronStoreMock());
 
 // Configurable fs mock so tests can simulate read failures.
+// `readFileImpl` is keyed only for THIS test's known sound-file paths; for any
+// other path (e.g. the z-index discipline scanner reading source files in a
+// later test) delegate to the real fs so the process-global mock doesn't poison
+// downstream readers.
+const SOUND_PATH_MARKER = ".wav";
 let readFileImpl: (p: string) => Buffer = (_p) => Buffer.from("fake-wav-bytes");
 mock.module("node:fs", () => ({
 	...realFs,
 	default: realFs,
-	readFileSync: (p: string) => readFileImpl(p),
+	readFileSync: ((p: string, ...rest: unknown[]) =>
+		typeof p === "string" && p.endsWith(SOUND_PATH_MARKER)
+			? readFileImpl(p)
+			: (realFs.readFileSync as (...a: unknown[]) => unknown)(p, ...rest)) as unknown as typeof realFs.readFileSync,
 }));
 
 // Configurable store mock — tests set storeValues to drive getStoreValue().

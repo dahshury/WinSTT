@@ -125,10 +125,12 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		estimate,
 		probing,
 		installPhase,
+		installError,
 		handleEnabledToggle,
 		handleInstallConfirm,
 		handleInstallCancel,
 		closeConfirm,
+		retryInstall,
 	} = useTtsInstallGate();
 
 	const enabled = tts?.enabled ?? false;
@@ -390,7 +392,22 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 								variant="active"
 							/>
 						) : null}
-						{errorReason ? (
+						{installError ? (
+							<div className="flex items-start gap-2 rounded-md border border-error/40 bg-error/10 p-2 text-error text-xs">
+								<div className="flex-1">
+									<div className="font-medium">{t("installFailedTitle")}</div>
+									<div className="opacity-90">{installError}</div>
+								</div>
+								<button
+									className="rounded border border-error/60 px-2 py-0.5 font-medium text-error transition hover:bg-error/20"
+									onClick={retryInstall}
+									type="button"
+								>
+									{t("retry")}
+								</button>
+							</div>
+						) : null}
+						{errorReason && !installError ? (
 							<div className="rounded-md border border-error/40 bg-error/10 p-2 text-error text-xs">
 								<span className="font-medium">{t("errorTitle")}:</span> {errorReason}
 							</div>

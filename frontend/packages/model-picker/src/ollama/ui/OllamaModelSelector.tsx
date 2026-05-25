@@ -160,7 +160,6 @@ function PublisherChip({ family }: { family: string }) {
 	const iconSrc = getProviderIconWithFallback(publisher.slug);
 	return (
 		<span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface-secondary/60 px-1.5 py-0.5 font-medium text-[10px] text-foreground-secondary leading-none">
-			{/* biome-ignore lint/performance/noImgElement: static local maker logo */}
 			<img
 				alt=""
 				className="size-3 rounded-[2px] object-cover"
@@ -586,7 +585,6 @@ function PublisherGroupHeader({ publisherSlug, count }: { count: number; publish
 			data-rail-section={publisherSlug}
 		>
 			<span className="flex items-center gap-1.5 font-semibold text-foreground-secondary text-xs uppercase tracking-wide">
-				{/* biome-ignore lint/performance/noImgElement: static local maker logo */}
 				<img
 					alt=""
 					className="size-3.5 rounded-[2px] object-cover"
@@ -637,7 +635,6 @@ function LibraryPublisherHeader({
 			data-rail-section={`${LIBRARY_RAIL_ID}:${publisherSlug}`}
 		>
 			<span className="flex items-center gap-1.5 font-semibold text-foreground-secondary text-xs uppercase tracking-wide">
-				{/* biome-ignore lint/performance/noImgElement: static local maker logo */}
 				<img
 					alt=""
 					className="size-3.5 rounded-[2px] object-cover"
@@ -903,7 +900,6 @@ function LibraryRowHeader({
 		<button className="flex w-full items-start gap-2 text-left" onClick={onClick} type="button">
 			<div className="min-w-0 flex-1">
 				<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-					{/* biome-ignore lint/performance/noImgElement: static local maker logo */}
 					<img
 						alt=""
 						className="size-4 rounded-[2px] object-cover"
@@ -1132,7 +1128,6 @@ function RecommendedRow({
 			<div className="flex items-start gap-3">
 				<div className="min-w-0 flex-1">
 					<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-						{/* biome-ignore lint/performance/noImgElement: static local maker logo */}
 						<img
 							alt=""
 							className="size-4 rounded-[2px] object-cover"
@@ -1717,7 +1712,6 @@ export function OllamaModelSelector({
 				label: publisher.label,
 				badge: entries.length,
 				icon: (
-					// biome-ignore lint/performance/noImgElement: static local maker logo
 					<img
 						alt=""
 						className="size-5 rounded-[3px] object-cover"
@@ -1750,7 +1744,6 @@ export function OllamaModelSelector({
 					label: publisher.label,
 					badge: hits.length,
 					icon: (
-						// biome-ignore lint/performance/noImgElement: static local maker logo
 						<img
 							alt=""
 							className="size-5 rounded-[3px] object-cover opacity-80"

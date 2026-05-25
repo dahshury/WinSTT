@@ -385,7 +385,11 @@
     "shortcutTtsStop": "Stop reading",
     "repasteKey": "Re-paste Key",
     "repasteKeyCaption": "Click Record, press your key combo, then click Stop",
-    "repasteKeyTooltip": "The keyboard shortcut that re-pastes your most recent transcription. Click Record, press the key combination you want, then click Stop."
+    "repasteKeyTooltip": "The keyboard shortcut that re-pastes your most recent transcription. Click Record, press the key combination you want, then click Stop.",
+    "conflictError": "Conflicts with {other} ({combo}) — pick a different combination",
+    "conflictOtherPushToTalk": "Push-to-Talk",
+    "conflictOtherRepaste": "Re-paste",
+    "conflictOtherTts": "Text-to-speech"
   },
   "dictionary": {
     "title": "Dictionary",
@@ -648,6 +652,8 @@
     "downloading": "Downloading model…",
     "downloadingProgress": "{percent}% — {downloaded} of {total}",
     "errorTitle": "TTS error",
+    "installFailedTitle": "TTS install failed",
+    "retry": "Retry",
     "noVoicesYet": "No voices loaded yet. Enable TTS to fetch the catalog.",
     "installPhaseEngine": "Installing engine",
     "installPhaseModel": "Installing voice model",
@@ -769,6 +775,7 @@
     "sourceTooltip": "Local runs the chosen Whisper / ONNX model on this machine. Cloud routes audio to a configured provider (OpenAI / ElevenLabs) — requires an API key set in Integrations.",
     "sourceLocal": "Local",
     "sourceCloud": "Cloud",
+    "cloudDisabledHint": "Add an API key in the Integrations tab to enable Cloud.",
     "providerStatus": "Connected to {provider} · {status}",
     "providerStatusValid": "key valid",
     "providerStatusNotVerified": "not verified",

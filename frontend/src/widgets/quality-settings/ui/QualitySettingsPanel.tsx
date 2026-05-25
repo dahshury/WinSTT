@@ -392,6 +392,29 @@ export function QualitySettingsPanel() {
 
 	return (
 		<div className="flex flex-col gap-2">
+			{/* ── Context Awareness ──────────────────────────── */}
+			<SettingSection icon={EyeIcon} title={tg("contextAwarenessSection")}>
+				<div className="flex flex-col divide-y divide-surface-1">
+					<FormControl
+						caption={tg("contextAwarenessCaption")}
+						label={tg("contextAwareness")}
+						tooltip={tg("contextAwarenessTooltip")}
+					>
+						<Toggle checked={contextAwarenessEnabled} onCheckedChange={handleContextToggle} />
+					</FormControl>
+				</div>
+				<OptInDialog
+					body={tg("contextAwarenessDialogBody")}
+					cancelLabel={tg("contextAwarenessDialogCancel")}
+					confirmLabel={tg("contextAwarenessDialogConfirm")}
+					onCancel={() => updateGeneral({ contextAwareness: false })}
+					onConfirm={() => updateGeneral({ contextAwareness: true })}
+					onOpenChange={setContextDialogOpen}
+					open={contextDialogOpen}
+					title={tg("contextAwarenessDialogTitle")}
+				/>
+			</SettingSection>
+
 			{/* ── Voice Activity Detection (only meaningful when VAD drives endpoints) */}
 			{(recordingMode === "listen" || recordingMode === "wakeword") && (
 				<VadSection audio={audio} ta={ta} updateAudio={updateAudio} />
@@ -470,29 +493,6 @@ export function QualitySettingsPanel() {
 						</ElevatedSurface>
 					</FormControl>
 				</div>
-			</SettingSection>
-
-			{/* ── Context Awareness ──────────────────────────── */}
-			<SettingSection icon={EyeIcon} title={tg("contextAwarenessSection")}>
-				<div className="flex flex-col divide-y divide-surface-1">
-					<FormControl
-						caption={tg("contextAwarenessCaption")}
-						label={tg("contextAwareness")}
-						tooltip={tg("contextAwarenessTooltip")}
-					>
-						<Toggle checked={contextAwarenessEnabled} onCheckedChange={handleContextToggle} />
-					</FormControl>
-				</div>
-				<OptInDialog
-					body={tg("contextAwarenessDialogBody")}
-					cancelLabel={tg("contextAwarenessDialogCancel")}
-					confirmLabel={tg("contextAwarenessDialogConfirm")}
-					onCancel={() => updateGeneral({ contextAwareness: false })}
-					onConfirm={() => updateGeneral({ contextAwareness: true })}
-					onOpenChange={setContextDialogOpen}
-					open={contextDialogOpen}
-					title={tg("contextAwarenessDialogTitle")}
-				/>
 			</SettingSection>
 		</div>
 	);

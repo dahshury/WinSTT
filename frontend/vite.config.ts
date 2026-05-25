@@ -63,13 +63,18 @@ export default defineConfig({
 		reportCompressedSize: false,
 		rollupOptions: {
 			input: {
+				// `main` stays at the root so Vite's dev server serves it from `/`
+				// (the dev-root convention) and so `bun electron:start`'s wait-on
+				// tcp:3000 handshake hits a real page. The 6 secondary windows
+				// live under `windows/` to keep the frontend root uncluttered;
+				// build output mirrors the input layout (dist-renderer/windows/*).
 				main: resolve(rootDir, "index.html"),
-				settings: resolve(rootDir, "settings.html"),
-				overlay: resolve(rootDir, "overlay.html"),
-				"tray-menu": resolve(rootDir, "tray-menu.html"),
-				"model-picker": resolve(rootDir, "model-picker.html"),
-				"device-picker": resolve(rootDir, "device-picker.html"),
-				onboarding: resolve(rootDir, "onboarding.html"),
+				settings: resolve(rootDir, "windows/settings.html"),
+				overlay: resolve(rootDir, "windows/overlay.html"),
+				"tray-menu": resolve(rootDir, "windows/tray-menu.html"),
+				"model-picker": resolve(rootDir, "windows/model-picker.html"),
+				"device-picker": resolve(rootDir, "windows/device-picker.html"),
+				onboarding: resolve(rootDir, "windows/onboarding.html"),
 			},
 			output: {
 				// Hand-curated chunk split to keep per-page bundles lean. Without

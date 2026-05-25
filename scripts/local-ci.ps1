@@ -11,7 +11,8 @@
         bun typecheck
         bun lint
         bun run check:fsd
-        bun test                           # soft-fail -- Electron-mock tests are flaky locally
+        bun test --coverage                # soft-fail -- Electron-mock tests are flaky locally
+        bun run coverage:gate              # soft-fail -- CI enforces this as a hard gate
 
     Server steps (in server/):
         uv sync --group dev --extra cpu    # CPU extra -- script runs without CUDA
@@ -217,8 +218,17 @@ else {
             -WorkingDirectory $script:FrontendDir
 
         # Soft -- see header docstring (Electron-mock harness flakiness).
+        # Run with --coverage so the coverage-gate step below has fresh lcov.
         Invoke-Step -Name "frontend:test" `
-            -Command "bun test" `
+            -Command "bun test --coverage" `
+            -WorkingDirectory $script:FrontendDir `
+            -Soft
+
+        # Coverage regression gate -- soft because local-ci is lenient by design.
+        # CI enforces this as a HARD gate; here it's informational so a developer
+        # working on a slice with deliberately thin coverage isn't blocked locally.
+        Invoke-Step -Name "frontend:coverage:gate" `
+            -Command "bun run coverage:gate" `
             -WorkingDirectory $script:FrontendDir `
             -Soft
     }
@@ -253,10 +263,23 @@ else {
             -WorkingDirectory $script:ServerDir
 
         # 99% gate instead of the 100% local gate -- matches CI; see
-        # memory/project_server_coverage_preexisting_gap.md
+        # memory/project_server_coverage_preexisting_gap.md.
+        # Pytest also writes a fresh JSON coverage report into
+        # server/reports/crap-coverage.json so the CRAP analyzer below
+        # can reuse it via --skip-coverage (avoids a second test run).
         Invoke-Step -Name "server:pytest" `
-            -Command "uv run pytest --tb=short --cov-fail-under=99" `
+            -Command "uv run pytest --tb=short --cov-fail-under=99 --cov-report=json:reports/crap-coverage.json" `
             -WorkingDirectory $script:ServerDir
+
+        # CRAP analyzer -- cyclomatic-complexity x inverse-coverage score
+        # per function. Mirrors the frontend's `bun run scripts/crap.ts`
+        # step. Treated as SOFT: the score is informational; CI uploads
+        # the report but doesn't block on it. --skip-coverage reuses the
+        # JSON we just produced.
+        Invoke-Step -Name "server:crap" `
+            -Command "uv run python scripts/crap.py --skip-coverage" `
+            -WorkingDirectory $script:ServerDir `
+            -Soft
     }
 }
 

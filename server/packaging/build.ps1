@@ -9,8 +9,11 @@
 # The script:
 #   1. Resolves the venv to the requested flavor via ``uv sync --extra``
 #   2. Runs PyInstaller using server/packaging/stt-server.spec
-#   3. Copies the dist/stt-server/ folder to frontend/stt-server-dist-<flavor>/
-#      where electron-builder reads it via extraResources.
+#   3. Copies the dist/stt-server/ folder to
+#      <repo>/packaging/stt-server-dist/<flavor>/ where
+#      packaging/electron-builder.<flavor>.yml reads it via
+#      ``extraResources: from: ../packaging/stt-server-dist/<flavor>/``
+#      (resolved from projectDir = frontend, so ``..`` is the repo root).
 #
 # Idempotent: re-running with a different flavor just swaps the venv extras
 # and rebuilds. ``--clean`` is passed to PyInstaller so stale binaries from
@@ -27,8 +30,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ServerDir = Resolve-Path (Join-Path $ScriptDir "..")
 $RepoRoot = Resolve-Path (Join-Path $ServerDir "..")
-$FrontendDir = Resolve-Path (Join-Path $RepoRoot "frontend")
-$DistTarget = Join-Path $FrontendDir "stt-server-dist-$Flavor"
+$DistTarget = Join-Path $RepoRoot "packaging\stt-server-dist\$Flavor"
 
 Write-Host "==> Building stt-server ($Flavor flavor)" -ForegroundColor Cyan
 Write-Host "    Server : $ServerDir"
@@ -56,6 +58,10 @@ try {
     Write-Host "==> Copying build → $DistTarget" -ForegroundColor Cyan
     if (Test-Path $DistTarget) {
         Remove-Item -Recurse -Force $DistTarget
+    }
+    $DistParent = Split-Path -Parent $DistTarget
+    if (-not (Test-Path $DistParent)) {
+        New-Item -ItemType Directory -Force -Path $DistParent | Out-Null
     }
     Copy-Item -Recurse -Path $BuildOutput -Destination $DistTarget
 

@@ -14,6 +14,7 @@ export type {
 } from "./model/setting";
 export { DEFAULT_SETTINGS } from "./model/setting";
 export { useSettingsStore } from "./model/settings-store";
+export { useSettingsTabStore } from "./model/settings-tab-store";
 export {
 	SettingResetButton,
 	type SettingResetButtonProps,

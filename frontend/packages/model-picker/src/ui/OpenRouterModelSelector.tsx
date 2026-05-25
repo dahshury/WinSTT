@@ -255,7 +255,6 @@ export function OpenRouterModelSelector({
 			label: formatMaker(maker),
 			badge: groupedModelsAll.find(([m]) => m === maker)?.[1].length,
 			icon: iconSrc ? (
-				// biome-ignore lint/performance/noImgElement: static local maker logo
 				<img
 					alt=""
 					className="size-5 rounded-[3px] object-cover"

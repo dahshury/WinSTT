@@ -40,8 +40,6 @@ const SKIP_DIRS = new Set([
 	"build",
 	"coverage",
 	"playwright-report",
-	"stt-server-dist-cpu",
-	"stt-server-dist-gpu",
 ]);
 
 function walk(dir: string): string[] {

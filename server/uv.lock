@@ -1434,7 +1434,8 @@ wheels = [
 
 [[package]]
 name = "onnx-asr"
-source = { editable = "../examples/onnx-asr" }
+version = "0.1.dev235+g44685a815"
+source = { git = "https://github.com/dahshury/onnx-asr.git?rev=44685a815fb69cfa763dcc139cbf17b8914b9a34#44685a815fb69cfa763dcc139cbf17b8914b9a34" }
 dependencies = [
     { name = "numpy" },
 ]
@@ -1442,86 +1443,6 @@ dependencies = [
 [package.optional-dependencies]
 hub = [
     { name = "huggingface-hub" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "huggingface-hub", marker = "extra == 'hub'", specifier = ">=0.30.2" },
-    { name = "numpy", specifier = ">=1.22.4" },
-    { name = "onnxruntime", marker = "extra == 'cpu'", specifier = ">=1.18.1" },
-    { name = "onnxruntime-gpu", marker = "extra == 'gpu'", specifier = ">=1.18.1" },
-    { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4.6.0" },
-]
-provides-extras = ["cpu", "gpu", "hub"]
-
-[package.metadata.requires-dev]
-benchmark = [
-    { name = "datasets", specifier = ">=4.8.4" },
-    { name = "ipykernel", specifier = "<7" },
-    { name = "ipywidgets", specifier = ">=8.1.8" },
-    { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "jiwer", specifier = ">=3.1.0" },
-    { name = "nbstripout", specifier = ">=0.9.1" },
-    { name = "pandas", specifier = ">=2.3.3" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "tqdm", specifier = ">=4.67.3" },
-]
-build = [
-    { name = "hatch-vcs", specifier = ">=0.5.0" },
-    { name = "hatchling", specifier = ">=1.28.0" },
-    { name = "ml-dtypes", specifier = ">=0.5.4" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "onnxscript", specifier = ">=0.6.2" },
-]
-dev = [
-    { name = "hatch-vcs", specifier = ">=0.5.0" },
-    { name = "hatchling", specifier = ">=1.28.0" },
-    { name = "ipykernel", specifier = "<7" },
-    { name = "ipywidgets", specifier = ">=8.1.8" },
-    { name = "ml-dtypes", specifier = ">=0.5.4" },
-    { name = "mypy", specifier = ">=1.20.1" },
-    { name = "nbstripout", specifier = ">=0.9.1" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "onnx-asr", extras = ["hub"] },
-    { name = "onnxscript", specifier = ">=0.6.2" },
-    { name = "psutil", specifier = ">=7.2.2" },
-    { name = "pytest", specifier = ">=9.0.3" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "ruff", specifier = ">=0.15.11" },
-]
-docs = [
-    { name = "click", specifier = ">=8.3.2" },
-    { name = "markdown-callouts", specifier = ">=0.4.0" },
-    { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.7.2" },
-    { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.4" },
-    { name = "ruff", specifier = ">=0.15.11" },
-]
-jupyter = [
-    { name = "ipykernel", specifier = "<7" },
-    { name = "ipywidgets", specifier = ">=8.1.8" },
-    { name = "nbstripout", specifier = ">=0.9.1" },
-]
-test = [
-    { name = "psutil", specifier = ">=7.2.2" },
-    { name = "pytest", specifier = ">=9.0.3" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-]
-test-all = [
-    { name = "hatch-vcs", specifier = ">=0.5.0" },
-    { name = "hatchling", specifier = ">=1.28.0" },
-    { name = "kaldi-native-fbank", specifier = ">=1.22.3" },
-    { name = "ml-dtypes", specifier = ">=0.5.4" },
-    { name = "nemo-toolkit", extras = ["asr"], specifier = ">=2.7.2" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "onnx", specifier = ">=1.21.0" },
-    { name = "onnxscript", specifier = ">=0.6.2" },
-    { name = "openai-whisper", specifier = ">=20250625" },
-    { name = "psutil", specifier = ">=7.2.2" },
-    { name = "pytest", specifier = ">=9.0.3" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torch", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "torchaudio", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cpu" },
 ]
 
 [[package]]
@@ -3037,7 +2958,7 @@ requires-dist = [
     { name = "nvidia-ml-py", specifier = ">=12.0" },
     { name = "nvidia-nvjitlink-cu12", marker = "extra == 'gpu'", specifier = ">=12.4" },
     { name = "onnx", specifier = ">=1.16" },
-    { name = "onnx-asr", extras = ["hub"], editable = "../examples/onnx-asr" },
+    { name = "onnx-asr", extras = ["hub"], git = "https://github.com/dahshury/onnx-asr.git?rev=44685a815fb69cfa763dcc139cbf17b8914b9a34" },
     { name = "onnxruntime", marker = "extra == 'cpu'", specifier = ">=1.18.1" },
     { name = "onnxruntime-gpu", marker = "extra == 'gpu'", specifier = ">=1.18.1" },
     { name = "openwakeword", specifier = ">=0.4.0" },

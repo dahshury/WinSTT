@@ -58,9 +58,11 @@ jobs:
         shell: pwsh
         run: choco install upx -y --no-progress
 
-      # The PyInstaller build step lives outside the frontend's working
-      # directory; it installs Python deps and produces
-      # frontend/stt-server-dist-${flavor}/ which electron-builder reads.
+      # The PyInstaller build step produces
+      # <repo>/packaging/stt-server-dist/${flavor}/ which
+      # packaging/electron-builder.${flavor}.yml reads via
+      # ``extraResources: from: ../packaging/stt-server-dist/${flavor}/``
+      # (resolved against projectDir = frontend, so ``..`` is the repo root).
       - name: Build STT server (${{ matrix.flavor }})
         shell: pwsh
         run: pwsh server/packaging/build.ps1 -Flavor ${{ matrix.flavor }}
@@ -94,6 +96,11 @@ jobs:
         working-directory: frontend
         run: bun install --frozen-lockfile
 
+      # Install root devDeps (electron-builder). The build script lives at
+      # the repo root now (see root package.json) and delegates the renderer/
+      # main prep into frontend/ via ``bun --cwd frontend run …``.
+      - name: Install Root Dependencies
+        run: bun install --frozen-lockfile
+
       - name: Build And Publish Electron Release (${{ matrix.flavor }})
-        working-directory: frontend
         run: bun run electron:build:publish:${{ matrix.flavor }}

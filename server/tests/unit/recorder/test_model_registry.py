@@ -62,7 +62,6 @@ class TestModelCatalog:
             "alphacep/vosk-model-ru",
             "alphacep/vosk-model-small-ru",
             "t-tech/t-one",
-            "whisper-base",
         ]
         for model_id in onnx_ids:
             info = catalog.get(model_id)

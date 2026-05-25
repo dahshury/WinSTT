@@ -648,6 +648,8 @@
     "downloading": "मॉडल डाउनलोड हो रहा है…",
     "downloadingProgress": "{percent}% — {total} में से {downloaded}",
     "errorTitle": "TTS त्रुटि",
+    "installFailedTitle": "TTS स्थापना विफल",
+    "retry": "पुनः प्रयास करें",
     "noVoicesYet": "अभी तक कोई आवाज़ लोड नहीं हुई है। कैटलॉग प्राप्त करने के लिए TTS सक्षम करें।",
     "installPhaseEngine": "इंजन स्थापित हो रहा है",
     "installPhaseModel": "आवाज़ मॉडल स्थापित हो रहा है",

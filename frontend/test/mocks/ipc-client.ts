@@ -429,5 +429,112 @@ export function ipcClientMock(): Record<string, unknown> {
 		onLlmProcessingEnd: (cb: () => void) => on(IPC.LLM_PROCESSING_END, cb),
 		getLlmWarmupStatus: () => invokeOrDefault<unknown>(IPC.LLM_GET_WARMUP_STATUS, null),
 		onLlmWarmupStatus: (cb: (status: unknown) => void) => onCast(IPC.LLM_WARMUP_STATUS, cb),
+		onLlmReasoningDelta: (cb: (payload: { delta: string }) => void) =>
+			onCast(IPC.LLM_REASONING_DELTA, cb),
+		onLlmLearnedProperNouns: (cb: (payload: { nouns: readonly string[] }) => void) =>
+			onCast(IPC.LLM_LEARNED_PROPER_NOUNS, cb),
+		runLlmPreview: (text: string, feature: "dictation" | "transforms") =>
+			invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, { text, feature }),
+
+		// Diarization (runtime toggle + speaker segments)
+		sttRequestDiarizationToggle: (enabled: boolean) =>
+			send(IPC.STT_CALL_METHOD, { method: "request_diarization_toggle", args: [enabled] }),
+		onDiarizationToggleStarted: (cb: (info: unknown) => void) =>
+			onCast(IPC.STT_DIARIZATION_TOGGLE_STARTED, cb),
+		onDiarizationToggleCompleted: (cb: (info: unknown) => void) =>
+			onCast(IPC.STT_DIARIZATION_TOGGLE_COMPLETED, cb),
+		onDiarizationToggleFailed: (cb: (info: unknown) => void) =>
+			onCast(IPC.STT_DIARIZATION_TOGGLE_FAILED, cb),
+		onSpeakerSegments: (cb: (segments: unknown[]) => void) =>
+			onTyped(IPC.STT_SPEAKER_SEGMENTS, (d: { segments: unknown[] }) => d.segments, cb),
+
+		// Server lifecycle pushes
+		onServerRestartRequired: (cb: (info: unknown) => void) => onCast(IPC.STT_RESTART_REQUIRED, cb),
+
+		// Model cache + fitness
+		deleteModelCache: (modelId: string) =>
+			invokeOrDefault<unknown>(IPC.STT_DELETE_MODEL_CACHE, null, { modelId }),
+		fetchLiveResources: (forceRefresh = false) =>
+			invokeOrDefault<unknown>(IPC.STT_GET_LIVE_RESOURCES, null, { forceRefresh }),
+		assessDictationFit: (modelId: string, quantization = "", device: string | null = null) =>
+			invokeOrDefault<unknown>(IPC.STT_ASSESS_DICTATION_FIT, null, {
+				modelId,
+				quantization,
+				device,
+			}),
+		assessOllamaFitOnServer: (sizeBytes: number) =>
+			invokeOrDefault<unknown>(IPC.STT_ASSESS_OLLAMA_FIT, null, { sizeBytes }),
+
+		// Sound library
+		soundLibraryAdd: (sourcePath: string, name?: string) =>
+			invokeOrDefault<unknown>(
+				IPC.SOUND_LIBRARY_ADD,
+				{ ok: false, error: "IPC unavailable" },
+				{ sourcePath, name }
+			),
+		soundLibraryRemove: (filePath: string) =>
+			invokeOrDefault<unknown>(
+				IPC.SOUND_LIBRARY_REMOVE,
+				{ ok: false, error: "IPC unavailable" },
+				{ path: filePath }
+			),
+		soundLibraryReadFile: (filePath: string) =>
+			invokeOrDefault<Uint8Array | null>(IPC.SOUND_LIBRARY_READ_FILE, null, { path: filePath }),
+
+		// TTS — voice catalog + lifecycle (synthesis + playback + install)
+		listTtsVoices: () =>
+			invokeOrDefault<unknown>(IPC.TTS_LIST_VOICES, {
+				languages: [],
+				voices: [],
+				unavailable: true,
+			}),
+		ttsDownloadEstimate: () =>
+			invokeOrDefault<unknown>(IPC.TTS_DOWNLOAD_ESTIMATE, { unavailable: true }),
+		initTts: () => invokeOrDefault<{ ready: boolean }>(IPC.TTS_INIT, { ready: false }),
+		ttsSpeak: (payload: { text: string; voice?: string; lang?: string; speed?: number }) =>
+			invokeOrDefault<{ requestId: string }>(IPC.TTS_SPEAK, { requestId: "" }, payload),
+		ttsSpeakSelection: () =>
+			invokeOrDefault<unknown>(IPC.TTS_SPEAK_SELECTION, {
+				requestId: "",
+				text: "",
+				source: "empty",
+			}),
+		ttsCancel: (requestId?: string) => send(IPC.TTS_CANCEL, { requestId }),
+		ttsReportPlaybackStarted: (requestId: string) =>
+			send(IPC.TTS_REPORT_PLAYBACK_STARTED, { requestId }),
+		ttsReportPlaybackEnded: (requestId: string) =>
+			send(IPC.TTS_REPORT_PLAYBACK_ENDED, { requestId }),
+		onTtsStarted: (cb: (payload: unknown) => void) => onCast(IPC.TTS_STARTED, cb),
+		onTtsChunk: (cb: (payload: unknown) => void) => onCast(IPC.TTS_CHUNK, cb),
+		onTtsCompleted: (cb: (payload: unknown) => void) => onCast(IPC.TTS_COMPLETED, cb),
+		onTtsFailed: (cb: (payload: unknown) => void) => onCast(IPC.TTS_FAILED, cb),
+		onTtsPlaybackStarted: (cb: (payload: unknown) => void) => onCast(IPC.TTS_PLAYBACK_STARTED, cb),
+		onTtsPlaybackEnded: (cb: (payload: unknown) => void) => onCast(IPC.TTS_PLAYBACK_ENDED, cb),
+		onTtsModelDownloadStart: (cb: () => void) =>
+			onCast<Record<string, never>>(IPC.TTS_MODEL_DOWNLOAD_START, () => cb()),
+		onTtsModelDownloadProgress: (cb: (payload: unknown) => void) =>
+			onCast(IPC.TTS_MODEL_DOWNLOAD_PROGRESS, cb),
+		onTtsModelDownloadComplete: (cb: (payload: unknown) => void) =>
+			onCast(IPC.TTS_MODEL_DOWNLOAD_COMPLETE, cb),
+		onTtsInstallStatus: (cb: (payload: unknown) => void) => onCast(IPC.TTS_INSTALL_STATUS, cb),
+		onTtsInstallFailed: (cb: (payload: unknown) => void) => onCast(IPC.TTS_INSTALL_FAILED, cb),
+
+		// Diagnostics + About
+		diagOpenLogsFolder: () =>
+			invokeOrDefault<unknown>(IPC.DIAG_OPEN_LOGS_FOLDER, {
+				ok: false,
+				error: "IPC unavailable",
+			}),
+		diagSaveBundle: () =>
+			invokeOrDefault<unknown>(IPC.DIAG_SAVE_BUNDLE, { ok: false, error: "IPC unavailable" }),
+		aboutGetLicense: () => invokeOrDefault<string>(IPC.ABOUT_GET_LICENSE, ""),
+		aboutGetNotices: () => invokeOrDefault<string>(IPC.ABOUT_GET_NOTICES, ""),
+		aboutGetAppInfo: () =>
+			invokeOrDefault<unknown>(IPC.ABOUT_GET_APP_INFO, {
+				copyright: "",
+				electronVersion: "",
+				nodeVersion: "",
+				version: "",
+			}),
 	};
 }

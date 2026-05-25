@@ -59,11 +59,14 @@ def _visit(node: ast.AST, out: list[FunctionDescriptor], stack: list[str]) -> No
     is_cls = isinstance(node, ast.ClassDef)
 
     if is_fn:
+        # ``isinstance(node, FunctionLike)`` already narrowed ``node`` for runtime
+        # but mypy needs the explicit assert to see ``.lineno`` / ``decorator_list``.
+        assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
         local = _local_name(node)
         qualified = ".".join([*stack, local]) if stack else local
         start = node.lineno
         # Fold decorator lines into the span so decorator-line coverage counts.
-        decorators = getattr(node, "decorator_list", [])
+        decorators: list[ast.expr] = getattr(node, "decorator_list", [])
         if decorators:
             start = min(start, min(d.lineno for d in decorators))
         end = getattr(node, "end_lineno", None) or start

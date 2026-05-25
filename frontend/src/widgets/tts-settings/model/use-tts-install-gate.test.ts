@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { TtsDownloadEstimatePayload } from "@/shared/api/ipc-client";
 import {
+	buildTtsEnablePatch,
 	projectInstallPhase,
 	resolveConfirmAction,
 	resolveProbeAction,
@@ -83,5 +84,25 @@ describe("resolveToggleAction", () => {
 
 	test("false → 'disable'", () => {
 		expect(resolveToggleAction(false)).toBe("disable");
+	});
+});
+
+describe("buildTtsEnablePatch", () => {
+	test("non-empty current hotkey → only flips enabled (preserves user binding)", () => {
+		expect(buildTtsEnablePatch("LCtrl+S", "LWin+R")).toEqual({ enabled: true });
+	});
+
+	test("empty current hotkey → folds in the default binding", () => {
+		expect(buildTtsEnablePatch("", "LWin+R")).toEqual({
+			enabled: true,
+			hotkey: "LWin+R",
+		});
+	});
+
+	test("whitespace-only hotkey is treated as empty (folds default)", () => {
+		expect(buildTtsEnablePatch("   ", "LWin+R")).toEqual({
+			enabled: true,
+			hotkey: "LWin+R",
+		});
 	});
 });

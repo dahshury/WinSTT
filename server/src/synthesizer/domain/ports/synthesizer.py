@@ -68,5 +68,15 @@ class ISpeechSynthesizer(ABC):
         """True once the underlying ONNX session and voicepacks are loaded."""
 
     @abstractmethod
+    def warm_up(self) -> None:
+        """Force the engine pack download + ONNX session load now.
+
+        Synchronous and blocking — callers wishing to keep the asyncio
+        loop live must run this in an executor. Raises on download / load
+        failure so the caller can surface it to the user; succeeds as a
+        no-op once already ready (idempotent).
+        """
+
+    @abstractmethod
     def shutdown(self) -> None:
         """Release native resources. Idempotent."""

@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { electronMock } from "@test/mocks/electron";
 import { uiohookMock } from "@test/mocks/uiohook-napi";
 
@@ -30,15 +30,24 @@ let trayMenuBounds: Electron.Rectangle | null = null;
 let trayMenuHideCalls = 0;
 let trayMenuBlurSuppressed: boolean | null = null;
 
-mock.module("./tray-menu-window", () => ({
-	getTrayMenuBounds: () => trayMenuBounds,
-	hideTrayMenu: () => {
-		trayMenuHideCalls++;
-	},
-	setTrayMenuBlurSuppressed: (v: boolean) => {
-		trayMenuBlurSuppressed = v;
-	},
-}));
+// Spy on the relevant exports rather than mock-module-replacing the whole
+// `./tray-menu-window` file. mock.module would install a process-global
+// replacement that bun 1.3.6 can't isolate per file, poisoning
+// `tray-menu-window.test.ts`. spyOn on the namespace flips the bindings
+// only for THIS file's lifetime and is restored in afterAll below.
+const trayMenuWindowNs = await import("./tray-menu-window");
+const getTrayMenuBoundsSpy = spyOn(trayMenuWindowNs, "getTrayMenuBounds").mockImplementation(
+	() => trayMenuBounds
+);
+const hideTrayMenuSpy = spyOn(trayMenuWindowNs, "hideTrayMenu").mockImplementation(() => {
+	trayMenuHideCalls++;
+});
+const setTrayMenuBlurSuppressedSpy = spyOn(
+	trayMenuWindowNs,
+	"setTrayMenuBlurSuppressed"
+).mockImplementation((v: boolean) => {
+	trayMenuBlurSuppressed = v;
+});
 
 const { __device_picker_window_test_helpers__: H } = await import("./device-picker-window");
 
@@ -921,4 +930,14 @@ describe("destroy / teardown", () => {
 		resetModuleState();
 		H.teardownDevicePickerHandlers();
 	});
+});
+
+// Restore the spies so `electron/ipc/tray-menu-window.test.ts` sees the real
+// `getTrayMenuBounds` / `hideTrayMenu` / `setTrayMenuBlurSuppressed` when it
+// imports its SUT — bun shares module bindings across test files, so without
+// this the stubbed impls would persist and break the tray-menu-window suite.
+afterAll(() => {
+	getTrayMenuBoundsSpy.mockRestore();
+	hideTrayMenuSpy.mockRestore();
+	setTrayMenuBlurSuppressedSpy.mockRestore();
 });

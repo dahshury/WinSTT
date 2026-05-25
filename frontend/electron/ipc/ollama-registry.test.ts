@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { debugLogMock } from "@test/mocks/debug-log";
+import { electronMock } from "@test/mocks/electron";
 
 const noop = () => undefined;
 
-mock.module("electron", () => ({
-	ipcMain: { handle: noop, removeHandler: noop },
-}));
-mock.module("../lib/debug-log", () => ({ dbg: noop, dbgVerbose: noop }));
+// Use the complete `electronMock()` factory so the process-global mock leak
+// this installs is semantically complete — partial shims would make every
+// later test importing `app` / `BrowserWindow` / etc. from `electron` throw
+// "Export named X not found".
+mock.module("electron", () => electronMock());
+mock.module("../lib/debug-log", () => debugLogMock());
 
 const { __ollama_registry_test_helpers__, setupOllamaRegistry } = await import("./ollama-registry");
 

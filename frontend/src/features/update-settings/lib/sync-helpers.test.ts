@@ -5,12 +5,14 @@ import {
 	clearIfSet,
 	computeSilenceEndpointEnabled,
 	computeSilenceTiming,
+	deriveBroadcastUpdate,
 	getManualToggleStop,
 	getPrevManualToggleStop,
 	getPrevSmartEndpoint,
 	getRecordingMode,
 	getSmartEndpoint,
 	isModeChanged,
+	mergeBroadcastPreservingUserDirty,
 	scheduleSave,
 	shouldSendInitial,
 	shouldSendOnChange,
@@ -404,5 +406,127 @@ describe("scheduleSave", () => {
 		// prevTimer was cleared; immediate save ran
 		expect(saveFn).toHaveBeenCalledTimes(1);
 		expect(debounceRef.current).toBeNull();
+	});
+});
+
+describe("mergeBroadcastPreservingUserDirty", () => {
+	// Minimal AppSettings shape — only the top-level sections we touch in this
+	// test matter; we cast away through `unknown` so we don't need to mock the
+	// full Zod-output type here.
+	interface Mini {
+		audio: { silero: number };
+		general: { overlayMode: string };
+	}
+	const cast = <T>(v: T) => v as unknown as Parameters<typeof mergeBroadcastPreservingUserDirty>[0];
+
+	test("returns identity (use decoded) when there is no lastSaved baseline", () => {
+		const decoded: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
+		const current: Mini = { general: { overlayMode: "dynamic-island" }, audio: { silero: 0.4 } };
+		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
+			cast(decoded),
+			cast(current),
+			undefined
+		);
+		expect(merged).toBe(cast(decoded));
+		expect(preserved).toBe(false);
+	});
+
+	test("uses decoded when current matches lastSaved for every section (pure broadcast)", () => {
+		const decoded: Mini = { general: { overlayMode: "dynamic-island" }, audio: { silero: 0.5 } };
+		const current: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
+		const lastSaved: Mini = { ...current };
+		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
+			cast(decoded),
+			cast(current),
+			cast(lastSaved)
+		);
+		expect(merged).toEqual(cast(decoded));
+		expect(preserved).toBe(false);
+	});
+
+	test("preserves a user-dirty section (current differs from lastSaved) and accepts broadcast for others", () => {
+		// This is the canonical race: user clicked overlayMode → general is
+		// dirty in `current`. A broadcast from another window's save lands
+		// (with `audio` updated, but general still showing the on-disk
+		// pre-click value). The merge must keep current.general while
+		// accepting decoded.audio.
+		const decoded: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.5 } };
+		const current: Mini = { general: { overlayMode: "dynamic-island" }, audio: { silero: 0.4 } };
+		const lastSaved: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
+		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
+			cast(decoded),
+			cast(current),
+			cast(lastSaved)
+		);
+		expect((merged as unknown as Mini).general.overlayMode).toBe("dynamic-island");
+		expect((merged as unknown as Mini).audio.silero).toBe(0.5);
+		expect(preserved).toBe(true);
+	});
+
+	test("treats deep-equal sections as not dirty (reference inequality alone is not enough)", () => {
+		const decoded: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.5 } };
+		// Same structural content as lastSaved but a fresh object reference —
+		// must not be flagged as user-dirty.
+		const current: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
+		const lastSaved: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
+		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
+			cast(decoded),
+			cast(current),
+			cast(lastSaved)
+		);
+		expect((merged as unknown as Mini).general.overlayMode).toBe("floating-bottom");
+		expect((merged as unknown as Mini).audio.silero).toBe(0.5);
+		expect(preserved).toBe(false);
+	});
+
+	test("preserves multiple dirty sections simultaneously", () => {
+		const decoded: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
+		const current: Mini = { general: { overlayMode: "dynamic-island" }, audio: { silero: 0.7 } };
+		const lastSaved: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
+		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
+			cast(decoded),
+			cast(current),
+			cast(lastSaved)
+		);
+		expect((merged as unknown as Mini).general.overlayMode).toBe("dynamic-island");
+		expect((merged as unknown as Mini).audio.silero).toBe(0.7);
+		expect(preserved).toBe(true);
+	});
+});
+
+describe("deriveBroadcastUpdate", () => {
+	// `deriveBroadcastUpdate` calls decodeSettingsPayload internally, which
+	// runs the full schema parse — feed it inputs the schema accepts.
+	type AnySettings = Parameters<typeof deriveBroadcastUpdate>[0];
+
+	function freshDefaults(): AnySettings {
+		// Empty object → schema fills in every default. Cheap way to get a
+		// valid AppSettings without listing every section.
+		return {} as AnySettings;
+	}
+
+	test("pure broadcast (no preserved dirt) flips nextFromBroadcast=true", () => {
+		const result = deriveBroadcastUpdate(freshDefaults(), freshDefaults(), undefined, false);
+		expect(result.nextFromBroadcast).toBe(true);
+	});
+
+	test("preserved dirt keeps nextFromBroadcast at the prior value (false stays false)", () => {
+		const current = freshDefaults();
+		const lastSaved = freshDefaults();
+		// Hand-craft a user-dirty section so preserved=true. Override one key on
+		// current that doesn't match lastSaved.
+		(current as unknown as { audio: { silero: number } }).audio = { silero: 0.99 };
+		(lastSaved as unknown as { audio: { silero: number } }).audio = { silero: 0.5 };
+		const result = deriveBroadcastUpdate(freshDefaults(), current, lastSaved, false);
+		expect(result.nextFromBroadcast).toBe(false);
+	});
+
+	test("preserved dirt keeps a prior true at true (sticky)", () => {
+		const current = freshDefaults();
+		const lastSaved = freshDefaults();
+		(current as unknown as { audio: { silero: number } }).audio = { silero: 0.99 };
+		(lastSaved as unknown as { audio: { silero: number } }).audio = { silero: 0.5 };
+		const result = deriveBroadcastUpdate(freshDefaults(), current, lastSaved, true);
+		expect(result.nextFromBroadcast).toBe(true);
 	});
 });

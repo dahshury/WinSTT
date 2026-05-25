@@ -62,7 +62,14 @@ export function useDeviceSwitchFeedback(): void {
 			// Read AFTER updateAudio so the fresh inputDeviceIndex is in the
 			// snapshot.  Zustand updates are synchronous, so getState()
 			// reflects the mutation immediately.
-			settingsSave(useSettingsStore.getState().settings);
+			//
+			// Send ONLY the `audio` section, not the full settings. A full save
+			// would broadcast this renderer's stale `general`/`model`/etc. to
+			// other windows, clobbering anything (e.g. `general.overlayMode`)
+			// the user just changed in the settings panel that's still inside
+			// its 300ms debounce — both on disk and via a `settings:changed`
+			// broadcast that cancels the panel's pending save.
+			settingsSave({ audio: useSettingsStore.getState().settings.audio });
 			refresh().catch(() => undefined);
 			showEphemeral(t("deviceSwitchFailed", { reason: errorMessage }));
 		});
@@ -74,6 +81,8 @@ export function useDeviceSwitchFeedback(): void {
 			return;
 		}
 		updateAudio({ inputDeviceIndex: null });
-		settingsSave(useSettingsStore.getState().settings);
+		// Same partial-save rationale as the device-switch-failed handler above —
+		// only the `audio` section is this hook's concern.
+		settingsSave({ audio: useSettingsStore.getState().settings.audio });
 	}, [devices, savedIndex, updateAudio]);
 }

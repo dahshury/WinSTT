@@ -194,6 +194,12 @@ function setupTtsImpl(sttClient: SttClient) {
 			broadcastAll(IPC.TTS_INSTALL_STATUS, {
 				phase: typeof event.phase === "string" ? event.phase : "unknown",
 			}),
+		tts_install_failed: (event) =>
+			broadcastAll(IPC.TTS_INSTALL_FAILED, {
+				reason:
+					typeof event.reason === "string" && event.reason ? event.reason : "TTS install failed",
+				category: typeof event.category === "string" ? event.category : null,
+			}),
 	};
 
 	const onDataEvent = (event: Record<string, unknown>): void => {

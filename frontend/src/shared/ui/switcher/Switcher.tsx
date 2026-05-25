@@ -8,8 +8,18 @@ import { cn } from "@/shared/lib/cn";
 import { fontWeights } from "@/shared/lib/font-weight";
 import { springs } from "@/shared/lib/springs";
 import { surfaceBg, surfaceShadow, useSurface } from "@/shared/lib/surface";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 export interface SwitcherOption<T extends string = string> {
+	/** Optional small icon rendered as a corner badge over the option (e.g. a
+	 * lock icon to mark a tab that's disabled until some prerequisite is met).
+	 * Becomes interactive when `badgeTooltip` or `onBadgeClick` is also
+	 * provided — the badge floats above the (possibly disabled) Toggle so
+	 * hover/click events reach it regardless of the Toggle's disabled state. */
+	badgeIcon?: IconSvgElement;
+	/** Optional tooltip shown when the badge is hovered/focused — typically
+	 * explains why the option is currently disabled. */
+	badgeTooltip?: string;
 	/** Optional per-option accent color (hex). When set, the active-segment
 	 * indicator fills with this color when the option is selected, and the
 	 * unselected label is tinted with the same color. */
@@ -19,6 +29,9 @@ export interface SwitcherOption<T extends string = string> {
 	/** Optional leading icon shown before the label */
 	icon?: IconSvgElement;
 	label: string;
+	/** Optional click handler invoked when the badge is pressed. Makes the
+	 * badge render as a button instead of a presentational span. */
+	onBadgeClick?: () => void;
 	value: T;
 }
 
@@ -278,6 +291,62 @@ export function Switcher<T extends string = string>({
 								</span>
 							</span>
 						</Toggle>
+					);
+				})}
+
+				{options.map((opt, index) => {
+					if (!opt.badgeIcon) {
+						return null;
+					}
+					const rect = rects[index];
+					if (!rect) {
+						return null;
+					}
+					const interactive = opt.badgeTooltip !== undefined || opt.onBadgeClick !== undefined;
+					const badgeClass = cn(
+						"absolute z-overlay inline-flex size-4 items-center justify-center rounded-full border bg-surface-elevated shadow-sm transition-colors duration-150",
+						interactive
+							? "cursor-pointer border-warning/40 text-warning/80 hover:border-warning hover:bg-warning/10 hover:text-warning"
+							: "pointer-events-none border-border text-foreground-muted"
+					);
+					const badgeStyle = {
+						top: rect.top - 6,
+						left: rect.left + rect.width - 10,
+					};
+					const badgeIcon = (
+						<HugeiconsIcon aria-hidden="true" className="shrink-0" icon={opt.badgeIcon} size={10} />
+					);
+					if (!interactive) {
+						return (
+							<span
+								aria-hidden="true"
+								className={badgeClass}
+								key={`${opt.value}-badge`}
+								style={badgeStyle}
+							>
+								{badgeIcon}
+							</span>
+						);
+					}
+					const badgeButton = (
+						<button
+							aria-label={opt.badgeTooltip ?? opt.label}
+							className={badgeClass}
+							key={`${opt.value}-badge`}
+							onClick={opt.onBadgeClick}
+							style={badgeStyle}
+							type="button"
+						>
+							{badgeIcon}
+						</button>
+					);
+					if (opt.badgeTooltip === undefined) {
+						return badgeButton;
+					}
+					return (
+						<Tooltip content={opt.badgeTooltip} key={`${opt.value}-badge`} side="top">
+							{badgeButton}
+						</Tooltip>
 					);
 				})}
 			</ToggleGroup>

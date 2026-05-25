@@ -648,6 +648,8 @@
     "downloading": "正在下载模型…",
     "downloadingProgress": "{percent}% — {downloaded} / {total}",
     "errorTitle": "TTS 错误",
+    "installFailedTitle": "TTS 安装失败",
+    "retry": "重试",
     "noVoicesYet": "尚未加载任何语音。启用 TTS 以获取目录。",
     "installPhaseEngine": "正在安装引擎",
     "installPhaseModel": "正在安装语音模型",

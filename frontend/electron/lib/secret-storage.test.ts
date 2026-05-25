@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { electronMock } from "@test/mocks/electron";
 
 // `safeStorage` calls flow through here. Tests flip the available/encrypt
 // shape per-case to cover the happy path, the unavailable-keystore fallback,
@@ -15,7 +16,12 @@ const fake = {
 	},
 };
 
+// Spread `electronMock()` so the process-global mock leak this installs is
+// semantically complete — partial shims would make every later test importing
+// `app` / `BrowserWindow` / etc. from `electron` throw "Export named X not
+// found". Only `safeStorage` needs a custom impl here.
 mock.module("electron", () => ({
+	...electronMock(),
 	safeStorage: {
 		isEncryptionAvailable: () => fake.available,
 		encryptString: (s: string) => fake.encrypt(s),

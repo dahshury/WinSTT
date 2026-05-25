@@ -648,6 +648,8 @@
     "downloading": "جارٍ تنزيل النموذج…",
     "downloadingProgress": "{percent}% — {downloaded} من {total}",
     "errorTitle": "خطأ في تحويل النص إلى كلام",
+    "installFailedTitle": "فشل تثبيت تحويل النص إلى كلام",
+    "retry": "إعادة المحاولة",
     "noVoicesYet": "لم يتم تحميل أي أصوات بعد. فعّل ميزة التحويل لجلب القائمة.",
     "installPhaseEngine": "جارٍ تثبيت المحرك",
     "installPhaseModel": "جارٍ تثبيت نموذج الصوت",

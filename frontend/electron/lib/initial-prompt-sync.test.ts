@@ -12,13 +12,11 @@
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { debugLogMock } from "@test/mocks/debug-log";
 import { storeMock } from "../../test/mocks/store";
 import type { SttClient } from "../ws/stt-client";
 
-mock.module("./debug-log", () => ({
-	dbg: () => undefined,
-	dbgVerbose: () => undefined,
-}));
+mock.module("./debug-log", () => debugLogMock());
 
 const sharedStore = storeMock();
 mock.module("./store", () => sharedStore);

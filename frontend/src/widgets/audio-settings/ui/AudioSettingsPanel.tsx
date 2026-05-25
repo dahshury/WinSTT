@@ -8,7 +8,7 @@ import {
 	SettingSection,
 	useSettingsStore,
 } from "@/entities/setting";
-import { HotkeyRecorder } from "@/features/record-hotkey";
+import { type ForbiddenCombo, HotkeyRecorder } from "@/features/record-hotkey";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Select, type SelectOption } from "@/shared/ui/select";
@@ -28,6 +28,25 @@ export function AudioSettingsPanel() {
 	const th = useTranslations("hotkey");
 	const tt = useTranslations("tts");
 	const pttKey = hotkey?.pushToTalkKey ?? DEFAULT_SETTINGS.hotkey.pushToTalkKey;
+	// Each recorder must reject anything equal-to / subset-of / superset-of the
+	// OTHER two bindings — otherwise pressing one hotkey would also satisfy the
+	// matcher for another. Labels are localized here so the inline error names
+	// the colliding binding by its visible setting name.
+	const pttLabel = th("conflictOtherPushToTalk");
+	const repasteLabel = th("conflictOtherRepaste");
+	const ttsLabel = th("conflictOtherTts");
+	const pttForbidden: ForbiddenCombo[] = [
+		{ combo: repasteHotkey, label: repasteLabel },
+		{ combo: ttsHotkey, label: ttsLabel },
+	];
+	const repasteForbidden: ForbiddenCombo[] = [
+		{ combo: pttKey, label: pttLabel },
+		{ combo: ttsHotkey, label: ttsLabel },
+	];
+	const ttsForbidden: ForbiddenCombo[] = [
+		{ combo: pttKey, label: pttLabel },
+		{ combo: repasteHotkey, label: repasteLabel },
+	];
 	const { devices, defaultDevice } = useInputDevices();
 	const deviceOptions = useMemo<SelectOption[]>(() => {
 		const defaultLabel = defaultDevice
@@ -95,6 +114,7 @@ export function AudioSettingsPanel() {
 						>
 							<HotkeyRecorder
 								currentKey={pttKey}
+								forbiddenCombos={pttForbidden}
 								onKeyRecorded={(key) => updateHotkey({ pushToTalkKey: key })}
 							/>
 						</FormControl>
@@ -115,6 +135,7 @@ export function AudioSettingsPanel() {
 						>
 							<HotkeyRecorder
 								currentKey={repasteHotkey}
+								forbiddenCombos={repasteForbidden}
 								onKeyRecorded={(key) => updateGeneral({ repasteHotkey: key })}
 							/>
 						</FormControl>
@@ -132,6 +153,7 @@ export function AudioSettingsPanel() {
 						>
 							<HotkeyRecorder
 								currentKey={ttsHotkey}
+								forbiddenCombos={ttsForbidden}
 								onKeyRecorded={(key) => updateTts({ hotkey: key })}
 							/>
 						</FormControl>

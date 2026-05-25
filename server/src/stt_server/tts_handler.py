@@ -140,9 +140,52 @@ def _ensure_synthesizer(state: ServerState) -> bool:
         return False
 
 
+async def _warm_up_synthesizer(state: ServerState, loop: asyncio.AbstractEventLoop) -> None:
+    """Background task: actually download the engine pack + load the ONNX session.
+
+    ``_ensure_synthesizer`` only builds the Python wrapper — it does not
+    touch the network or load the model. Without this task the first
+    user-visible failure surfaces on the very first ``tts_synthesize``,
+    long after the toggle reports as enabled. Running ``warm_up`` here
+    means the install progress + any failure surface immediately on the
+    off→on edge, before the user clicks Play.
+
+    Progress events flow naturally via the ``on_progress``/``on_status``
+    callbacks wired in ``_ensure_synthesizer`` — this coroutine only adds
+    the explicit failure event so the UI can show a Retry banner instead
+    of leaving the toggle stuck in "enabled with no engine".
+    """
+    if state.synthesizer is None or state.synthesizer.is_ready():
+        return
+    try:
+        await loop.run_in_executor(None, state.synthesizer.warm_up)
+    except Exception as exc:
+        logger.warning("TTS warm-up failed", exc_info=True)
+        from src.recorder.domain.swap_errors import classify_swap_error
+
+        info = classify_swap_error(exc)
+        _enqueue(
+            state,
+            loop,
+            json.dumps(
+                {
+                    "type": "tts_install_failed",
+                    "reason": info.user_message,
+                    "category": str(info.category),
+                }
+            ),
+        )
+
+
 @register_command("init_tts", pre_ready=True)
 async def _handle_init_tts(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
-    """Ensure the synthesizer is constructed. Idempotent. Pre-ready safe."""
+    """Ensure the synthesizer is constructed AND warm. Idempotent. Pre-ready safe.
+
+    Two-step: ``_ensure_synthesizer`` builds the wrapper (cheap, no I/O),
+    then a background task eagerly warms the engine so the download +
+    progress + any failure surface immediately rather than waiting for
+    the user's first ``tts_synthesize``.
+    """
     ok = _ensure_synthesizer(state)
     await ws.send(
         json.dumps(
@@ -154,6 +197,11 @@ async def _handle_init_tts(ws: ServerConnection, state: ServerState, data: dict[
             }
         )
     )
+    if ok:
+        loop = asyncio.get_event_loop()
+        task = asyncio.create_task(_warm_up_synthesizer(state, loop))
+        _active_tasks.add(task)
+        task.add_done_callback(_active_tasks.discard)
 
 
 @register_command("shutdown_tts")

@@ -47,7 +47,12 @@ logger = logging.getLogger(__name__)
 #: independently of the per-app-version release — same pattern as the
 #: Kokoro model URLs. Override the whole URL with ``WINSTT_TTS_PACK_URL``
 #: (and optionally ``WINSTT_TTS_PACK_SHA256_URL``) for testing / mirrors.
-_PACK_RELEASE_BASE = "https://github.com/dahshury/winstt2/releases/download/tts-pack-v1"
+#:
+#: Hosted on the PUBLIC ``dahshury/winstt-assets`` repo, NOT the private
+#: ``dahshury/winstt2`` app repo: ``download_with_progress`` uses tokenless
+#: urllib, and GitHub returns HTTP 404 for asset URLs on private repos to
+#: unauthenticated clients. See ``project_private_repo_breaks_pack_distribution``.
+_PACK_RELEASE_BASE = "https://github.com/dahshury/winstt-assets/releases/download/tts-pack-v1"
 
 #: Approximate confirm-dialog total: engine pack (~29 MB compressed) +
 #: Kokoro fp16 model (~163 MB) + voicepacks (~27 MB). Live progress bars
@@ -105,7 +110,17 @@ def resolve_runtime_dir(override: str | None = None) -> Path:
 
 
 def is_installed(runtime_dir: Path) -> bool:
-    """True when a prior verified extract for this interpreter's pack is present."""
+    """True when a prior verified extract for this interpreter's pack is present.
+
+    Also rejects the double-nested layout (``runtime/<pkg>/<pkg>/``) that
+    can result when a prior install raced a locked ``.pyd``: an earlier
+    ``shutil.rmtree(dst, ignore_errors=True)`` would silently no-op and
+    ``shutil.move`` would then deposit the new package *inside* the
+    leftover one. Python imports the outer dir as a namespace package and
+    the native extension is unreachable (``ImportError: cannot import name
+    'HashTrieMap' from 'rpds'``). Detecting that here forces a clean
+    re-extract instead of trusting a sentinel that lies.
+    """
     sentinel = runtime_dir / _SENTINEL
     if not sentinel.is_file() or not (runtime_dir / "kokoro_onnx").is_dir():
         return False
@@ -113,7 +128,9 @@ def is_installed(runtime_dir: Path) -> bool:
         meta = json.loads(sentinel.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return bool(meta.get("pack_filename") == pack_filename())
+    if meta.get("pack_filename") != pack_filename():
+        return False
+    return not any(child.is_dir() and (child / child.name).is_dir() for child in runtime_dir.iterdir())
 
 
 def _read_remote_sha256(should_cancel: CancelFn | None) -> str | None:
@@ -176,7 +193,22 @@ def ensure_support_pack(
         for child in staging.iterdir():
             dst = runtime_dir / child.name
             if dst.exists():
-                shutil.rmtree(dst, ignore_errors=True) if dst.is_dir() else dst.unlink(missing_ok=True)
+                # NEVER silently swallow: a half-removed dir leaves
+                # ``shutil.move(src_dir, existing_dir)`` falling back to
+                # "move INTO existing", which deposits the new package
+                # under ``runtime/<pkg>/<pkg>/`` and corrupts every
+                # subsequent import (see ``is_installed`` note).
+                try:
+                    if dst.is_dir():
+                        shutil.rmtree(dst)
+                    else:
+                        dst.unlink()
+                except OSError as exc:
+                    raise RuntimeError(
+                        f"Could not replace existing {dst.name} in TTS runtime "
+                        f"({exc}). A previous server process may be holding the "
+                        "file open — restart the app and try enabling TTS again."
+                    ) from exc
             shutil.move(str(child), str(dst))
 
     (runtime_dir / _SENTINEL).write_text(
@@ -196,3 +228,52 @@ def activate(runtime_dir: Path) -> None:
     if rt not in sys.path:
         sys.path.insert(0, rt)
     importlib.invalidate_caches()
+
+
+def _evict_runtime_modules(runtime_dir: Path) -> None:
+    """Pop ``sys.modules`` entries whose code lives under ``runtime_dir``.
+
+    Needed before retrying an import after a failed install: a namespace
+    package previously cached under e.g. ``sys.modules['rpds']`` shadows
+    the freshly-extracted regular package and the import keeps failing.
+    Pure-Python modules drop cleanly; native ``.pyd`` files stay loaded
+    in the OS, but their cached module entry is what blocks re-import.
+    """
+    rt = str(runtime_dir.resolve()).lower()
+    to_drop: list[str] = []
+    for name, mod in list(sys.modules.items()):
+        candidates: list[str] = []
+        file_attr = getattr(mod, "__file__", None)
+        if isinstance(file_attr, str):
+            candidates.append(file_attr)
+        spec = getattr(mod, "__spec__", None)
+        locs = getattr(spec, "submodule_search_locations", None) if spec else None
+        if locs:
+            candidates.extend(str(loc) for loc in locs)
+        for loc in candidates:
+            if loc and loc.lower().startswith(rt):
+                to_drop.append(name)
+                break
+    for name in to_drop:
+        sys.modules.pop(name, None)
+
+
+def repair_and_reinstall(
+    runtime_dir: Path,
+    on_progress: ProgressFn | None = None,
+    should_cancel: CancelFn | None = None,
+) -> None:
+    """Force a clean re-download after detecting a corrupt pack at runtime.
+
+    Used by the synthesizer's auto-recovery path: when ``import
+    kokoro_onnx`` raises ``ImportError``, that's almost always a sign the
+    runtime layout is corrupt (e.g., the double-nested ``rpds/rpds/``
+    pattern). Removing the sentinel makes ``is_installed`` return False,
+    evicting modules clears any namespace-package cache from the first
+    failed attempt, and then ``ensure_support_pack`` re-extracts cleanly.
+    The caller still has to ``activate()`` + retry the import.
+    """
+    sentinel = runtime_dir / _SENTINEL
+    sentinel.unlink(missing_ok=True)
+    _evict_runtime_modules(runtime_dir)
+    ensure_support_pack(runtime_dir, on_progress=on_progress, should_cancel=should_cancel)

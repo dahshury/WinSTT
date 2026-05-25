@@ -74,20 +74,11 @@ function resetStubs(): void {
 	__resetAudioMuteForTesting__();
 }
 
-// Capture console.log so we can pin down the dbg() messages emitted by
-// production code. Without this, every dbg() string literal in
-// audio-mute.ts (the "audio-mute" tag and the human-readable status
-// strings) survives mutation testing because no test observes them.
-const consoleLogLines: string[] = [];
-const realConsoleLog = console.log;
-console.log = (...args: unknown[]) => {
-	for (const arg of args) {
-		consoleLogLines.push(String(arg));
-	}
-};
-process.on("exit", () => {
-	console.log = realConsoleLog;
-});
+// Capture dbg() messages emitted by production code. The buffer is installed
+// by test/preload.ts as a custom electron-log console-transport so it captures
+// every level (info/warn/error/verbose); patching `console.log` here would
+// miss the `console.info`-routed lines that `dbg()` actually emits.
+const consoleLogLines = (globalThis as unknown as { __testLogLines: string[] }).__testLogLines;
 function recentLogContains(needle: string): boolean {
 	return consoleLogLines.some((line) => line.includes(needle));
 }

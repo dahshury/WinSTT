@@ -70,18 +70,9 @@ uv --version
 </Step>
 
 <Step>
-### Clone the onnx-asr dependency
-
-The server depends on [onnx-asr](https://github.com/istupakov/onnx-asr) as a local editable package. Clone it into the `examples/` directory:
-
-```bash
-mkdir examples
-git clone https://github.com/istupakov/onnx-asr.git examples/onnx-asr
-```
-</Step>
-
-<Step>
 ### Install server dependencies
+
+The server depends on `onnx-asr` via a [WinSTT-side fork](https://github.com/dahshury/onnx-asr) pinned to a specific commit in `server/pyproject.toml` (`[tool.uv.sources]`). `uv sync` fetches it automatically — no separate clone step is needed.
 
 The transcription stack is **ONNX-only** (no PyTorch in core deps). You must
 pick exactly one ONNX runtime extra — `cpu` and `gpu` conflict:
@@ -218,21 +209,31 @@ app; only the bundled `stt-server.exe` differs:
 | `WinSTT-CPU-Setup-<version>.exe` | ~150 MB | `onnxruntime` (CPU) |
 | `WinSTT-GPU-Setup-<version>.exe` | ~2 GB | `onnxruntime-gpu` + all NVIDIA CUDA wheels (falls back to CPU if CUDA isn't viable) |
 
-Build the server executables, then the installers:
+Build the server executables, then the installers. Both commands run from the **repo root**. Packaging configs and intermediate PyInstaller output live under `packaging/`:
+
+```
+packaging/
+├── electron-builder.yml
+├── electron-builder.cpu.yml
+├── electron-builder.gpu.yml
+└── stt-server-dist/
+    ├── cpu/
+    └── gpu/
+```
+
+The final installer lands at `<repo>/dist/`.
 
 <Tabs items={['CPU', 'GPU']}>
 <Tab value="CPU">
 ```bash
-pwsh server/packaging/build.ps1 -Flavor cpu   # -> frontend/stt-server-dist-cpu/
-cd frontend
-bun run electron:build:cpu
+pwsh server/packaging/build.ps1 -Flavor cpu   # -> packaging/stt-server-dist/cpu/
+bun run electron:build:cpu                    # -> dist/
 ```
 </Tab>
 <Tab value="GPU">
 ```bash
-pwsh server/packaging/build.ps1 -Flavor gpu   # -> frontend/stt-server-dist-gpu/
-cd frontend
-bun run electron:build:gpu
+pwsh server/packaging/build.ps1 -Flavor gpu   # -> packaging/stt-server-dist/gpu/
+bun run electron:build:gpu                    # -> dist/
 ```
 </Tab>
 </Tabs>
@@ -261,14 +262,10 @@ Make sure the STT server is running before launching the Electron app. The front
 </Accordion>
 
 <Accordion title="'onnx-asr' not found during uv sync">
-The server references `onnx-asr` as a local editable dependency at `../examples/onnx-asr`. Make sure you cloned the repo:
-
-```bash
-git clone https://github.com/istupakov/onnx-asr.git examples/onnx-asr
-```
+`onnx-asr` is fetched directly from `github.com/dahshury/onnx-asr` (pinned commit in `server/pyproject.toml`); no local checkout is needed. If `uv sync` fails on the git fetch, check your network / GitHub access and rerun.
 </Accordion>
 
 <Accordion title="bun install fails on uiohook-napi">
-`uiohook-napi` is a native module that needs compilation. Make sure you have the Visual Studio Build Tools (C++ workload) installed. The `trustedDependencies` in `package.json` already includes it.
+The prebuilt NAPI binary that ships with `uiohook-napi` is loaded as-is — no rebuild is forced, so no MSVC is required for dev. If you've modified the native helpers (`frontend/electron/native/src/winstt-*.c`) and want to rebuild them, that step does need Visual Studio Build Tools — run `bun --cwd frontend run native:build` from a Developer Command Prompt.
 </Accordion>
 </Accordions>

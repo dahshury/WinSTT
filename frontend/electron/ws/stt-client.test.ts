@@ -70,27 +70,20 @@ class MockWebSocket {
 // and `WebSocket.OPEN` so both shape-points need our test double.
 (globalThis as { WebSocket: unknown }).WebSocket = MockWebSocket;
 
-mock.module("../lib/debug-log", () => ({
-	dbg: () => undefined,
-	dbgVerbose: () => undefined,
-	getLogger: () => ({
-		error: () => undefined,
-		warn: () => undefined,
-		info: () => undefined,
-		debug: () => undefined,
-	}),
-}));
+const { debugLogMock } = await import("@test/mocks/debug-log");
+mock.module("../lib/debug-log", () => debugLogMock());
 
-// `electron/lib/sentry-main` statically imports `app` from electron, which
-// happy-dom + bun:test can't resolve. Stub it so the SUT (and the pure
-// helpers exported alongside it) can be imported locally without the
-// "Export named 'app' not found" failure.
-mock.module("../lib/sentry-main", () => ({
-	breadcrumb: () => undefined,
-}));
-mock.module("electron", () => ({
-	app: { getPath: () => "" },
-}));
+// Spread `electronMock()` (imported below) so the process-global mock leak
+// this installs is semantically complete — partial shims would make every
+// later test importing `BrowserWindow`/`Tray`/etc. from `electron` throw
+// "Export named X not found". With electron properly mocked, the real
+// `electron/lib/sentry-main` loads fine (its `app` import resolves through
+// the mock) and `breadcrumb()` becomes a no-op (no DSN configured). NOT
+// mocking sentry-main avoids a process-global module leak that would
+// poison `electron/lib/sentry-main.test.ts` — bun 1.3.6 doesn't isolate
+// mock.module across test files.
+const { electronMock } = await import("@test/mocks/electron");
+mock.module("electron", () => electronMock());
 
 const {
 	SttClient,

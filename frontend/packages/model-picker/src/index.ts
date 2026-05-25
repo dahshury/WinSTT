@@ -86,6 +86,9 @@ export {
 // STT helpers exposed for the settings panel's quantization label + realtime
 // viability check (used outside the picker for download progress UI etc.).
 export { resolveQuantCache } from "./stt/lib/cache-helpers";
+// Shared STT picker dimensions — keep the BrowserWindow (`ModelPickerWindow`)
+// and the settings popup at the same width so both surfaces look identical.
+export { STT_PICKER_WIDTH_CLASS, STT_PICKER_WIDTH_PX } from "./stt/lib/dimensions";
 export { isRealtimeViable } from "./stt/lib/realtime-viability";
 // Whisper / NeMo / GigaAM / Kaldi / Lite-Whisper / T-One STT picker.
 export {

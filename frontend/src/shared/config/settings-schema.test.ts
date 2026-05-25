@@ -11,6 +11,7 @@ import {
 	modelSettingsSchema,
 	qualitySettingsSchema,
 	snippetEntrySchema,
+	ttsSettingsSchema,
 } from "./settings-schema";
 
 describe("modelSettingsSchema defaults", () => {
@@ -129,8 +130,17 @@ describe("generalSettingsSchema", () => {
 		expect(generalSettingsSchema.parse({}).repasteHotkey).toBe("LCtrl+LShift+V");
 	});
 
-	test("repasteHotkey accepts an empty string (feature disabled)", () => {
-		expect(generalSettingsSchema.parse({ repasteHotkey: "" }).repasteHotkey).toBe("");
+	test("repasteHotkey rejects empty input but rescues via .catch() to default", () => {
+		// Empty would silently disable the re-paste shortcut and bypass the
+		// conflict detector — both undesirable. `.min(1).catch(default)`
+		// rehydrates corrupt persisted state instead of throwing.
+		expect(generalSettingsSchema.parse({ repasteHotkey: "" }).repasteHotkey).toBe("LCtrl+LShift+V");
+	});
+
+	test("repasteHotkey accepts a valid combo verbatim", () => {
+		expect(generalSettingsSchema.parse({ repasteHotkey: "LCtrl+LAlt+R" }).repasteHotkey).toBe(
+			"LCtrl+LAlt+R"
+		);
 	});
 
 	test("visualizerSize falls back to 'xs' for legacy integer values via .catch()", () => {
@@ -168,8 +178,11 @@ describe("hotkeySettingsSchema", () => {
 		expect(hotkeySettingsSchema.parse({}).pushToTalkKey).toBe("LCtrl+LMeta");
 	});
 
-	test("rejects empty pushToTalkKey", () => {
-		expect(() => hotkeySettingsSchema.parse({ pushToTalkKey: "" })).toThrow();
+	test("rescues empty pushToTalkKey via .catch() to default", () => {
+		// `.min(1)` would throw on empty input; `.catch()` swallows the failure
+		// and reverts to the documented default. Without the catch, a single
+		// bad row in settings.json would wipe the entire `hotkey` section.
+		expect(hotkeySettingsSchema.parse({ pushToTalkKey: "" }).pushToTalkKey).toBe("LCtrl+LMeta");
 	});
 });
 
@@ -425,6 +438,40 @@ describe("generalSettingsSchema defaults (lock-down)", () => {
 describe("hotkeySettingsSchema (lock-down)", () => {
 	test("default 'LCtrl+LMeta' is preserved when no input", () => {
 		expect(hotkeySettingsSchema.parse({}).pushToTalkKey).toBe("LCtrl+LMeta");
+	});
+});
+
+describe("ttsSettingsSchema hotkey", () => {
+	test("defaults to LMeta+LShift+E (must always be non-empty)", () => {
+		expect(ttsSettingsSchema.parse({}).hotkey).toBe("LMeta+LShift+E");
+	});
+
+	test("rescues empty hotkey via .catch() to default", () => {
+		expect(ttsSettingsSchema.parse({ hotkey: "" }).hotkey).toBe("LMeta+LShift+E");
+	});
+
+	test("accepts a valid combo verbatim", () => {
+		expect(ttsSettingsSchema.parse({ hotkey: "LCtrl+LAlt+T" }).hotkey).toBe("LCtrl+LAlt+T");
+	});
+});
+
+describe("appSettingsSchema — no hotkey field is ever empty", () => {
+	test("all three hotkeys resolve to non-empty defaults from an empty input", () => {
+		const out = appSettingsSchema.parse({});
+		expect(out.hotkey.pushToTalkKey.length).toBeGreaterThan(0);
+		expect(out.general.repasteHotkey.length).toBeGreaterThan(0);
+		expect(out.tts.hotkey.length).toBeGreaterThan(0);
+	});
+
+	test("all three hotkeys rehydrate to non-empty even when persisted as empty strings", () => {
+		const out = appSettingsSchema.parse({
+			hotkey: { pushToTalkKey: "" },
+			general: { repasteHotkey: "" },
+			tts: { hotkey: "" },
+		});
+		expect(out.hotkey.pushToTalkKey).toBe("LCtrl+LMeta");
+		expect(out.general.repasteHotkey).toBe("LCtrl+LShift+V");
+		expect(out.tts.hotkey).toBe("LMeta+LShift+E");
 	});
 });
 

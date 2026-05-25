@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { debugLogMock } from "@test/mocks/debug-log";
 import { electronMock } from "@test/mocks/electron";
 import { storeMock } from "@test/mocks/store";
 
@@ -86,24 +87,13 @@ mock.module("electron", () => ({
 // side effects when dbg is a silent no-op.
 const dbgCalls: Array<{ tag: string; args: unknown[] }> = [];
 mock.module("../lib/debug-log", () => ({
+	...debugLogMock(),
 	dbg: (tag: string, ...args: unknown[]) => {
 		dbgCalls.push({ tag, args });
 	},
 	dbgVerbose: (tag: string, ...args: unknown[]) => {
 		dbgCalls.push({ tag, args });
 	},
-	// `getLogger` is consumed transitively by `sentry-main.ts` (imported via
-	// the `breadcrumb` helper added in stt-process.ts). Stub it so this module
-	// can load under test without pulling in the real electron-log transport.
-	getLogger: () => ({
-		info: () => undefined,
-		warn: () => undefined,
-		error: () => undefined,
-		verbose: () => undefined,
-		debug: () => undefined,
-		silly: () => undefined,
-		log: () => undefined,
-	}),
 }));
 
 function dbgHas(tag: string, messageContains: string): boolean {

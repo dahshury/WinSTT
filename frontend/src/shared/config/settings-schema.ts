@@ -119,8 +119,10 @@ export const generalSettingsSchema = z.object({
 	// app's native binding (e.g. paste-without-formatting). Stored in the same
 	// uiohook-style accelerator format the HotkeyRecorder produces; the main
 	// process converts it to an Electron accelerator at registration time.
-	// Empty string = feature disabled (shortcut not registered).
-	repasteHotkey: z.string().default("LCtrl+LShift+V"),
+	// Must be non-empty: an empty string from corrupt settings would leave
+	// the feature silently disabled; instead `.catch()` rehydrates to the
+	// canonical default so the binding is always present.
+	repasteHotkey: z.string().min(1).default("LCtrl+LShift+V").catch("LCtrl+LShift+V"),
 	loopbackDeviceIndex: z.number().int().nullable().default(null),
 	// Wake word used when recordingMode is "wakeword". The renderer auto-
 	// selects the right detector backend from this value alone (see
@@ -228,7 +230,12 @@ export const generalSettingsSchema = z.object({
 });
 
 export const hotkeySettingsSchema = z.object({
-	pushToTalkKey: z.string().min(1).default("LCtrl+LMeta"),
+	// `.catch("LCtrl+LMeta")` is the rescue path: if settings.json on disk
+	// ever sneaks an empty string in (legacy data, hand-edit, sync conflict),
+	// `.min(1)` would throw and `decodeSettingsPayload` would wipe the whole
+	// `hotkey` section. Catch rehydrates to the documented default so the
+	// PTT binding is always present and never empty.
+	pushToTalkKey: z.string().min(1).default("LCtrl+LMeta").catch("LCtrl+LMeta"),
 });
 
 // Dictionary entries are dual-purpose, matching Wispr Flow's two-mode model:
@@ -461,14 +468,19 @@ export const integrationsSchema = z.object({
 // `lang` mirror the Kokoro voice catalog (see
 // ``server/src/synthesizer/infrastructure/voice_catalog.py``); `speed` is
 // a multiplier clamped 0.5..2.0. `hotkey` is the global combo that
-// captures the active selection and reads it aloud; empty = bound from
-// the in-app UI only. `device` mirrors the STT side's "auto / cuda / cpu".
+// captures the active selection and reads it aloud; defaults to
+// LWin+LShift+E so the binding is always present when TTS is enabled
+// (users can rebind from settings). `device` mirrors the STT side's
+// "auto / cuda / cpu".
 export const ttsSettingsSchema = z.object({
 	enabled: z.boolean().default(false),
 	voice: z.string().default("af_heart"),
 	lang: z.string().default("en-us"),
 	speed: z.number().min(0.5).max(2.0).default(1.0),
-	hotkey: z.string().default(""),
+	// Always non-empty: TTS the feature stays gated by `enabled`, but the
+	// hotkey itself must always carry a valid combo so the conflict checker
+	// can compare against it and the recorder UI never renders an empty chip.
+	hotkey: z.string().min(1).default("LMeta+LShift+E").catch("LMeta+LShift+E"),
 	device: z.enum(["auto", "cuda", "cpu"]).default("auto"),
 });
 

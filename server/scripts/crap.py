@@ -26,7 +26,6 @@ Usage (from server/):
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import json
 import subprocess
 import sys
@@ -48,7 +47,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--top", type=int, default=25)
     p.add_argument("--skip-coverage", action="store_true")
     p.add_argument("--strict", action="store_true")
-    p.add_argument("--json", dest="json_out", default=None)
+    # Default: write reports/crap.json (matches frontend convention).
+    # Pass --no-json to skip the file write.
+    p.add_argument("--json", dest="json_out", default="reports/crap.json")
+    p.add_argument("--no-json", dest="json_out", action="store_const", const=None)
     return p.parse_args(argv)
 
 
@@ -114,10 +116,21 @@ def main() -> int:
     if args.json_out:
         out_path = PROJECT_ROOT / args.json_out
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(
-            json.dumps([dataclasses.asdict(m) for m in metrics], indent=2) + "\n",
-            encoding="utf-8",
-        )
+        # Match the frontend's camelCase shape so artifacts compose 1:1
+        # across both jobs (frontend/reports/crap.json + server/reports/crap.json).
+        payload = [
+            {
+                "file": m.file,
+                "name": m.name,
+                "startLine": m.start_line,
+                "endLine": m.end_line,
+                "complexity": m.complexity,
+                "coverage": m.coverage,
+                "crap": m.crap,
+            }
+            for m in metrics
+        ]
+        out_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     if args.strict:
         over = [m for m in metrics if (m.crap or 0.0) >= args.threshold]

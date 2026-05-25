@@ -35,13 +35,13 @@ describe("getDevPageUrl", () => {
 		expect(getDevPageUrl("main")).toBe("http://localhost:3000/");
 	});
 
-	test("non-main page resolves to its filename under the dev origin", () => {
-		expect(getDevPageUrl("settings")).toBe("http://localhost:3000/settings.html");
-		expect(getDevPageUrl("overlay")).toBe("http://localhost:3000/overlay.html");
-		expect(getDevPageUrl("tray-menu")).toBe("http://localhost:3000/tray-menu.html");
-		expect(getDevPageUrl("model-picker")).toBe("http://localhost:3000/model-picker.html");
-		expect(getDevPageUrl("device-picker")).toBe("http://localhost:3000/device-picker.html");
-		expect(getDevPageUrl("onboarding")).toBe("http://localhost:3000/onboarding.html");
+	test("non-main page resolves to its windows/ filename under the dev origin", () => {
+		expect(getDevPageUrl("settings")).toBe("http://localhost:3000/windows/settings.html");
+		expect(getDevPageUrl("overlay")).toBe("http://localhost:3000/windows/overlay.html");
+		expect(getDevPageUrl("tray-menu")).toBe("http://localhost:3000/windows/tray-menu.html");
+		expect(getDevPageUrl("model-picker")).toBe("http://localhost:3000/windows/model-picker.html");
+		expect(getDevPageUrl("device-picker")).toBe("http://localhost:3000/windows/device-picker.html");
+		expect(getDevPageUrl("onboarding")).toBe("http://localhost:3000/windows/onboarding.html");
 	});
 });
 
@@ -49,7 +49,7 @@ describe("getPackagedPagePath", () => {
 	test("dev mode resolves under dist-renderer next to electron output", () => {
 		setPackaged(false);
 		const p = getPackagedPagePath("settings");
-		expect(p.endsWith(`${path.sep}settings.html`)).toBe(true);
+		expect(p.endsWith(path.join("windows", "settings.html"))).toBe(true);
 		expect(p.includes("dist-renderer")).toBe(true);
 	});
 
@@ -101,7 +101,10 @@ describe("loadRendererPage", () => {
 			"settings"
 		);
 		expect(calls).toEqual([
-			{ kind: "file", arg: path.join("C:\\fake\\res", "renderer", "settings.html") },
+			{
+				kind: "file",
+				arg: path.join("C:\\fake\\res", "renderer", "windows", "settings.html"),
+			},
 		]);
 		setPackaged(false);
 	});
@@ -116,7 +119,7 @@ describe("isAllowedRendererUrl", () => {
 	test("dev mode accepts the dev origin", () => {
 		setPackaged(false);
 		expect(isAllowedRendererUrl("http://localhost:3000/")).toBe(true);
-		expect(isAllowedRendererUrl("http://localhost:3000/settings.html")).toBe(true);
+		expect(isAllowedRendererUrl("http://localhost:3000/windows/settings.html")).toBe(true);
 	});
 
 	test("dev mode rejects other origins", () => {

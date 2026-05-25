@@ -36,7 +36,6 @@ function AuthorLabel({ family }: { family: FamilyKey }) {
 			data-rail-section={family}
 		>
 			{config.logoSrc ? (
-				/* biome-ignore lint/performance/noImgElement: Provider icons are static local PNGs served from /public — Vite copies them verbatim and the renderer loads them via plain <img>. */
 				<img
 					alt={`${author} logo`}
 					className="size-4 shrink-0 rounded-[3px] object-cover"

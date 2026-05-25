@@ -20,14 +20,18 @@ export type RendererPage =
 	| "device-picker"
 	| "onboarding";
 
+// `main` stays at the project root (Vite dev-root convention); the 6 secondary
+// window entries live under `windows/` so the frontend root isn't cluttered
+// with one HTML per BrowserWindow. The build mirrors the input layout, so the
+// packaged paths are `renderer/windows/<name>.html`.
 const PAGE_TO_FILE: Record<RendererPage, string> = {
 	main: "index.html",
-	settings: "settings.html",
-	overlay: "overlay.html",
-	"tray-menu": "tray-menu.html",
-	"model-picker": "model-picker.html",
-	"device-picker": "device-picker.html",
-	onboarding: "onboarding.html",
+	settings: "windows/settings.html",
+	overlay: "windows/overlay.html",
+	"tray-menu": "windows/tray-menu.html",
+	"model-picker": "windows/model-picker.html",
+	"device-picker": "windows/device-picker.html",
+	onboarding: "windows/onboarding.html",
 };
 
 const DEV_BASE_URL = "http://localhost:3000";
@@ -45,7 +49,7 @@ function getRendererRoot(): string {
 	return path.join(import.meta.dirname, "..", "..", "dist-renderer");
 }
 
-/** Returns the dev-server URL for a page, e.g. http://localhost:3000/settings.html.
+/** Returns the dev-server URL for a page, e.g. http://localhost:3000/windows/settings.html.
  * Only meaningful while `bun dev` is running. */
 export function getDevPageUrl(page: RendererPage): string {
 	const file = PAGE_TO_FILE[page];

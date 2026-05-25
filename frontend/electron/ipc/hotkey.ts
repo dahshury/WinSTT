@@ -9,6 +9,7 @@ import { breadcrumb } from "../lib/sentry-main";
 import { playRecordingSound } from "../lib/sound";
 import { getStoreValue } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
+import { setHotkeyRecording } from "./recording-mode";
 
 const MAX_COMBO_KEYS = 3;
 
@@ -175,6 +176,9 @@ export function setupHotkeyHandlers(
 		// Stryker disable next-line ArrayDeclaration: handleStartRecording() always resets this before recording state is observed again
 		peakSnapshot = [];
 		recordingSender = null;
+		// Cross-handler edge: clear the global flag so the sibling listeners
+		// (tts-hotkey, repaste-hotkey) come back armed.
+		setHotkeyRecording(false);
 	};
 
 	const updatePeakSnapshot = () => {
@@ -500,6 +504,10 @@ export function setupHotkeyHandlers(
 		// Temporarily disable hotkey detection while recording
 		pressedKeys.clear();
 		setIsActive(false);
+		// Cross-handler edge: tts-hotkey and repaste-hotkey gate their fire
+		// paths on this flag so the user's recording keystrokes don't
+		// accidentally trigger sibling actions (paste, read selection).
+		setHotkeyRecording(true);
 		return true;
 	};
 

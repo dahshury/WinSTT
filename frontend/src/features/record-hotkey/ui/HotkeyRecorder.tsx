@@ -2,7 +2,9 @@ import { PlayIcon, StopCircleIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { AnimatePresence, domAnimation, LazyMotion, m as motion } from "motion/react";
 import { useTranslations } from "next-intl";
+import { useState } from "react";
 import { formatKeyName } from "@/shared/lib/format-key-name";
+import { compareHotkeys, isHotkeyConflict } from "@/shared/lib/hotkey-conflict";
 import { springs } from "@/shared/lib/springs";
 import {
 	InputGroup,
@@ -13,8 +15,27 @@ import {
 } from "@/shared/ui/input-group";
 import { useKeyRecorder } from "../model/use-key-recorder";
 
+/**
+ * One row in the `forbiddenCombos` prop. `combo` is the uiohook accelerator
+ * string the other hotkey is currently bound to; `label` is the human-readable
+ * name of that other hotkey (already i18n-resolved by the caller) used in the
+ * inline error so the user sees WHICH binding is colliding, not just THAT one is.
+ */
+export interface ForbiddenCombo {
+	combo: string;
+	label: string;
+}
+
 export interface HotkeyRecorderProps {
 	currentKey: string;
+	/**
+	 * Combos this recorder must NOT collide with. A recording that ends up equal
+	 * to, a subset of, or a superset of any entry here is rejected: the parent
+	 * `onKeyRecorded` is never called and an inline error is shown identifying
+	 * the conflicting binding by its `label`. Empty / undefined disables the
+	 * cross-hotkey check (single-recorder usages still work unchanged).
+	 */
+	forbiddenCombos?: readonly ForbiddenCombo[];
 	onKeyRecorded: (key: string) => void;
 }
 
@@ -39,6 +60,25 @@ export function resolveDisplayText(
 		return liveKeys.map(formatKeyName).join(" + ");
 	}
 	return pressKeysLabel;
+}
+
+/**
+ * Scan `forbiddenCombos` for the first conflict against `candidate`. Pure so
+ * the wiring stays test-friendly and the component body stays small.
+ */
+export function findConflict(
+	candidate: string,
+	forbiddenCombos: readonly ForbiddenCombo[] | undefined
+): ForbiddenCombo | null {
+	if (!forbiddenCombos) {
+		return null;
+	}
+	for (const entry of forbiddenCombos) {
+		if (isHotkeyConflict(compareHotkeys(candidate, entry.combo))) {
+			return entry;
+		}
+	}
+	return null;
 }
 
 const CHIP_BASE =
@@ -139,15 +179,64 @@ function ToggleIcon({ recording }: { recording: boolean }) {
 	);
 }
 
-export function HotkeyRecorder({ currentKey, onKeyRecorded }: HotkeyRecorderProps) {
-	const { recording, liveKeys, startRecording, stopRecording } = useKeyRecorder({
-		onKeyRecorded,
-	});
+function ConflictMessage({ message }: { message: string }) {
+	// Inline below the recorder card — matches the user's "no toast" preference.
+	// `role="alert"` so screen readers announce the rejection on next-tick paint,
+	// which is what assistive-tech users expect for "your last action failed".
+	return (
+		<motion.div
+			animate={{ opacity: 1, y: 0 }}
+			className="mt-1 text-[11px] text-error"
+			exit={{ opacity: 0, y: -2 }}
+			initial={{ opacity: 0, y: -2 }}
+			key="conflict"
+			role="alert"
+			transition={{ duration: 0.16, ease: "easeOut" }}
+		>
+			{message}
+		</motion.div>
+	);
+}
+
+export function HotkeyRecorder({
+	currentKey,
+	onKeyRecorded,
+	forbiddenCombos,
+}: HotkeyRecorderProps) {
 	const t = useTranslations("hotkey");
+	const [conflictMessage, setConflictMessage] = useState<string | null>(null);
+
+	// Intercept the raw recording-done event so we can reject a conflicting
+	// combo BEFORE telling the parent to persist it. The recorder hook still
+	// drives all the keyboard state — we only gate the final commit.
+	const handleRecorded = (combo: string): void => {
+		const conflict = findConflict(combo, forbiddenCombos);
+		if (conflict) {
+			setConflictMessage(
+				t("conflictError", { other: conflict.label, combo: formatCombo(conflict.combo) })
+			);
+			return;
+		}
+		setConflictMessage(null);
+		onKeyRecorded(combo);
+	};
+
+	const { recording, liveKeys, startRecording, stopRecording } = useKeyRecorder({
+		onKeyRecorded: handleRecorded,
+	});
+
 	const displayText = resolveDisplayText(recording, liveKeys, currentKey, t("pressKeys"));
 	const isHint = recording && liveKeys.length === 0;
-	const onToggle = recording ? stopRecording : startRecording;
-	const tone = recording ? "danger" : "default";
+	const onToggle = recording
+		? stopRecording
+		: () => {
+				// Clearing the error on a fresh attempt prevents stale "conflicts with
+				// X" text from outliving the next successful recording.
+				setConflictMessage(null);
+				startRecording();
+			};
+	const showError = !recording && conflictMessage !== null;
+	const tone = recording || showError ? "danger" : "default";
 	const toggleLabel = recording ? t("stop") : t("record");
 
 	return (
@@ -178,6 +267,10 @@ export function HotkeyRecorder({ currentKey, onKeyRecorded }: HotkeyRecorderProp
 						</motion.span>
 					</InputGroupAddon>
 				</InputGroup>
+				{/* Bare conditional (no AnimatePresence) so the alert unmounts
+				    instantly when the user starts a new recording — keeps the
+				    DOM in sync with state without waiting on an exit animation. */}
+				{showError && <ConflictMessage message={conflictMessage} />}
 			</div>
 		</LazyMotion>
 	);

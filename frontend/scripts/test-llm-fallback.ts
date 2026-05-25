@@ -13,13 +13,9 @@
  *   OPENROUTER_API_KEY=sk-or-v1-... bun run scripts/test-llm-fallback.ts
  */
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { computeModelExclusionConfig, filterModelsForFallback, isFallbackExcluded } from "@picker";
 import { generateObject } from "ai";
 import { z } from "zod";
-import {
-	computeModelExclusionConfig,
-	filterModelsForFallback,
-	isFallbackExcluded,
-} from "../src/widgets/openrouter-model-selector/lib/model-exclusion";
 
 const apiKey = process.env.OPENROUTER_API_KEY;
 if (!apiKey) {

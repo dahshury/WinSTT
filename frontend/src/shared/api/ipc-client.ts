@@ -231,7 +231,14 @@ export const gpuGetInfo = () => invokeOrDefault<GpuInfo | null>(IPC.GPU_GET_INFO
 export const getSystemLocale = () => invokeOrDefault<string>(IPC.APP_GET_SYSTEM_LOCALE, "");
 
 // Settings
-export const settingsSave = (settings: AppSettings) =>
+//
+// `Partial<AppSettings>` because partial top-level sections are legal:
+// `settingsSaveImpl` in main only iterates `Object.entries(payload)` and writes
+// keys that appear in `ALLOWED_SETTINGS_KEYS`. Callers like `useVadCalibration`
+// and `useDeviceSwitchFeedback` send only `{ audio: ... }` so they cannot
+// clobber a section (e.g. `general.overlayMode`) that the user just changed in
+// the settings panel but hasn't debounce-saved yet.
+export const settingsSave = (settings: Partial<AppSettings>) =>
 	send(IPC.SETTINGS_SAVE, { settings: settings as AppSettingsSaveInput });
 export const settingsLoad = async (): Promise<AppSettings> => {
 	const payload = await invokeOrDefault<unknown>(IPC.SETTINGS_LOAD, {});
@@ -949,6 +956,13 @@ export interface TtsInstallStatusPayload {
 	phase: TtsInstallPhase;
 }
 
+export interface TtsInstallFailedPayload {
+	/** Coarse failure category (network / model-not-found / cancelled / ...). */
+	category: string | null;
+	/** Classified, human-readable reason — safe to show directly in the UI. */
+	reason: string;
+}
+
 const TTS_VOICE_FALLBACK: TtsVoiceCatalog = { voices: [], languages: [] };
 
 const TTS_ESTIMATE_FALLBACK: TtsDownloadEstimatePayload = {
@@ -1064,6 +1078,10 @@ export const onTtsModelDownloadProgress = (
 export const onTtsInstallStatus = (
 	callback: (payload: TtsInstallStatusPayload) => void
 ): (() => void) => onCast<TtsInstallStatusPayload>(IPC.TTS_INSTALL_STATUS, callback);
+
+export const onTtsInstallFailed = (
+	callback: (payload: TtsInstallFailedPayload) => void
+): (() => void) => onCast<TtsInstallFailedPayload>(IPC.TTS_INSTALL_FAILED, callback);
 
 export const onTtsModelDownloadComplete = (
 	callback: (payload: { cancelled: boolean }) => void

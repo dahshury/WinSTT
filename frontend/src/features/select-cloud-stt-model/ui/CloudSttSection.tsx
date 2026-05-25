@@ -11,29 +11,22 @@ import {
 	providerDisplayName,
 } from "@/entities/cloud-stt-provider";
 import { useSettingsStore } from "@/entities/setting";
-import { windowOpenSettings } from "@/shared/api/ipc-client";
 import type { CloudSttProvider } from "@/shared/api/models";
-import { Tooltip } from "@/shared/ui/tooltip";
 
 /**
- * Cloud provider header — name, status dot, and either a "Configure key →"
- * button (when there is no key) or nothing (otherwise; rows below are
- * directly selectable). Status dot mirrors the credential probe:
- * verified=green, invalid=red, anything else=grey.
+ * Cloud provider header — name and credential status dot. Only rendered for
+ * providers whose API key has been configured (filtered by the parent), so
+ * the "no key" branch is unreachable here. Status dot mirrors the credential
+ * probe: verified=green, invalid=red, anything else=grey.
  */
 function CloudProviderHeader({ provider }: { provider: CloudSttProvider }) {
-	const apiKey = useSettingsStore((s) => s.settings.integrations[provider].apiKey);
 	const status = useCredentialStatus(provider);
-	const t = useTranslations("integrations");
-	const hasKey = apiKey.trim().length > 0;
 
-	let dotColor = "bg-foreground-dim/40";
+	let dotColor = "bg-foreground-muted";
 	if (status.status === "verified") {
 		dotColor = "bg-success";
 	} else if (status.status === "invalid") {
 		dotColor = "bg-error";
-	} else if (hasKey && status.status === "idle") {
-		dotColor = "bg-foreground-muted";
 	}
 
 	return (
@@ -44,15 +37,6 @@ function CloudProviderHeader({ provider }: { provider: CloudSttProvider }) {
 					{providerDisplayName(provider)}
 				</span>
 			</div>
-			{!hasKey && (
-				<button
-					className="text-foreground-muted text-xs underline-offset-2 hover:text-foreground-secondary hover:underline"
-					onClick={windowOpenSettings}
-					type="button"
-				>
-					{t("configureKey")} →
-				</button>
-			)}
 		</div>
 	);
 }
@@ -65,19 +49,13 @@ interface CloudRowProps {
 }
 
 function CloudRow({ provider, model, onSelect, selected }: CloudRowProps) {
-	const apiKey = useSettingsStore((s) => s.settings.integrations[provider].apiKey);
-	const t = useTranslations("integrations");
-	const hasKey = apiKey.trim().length > 0;
 	const fullId = `${provider}:${model.id}`;
-
-	const button = (
+	return (
 		<button
 			className={[
-				"flex w-full items-start gap-2 px-3 py-2 text-left transition-colors",
+				"flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left transition-colors",
 				selected ? "bg-accent/10" : "hover:bg-surface-2",
-				hasKey ? "cursor-pointer" : "cursor-not-allowed opacity-40",
 			].join(" ")}
-			disabled={!hasKey}
 			onClick={() => onSelect(fullId)}
 			type="button"
 		>
@@ -92,15 +70,6 @@ function CloudRow({ provider, model, onSelect, selected }: CloudRowProps) {
 			</span>
 		</button>
 	);
-
-	if (hasKey) {
-		return button;
-	}
-	return (
-		<Tooltip content={t("configureKeyTooltip")} side="top">
-			<span>{button}</span>
-		</Tooltip>
-	);
 }
 
 interface CloudSttSectionProps {
@@ -110,16 +79,22 @@ interface CloudSttSectionProps {
 
 /**
  * Compact cloud-models panel rendered above the local picker (settings panel
- * + detached picker window). Each provider gets a sticky header followed by
- * a list of provider-native model rows; selecting one persists the colon-
- * prefixed `provider:model_id` to `settings.model.model`.
- *
- * Greyed-out rows (no key) carry a tooltip pointing users back at Settings →
- * Integrations. The selected row is highlighted; the rest of the model
- * picker continues to render local models below.
+ * + detached picker window). Only providers whose API key has been configured
+ * contribute a header + model rows; the section collapses to nothing when no
+ * provider has a key (the local picker below is the only path forward until
+ * the user adds a key in Settings → Integrations).
  */
 export function CloudSttSection({ selectedId, onSelect }: CloudSttSectionProps) {
 	const t = useTranslations("integrations");
+	const integrations = useSettingsStore((s) => s.settings.integrations);
+	const visibleProviders = CLOUD_PROVIDERS.filter(
+		(provider) => integrations[provider].apiKey.trim().length > 0
+	);
+
+	if (visibleProviders.length === 0) {
+		return null;
+	}
+
 	return (
 		<div className="overflow-hidden rounded-md border border-border bg-surface-elevated">
 			<div className="flex items-center gap-2 bg-surface-2 px-3 py-1.5">
@@ -128,7 +103,7 @@ export function CloudSttSection({ selectedId, onSelect }: CloudSttSectionProps) 
 					{t("cloudModels")}
 				</span>
 			</div>
-			{CLOUD_PROVIDERS.map((provider) => (
+			{visibleProviders.map((provider) => (
 				<div key={provider}>
 					<CloudProviderHeader provider={provider} />
 					{CLOUD_CATALOG[provider].map((model) => (

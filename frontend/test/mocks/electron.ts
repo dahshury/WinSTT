@@ -68,6 +68,12 @@ export interface ElectronMockHandle {
 	dialog: {
 		showOpenDialogSync: () => string[] | undefined;
 	};
+	globalShortcut: {
+		register: (accelerator: string, handler: () => void) => boolean;
+		unregister: (accelerator: string) => void;
+		unregisterAll: () => void;
+		isRegistered: (accelerator: string) => boolean;
+	};
 	ipcMain: {
 		handle: (channel: string, listener: IpcHandler) => void;
 		removeHandler: (channel: string) => void;
@@ -220,6 +226,12 @@ export function electronMock(): ElectronMockHandle {
 			showOpenDialogSync: () => undefined,
 		},
 		ipcMain,
+		globalShortcut: {
+			register: () => true,
+			unregister: () => undefined,
+			unregisterAll: () => undefined,
+			isRegistered: () => false,
+		},
 		Menu: {
 			buildFromTemplate: () => ({ popup: () => undefined }),
 			setApplicationMenu: () => undefined,

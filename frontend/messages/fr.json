@@ -648,6 +648,8 @@
     "downloading": "Téléchargement du modèle…",
     "downloadingProgress": "{percent}% — {downloaded} sur {total}",
     "errorTitle": "Erreur TTS",
+    "installFailedTitle": "Échec de l'installation TTS",
+    "retry": "Réessayer",
     "noVoicesYet": "Aucune voix chargée pour le moment. Activez TTS pour récupérer le catalogue.",
     "installPhaseEngine": "Installation du moteur",
     "installPhaseModel": "Installation du modèle vocal",
