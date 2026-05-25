@@ -465,10 +465,7 @@ async function searchOrCached(trimmed: string, page: number): Promise<OllamaLibr
 	return cached ?? (await searchOrFail(trimmed, page, cacheKey));
 }
 
-async function searchOllamaLibrary(
-	query: string,
-	page = 0
-): Promise<OllamaLibrarySearchResult> {
+async function searchOllamaLibrary(query: string, page = 0): Promise<OllamaLibrarySearchResult> {
 	const trimmed = query.trim();
 	return trimmed.length > 0
 		? await searchOrCached(trimmed, page)

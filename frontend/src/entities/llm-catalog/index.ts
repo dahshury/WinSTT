@@ -1,4 +1,3 @@
-export { assessOllamaFit } from "./lib/hardware-fit";
 export {
 	type BuiltinPresetEntry,
 	type CustomModifier,
@@ -8,6 +7,7 @@ export {
 	type PresetLevel,
 	TONE_GROUP,
 } from "@/shared/lib/preset-prompts";
+export { assessOllamaFit } from "./lib/hardware-fit";
 export { findRecommendedModel, RECOMMENDED_OLLAMA_MODELS } from "./lib/recommended-models";
 export {
 	type PausedPullState,

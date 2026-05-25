@@ -84,11 +84,7 @@ function getContainerClassName(isListenMode: boolean): string {
 	return `${base} ${border}`;
 }
 
-export {
-	getContainerClassName,
-	runTranscription,
-	validateDroppedFile,
-};
+export { getContainerClassName, runTranscription, validateDroppedFile };
 
 // Test-only exports — pure helpers extracted from drag/drop handling.
 export const __audio_display_test_helpers__ = {

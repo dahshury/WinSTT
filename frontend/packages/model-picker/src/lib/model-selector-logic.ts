@@ -412,4 +412,3 @@ export function groupModelsByMaker(
 
 	return entries.toSorted(([a], [b]) => a.localeCompare(b));
 }
-

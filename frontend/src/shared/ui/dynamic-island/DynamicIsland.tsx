@@ -1,4 +1,4 @@
-import { AnimatePresence, type HTMLMotionProps, m, type Variants } from "motion/react";
+import { AnimatePresence, type HTMLMotionProps, m } from "motion/react";
 import { createContext, type ReactNode, useContext, useEffect, useReducer, useRef } from "react";
 
 /**
@@ -47,7 +47,7 @@ export interface Preset {
 // short capsule at rest (`default`/`compact`) that can grow downward for
 // multi-line content (`tall`/`ultra`/`massive`). `empty` collapses the shell
 // to a 0×0 box used to hide the island without unmounting the tree.
-export const presets: Record<SizePresets, Preset> = {
+const presets: Record<SizePresets, Preset> = {
 	default: { width: 150, height: 36, borderRadius: 28 },
 	compact: { width: 240, height: 36, borderRadius: 28 },
 	compactLong: { width: 360, height: 36, borderRadius: 28 },
@@ -174,14 +174,6 @@ export function useDynamicIslandSize(): ContextValue {
  * ref so step-array identity changes on subsequent renders don't restart
  * the queue — the schedule is a one-shot, mount-time behavior.
  */
-export function useScheduledAnimations(steps: AnimationStep[]): void {
-	const { scheduleAnimation } = useDynamicIslandSize();
-	const stepsRef = useRef(steps);
-	useEffect(() => {
-		scheduleAnimation(stepsRef.current);
-	}, [scheduleAnimation]);
-}
-
 const shellTransition = { type: "spring" as const, stiffness: 420, damping: 32, mass: 1 };
 
 export interface DynamicIslandProps extends Omit<HTMLMotionProps<"div">, "id"> {
@@ -281,83 +273,6 @@ export function DynamicIsland({
 					</m.div>
 				</AnimatePresence>
 			)}
-		</m.div>
-	);
-}
-
-const containerVariants: Variants = {
-	initial: { opacity: 0, scale: 0.96 },
-	animate: { opacity: 1, scale: 1, transition: { duration: 0.18 } },
-	exit: { opacity: 0, scale: 0.96, transition: { duration: 0.12 } },
-};
-
-export interface DynamicContainerProps {
-	children?: ReactNode;
-	className?: string;
-}
-
-export function DynamicContainer({ children, className }: DynamicContainerProps) {
-	return (
-		<m.div
-			animate="animate"
-			className={className}
-			exit="exit"
-			initial="initial"
-			variants={containerVariants}
-		>
-			{children}
-		</m.div>
-	);
-}
-
-const textTransition = { duration: 0.16 };
-
-export interface DynamicTextProps {
-	children?: ReactNode;
-	className?: string;
-}
-
-export function DynamicTitle({ children, className }: DynamicTextProps) {
-	return (
-		<m.h3
-			animate={{ opacity: 1, y: 0 }}
-			className={className}
-			exit={{ opacity: 0, y: -4 }}
-			initial={{ opacity: 0, y: 4 }}
-			transition={textTransition}
-		>
-			{children}
-		</m.h3>
-	);
-}
-
-export function DynamicDescription({ children, className }: DynamicTextProps) {
-	return (
-		<m.p
-			animate={{ opacity: 1, y: 0 }}
-			className={className}
-			exit={{ opacity: 0, y: -4 }}
-			initial={{ opacity: 0, y: 4 }}
-			transition={textTransition}
-		>
-			{children}
-		</m.p>
-	);
-}
-
-export type DynamicDivProps = HTMLMotionProps<"div"> & { className?: string };
-
-export function DynamicDiv({ children, className, ...rest }: DynamicDivProps) {
-	return (
-		<m.div
-			animate={{ opacity: 1 }}
-			className={className}
-			exit={{ opacity: 0 }}
-			initial={{ opacity: 0 }}
-			transition={{ duration: 0.14 }}
-			{...rest}
-		>
-			{children}
 		</m.div>
 	);
 }

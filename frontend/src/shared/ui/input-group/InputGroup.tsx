@@ -1,12 +1,5 @@
 import { Button as BaseButton } from "@base-ui/react/button";
-import { Input as BaseInput } from "@base-ui/react/input";
-import type {
-	ComponentPropsWithoutRef,
-	ComponentPropsWithRef,
-	HTMLAttributes,
-	ReactNode,
-	Ref,
-} from "react";
+import type { ComponentPropsWithRef, HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceClasses, useSurface } from "@/shared/lib/surface";
 
@@ -113,29 +106,6 @@ export function InputGroupContent({ children, className, ...rest }: InputGroupCo
 		>
 			{children}
 		</div>
-	);
-}
-
-export interface InputGroupInputProps extends ComponentPropsWithoutRef<"input"> {
-	ref?: Ref<HTMLInputElement>;
-}
-
-/**
- * Input slot. Uses Base UI `Input` so it carries the same a11y +
- * field-context behaviour as the rest of the system. Renders flush
- * inside the group — no own border or background.
- */
-export function InputGroupInput({ className, ref, ...rest }: InputGroupInputProps) {
-	return (
-		<BaseInput
-			className={cn(
-				"min-w-0 flex-1 border-none bg-transparent px-3 font-sans text-body caret-accent outline-none",
-				"placeholder:text-foreground-muted disabled:cursor-not-allowed",
-				className
-			)}
-			ref={ref}
-			{...rest}
-		/>
 	);
 }
 

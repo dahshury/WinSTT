@@ -136,4 +136,3 @@ export function getProviderIconWithFallback(
 ): string {
 	return getProviderIcon(provider) || fallback || "/provider-icons/openrouter.png";
 }
-

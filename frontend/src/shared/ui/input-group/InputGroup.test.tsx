@@ -5,7 +5,6 @@ import {
 	InputGroupAddon,
 	InputGroupButton,
 	InputGroupContent,
-	InputGroupInput,
 	InputGroupText,
 } from "./InputGroup";
 
@@ -13,7 +12,7 @@ describe("InputGroup", () => {
 	test("renders children inside a flex shell", () => {
 		const { container } = render(
 			<InputGroup>
-				<InputGroupInput placeholder="search" />
+				<input placeholder="search" />
 			</InputGroup>
 		);
 		const root = container.firstChild as HTMLElement;
@@ -23,7 +22,7 @@ describe("InputGroup", () => {
 	test("exposes data-size and data-tone for downstream targeting", () => {
 		const { container } = render(
 			<InputGroup size="sm" tone="active">
-				<InputGroupInput />
+				<input />
 			</InputGroup>
 		);
 		const root = container.firstChild as HTMLElement;
@@ -37,7 +36,7 @@ describe("InputGroup", () => {
 				<InputGroupAddon>
 					<span>start</span>
 				</InputGroupAddon>
-				<InputGroupInput />
+				<input />
 				<InputGroupAddon align="inline-end">
 					<span>end</span>
 				</InputGroupAddon>
@@ -62,8 +61,6 @@ describe("InputGroup", () => {
 			</InputGroup>
 		);
 		const btn = screen.getByRole("button");
-		// Danger tone is a filled error-coloured CTA — the brand colour
-		// reaches the button via `bg-error`.
 		expect(btn.className).toContain("bg-error");
 		fireEvent.click(btn);
 		expect(clicks).toBe(1);

@@ -7,9 +7,9 @@
  * `features/model-download`.
  */
 
-export {
-	type ReasoningEffort,
-	type Verbosity,
+export type {
+	ReasoningEffort,
+	Verbosity,
 } from "./config/model-selector-options";
 export {
 	computeModelExclusionConfig,
@@ -17,17 +17,17 @@ export {
 	isFallbackExcluded,
 	type ModelExclusionConfig,
 } from "./lib/model-exclusion";
-export {
-	type ModelVariant,
-	type ModelVariantInfo,
+export type {
+	ModelVariant,
+	ModelVariantInfo,
 } from "./lib/model-variant-utils";
-export {
-	type FilterableParameter,
-	type OpenRouterProvider,
-	type ParameterInfo,
-	type ProviderInfo,
-	type ProviderPreferences,
-	type ProviderSortOption,
+export type {
+	FilterableParameter,
+	OpenRouterProvider,
+	ParameterInfo,
+	ProviderInfo,
+	ProviderPreferences,
+	ProviderSortOption,
 } from "./lib/openrouter-provider-utils";
 export type { OpenRouterModelSelectorProps } from "./model/openrouter-model-selector.types";
 export {
@@ -42,8 +42,8 @@ export {
 	SttModelSelector,
 	type SttModelSelectorProps,
 } from "./stt/ui/SttModelSelector";
-export {
-	type PickerLabels,
-	type TranslateFn,
+export type {
+	PickerLabels,
+	TranslateFn,
 } from "./types";
 export { OpenRouterModelSelector } from "./ui/OpenRouterModelSelector";

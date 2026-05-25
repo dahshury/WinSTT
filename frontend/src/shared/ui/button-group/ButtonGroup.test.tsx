@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import { ButtonGroup } from "./ButtonGroup";
-import { ButtonGroupText } from "./ButtonGroupText";
 
 describe("ButtonGroup", () => {
 	test("renders a toolbar role with the given aria-label", () => {
@@ -35,17 +34,5 @@ describe("ButtonGroup", () => {
 		);
 		expect(screen.getByText("first")).toBeDefined();
 		expect(screen.getByText("second")).toBeDefined();
-	});
-});
-
-describe("ButtonGroupText", () => {
-	test("renders children", () => {
-		render(<ButtonGroupText>Saved</ButtonGroupText>);
-		expect(screen.getByText("Saved")).toBeDefined();
-	});
-
-	test("merges custom className", () => {
-		render(<ButtonGroupText className="extra-x">X</ButtonGroupText>);
-		expect(screen.getByText("X").className).toContain("extra-x");
 	});
 });

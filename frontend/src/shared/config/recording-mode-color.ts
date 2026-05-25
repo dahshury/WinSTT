@@ -24,4 +24,3 @@ export const RECORDING_MODE_COLOR_RGB = {
 	listen: [34, 197, 94],
 	wakeword: [249, 115, 22],
 } as const satisfies Record<RecordingMode, readonly [number, number, number]>;
-

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { renderHook, type RenderHookResult } from "@testing-library/react";
+import { type RenderHookResult, renderHook } from "@testing-library/react";
 import { IPC } from "@/shared/api/ipc-channels";
 import { useVisualizerStore } from "../model/visualizer-store";
 import { useVisualizerSync } from "./use-visualizer-sync";

@@ -462,4 +462,3 @@ export function shutdownPsHost(): void {
 		}
 	}
 }
-

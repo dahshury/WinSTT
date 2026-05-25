@@ -90,18 +90,6 @@ export const SUPPORTED_EVENT_TYPES = [
 
 export type SupportedEventType = (typeof SUPPORTED_EVENT_TYPES)[number];
 
-const eventSchemas = {
-	realtime: realtimeTextSchema,
-	fullSentence: fullSentenceSchema,
-	recording_start: recordingStartSchema,
-	recording_stop: recordingStopSchema,
-	vad_detect_start: vadDetectStartSchema,
-	vad_detect_stop: vadDetectStopSchema,
-	audio_level: audioLevelSchema,
-	model_download_progress: modelDownloadProgressSchema,
-	wakeword_detected: wakewordDetectedSchema,
-} as const satisfies Record<SupportedEventType, z.ZodTypeAny>;
-
 // ── Public entry point ───────────────────────────────────────────────
 
 /**

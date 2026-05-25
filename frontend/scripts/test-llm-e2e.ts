@@ -14,6 +14,10 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateObject } from "ai";
 import { z } from "zod";
 import {
+	createModelSelection,
+	parseModelSelection,
+} from "../src/shared/lib/openrouter-model-selection";
+import {
 	ALL_PRESET_KEYS,
 	getPresetPrompt,
 	PRESET_LEVELS,
@@ -21,10 +25,6 @@ import {
 	type PresetKey,
 	type PresetLevel,
 } from "../src/shared/lib/preset-prompts";
-import {
-	createModelSelection,
-	parseModelSelection,
-} from "../src/shared/lib/openrouter-model-selection";
 
 const rawApiKey = process.env.OPENROUTER_API_KEY;
 if (!rawApiKey) {

@@ -236,4 +236,3 @@ export function formatModelName(name?: string | null, maker?: string | null): st
 		maker && merged.length > 1 ? dropLeadingMakerToken(merged, maker, formatMaker(maker)) : merged;
 	return final.join(" ");
 }
-
