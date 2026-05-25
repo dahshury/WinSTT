@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -26,10 +28,8 @@ _ALL_STATES = list(RecorderState)
 def test_abort_always_reaches_inactive(transitions: list[RecorderState]) -> None:
     sm = RecorderStateMachine()
     for target in transitions:
-        try:
+        with contextlib.suppress(InvalidStateTransition):
             sm.transition(target)
-        except InvalidStateTransition:
-            pass
     sm.abort()
     assert sm.state == RecorderState.INACTIVE
     assert sm.is_inactive
@@ -40,10 +40,8 @@ def test_abort_always_reaches_inactive(transitions: list[RecorderState]) -> None
 def test_abort_is_idempotent(transitions: list[RecorderState]) -> None:
     sm = RecorderStateMachine()
     for target in transitions:
-        try:
+        with contextlib.suppress(InvalidStateTransition):
             sm.transition(target)
-        except InvalidStateTransition:
-            pass
     sm.abort()
     state_after_first = sm.state
     sm.abort()
@@ -57,7 +55,7 @@ def test_invalid_transition_always_raises(from_state: RecorderState, to_state: R
     sm = RecorderStateMachine()
     # Force the machine into ``from_state`` by overriding the internal field;
     # abort() then would reset, so we go through the (legal) abort + private set.
-    sm._state = from_state  # type: ignore[attr-defined]  # noqa: SLF001
+    sm._state = from_state  # type: ignore[attr-defined]
     if to_state in _VALID_TRANSITIONS[from_state]:
         old = sm.transition(to_state)
         assert old == from_state
@@ -76,8 +74,8 @@ def test_valid_transitions_are_deterministic(from_state: RecorderState, to_state
         return
     sm_a = RecorderStateMachine()
     sm_b = RecorderStateMachine()
-    sm_a._state = from_state  # type: ignore[attr-defined]  # noqa: SLF001
-    sm_b._state = from_state  # type: ignore[attr-defined]  # noqa: SLF001
+    sm_a._state = from_state  # type: ignore[attr-defined]
+    sm_b._state = from_state  # type: ignore[attr-defined]
     old_a = sm_a.transition(to_state)
     old_b = sm_b.transition(to_state)
     assert old_a == old_b == from_state

@@ -193,7 +193,7 @@ warn_no_return = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","soundfile.*","websocket.*","websockets.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnx.*","onnxruntime.*","torch.*","transformers.*","psutil.*","nvidia.*","pynvml.*","kokoro_onnx.*","phonemizer.*","espeakng_loader.*","misaki.*"]
+module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","websocket.*","websockets.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnx.*","onnxruntime.*","torch.*","transformers.*","psutil.*","nvidia.*","pynvml.*","kokoro_onnx.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

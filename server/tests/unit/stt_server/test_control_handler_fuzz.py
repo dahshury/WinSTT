@@ -84,7 +84,7 @@ def _dispatch_safely(command: Any, payload: Any) -> tuple[bool, list[str]]:  # n
     try:
         _run(_dispatch_command(ws, state, payload, command))  # type: ignore[arg-type]
         return False, ws.sent
-    except Exception:  # noqa: BLE001 — fuzzer asserts no leakage
+    except Exception:
         return True, ws.sent
 
 
