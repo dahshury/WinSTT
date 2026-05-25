@@ -1,10 +1,4 @@
-type UpdaterStatus =
-	| "idle"
-	| "checking"
-	| "available"
-	| "not-available"
-	| "downloaded"
-	| "error";
+type UpdaterStatus = "idle" | "checking" | "available" | "not-available" | "downloaded" | "error";
 
 export interface UpdaterStatusEntryInput {
 	message?: string;
