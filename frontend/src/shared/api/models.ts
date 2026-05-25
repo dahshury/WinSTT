@@ -36,7 +36,7 @@ export type CloudSttErrorCode = components["schemas"]["CloudSttErrorCode"];
 // pass (paired with `LlmWarmupStatus.inProgress === true`). Other outcomes
 // are terminal. `"unreachable"` and `"skipped"` mirror the main-process
 // shape exactly so a narrow type guard works on either side.
-export type LlmWarmupOutcome =
+type LlmWarmupOutcome =
 	| "ok"
 	| "model-not-found"
 	| "load-failed"

@@ -319,7 +319,7 @@ const presetEntrySchema = z
 		path: ["targetLang"],
 	});
 
-export const presetsSchema = z
+const presetsSchema = z
 	.array(presetEntrySchema)
 	.default([{ key: "neutral" }])
 	.refine(

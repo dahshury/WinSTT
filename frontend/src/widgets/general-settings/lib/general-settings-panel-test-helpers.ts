@@ -51,7 +51,7 @@ export function visualizerSizeFromIndex(index: number): VisualizerSizePreset {
 	return VISUALIZER_SIZE_PRESETS[index] ?? "xs";
 }
 
-export function buildVisualizerTypeOptions(t: GeneralT): SelectOption[] {
+function buildVisualizerTypeOptions(t: GeneralT): SelectOption[] {
 	return [
 		{ id: "bar", label: t("visualizerBar"), icon: BarChartIcon },
 		{ id: "grid", label: t("visualizerGrid"), icon: GridIcon },
@@ -105,7 +105,7 @@ export function buildRecordingModeOptions(t: GeneralT): readonly {
 	] as const;
 }
 
-export const PORCUPINE_FREE_KEYWORDS = [
+const PORCUPINE_FREE_KEYWORDS = [
 	"alexa",
 	"americano",
 	"blueberry",
@@ -122,7 +122,7 @@ export const PORCUPINE_FREE_KEYWORDS = [
 	"terminator",
 ] as const;
 
-export const OPENWAKEWORD_KEYWORDS = [
+const OPENWAKEWORD_KEYWORDS = [
 	"alexa",
 	"hey_jarvis",
 	"hey_mycroft",
@@ -147,15 +147,15 @@ function classifyEngine(inPorc: boolean, inOww: boolean): WakeWordEngine {
 	return table[key];
 }
 
-export function engineForKeyword(word: string): WakeWordEngine {
+function engineForKeyword(word: string): WakeWordEngine {
 	return classifyEngine(PORCUPINE_KEYWORD_SET.has(word), OPENWAKEWORD_KEYWORD_SET.has(word));
 }
 
-export function formatWakeWordLabel(word: string): string {
+function formatWakeWordLabel(word: string): string {
 	return word.replace(/_/g, " ");
 }
 
-export function buildUnifiedWakeWordList(): readonly string[] {
+function buildUnifiedWakeWordList(): readonly string[] {
 	const all = new Set<string>([...PORCUPINE_FREE_KEYWORDS, ...OPENWAKEWORD_KEYWORDS]);
 	const sortKey = (w: string): number => {
 		const engine = engineForKeyword(w);
@@ -170,10 +170,10 @@ export function buildUnifiedWakeWordList(): readonly string[] {
 	return [...all].toSorted((a, b) => sortKey(a) - sortKey(b) || a.localeCompare(b));
 }
 
-export const ALL_WAKE_WORDS = buildUnifiedWakeWordList();
+const ALL_WAKE_WORDS = buildUnifiedWakeWordList();
 export const DEFAULT_WAKE_WORD = "alexa";
 
-export function engineBadge(engine: WakeWordEngine): string {
+function engineBadge(engine: WakeWordEngine): string {
 	if (engine === "composite") {
 		return "2x";
 	}
@@ -195,7 +195,7 @@ function isKnownWakeWord(word: string | undefined): word is string {
 	return word !== undefined && ALL_WAKE_WORDS.includes(word);
 }
 
-export function reconcileWakeWord(currentWord: string | undefined): string {
+function reconcileWakeWord(currentWord: string | undefined): string {
 	return isKnownWakeWord(currentWord) ? currentWord : DEFAULT_WAKE_WORD;
 }
 
@@ -264,7 +264,7 @@ export interface StartupFlags {
 	startMinimized: boolean;
 }
 
-export function readBoolFlag(value: boolean | undefined, fallback: boolean): boolean {
+function readBoolFlag(value: boolean | undefined, fallback: boolean): boolean {
 	return value ?? fallback;
 }
 
@@ -301,9 +301,7 @@ const LIVE_TRANSCRIPTION_DISPLAY_VALUES: Record<LiveTranscriptionDisplayValue, t
 	both: true,
 };
 
-export function isLiveTranscriptionDisplayValue(
-	value: string
-): value is LiveTranscriptionDisplayValue {
+function isLiveTranscriptionDisplayValue(value: string): value is LiveTranscriptionDisplayValue {
 	return Object.hasOwn(LIVE_TRANSCRIPTION_DISPLAY_VALUES, value);
 }
 
@@ -311,7 +309,7 @@ export function liveOverlayDisabled(general: GeneralSettings | undefined): boole
 	return !(general?.showRecordingOverlay ?? true);
 }
 
-export function needsOverlay(value: LiveTranscriptionDisplayValue): boolean {
+function needsOverlay(value: LiveTranscriptionDisplayValue): boolean {
 	return value === "in-pill" || value === "both";
 }
 
@@ -356,7 +354,7 @@ export function buildOverlayModeSwitcherOptions(t: GeneralT): SwitcherOption[] {
 	];
 }
 
-export function buildLiveTranscriptionDisplayOptions(
+function buildLiveTranscriptionDisplayOptions(
 	t: GeneralT,
 	overlayDisabled: boolean
 ): readonly {

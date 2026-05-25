@@ -65,7 +65,7 @@ export interface LlmDraftSnapshot {
 	transforms: LlmFeatureDraft & PresetCarrier & { hotkey: string };
 }
 
-export const DEFAULT_FEATURE: LlmFeatureDraft = {
+const DEFAULT_FEATURE: LlmFeatureDraft = {
 	enabled: false,
 	provider: "ollama",
 	model: "",
@@ -77,12 +77,12 @@ export const DEFAULT_FEATURE: LlmFeatureDraft = {
 	maxOutputTokens: null,
 };
 
-export const DEFAULT_PRESET_CARRIER: PresetCarrier = {
+const DEFAULT_PRESET_CARRIER: PresetCarrier = {
 	presets: [{ key: "neutral" }],
 	customModifiers: [],
 };
 
-export const DEFAULT_LLM: LlmDraftSnapshot = {
+const DEFAULT_LLM: LlmDraftSnapshot = {
 	endpoint: "http://localhost:11434",
 	openrouterApiKey: "",
 	dictation: { ...DEFAULT_FEATURE, ...DEFAULT_PRESET_CARRIER },
@@ -103,7 +103,7 @@ export const PRESET_LABEL_KEY = {
 	translate: "presetTranslate",
 } as const;
 
-export const LEVEL_LABEL_KEY = {
+const LEVEL_LABEL_KEY = {
 	light: "levelLight",
 	medium: "levelMedium",
 	high: "levelHigh",
@@ -111,7 +111,7 @@ export const LEVEL_LABEL_KEY = {
 
 export const DEFAULT_LEVEL: PresetLevel = "medium";
 
-export function readFeatureSnapshot(
+function readFeatureSnapshot(
 	incoming: Partial<LlmFeatureDraft> | null | undefined
 ): LlmFeatureDraft {
 	return { ...DEFAULT_FEATURE, ...(incoming ?? {}) };
@@ -131,9 +131,7 @@ function resolveCustomModifiers(src: Partial<PresetCarrier>): readonly CustomMod
 		: DEFAULT_PRESET_CARRIER.customModifiers;
 }
 
-export function readPresetCarrier(
-	incoming: Partial<PresetCarrier> | null | undefined
-): PresetCarrier {
+function readPresetCarrier(incoming: Partial<PresetCarrier> | null | undefined): PresetCarrier {
 	const src = incoming ?? {};
 	return {
 		presets: resolvePresets(src),
@@ -261,7 +259,7 @@ function entryShapeOf(key: IndependentKey): EntryShape {
 	return key === "translate" ? "translate" : leveledOrPlain(key);
 }
 
-export function makeIndependentEntry(
+function makeIndependentEntry(
 	key: IndependentKey,
 	levelOverride?: PresetLevel,
 	targetLangOverride?: string
@@ -338,7 +336,7 @@ function findFirstDifferentModel(models: readonly OllamaModel[], current: string
 	return first === current ? null : first;
 }
 
-export function pickReplacementOllamaModel(
+function pickReplacementOllamaModel(
 	models: readonly OllamaModel[],
 	current: string
 ): string | null {
@@ -453,7 +451,7 @@ function showOllamaNotReachable(deps: FeatureToggleDeps): void {
 	deps.setShowOllamaDialog(true);
 }
 
-export async function tryEnableOllamaForFeature(deps: FeatureToggleDeps): Promise<void> {
+async function tryEnableOllamaForFeature(deps: FeatureToggleDeps): Promise<void> {
 	const reachable = await deps.checkOllamaReachable();
 	const flows: Readonly<Record<"reachable" | "unreachable", (d: FeatureToggleDeps) => void>> = {
 		reachable: runReachableOllamaFlow,
@@ -497,7 +495,7 @@ function hasOpenRouterApiKey(deps: FeatureToggleDeps): boolean {
 	return Boolean(deps.openrouterApiKey);
 }
 
-export function tryEnableOpenRouterForFeature(deps: FeatureToggleDeps): void {
+function tryEnableOpenRouterForFeature(deps: FeatureToggleDeps): void {
 	const flows: Readonly<Record<"hasKey" | "noKey", (d: FeatureToggleDeps) => void>> = {
 		hasKey: continueOpenRouterEnable,
 		noKey: showOpenRouterApiKeyDialog,

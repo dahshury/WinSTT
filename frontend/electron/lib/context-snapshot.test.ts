@@ -2,8 +2,13 @@ import { describe, expect, test } from "bun:test";
 import {
 	EMPTY_CONTEXT,
 	formatContextForPrompt,
+	isDeniedByList,
 	type WindowContextSnapshot,
 } from "./context-snapshot";
+
+function makeSnapshot(overrides: Partial<WindowContextSnapshot> = {}): WindowContextSnapshot {
+	return { ...EMPTY_CONTEXT, ...overrides };
+}
 
 describe("EMPTY_CONTEXT", () => {
 	test("exposes empty strings for every snapshot field", () => {
@@ -202,5 +207,76 @@ describe("formatContextForPrompt — caret-split mode", () => {
 		const before = { ...snapshot };
 		formatContextForPrompt(snapshot);
 		expect(snapshot).toEqual(before);
+	});
+});
+
+describe("isDeniedByList", () => {
+	test("returns false for an empty deny list", () => {
+		expect(isDeniedByList(makeSnapshot({ appExe: "chrome.exe" }), [])).toBe(false);
+	});
+
+	test("matches an exe entry against the snapshot's appExe (case-insensitive)", () => {
+		expect(isDeniedByList(makeSnapshot({ appExe: "1Password.exe" }), ["1password.exe"])).toBe(
+			true
+		);
+	});
+
+	test("matches a bare-host pattern against the snapshot's URL host", () => {
+		expect(
+			isDeniedByList(makeSnapshot({ url: "https://bank.example.com/account" }), ["example.com"])
+		).toBe(true);
+	});
+
+	test("matches a wildcard *.host pattern after stripping the leading *.", () => {
+		expect(
+			isDeniedByList(makeSnapshot({ url: "https://mail.example.com" }), ["*.example.com"])
+		).toBe(true);
+	});
+
+	test("does not match a host with no URL captured", () => {
+		expect(isDeniedByList(makeSnapshot({ appExe: "chrome.exe" }), ["example.com"])).toBe(false);
+	});
+
+	test("ignores empty / whitespace-only deny patterns", () => {
+		expect(isDeniedByList(makeSnapshot({ appExe: "chrome.exe" }), ["   ", "", "chrome.exe"])).toBe(
+			true
+		);
+	});
+
+	test("returns false when neither exe nor host matches any pattern", () => {
+		expect(
+			isDeniedByList(makeSnapshot({ appExe: "chrome.exe", url: "https://github.com" }), [
+				"1password.exe",
+				"bank.com",
+			])
+		).toBe(false);
+	});
+});
+
+describe("formatContextForPrompt — IDE detection", () => {
+	test("emits the IDE-context marker when appExe is a recognised editor", () => {
+		const result = formatContextForPrompt(
+			makeSnapshot({ appExe: "code.exe", windowTitle: "VS Code" })
+		);
+		expect(result).toContain("IDE context: yes");
+	});
+
+	test("recognises JetBrains-family binaries via prefix match", () => {
+		for (const exe of ["idea64.exe", "pycharm64.exe", "webstorm64.exe", "rider64.exe"]) {
+			const result = formatContextForPrompt(makeSnapshot({ appExe: exe, windowTitle: "JB" }));
+			expect(result).toContain("IDE context: yes");
+		}
+	});
+
+	test("does not emit IDE marker for unrelated apps", () => {
+		const result = formatContextForPrompt(
+			makeSnapshot({ appExe: "chrome.exe", windowTitle: "Chrome" })
+		);
+		expect(result).not.toContain("IDE context");
+	});
+
+	test("does not emit IDE marker when appExe is missing", () => {
+		const result = formatContextForPrompt(makeSnapshot({ windowTitle: "Untitled" }));
+		expect(result).not.toContain("IDE context");
 	});
 });
