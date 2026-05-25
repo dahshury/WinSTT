@@ -16,10 +16,10 @@ import {
 } from "@/shared/lib/openrouter-model-selection";
 
 /** The model ID for OpenRouter Auto. */
-export const OPENROUTER_AUTO_MODEL_ID = "openrouter/auto";
+const OPENROUTER_AUTO_MODEL_ID = "openrouter/auto";
 
 /** Auto can be represented as either empty string `""` or `"openrouter/auto"`. */
-export function isAutoModel(value: string | undefined | null): boolean {
+function isAutoModel(value: string | undefined | null): boolean {
 	if (!value || value.trim() === "") {
 		return true;
 	}

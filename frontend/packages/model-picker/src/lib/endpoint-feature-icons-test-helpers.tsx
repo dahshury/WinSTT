@@ -26,7 +26,7 @@ export interface FeatureIconConfig {
 	textClass: string;
 }
 
-export const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
+const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 	tools: {
 		icon: <HugeiconsIcon className="size-3" icon={Wrench01Icon} />,
 		iconSm: <HugeiconsIcon className="size-2.5" icon={Wrench01Icon} />,
@@ -106,7 +106,7 @@ export const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 	},
 };
 
-export const FEATURE_PRIORITY = [
+const FEATURE_PRIORITY = [
 	"tools",
 	"parallel_tool_calls",
 	"reasoning",
@@ -128,7 +128,7 @@ const QUANTIZATION_LABELS: Record<string, string> = {
 	gguf: "GGUF",
 };
 
-export function getQuantizationLabel(endpoint: OpenRouterEndpoint): string | undefined {
+function getQuantizationLabel(endpoint: OpenRouterEndpoint): string | undefined {
 	const quant = endpoint.quantization;
 	if (!quant) {
 		return;
@@ -146,7 +146,7 @@ export interface ChipChromeOptions {
 	shouldShowLabel: boolean;
 }
 
-export function chipSizeKey(showLabel: boolean, flat: boolean, isSmall: boolean): number {
+function chipSizeKey(showLabel: boolean, flat: boolean, isSmall: boolean): number {
 	// biome-ignore lint/suspicious/noBitwiseOperators: intentional bit packing for stable O(1) lookup key
 	return (showLabel ? 4 : 0) | (flat ? 2 : 0) | (isSmall ? 1 : 0);
 }
@@ -177,7 +177,7 @@ export function getChipLabelClass(isSmall: boolean): string {
 	);
 }
 
-export function buildQuantizationFeature(quantLabel: string): {
+function buildQuantizationFeature(quantLabel: string): {
 	key: string;
 	config: FeatureIconConfig;
 } {
@@ -196,7 +196,7 @@ export function buildQuantizationFeature(quantLabel: string): {
 	};
 }
 
-export function resolveParamFeature(
+function resolveParamFeature(
 	param: string,
 	supportedParamsSet: Set<string>
 ): FeatureIconConfig | null {
@@ -206,7 +206,7 @@ export function resolveParamFeature(
 	return FEATURE_ICONS[param] ?? null;
 }
 
-export function appendSupportedParams(
+function appendSupportedParams(
 	features: Array<{ key: string; config: FeatureIconConfig }>,
 	supportedParamsSet: Set<string>,
 	maxIcons: number

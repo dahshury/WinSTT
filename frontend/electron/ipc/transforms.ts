@@ -64,7 +64,7 @@ function sendToWindow(win: BrowserWindow, channel: string, payload: unknown): vo
 	try {
 		win.webContents.send(channel, payload);
 	} catch (err) {
-		dbg("transforms", `broadcast failed: ${(err as Error).message}`);
+		dbg("transforms", `broadcast failed: ${getErrorMessage(err)}`);
 	}
 }
 

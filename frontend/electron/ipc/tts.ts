@@ -98,7 +98,7 @@ function broadcastAll(channel: string, payload: unknown): void {
 		try {
 			bw.webContents.send(channel, payload);
 		} catch (err) {
-			dbg("tts", `broadcast failed for ${channel}: ${(err as Error).message}`);
+			dbg("tts", `broadcast failed for ${channel}: ${getErrorMessage(err)}`);
 		}
 	}
 }

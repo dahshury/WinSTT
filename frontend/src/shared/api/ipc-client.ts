@@ -6,12 +6,10 @@ import type {
 	AudioDevice,
 	GpuInfo,
 	LlmWarmupModelStatus,
-	LlmWarmupOutcome,
 	LlmWarmupStatus,
 	OllamaDeleteResult,
 	OllamaDetectResult,
 	OllamaLibraryCatalogResult as OllamaLibraryCatalogResultT,
-	OllamaLibrarySearchResult as OllamaLibrarySearchResultT,
 	OllamaLibraryTagsResult as OllamaLibraryTagsResultT,
 	OllamaModel,
 	OllamaPullProgress,
@@ -21,7 +19,7 @@ import type {
 	ServerStatus,
 } from "./models";
 
-export type { LlmWarmupModelStatus, LlmWarmupOutcome, LlmWarmupStatus };
+export type { LlmWarmupModelStatus, LlmWarmupStatus };
 
 import { decodeSettingsPayload } from "./settings-codec";
 
@@ -486,7 +484,7 @@ export const fetchModelsWithState = () =>
 // Live host snapshot + server-authoritative fit assessments.
 // Spec source of truth: spec/openapi.yaml LiveResources / *FitAssessment.
 
-export interface LiveGpuEntry {
+interface LiveGpuEntry {
 	free_vram_bytes: number;
 	name: string;
 	total_vram_bytes: number;
@@ -585,7 +583,7 @@ export const dialogOpenFile = (
 ) => invokeOrDefault<string | null>(IPC.DIALOG_OPEN_FILE, null, { filters, title });
 
 // Sound library — custom recording-sound files persisted under userData/sounds/.
-export interface SoundLibraryEntryDTO {
+interface SoundLibraryEntryDTO {
 	id: string;
 	name: string;
 	path: string;
@@ -821,14 +819,10 @@ export type {
 	OllamaDetectResult,
 	OllamaModel,
 	OllamaPullProgress,
-	OllamaPullProgressStatus,
 	OllamaPullResult,
 	OllamaScanResult,
-	OpenRouterEndpoint,
 	OpenRouterModel,
-	OpenRouterPricing,
 	OpenRouterScanResult,
-	RecommendedOllamaModel,
 } from "./models";
 
 const OLLAMA_SCAN_FALLBACK: OllamaScanResult = {
@@ -912,14 +906,14 @@ export const onTransformFailed = (
 
 // ─── TTS ──────────────────────────────────────────────────────────────
 
-export interface TtsVoice {
+interface TtsVoice {
 	gender: string;
 	id: string;
 	label: string;
 	language: string;
 }
 
-export interface TtsLanguage {
+interface TtsLanguage {
 	code: string;
 	label: string;
 }
@@ -931,12 +925,6 @@ export interface TtsVoiceCatalog {
 
 export interface TtsSpeakResult {
 	requestId: string;
-}
-
-export interface TtsSpeakSelectionResult {
-	requestId: string;
-	source: "uia" | "clipboard" | "empty";
-	text: string;
 }
 
 export interface TtsChunkPayload {
@@ -1052,13 +1040,6 @@ export const ttsSpeak = (payload: {
  * of LLM rewrite. Empty selection broadcasts {@link onTtsFailed} with
  * reason "No text selected".
  */
-export const ttsSpeakSelection = (): Promise<TtsSpeakSelectionResult> =>
-	invokeOrDefault<TtsSpeakSelectionResult>(IPC.TTS_SPEAK_SELECTION, {
-		requestId: "",
-		text: "",
-		source: "empty",
-	});
-
 /** Cancel one or every active TTS request. */
 export const ttsCancel = (requestId?: string): void => {
 	send(IPC.TTS_CANCEL, { requestId });
@@ -1157,24 +1138,10 @@ export const cancelOllamaModelPull = (model: string): Promise<{ cancelled: boole
 export const deleteOllamaModel = (model: string): Promise<OllamaDeleteResult> =>
 	invokeOrDefault<OllamaDeleteResult>(IPC.LLM_DELETE_MODEL, OLLAMA_DELETE_FALLBACK, { model });
 
-const OLLAMA_LIBRARY_SEARCH_FALLBACK: OllamaLibrarySearchResultT = {
-	hits: [],
-	hasMore: false,
-	page: 0,
-	query: "",
-};
-
 const OLLAMA_LIBRARY_TAGS_FALLBACK: OllamaLibraryTagsResultT = {
 	model: "",
 	tags: [],
 };
-
-export const searchOllamaLibrary = (query: string, page = 0): Promise<OllamaLibrarySearchResultT> =>
-	invokeOrDefault<OllamaLibrarySearchResultT>(
-		IPC.LLM_SEARCH_OLLAMA_LIBRARY,
-		{ ...OLLAMA_LIBRARY_SEARCH_FALLBACK, query, page },
-		{ query, page }
-	);
 
 export const fetchOllamaLibraryTags = (model: string): Promise<OllamaLibraryTagsResultT> =>
 	invokeOrDefault<OllamaLibraryTagsResultT>(
@@ -1286,17 +1253,3 @@ export const aboutGetNotices = (): Promise<string> =>
 
 export const aboutGetAppInfo = (): Promise<AboutAppInfo> =>
 	invokeOrDefault<AboutAppInfo>(IPC.ABOUT_GET_APP_INFO, ABOUT_APP_INFO_FALLBACK);
-
-/**
- * Run a one-shot transform against arbitrary sample text — used by the
- * Transforms playground to preview a prompt before binding it.
- *
- * WIP: the main-process IPC handler isn't wired up yet. The renderer-side
- * Transforms UI calls this from its Playground "Run" button; until the
- * handler lands the call throws so failures are visible instead of
- * pretending to succeed with an empty string.
- */
-export const previewTransform = (_sample: string, _prompt: string): Promise<string> =>
-	Promise.reject(
-		new Error("previewTransform: IPC handler not yet wired (main-process implementation pending)")
-	);

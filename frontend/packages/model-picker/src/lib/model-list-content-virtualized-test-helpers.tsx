@@ -42,7 +42,7 @@ const VARIANT_GRADIENT_MAP: Record<ModelVariantKey, string> = {
 };
 
 const uniqueEndpointsCache = new WeakMap<OpenRouterModel, OpenRouterEndpoint[]>();
-export function getCachedUniqueEndpoints(model: OpenRouterModel): OpenRouterEndpoint[] {
+function getCachedUniqueEndpoints(model: OpenRouterModel): OpenRouterEndpoint[] {
 	const cached = uniqueEndpointsCache.get(model);
 	if (cached) {
 		return cached;
@@ -52,19 +52,19 @@ export function getCachedUniqueEndpoints(model: OpenRouterModel): OpenRouterEndp
 	return fresh;
 }
 
-export function isPositiveNumber(value: number | null | undefined): value is number {
+function isPositiveNumber(value: number | null | undefined): value is number {
 	return value != null && value > 0;
 }
 
-export function hasModelEndpoints(model: OpenRouterModel): boolean {
+function hasModelEndpoints(model: OpenRouterModel): boolean {
 	return !!(model.endpoints && model.endpoints.length > 0);
 }
 
-export function getEndpointProviderSlug(endpoint: OpenRouterEndpoint): string {
+function getEndpointProviderSlug(endpoint: OpenRouterEndpoint): string {
 	return endpoint.tag || endpoint.provider_name;
 }
 
-export function findSelectedProvider(
+function findSelectedProvider(
 	endpoints: OpenRouterEndpoint[],
 	parsedProviderSlug: string | undefined
 ): OpenRouterEndpoint | null {
@@ -92,7 +92,7 @@ interface SelectionFlags {
 	isSelected: boolean;
 }
 
-export function computeSelectionFlags(
+function computeSelectionFlags(
 	modelId: string,
 	parsedModelId: string | undefined,
 	parsedProviderSlug: string | undefined
@@ -104,7 +104,7 @@ export function computeSelectionFlags(
 	};
 }
 
-export function computeModelEndpoints(model: OpenRouterModel): {
+function computeModelEndpoints(model: OpenRouterModel): {
 	hasEndpoints: boolean;
 	uniqueEndpoints: OpenRouterEndpoint[];
 } {
@@ -113,13 +113,13 @@ export function computeModelEndpoints(model: OpenRouterModel): {
 	return { hasEndpoints, uniqueEndpoints };
 }
 
-export function computeVariantClasses(
+function computeVariantClasses(
 	model: OpenRouterModel
 ): ReturnType<typeof getVariantClasses> | null {
 	return model.variant ? getVariantClasses(model.variant) : null;
 }
 
-export function computeHeaderPricing(
+function computeHeaderPricing(
 	uniqueEndpoints: OpenRouterEndpoint[],
 	hasProviders: boolean
 ): ReturnType<typeof getPricingTier> | null {
@@ -130,7 +130,7 @@ export function computeHeaderPricing(
 	return firstEndpoint ? getPricingTier(firstEndpoint.pricing) : null;
 }
 
-export function computeSelectedProvider(
+function computeSelectedProvider(
 	uniqueEndpoints: OpenRouterEndpoint[],
 	flags: SelectionFlags,
 	parsedProviderSlug: string | undefined
@@ -140,7 +140,7 @@ export function computeSelectedProvider(
 		: null;
 }
 
-export function computeModelHeaderState(
+function computeModelHeaderState(
 	model: OpenRouterModel,
 	parsedModelId: string | undefined,
 	parsedProviderSlug: string | undefined,
@@ -167,11 +167,11 @@ const MODEL_CARD_BASE_CLASSES = cn(
 );
 const MODEL_CARD_SELECTED_CLASSES = "border-accent/50 bg-accent/10 shadow-md ring-1 ring-accent/30";
 
-export function isAnyModelSelected(flags: SelectionFlags): boolean {
+function isAnyModelSelected(flags: SelectionFlags): boolean {
 	return flags.isSelected || flags.isProviderSelected;
 }
 
-export function getModelCardClassName(flags: SelectionFlags): string {
+function getModelCardClassName(flags: SelectionFlags): string {
 	return cn(MODEL_CARD_BASE_CLASSES, isAnyModelSelected(flags) && MODEL_CARD_SELECTED_CLASSES);
 }
 
@@ -182,7 +182,7 @@ const PROVIDER_CARD_BASE_CLASSES = cn(
 );
 const PROVIDER_CARD_SELECTED_CLASSES = "border-accent/50 bg-accent/10 ring-1 ring-accent/30";
 
-export function getProviderCardClassName(isSelected: boolean): string {
+function getProviderCardClassName(isSelected: boolean): string {
 	return cn(PROVIDER_CARD_BASE_CLASSES, isSelected && PROVIDER_CARD_SELECTED_CLASSES);
 }
 
@@ -191,15 +191,15 @@ const SELECTION_DOT_BASE =
 const SELECTION_DOT_SELECTED = "bg-accent shadow-[0_0_4px_var(--color-accent-glow-strong)]";
 const SELECTION_DOT_IDLE = "bg-transparent ring-1 ring-border/50 group-hover/provider:ring-border";
 
-export function getSelectionDotClassName(isSelected: boolean): string {
+function getSelectionDotClassName(isSelected: boolean): string {
 	return cn(SELECTION_DOT_BASE, isSelected ? SELECTION_DOT_SELECTED : SELECTION_DOT_IDLE);
 }
 
-export function getNonFreeBaseTextColor(withForegroundFallback: boolean): string {
+function getNonFreeBaseTextColor(withForegroundFallback: boolean): string {
 	return withForegroundFallback ? "text-foreground-secondary" : "text-foreground";
 }
 
-export function getPricingBaseTextColor(
+function getPricingBaseTextColor(
 	pricingInfo: ReturnType<typeof getPricingTier>,
 	withForegroundFallback: boolean
 ): string {
@@ -209,13 +209,11 @@ export function getPricingBaseTextColor(
 	return getNonFreeBaseTextColor(withForegroundFallback);
 }
 
-export function getPricingExtraClass(
-	pricingInfo: ReturnType<typeof getPricingTier>
-): string | false {
+function getPricingExtraClass(pricingInfo: ReturnType<typeof getPricingTier>): string | false {
 	return pricingInfo.tier === "free" ? false : pricingInfo.className;
 }
 
-export function getPricingClassName(
+function getPricingClassName(
 	pricingInfo: ReturnType<typeof getPricingTier>,
 	withForegroundFallback: boolean
 ): string {
@@ -226,19 +224,19 @@ export function getPricingClassName(
 	);
 }
 
-export function getPricingLabel(pricingInfo: ReturnType<typeof getPricingTier>): string {
+function getPricingLabel(pricingInfo: ReturnType<typeof getPricingTier>): string {
 	return pricingInfo.tier === "free" ? "Free" : pricingInfo.label;
 }
 
-export function getProvidersRowState(isOpen: boolean): "open" | "closed" {
+function getProvidersRowState(isOpen: boolean): "open" | "closed" {
 	return isOpen ? "open" : "closed";
 }
 
-export function getProvidersGridTemplateRows(isOpen: boolean): string {
+function getProvidersGridTemplateRows(isOpen: boolean): string {
 	return isOpen ? "1fr" : "0fr";
 }
 
-export function getExpandAriaLabel(isExpanded: boolean, providerCount: number): string {
+function getExpandAriaLabel(isExpanded: boolean, providerCount: number): string {
 	const verb = isExpanded ? "Hide" : "Show";
 	return `${verb} ${providerCount} hosting providers`;
 }
@@ -248,15 +246,15 @@ const EXPAND_BUTTON_BASE = cn(
 	"text-foreground-muted hover:bg-accent/10 hover:text-accent active:bg-accent/15"
 );
 
-export function getExpandButtonClassName(isExpanded: boolean): string {
+function getExpandButtonClassName(isExpanded: boolean): string {
 	return cn(EXPAND_BUTTON_BASE, isExpanded && "bg-accent/10 text-accent");
 }
 
-export function getChevronClassName(isExpanded: boolean): string {
+function getChevronClassName(isExpanded: boolean): string {
 	return cn("size-3 transition-transform duration-200", isExpanded && "rotate-90");
 }
 
-export function getProviderCountTooltip(providerCount: number): string {
+function getProviderCountTooltip(providerCount: number): string {
 	const verb = providerCount === 1 ? " hosts" : "s host";
 	return `${providerCount} provider${verb} this model. Tap to compare pricing, latency, and features.`;
 }
@@ -265,10 +263,7 @@ interface SelectionState {
 	kind: "selected" | "provider" | "none";
 }
 
-export function getSelectionState(
-	isSelected: boolean,
-	isProviderSelected: boolean
-): SelectionState {
+function getSelectionState(isSelected: boolean, isProviderSelected: boolean): SelectionState {
 	if (isSelected) {
 		return { kind: "selected" };
 	}
@@ -278,7 +273,7 @@ export function getSelectionState(
 	return { kind: "none" };
 }
 
-export function getSelectionProviderTooltip(selectedProviderName: string | undefined): string {
+function getSelectionProviderTooltip(selectedProviderName: string | undefined): string {
 	return selectedProviderName ? `Provider: ${selectedProviderName}` : "Provider selected";
 }
 
@@ -313,7 +308,7 @@ export function buildVirtualItems(
 	return items;
 }
 
-export function appendModelEntries(
+function appendModelEntries(
 	items: VirtualizedItem[],
 	startIndex: number,
 	model: OpenRouterModel,
@@ -351,11 +346,7 @@ interface ItemSizeHandle {
 	getItemSize: (index: number) => number;
 }
 
-export function findActiveVirtualIndex(
-	handle: ItemSizeHandle,
-	itemCount: number,
-	offset: number
-): number {
+function findActiveVirtualIndex(handle: ItemSizeHandle, itemCount: number, offset: number): number {
 	const threshold = offset + 1;
 	for (let i = 0; i < itemCount; i++) {
 		const start = handle.getItemOffset(i);
@@ -367,14 +358,14 @@ export function findActiveVirtualIndex(
 	return itemCount - 1;
 }
 
-export function findIndexByModelId(items: VirtualizedItem[], modelId: string | undefined): number {
+function findIndexByModelId(items: VirtualizedItem[], modelId: string | undefined): number {
 	if (!modelId) {
 		return -1;
 	}
 	return items.findIndex((item) => item.type === "model" && item.model.id === modelId);
 }
 
-export function findIndexByMaker(items: VirtualizedItem[], maker: string): number {
+function findIndexByMaker(items: VirtualizedItem[], maker: string): number {
 	return items.findIndex((item) => item.type === "model" && item.model.maker === maker);
 }
 
@@ -384,7 +375,7 @@ interface ScrollRequest {
 	nonce: number;
 }
 
-export function findScrollTargetIndex(items: VirtualizedItem[], request: ScrollRequest): number {
+function findScrollTargetIndex(items: VirtualizedItem[], request: ScrollRequest): number {
 	const byId = findIndexByModelId(items, request.modelId);
 	if (byId >= 0) {
 		return byId;
@@ -404,7 +395,7 @@ function VariantAccentStrip({ variant, gradient }: { variant: ModelVariantKey; g
 	);
 }
 
-export function ProviderStatChip({
+function ProviderStatChip({
 	icon,
 	value,
 	tooltipTitle,
@@ -441,14 +432,14 @@ export function ProviderStatChip({
 	);
 }
 
-export function shouldShowStatsRow(
+function shouldShowStatsRow(
 	contextLength: number | null | undefined,
 	maxOut: number | null | undefined
 ): boolean {
 	return isPositiveNumber(contextLength) || isPositiveNumber(maxOut);
 }
 
-export function ProviderStatsRow({
+function ProviderStatsRow({
 	contextLength,
 	maxOut,
 }: {
@@ -561,7 +552,7 @@ interface ProvidersRowProps {
 	parsedProviderSlug: string | undefined;
 }
 
-export function isProviderSelected(
+function isProviderSelected(
 	model: OpenRouterModel,
 	providerSlug: string,
 	parsedModelId: string | undefined,
@@ -620,7 +611,7 @@ function ProvidersRowInner({
 
 export const useProvidersOpenedFlag = useOpenedFlag;
 
-export const ProvidersRow = memo(function ProvidersRow(props: ProvidersRowProps) {
+const ProvidersRow = memo(function ProvidersRow(props: ProvidersRowProps) {
 	return <ProvidersRowInner {...props} />;
 });
 
@@ -687,14 +678,14 @@ function SelectionIndicator({
 	return <>{renderer({ selectedProviderName })}</>;
 }
 
-export function resolveMakerIconSrc(maker: string | undefined): string | null {
+function resolveMakerIconSrc(maker: string | undefined): string | null {
 	if (!maker) {
 		return null;
 	}
 	return getProviderIconWithFallback(maker) ?? null;
 }
 
-export function MakerIcon({ maker }: { maker: string | undefined }) {
+function MakerIcon({ maker }: { maker: string | undefined }) {
 	const providerIcon = resolveMakerIconSrc(maker);
 	if (!providerIcon) {
 		return null;
@@ -713,7 +704,7 @@ export function MakerIcon({ maker }: { maker: string | undefined }) {
 	);
 }
 
-export function ContextChip({ contextLength }: { contextLength: number | null | undefined }) {
+function ContextChip({ contextLength }: { contextLength: number | null | undefined }) {
 	if (!isPositiveNumber(contextLength)) {
 		return null;
 	}
@@ -740,11 +731,7 @@ export function ContextChip({ contextLength }: { contextLength: number | null | 
 	);
 }
 
-export function PricingChip({
-	pricingInfo,
-}: {
-	pricingInfo: ReturnType<typeof getPricingTier> | null;
-}) {
+function PricingChip({ pricingInfo }: { pricingInfo: ReturnType<typeof getPricingTier> | null }) {
 	if (!pricingInfo) {
 		return null;
 	}
@@ -770,7 +757,7 @@ export function PricingChip({
 	);
 }
 
-export function FeaturedEndpointChip({ endpoint }: { endpoint: OpenRouterEndpoint | null }) {
+function FeaturedEndpointChip({ endpoint }: { endpoint: OpenRouterEndpoint | null }) {
 	if (!endpoint) {
 		return null;
 	}
@@ -781,7 +768,7 @@ export function FeaturedEndpointChip({ endpoint }: { endpoint: OpenRouterEndpoin
 	);
 }
 
-export function isFeaturedEndpointEligible(
+function isFeaturedEndpointEligible(
 	uniqueEndpoints: OpenRouterEndpoint[],
 	hasEndpoints: boolean,
 	hasProviders: boolean
@@ -792,7 +779,7 @@ export function isFeaturedEndpointEligible(
 	return hasEndpoints && uniqueEndpoints.length > 0;
 }
 
-export function getFeaturedEndpoint(
+function getFeaturedEndpoint(
 	uniqueEndpoints: OpenRouterEndpoint[],
 	hasEndpoints: boolean,
 	hasProviders: boolean
@@ -803,7 +790,7 @@ export function getFeaturedEndpoint(
 	return uniqueEndpoints[0] ?? null;
 }
 
-export function shouldRenderInlineMeta(
+function shouldRenderInlineMeta(
 	contextLength: number | null | undefined,
 	pricingInfo: ReturnType<typeof getPricingTier> | null,
 	featuredEndpoint: OpenRouterEndpoint | null,
@@ -828,7 +815,7 @@ function ModalitiesChip({ modalities }: { modalities: readonly string[] | undefi
 	);
 }
 
-export function InlineModelMeta({
+function InlineModelMeta({
 	model,
 	pricingInfo,
 	hasProviders,
@@ -863,7 +850,7 @@ export function InlineModelMeta({
 	);
 }
 
-export function VariantBadge({
+function VariantBadge({
 	variant,
 	variantClasses,
 }: {
@@ -888,7 +875,7 @@ export function VariantBadge({
 	);
 }
 
-export function ModelDescription({ description }: { description: string | undefined }) {
+function ModelDescription({ description }: { description: string | undefined }) {
 	if (!description) {
 		return null;
 	}
@@ -960,7 +947,7 @@ function ProvidersExpandButton({
 	);
 }
 
-export function ModelHeaderTitleRow({
+function ModelHeaderTitleRow({
 	model,
 	variantClasses,
 }: {
@@ -1015,7 +1002,7 @@ interface ModelHeaderProps {
 	parsedProviderSlug: string | undefined;
 }
 
-export function ModelVariantStrip({
+function ModelVariantStrip({
 	variant,
 	variantClasses,
 }: {
@@ -1028,7 +1015,7 @@ export function ModelVariantStrip({
 	return <VariantAccentStrip gradient={variantClasses.gradient} variant={variant} />;
 }
 
-export function ModelHeaderProvidersButton({
+function ModelHeaderProvidersButton({
 	hasProviders,
 	isExpanded,
 	modelId,
@@ -1054,7 +1041,7 @@ export function ModelHeaderProvidersButton({
 	);
 }
 
-export function ModelHeader({
+function ModelHeader({
 	model,
 	isExpanded,
 	hasProviders,
@@ -1139,15 +1126,15 @@ export function getRowKey(item: VirtualizedItem): string {
 	return `${prefix}-${item.model.id}`;
 }
 
-export function resolveActiveMaker(items: VirtualizedItem[], idx: number): string | null {
+function resolveActiveMaker(items: VirtualizedItem[], idx: number): string | null {
 	return items[idx]?.model.maker ?? null;
 }
 
-export function shouldNotifyMaker(nextMaker: string | null, lastMaker: string | null): boolean {
+function shouldNotifyMaker(nextMaker: string | null, lastMaker: string | null): boolean {
 	return nextMaker !== lastMaker;
 }
 
-export function isNewScrollNonce(lastNonce: number | null, nonce: number): boolean {
+function isNewScrollNonce(lastNonce: number | null, nonce: number): boolean {
 	return lastNonce !== nonce;
 }
 
@@ -1189,11 +1176,11 @@ export function applyScrollToMakerRequest(
 	return scrollToMakerRequest.nonce;
 }
 
-export function getEmptyStateLabel(hasActiveFilters: boolean): string {
+function getEmptyStateLabel(hasActiveFilters: boolean): string {
 	return hasActiveFilters ? "No models found" : "Unable to load models";
 }
 
-export function getEmptyStateBody(hasActiveFilters: boolean): string {
+function getEmptyStateBody(hasActiveFilters: boolean): string {
 	return hasActiveFilters
 		? "Try adjusting your filters to see more results."
 		: "The OpenRouter servers may be down or you may have lost internet connection. Please check your connection and try again.";

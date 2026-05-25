@@ -5,7 +5,7 @@
  * (e.g., DeepInfra, Together, Azure) that host the same model.
  */
 
-export const OPENROUTER_PROVIDERS = [
+const OPENROUTER_PROVIDERS = [
 	"anthropic",
 	"openai",
 	"google",
@@ -32,15 +32,15 @@ export const OPENROUTER_PROVIDERS = [
 	"xai",
 ] as const;
 
-export type OpenRouterProvider = (typeof OPENROUTER_PROVIDERS)[number];
+type OpenRouterProvider = (typeof OPENROUTER_PROVIDERS)[number];
 
-export interface ProviderInfo {
+interface ProviderInfo {
 	description?: string;
 	id: OpenRouterProvider;
 	name: string;
 }
 
-export const PROVIDER_INFO: Record<OpenRouterProvider, ProviderInfo> = {
+const PROVIDER_INFO: Record<OpenRouterProvider, ProviderInfo> = {
 	anthropic: {
 		id: "anthropic",
 		name: "Anthropic",
@@ -99,36 +99,6 @@ export const PROVIDER_INFO: Record<OpenRouterProvider, ProviderInfo> = {
 	xai: { id: "xai", name: "xAI", description: "xAI (Grok)" },
 };
 
-export interface ProviderPreferences {
-	allow_fallbacks?: boolean;
-	data_collection?: "allow" | "deny";
-	enforce_distillable_text?: boolean;
-	ignore?: string[];
-	max_price?: {
-		prompt?: number;
-		completion?: number;
-		request?: number;
-		image?: number;
-	};
-	only?: string[];
-	order?: string[];
-	quantizations?: Array<
-		"int4" | "int8" | "fp4" | "fp6" | "fp8" | "fp16" | "bf16" | "fp32" | "unknown"
-	>;
-	require_parameters?: boolean;
-	sort?: "price" | "throughput" | "latency";
-	zdr?: boolean;
-}
-
-export const PROVIDER_SORT_OPTIONS = [
-	{ value: undefined, label: "Default (load balanced)" },
-	{ value: "price", label: "Lowest Price" },
-	{ value: "throughput", label: "Highest Throughput" },
-	{ value: "latency", label: "Lowest Latency" },
-] as const;
-
-export type ProviderSortOption = "price" | "throughput" | "latency" | undefined;
-
 export function formatProviderName(provider: string): string {
 	const info = PROVIDER_INFO[provider as OpenRouterProvider];
 	if (info) {
@@ -138,10 +108,6 @@ export function formatProviderName(provider: string): string {
 		.split("-")
 		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
 		.join(" ");
-}
-
-export function isKnownProvider(provider: string): provider is OpenRouterProvider {
-	return OPENROUTER_PROVIDERS.includes(provider as OpenRouterProvider);
 }
 
 /**

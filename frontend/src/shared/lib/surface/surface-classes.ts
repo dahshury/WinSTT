@@ -99,28 +99,6 @@ const SURFACE_POPUP_OPEN_BG: Record<Level, string> = {
 	8: "data-[popup-open]:bg-surface-8",
 };
 
-const SURFACE_ACTIVE_BG: Record<Level, string> = {
-	1: "data-[active]:bg-surface-1",
-	2: "data-[active]:bg-surface-2",
-	3: "data-[active]:bg-surface-3",
-	4: "data-[active]:bg-surface-4",
-	5: "data-[active]:bg-surface-5",
-	6: "data-[active]:bg-surface-6",
-	7: "data-[active]:bg-surface-7",
-	8: "data-[active]:bg-surface-8",
-};
-
-const SURFACE_NOT_PRESSED_BG: Record<Level, string> = {
-	1: "not-data-[pressed]:bg-surface-1",
-	2: "not-data-[pressed]:bg-surface-2",
-	3: "not-data-[pressed]:bg-surface-3",
-	4: "not-data-[pressed]:bg-surface-4",
-	5: "not-data-[pressed]:bg-surface-5",
-	6: "not-data-[pressed]:bg-surface-6",
-	7: "not-data-[pressed]:bg-surface-7",
-	8: "not-data-[pressed]:bg-surface-8",
-};
-
 function clamp(level: number): Level {
 	return Math.max(1, Math.min(8, Math.round(level))) as Level;
 }
@@ -151,14 +129,6 @@ export function surfaceCheckedBg(level: number): string {
 
 export function surfaceSelectedBg(level: number): string {
 	return SURFACE_SELECTED_BG[clamp(level)];
-}
-
-export function surfaceNotPressedBg(level: number): string {
-	return SURFACE_NOT_PRESSED_BG[clamp(level)];
-}
-
-export function surfaceActiveBg(level: number): string {
-	return SURFACE_ACTIVE_BG[clamp(level)];
 }
 
 export function surfacePopupOpenBg(level: number): string {

@@ -58,14 +58,6 @@ const FAMILY_DISPLAY: Record<string, string> = {
 	other: "Other",
 };
 
-export function formatFamily(family: string): string {
-	const known = FAMILY_DISPLAY[family];
-	if (known) {
-		return known;
-	}
-	return family.charAt(0).toUpperCase() + family.slice(1);
-}
-
 /**
  * Map an Ollama model family slug → publisher info. Ollama's `/api/tags` does
  * not expose the maker, so we derive it from the well-known family name.
@@ -282,25 +274,6 @@ export function getOllamaPublisher(family: string): OllamaPublisher {
 		return inferred;
 	}
 	return DEFAULT_PUBLISHER;
-}
-
-/** Group models by family, sorted alphabetically by display name. */
-export function groupOllamaModelsByFamily(
-	models: readonly OllamaModel[]
-): [string, OllamaModel[]][] {
-	const groups = new Map<string, OllamaModel[]>();
-	for (const model of models) {
-		const family = getOllamaFamily(model);
-		const bucket = groups.get(family);
-		if (bucket) {
-			bucket.push(model);
-		} else {
-			groups.set(family, [model]);
-		}
-	}
-	return Array.from(groups.entries()).toSorted(([a], [b]) =>
-		formatFamily(a).localeCompare(formatFamily(b))
-	);
 }
 
 /**

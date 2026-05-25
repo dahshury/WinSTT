@@ -41,8 +41,6 @@ export function getVariantIcon(variant: ModelVariant, className = "h-3 w-3"): Re
 	return <HugeiconsIcon className={className} icon={icon} />;
 }
 
-export { VARIANT_ICON_MAP as __variantIconMap };
-
 export function getVariantClasses(variant: ModelVariant): {
 	bg: string;
 	text: string;
@@ -114,24 +112,6 @@ export function getPricingTier(pricing: OpenRouterPricing | undefined): PricingT
 	const priceLabel = `${formatCurrency(promptPerMillion)}/${formatCurrency(completionPerMillion)}`;
 	const avgCost = (promptPerMillion + completionPerMillion) / 2;
 	return { label: priceLabel, ...classifyAvgCost(avgCost) };
-}
-
-export { classifyAvgCost as __classifyAvgCost };
-
-export function formatPricing(pricing: OpenRouterPricing | undefined): string {
-	const prompt = parsePricingValue(pricing?.prompt);
-	const completion = parsePricingValue(pricing?.completion);
-
-	if (prompt === 0 && completion === 0) {
-		return "Free";
-	}
-
-	const promptPerMillion = prompt * 1_000_000;
-	const completionPerMillion = completion * 1_000_000;
-
-	const formattedPrompt = formatCurrency(promptPerMillion);
-	const formattedCompletion = formatCurrency(completionPerMillion);
-	return `${formattedPrompt}/${formattedCompletion} per 1M`;
 }
 
 export function getUniqueEndpoints(endpoints: OpenRouterEndpoint[]): OpenRouterEndpoint[] {

@@ -288,10 +288,9 @@ function mergeSections(
 ): { merged: AppSettings; preserved: boolean } {
 	let preserved = false;
 	const result: Record<string, unknown> = {};
-	const currentRec = current as unknown as Record<string, unknown>;
-	const lastSavedRec = lastSaved as unknown as Record<string, unknown>;
 	for (const [key, decodedValue] of Object.entries(decoded)) {
-		const picked = pickSection(decodedValue, currentRec[key], lastSavedRec[key]);
+		const typedKey = key as keyof AppSettings;
+		const picked = pickSection(decodedValue, current[typedKey], lastSaved[typedKey]);
 		result[key] = picked.value;
 		preserved = preserved || picked.preserved;
 	}

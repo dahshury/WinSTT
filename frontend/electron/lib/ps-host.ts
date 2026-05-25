@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { getErrorMessage } from "../../src/shared/lib/errors";
 import { dbg } from "./debug-log";
 
 /**
@@ -350,7 +351,7 @@ function startPs(): Promise<boolean> {
 		try {
 			ps.stdin?.write(`${SETUP_SCRIPT}\n`);
 		} catch (err) {
-			dbg("ps-host", `setup stdin write failed: ${(err as Error).message}`);
+			dbg("ps-host", `setup stdin write failed: ${getErrorMessage(err)}`);
 			finishSetup(false);
 		}
 	});
@@ -437,7 +438,7 @@ export async function runPsCommand(command: string, opts: RunOptions = {}): Prom
 		} catch (err) {
 			pending.delete(id);
 			clearTimeout(timer);
-			dbg("ps-host", `stdin write failed: ${(err as Error).message}`);
+			dbg("ps-host", `stdin write failed: ${getErrorMessage(err)}`);
 			resolve({ ok: false, value: null });
 		}
 	});

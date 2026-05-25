@@ -1,6 +1,1 @@
-export {
-	type CredentialStatus,
-	type ProviderStatusEntry,
-	useCredentialStatus,
-	useCredentialStatusStore,
-} from "./model/store";
+export { useCredentialStatus, useCredentialStatusStore } from "./model/store";

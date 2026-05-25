@@ -1,6 +1,5 @@
-export { Elevated, type ElevatedProps } from "./Elevated";
+export { Elevated } from "./Elevated";
 export {
-	surfaceActiveBg,
 	surfaceActivePseudoBg,
 	surfaceBg,
 	surfaceBg90,
@@ -8,7 +7,6 @@ export {
 	surfaceClasses,
 	surfaceHighlightedBg,
 	surfaceHoverBg,
-	surfaceNotPressedBg,
 	surfacePopupOpenBg,
 	surfaceSelectedBg,
 	surfaceShadow,

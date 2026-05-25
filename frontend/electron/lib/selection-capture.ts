@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { app, clipboard } from "electron";
+import { getErrorMessage } from "../../src/shared/lib/errors";
 import { readWindowSelection } from "./context-reader";
 import { dbg } from "./debug-log";
 
@@ -73,7 +74,7 @@ function readClipboardSafe(): string {
 	try {
 		return clipboard.readText() ?? "";
 	} catch (err) {
-		dbg("selection", `clipboard read failed: ${(err as Error).message}`);
+		dbg("selection", `clipboard read failed: ${getErrorMessage(err)}`);
 		return "";
 	}
 }
@@ -82,7 +83,7 @@ function writeClipboardSafe(text: string): void {
 	try {
 		clipboard.writeText(text);
 	} catch (err) {
-		dbg("selection", `clipboard write failed: ${(err as Error).message}`);
+		dbg("selection", `clipboard write failed: ${getErrorMessage(err)}`);
 	}
 }
 

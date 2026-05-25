@@ -100,61 +100,10 @@ export const MODEL_VARIANT_INFO: Record<ModelVariant, ModelVariantInfo> = {
 	},
 };
 
-export function parseModelVariant(modelId: string): {
-	baseModelId: string;
-	variant: ModelVariant | undefined;
-} {
-	for (const variant of MODEL_VARIANTS) {
-		const suffix = `:${variant}`;
-		if (modelId.endsWith(suffix)) {
-			return {
-				baseModelId: modelId.slice(0, -suffix.length),
-				variant,
-			};
-		}
-	}
-	return { baseModelId: modelId, variant: undefined };
-}
-
-export function getModelVariant(modelId: string): ModelVariant | undefined {
-	return parseModelVariant(modelId).variant;
-}
-
-export function getBaseModelId(modelId: string): string {
-	return parseModelVariant(modelId).baseModelId;
-}
-
 export function hasVariant(modelId: string, variant: ModelVariant): boolean {
 	return modelId.endsWith(`:${variant}`);
 }
 
 export function hasAnyVariant(modelId: string): boolean {
 	return MODEL_VARIANTS.some((v) => modelId.endsWith(`:${v}`));
-}
-
-export function setModelVariant(modelId: string, variant: ModelVariant | undefined): string {
-	const baseId = getBaseModelId(modelId);
-	return variant ? `${baseId}:${variant}` : baseId;
-}
-
-export function getAvailableVariants(modelIds: string[]): ModelVariant[] {
-	const variants = new Set<ModelVariant>();
-	for (const modelId of modelIds) {
-		const variant = getModelVariant(modelId);
-		if (variant) {
-			variants.add(variant);
-		}
-	}
-	return Array.from(variants).sort((a, b) => {
-		const aIndex = MODEL_VARIANTS.indexOf(a);
-		const bIndex = MODEL_VARIANTS.indexOf(b);
-		return aIndex - bIndex;
-	});
-}
-
-export function filterByVariant(modelIds: string[], variant: ModelVariant | undefined): string[] {
-	if (!variant) {
-		return modelIds.filter((id) => !hasAnyVariant(id));
-	}
-	return modelIds.filter((id) => hasVariant(id, variant));
 }

@@ -775,7 +775,7 @@ function errorToMessage(err: unknown): string {
 }
 
 const ERROR_MESSAGE_PICKERS: Readonly<Record<"true" | "false", (err: unknown) => string>> = {
-	true: (err) => (err as Error).message,
+	true: (err) => (err instanceof Error ? err.message : String(err)),
 	false: (err) => String(err),
 };
 

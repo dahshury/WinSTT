@@ -83,8 +83,6 @@ import { ContextDenyListSection } from "./ContextDenyListSection";
 import { Playground } from "./Playground";
 import { WarmupStatusBanner } from "./WarmupStatusBanner";
 
-export type LlmSettingsPanelProps = Record<string, never>;
-
 type TranslateFn = ReturnType<typeof useTranslations>;
 
 // Re-uses the spec-generated shape so `details.parameterSize` /

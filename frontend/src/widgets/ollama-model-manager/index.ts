@@ -1,4 +1,1 @@
-export {
-	OllamaModelManagerDialog,
-	type OllamaModelManagerDialogProps,
-} from "./ui/OllamaModelManagerDialog";
+export { OllamaModelManagerDialog } from "./ui/OllamaModelManagerDialog";

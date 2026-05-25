@@ -540,7 +540,7 @@ function untrackInFlight(requestId: string): void {
 }
 
 function sendControl(sttClient: SttClient, response: CloudTranscribeResponse): void {
-	sttClient.sendControl(response as unknown as Record<string, unknown>);
+	sttClient.sendControl({ ...response });
 }
 
 function buildSuccessResponse(

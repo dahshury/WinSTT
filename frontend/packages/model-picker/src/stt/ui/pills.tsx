@@ -1,39 +1,7 @@
 "use client";
 
-import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import type { ReactNode } from "react";
 import type { ModelCacheInfo } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
-import { Tooltip } from "@/shared/ui/tooltip";
-
-interface PillProps {
-	children: ReactNode;
-	className?: string;
-	icon?: IconSvgElement;
-	tooltip?: string;
-}
-
-export function Pill({ icon, children, className, tooltip }: PillProps) {
-	const content = (
-		<span
-			className={cn(
-				"inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-medium text-[10.5px] leading-none",
-				className
-			)}
-		>
-			{icon ? <HugeiconsIcon className="size-3 shrink-0" icon={icon} /> : null}
-			{children}
-		</span>
-	);
-	if (!tooltip) {
-		return content;
-	}
-	return (
-		<Tooltip content={tooltip} side="top">
-			<span className="inline-flex">{content}</span>
-		</Tooltip>
-	);
-}
 
 const QUANT_DOT_CLASS: Record<ModelCacheInfo["state"], string> = {
 	cached: "bg-emerald-500",

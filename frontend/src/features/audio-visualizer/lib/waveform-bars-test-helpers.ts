@@ -304,28 +304,15 @@ function drawFrame(
 	ctx.stroke();
 }
 
-export type { CanvasMetrics, RenderParams };
+export type { CanvasMetrics };
 export {
 	ACTIVITY_SMOOTHING,
 	AMP_SMOOTHING,
-	activeWaveAmp,
-	buildWavePoints,
 	computeActivityTarget,
 	computeRenderParams,
-	computeTargetAmp,
-	computeWaveY,
 	drawBaseline,
-	drawFilledRegion,
 	drawFrame,
-	drawWavePath,
-	ensureCanvasSize,
 	getCanvasMetrics,
-	getDpr,
-	hasAudioInput,
-	isAudioActive,
-	lerpColor,
-	tracePath,
-	vadAmpBoost,
 };
 
 // Test-only exports — pure helpers extracted from the render loop. Not part

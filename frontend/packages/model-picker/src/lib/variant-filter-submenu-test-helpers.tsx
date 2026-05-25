@@ -6,16 +6,16 @@ import { DropdownMenuItem } from "../ui/DropdownMenu";
 import { getVariantIcon } from "./filter-icons";
 import { MODEL_VARIANT_INFO, type ModelVariant } from "./model-variant-utils";
 
-export const STANDARD_INFO = { label: "Standard" } as const;
+const STANDARD_INFO = { label: "Standard" } as const;
 
-export function getVariantInfo(variant: ModelVariant | "none"): { label: string } {
+function getVariantInfo(variant: ModelVariant | "none"): { label: string } {
 	if (variant === "none") {
 		return STANDARD_INFO;
 	}
 	return MODEL_VARIANT_INFO[variant];
 }
 
-export function isVariantSelected(
+function isVariantSelected(
 	selectedVariant: ModelVariant | "none" | null,
 	variant: ModelVariant | "none"
 ): boolean {

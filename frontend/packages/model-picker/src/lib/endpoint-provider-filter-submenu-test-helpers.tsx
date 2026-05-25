@@ -17,7 +17,7 @@ export function filterEndpointProviders(
 	return providers.filter(([p]) => p.toLowerCase().includes(queryLower));
 }
 
-export function resolveSelection(value: string | null): string | null | "noop" {
+function resolveSelection(value: string | null): string | null | "noop" {
 	if (value === ALL_PROVIDERS_VALUE) {
 		return null;
 	}
@@ -27,7 +27,7 @@ export function resolveSelection(value: string | null): string | null | "noop" {
 	return "noop";
 }
 
-export function isTickVisible(selectedProvider: string | null, matchValue: string | null): boolean {
+function isTickVisible(selectedProvider: string | null, matchValue: string | null): boolean {
 	return selectedProvider === matchValue;
 }
 
@@ -49,7 +49,7 @@ interface SelectedTickProps {
 	visible: boolean;
 }
 
-export function SelectedTick({ visible }: SelectedTickProps) {
+function SelectedTick({ visible }: SelectedTickProps) {
 	if (!visible) {
 		return null;
 	}

@@ -296,9 +296,9 @@ async function resolveOutputPath(
 	filePath: string,
 	format: string,
 	saveLocation: string
-): Promise<string | null> {
+): Promise<string | null | undefined> {
 	if (saveLocation !== "ask") {
-		return undefined as unknown as string | null;
+		return;
 	}
 	const chosen = await promptSaveLocation(filePath, format);
 	return chosen;
@@ -354,7 +354,7 @@ function enqueueTranscription(
 async function validateAndResolveOutput(
 	client: SttClient,
 	filePath: string
-): Promise<{ format: string; outputPath: string | null }> {
+): Promise<{ format: string; outputPath: string | null | undefined }> {
 	assertValidFilePath(filePath);
 	assertSupportedExtension(filePath);
 	await assertFileAccessible(filePath);

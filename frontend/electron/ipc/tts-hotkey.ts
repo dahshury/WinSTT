@@ -12,6 +12,7 @@
 
 import { randomUUID } from "node:crypto";
 import { UiohookKey, uIOhook } from "uiohook-napi";
+import { getErrorMessage } from "../../src/shared/lib/errors";
 import { dbg } from "../lib/debug-log";
 import { parseAccelerator } from "../lib/keycodes";
 import { captureSelection } from "../lib/selection-capture";
@@ -100,7 +101,7 @@ function dispatchSpeak(): void {
 			});
 		})
 		.catch((err: unknown) => {
-			dbg("tts-hotkey", `captureSelection failed: ${(err as Error).message}`);
+			dbg("tts-hotkey", `captureSelection failed: ${getErrorMessage(err)}`);
 		});
 }
 

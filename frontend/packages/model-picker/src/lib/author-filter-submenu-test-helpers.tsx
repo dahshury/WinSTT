@@ -14,11 +14,11 @@ export function filterByQuery(allProviders: string[], queryLower: string): strin
 	return allProviders.filter((p) => p.toLowerCase().includes(queryLower));
 }
 
-export function getFavoriteTooltipText(isFavorite: boolean): string {
+function getFavoriteTooltipText(isFavorite: boolean): string {
 	return isFavorite ? "Remove from favorites" : "Add to favorites";
 }
 
-export function handleFavoriteButtonClick(
+function handleFavoriteButtonClick(
 	event: React.MouseEvent,
 	provider: string,
 	onToggleFavorite: (maker: string) => void

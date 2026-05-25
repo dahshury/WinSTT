@@ -31,7 +31,7 @@ export interface BuiltinPresetEntry {
  *  custom modifier *definitions* live in `llm.dictation.customModifiers` and
  *  are folded in transiently at processing time so the existing single-array
  *  compose / logging path needs no extra plumbing. */
-export const CUSTOM_MODIFIER_KEY = "__custom__" as const;
+const CUSTOM_MODIFIER_KEY = "__custom__" as const;
 
 export interface CustomModifierEntry {
 	id: string;

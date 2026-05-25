@@ -12,7 +12,7 @@ interface ActiveFilterCountInput {
 	selectedVariant: ModelVariant | "none" | null;
 }
 
-export function countNonNull(value: unknown): number {
+function countNonNull(value: unknown): number {
 	return value === null ? 0 : 1;
 }
 
@@ -42,14 +42,14 @@ interface MaybeAuthorSubmenuProps {
 	selectedMakers: string[];
 }
 
-export function shouldRenderAuthorSubmenu(
+function shouldRenderAuthorSubmenu(
 	allProviders: string[],
 	onMakersChange: ((makers: string[]) => void) | undefined
 ): boolean {
 	return allProviders.length > 0 && !!onMakersChange;
 }
 
-export function shouldRenderEndpointSubmenu(endpointProviders: [string, number][]): boolean {
+function shouldRenderEndpointSubmenu(endpointProviders: [string, number][]): boolean {
 	return endpointProviders.length > 0;
 }
 

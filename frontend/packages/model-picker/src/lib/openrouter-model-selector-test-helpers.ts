@@ -8,8 +8,8 @@ import {
 	type ModelExclusionConfig,
 } from "./model-exclusion";
 
-export const POPUP_ROLES: ReadonlySet<string> = new Set(["menu", "menuitem", "tooltip"]);
-export const POPUP_SLOT = "model-filters-menu-content";
+const POPUP_ROLES: ReadonlySet<string> = new Set(["menu", "menuitem", "tooltip"]);
+const POPUP_SLOT = "model-filters-menu-content";
 
 export interface ScrollToMakerRequest {
 	maker: string;
@@ -22,20 +22,20 @@ export interface ParsedSelectionToken {
 	providerSlug?: string | undefined;
 }
 
-export function nodeRoleIsPopup(node: HTMLElement): boolean {
+function nodeRoleIsPopup(node: HTMLElement): boolean {
 	const role = node.getAttribute("role");
 	return role !== null && POPUP_ROLES.has(role);
 }
 
-export function nodeSlotIsPopup(node: HTMLElement): boolean {
+function nodeSlotIsPopup(node: HTMLElement): boolean {
 	return node.dataset?.slot === POPUP_SLOT;
 }
 
-export function nodeMatchesPopupSelector(node: HTMLElement, ownPopup: HTMLElement | null): boolean {
+function nodeMatchesPopupSelector(node: HTMLElement, ownPopup: HTMLElement | null): boolean {
 	return node === ownPopup || nodeRoleIsPopup(node) || nodeSlotIsPopup(node);
 }
 
-export function walkAncestors(start: HTMLElement | null): HTMLElement[] {
+function walkAncestors(start: HTMLElement | null): HTMLElement[] {
 	const chain: HTMLElement[] = [];
 	for (let cursor = start; cursor; cursor = cursor.parentElement) {
 		chain.push(cursor);
@@ -50,7 +50,7 @@ export function isInsideMenuPopup(
 	return walkAncestors(target).some((node) => nodeMatchesPopupSelector(node, ownPopup));
 }
 
-export function applyExclusion(
+function applyExclusion(
 	models: OpenRouterModel[],
 	config: ModelExclusionConfig | undefined
 ): OpenRouterModel[] {
@@ -60,7 +60,7 @@ export function applyExclusion(
 	return filterModelsForFallback(models, config);
 }
 
-export function applyDisabledFilter(
+function applyDisabledFilter(
 	models: OpenRouterModel[],
 	disabledIds: readonly string[] | undefined
 ): OpenRouterModel[] {
@@ -79,18 +79,18 @@ export function applyModelFilters(
 	return applyDisabledFilter(applyExclusion(models, exclusionConfig), disabledModelIds);
 }
 
-export function endpointMatchesProviderSlug(endpoint: OpenRouterEndpoint, slug: string): boolean {
+function endpointMatchesProviderSlug(endpoint: OpenRouterEndpoint, slug: string): boolean {
 	return endpoint.provider_name === slug || endpoint.tag === slug;
 }
 
-export function selectEndpointFromList(
+function selectEndpointFromList(
 	endpoints: OpenRouterEndpoint[],
 	slug: string
 ): OpenRouterEndpoint | null {
 	return endpoints.find((e) => endpointMatchesProviderSlug(e, slug)) ?? null;
 }
 
-export function findEndpointForProviderSlug(
+function findEndpointForProviderSlug(
 	model: OpenRouterModel | undefined,
 	slug: string | undefined
 ): OpenRouterEndpoint | null {
@@ -125,7 +125,7 @@ export function resolveSelectionValue(
 	return "";
 }
 
-export function splitTokenAtSeparator(token: string): ParsedSelectionToken {
+function splitTokenAtSeparator(token: string): ParsedSelectionToken {
 	const atIndex = token.lastIndexOf("@");
 	if (atIndex === -1) {
 		return { modelId: token };
@@ -152,7 +152,7 @@ export function buildScrollRequestForModel(
 	};
 }
 
-export function shouldInterceptClose(
+function shouldInterceptClose(
 	reason: string | undefined,
 	itemPressReason: string,
 	isInsidePopup: boolean

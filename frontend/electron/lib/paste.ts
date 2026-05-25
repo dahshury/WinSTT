@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { app, clipboard, type NativeImage } from "electron";
+import { getErrorMessage } from "../../src/shared/lib/errors";
 import { setPasteGuard } from "../ipc/hotkey";
 import { dbg } from "./debug-log";
 
@@ -245,7 +246,7 @@ export function spawnInto(run: BinaryRun, binPath: string, args: string[] = []):
 		});
 		return true;
 	} catch (err) {
-		finishBinaryRun(run, false, `spawn failed: ${(err as Error).message}`);
+		finishBinaryRun(run, false, `spawn failed: ${getErrorMessage(err)}`);
 		return false;
 	}
 }
@@ -316,7 +317,7 @@ export function wireTypeStdin(run: BinaryRun, stdin: NodeJS.WritableStream, text
 		});
 		stdin.end(text, "utf8");
 	} catch (err) {
-		finishBinaryRun(run, false, `stdin write failed: ${(err as Error).message}`);
+		finishBinaryRun(run, false, `stdin write failed: ${getErrorMessage(err)}`);
 	}
 }
 
@@ -356,7 +357,7 @@ export function writeClipboard(text: string): boolean {
 		clipboard.writeText(text);
 		return true;
 	} catch (err) {
-		dbg("paste", `clipboard.writeText failed: ${(err as Error).message}`);
+		dbg("paste", `clipboard.writeText failed: ${getErrorMessage(err)}`);
 		return false;
 	}
 }
@@ -547,7 +548,7 @@ export function readClipboardFormat<T>(read: () => T, empty: T, format: string):
 	try {
 		return read();
 	} catch (err) {
-		dbg("paste", `clipboard.read${format} failed: ${(err as Error).message}`);
+		dbg("paste", `clipboard.read${format} failed: ${getErrorMessage(err)}`);
 		return empty;
 	}
 }
@@ -677,7 +678,7 @@ export function fallbackTextOnlyRestore(text: string): void {
 	try {
 		clipboard.writeText(text);
 	} catch (err2) {
-		dbg("paste", `text-only restore also failed: ${(err2 as Error).message}`);
+		dbg("paste", `text-only restore also failed: ${getErrorMessage(err2)}`);
 	}
 }
 
@@ -686,7 +687,7 @@ export function writeRestorePayload(snapshot: ClipboardSnapshot): void {
 	try {
 		clipboard.write(buildRestorePayload(snapshot));
 	} catch (err) {
-		dbg("paste", `clipboard restore failed: ${(err as Error).message}`);
+		dbg("paste", `clipboard restore failed: ${getErrorMessage(err)}`);
 		fallbackTextOnlyRestore(snapshot.text);
 	}
 }

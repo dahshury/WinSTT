@@ -22,6 +22,7 @@
  */
 
 import { globalShortcut } from "electron";
+import { getErrorMessage } from "../../src/shared/lib/errors";
 import { dbg } from "../lib/debug-log";
 import { uiohookAcceleratorToElectron } from "../lib/keycodes";
 import { getLastTranscription } from "../lib/last-transcription";
@@ -67,7 +68,7 @@ function unregisterCurrent(): void {
 	try {
 		globalShortcut.unregister(registeredAccelerator);
 	} catch (err) {
-		dbg("repaste-hotkey", `unregister threw: ${(err as Error).message}`);
+		dbg("repaste-hotkey", `unregister threw: ${getErrorMessage(err)}`);
 	}
 	registeredAccelerator = null;
 }
@@ -103,7 +104,7 @@ function tryRegister(accelerator: string): boolean {
 	try {
 		return globalShortcut.register(accelerator, handleTrigger);
 	} catch (err) {
-		dbg("repaste-hotkey", `register threw for "${accelerator}": ${(err as Error).message}`);
+		dbg("repaste-hotkey", `register threw for "${accelerator}": ${getErrorMessage(err)}`);
 		return false;
 	}
 }

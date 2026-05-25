@@ -77,7 +77,7 @@ export const audioSettingsSchema = z.object({
 // (never persisted); every entry here is a user-uploaded clip stored under
 // `userData/sounds/`. `path` is the absolute path on disk; `name` is the
 // display label (renamable independently of the on-disk filename).
-export const soundLibraryEntrySchema = z.object({
+const soundLibraryEntrySchema = z.object({
 	id: z.string().min(1),
 	name: z.string().min(1),
 	path: z.string().min(1),
@@ -283,7 +283,7 @@ export const addSnippetEntrySchema = z.object({
 });
 export type AddSnippetEntry = z.infer<typeof addSnippetEntrySchema>;
 
-export const presetKeySchema = z.enum([
+const presetKeySchema = z.enum([
 	"neutral",
 	"formal",
 	"friendly",
@@ -297,12 +297,12 @@ export const presetKeySchema = z.enum([
 	"translate",
 ]);
 
-export const presetLevelSchema = z.enum(["light", "medium", "high"]);
+const presetLevelSchema = z.enum(["light", "medium", "high"]);
 
 const KEYS_WITH_LEVELS = new Set(["summarize", "concise"]);
 const TONE_KEYS = new Set(["neutral", "formal", "friendly", "technical", "casual"]);
 
-export const presetEntrySchema = z
+const presetEntrySchema = z
 	.object({
 		key: presetKeySchema,
 		level: presetLevelSchema.optional(),
@@ -350,7 +350,7 @@ export const presetsSchema = z
 // `level` is always allowed here — for a custom modifier the Low/Medium/High
 // switcher tunes intensity of the single authored prompt rather than
 // selecting between distinct texts (see `CUSTOM_LEVEL_HINT`).
-export const customModifierSchema = z.object({
+const customModifierSchema = z.object({
 	id: z.string().min(1),
 	name: z.string().default(""),
 	prompt: z.string().default(""),
@@ -388,7 +388,7 @@ const llmFeatureBaseShape = {
 	thinkingEffort: z.enum(["off", "low", "medium", "high"]).default("medium"),
 };
 
-export const llmDictationSchema = z.object({
+const llmDictationSchema = z.object({
 	enabled: z.boolean().default(false),
 	...llmFeatureBaseShape,
 	presets: presetsSchema,
@@ -401,23 +401,15 @@ export const llmDictationSchema = z.object({
 // Single user-configurable text transform. Mirrors the OpenAPI `Transform`
 // schema (see `spec/openapi.yaml`). Built-in entries flag `builtin: true`
 // so the UI can show a Reset action instead of Delete.
-export const transformSchema = z.object({
+const transformSchema = z.object({
 	id: z.string().min(1),
 	name: z.string().default(""),
 	prompt: z.string().default(""),
 	hotkey: z.string().default(""),
 	builtin: z.boolean().default(false),
 });
-type TransformEntry = z.infer<typeof transformSchema>;
 
-// Built-in transforms seeded into `settings.llm.transforms.prompts` on first
-// run. Currently empty — the catalog will be filled out as the Transforms
-// feature lands more presets. Exported so the renderer can offer a Reset
-// action that restores a built-in's prompt without wiping user-authored
-// entries.
-export const BUILTIN_TRANSFORMS: readonly TransformEntry[] = [];
-
-export const llmTransformsSchema = z.object({
+const llmTransformsSchema = z.object({
 	enabled: z.boolean().default(false),
 	...llmFeatureBaseShape,
 	// Same composition shape as dictation: ordered preset list + custom modifiers.
@@ -459,13 +451,13 @@ export const llmSettingsSchema = z.object({
 // of the last successful probe (null = never probed); `lastVerifiedAt`
 // is epoch-ms. Matches the existing `llm.openrouterApiKey` pattern so
 // the UI can use `PasswordField` directly against the store value.
-export const providerIntegrationStatusSchema = z.object({
+const providerIntegrationStatusSchema = z.object({
 	apiKey: z.string().default(""),
 	verified: z.boolean().nullable().default(null),
 	lastVerifiedAt: z.number().nullable().default(null),
 });
 
-export const integrationsSchema = z.object({
+const integrationsSchema = z.object({
 	openai: providerIntegrationStatusSchema.prefault({}),
 	elevenlabs: providerIntegrationStatusSchema.prefault({}),
 });

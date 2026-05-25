@@ -1,1 +1,1 @@
-export { TtsModelSection, type TtsModelSectionProps } from "./ui/TtsModelSection";
+export { TtsModelSection } from "./ui/TtsModelSection";

@@ -21,7 +21,7 @@ function pushEndpointItems(
 }
 
 /** Pure: appends provider-specific item strings for a model with multiple endpoints. */
-export function appendModelEndpointItems(items: string[], model: OpenRouterModel): void {
+function appendModelEndpointItems(items: string[], model: OpenRouterModel): void {
 	if (!(model.endpoints && model.endpoints.length > 1)) {
 		return;
 	}
@@ -29,7 +29,7 @@ export function appendModelEndpointItems(items: string[], model: OpenRouterModel
 }
 
 /** Pure: builds Combobox item value strings from grouped models. */
-export function buildComboboxItems(groupedModels: [string, OpenRouterModel[]][]): string[] {
+function buildComboboxItems(groupedModels: [string, OpenRouterModel[]][]): string[] {
 	const items: string[] = [];
 	for (const [, makerModels] of groupedModels) {
 		for (const model of makerModels) {
@@ -72,7 +72,7 @@ function hasSingleValueSelection(
 }
 
 /** Pure: returns true when any selection-type filter is active. */
-export function hasSelectionFilter(
+function hasSelectionFilter(
 	selectedMakers: string[],
 	selectedVariant: ModelVariant | "none" | null,
 	selectedEndpointProvider: string | null,
@@ -85,7 +85,7 @@ export function hasSelectionFilter(
 }
 
 /** Pure: returns true when any filter is active. */
-export function computeHasActiveFilters(
+function computeHasActiveFilters(
 	selectedMakers: string[],
 	searchQuery: string,
 	selectedVariant: ModelVariant | "none" | null,

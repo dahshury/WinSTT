@@ -24,15 +24,15 @@ export function getParamCount(
 	return parameterCounts.get(param) ?? 0;
 }
 
-export function shouldShowSelectedTick(visible: boolean): boolean {
+function shouldShowSelectedTick(visible: boolean): boolean {
 	return visible;
 }
 
-export function shouldShowCountBadge(count: number): boolean {
+function shouldShowCountBadge(count: number): boolean {
 	return count > 0;
 }
 
-export function shouldShowClearAll(selectedCount: number): boolean {
+function shouldShowClearAll(selectedCount: number): boolean {
 	return selectedCount > 0;
 }
 
@@ -40,7 +40,7 @@ interface SelectedTickProps {
 	visible: boolean;
 }
 
-export function SelectedTick({ visible }: SelectedTickProps) {
+function SelectedTick({ visible }: SelectedTickProps) {
 	if (!shouldShowSelectedTick(visible)) {
 		return null;
 	}
