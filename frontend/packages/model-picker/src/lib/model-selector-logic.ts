@@ -413,28 +413,3 @@ export function groupModelsByMaker(
 	return entries.toSorted(([a], [b]) => a.localeCompare(b));
 }
 
-export const __model_selector_logic_test_helpers__ = {
-	scoreModelMatch,
-	searchModels,
-	matchesVariantFilter,
-	matchesEndpointFilter,
-	matchesParametersFilter,
-	modelPassesFilters,
-	buildActiveFilters,
-	hasAnyActiveFilter,
-	passesMakerFilter,
-	passesVariantFilter,
-	passesEndpointFilter,
-	passesParametersFilter,
-	getMakerKey,
-	makeOrderComparator,
-	compareByMissingOrder,
-	collectExactMatches,
-	appendUniqueFuzzy,
-	anyNameStartsWith,
-	anyNameIncludes,
-	toLowerCased,
-	endpointMatches,
-	setHasAll,
-	nonEmptySetOrNull,
-};

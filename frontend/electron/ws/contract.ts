@@ -90,10 +90,7 @@ export const SUPPORTED_EVENT_TYPES = [
 
 export type SupportedEventType = (typeof SUPPORTED_EVENT_TYPES)[number];
 
-// Per-type schema map — exported so the property-test harness can pair a
-// generator with its matching parser. Keeping the keys aligned with
-// `SUPPORTED_EVENT_TYPES` lets tests iterate the full union exhaustively.
-export const eventSchemas = {
+const eventSchemas = {
 	realtime: realtimeTextSchema,
 	fullSentence: fullSentenceSchema,
 	recording_start: recordingStartSchema,

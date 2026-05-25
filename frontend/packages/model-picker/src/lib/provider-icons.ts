@@ -5,7 +5,7 @@
  * `frontend/public/provider-icons/`.
  */
 
-export const PROVIDER_ICONS: Record<string, string> = {
+const PROVIDER_ICONS: Record<string, string> = {
 	ai21: "/provider-icons/ai21.png",
 	"aion-labs": "/provider-icons/aion-labs.png",
 	alfredpros: "/provider-icons/alfredpros.png",
@@ -117,7 +117,7 @@ function normalizeProviderName(provider: string): string {
 	return normalized;
 }
 
-export function getProviderIcon(provider: string | null | undefined): string | null {
+function getProviderIcon(provider: string | null | undefined): string | null {
 	if (!provider) {
 		return null;
 	}
@@ -137,11 +137,3 @@ export function getProviderIconWithFallback(
 	return getProviderIcon(provider) || fallback || "/provider-icons/openrouter.png";
 }
 
-export const __provider_icons_test_helpers__ = {
-	PROVIDER_NAME_ALIASES,
-	findExactProviderKey,
-	findAliasProviderKey,
-	findFuzzyProviderKey,
-	isFuzzyMatch,
-	normalizeProviderName,
-};

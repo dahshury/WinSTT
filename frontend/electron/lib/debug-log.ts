@@ -127,6 +127,4 @@ export function getLogger(scope: string): ReturnType<typeof log.scope> {
 	return log.scope(scope);
 }
 
-/** Root electron-log instance — exposed for advanced callers (transports, hooks). */
-export const logger = log;
 export default log;

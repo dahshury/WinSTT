@@ -20,7 +20,7 @@ import {
 	PRESETS_WITH_LEVELS,
 	type PresetKey,
 	type PresetLevel,
-} from "../src/entities/llm-catalog/lib/preset-prompts";
+} from "../src/shared/lib/preset-prompts";
 import {
 	createModelSelection,
 	parseModelSelection,

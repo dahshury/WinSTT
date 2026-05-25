@@ -7,6 +7,8 @@
  * with dot-path support, mirroring the real library.
  */
 
+import { EventEmitter } from "node:events";
+
 function getByPath(obj: Record<string, unknown>, key: string): unknown {
 	if (key in obj) {
 		return obj[key];
@@ -57,8 +59,13 @@ function deleteByPath(obj: Record<string, unknown>, key: string): void {
 	delete cur[parts.at(-1) as string];
 }
 
-export class MockStore<T extends Record<string, unknown> = Record<string, unknown>> {
+class MockStore<T extends Record<string, unknown> = Record<string, unknown>> {
 	store: Record<string, unknown>;
+	/** Real electron-store v15 exposes an `events` EventEmitter that
+	 * `setMaxListeners(50, store.events)` in `electron/lib/store.ts` requires.
+	 * Node's `setMaxListeners` accepts EventEmitter; happy-dom's EventTarget
+	 * is rejected by Bun's setMaxListeners (ERR_INVALID_ARG_TYPE). */
+	events = new EventEmitter();
 	private readonly listeners = new Map<string, Array<(value: unknown, prev: unknown) => void>>();
 
 	constructor(opts?: { defaults?: T }) {

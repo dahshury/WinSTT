@@ -43,7 +43,6 @@ export function debugLogMock(): Record<string, unknown> {
 		jsonStringifyOrString,
 		identityString,
 		stringifyArg,
-		logger: noopLog,
 		default: noopLog,
 	};
 }

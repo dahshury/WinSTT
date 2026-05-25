@@ -431,11 +431,7 @@ export function syncOverlayToMainWindow(): void {
 	}
 }
 
-/**
- * Force-hide. Same behavior as `hideOverlay()`, kept as a separate name
- * so settings watchers stay clear about intent.
- */
-export function hideOverlayImmediate(): void {
+function hideOverlayImmediate(): void {
 	hideOverlay();
 }
 

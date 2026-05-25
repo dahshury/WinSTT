@@ -1,15 +1,29 @@
-import { Certificate01Icon, InformationCircleIcon, LicenseIcon } from "@hugeicons/core-free-icons";
+import {
+	Certificate01Icon,
+	CloudDownloadIcon,
+	InformationCircleIcon,
+	LicenseIcon,
+	RefreshIcon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import { SettingSection } from "@/entities/setting";
+import { SettingSection, useSettingsStore } from "@/entities/setting";
 import {
 	type AboutAppInfo,
 	aboutGetAppInfo,
 	aboutGetLicense,
 	aboutGetNotices,
+	onUpdaterStatus,
+	type UpdaterStatusEntry,
+	updaterCheckNow,
+	updaterGetStatusHistory,
 } from "@/shared/api/ipc-client";
+import { Button } from "@/shared/ui/button";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import { FormControl } from "@/shared/ui/form-control";
 import { ScrollArea } from "@/shared/ui/scroll-area";
+import { Toggle } from "@/shared/ui/toggle";
 
 type AboutT = ReturnType<typeof useTranslations<"about">>;
 
@@ -75,6 +89,105 @@ function LicenseSection({ license, loading, t }: { license: string; loading: boo
 	);
 }
 
+function formatStatus(entry: UpdaterStatusEntry | null, t: AboutT): string {
+	if (!entry) {
+		return t("updatesStatusIdle");
+	}
+	switch (entry.status) {
+		case "checking":
+			return t("updatesStatusChecking");
+		case "available":
+			return t("updatesStatusAvailable", { version: entry.version ?? "?" });
+		case "not-available":
+			return t("updatesStatusUpToDate");
+		case "downloaded":
+			return t("updatesStatusDownloaded", { version: entry.version ?? "?" });
+		case "error":
+			return t("updatesStatusError", { message: entry.message ?? "" });
+		default:
+			return t("updatesStatusIdle");
+	}
+}
+
+function UpdatesSection({ t }: { t: AboutT }) {
+	const receivePrereleaseUpdates = useSettingsStore(
+		(s) => s.settings.general?.receivePrereleaseUpdates ?? false
+	);
+	const update = useSettingsStore((s) => s.updateGeneralSettings);
+	const [latestStatus, setLatestStatus] = useState<UpdaterStatusEntry | null>(null);
+	const [checking, setChecking] = useState(false);
+
+	useEffect(() => {
+		let cancelled = false;
+		updaterGetStatusHistory().then((history) => {
+			if (cancelled) {
+				return;
+			}
+			// History is append-only; the freshest entry is at the end.
+			setLatestStatus(history.at(-1) ?? null);
+		});
+		const off = onUpdaterStatus((entry) => {
+			setLatestStatus(entry);
+			if (entry.status !== "checking") {
+				setChecking(false);
+			}
+		});
+		return () => {
+			cancelled = true;
+			off();
+		};
+	}, []);
+
+	const handleCheck = async () => {
+		setChecking(true);
+		const result = await updaterCheckNow();
+		// If the main process can't trigger a check (dev mode / disabled),
+		// flip the button back to idle immediately — no status event will
+		// arrive to do it for us.
+		if (!result.triggered) {
+			setChecking(false);
+		}
+	};
+
+	return (
+		<SettingSection
+			description={t("updatesDescription")}
+			headerAction={
+				<Button
+					className="flex h-8 items-center gap-2 rounded-md border border-foreground/15 bg-foreground/5 px-3 font-medium text-body text-foreground transition-colors duration-150 hover:bg-foreground/10 disabled:cursor-not-allowed disabled:opacity-50"
+					disabled={checking}
+					onClick={handleCheck}
+				>
+					<HugeiconsIcon
+						className={checking ? "animate-spin" : undefined}
+						icon={RefreshIcon}
+						size={12}
+					/>
+					{checking ? t("updatesChecking") : t("updatesCheckNow")}
+				</Button>
+			}
+			icon={CloudDownloadIcon}
+			title={t("updatesTitle")}
+		>
+			<div className="flex flex-col gap-3">
+				<FormControl
+					caption={t("receivePrereleaseUpdatesCaption")}
+					label={t("receivePrereleaseUpdates")}
+					labelAddon={
+						<Toggle
+							checked={receivePrereleaseUpdates}
+							onCheckedChange={(v) => update({ receivePrereleaseUpdates: v })}
+						/>
+					}
+				/>
+				<ElevatedSurface className="px-3 py-2">
+					<span className="text-body text-foreground-muted">{formatStatus(latestStatus, t)}</span>
+				</ElevatedSurface>
+			</div>
+		</SettingSection>
+	);
+}
+
 function NoticesSection({ loading, notices, t }: { loading: boolean; notices: string; t: AboutT }) {
 	return (
 		<SettingSection
@@ -120,6 +233,7 @@ export function AboutSettingsPanel() {
 	return (
 		<div className="flex flex-col gap-2">
 			<AppInfoSection info={info} t={t} />
+			<UpdatesSection t={t} />
 			<LicenseSection license={license} loading={loading} t={t} />
 			<NoticesSection loading={loading} notices={notices} t={t} />
 		</div>

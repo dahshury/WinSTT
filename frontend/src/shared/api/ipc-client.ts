@@ -717,6 +717,14 @@ export const updaterClearStatusHistory = () =>
 export const onUpdaterStatus = (cb: (entry: UpdaterStatusEntry) => void) =>
 	onCast(IPC.UPDATER_STATUS, cb);
 
+export interface UpdaterCheckNowResult {
+	reason?: string;
+	triggered: boolean;
+}
+
+export const updaterCheckNow = () =>
+	invokeOrDefault<UpdaterCheckNowResult>(IPC.UPDATER_CHECK_NOW, { triggered: false });
+
 export interface WindowTelemetryPayload {
 	bounds: { x: number; y: number; width: number; height: number };
 	event:

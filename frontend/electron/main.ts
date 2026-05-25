@@ -131,6 +131,41 @@ const updaterStatusHistory = createUpdaterStatusHistory({ maxEntries: 200 });
 const sttClient = new SttClient();
 const isDev = !app.isPackaged;
 
+/**
+ * Live handle to the `electron-updater` autoUpdater singleton, populated by
+ * `initAutoUpdater()` once the bundled ESM/CJS module is dynamically loaded.
+ * Lifted to module scope so:
+ *   1. The "Check for updates now" IPC handler can call into it on demand.
+ *   2. The `general` store watcher can flip `allowPrerelease` live when the
+ *      user toggles "Receive pre-release updates" — no restart required.
+ * Stays `null` in dev / when auto-updates are disabled by env var.
+ */
+interface AutoUpdaterHandle {
+	allowPrerelease: boolean;
+	autoDownload: boolean;
+	checkForUpdatesAndNotify: () => Promise<unknown>;
+	on: (event: string, listener: (...args: unknown[]) => void) => void;
+}
+let autoUpdaterRef: AutoUpdaterHandle | null = null;
+let disposeUpdaterSettingsWatcher: (() => void) | null = null;
+
+/** Pre-release semver versions carry a `-` separator (e.g. `0.1.0-alpha.0`). */
+function isPrereleaseVersion(version: string): boolean {
+	return version.includes("-");
+}
+
+/**
+ * Effective `allowPrerelease` flag for electron-updater. Honors the user's
+ * persisted setting OR forces it on when this build itself is a pre-release —
+ * an alpha install must always be able to update to the next alpha, even if
+ * the persisted toggle is off (e.g. fresh install where the user hasn't
+ * touched settings).
+ */
+function shouldAllowPrerelease(): boolean {
+	const userOptIn = getStoreValue("general.receivePrereleaseUpdates") === true;
+	return userOptIn || isPrereleaseVersion(app.getVersion());
+}
+
 /** Shared webPreferences for all BrowserWindows (sandbox + context isolation). */
 const sharedWebPreferences: Electron.WebPreferences = {
 	preload: path.join(import.meta.dirname, "preload.cjs"),
@@ -356,20 +391,15 @@ async function initAutoUpdater(): Promise<void> {
 		// runtime). The bundled-ESM shape sometimes exposes named exports at
 		// `module.<name>` and sometimes at `module.default.<name>` depending on
 		// how esbuild wraps the original CJS module — accept both.
-		interface AutoUpdater {
-			allowPrerelease: boolean;
-			autoDownload: boolean;
-			checkForUpdatesAndNotify: () => Promise<unknown>;
-			on: (event: string, listener: (...args: unknown[]) => void) => void;
-		}
 		const updaterModule = (await import("electron-updater")) as {
-			autoUpdater?: AutoUpdater;
-			default?: { autoUpdater?: AutoUpdater };
+			autoUpdater?: AutoUpdaterHandle;
+			default?: { autoUpdater?: AutoUpdaterHandle };
 		};
 		const autoUpdater = updaterModule.autoUpdater ?? updaterModule.default?.autoUpdater;
 		if (!autoUpdater) {
 			throw new Error("electron-updater: autoUpdater export not found on module");
 		}
+		autoUpdaterRef = autoUpdater;
 
 		const getUpdateVersion = (payload: unknown): string => {
 			if (typeof payload === "object" && payload !== null && "version" in payload) {
@@ -379,11 +409,12 @@ async function initAutoUpdater(): Promise<void> {
 		};
 
 		autoUpdater.autoDownload = true;
-		// While the app ships as a pre-release (0.x.y-alpha.*), opt into the
-		// GitHub prerelease channel — otherwise electron-updater only sees
-		// stable releases and never serves alpha→alpha updates. Drop this back
-		// to false (or gate behind a setting) once we cut the first stable.
-		autoUpdater.allowPrerelease = true;
+		// Sourced from the user's persisted "Receive pre-release updates"
+		// toggle, OR-ed with "is this build itself a pre-release". The OR
+		// guarantees alpha→alpha self-updates work without forcing every
+		// stable user onto the alpha train. Live-updated below via the
+		// general-settings watcher.
+		autoUpdater.allowPrerelease = shouldAllowPrerelease();
 		autoUpdater.on("checking-for-update", () => {
 			dbg("updater", "Checking for updates");
 			recordUpdaterStatus({ status: "checking" });
@@ -407,6 +438,28 @@ async function initAutoUpdater(): Promise<void> {
 			dbg("updater", "Update downloaded:", version);
 			recordUpdaterStatus({ status: "downloaded", version });
 		});
+
+		// Live-update `allowPrerelease` whenever the user toggles "Receive
+		// pre-release updates" in Settings — no restart needed. We watch the
+		// whole `general` section (matching the pattern used for the listen-
+		// mode resize handler above) and re-derive on every change since the
+		// toggle's value is cheap to read and the comparison is idempotent.
+		const updateAllowPrerelease = (): void => {
+			const next = shouldAllowPrerelease();
+			if (autoUpdater.allowPrerelease !== next) {
+				autoUpdater.allowPrerelease = next;
+				dbg("updater", `allowPrerelease → ${next}`);
+				// Re-check immediately so a user who flipped the toggle on
+				// sees the prerelease they were waiting for without having
+				// to wait for the next 4h tick.
+				autoUpdater.checkForUpdatesAndNotify().catch((error: unknown) => {
+					const message = toErrorMessage(error);
+					dbg("updater", "Post-toggle re-check failed:", message);
+					recordUpdaterStatus({ status: "error", message });
+				});
+			}
+		};
+		disposeUpdaterSettingsWatcher = store.onDidChange("general", updateAllowPrerelease);
 
 		await autoUpdater.checkForUpdatesAndNotify();
 		autoUpdateCheckTimer = setInterval(
@@ -668,6 +721,8 @@ if (gotTheLock) {
 		disposeGeneralSettingsWatcher?.();
 		disposeGeneralSettingsWatcher = null;
 		cleanupSettingsHandlers();
+		disposeUpdaterSettingsWatcher?.();
+		disposeUpdaterSettingsWatcher = null;
 		if (autoUpdateCheckTimer) {
 			clearInterval(autoUpdateCheckTimer);
 			autoUpdateCheckTimer = null;
@@ -791,16 +846,36 @@ function setupClipboardHandlers(): () => void {
 function setupUpdaterStatusHandlers(): () => void {
 	ipcMain.removeHandler(IPC.UPDATER_GET_STATUS_HISTORY);
 	ipcMain.removeHandler(IPC.UPDATER_CLEAR_STATUS_HISTORY);
+	ipcMain.removeHandler(IPC.UPDATER_CHECK_NOW);
 
 	ipcMain.handle(IPC.UPDATER_GET_STATUS_HISTORY, () => updaterStatusHistory.getHistory());
 	ipcMain.handle(IPC.UPDATER_CLEAR_STATUS_HISTORY, () => {
 		updaterStatusHistory.clear();
 		return { cleared: true };
 	});
+	// On-demand check. Returns `{ triggered: boolean, reason?: string }` so the
+	// renderer button can flip back to "Checked" after the user clicks; the
+	// real status payload arrives asynchronously over `IPC.UPDATER_STATUS`
+	// like every other update event.
+	ipcMain.handle(IPC.UPDATER_CHECK_NOW, async () => {
+		if (!autoUpdaterRef) {
+			return { triggered: false, reason: "updater-unavailable" };
+		}
+		try {
+			await autoUpdaterRef.checkForUpdatesAndNotify();
+			return { triggered: true };
+		} catch (error) {
+			const message = toErrorMessage(error);
+			dbg("updater", "Manual update check failed:", message);
+			recordUpdaterStatus({ status: "error", message });
+			return { triggered: false, reason: message };
+		}
+	});
 
 	return () => {
 		ipcMain.removeHandler(IPC.UPDATER_GET_STATUS_HISTORY);
 		ipcMain.removeHandler(IPC.UPDATER_CLEAR_STATUS_HISTORY);
+		ipcMain.removeHandler(IPC.UPDATER_CHECK_NOW);
 	};
 }
 

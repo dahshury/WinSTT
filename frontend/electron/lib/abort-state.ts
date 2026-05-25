@@ -48,8 +48,3 @@ export function clearSessionAborted(): void {
 export function isSessionAborted(): boolean {
 	return sessionAborted;
 }
-
-/** Test hook: reset all module state to its construction default. */
-export function __resetAbortStateForTesting__(): void {
-	sessionAborted = false;
-}

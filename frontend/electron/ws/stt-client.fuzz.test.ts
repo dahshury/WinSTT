@@ -10,11 +10,11 @@ const { _testHandleDataMessage, _testResetContractMismatchCache } = await import
 
 beforeEach(() => {
 	_testResetContractMismatchCache();
-	delete (Object.prototype as Record<string, unknown>).polluted;
+	Reflect.deleteProperty(Object.prototype, "polluted");
 });
 
 afterEach(() => {
-	delete (Object.prototype as Record<string, unknown>).polluted;
+	Reflect.deleteProperty(Object.prototype, "polluted");
 });
 
 function callSafely(raw: string): { threw: boolean; result?: unknown } {
@@ -32,7 +32,7 @@ describe("stt-client fuzz: totality", () => {
 				const { threw } = callSafely(raw);
 				expect(threw).toBe(false);
 			}),
-			{ numRuns: 500 },
+			{ numRuns: 500 }
 		);
 	});
 
@@ -42,7 +42,7 @@ describe("stt-client fuzz: totality", () => {
 				const { threw } = callSafely(raw);
 				expect(threw).toBe(false);
 			}),
-			{ numRuns: 500 },
+			{ numRuns: 500 }
 		);
 	});
 
@@ -53,18 +53,18 @@ describe("stt-client fuzz: totality", () => {
 				const { threw } = callSafely(raw);
 				expect(threw).toBe(false);
 			}),
-			{ numRuns: 500 },
+			{ numRuns: 500 }
 		);
 	});
 
 	test("raw byte-stream decoded as UTF-8 never throws", () => {
 		fc.assert(
-			fc.property(fc.uint8Array({ maxLength: 10000 }), (bytes) => {
+			fc.property(fc.uint8Array({ maxLength: 10_000 }), (bytes) => {
 				const raw = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
 				const { threw } = callSafely(raw);
 				expect(threw).toBe(false);
 			}),
-			{ numRuns: 500 },
+			{ numRuns: 500 }
 		);
 	});
 });
@@ -80,7 +80,7 @@ describe("stt-client fuzz: return-shape consistency", () => {
 				expect("dispatched" in r).toBe(true);
 				expect("validated" in r).toBe(true);
 			}),
-			{ numRuns: 200 },
+			{ numRuns: 200 }
 		);
 	});
 
@@ -108,14 +108,17 @@ describe("stt-client fuzz: prototype pollution", () => {
 	test("random property names including __proto__ do not pollute", () => {
 		fc.assert(
 			fc.property(
-				fc.dictionary(fc.constantFrom("__proto__", "constructor", "prototype", "polluted"), fc.jsonValue()),
+				fc.dictionary(
+					fc.constantFrom("__proto__", "constructor", "prototype", "polluted"),
+					fc.jsonValue()
+				),
 				(obj) => {
 					const raw = JSON.stringify(obj);
 					callSafely(raw);
 					expect(({} as Record<string, unknown>).polluted).toBeUndefined();
-				},
+				}
 			),
-			{ numRuns: 200 },
+			{ numRuns: 200 }
 		);
 	});
 });
@@ -131,7 +134,7 @@ describe("stt-client fuzz: adversarial seeds", () => {
 		"[]",
 		"{}",
 		"[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
-		`{"type":"${"x".repeat(10000)}"}`,
+		`{"type":"${"x".repeat(10_000)}"}`,
 		'﻿{"type":"realtime","text":"hello"}',
 		'{"type":"‮‭"}',
 		"\x00\x01\x02",

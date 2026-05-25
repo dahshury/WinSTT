@@ -25,10 +25,3 @@ export const RECORDING_MODE_COLOR_RGB = {
 	wakeword: [249, 115, 22],
 } as const satisfies Record<RecordingMode, readonly [number, number, number]>;
 
-export function getRecordingModeHex(mode: RecordingMode): `#${string}` {
-	return RECORDING_MODE_COLOR_HEX[mode];
-}
-
-export function getRecordingModeRgb(mode: RecordingMode): readonly [number, number, number] {
-	return RECORDING_MODE_COLOR_RGB[mode];
-}

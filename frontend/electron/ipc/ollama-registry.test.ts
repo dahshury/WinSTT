@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { debugLogMock } from "@test/mocks/debug-log";
 import { electronMock } from "@test/mocks/electron";
 
-const noop = () => undefined;
-
 // Use the complete `electronMock()` factory so the process-global mock leak
 // this installs is semantically complete — partial shims would make every
 // later test importing `app` / `BrowserWindow` / etc. from `electron` throw

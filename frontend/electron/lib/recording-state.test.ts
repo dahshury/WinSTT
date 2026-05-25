@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { electronMock } from "@test/mocks/electron";
 import { electronStoreMock } from "@test/mocks/electron-store";
 
 // Mock the underlying `electron-store` package (same approach as
@@ -6,6 +7,14 @@ import { electronStoreMock } from "@test/mocks/electron-store";
 // mock `./store` directly — that would conflict with store.test.ts's
 // own setup under bun's process-global mock.module registry.
 mock.module("electron-store", () => electronStoreMock());
+
+// `./store` transitively imports `./secret-storage` which imports
+// `safeStorage` from electron. Bun-test's resolution of `electron`
+// against the real npm package doesn't expose `safeStorage`, so the
+// module link fails before any test runs (and the failure poisons
+// sibling files via "Export named 'safeStorage' not found"). Install
+// the complete shared electronMock() so the link resolves.
+mock.module("electron", () => electronMock());
 
 const { store } = await import("./store");
 const {

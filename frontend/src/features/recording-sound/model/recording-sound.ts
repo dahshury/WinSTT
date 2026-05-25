@@ -1,7 +1,7 @@
 import type { SoundLibraryEntry } from "@/shared/config/settings-schema";
 
 /** Stable identifier for the implicit "default" entry. Never persisted. */
-export const DEFAULT_SOUND_ID = "__winstt_default__";
+const DEFAULT_SOUND_ID = "__winstt_default__";
 
 /**
  * A row in the picker. Default is virtual (no path), customs are real files

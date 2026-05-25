@@ -42,7 +42,6 @@ mock.module("../lib/ps-host", () => ({
 		return { ok: true, value: null };
 	},
 	shutdownPsHost: () => undefined,
-	__resetPsHostForTesting__: () => undefined,
 }));
 
 const audioMute = await import("./audio-mute");

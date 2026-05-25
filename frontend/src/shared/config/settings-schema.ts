@@ -213,6 +213,13 @@ export const generalSettingsSchema = z.object({
 	// `init()` can't be cleanly reversed at runtime, so the renderer + main
 	// SDKs both read this flag once at startup.
 	sendCrashReports: z.boolean().default(true),
+	// Opt-in toggle for pre-release (alpha/beta) auto-updates. Defaults to
+	// `false` so a future stable release stays on stable for everyone except
+	// users who explicitly want early access. The main process OR-s this with
+	// "current build is a pre-release" so alpha installs keep updating to
+	// newer alphas regardless of the toggle — the user-facing knob only
+	// changes behavior once we cut the first stable.
+	receivePrereleaseUpdates: z.boolean().default(false),
 	// First-run onboarding gate. `false` triggers the onboarding wizard window
 	// (one-time wizard that picks local vs cloud STT, tests the mic, optionally
 	// collects cloud keys, and offers Ollama setup). `.catch(false)` means a

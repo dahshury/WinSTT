@@ -463,9 +463,3 @@ export function shutdownPsHost(): void {
 	}
 }
 
-/** Test hook: reset module state. */
-export function __resetPsHostForTesting__(): void {
-	shutdownPsHost();
-	nextId = 1;
-	stdoutBuffer = "";
-}

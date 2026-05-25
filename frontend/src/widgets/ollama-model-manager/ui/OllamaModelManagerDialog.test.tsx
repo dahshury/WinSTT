@@ -390,9 +390,12 @@ describe("OllamaModelManagerDialog — Recommended tab", () => {
 
 	test("CustomPullRow: shows pull row for a custom model:tag query", async () => {
 		renderDialog();
-		// Switch to recommended tab
+		// Switch to recommended tab. The Switcher renders each option's label
+		// twice inside the same <button> (an invisible span for stable sizing
+		// plus the visible span), so `textContent` is "RecommendedRecommended"
+		// — match via `includes("Recommended")` instead of strict equality.
 		const allBtns = Array.from(document.querySelectorAll("button"));
-		const recBtn = allBtns.find((b) => (b.textContent ?? "").trim() === "Recommended");
+		const recBtn = allBtns.find((b) => (b.textContent ?? "").includes("Recommended"));
 		if (recBtn) {
 			await act(async () => {
 				fireEvent.click(recBtn);

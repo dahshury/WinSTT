@@ -816,7 +816,6 @@ export {
 	buildRetryExtra,
 	buildSuccessResponse,
 	buildTranscriptionModel,
-	CLOUD_TRANSCRIBE_TIMEOUT_MS,
 	channelForErrorCode,
 	classifyError,
 	decodeAudio,

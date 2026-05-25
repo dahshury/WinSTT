@@ -465,7 +465,7 @@ async function searchOrCached(trimmed: string, page: number): Promise<OllamaLibr
 	return cached ?? (await searchOrFail(trimmed, page, cacheKey));
 }
 
-export async function searchOllamaLibrary(
+async function searchOllamaLibrary(
 	query: string,
 	page = 0
 ): Promise<OllamaLibrarySearchResult> {
@@ -506,7 +506,7 @@ function liveCatalogCache(): OllamaLibraryCatalogResult | null {
  * the entire result once and hand it to the renderer for client-side
  * filtering. Cached for {@link CATALOG_TTL_MS} since the library only grows.
  */
-export async function fetchOllamaLibraryCatalog(): Promise<OllamaLibraryCatalogResult> {
+async function fetchOllamaLibraryCatalog(): Promise<OllamaLibraryCatalogResult> {
 	return liveCatalogCache() ?? (await catalogOrFail());
 }
 
@@ -538,7 +538,7 @@ async function tagsOrCached(trimmed: string): Promise<OllamaLibraryTagsResult> {
 	return cached ?? (await tagsOrFail(trimmed, cacheKey));
 }
 
-export async function fetchOllamaLibraryTags(model: string): Promise<OllamaLibraryTagsResult> {
+async function fetchOllamaLibraryTags(model: string): Promise<OllamaLibraryTagsResult> {
 	const trimmed = model.trim();
 	return trimmed.length > 0 ? await tagsOrCached(trimmed) : emptyTagsResult(trimmed);
 }

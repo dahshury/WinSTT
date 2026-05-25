@@ -335,7 +335,7 @@ function instantiatePickerWindow(): BrowserWindow {
 	return pickerWindow;
 }
 
-export function createDevicePickerWindow(): BrowserWindow {
+function createDevicePickerWindow(): BrowserWindow {
 	if (isWindowAlive(pickerWindow)) {
 		return pickerWindow;
 	}
@@ -347,10 +347,10 @@ export function createDevicePickerWindow(): BrowserWindow {
 // Entrance: arrive fast, settle gently (ease-out). Exit: start gently,
 // build momentum, then leave (ease-in). Both cubic so neither is the
 // flagged "linear motion".
-export function easeOutCubic(t: number): number {
+function easeOutCubic(t: number): number {
 	return 1 - (1 - t) ** 3;
 }
-export function easeInCubic(t: number): number {
+function easeInCubic(t: number): number {
 	return t ** 3;
 }
 
@@ -478,7 +478,7 @@ function computeXAxis(
  * the bottom stays put and the picker scrolls internally. Everything is
  * then clamped into the display work area.
  */
-export function computePickerPosition(
+function computePickerPosition(
 	anchor: Anchor,
 	size: { width: number; height: number },
 	workArea: { x: number; y: number; width: number; height: number }
@@ -542,12 +542,12 @@ function showWhenReady(win: BrowserWindow): void {
 	deferShowUntilLoaded(win);
 }
 
-export function showDevicePickerAtAnchor(anchor: Anchor): void {
+function showDevicePickerAtAnchor(anchor: Anchor): void {
 	lastAnchor = anchor;
 	showWhenReady(createDevicePickerWindow());
 }
 
-export function hideDevicePicker(): void {
+function hideDevicePicker(): void {
 	hideAliveWindow(pickerWindow);
 	lastAnchor = null;
 }
@@ -589,7 +589,7 @@ function reanchorIfVisible(): void {
 	placeAndShowPicker(pickerWindow as BrowserWindow);
 }
 
-export function applyResize(payload: { width: number; height: number }): void {
+function applyResize(payload: { width: number; height: number }): void {
 	const next = normalizeResizePayload(payload);
 	if (sizeUnchanged(desiredSize, next)) {
 		return;

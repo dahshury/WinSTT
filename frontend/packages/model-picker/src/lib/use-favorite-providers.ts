@@ -32,12 +32,6 @@ function getInitialFavorites(): string[] {
 	return readStoredFavorites() ?? DEFAULT_FAVORITES;
 }
 
-export const __use_favorite_providers_test_helpers__ = {
-	isNonEmptyArray,
-	parseStoredFavorites,
-	readStoredFavorites,
-};
-
 export function useFavoriteProviders() {
 	const [favorites, setFavorites] = useState<string[]>(getInitialFavorites);
 	const [isLoaded] = useState(true);

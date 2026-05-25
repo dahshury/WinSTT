@@ -185,7 +185,7 @@ const SCHEME_PREFIX_RE = /^[a-z]+:\/\//;
 const LEADING_WILDCARD_RE = /^\*\./;
 
 /** True when the snapshot's foreground app is a recognised IDE. */
-export function isIdeContext(snapshot: WindowContextSnapshot): boolean {
+function isIdeContext(snapshot: WindowContextSnapshot): boolean {
 	const exe = (snapshot.appExe ?? "").toLowerCase();
 	if (!exe) {
 		return false;

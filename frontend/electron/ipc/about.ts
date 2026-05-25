@@ -4,7 +4,7 @@ import { app, ipcMain } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
 import { dbg } from "../lib/debug-log";
 
-export interface AppInfo {
+interface AppInfo {
 	copyright: string;
 	electronVersion: string;
 	nodeVersion: string;
@@ -54,10 +54,3 @@ export function setupAboutHandlers(): () => void {
 		ipcMain.removeHandler(IPC.ABOUT_GET_APP_INFO);
 	};
 }
-
-export const __about_test_helpers__ = {
-	resolveBundledTextFile,
-	readBundledText,
-	buildAppInfo,
-	COPYRIGHT,
-};

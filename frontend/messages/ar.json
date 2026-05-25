@@ -63,7 +63,19 @@
     "licenseTitle": "الترخيص",
     "licenseDescription": "اتفاقية ترخيص المستخدم النهائي لتطبيق WinSTT.",
     "noticesTitle": "إشعارات الأطراف الخارجية",
-    "noticesDescription": "مكونات مفتوحة المصدر ونماذج تعلّم آلي ومواد أخرى من أطراف خارجية مضمّنة أو يُنزّلها WinSTT."
+    "noticesDescription": "مكونات مفتوحة المصدر ونماذج تعلّم آلي ومواد أخرى من أطراف خارجية مضمّنة أو يُنزّلها WinSTT.",
+    "updatesTitle": "التحديثات",
+    "updatesDescription": "يتحقق WinSTT من التحديثات تلقائيًا كل بضع ساعات وعند بدء التشغيل.",
+    "updatesCheckNow": "تحقّق الآن",
+    "updatesChecking": "جارٍ التحقق…",
+    "receivePrereleaseUpdates": "تلقّي تحديثات ما قبل الإصدار",
+    "receivePrereleaseUpdatesCaption": "اشترك في إصدارات الألفا والبيتا. تتلقّى إصدارات ما قبل الإصدار دائمًا تحديثات لأحدث إصدارات ما قبل الإصدار بصرف النظر عن هذا الخيار.",
+    "updatesStatusIdle": "لم يتم التحقق من التحديثات بعد.",
+    "updatesStatusChecking": "جارٍ التحقق من التحديثات…",
+    "updatesStatusAvailable": "تحديث متاح: {version}",
+    "updatesStatusUpToDate": "أنت تستخدم أحدث إصدار.",
+    "updatesStatusDownloaded": "تم تنزيل التحديث {version} — أعد التشغيل للتثبيت.",
+    "updatesStatusError": "فشل التحقق من التحديث: {message}"
   },
   "history": {
     "summaryTitle": "إحصائيات إجمالية",

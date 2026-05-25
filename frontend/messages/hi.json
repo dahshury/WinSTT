@@ -63,7 +63,19 @@
     "licenseTitle": "लाइसेंस",
     "licenseDescription": "WinSTT के लिए अंतिम-उपयोगकर्ता लाइसेंस अनुबंध।",
     "noticesTitle": "तृतीय-पक्ष सूचनाएँ",
-    "noticesDescription": "WinSTT द्वारा बंडल या डाउनलोड किए गए ओपन-सोर्स घटक, AI मॉडल और अन्य तृतीय-पक्ष सामग्री।"
+    "noticesDescription": "WinSTT द्वारा बंडल या डाउनलोड किए गए ओपन-सोर्स घटक, AI मॉडल और अन्य तृतीय-पक्ष सामग्री।",
+    "updatesTitle": "अपडेट",
+    "updatesDescription": "WinSTT हर कुछ घंटे और लॉन्च पर स्वचालित रूप से अपडेट की जाँच करता है।",
+    "updatesCheckNow": "अभी जाँचें",
+    "updatesChecking": "जाँच हो रही है…",
+    "receivePrereleaseUpdates": "प्री-रिलीज़ अपडेट प्राप्त करें",
+    "receivePrereleaseUpdatesCaption": "अल्फा और बीटा रिलीज़ का विकल्प चुनें। प्री-रिलीज़ बिल्ड हमेशा नए प्री-रिलीज़ पर अपडेट होते हैं, चाहे यह विकल्प कुछ भी हो।",
+    "updatesStatusIdle": "अभी तक कोई अपडेट जाँच नहीं हुई।",
+    "updatesStatusChecking": "अपडेट की जाँच हो रही है…",
+    "updatesStatusAvailable": "अपडेट उपलब्ध: {version}",
+    "updatesStatusUpToDate": "आप नवीनतम संस्करण पर हैं।",
+    "updatesStatusDownloaded": "अपडेट {version} डाउनलोड हो गया — इंस्टॉल करने के लिए पुनः आरंभ करें।",
+    "updatesStatusError": "अपडेट जाँच विफल: {message}"
   },
   "history": {
     "summaryTitle": "कुल आँकड़े",

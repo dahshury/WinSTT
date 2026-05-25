@@ -1,10 +1,4 @@
 export { useVisualizerSync } from "./api/use-visualizer-sync";
-export type { AgentState, VisualizerSize, VisualizerType } from "./lib/audio-visualizer";
-export { isVisualizerType, VISUALIZER_TYPES } from "./lib/audio-visualizer";
+export { isVisualizerType } from "./lib/audio-visualizer";
 export { useVisualizerStore } from "./model/visualizer-store";
 export { AudioVisualizer } from "./ui/AudioVisualizer";
-export { AudioVisualizerAura } from "./ui/AudioVisualizerAura";
-export { AudioVisualizerBar } from "./ui/AudioVisualizerBar";
-export { AudioVisualizerGrid } from "./ui/AudioVisualizerGrid";
-export { AudioVisualizerRadial } from "./ui/AudioVisualizerRadial";
-export { AudioVisualizerWave } from "./ui/AudioVisualizerWave";

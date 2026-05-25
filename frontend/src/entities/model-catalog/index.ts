@@ -1,7 +1,4 @@
 export {
-	buildModelOpts,
-	buildRealtimeOpts,
-	isUncomfortable,
 	needsModelFallback,
 	pickDefaultSttModel,
 } from "./lib/model-options";

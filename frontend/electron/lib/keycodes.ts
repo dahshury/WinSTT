@@ -149,7 +149,7 @@ for (const [code, name] of Object.entries(KEYCODE_TO_NAME)) {
 // fallback always covers every input the suite exercises (lower-case letters
 // and lower-case modifier names hit either the title-case or upper-case
 // branch identically), so the final return value is unchanged.
-export function lookupKeycode(part: string): number | undefined {
+function lookupKeycode(part: string): number | undefined {
 	return (
 		NAME_TO_KEYCODE[part] ??
 		NAME_TO_KEYCODE[part.charAt(0).toUpperCase() + part.slice(1)] ??

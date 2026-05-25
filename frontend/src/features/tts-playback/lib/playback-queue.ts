@@ -53,7 +53,7 @@ export function parseFloat32Samples(chunk: ChunkInput): AudioSamples | null {
  * ``samples`` into a freshly-allocated owned ``Float32Array``. Missing
  * trailing samples are zero-filled (the buffer starts zeroed).
  */
-export function extractChannelPlane(
+function extractChannelPlane(
 	samples: Float32Array,
 	channels: number,
 	frames: number,

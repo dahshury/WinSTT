@@ -84,15 +84,9 @@ function getContainerClassName(isListenMode: boolean): string {
 	return `${base} ${border}`;
 }
 
-export type { DropValidation, RunTranscriptionDeps, TranslateFn };
 export {
-	checkExtension,
-	checkFilePath,
-	extractErrorMessage,
 	getContainerClassName,
-	getExtension,
 	runTranscription,
-	SUPPORTED_EXTENSIONS,
 	validateDroppedFile,
 };
 

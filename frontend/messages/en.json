@@ -63,7 +63,19 @@
     "licenseTitle": "License",
     "licenseDescription": "End User License Agreement for WinSTT.",
     "noticesTitle": "Third-party notices",
-    "noticesDescription": "Open-source components, ML models, and other third-party material bundled or downloaded by WinSTT."
+    "noticesDescription": "Open-source components, ML models, and other third-party material bundled or downloaded by WinSTT.",
+    "updatesTitle": "Updates",
+    "updatesDescription": "WinSTT checks for updates automatically every few hours and on launch.",
+    "updatesCheckNow": "Check now",
+    "updatesChecking": "Checking…",
+    "receivePrereleaseUpdates": "Receive pre-release updates",
+    "receivePrereleaseUpdatesCaption": "Opt in to alpha and beta releases. Pre-release builds always update to newer pre-releases regardless of this toggle.",
+    "updatesStatusIdle": "No updates checked yet.",
+    "updatesStatusChecking": "Checking for updates…",
+    "updatesStatusAvailable": "Update available: {version}",
+    "updatesStatusUpToDate": "You're on the latest version.",
+    "updatesStatusDownloaded": "Update {version} downloaded — restart to install.",
+    "updatesStatusError": "Update check failed: {message}"
   },
   "history": {
     "summaryTitle": "Overall Stats",

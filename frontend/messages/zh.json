@@ -63,7 +63,19 @@
     "licenseTitle": "许可证",
     "licenseDescription": "WinSTT 的最终用户许可协议。",
     "noticesTitle": "第三方声明",
-    "noticesDescription": "WinSTT 捆绑或下载的开源组件、AI 模型及其他第三方材料。"
+    "noticesDescription": "WinSTT 捆绑或下载的开源组件、AI 模型及其他第三方材料。",
+    "updatesTitle": "更新",
+    "updatesDescription": "WinSTT 每隔几小时及启动时会自动检查更新。",
+    "updatesCheckNow": "立即检查",
+    "updatesChecking": "正在检查…",
+    "receivePrereleaseUpdates": "接收预发布更新",
+    "receivePrereleaseUpdatesCaption": "选择加入 alpha 和 beta 版本。预发布版本始终会更新到更新的预发布版本，无论此开关如何设置。",
+    "updatesStatusIdle": "尚未检查更新。",
+    "updatesStatusChecking": "正在检查更新…",
+    "updatesStatusAvailable": "可用更新：{version}",
+    "updatesStatusUpToDate": "已是最新版本。",
+    "updatesStatusDownloaded": "更新 {version} 已下载 — 重启以安装。",
+    "updatesStatusError": "更新检查失败：{message}"
   },
   "history": {
     "summaryTitle": "总体统计",

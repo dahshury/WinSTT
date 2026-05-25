@@ -185,7 +185,3 @@ export function setupOnboardingHandlers(options: SetupOptions): () => void {
 		onboardingWindow = null;
 	};
 }
-
-export const __onboarding_window_test_helpers__ = {
-	isFinishPayload,
-};

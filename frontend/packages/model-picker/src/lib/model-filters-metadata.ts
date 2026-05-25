@@ -146,19 +146,3 @@ export function computeModelFiltersMetadata(models: OpenRouterModel[]): ModelFil
 		parameterCounts: acc.parameterCounts,
 	};
 }
-
-export const __model_filters_metadata_test_helpers__ = {
-	createAccumulator,
-	bumpCount,
-	modelHasImplicitVariant,
-	accumulateVariant,
-	accumulateEndpoints,
-	registerEndpointProvider,
-	accumulateMaker,
-	accumulateParameters,
-	registerParameter,
-	accumulateModel,
-	buildAvailableVariants,
-	compareEndpointEntries,
-	buildSortedEndpointProviders,
-};

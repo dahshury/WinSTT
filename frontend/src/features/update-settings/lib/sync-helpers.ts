@@ -27,7 +27,7 @@ export function shouldSendOnChange<V>(
  * detection (PTT: key release defines the boundary; toggle+manualToggleStop:
  * second press defines the boundary). CC 3 — one ternary, one short-circuit.
  */
-export function silenceEndpointBypassed(mode: string, manualToggleStop = false): boolean {
+function silenceEndpointBypassed(mode: string, manualToggleStop = false): boolean {
 	return mode === "ptt" || (mode === "toggle" && manualToggleStop);
 }
 

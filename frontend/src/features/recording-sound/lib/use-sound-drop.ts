@@ -131,10 +131,3 @@ export function useSoundDrop({ onAdd, t }: UseSoundDropOptions): UseSoundDropRet
 		resetError,
 	};
 }
-
-export const __use_sound_drop_test_helpers__ = {
-	hasValidExtension,
-	checkDuration,
-	ACCEPTED_EXTENSIONS,
-	MAX_DURATION_SECONDS,
-};

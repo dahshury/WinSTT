@@ -29,7 +29,10 @@ mock.module("node:fs", () => ({
 	readFileSync: ((p: string, ...rest: unknown[]) =>
 		typeof p === "string" && p.endsWith(SOUND_PATH_MARKER)
 			? readFileImpl(p)
-			: (realFs.readFileSync as (...a: unknown[]) => unknown)(p, ...rest)) as unknown as typeof realFs.readFileSync,
+			: (realFs.readFileSync as (...a: unknown[]) => unknown)(
+					p,
+					...rest
+				)) as unknown as typeof realFs.readFileSync,
 }));
 
 // Configurable store mock — tests set storeValues to drive getStoreValue().

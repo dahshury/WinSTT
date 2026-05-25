@@ -2,272 +2,194 @@ import { describe, expect, test } from "bun:test";
 import {
 	ALL_PRESET_KEYS,
 	buildSystemPrompt,
-	CUSTOM_MODIFIER_KEY,
-	type CustomModifier,
-	type CustomModifierEntry,
 	getPresetPrompt,
 	hasLevels,
 	INDEPENDENT_PRESETS,
-	isCustomEntry,
 	isToneKey,
-	mergePresetsWithCustomModifiers,
 	PRESET_LEVELS,
 	PRESETS_WITH_LEVELS,
-	type PresetEntry,
+	type PresetKey,
 	TONE_GROUP,
-} from "./preset-prompts";
+} from "@/shared/lib/preset-prompts";
 
-// preset-prompts is load-bearing for LLM dictation cleanup. Asserts cover the
-// public surface plus the sentinel-key merge contract documented in
-// memory/project_custom_modifiers.md (custom modifiers fold into the runtime
-// presets array via the __custom__ sentinel; disabled or empty entries are
-// dropped; translate is always emitted last by composePresetBody).
-
-// The schema-clamp tail that every preset prompt ends with. Spot-checking its
-// presence keeps the per-preset structured-output guarantee from regressing.
-const SCHEMA_CLAMP_TAIL = "Output only the transformed text";
-
-function makeCustom(overrides: Partial<CustomModifier> = {}): CustomModifier {
-	return {
-		enabled: true,
-		id: "m1",
-		level: "medium",
-		levelsEnabled: false,
-		name: "My modifier",
-		prompt: "Speak like a pirate.",
-		...overrides,
-	};
-}
-
-describe("isCustomEntry", () => {
-	test("true when the entry uses the custom sentinel key", () => {
-		const entry: PresetEntry = {
-			key: CUSTOM_MODIFIER_KEY,
-			id: "x",
-			name: "x",
-			prompt: "x",
-		};
-		expect(isCustomEntry(entry)).toBe(true);
+describe("preset-prompts", () => {
+	test("ALL_PRESET_KEYS contains the eleven canonical presets", () => {
+		expect([...(ALL_PRESET_KEYS as readonly string[])].sort()).toEqual(
+			[
+				"casual",
+				"concise",
+				"formal",
+				"friendly",
+				"neutral",
+				"reorder",
+				"restructure",
+				"rewordForClarity",
+				"summarize",
+				"technical",
+				"translate",
+			].sort()
+		);
 	});
 
-	test("false for any built-in preset key", () => {
-		expect(isCustomEntry({ key: "neutral" })).toBe(false);
-		expect(isCustomEntry({ key: "translate", targetLang: "Spanish" })).toBe(false);
-	});
-});
-
-describe("isToneKey / hasLevels", () => {
-	test("isToneKey returns true for every tone-group key", () => {
-		for (const k of TONE_GROUP) {
-			expect(isToneKey(k)).toBe(true);
+	test("TONE_GROUP and INDEPENDENT_PRESETS are disjoint and cover all keys", () => {
+		const tones = new Set<PresetKey>(TONE_GROUP as readonly PresetKey[]);
+		const indep = new Set<PresetKey>(INDEPENDENT_PRESETS as readonly PresetKey[]);
+		for (const key of ALL_PRESET_KEYS) {
+			expect(tones.has(key) !== indep.has(key)).toBe(true);
 		}
 	});
 
-	test("isToneKey returns false for non-tone keys", () => {
-		for (const k of INDEPENDENT_PRESETS) {
-			expect(isToneKey(k)).toBe(false);
+	test("PRESETS_WITH_LEVELS is summarize and concise", () => {
+		expect([...PRESETS_WITH_LEVELS].sort()).toEqual(["concise", "summarize"]);
+	});
+
+	test("isToneKey and hasLevels classify correctly", () => {
+		expect(isToneKey("neutral")).toBe(true);
+		expect(isToneKey("summarize")).toBe(false);
+		expect(hasLevels("summarize")).toBe(true);
+		expect(hasLevels("concise")).toBe(true);
+		expect(hasLevels("reorder")).toBe(false);
+	});
+
+	test("every preset returns a non-empty prompt", () => {
+		const leveled = new Set<PresetKey>(PRESETS_WITH_LEVELS as readonly PresetKey[]);
+		for (const key of ALL_PRESET_KEYS) {
+			if (leveled.has(key)) {
+				for (const level of PRESET_LEVELS) {
+					const prompt = getPresetPrompt(key, level);
+					expect(prompt.length).toBeGreaterThan(10);
+				}
+			} else {
+				const prompt = getPresetPrompt(key);
+				expect(prompt.length).toBeGreaterThan(10);
+			}
 		}
 	});
 
-	test("hasLevels returns true exactly for the leveled preset keys", () => {
-		for (const k of PRESETS_WITH_LEVELS) {
-			expect(hasLevels(k)).toBe(true);
+	test("level variants differ for summarize and concise", () => {
+		for (const family of PRESETS_WITH_LEVELS) {
+			const light = getPresetPrompt(family, "light");
+			const medium = getPresetPrompt(family, "medium");
+			const high = getPresetPrompt(family, "high");
+			expect(new Set([light, medium, high]).size).toBe(3);
 		}
-		expect(hasLevels("neutral")).toBe(false);
+	});
+
+	test("buildSystemPrompt includes the neutral preset body for empty array", () => {
+		// The system prompt now wraps every preset body with a trailing
+		// reminder that the model should output ONLY the transformed text.
+		// The structural guarantee comes from Ollama's `format` schema; the
+		// reminder just keeps the model from putting reasoning INSIDE the
+		// `text` field.
+		const out = buildSystemPrompt([]);
+		expect(out).toContain(getPresetPrompt("neutral"));
+		expect(out.toLowerCase()).toContain("output only the transformed text");
+	});
+
+	test("buildSystemPrompt includes the single preset body verbatim", () => {
+		const out = buildSystemPrompt([{ key: "formal" }]);
+		expect(out).toContain(getPresetPrompt("formal"));
+	});
+
+	test("Polish base is present in every system prompt, exactly once", () => {
+		const polishBase = getPresetPrompt("neutral");
+		const occurrences = (haystack: string, needle: string): number =>
+			haystack.split(needle).length - 1;
+
+		for (const presets of [
+			[] as const,
+			[{ key: "neutral" }] as const,
+			[{ key: "formal" }] as const,
+			[{ key: "summarize", level: "high" }] as const,
+			[{ key: "formal" }, { key: "concise", level: "medium" }, { key: "reorder" }] as const,
+			[{ key: "neutral" }, { key: "neutral" }] as const,
+		]) {
+			const out = buildSystemPrompt([...presets]);
+			expect(occurrences(out, polishBase)).toBe(1);
+		}
+	});
+
+	test("neutral alone is exactly the Polish prompt (no extra style layer)", () => {
+		const base = getPresetPrompt("neutral");
+		const expected = buildSystemPrompt([]);
+		expect(buildSystemPrompt([{ key: "neutral" }])).toBe(expected);
+		expect(buildSystemPrompt([{ key: "neutral" }, { key: "neutral" }])).toBe(expected);
+		expect(expected).toContain(base);
+		expect(expected).not.toContain("on top");
+	});
+
+	test("restructure defaults to prose and gates list conversion", () => {
+		// Regression: restructure numbered every sentence of a connected
+		// statement+question ("…Whisper models… Is that correct?") as 1-/2-/3-.
+		const r = getPresetPrompt("restructure");
+		expect(r.toLowerCase()).toContain("default to keeping the speaker");
+		expect(r).toContain("Do NOT convert text to a list merely because it has several sentences");
+		expect(r.toLowerCase()).toContain("never turn a question into a list item");
+	});
+
+	test("Polish base forbids unprompted list/structure and stray blank lines", () => {
+		// Regression: with no restructure modifier the model spontaneously
+		// turned a few sentences into a numbered list with blank lines.
+		const base = getPresetPrompt("neutral");
+		expect(base).toContain("do not reorganize prose into lists");
+		expect(base).toContain("do not introduce blank lines");
+		// Spoken layout commands must still survive the prohibition.
+		expect(base).toContain("new paragraph");
+	});
+
+	test("a tone layers its own prompt on top of the Polish base", () => {
+		const out = buildSystemPrompt([{ key: "formal" }]);
+		expect(out).toContain(getPresetPrompt("neutral"));
+		expect(out).toContain(getPresetPrompt("formal"));
+		expect(out).toContain("on top");
+	});
+
+	test("translate is an independent preset with no levels", () => {
+		expect((INDEPENDENT_PRESETS as readonly string[]).includes("translate")).toBe(true);
+		expect(isToneKey("translate")).toBe(false);
 		expect(hasLevels("translate")).toBe(false);
 	});
 
-	test("ALL_PRESET_KEYS unions tones and independent presets without overlap", () => {
-		// `length` on `as const` tuples is a literal type, so coerce to `number`
-		// before comparing the runtime sums.
-		const allLen: number = ALL_PRESET_KEYS.length;
-		const sum: number = TONE_GROUP.length + INDEPENDENT_PRESETS.length;
-		expect(allLen).toBe(sum);
-		expect(new Set(ALL_PRESET_KEYS).size).toBe(allLen);
+	test("translate entry resolves the chosen target language into the prompt", () => {
+		const out = buildSystemPrompt([{ key: "translate", targetLang: "Spanish" }]);
+		// Polish base is still present exactly once (cleanup runs first).
+		expect(out).toContain(getPresetPrompt("neutral"));
+		// The target language is named in the composed instruction.
+		expect(out).toContain("Spanish");
+		// Generalization clause: English examples are illustrative only.
+		expect(out.toLowerCase()).toContain("language-general");
+		// Must not leak the original / transliteration.
+		expect(out).toContain("Output ONLY the Spanish text");
 	});
 
-	test("PRESET_LEVELS is the three standard intensities", () => {
-		expect(PRESET_LEVELS).toEqual(["light", "medium", "high"]);
-	});
-});
-
-describe("getPresetPrompt", () => {
-	test("every preset key resolves to a non-empty string ending in the schema clamp", () => {
-		for (const k of ALL_PRESET_KEYS) {
-			const out = getPresetPrompt(k);
-			expect(out.length).toBeGreaterThan(0);
-			expect(out).toContain(SCHEMA_CLAMP_TAIL);
-		}
-	});
-
-	test("leveled presets emit different prompts per level", () => {
-		const light = getPresetPrompt("concise", "light");
-		const medium = getPresetPrompt("concise", "medium");
-		const high = getPresetPrompt("concise", "high");
-		expect(light).not.toBe(medium);
-		expect(medium).not.toBe(high);
-	});
-
-	test("leveled presets default to medium when no level is supplied", () => {
-		expect(getPresetPrompt("concise")).toBe(getPresetPrompt("concise", "medium"));
-		expect(getPresetPrompt("summarize")).toBe(getPresetPrompt("summarize", "medium"));
-	});
-
-	test("translate preset returns a prompt mentioning the default target language", () => {
-		const out = getPresetPrompt("translate");
-		expect(out).toContain("English");
-	});
-});
-
-describe("mergePresetsWithCustomModifiers", () => {
-	const builtins: readonly PresetEntry[] = [{ key: "neutral" }, { key: "formal" }];
-
-	test("returns a copy of the presets when the modifier list is null/undefined", () => {
-		const out = mergePresetsWithCustomModifiers(builtins, null);
-		expect(out).toEqual([...builtins]);
-		// Must NOT alias the input.
-		expect(out).not.toBe(builtins);
-	});
-
-	test("returns a copy of the presets when the modifier list is empty", () => {
-		expect(mergePresetsWithCustomModifiers(builtins, [])).toEqual([...builtins]);
-	});
-
-	test("appends enabled, non-blank modifiers using the sentinel key", () => {
-		const m = makeCustom({ id: "a" });
-		const out = mergePresetsWithCustomModifiers(builtins, [m]);
-		expect(out.length).toBe(builtins.length + 1);
-		const last = out.at(-1) as CustomModifierEntry;
-		expect(last.key).toBe(CUSTOM_MODIFIER_KEY);
-		expect(last.id).toBe("a");
-		expect(last.name).toBe(m.name);
-		expect(last.prompt).toBe(m.prompt);
-	});
-
-	test("drops disabled modifiers", () => {
-		const out = mergePresetsWithCustomModifiers(builtins, [
-			makeCustom({ enabled: false, id: "off" }),
-		]);
-		expect(out).toEqual([...builtins]);
-	});
-
-	test("drops modifiers whose prompt is blank or whitespace-only", () => {
-		const out = mergePresetsWithCustomModifiers(builtins, [
-			makeCustom({ id: "empty", prompt: "" }),
-			makeCustom({ id: "ws", prompt: "   \t  " }),
-		]);
-		expect(out).toEqual([...builtins]);
-	});
-
-	test("carries level through when levelsEnabled is true", () => {
-		const out = mergePresetsWithCustomModifiers(builtins, [
-			makeCustom({ id: "lvl", level: "high", levelsEnabled: true }),
-		]);
-		const last = out.at(-1) as CustomModifierEntry;
-		expect(last.level).toBe("high");
-	});
-
-	test("omits level when levelsEnabled is false (single-prompt mode)", () => {
-		const out = mergePresetsWithCustomModifiers(builtins, [
-			makeCustom({ id: "nolvl", level: "high", levelsEnabled: false }),
-		]);
-		const last = out.at(-1) as CustomModifierEntry;
-		expect(last.level).toBeUndefined();
-	});
-
-	test("defaults the carried level to medium when levelsEnabled but level missing", () => {
-		// `level` is `level?: PresetLevel | undefined`, so we cast through the
-		// partial overrides shape to omit it.
-		const out = mergePresetsWithCustomModifiers(builtins, [
-			makeCustom({ id: "auto", levelsEnabled: true, level: undefined }),
-		]);
-		const last = out.at(-1) as CustomModifierEntry;
-		expect(last.level).toBe("medium");
-	});
-});
-
-describe("buildSystemPrompt", () => {
-	test("with no presets, emits just the Polish base + closing reminder", () => {
-		const out = buildSystemPrompt([]);
-		expect(out).toContain("Clean up dictated speech");
-		expect(out).toContain("Output only the transformed text in the `text` field.");
-	});
-
-	test("`[neutral]` collapses to the same output as `[]` (neutral IS the base)", () => {
-		expect(buildSystemPrompt([{ key: "neutral" }])).toBe(buildSystemPrompt([]));
-	});
-
-	test("a single non-neutral preset is layered on top with the 'apply this style' phrasing", () => {
-		const out = buildSystemPrompt([{ key: "formal" }]);
-		expect(out).toContain("Then apply this style on top");
-		expect(out).toContain("professional business English");
-	});
-
-	test("multiple non-neutral presets are rendered as a bulleted list", () => {
-		const out = buildSystemPrompt([{ key: "formal" }, { key: "concise", level: "high" }]);
-		expect(out).toContain("Then apply all of the following style constraints");
-		expect(out).toMatch(/^- /m);
-	});
-
-	test("translate is always the LAST bullet, regardless of input order", () => {
-		const out = buildSystemPrompt([
-			{ key: "translate", targetLang: "Spanish" },
-			{ key: "formal" },
-			{ key: "concise", level: "medium" },
-		]);
-		const formalIdx = out.indexOf("professional business English");
-		const conciseIdx = out.indexOf("Compress wording");
-		const translateIdx = out.indexOf("Spanish");
-		expect(formalIdx).toBeGreaterThanOrEqual(0);
-		expect(conciseIdx).toBeGreaterThanOrEqual(0);
+	test("translate is folded LAST so cleanup/style run in the source language", () => {
+		const out = buildSystemPrompt([{ key: "formal" }, { key: "translate", targetLang: "French" }]);
+		const formalIdx = out.indexOf(getPresetPrompt("formal"));
+		const translateIdx = out.indexOf("Translate the cleaned, styled result into French");
+		expect(formalIdx).toBeGreaterThan(-1);
 		expect(translateIdx).toBeGreaterThan(formalIdx);
-		expect(translateIdx).toBeGreaterThan(conciseIdx);
 	});
 
-	test("translate inherits the chosen targetLang and falls back to English when blank", () => {
-		const withTarget = buildSystemPrompt([{ key: "translate", targetLang: "French" }]);
-		expect(withTarget).toContain("French");
-		const blank = buildSystemPrompt([{ key: "translate", targetLang: "" }]);
-		expect(blank).toContain("English");
+	test("translate without an explicit language defaults to English", () => {
+		const out = buildSystemPrompt([{ key: "translate" }]);
+		expect(out).toContain("into English");
 	});
 
-	test("custom modifier with levelsEnabled appends a level hint before the schema clamp", () => {
-		const merged = mergePresetsWithCustomModifiers(
-			[{ key: "neutral" }],
-			[makeCustom({ id: "p", prompt: "Use emoji.", levelsEnabled: true, level: "light" })]
-		);
-		const out = buildSystemPrompt(merged);
-		expect(out).toContain("Use emoji.");
-		expect(out).toContain("Apply this lightly");
-		expect(out).toContain(SCHEMA_CLAMP_TAIL);
-	});
-
-	test("custom modifier without levels applies the prompt verbatim (no hint)", () => {
-		const merged = mergePresetsWithCustomModifiers(
-			[{ key: "neutral" }],
-			[makeCustom({ id: "p", prompt: "Use emoji.", levelsEnabled: false })]
-		);
-		const out = buildSystemPrompt(merged);
-		expect(out).toContain("Use emoji.");
-		expect(out).not.toContain("Apply this lightly");
-		expect(out).not.toContain("Apply this moderately");
-		expect(out).not.toContain("Apply this strongly");
-	});
-
-	test("custom-level high/medium hints render as expected", () => {
-		const high = buildSystemPrompt(
-			mergePresetsWithCustomModifiers(
-				[],
-				[makeCustom({ id: "h", prompt: "X.", levelsEnabled: true, level: "high" })]
-			)
-		);
-		expect(high).toContain("Apply this strongly and thoroughly");
-		const med = buildSystemPrompt(
-			mergePresetsWithCustomModifiers(
-				[],
-				[makeCustom({ id: "m", prompt: "X.", levelsEnabled: true, level: "medium" })]
-			)
-		);
-		expect(med).toContain("Apply this moderately");
+	test("buildSystemPrompt combines multiple presets as bullets, NOT numbered steps", () => {
+		// Numbered lists invite chain-of-thought ("I'll go through each in
+		// turn") from reasoning models trained on instruction-following
+		// data. Bullets phrase the same constraints as a unified style guide
+		// the model applies in one pass.
+		const out = buildSystemPrompt([
+			{ key: "formal" },
+			{ key: "summarize", level: "light" },
+			{ key: "reorder" },
+		]);
+		expect(out).toContain("simultaneously");
+		expect(out).toContain(`- ${getPresetPrompt("formal")}`);
+		expect(out).toContain(`- ${getPresetPrompt("summarize", "light")}`);
+		expect(out).toContain(`- ${getPresetPrompt("reorder")}`);
+		// Explicit anti-numbered-list check: no "1." / "2." / "3." prefixes.
+		expect(out).not.toMatch(/^\s*1\./m);
 	});
 });

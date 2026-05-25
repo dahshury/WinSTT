@@ -63,7 +63,19 @@
     "licenseTitle": "Licence",
     "licenseDescription": "Contrat de licence utilisateur final de WinSTT.",
     "noticesTitle": "Avis de tiers",
-    "noticesDescription": "Composants open source, modèles d'IA et autres éléments tiers fournis ou téléchargés par WinSTT."
+    "noticesDescription": "Composants open source, modèles d'IA et autres éléments tiers fournis ou téléchargés par WinSTT.",
+    "updatesTitle": "Mises à jour",
+    "updatesDescription": "WinSTT recherche automatiquement des mises à jour toutes les quelques heures et au démarrage.",
+    "updatesCheckNow": "Vérifier maintenant",
+    "updatesChecking": "Vérification…",
+    "receivePrereleaseUpdates": "Recevoir les versions préliminaires",
+    "receivePrereleaseUpdatesCaption": "Activez la réception des versions alpha et bêta. Les versions préliminaires se mettent toujours à jour vers la version préliminaire suivante, indépendamment de cette option.",
+    "updatesStatusIdle": "Aucune mise à jour vérifiée pour l'instant.",
+    "updatesStatusChecking": "Recherche de mises à jour…",
+    "updatesStatusAvailable": "Mise à jour disponible : {version}",
+    "updatesStatusUpToDate": "Vous utilisez la dernière version.",
+    "updatesStatusDownloaded": "Mise à jour {version} téléchargée — redémarrez pour installer.",
+    "updatesStatusError": "Échec de la recherche de mise à jour : {message}"
   },
   "history": {
     "summaryTitle": "Statistiques Globales",

@@ -986,7 +986,7 @@ function logDataEventArrival(type: string): void {
 	}
 }
 
-export function processDataEvent(
+function processDataEvent(
 	event: Record<string, unknown>,
 	queues: DataEventQueues,
 	ctx: DispatchContext

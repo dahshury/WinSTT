@@ -182,6 +182,5 @@ export {
 	handleVerifyInvocation,
 	isVerifyPayload,
 	probeUrlFor,
-	VERIFY_TIMEOUT_MS,
 	verifyCredential,
 };

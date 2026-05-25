@@ -75,6 +75,12 @@ const storeValueSchemas = {
 	// that lets us fix bugs users can't reproduce). Takes effect on next launch;
 	// `initSentryMain` reads this synchronously at startup.
 	"general.sendCrashReports": z.boolean().catch(true),
+	// Opt-in toggle for pre-release (alpha/beta) auto-updates. Defaults to
+	// false: stable users stay on stable. main.ts's `initAutoUpdater` OR-s
+	// this against `isPrereleaseVersion(app.getVersion())`, so users already
+	// running a pre-release alpha build receive the next alpha regardless of
+	// this flag — the toggle only matters once a stable release ships.
+	"general.receivePrereleaseUpdates": z.boolean().catch(false),
 	// First-run onboarding gate. `false` opens the onboarding wizard before the
 	// main window; flipped to `true` once the wizard completes or is skipped.
 	// Must be declared here so the main process can read it synchronously at
@@ -332,6 +338,10 @@ export const store = new Store({
 			// Toggling requires app restart — `initSentryMain` reads it once
 			// synchronously at startup; runtime live-reconfigure isn't safe.
 			sendCrashReports: true,
+			// Pre-release auto-update opt-in. Defaults to false; main.ts forces
+			// it effectively-on for alpha builds so they self-update. Stable
+			// users must opt in to receive alphas/betas. See main.ts.
+			receivePrereleaseUpdates: false,
 			// First-run onboarding gate. Defaults to false so net-new installs
 			// see the wizard; flipped to true once the user finishes or skips.
 			onboarded: false,

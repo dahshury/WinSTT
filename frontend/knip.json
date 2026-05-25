@@ -5,9 +5,16 @@
     "windows/*.html",
     "src/entries/*.tsx",
     "**/*.test.{ts,tsx}",
-    "stryker.conf.json"
+    "stryker.conf.json",
+    "scripts/**/*.ts"
   ],
-  "project": ["src/**/*.{ts,tsx}", "electron/**/*.ts", "test/**/*.{ts,tsx}"],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "electron/**/*.ts",
+    "test/**/*.{ts,tsx}",
+    "packages/*/src/**/*.{ts,tsx}",
+    "scripts/**/*.ts"
+  ],
   "ignoreDependencies": [
     "tailwindcss",
     "@stryker-mutator/core",

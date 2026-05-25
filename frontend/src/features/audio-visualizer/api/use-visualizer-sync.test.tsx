@@ -1,11 +1,22 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { renderHook } from "@testing-library/react";
+import { renderHook, type RenderHookResult } from "@testing-library/react";
 import { IPC } from "@/shared/api/ipc-channels";
 import { useVisualizerStore } from "../model/visualizer-store";
 import { useVisualizerSync } from "./use-visualizer-sync";
 
 const originalApi = window.electronAPI;
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+// Track every mounted hook so afterEach can tear them down — without an
+// explicit unmount, useVisualizerSync's rAF loop keeps running across test
+// files (bun:test doesn't isolate hook state) and continually calls
+// `setAudioLevel(0)`, racing with sibling tests like use-multiband-volume
+// that set audioLevel non-zero and expect it to stay.
+let mountedHooks: RenderHookResult<unknown, unknown>[] = [];
+function renderHookTracked<T>(cb: () => T): RenderHookResult<T, void> {
+	const result = renderHook(cb);
+	mountedHooks.push(result as RenderHookResult<unknown, unknown>);
+	return result;
+}
 
 beforeEach(() => {
 	listeners.clear();
@@ -32,6 +43,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	for (const h of mountedHooks) {
+		h.unmount();
+	}
+	mountedHooks = [];
 	window.electronAPI = originalApi;
 });
 
@@ -43,7 +58,7 @@ function fire(channel: string, ...args: unknown[]) {
 
 describe("useVisualizerSync", () => {
 	test("subscribes to all six visualizer-sync channels", () => {
-		renderHook(() => useVisualizerSync());
+		renderHookTracked(() => useVisualizerSync());
 		for (const ch of [
 			IPC.STT_RECORDING_START,
 			IPC.STT_RECORDING_STOP,
@@ -57,13 +72,13 @@ describe("useVisualizerSync", () => {
 	});
 
 	test("recording-start sets isRecording=true", () => {
-		renderHook(() => useVisualizerSync());
+		renderHookTracked(() => useVisualizerSync());
 		fire(IPC.STT_RECORDING_START);
 		expect(useVisualizerStore.getState().isRecording).toBe(true);
 	});
 
 	test("recording-stop clears isRecording and isSpeaking", () => {
-		renderHook(() => useVisualizerSync());
+		renderHookTracked(() => useVisualizerSync());
 		fire(IPC.STT_RECORDING_START);
 		useVisualizerStore.setState({ isSpeaking: true });
 		fire(IPC.STT_RECORDING_STOP);
@@ -72,7 +87,7 @@ describe("useVisualizerSync", () => {
 	});
 
 	test("vad-start and vad-stop toggle isSpeaking", () => {
-		renderHook(() => useVisualizerSync());
+		renderHookTracked(() => useVisualizerSync());
 		fire(IPC.STT_VAD_START);
 		expect(useVisualizerStore.getState().isSpeaking).toBe(true);
 		fire(IPC.STT_VAD_STOP);

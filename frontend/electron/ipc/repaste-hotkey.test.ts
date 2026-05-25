@@ -2,7 +2,6 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } 
 import { debugLogMock } from "@test/mocks/debug-log";
 import { electronMock } from "@test/mocks/electron";
 
-const noop = () => undefined;
 mock.module("../lib/debug-log", () => debugLogMock());
 
 // ── Controllable electron globalShortcut mock ──────────────────────

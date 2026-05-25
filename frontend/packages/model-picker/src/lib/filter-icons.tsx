@@ -54,9 +54,3 @@ export function getParameterIcon(param: FilterableParameter): ReactNode {
 	const icon = PARAMETER_ICON_MAP[param] ?? Settings01Icon;
 	return renderIcon(icon);
 }
-
-export const __filter_icons_test_helpers__ = {
-	VARIANT_ICON_MAP,
-	PARAMETER_ICON_MAP,
-	renderIcon,
-};

@@ -120,10 +120,3 @@ export function initSoundLibrary(): () => void {
 		ipcMain.removeHandler(IPC.SOUND_LIBRARY_READ_FILE);
 	};
 }
-
-export const __sound_library_test_helpers__ = {
-	ALLOWED_EXTS,
-	sanitizeExtension,
-	defaultDisplayName,
-	isInLibrary,
-};

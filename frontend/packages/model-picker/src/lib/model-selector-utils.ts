@@ -1,16 +1,5 @@
-export function capitalize(str: string): string {
+function capitalize(str: string): string {
 	return str.charAt(0).toUpperCase() + str.slice(1);
-}
-
-const PROVIDER_DISPLAY_OVERRIDES: Record<string, string> = {
-	"microsoft/azure": "Microsoft Azure",
-};
-
-export function formatProvider(provider?: string): string {
-	if (!provider) {
-		return "OpenRouter";
-	}
-	return PROVIDER_DISPLAY_OVERRIDES[provider] ?? capitalize(provider);
 }
 
 const MAKER_DISPLAY_OVERRIDES: Record<string, string> = {
@@ -248,32 +237,3 @@ export function formatModelName(name?: string | null, maker?: string | null): st
 	return final.join(" ");
 }
 
-function shouldKeepUnique<T>(item: T | undefined, filter?: (val: T) => boolean): item is T {
-	if (item === undefined) {
-		return false;
-	}
-	return !filter || filter(item);
-}
-
-export function getUniqueValues<T>(arr: (T | undefined)[], filter?: (val: T) => boolean): T[] {
-	const unique = new Set<T>();
-	for (const item of arr) {
-		if (shouldKeepUnique(item, filter)) {
-			unique.add(item);
-		}
-	}
-	return Array.from(unique).sort();
-}
-
-export const __model_selector_utils_test_helpers__ = {
-	PROVIDER_DISPLAY_OVERRIDES,
-	MAKER_DISPLAY_OVERRIDES,
-	VERSION_HYPHEN_PREFIXES,
-	stripModelNamespace,
-	tokenizeModelCore,
-	mergeVersionTokens,
-	shouldMergeVersion,
-	isVersionMergeablePrev,
-	shouldKeepUnique,
-	formatModelToken,
-};
