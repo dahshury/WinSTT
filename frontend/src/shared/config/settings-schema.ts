@@ -408,7 +408,7 @@ export const transformSchema = z.object({
 	hotkey: z.string().default(""),
 	builtin: z.boolean().default(false),
 });
-export type TransformEntry = z.infer<typeof transformSchema>;
+type TransformEntry = z.infer<typeof transformSchema>;
 
 // Built-in transforms seeded into `settings.llm.transforms.prompts` on first
 // run. Currently empty — the catalog will be filled out as the Transforms
@@ -508,5 +508,4 @@ export const appSettingsSchema = z.object({
 	integrations: integrationsSchema.prefault({}),
 });
 
-export type AppSettingsInput = z.input<typeof appSettingsSchema>;
 export type AppSettingsOutput = z.output<typeof appSettingsSchema>;

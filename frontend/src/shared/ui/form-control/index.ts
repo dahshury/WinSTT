@@ -1,1 +1,1 @@
-export { FormControl, type FormControlProps } from "./FormControl";
+export { FormControl } from "./FormControl";

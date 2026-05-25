@@ -1,16 +1,9 @@
 export {
 	Table,
 	TableBody,
-	type TableBodyProps,
 	TableCell,
-	type TableCellProps,
 	TableEmpty,
-	type TableEmptyProps,
 	TableHead,
 	TableHeader,
-	type TableHeaderProps,
-	type TableHeadProps,
-	type TableProps,
 	TableRow,
-	type TableRowProps,
 } from "./Table";

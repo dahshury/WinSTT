@@ -1372,7 +1372,7 @@ const OLLAMA_KEEP_ALIVE = "30m";
  * thinking models without an effort knob treat any truthy `think` as
  * "on" and ignore the level.
  */
-export type ThinkingEffort = "off" | "low" | "medium" | "high";
+type ThinkingEffort = "off" | "low" | "medium" | "high";
 
 function thinkingFlagFor(effort: ThinkingEffort, supportsThinking: boolean): unknown {
 	if (!supportsThinking || effort === "off") {

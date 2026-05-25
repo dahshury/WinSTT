@@ -5,8 +5,8 @@ import type { SystemInfoEntry } from "@/shared/api/ipc-client";
  * if it doesn't. "gpu" / "cpu" are positive outcomes; "vram" / "ram" name
  * the resource that's the bottleneck when `fits` is false.
  */
-export type OllamaFitTarget = "gpu" | "cpu";
-export type OllamaFitShortfall = "vram" | "ram" | "unknown";
+type OllamaFitTarget = "gpu" | "cpu";
+type OllamaFitShortfall = "vram" | "ram" | "unknown";
 
 export interface OllamaFitAssessment {
 	/** Bytes available on the resource we'd try first (GPU VRAM if present, else RAM budget). */

@@ -36,9 +36,9 @@ import { dbg } from "../lib/debug-log";
 import { getStoreValue } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
 
-export type CloudSttProvider = "openai" | "elevenlabs";
+type CloudSttProvider = "openai" | "elevenlabs";
 
-export type CloudSttErrorCode =
+type CloudSttErrorCode =
 	| "auth"
 	| "network"
 	| "rate_limit"

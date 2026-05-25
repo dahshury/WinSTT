@@ -8,7 +8,7 @@ export interface ContextMenuIpcRequest {
 	y?: number;
 }
 
-export interface ContextMenuIpcResponse {
+interface ContextMenuIpcResponse {
 	selectedId: string | null;
 }
 

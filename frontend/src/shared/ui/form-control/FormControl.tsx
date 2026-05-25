@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { InfoTooltip } from "@/shared/ui/info-tooltip";
 
-export type FormControlLayout = "stacked" | "row";
+type FormControlLayout = "stacked" | "row";
 
 export interface FormControlProps {
 	caption?: string | undefined;

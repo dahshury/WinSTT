@@ -32,15 +32,15 @@ import { IPC } from "../../src/shared/api/ipc-channels";
 import { getErrorMessage } from "../../src/shared/lib/errors";
 import { dbg } from "../lib/debug-log";
 
-export type CloudSttProvider = "openai" | "elevenlabs";
+type CloudSttProvider = "openai" | "elevenlabs";
 
 /** Providers the verify-credentials IPC accepts. STT-only (`CloudSttProvider`)
  *  plus `openrouter`, which is an LLM credential but shares the same probe-and-
  *  classify shape. Kept distinct from `CloudSttProvider` so the cloud-STT type
  *  union doesn't grow non-STT members. */
-export type VerifiableProvider = CloudSttProvider | "openrouter";
+type VerifiableProvider = CloudSttProvider | "openrouter";
 
-export type VerifyCredentialResult =
+type VerifyCredentialResult =
 	| { ok: true }
 	| {
 			ok: false;

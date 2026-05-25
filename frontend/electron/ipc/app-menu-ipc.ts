@@ -9,12 +9,12 @@ export const APP_MENU_RESET_CHANNEL = "app-menu:reset";
 
 type IpcHandler = (_event: unknown, payload?: unknown) => unknown | Promise<unknown>;
 
-export interface IpcMainLike {
+interface IpcMainLike {
 	handle(channel: string, listener: IpcHandler): void;
 	removeHandler(channel: string): void;
 }
 
-export interface AppMenuController {
+interface AppMenuController {
 	applyTemplate(template: AppMenuBuiltItem[]): void;
 	reset(): void;
 }

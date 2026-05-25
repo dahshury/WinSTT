@@ -1,1 +1,1 @@
-export { SearchableSelect, type SearchableSelectProps } from "./SearchableSelect";
+export { SearchableSelect } from "./SearchableSelect";

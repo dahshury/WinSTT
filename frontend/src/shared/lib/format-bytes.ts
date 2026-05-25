@@ -14,7 +14,7 @@ const MIB = KIB * 1024;
 const GIB = MIB * 1024;
 
 /** Smallest unit the formatter is allowed to step down to. */
-export type ByteUnit = "B" | "KB" | "MB" | "GB";
+type ByteUnit = "B" | "KB" | "MB" | "GB";
 
 export interface FormatBytesOptions {
 	/** Decimal places for the GB tier. Default `1`. */

@@ -11,7 +11,7 @@ import { Tooltip } from "@/shared/ui/tooltip";
  *  - `paused` partial bytes on disk, no flow     → "Discard" + "Resume" */
 export type DownloadPhase = "idle" | "active" | "paused";
 
-export interface DownloadActionLabels {
+interface DownloadActionLabels {
 	discard: string;
 	download: string;
 	resume: string;

@@ -1,5 +1,1 @@
-export {
-	ResourceWarningDialog,
-	type ResourceWarningDialogProps,
-	type ResourceWarningKind,
-} from "./ResourceWarningDialog";
+export { ResourceWarningDialog } from "./ResourceWarningDialog";

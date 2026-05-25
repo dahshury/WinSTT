@@ -53,7 +53,7 @@ import {
 	groupOllamaModelsByPublisher,
 } from "../lib/family-helpers";
 
-export interface PausedPullState {
+interface PausedPullState {
 	pausedAt: number;
 	progress: OllamaPullProgress;
 }
@@ -62,7 +62,7 @@ export interface PausedPullState {
  *  "won't fit" warning chip next to oversized recommendations. Mirrors
  *  {@link import("@/entities/llm-catalog").OllamaFitAssessment} but without
  *  pulling the entities package into the picker. */
-export interface OllamaFitInfo {
+interface OllamaFitInfo {
 	availableBytes: number;
 	fits: boolean;
 	requiredBytes: number;
@@ -71,7 +71,7 @@ export interface OllamaFitInfo {
 
 /** State surfaced by the library scraper — passed in so the picker stays
  *  presentational while the renderer-side store drives fetching. */
-export interface OllamaLibrarySearchProps {
+interface OllamaLibrarySearchProps {
 	/** Full library catalog (entire `ollama.com/library` listing). The picker
 	 *  filters this client-side against the search query and groups it by
 	 *  publisher into per-maker sections. */

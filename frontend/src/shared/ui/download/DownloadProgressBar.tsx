@@ -4,7 +4,7 @@ import { cn } from "@/shared/lib/cn";
 
 /** "active" pulses the accent color; "paused" freezes a warning-tinted bar so
  *  a static fill can't be mistaken for an idle / finished one. */
-export type DownloadProgressVariant = "active" | "paused";
+type DownloadProgressVariant = "active" | "paused";
 
 export interface DownloadProgressBarProps {
 	/** Left-side caption, e.g. `"45% — Downloading"` or `"Paused at 60%"`.

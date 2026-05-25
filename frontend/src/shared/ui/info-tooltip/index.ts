@@ -1,1 +1,1 @@
-export { InfoTooltip, type InfoTooltipProps } from "./InfoTooltip";
+export { InfoTooltip } from "./InfoTooltip";

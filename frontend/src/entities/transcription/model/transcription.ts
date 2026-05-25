@@ -2,8 +2,6 @@ import type { components } from "@spec/schema";
 
 type BaseTranscriptionItem = components["schemas"]["TranscriptionItem"];
 
-export type RecorderState = components["schemas"]["RecorderState"];
-
 export interface SpeakerSegment {
 	end: number;
 	speaker: number;

@@ -27,7 +27,7 @@ import { SttFiltersMenu } from "./SttFiltersMenu";
 import { SttModelList } from "./SttModelList";
 import { SttModelSelectorTrigger } from "./SttModelSelectorTrigger";
 
-export type SttModelChange = (modelId: string, quantization?: OnnxQuantization) => void;
+type SttModelChange = (modelId: string, quantization?: OnnxQuantization) => void;
 
 export interface SttModelSelectorProps {
 	currentQuantization: OnnxQuantization;

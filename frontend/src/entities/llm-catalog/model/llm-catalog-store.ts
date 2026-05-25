@@ -12,7 +12,7 @@ import {
 
 export type { OllamaModel };
 
-export interface PullState {
+interface PullState {
 	progress: OllamaPullProgress;
 	startedAt: number;
 }

@@ -14,7 +14,7 @@ import {
 } from "@/shared/api/ipc-client";
 import { TtsPlaybackQueue } from "../lib/playback-queue";
 
-export type TtsStatus = "idle" | "speaking" | "error";
+type TtsStatus = "idle" | "speaking" | "error";
 
 export interface TtsPlaybackState {
 	error: string | null;

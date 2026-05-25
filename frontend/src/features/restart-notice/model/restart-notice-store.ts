@@ -7,7 +7,7 @@ import { create } from "zustand";
  * UI gating on the never-arriving restart looks like a hang. At most one
  * notice at a time; newer events overwrite older ones.
  */
-export type RestartNoticeKind = "unmanaged" | "skew";
+type RestartNoticeKind = "unmanaged" | "skew";
 
 interface RestartNotice {
 	kind: RestartNoticeKind;

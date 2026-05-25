@@ -1,1 +1,1 @@
-export { OptInDialog, type OptInDialogProps } from "./OptInDialog";
+export { OptInDialog } from "./OptInDialog";

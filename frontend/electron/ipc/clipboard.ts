@@ -2,7 +2,7 @@ import type { IpcMainInvokeEvent } from "electron";
 import { ValidationError } from "../../src/shared/lib/errors";
 import { isRecord } from "../lib/ipc-helpers";
 
-export type ClipboardOperation = "readText" | "writeText" | "clear";
+type ClipboardOperation = "readText" | "writeText" | "clear";
 
 export type ClipboardPayload =
 	| { operation: "readText" }

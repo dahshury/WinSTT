@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 
-export type SliderVariant = "pips" | "scrubber";
+type SliderVariant = "pips" | "scrubber";
 
 export interface SliderProps {
 	"aria-label"?: string;

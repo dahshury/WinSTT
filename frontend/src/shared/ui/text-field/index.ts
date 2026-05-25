@@ -1,2 +1,2 @@
-export { PasswordField, type PasswordFieldProps } from "./PasswordField";
-export { TextField, type TextFieldProps } from "./TextField";
+export { PasswordField } from "./PasswordField";
+export { TextField } from "./TextField";

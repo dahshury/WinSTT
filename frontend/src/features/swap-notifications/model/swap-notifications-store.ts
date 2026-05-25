@@ -12,7 +12,7 @@ import type { ModelSwapFailedCategory, ModelSwapKind } from "@/shared/api/ipc-cl
  * model-swap-store (which only tracks in-flight state) so the toast can
  * persist for its 5-second display after the swap has resolved.
  */
-export interface SwapFailureNotification {
+interface SwapFailureNotification {
 	category: ModelSwapFailedCategory;
 	createdAt: number;
 	detail: string;

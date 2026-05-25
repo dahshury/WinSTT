@@ -2,7 +2,7 @@ import type { FitAssessmentEntry } from "@/shared/api/ipc-client";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { OptInDialog } from "@/shared/ui/opt-in-dialog";
 
-export type ResourceWarningKind = "dictation" | "ollama";
+type ResourceWarningKind = "dictation" | "ollama";
 
 export interface ResourceWarningDialogProps {
 	assessment: FitAssessmentEntry | null;

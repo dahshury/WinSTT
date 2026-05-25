@@ -1,3 +1,4 @@
+import type { useTranslations } from "next-intl";
 import { type DragEvent, useCallback, useState } from "react";
 import { getFilePath } from "@/shared/api/ipc-client";
 
@@ -5,8 +6,7 @@ const ACCEPTED_EXTENSIONS = ["wav", "mp3"];
 const MAX_DURATION_SECONDS = 3;
 const TRAILING_EXTENSION_RE = /\.[^.]+$/;
 
-// biome-ignore lint/suspicious/noExplicitAny: next-intl Translator uses namespace-parameterized generics; narrowing breaks assignability at the call site.
-type TranslatorFn = (key: any, values?: any) => string;
+type TranslatorFn = ReturnType<typeof useTranslations>;
 
 async function getAudioDuration(file: File): Promise<number> {
 	const buffer = await file.arrayBuffer();

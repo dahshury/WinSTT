@@ -1,4 +1,4 @@
-export type UpdaterStatus =
+type UpdaterStatus =
 	| "idle"
 	| "checking"
 	| "available"

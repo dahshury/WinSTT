@@ -1,5 +1,5 @@
 import { AnimatePresence, type HTMLMotionProps, m } from "motion/react";
-import { createContext, type ReactNode, useContext, useEffect, useReducer, useRef } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useReducer } from "react";
 
 /**
  * DynamicIsland — composable, animated capsule primitives for adaptive
@@ -37,7 +37,7 @@ export type SizePresets =
 	| "reset"
 	| "empty";
 
-export interface Preset {
+interface Preset {
 	borderRadius: number;
 	height: number;
 	width: number;

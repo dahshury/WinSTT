@@ -1,13 +1,13 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
 
-export interface ProximityRect {
+interface ProximityRect {
 	height: number;
 	left: number;
 	top: number;
 	width: number;
 }
 
-export interface ProximityHandlers {
+interface ProximityHandlers {
 	onMouseEnter: () => void;
 	onMouseLeave: () => void;
 	onMouseMove: (e: { clientY: number }) => void;

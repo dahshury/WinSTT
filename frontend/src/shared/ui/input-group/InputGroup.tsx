@@ -3,9 +3,9 @@ import type { ComponentPropsWithRef, HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceClasses, useSurface } from "@/shared/lib/surface";
 
-export type InputGroupSize = "sm" | "md";
+type InputGroupSize = "sm" | "md";
 export type InputGroupTone = "default" | "active" | "danger" | "muted";
-export type InputGroupAddonAlign = "inline-start" | "inline-end";
+type InputGroupAddonAlign = "inline-start" | "inline-end";
 
 const SIZE_HEIGHT: Record<InputGroupSize, string> = {
 	sm: "h-7 text-2xs",

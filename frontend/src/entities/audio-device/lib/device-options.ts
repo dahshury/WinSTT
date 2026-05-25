@@ -1,6 +1,6 @@
 import type { AudioDevice } from "../model/audio-device";
 
-export interface InputDeviceOption {
+interface InputDeviceOption {
 	id: string;
 	label: string;
 }

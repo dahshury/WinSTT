@@ -1,3 +1,4 @@
+import type { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { cn } from "@/shared/lib/cn";
@@ -11,8 +12,7 @@ import { SoundLibraryAddRow } from "./SoundLibraryAddRow";
 import { SoundLibraryEmptyState } from "./SoundLibraryEmptyState";
 import { SoundLibraryRow } from "./SoundLibraryRow";
 
-// biome-ignore lint/suspicious/noExplicitAny: next-intl Translator uses namespace-parameterized generics; narrowing breaks assignability at call sites.
-type TranslatorFn = (key: any, values?: any) => string;
+type TranslatorFn = ReturnType<typeof useTranslations>;
 
 interface SoundLibraryProps {
 	t: TranslatorFn;

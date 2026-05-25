@@ -1,6 +1,6 @@
 import type { MenuItemConstructorOptions } from "electron";
 
-export type ContextMenuItemType = "normal" | "checkbox" | "radio";
+type ContextMenuItemType = "normal" | "checkbox" | "radio";
 
 interface ContextMenuSharedItem {
 	accelerator?: string;

@@ -44,5 +44,3 @@ export const Z_INDEX = {
 	toast: 1400,
 	noiseOverlay: 9999,
 } as const;
-
-export type ZIndexLayer = keyof typeof Z_INDEX;

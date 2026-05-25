@@ -12,7 +12,7 @@
  * i18next, lingui, or any other i18n lib. When omitted, the package's
  * defaults (English) are used.
  */
-export type TranslateFn = (key: string) => string;
+type TranslateFn = (key: string) => string;
 
 /**
  * Identity translate — returns the key as-is. Useful as a safe default for
@@ -25,7 +25,7 @@ export const identityTranslate: TranslateFn = (key) => key;
  * default; consumers can override any subset by passing a `t` function or a
  * partial `labels` object.
  */
-export interface PickerLabels {
+interface PickerLabels {
 	emptyNoModelsBody: string;
 	emptyNoModelsTitle: string;
 	emptyUnreachableBody: string;

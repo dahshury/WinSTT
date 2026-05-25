@@ -57,23 +57,6 @@ function useRefAnimatedValue(
 	return { motionValue, controls: controlsRef, animate: animateFn };
 }
 
-export interface AuraUniforms {
-	uAmplitude: { type: string; value: number };
-	uBloom: { type: string; value: number };
-	uBlur: { type: string; value: number };
-	uColor: { type: string; value: number[] };
-	uColorShift: { type: string; value: number };
-	uFrequency: { type: string; value: number };
-	uMix: { type: string; value: number };
-	uMode: { type: string; value: number };
-	uScale: { type: string; value: number };
-	uShape: { type: string; value: number };
-	uSmoothing: { type: string; value: number };
-	uSpacing: { type: string; value: number };
-	uSpeed: { type: string; value: number };
-	uVariance: { type: string; value: number };
-}
-
 export function useAuraAnimator(state: AgentState, uniformsRef: React.RefObject<Uniforms>): void {
 	const { animate: animateScale, motionValue: scaleMotionValue } = useRefAnimatedValue(
 		DEFAULT_SCALE,

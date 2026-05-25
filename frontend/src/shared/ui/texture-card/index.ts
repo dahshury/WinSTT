@@ -1,4 +1,3 @@
-export type { TextureCardProps, TextureCardRegionProps } from "./TextureCard";
 export {
 	TextureCard,
 	TextureCardBody,

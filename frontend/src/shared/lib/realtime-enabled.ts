@@ -1,5 +1,4 @@
 export type LiveTranscriptionDisplay = "none" | "in-app" | "in-pill" | "both";
-export type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword";
 
 interface DisplayState {
 	liveTranscriptionDisplay: LiveTranscriptionDisplay;

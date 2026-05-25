@@ -9,7 +9,7 @@
 
 export type CalendarSystemId = "gregorian" | "hijri";
 
-export interface LabeledDate {
+interface LabeledDate {
 	date: Date;
 	label: string;
 }

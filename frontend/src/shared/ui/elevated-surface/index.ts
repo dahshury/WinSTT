@@ -1,1 +1,1 @@
-export { ElevatedSurface, type ElevatedSurfaceProps } from "./ElevatedSurface";
+export { ElevatedSurface } from "./ElevatedSurface";

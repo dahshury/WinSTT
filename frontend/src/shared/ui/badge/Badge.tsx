@@ -1,7 +1,7 @@
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 
-export type BadgeVariant = "default" | "secondary" | "outline";
+type BadgeVariant = "default" | "secondary" | "outline";
 
 export interface BadgeProps extends ComponentPropsWithoutRef<"span"> {
 	children?: ReactNode;
