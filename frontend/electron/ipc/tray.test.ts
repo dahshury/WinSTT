@@ -1,12 +1,17 @@
-import { afterAll, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import * as realFs from "node:fs";
 import { electronMock } from "@test/mocks/electron";
 
 type TrayHandler = (...args: unknown[]) => void;
 
 interface TrayInstance {
+	contextMenus: unknown[];
+	destroyed: boolean;
 	handlers: Map<string, TrayHandler>;
+	imageCount: number;
+	isDestroyed: () => boolean;
 	on: (event: string, handler: TrayHandler) => void;
+	setContextMenu: (menu: unknown) => void;
 	setImage: () => void;
 	setToolTip: (tip: string) => void;
 	tooltips: string[];
@@ -17,7 +22,13 @@ const trayInstances: TrayInstance[] = [];
 function makeTray(): TrayInstance {
 	const handlers = new Map<string, TrayHandler>();
 	const instance: TrayInstance = {
+		contextMenus: [],
+		destroyed: false,
 		handlers,
+		imageCount: 0,
+		isDestroyed() {
+			return instance.destroyed;
+		},
 		tooltips: [],
 		setToolTip(tip: string) {
 			instance.tooltips.push(tip);
@@ -26,7 +37,10 @@ function makeTray(): TrayInstance {
 			handlers.set(event, handler);
 		},
 		setImage() {
-			/* noop */
+			instance.imageCount += 1;
+		},
+		setContextMenu(menu: unknown) {
+			instance.contextMenus.push(menu);
 		},
 	};
 	trayInstances.push(instance);
@@ -36,11 +50,32 @@ function makeTray(): TrayInstance {
 let createFromPathEmpty = false;
 let existsSyncReturn = true;
 
+const themeListeners: Array<() => void> = [];
+
 mock.module("electron", () => ({
 	...electronMock(),
 	nativeImage: {
 		createFromPath: () => ({ isEmpty: () => createFromPathEmpty }),
 		createEmpty: () => ({ isEmpty: () => true }),
+	},
+	nativeTheme: {
+		shouldUseDarkColors: true,
+		on: (event: string, cb: () => void) => {
+			if (event === "updated") {
+				themeListeners.push(cb);
+			}
+		},
+		off: (event: string, cb: () => void) => {
+			if (event === "updated") {
+				const idx = themeListeners.indexOf(cb);
+				if (idx !== -1) {
+					themeListeners.splice(idx, 1);
+				}
+			}
+		},
+	},
+	Menu: {
+		buildFromTemplate: (template: unknown[]) => ({ template }),
 	},
 	Tray: function TrayCtor(this: TrayInstance) {
 		const t = makeTray();
@@ -73,6 +108,7 @@ const showTrayMenuAtSpy = spyOn(trayMenuWindowNs, "showTrayMenuAt").mockImplemen
 );
 
 const { setupTray } = await import("./tray");
+const trayStateNs = await import("./tray-state");
 
 function makeWin(): { show: () => void; showCount: number } {
 	const win = {
@@ -85,6 +121,13 @@ function makeWin(): { show: () => void; showCount: number } {
 }
 
 describe("setupTray", () => {
+	afterEach(() => {
+		// Reset the tray-state singleton between tests so each setupTray
+		// call attaches against a clean slate (no stale theme listener, no
+		// previous Tray reference).
+		trayStateNs.__tray_state_test_helpers__.resetForTests();
+	});
+
 	test("module exports the setup function", () => {
 		expect(typeof setupTray).toBe("function");
 	});

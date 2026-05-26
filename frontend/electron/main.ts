@@ -64,6 +64,12 @@ import { setupTransformHotkeys } from "./ipc/transform-hotkeys";
 import { setupTransforms } from "./ipc/transforms";
 import { setupTray } from "./ipc/tray";
 import { setupTrayMenuHandlers } from "./ipc/tray-menu-window";
+import {
+	detachTray,
+	onTrayIdle,
+	onTrayRecordingStart,
+	onTrayTranscriptionStart,
+} from "./ipc/tray-state";
 import { setupTts } from "./ipc/tts";
 import { setupTtsHotkey } from "./ipc/tts-hotkey";
 import {
@@ -213,6 +219,50 @@ let lastRuntimeInfo: unknown = null;
 sttClient.on("runtime-info", (info: unknown) => {
 	lastRuntimeInfo = info;
 });
+
+// Drive the state-driven tray icon (idle / recording / transcribing) from
+// raw server events. We subscribe directly on the SttClient so the tray
+// state stays correct even if the relay isn't wired yet (onboarding delay)
+// or fails — the tray is non-critical UI, but it shouldn't lie about state.
+// See `electron/ipc/tray-state.ts` for the controller; transitions here
+// match the relay's recording lifecycle (handleRecordingStart, the
+// `transcription_start` simple-relay branch, and handleRecordingStop /
+// fullSentence / no_audio_detected as terminal idle signals).
+//
+// Defer idle/transcribing transitions via a microtask so the relay's
+// data-event listener (which runs the recording-indicator's revertIcons()
+// on recording_stop) lands first; without that ordering, the indicator
+// would overwrite our theme-aware idle icon with the legacy build asset.
+function dispatchTrayStateFromEvent(type: string): void {
+	if (type === "recording_start") {
+		onTrayRecordingStart();
+		return;
+	}
+	queueMicrotask(() => {
+		if (type === "transcription_start") {
+			onTrayTranscriptionStart();
+			return;
+		}
+		if (type === "recording_stop" || type === "fullSentence" || type === "no_audio_detected") {
+			onTrayIdle();
+		}
+	});
+}
+sttClient.on("data-event", (event: unknown) => {
+	const ev = event as { type?: unknown } | null;
+	const type = ev && typeof ev.type === "string" ? ev.type : null;
+	if (!type) {
+		return;
+	}
+	dispatchTrayStateFromEvent(type);
+});
+sttClient.on("disconnected", () => {
+	// A reconnect storm or a server crash mid-recording shouldn't leave the
+	// tray stuck on the "Recording…" red dot. Reset to idle whenever we
+	// lose the server.
+	onTrayIdle();
+});
+
 let hasFlushedAudioOnQuit = false;
 let cspHookInstalled = false;
 let disposeGeneralSettingsWatcher: (() => void) | null = null;
@@ -759,6 +809,7 @@ if (gotTheLock) {
 		}
 		killSttProcess();
 		sttClient.disconnect();
+		detachTray();
 		tray?.destroy();
 		tray = null;
 		if (overlayWindow && !overlayWindow.isDestroyed()) {
@@ -1478,8 +1529,13 @@ function createWindow() {
 	const { cleanup: fileTranscribeCleanup } = setupFileTranscribeHandlers(mainWindow, sttClient);
 	cleanupFileTranscribe = fileTranscribeCleanup;
 
-	// Setup tray with custom menu window
-	const newTray = setupTray(mainWindow);
+	// Setup tray with custom menu window. The tray-state controller manages
+	// the native context menu (state label + open/settings/quit + reserved
+	// history submenu) — `openSettings` routes its Settings item to the
+	// same pre-created BrowserWindow the renderer uses.
+	const newTray = setupTray(mainWindow, {
+		openSettings: () => openSettingsWindow(),
+	});
 	tray = newTray;
 	// Pass the module-level cache of pre-window events so the relay's IPC
 	// handlers (STT_GET_SERVER_READY / STT_GET_RUNTIME_INFO) answer correctly

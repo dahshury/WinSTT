@@ -26,6 +26,7 @@
     "generate": "openapi-typescript ../spec/openapi.yaml -o ../spec/generated/ts/schema.d.ts",
     "knip": "knip",
     "icon:generate": "bun run scripts/generate-placeholder-icon.ts",
+    "icon:tray:generate": "bun run scripts/generate-tray-icons.ts",
     "check:fsd": "bun run scripts/check-fsd-violations.ts",
     "check:fsd:diff": "bun run scripts/check-fsd-violations.ts --diff-base origin/main",
     "check:react-doctor": "react-doctor --fail-on error --offline",
