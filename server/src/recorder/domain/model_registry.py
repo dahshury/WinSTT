@@ -45,6 +45,13 @@ class ModelInfo:
     #: most other repos ship only the default graph. Empty list → the model
     #: takes no quantization (faster-whisper-style), picker hides the row.
     available_quantizations: list[str] = field(default_factory=lambda: [""])
+    #: Optional lowercase hex SHA-256 of the canonical model archive. Only
+    #: meaningful for URL-based downloads handled by the Electron-side
+    #: `model-downloader.ts` (the Handy-style flow). The HuggingFace path
+    #: ignores it — `huggingface_hub` does its own per-blob ETag checks. A
+    #: ``None`` value means "no expected digest available"; the downloader
+    #: skips verification and surfaces a corruption only at first ONNX-load.
+    sha256: str | None = None
 
 
 #: Quantization suffixes ORT's CUDAExecutionProvider can actually accelerate.
@@ -123,6 +130,8 @@ def _model_from_json(entry: dict[str, Any]) -> ModelInfo:
     params = int(entry.get("param_count", 0))
     quants = _str_list(entry.get("available_quantizations", [""]), default=[""])
     languages = _str_list(entry.get("languages", []), default=[])
+    raw_sha = entry.get("sha256")
+    sha256 = str(raw_sha).lower() if isinstance(raw_sha, str) and raw_sha else None
     return ModelInfo(
         id=str(entry["id"]),
         display_name=str(entry.get("display_name", entry["id"])),
@@ -136,6 +145,7 @@ def _model_from_json(entry: dict[str, Any]) -> ModelInfo:
         description=str(entry.get("description", "")),
         param_count=params,
         available_quantizations=quants,
+        sha256=sha256,
     )
 
 
@@ -202,6 +212,7 @@ def _apply_overlay(info: ModelInfo, overlay: dict[str, dict[str, Any]]) -> Model
         description=info.description,
         param_count=info.param_count,
         available_quantizations=info.available_quantizations,
+        sha256=info.sha256,
     )
 
 
@@ -301,6 +312,11 @@ class ModelCatalog:
                     "description": m.description,
                     "param_count": m.param_count,
                     "available_quantizations": quants,
+                    # Surfaced to the frontend so the Electron-side downloader
+                    # can verify URL-based downloads. Always ``None`` for
+                    # HuggingFace-hosted models (huggingface_hub does its own
+                    # blob-level ETag checks).
+                    "sha256": m.sha256,
                 }
             )
         return result
