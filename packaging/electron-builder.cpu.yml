@@ -57,6 +57,20 @@ win:
   # Single-file portable .exe — no installer. Users double-click to run the
   # app directly; settings/cache live under %LOCALAPPDATA% as usual.
   artifactName: ${productName}-CPU-Portable-${version}.${ext}
+# macOS-only resources. The Swift Apple Intelligence CLI is built via
+# `bash tools/apple-intelligence-cli/build.sh` (Darwin-only; the script
+# no-ops on Windows/Linux) and lands at
+# frontend/electron/resources/macos/winstt-apple-llm.
+# electron-builder copies it to <App>.app/Contents/Resources/macos/
+# where electron/ipc/apple-intelligence.ts resolves it via
+# process.resourcesPath. Gated on the `mac` target so Windows CI builds
+# don't choke on a missing binary.
+mac:
+  extraResources:
+    - from: electron/resources/macos/
+      to: macos
+      filter:
+        - "winstt-apple-llm"
 portable:
   artifactName: ${productName}-CPU-Portable-${version}.${ext}
   # Stable extraction folder under %LOCALAPPDATA% — see electron-builder.gpu.yml

@@ -39,6 +39,7 @@ import {
 import { HotkeyRecorder } from "@/features/record-hotkey";
 import { detectOllama, fetchOllamaModels, startOllama } from "@/shared/api/ipc-client";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
+import { detectAppleIntelligencePlatform } from "@/shared/lib/apple-intelligence-platform";
 import { findLanguage, LANGUAGES } from "@/shared/lib/languages";
 import { Button } from "@/shared/ui/button";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
@@ -1252,7 +1253,11 @@ function useLlmSettingsPanel() {
 
 	const toneOpts = buildToneOpts(t);
 	const levelOpts = buildLevelOpts(t);
-	const providerOpts = buildProviderOpts(t);
+	const applePlatform = detectAppleIntelligencePlatform();
+	const providerOpts = buildProviderOpts(t, {
+		appleIntelligenceSupported: applePlatform === "apple-silicon",
+		appleIntelligenceUnavailableOnIntel: applePlatform === "intel-mac",
+	});
 
 	const ollamaCatalogState: OllamaCatalogState = {
 		error: ollamaError,
@@ -1694,10 +1699,102 @@ function useOllamaSwapTracker(opts: {
 	return { swap, beginSwap };
 }
 
+/**
+ * Apple Intelligence has no per-feature config — it's a single on-device
+ * model with no endpoint, no API key, no model picker. Render a stub
+ * panel explaining that and rely on the WarmupStatusBanner below to
+ * surface availability/load failures (which the IPC layer reports via
+ * the same channel as the other providers).
+ */
+function AppleIntelligenceSection({ t }: { t: TranslateFn }) {
+	return (
+		<div className="col-span-2 px-3 py-2 text-foreground-muted text-sm">
+			<p>{t("appleIntelligenceDescription")}</p>
+		</div>
+	);
+}
+
+interface ProviderSectionArgs {
+	beginOllamaSwap: (toName: string) => void;
+	fallbackExclusion: ReturnType<typeof computeModelExclusionConfig>;
+	featureSnapshot: LlmFeatureDraft;
+	librarySearch: import("@picker").OllamaModelSelectorProps["librarySearch"];
+	ollamaCatalog: OllamaCatalogState;
+	ollamaPullBundle: OllamaPullBundle;
+	ollamaReachable: boolean | null;
+	ollamaSwap: { fromName: string | null; toName: string } | null;
+	openrouterApiKey: string;
+	openrouterCatalog: OpenRouterCatalogState;
+	t: TranslateFn;
+	tc: TranslateFn;
+	updateAny: (p: Partial<LlmFeatureDraft>) => void;
+}
+
+function renderProviderSection(args: ProviderSectionArgs): ReactNode {
+	const { featureSnapshot, t } = args;
+	if (featureSnapshot.provider === "apple-intelligence") {
+		return <AppleIntelligenceSection t={t} />;
+	}
+	if (featureSnapshot.provider === "ollama") {
+		return (
+			<OllamaSection
+				enabled={featureSnapshot.enabled}
+				librarySearch={args.librarySearch}
+				model={featureSnapshot.model}
+				ollamaError={args.ollamaCatalog.error}
+				ollamaModels={args.ollamaCatalog.models}
+				ollamaReachable={args.ollamaReachable}
+				ollamaScanning={args.ollamaCatalog.isScanning}
+				pullBundle={args.ollamaPullBundle}
+				scanOllama={args.ollamaCatalog.scanModels}
+				setModel={(v) => {
+					args.beginOllamaSwap(v);
+					args.updateAny({ model: v });
+				}}
+				setThinkingEffort={(v) => args.updateAny({ thinkingEffort: v })}
+				swap={args.ollamaSwap}
+				t={t}
+				tc={args.tc}
+				thinkingEffort={featureSnapshot.thinkingEffort ?? "medium"}
+			/>
+		);
+	}
+	return (
+		<OpenRouterSection
+			apiKeyMissing={!args.openrouterApiKey}
+			fallbackExclusion={args.fallbackExclusion}
+			maxOutputTokens={featureSnapshot.maxOutputTokens}
+			onMaxOutputTokensChange={(v) => args.updateAny({ maxOutputTokens: v })}
+			onReasoningEffortChange={(v) => args.updateAny({ reasoningEffort: v })}
+			onVerbosityChange={(v) => args.updateAny({ verbosity: v })}
+			openrouterError={args.openrouterCatalog.error}
+			openrouterFallbackModel={featureSnapshot.openrouterFallbackModel}
+			openrouterModel={featureSnapshot.openrouterModel}
+			openrouterModels={args.openrouterCatalog.models}
+			openrouterScanning={args.openrouterCatalog.isScanning}
+			reasoningEffort={featureSnapshot.reasoningEffort}
+			scanOpenRouter={args.openrouterCatalog.scanModels}
+			setFallbackModel={(v) => args.updateAny({ openrouterFallbackModel: v })}
+			setModel={(v) => args.updateAny({ openrouterModel: v })}
+			t={t}
+			verbosity={featureSnapshot.verbosity}
+		/>
+	);
+}
+
 interface FeatureBlockComponentProps extends FeatureBlockProps {
 	checkOllamaReachable: () => Promise<boolean>;
 	children: ReactNode;
-	providerOpts: ReadonlyArray<{ label: string; value: string }>;
+	// Accept the richer ProviderOption shape (label, value, optional disabled
+	// + disabledTooltip) so Apple Intelligence can render greyed-out on Intel
+	// Macs. The Switcher ignores unknown fields, so older callers passing the
+	// `{label, value}` minimum still work.
+	providerOpts: ReadonlyArray<{
+		disabled?: boolean;
+		disabledTooltip?: string;
+		label: string;
+		value: string;
+	}>;
 }
 
 function FeatureBlock(props: FeatureBlockComponentProps) {
@@ -1776,48 +1873,21 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 						</ElevatedSurface>
 					</FormControl>
 				</div>
-				{featureSnapshot.provider === "ollama" ? (
-					<OllamaSection
-						enabled={featureSnapshot.enabled}
-						librarySearch={librarySearch}
-						model={featureSnapshot.model}
-						ollamaError={ollamaCatalog.error}
-						ollamaModels={ollamaCatalog.models}
-						ollamaReachable={ollamaReachable}
-						ollamaScanning={ollamaCatalog.isScanning}
-						pullBundle={ollamaPullBundle}
-						scanOllama={ollamaCatalog.scanModels}
-						setModel={(v) => {
-							beginOllamaSwap(v);
-							updateAny({ model: v });
-						}}
-						setThinkingEffort={(v) => updateAny({ thinkingEffort: v })}
-						swap={ollamaSwap}
-						t={t}
-						tc={tc}
-						thinkingEffort={featureSnapshot.thinkingEffort ?? "medium"}
-					/>
-				) : (
-					<OpenRouterSection
-						apiKeyMissing={!openrouterApiKey}
-						fallbackExclusion={fallbackExclusion}
-						maxOutputTokens={featureSnapshot.maxOutputTokens}
-						onMaxOutputTokensChange={(v) => updateAny({ maxOutputTokens: v })}
-						onReasoningEffortChange={(v) => updateAny({ reasoningEffort: v })}
-						onVerbosityChange={(v) => updateAny({ verbosity: v })}
-						openrouterError={openrouterCatalog.error}
-						openrouterFallbackModel={featureSnapshot.openrouterFallbackModel}
-						openrouterModel={featureSnapshot.openrouterModel}
-						openrouterModels={openrouterCatalog.models}
-						openrouterScanning={openrouterCatalog.isScanning}
-						reasoningEffort={featureSnapshot.reasoningEffort}
-						scanOpenRouter={openrouterCatalog.scanModels}
-						setFallbackModel={(v) => updateAny({ openrouterFallbackModel: v })}
-						setModel={(v) => updateAny({ openrouterModel: v })}
-						t={t}
-						verbosity={featureSnapshot.verbosity}
-					/>
-				)}
+				{renderProviderSection({
+					featureSnapshot,
+					librarySearch,
+					ollamaCatalog,
+					ollamaPullBundle,
+					ollamaReachable,
+					ollamaSwap,
+					beginOllamaSwap,
+					openrouterApiKey,
+					openrouterCatalog,
+					fallbackExclusion,
+					updateAny,
+					t,
+					tc,
+				})}
 				{featureSnapshot.enabled ? (
 					<WarmupStatusBanner
 						feature={feature}

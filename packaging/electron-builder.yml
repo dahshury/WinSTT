@@ -64,6 +64,19 @@ win:
     - portable
   icon: build/icon.ico
   artifactName: ${productName}-Portable-${version}.${ext}
+# macOS-only resources. The Swift Apple Intelligence CLI is compiled
+# before electron-builder runs (see tools/apple-intelligence-cli/build.sh)
+# and lands at frontend/electron/resources/macos/winstt-apple-llm.
+# electron-builder copies it to <App>.app/Contents/Resources/macos/
+# where electron/ipc/apple-intelligence.ts resolves it via
+# process.resourcesPath. The block is gated on `mac.extraResources` so it
+# never tries to run on Windows builds where the file doesn't exist.
+mac:
+  extraResources:
+    - from: electron/resources/macos/
+      to: macos
+      filter:
+        - "winstt-apple-llm"
 portable:
   artifactName: ${productName}-Portable-${version}.${ext}
   # Stable extraction folder under %LOCALAPPDATA% — see electron-builder.gpu.yml

@@ -147,6 +147,16 @@ Run from the **repo root**. All packaging configs and intermediate bundles live 
 
 Tagging a release (`git tag v0.X.0 && git push --tags`) runs the CPU + GPU jobs as a matrix and publishes both installers to the same GitHub Release.
 
+### macOS-only: Apple Intelligence CLI
+
+When packaging the Electron app for macOS, compile the bundled Apple Intelligence bridge BEFORE running `electron-builder`:
+
+```bash
+bash tools/apple-intelligence-cli/build.sh
+```
+
+This emits `frontend/electron/resources/macos/winstt-apple-llm` — a tiny Swift binary that the Electron main process spawns to call Apple's on-device `FoundationModels` framework (macOS 15+ Apple Silicon). The script no-ops on Windows/Linux so it's safe to leave in pre-package hook chains; production macOS CI jobs run it explicitly. See `tools/apple-intelligence-cli/main.swift` for the stdin/stdout JSON contract. The corresponding renderer-side provider option is hidden on non-Apple-Silicon platforms.
+
 ## Useful Commands
 
 ### Server (`server/`)
