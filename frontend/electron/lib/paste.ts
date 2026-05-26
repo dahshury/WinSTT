@@ -17,6 +17,15 @@ import { dbg } from "./debug-log";
  * raw WM_CHAR. The per-event cost is real but mitigated by the paste-guard
  * short-circuit in both uiohook listeners (`hotkey.ts` + `transform-hotkeys.ts`).
  *
+ * Layout-independence: when the fallback (or re-paste) path resorts to
+ * Ctrl+V, the native helper drives it with `SendInput { wVk = 0x56 }` —
+ * the virtual key code for the V key (`VK_V`). Windows resolves VK codes
+ * against the foreground thread's keyboard layout, so AZERTY, ЙЦУКЕН,
+ * Dvorak, Colemak users get Ctrl+V on whatever physical key produces V
+ * for them. The `--type` path doesn't use Ctrl+V at all — it emits raw
+ * UTF-16 via `KEYEVENTF_UNICODE`, which is also layout-agnostic. See
+ * `electron/native/src/winstt-paste.c::set_key` for the full contract.
+ *
  * Why a compiled C binary instead of PowerShell:
  *   - Cold-start: <50ms vs PowerShell's 2-8s under Defender scanning.
  *   - AV doesn't re-scan it every paste — it's a single signed binary.
