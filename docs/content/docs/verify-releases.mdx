@@ -1,0 +1,150 @@
+---
+title: Verify Release Signatures
+description: Verify the authenticity of a WinSTT installer offline with minisign
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Every WinSTT installer (both the CPU and GPU portable `.exe` builds) ships with a [minisign](https://jedisct1.github.io/minisign/) signature sidecar — a small `.minisig` file uploaded next to the installer on the [GitHub Releases page](https://github.com/dahshury/WinSTT/releases).
+
+This is **in addition to** the standard Authenticode signature that the Windows installer flow and `electron-updater` already validate automatically. The minisign sidecar lets you verify the download **manually, offline, on any platform** — useful if you want a second trust path beyond Windows' code-signing certificate store.
+
+<Callout title="You do not have to verify" type="info">
+  Verifying releases is optional. Regular installs and auto-updates already validate the Authenticode signature on Windows. This page is for power users who want belt-and-braces verification.
+</Callout>
+
+## What you need
+
+| File | Where to get it |
+|---|---|
+| The installer | [GitHub Releases](https://github.com/dahshury/WinSTT/releases) — e.g. `WinSTT-CPU-Portable-0.4.0.exe` |
+| The `.minisig` sidecar | Same release page — e.g. `WinSTT-CPU-Portable-0.4.0.exe.minisig` |
+| The public key | [`docs/winstt.pub`](https://github.com/dahshury/WinSTT/blob/main/docs/winstt.pub) in the repo |
+| `minisign` CLI | See install commands below |
+
+## Install minisign
+
+<Tabs items={["Windows", "macOS", "Linux"]}>
+  <Tab value="Windows">
+    Using [Scoop](https://scoop.sh/):
+
+    ```pwsh
+    scoop install minisign
+    ```
+
+    Or using [Chocolatey](https://chocolatey.org/):
+
+    ```pwsh
+    choco install minisign
+    ```
+  </Tab>
+  <Tab value="macOS">
+    ```bash
+    brew install minisign
+    ```
+  </Tab>
+  <Tab value="Linux">
+    ```bash
+    # Debian/Ubuntu
+    sudo apt install minisign
+
+    # Fedora
+    sudo dnf install minisign
+
+    # Arch
+    sudo pacman -S minisign
+    ```
+  </Tab>
+</Tabs>
+
+## Verify a release
+
+<Steps>
+<Step>
+### Download the three files into the same folder
+
+Put the installer, its `.minisig`, and `winstt.pub` side-by-side:
+
+```text
+WinSTT-CPU-Portable-0.4.0.exe
+WinSTT-CPU-Portable-0.4.0.exe.minisig
+winstt.pub
+```
+
+Fetch `winstt.pub` directly from the repo:
+
+```bash
+curl -LO https://raw.githubusercontent.com/dahshury/WinSTT/main/docs/winstt.pub
+```
+
+</Step>
+<Step>
+### Run minisign
+
+Set `ARTIFACT` to the installer filename you downloaded, then verify:
+
+```bash
+ARTIFACT="WinSTT-CPU-Portable-0.4.0.exe"
+
+minisign -Vm "$ARTIFACT" \
+  -p winstt.pub \
+  -x "$ARTIFACT.minisig"
+```
+
+On Windows PowerShell:
+
+```pwsh
+$ARTIFACT = "WinSTT-CPU-Portable-0.4.0.exe"
+
+minisign -Vm $ARTIFACT `
+  -p winstt.pub `
+  -x "$ARTIFACT.minisig"
+```
+
+</Step>
+<Step>
+### Confirm the success message
+
+On success, minisign prints:
+
+```text
+Signature and comment signature verified
+Trusted comment: WinSTT release v0.4.0 — WinSTT-CPU-Portable-0.4.0.exe
+```
+
+If the trusted comment matches the file you downloaded and the version you expected, the artifact is authentic and untampered.
+
+</Step>
+</Steps>
+
+## What "verified" means
+
+A successful verification proves:
+
+- The `.exe` you have is **byte-identical** to what the WinSTT release workflow signed.
+- The signature was produced by the **holder of the private key** matching `docs/winstt.pub` in this repo.
+
+It does **not** by itself prove the public key in the repo wasn't replaced — that's the same trust assumption you make any time you download `winstt.pub` from GitHub. For paranoid verification, pin the pubkey against a known-good commit, or cross-check against an out-of-band copy you saved on a previous release.
+
+## Things that should fail
+
+If any of these happen, **do not run the installer** and please [open an issue](https://github.com/dahshury/WinSTT/issues):
+
+| Output | Meaning |
+|---|---|
+| `Signature verification failed` | The installer was modified after signing, the `.minisig` was tampered with, or you have the wrong pubkey. |
+| `Couldn't open the public key` | `winstt.pub` is missing or malformed. Re-download from the repo. |
+| `Trusted comment` doesn't match the filename | A signature was reused from a different artifact. |
+
+<Callout title="Do not use GPG" type="warn">
+  The `.minisig` files are **not** OpenPGP signatures and `gpg --verify` will not work on them. Use the `minisign` CLI specifically.
+</Callout>
+
+## Why not auto-verify in the updater?
+
+`electron-updater` already verifies the Authenticode signature of every update payload on Windows before it executes, so minisign would be a redundant chain in the automated path. Wiring it into the updater would mean shipping `winstt.pub` inside the installed app and trusting the locally-cached copy on every update — which adds attack surface (the cached pubkey becomes a target) without strengthening the chain meaningfully beyond what Authenticode + the HTTPS endpoint already give us.
+
+Minisign is therefore intentionally positioned as a **manual, offline verification layer for power users**, distributed via this docs site and the repo — not bundled into the app.
+
+For maintainer-side details on key generation and CI configuration, see [`docs/RELEASE_SIGNING.md`](https://github.com/dahshury/WinSTT/blob/main/docs/RELEASE_SIGNING.md).

@@ -113,3 +113,74 @@ jobs:
 
       - name: Build And Publish Electron Release (${{ matrix.flavor }})
         run: bun run electron:build:publish:${{ matrix.flavor }}
+
+      # Parallel offline-verifiable trust layer alongside the Authenticode
+      # signature that electron-updater already validates. Power users can
+      # download <artifact>.minisig and verify with the pubkey at
+      # docs/winstt.pub on any platform. See docs/RELEASE_SIGNING.md and
+      # docs/content/docs/verify-releases.mdx.
+      #
+      # The keypair is generated locally by the maintainer (never in CI);
+      # the secret key is supplied via the MINISIGN_SECRET_KEY repo secret
+      # and the password via MINISIGN_PASSWORD. If MINISIGN_SECRET_KEY is
+      # unset (e.g. first release before secrets are configured), this step
+      # short-circuits with a warning so the release itself still publishes.
+      - name: Install minisign
+        if: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+        shell: pwsh
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          # Scoop is preinstalled on `windows-latest` runners.
+          scoop install minisign
+          minisign -v
+
+      - name: Sign artifacts with minisign (${{ matrix.flavor }})
+        if: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+        shell: pwsh
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # Materialize the secret key from the repo secret into a temp file
+          # (minisign -s wants a path). Cleaned up at job end with the runner.
+          $keyPath = Join-Path $env:RUNNER_TEMP "winstt.key"
+          $env:MINISIGN_SECRET_KEY | Out-File -FilePath $keyPath -Encoding ascii -NoNewline
+
+          # Tag name = the ref this workflow ran on (e.g. refs/tags/v0.4.0).
+          $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
+
+          # electron-builder writes installers to <repo>/dist/. Sign the
+          # portable .exe artifacts — and any future .dmg/.AppImage if the
+          # matrix grows — then upload each .minisig to the release.
+          $artifacts = Get-ChildItem -Path dist -File -Include "*.exe","*.dmg","*.AppImage","*.zip" -Recurse
+          if ($artifacts.Count -eq 0) {
+            Write-Error "No release artifacts found in dist/ — nothing to sign."
+            exit 1
+          }
+
+          foreach ($artifact in $artifacts) {
+            Write-Host "Signing $($artifact.FullName)"
+            # `-t` embeds a trusted comment with the artifact filename so
+            # `minisign -V` prints something meaningful to the verifier.
+            $trusted = "WinSTT release $tag — $($artifact.Name)"
+            $env:MINISIGN_PASSWORD | minisign -S -s $keyPath -m $artifact.FullName -t $trusted
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "minisign failed for $($artifact.FullName)"
+              exit $LASTEXITCODE
+            }
+          }
+
+          # Upload the .minisig sidecars to the same GitHub Release that
+          # electron-builder just published. `--clobber` keeps the step
+          # idempotent if a job is re-run.
+          $sigs = Get-ChildItem -Path dist -File -Filter "*.minisig" -Recurse | ForEach-Object { $_.FullName }
+          gh release upload $tag $sigs --clobber
+
+      - name: Skip minisign (secret unset)
+        if: ${{ secrets.MINISIGN_SECRET_KEY == '' }}
+        run: |
+          echo "::warning::MINISIGN_SECRET_KEY repo secret is not configured — skipping minisign signing. See docs/RELEASE_SIGNING.md."

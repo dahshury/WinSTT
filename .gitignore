@@ -108,3 +108,10 @@ docs/.output/
 
 # Scratch
 frontend/scripts/wip.txt
+
+# Minisign keys — used to sign release artifacts (see docs/RELEASE_SIGNING.md).
+# Secret keys (.key) MUST NEVER be committed. Public keys (.pub) are safe to
+# commit and are checked into docs/winstt.pub. The negative pattern below
+# preserves any *.pub already tracked by git.
+*.key
+!*.pub
