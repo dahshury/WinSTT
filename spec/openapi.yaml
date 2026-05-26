@@ -571,6 +571,23 @@ components:
         - auto
         - cpu
 
+    AcceleratorType:
+      type: string
+      description: |
+        User-facing GPU acceleration preference. `auto` walks the per-OS
+        priority list (Windows: DirectML > CUDA > CPU; Linux: CUDA > ROCm >
+        CPU; macOS: CoreML > CPU). Explicit values pin a specific ONNX
+        Runtime execution provider; the server falls back to CPU with a
+        log line if the chosen EP isn't registered (e.g. `cuda` selected
+        on a DirectML-only build).
+      enum:
+        - auto
+        - cuda
+        - directml
+        - rocm
+        - coreml
+        - cpu
+
     RecorderState:
       type: string
       enum:
@@ -734,6 +751,8 @@ components:
           $ref: "#/components/schemas/ComputeType"
         device:
           $ref: "#/components/schemas/DeviceType"
+        accelerator:
+          $ref: "#/components/schemas/AcceleratorType"
         backend:
           $ref: "#/components/schemas/TranscriberBackend"
         onnxQuantization:

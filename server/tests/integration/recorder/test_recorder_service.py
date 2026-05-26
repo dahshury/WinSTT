@@ -1895,7 +1895,7 @@ class TestRecorderService:
                 _FakeAdapter,
             ),
             patch(
-                "src.recorder.infrastructure.device.providers_for_device",
+                "src.recorder.infrastructure.device.providers_for_settings",
                 return_value=["CPUExecutionProvider"],
             ),
         ):

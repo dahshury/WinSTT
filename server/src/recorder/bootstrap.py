@@ -403,9 +403,12 @@ def build_transcriber(
         info.param_count if info else 0,
         info.available_quantizations if info else None,
     )
-    from src.recorder.infrastructure.device import providers_for_device
+    from src.recorder.infrastructure.device import providers_for_settings
 
-    providers = providers_for_device(config.transcription.device)
+    providers = providers_for_settings(
+        config.transcription.device,
+        config.transcription.accelerator,
+    )
 
     from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
@@ -552,9 +555,12 @@ def build_realtime_transcriber(
         info.param_count if info else 0,
         info.available_quantizations if info else None,
     )
-    from src.recorder.infrastructure.device import providers_for_device
+    from src.recorder.infrastructure.device import providers_for_settings
 
-    providers = providers_for_device(config.transcription.device)
+    providers = providers_for_settings(
+        config.transcription.device,
+        config.transcription.accelerator,
+    )
 
     from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
