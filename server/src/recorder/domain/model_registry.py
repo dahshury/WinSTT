@@ -45,43 +45,13 @@ class ModelInfo:
     #: most other repos ship only the default graph. Empty list → the model
     #: takes no quantization (faster-whisper-style), picker hides the row.
     available_quantizations: list[str] = field(default_factory=lambda: [""])
-    #: Heuristic relative speed / accuracy scores in [0, 1] derived from
-    #: ``param_count`` (and a small family bonus for Moonshine, which beats
-    #: its parameter weight class on speed). Used purely as a visual hint
-    #: in the picker — a horizontal bar next to each variant — so the user
-    #: can compare variants at a glance. NOT a measured benchmark.
-    speed_score: float = 0.5
-    accuracy_score: float = 0.5
-
-
-def _score_pair(params: int, family: str) -> tuple[float, float]:
-    """Return heuristic ``(speed_score, accuracy_score)`` for a model.
-
-    Both axes are relative, both clamped to ``[0, 1]``, both derived from
-    ``param_count``. Tracks the conventional ordering tiny < base < small
-    < medium < turbo < large. Moonshine variants get a small speed bonus
-    because the encoder-only architecture is ~2x faster than the Whisper
-    encoder-decoder at the same parameter weight class.
-    """
-    if params <= 0:
-        return (0.5, 0.5)
-    if params <= 50_000_000:
-        speed, acc = 1.0, 0.40
-    elif params <= 100_000_000:
-        speed, acc = 0.85, 0.55
-    elif params <= 300_000_000:
-        speed, acc = 0.65, 0.70
-    elif params <= 600_000_000:
-        speed, acc = 0.50, 0.80
-    elif params <= 900_000_000:
-        speed, acc = 0.45, 0.85
-    elif params <= 1_200_000_000:
-        speed, acc = 0.30, 0.90
-    else:
-        speed, acc = 0.20, 0.95
-    if family == "moonshine":
-        speed = min(1.0, speed + 0.15)
-    return (speed, acc)
+    #: Optional lowercase hex SHA-256 of the canonical model archive. Only
+    #: meaningful for URL-based downloads handled by the Electron-side
+    #: `model-downloader.ts` (the Handy-style flow). The HuggingFace path
+    #: ignores it — `huggingface_hub` does its own per-blob ETag checks. A
+    #: ``None`` value means "no expected digest available"; the downloader
+    #: skips verification and surfaces a corruption only at first ONNX-load.
+    sha256: str | None = None
 
 
 #: Quantization suffixes ORT's CUDAExecutionProvider can actually accelerate.
@@ -160,8 +130,8 @@ def _model_from_json(entry: dict[str, Any]) -> ModelInfo:
     params = int(entry.get("param_count", 0))
     quants = _str_list(entry.get("available_quantizations", [""]), default=[""])
     languages = _str_list(entry.get("languages", []), default=[])
-    family = str(entry.get("family", ""))
-    speed, acc = _score_pair(params, family)
+    raw_sha = entry.get("sha256")
+    sha256 = str(raw_sha).lower() if isinstance(raw_sha, str) and raw_sha else None
     return ModelInfo(
         id=str(entry["id"]),
         display_name=str(entry.get("display_name", entry["id"])),
@@ -175,8 +145,7 @@ def _model_from_json(entry: dict[str, Any]) -> ModelInfo:
         description=str(entry.get("description", "")),
         param_count=params,
         available_quantizations=quants,
-        speed_score=speed,
-        accuracy_score=acc,
+        sha256=sha256,
     )
 
 
@@ -243,8 +212,7 @@ def _apply_overlay(info: ModelInfo, overlay: dict[str, dict[str, Any]]) -> Model
         description=info.description,
         param_count=info.param_count,
         available_quantizations=info.available_quantizations,
-        speed_score=info.speed_score,
-        accuracy_score=info.accuracy_score,
+        sha256=info.sha256,
     )
 
 
@@ -344,8 +312,11 @@ class ModelCatalog:
                     "description": m.description,
                     "param_count": m.param_count,
                     "available_quantizations": quants,
-                    "speed_score": m.speed_score,
-                    "accuracy_score": m.accuracy_score,
+                    # Surfaced to the frontend so the Electron-side downloader
+                    # can verify URL-based downloads. Always ``None`` for
+                    # HuggingFace-hosted models (huggingface_hub does its own
+                    # blob-level ETag checks).
+                    "sha256": m.sha256,
                 }
             )
         return result

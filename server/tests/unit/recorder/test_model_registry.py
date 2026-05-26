@@ -177,6 +177,11 @@ class TestModelCatalog:
             assert "onnx_model_name" in d
             assert "description" in d
             assert "available_quantizations" in d
+            # Additive ``sha256`` field is always present; ``None`` when the
+            # catalog entry omits it (the current default for every shipped
+            # HuggingFace-hosted model). URL-based downloads supply a
+            # lowercase hex digest the Electron-side downloader verifies.
+            assert "sha256" in d
 
     def test_gated_whisper_repos_route_to_xenova_mirror(self, catalog: ModelCatalog) -> None:
         """medium / medium.en / large-v3 are gated on onnx-community (HTTP 401
@@ -430,3 +435,59 @@ class TestModelCatalog:
 
     def test_is_universal_constrained_known_model(self, catalog: ModelCatalog) -> None:
         assert catalog._is_universal("gigaam-v3-ctc", "en") is False
+
+
+class TestModelInfoSha256:
+    """Parser handles the optional ``sha256`` field — additive, never breaks
+    existing catalogs that omit it (matches Handy's behaviour for
+    HuggingFace-hosted models that rely on per-blob ETag checks instead)."""
+
+    def test_dataclass_defaults_to_none(self) -> None:
+        info = ModelInfo(
+            id="x",
+            display_name="X",
+            backend=TranscriberBackend.ONNX_ASR,
+            family="x",
+        )
+        assert info.sha256 is None
+
+    def test_dataclass_accepts_hex_digest(self) -> None:
+        digest = "a" * 64
+        info = ModelInfo(
+            id="x",
+            display_name="X",
+            backend=TranscriberBackend.ONNX_ASR,
+            family="x",
+            sha256=digest,
+        )
+        assert info.sha256 == digest
+
+    def test_parser_lowercases_provided_sha256(self) -> None:
+        from src.recorder.domain.model_registry import _model_from_json
+
+        info = _model_from_json(
+            {"id": "u", "display_name": "U", "sha256": "AB" * 32},
+        )
+        assert info.sha256 == ("ab" * 32)
+
+    def test_parser_treats_empty_string_as_none(self) -> None:
+        from src.recorder.domain.model_registry import _model_from_json
+
+        info = _model_from_json({"id": "u", "display_name": "U", "sha256": ""})
+        assert info.sha256 is None
+
+    def test_parser_omits_field_when_absent(self) -> None:
+        from src.recorder.domain.model_registry import _model_from_json
+
+        info = _model_from_json({"id": "u", "display_name": "U"})
+        assert info.sha256 is None
+
+    def test_parser_drops_non_string_sha256(self) -> None:
+        # A future bad catalog refresh might emit ``"sha256": false`` or a
+        # numeric — the parser must not crash and must not propagate a
+        # non-string into ``ModelInfo.sha256``.
+        from src.recorder.domain.model_registry import _model_from_json
+
+        for bad in (False, 0, 12345, [], {}):
+            info = _model_from_json({"id": "u", "display_name": "U", "sha256": bad})  # type: ignore[dict-item]
+            assert info.sha256 is None
