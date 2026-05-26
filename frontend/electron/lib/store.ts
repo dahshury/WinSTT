@@ -110,16 +110,6 @@ const storeValueSchemas = {
 	"general.onboarded": z.boolean().catch(false),
 	"general.onboardedAt": z.number().nullable().catch(null),
 	"general.onboardedTrack": z.enum(["", "local", "cloud"]).catch(""),
-	// Output audio device for TTS playback and recording chimes.
-	// Web Audio `MediaDeviceInfo.deviceId`; empty = system default.
-	"general.outputDeviceId": z.string().catch(""),
-	// Auto-press a "submit" key after each dictation paste lands.
-	"general.autoSubmit": z.boolean().catch(false),
-	"general.autoSubmitKey": z.enum(["enter", "ctrl_enter"]).catch("enter"),
-	// Cap on persisted history entries; trimmed on each insert.
-	"general.historyMaxEntries": z.number().int().min(10).max(10_000).catch(1000),
-	// Auto-delete saved WAVs by retention policy.
-	"general.recordingRetention": z.enum(["never", "cap", "days3", "weeks2", "months3"]).catch("cap"),
 	// quality
 	"quality.useMainModelForRealtime": z.boolean().catch(false),
 	"quality.ensureSentenceEndsWithPeriod": z.boolean().catch(true),

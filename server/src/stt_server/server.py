@@ -416,6 +416,39 @@ def _resolve_release() -> str | None:
         return None
 
 
+def _apply_data_dir(arg_data_dir: str | None) -> None:
+    """Apply the Electron-supplied data dir BEFORE observability + recorder init.
+
+    Honors ``--data-dir`` first, then ``$WINSTT_DATA_DIR``. When neither is
+    set, no-op — the historic defaults (``%APPDATA%`` / ``~/.winstt``) stay in
+    effect. Idempotent: only sets env vars when they aren't already set, so
+    portable-boot.ts's earlier ``setPath`` values from the Electron main
+    process always win when both have written.
+
+    Creates the data-dir tree (``./``, ``./hf/``, ``./logs/``) so subsequent
+    code that does ``Path(...).mkdir(parents=True, exist_ok=True)`` doesn't
+    race on first launch under a portable install.
+    """
+    raw = arg_data_dir or os.environ.get("WINSTT_DATA_DIR")
+    if not raw:
+        return
+    data_dir = Path(raw).expanduser()
+    hf_dir = data_dir / "hf"
+    logs_dir = data_dir / "logs"
+    for d in (data_dir, hf_dir, logs_dir):
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Best-effort: a portable install on a read-only USB stick will
+            # surface the error downstream when logging actually opens the
+            # file. Don't fail boot here.
+            pass
+    os.environ.setdefault("WINSTT_DATA_DIR", str(data_dir))
+    os.environ.setdefault("HF_HOME", str(hf_dir))
+    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(hf_dir))
+    os.environ.setdefault("WINSTT_LOG_DIR", str(logs_dir))
+
+
 async def main_async() -> None:
     """Async entry point — sets up WebSocket servers, recorder, and shutdown handling."""
     args = parse_arguments()
@@ -505,6 +538,12 @@ async def main_async() -> None:
         # Diarization — facade kwargs map to DiarizationConfig.enabled / .max_speakers.
         "enable_diarization": args.enable_diarization,
         "diarization_max_speakers": args.diarization_max_speakers,
+        # Handy-style on-demand mic: defaults release the device on PTT
+        # idle so the OS mic-in-use indicator doesn't stay lit. Flags
+        # override at boot — toggling them in settings requires a server
+        # restart (handled by STARTUP_ONLY_KEYS on the renderer side).
+        "always_on_microphone": args.always_on_microphone,
+        "lazy_stream_close": args.lazy_stream_close,
         "spinner": False,
         "use_microphone": True,
         # Wire dynamic-silence classification + WS broadcast off the
@@ -706,16 +745,38 @@ def main() -> None:
     # "Segmentation fault" with no clue which thread or call site triggered
     # it.  Signal-safe; adds no overhead until a signal fires.
     faulthandler.enable()
-    print(f"{bcolors.BOLD}{bcolors.OKCYAN}Starting server, please wait...{bcolors.ENDC}")
+    print(f"{bcolors.BOLD}{bcolors.OKCYAN}Starting server, please wait...{bcolors.ENDC}", flush=True)
     _clear_pycache()
+    exit_code = 0
     try:
         asyncio.run(main_async())
     except KeyboardInterrupt:
-        print(f"\n{bcolors.WARNING}Server interrupted by user.{bcolors.ENDC}")
-    except SystemExit:
-        pass
+        print(f"\n{bcolors.WARNING}Server interrupted by user.{bcolors.ENDC}", flush=True)
+    except SystemExit as e:
+        # Surface the SystemExit code so an early arg/config error doesn't look
+        # like a clean shutdown to the parent process. Print the message too —
+        # argparse raises SystemExit with a friendly message that's otherwise
+        # lost when stdout is block-buffered for piped output.
+        code = e.code if isinstance(e.code, int) else (1 if e.code else 0)
+        if e.code and not isinstance(e.code, int):
+            print(f"{bcolors.FAIL}SystemExit: {e.code}{bcolors.ENDC}", flush=True)
+        exit_code = code
+    except BaseException:
+        # Print the full traceback before os._exit blows away the buffer.
+        # Without this, an unhandled exception in main_async() (e.g. a crash
+        # during observability / data-dir / custom-models init that runs
+        # BEFORE the logger is configured) presents as a silent "exit 0" to
+        # the spawning Electron process — exactly the failure mode that
+        # masked the DirectML / custom-models init bug we just diagnosed.
+        import traceback
+        traceback.print_exc()
+        sys.stderr.flush()
+        sys.stdout.flush()
+        exit_code = 1
     finally:
-        os._exit(0)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(exit_code)
 
 
 if __name__ == "__main__":

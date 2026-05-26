@@ -565,6 +565,32 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--always_on_microphone",
+        action="store_true",
+        default=False,
+        help=(
+            "Keep the OS microphone stream allocated for the entire server "
+            "session. Default off (release-on-idle) matches Handy: boot does "
+            "not open a stream, the first PTT press lazily opens one, PTT "
+            "release closes it so the mic-in-use indicator clears. Enable "
+            "this if PTT response feels sluggish — the saved ~10-50 ms per "
+            "press costs a permanently-lit mic indicator while the app runs."
+        ),
+    )
+
+    parser.add_argument(
+        "--lazy_stream_close",
+        action="store_true",
+        default=False,
+        help=(
+            "Only meaningful when --always_on_microphone is off. When set, "
+            "PTT release stops the audio engine but defers closing the "
+            "stream by 30 s so back-to-back presses skip the open cost. "
+            "Off by default — release closes immediately."
+        ),
+    )
+
+    parser.add_argument(
         "--compute_type",
         type=str,
         default="default",
@@ -581,8 +607,14 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda",
-        help='Device for model to use. Can either be "cuda" or "cpu". Default is cuda.',
+        default="auto",
+        help=(
+            'Device tier for ONNX inference: "auto" (default — walks per-OS '
+            'priority: Windows DirectML > CUDA > CPU; Linux CUDA > ROCm > CPU; '
+            'macOS CoreML > CPU), "cuda", "directml", "rocm", "coreml", or "cpu". '
+            'Unrecognised values fall back to CPU with a log line. See '
+            "``recorder.infrastructure.device.resolve_accelerator``."
+        ),
     )
 
     parser.add_argument(
@@ -719,6 +751,24 @@ def parse_arguments() -> argparse.Namespace:
         help=(
             "Override the directory where Kokoro model + voicepacks are cached. "
             "Defaults to %%LOCALAPPDATA%%/winstt/tts/kokoro."
+        ),
+    )
+
+    # Portable / Electron-supplied data dir. Registered with argparse here so
+    # the flag survives ``parser.parse_args()`` (the pre-parser at module-load
+    # already consumed it via ``_resolve_data_dir`` but ``argparse`` will
+    # otherwise reject the unknown token when Electron forwards it).
+    parser.add_argument(
+        "--data-dir",
+        "--data_dir",
+        type=str,
+        default=None,
+        help=(
+            "Root directory for all per-user data (models, recordings, history db, logs). "
+            "When set, takes precedence over %%APPDATA%%/winstt and is propagated to the "
+            "WINSTT_DATA_DIR / HF_HOME / HUGGINGFACE_HUB_CACHE / WINSTT_LOG_DIR env vars "
+            "for downstream consumers. Mirrors the Electron main process's portable-mode "
+            "setPath('userData', ...) override."
         ),
     )
 
