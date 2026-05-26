@@ -346,7 +346,6 @@ export const store = new Store({
 			minGapBetweenRecordings: 0,
 			preRecordingBufferDuration: 1.0,
 			sileroSensitivityByDeviceName: {},
-			keepMicOpen: false,
 			clamshellMicrophone: null,
 		},
 		general: {

@@ -59,8 +59,21 @@ export function AudioSettingsPanel() {
 		return opts;
 	}, [devices, defaultDevice, t]);
 
+	// Clamshell picker shares the device list but uses a "disabled" sentinel
+	// instead of "default" — null = feature off (don't poll), whereas a
+	// configured index = mic to swap to when the lid closes.
+	const clamshellOptions = useMemo<SelectOption[]>(() => {
+		const opts: SelectOption[] = [{ id: "disabled", label: t("clamshellDisabled") }];
+		for (const d of devices) {
+			opts.push({ id: String(d.index), label: d.name });
+		}
+		return opts;
+	}, [devices, t]);
+
 	const currentDeviceId =
 		audio?.inputDeviceIndex == null ? "default" : String(audio.inputDeviceIndex);
+	const currentClamshellId =
+		audio?.clamshellMicrophone == null ? "disabled" : String(audio.clamshellMicrophone);
 
 	return (
 		<div className="flex flex-col gap-2">
@@ -82,6 +95,27 @@ export function AudioSettingsPanel() {
 									}
 									options={deviceOptions}
 									value={currentDeviceId}
+								/>
+							</ElevatedSurface>
+						</FormControl>
+						{/* Clamshell mic — auto-swap when the laptop lid closes. The
+						    polling detector lives in the Electron main process; the
+						    setting persists across launches. macOS + Linux supported;
+						    Windows is a documented v1.1 deferral. */}
+						<FormControl
+							caption={t("clamshellCaption")}
+							label={t("clamshellLabel")}
+							tooltip={t("clamshellTooltip")}
+						>
+							<ElevatedSurface inline>
+								<Select
+									onChange={(v) =>
+										update({
+											clamshellMicrophone: v === "disabled" ? null : Number.parseInt(v, 10),
+										})
+									}
+									options={clamshellOptions}
+									value={currentClamshellId}
 								/>
 							</ElevatedSurface>
 						</FormControl>

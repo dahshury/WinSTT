@@ -78,14 +78,6 @@ export const audioSettingsSchema = z.object({
 		.record(z.string(), z.number().min(0).max(1))
 		.default({})
 		.catch({}),
-	// Keep the input audio stream open between transcriptions (lazy-close).
-	// When true, the recorder pipeline reuses the existing PyAudio stream
-	// after a recording finalizes rather than calling cleanup() + setup() on
-	// the next listen, which trims ~50-200ms of startup latency per dictation.
-	// Off by default because some Windows audio drivers misbehave when a
-	// stream stays open across long idle gaps (low-quality USB headsets in
-	// particular drop to mono after ~30s with an idle stream).
-	keepMicOpen: z.boolean().default(false).catch(false),
 	// PyAudio device index of the alternate microphone activated when the
 	// laptop lid is closed (clamshell mode). When non-null, a platform-
 	// specific detector polls the OS lid state every few seconds; on close

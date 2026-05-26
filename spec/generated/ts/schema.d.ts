@@ -452,6 +452,18 @@ export interface components {
             minLengthOfRecording?: number;
             minGapBetweenRecordings?: number;
             preRecordingBufferDuration?: number;
+            /**
+             * @description PyAudio index of the alternate microphone activated when the
+             *     laptop lid is closed (clamshell mode). When set, a platform-
+             *     specific detector polls the OS lid state every few seconds; on
+             *     lid-closed it swaps the active mic to this index and on lid-
+             *     opened it restores the previously-selected `inputDeviceIndex`.
+             *     `null` disables the feature and the detector never starts.
+             *     Detection methods: ioreg on macOS, /proc/acpi/button/lid/ on
+             *     Linux. Windows is deferred — clamshell-with-dock setups are
+             *     uncommon there and Win32 has no equivalent zero-cost probe.
+             */
+            clamshellMicrophone?: number | null;
         };
         GeneralSettings: {
             autoStart?: boolean;

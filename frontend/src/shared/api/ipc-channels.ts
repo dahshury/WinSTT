@@ -54,9 +54,14 @@ export const IPC = {
 	STT_CALL_METHOD: "stt:call-method",
 	STT_IS_CONNECTED: "stt:is-connected",
 	// User-initiated cancel of the in-flight dictation session. Triggered by the
-	// overlay's X button (and parallel to the hotkey+Backspace combo).
+	// overlay's X button (and parallel to the hotkey+Backspace combo). Routes to
+	// `handleAbortOperation` which markSessionAborted + abort active Ollama
+	// chats + recorder.abort + clear_audio_queue + hide overlay.
 	STT_ABORT_OPERATION: "stt:abort-operation",
-	// Toggle whether the overlay BrowserWindow accepts mouse events.
+	// Toggle whether the overlay BrowserWindow accepts mouse events. The overlay
+	// is click-through by default (`setIgnoreMouseEvents(true, { forward: true })`);
+	// the renderer flips it off while the cursor is over the X cancel button so
+	// the click lands instead of falling through to the app beneath.
 	OVERLAY_SET_IGNORE_MOUSE: "overlay:set-ignore-mouse",
 
 	// Hotkey commands (renderer → main)
@@ -148,6 +153,12 @@ export const IPC = {
 
 	// Audio device events (main → renderer)
 	STT_DEVICE_SWITCH_FAILED: "stt:device-switch-failed",
+
+	// Clamshell lid events (main → renderer) — informational. The actual
+	// mic-swap is owned by the main-process detector; renderers can subscribe
+	// to surface a "switched to clamshell mic" toast or update overlay state.
+	LID_CLOSED: "lid:closed",
+	LID_OPENED: "lid:opened",
 
 	// Sound (renderer → main invoke, main → renderer push)
 	SOUND_GET_DATA: "sound:get-data",
@@ -270,7 +281,9 @@ export const IPC = {
 	SECURE_GET_KEY: "secure:get-key",
 	SECURE_INVOKE: "secure:invoke",
 
-	// Transcription history (renderer → main)
+	// Transcription history (renderer → main) — electron-store backed.
+	// Layered alongside the SQLite history (`history:*` channels below);
+	// not deleted yet because the settings panel still reads from it.
 	HISTORY_GET_ALL: "history:get-all",
 	HISTORY_CLEAR: "history:clear",
 	// Delete a single entry by id. Also unlinks the associated WAV (if
@@ -382,6 +395,8 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_GET_LIVE_RESOURCES]: ["invoke"],
 	[IPC.STT_ASSESS_DICTATION_FIT]: ["invoke"],
 	[IPC.STT_ASSESS_OLLAMA_FIT]: ["invoke"],
+	[IPC.STT_ABORT_OPERATION]: ["send"],
+	[IPC.OVERLAY_SET_IGNORE_MOUSE]: ["send"],
 
 	// Hotkey
 	[IPC.HOTKEY_PRESSED]: ["on"],
@@ -458,6 +473,10 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_LOOPBACK_STARTED]: ["on"],
 	[IPC.STT_LOOPBACK_STOPPED]: ["on"],
 	[IPC.STT_DEVICE_SWITCH_FAILED]: ["on"],
+
+	// Clamshell lid events (informational broadcasts)
+	[IPC.LID_CLOSED]: ["on"],
+	[IPC.LID_OPENED]: ["on"],
 
 	// Sound
 	[IPC.SOUND_GET_DATA]: ["invoke"],

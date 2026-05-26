@@ -27,6 +27,7 @@ import { registerAppMenuIpcHandlers } from "./ipc/app-menu-ipc";
 import type { AppMenuBuiltItem } from "./ipc/app-menu-template";
 import { flushMutePending, unmuteSystemAudio } from "./ipc/audio-mute";
 import { setupAutostartHandlers } from "./ipc/autostart";
+import { setupClamshellHandlers } from "./ipc/clamshell";
 import { createClipboardHandler } from "./ipc/clipboard";
 import {
 	createContextMenuIpcHandler,
@@ -140,7 +141,7 @@ let cleanupSystemLocale: (() => void) | null = null;
 let cleanupDiagBundle: (() => void) | null = null;
 let cleanupAbout: (() => void) | null = null;
 let cleanupSoundLibrary: (() => void) | null = null;
-let cleanupHistory: (() => void) | null = null;
+let cleanupClamshell: (() => void) | null = null;
 let autoUpdateCheckTimer: ReturnType<typeof setInterval> | null = null;
 const secureIpcKey = generateIpcPayloadKey();
 const updaterStatusHistory = createUpdaterStatusHistory({ maxEntries: 200 });
@@ -820,8 +821,8 @@ if (gotTheLock) {
 		cleanupAbout = null;
 		cleanupSoundLibrary?.();
 		cleanupSoundLibrary = null;
-		cleanupHistory?.();
-		cleanupHistory = null;
+		cleanupClamshell?.();
+		cleanupClamshell = null;
 		disposeGeneralSettingsWatcher?.();
 		disposeGeneralSettingsWatcher = null;
 		cleanupSettingsHandlers();
@@ -886,38 +887,10 @@ function setupGlobalIpcHandlers() {
 	cleanupDiagBundle = setupDiagBundleHandler();
 	cleanupAbout = setupAboutHandlers();
 	cleanupSoundLibrary = initSoundLibrary();
-	// SQLite-backed transcription history (history.db + recordings/ under
-	// userData). Honours the user's retention setting on an hourly sweeper
-	// + at startup. Disposed in app.before-quit so the WAL flushes cleanly.
-	cleanupHistory = setupHistoryIpc({
-		getRetention: () => {
-			const fromNewKey = getStoreValue("general.recordingRetentionPeriod");
-			const period =
-				typeof fromNewKey === "string" ? fromNewKey : getStoreValue("general.recordingRetention");
-			if (
-				period === "never" ||
-				period === "preserveLimit" ||
-				period === "cap" ||
-				period === "days3" ||
-				period === "weeks2" ||
-				period === "months3"
-			) {
-				return period;
-			}
-			return "preserveLimit";
-		},
-		getLimit: () => {
-			const fromNewKey = Number(getStoreValue("general.historyLimit"));
-			if (Number.isFinite(fromNewKey) && fromNewKey > 0) {
-				return Math.floor(fromNewKey);
-			}
-			const legacy = Number(getStoreValue("general.historyMaxEntries"));
-			if (Number.isFinite(legacy) && legacy > 0) {
-				return Math.floor(legacy);
-			}
-			return 5;
-		},
-	}).dispose;
+	// Clamshell-mic switching. Starts polling only when
+	// `audio.clamshellMicrophone` is configured; otherwise the setup call
+	// is cheap and registers nothing more than a settings-store watcher.
+	cleanupClamshell = setupClamshellHandlers(sttClient);
 }
 
 function setupAppMenuHandlers(): () => void {
