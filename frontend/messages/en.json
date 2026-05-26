@@ -341,7 +341,11 @@
     "minRecordingLength": "Min Recording Length",
     "minRecordingLengthCaption": "Minimum seconds for valid recording",
     "minRecordingLengthTooltip": "Recordings shorter than this are discarded as noise. Prevents accidental triggers like coughs, clicks, or brief sounds from being transcribed.",
-    "deviceSwitchFailed": "Couldn't open input device — {reason}"
+    "deviceSwitchFailed": "Couldn't open input device — {reason}",
+    "clamshellLabel": "Clamshell microphone",
+    "clamshellCaption": "Auto-swap to this mic when the lid is closed",
+    "clamshellTooltip": "On macOS and Linux, WinSTT polls the laptop lid state every 5 seconds. When the lid closes, recording switches to the mic selected here (e.g. an external USB mic on a dock); when the lid reopens, it switches back to the primary microphone. Leave on 'None (disabled)' to skip lid polling entirely. Windows is not yet supported.",
+    "clamshellDisabled": "None (disabled)"
   },
   "quality": {
     "enableRealtime": "Enable Realtime",
@@ -421,7 +425,10 @@
     "autoAddDecline": "Dismiss",
     "emptyState": "No dictionary entries yet",
     "clearTitle": "Delete All Dictionary Entries?",
-    "clearDescription": "All dictionary entries will be permanently removed. This cannot be undone."
+    "clearDescription": "All dictionary entries will be permanently removed. This cannot be undone.",
+    "thresholdLabel": "Correction strictness",
+    "thresholdCaption": "Maximum fuzzy-match score the server-side corrector will accept. Lower = stricter (fewer false replacements).",
+    "thresholdTooltip": "The deterministic corrector runs on the server right after transcription and BEFORE the LLM cleanup. Anything it misses still gets a second pass through the LLM modifiers."
   },
   "swapFailure": {
     "headline": "Couldn't load {model}",

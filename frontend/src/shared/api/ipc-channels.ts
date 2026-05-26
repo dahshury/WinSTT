@@ -53,6 +53,16 @@ export const IPC = {
 	STT_GET_PARAMETER: "stt:get-parameter",
 	STT_CALL_METHOD: "stt:call-method",
 	STT_IS_CONNECTED: "stt:is-connected",
+	// User-initiated cancel of the in-flight dictation session. Triggered by the
+	// overlay's X button (and parallel to the hotkey+Backspace combo). Routes to
+	// `handleAbortOperation` which markSessionAborted + abort active Ollama
+	// chats + recorder.abort + clear_audio_queue + hide overlay.
+	STT_ABORT_OPERATION: "stt:abort-operation",
+	// Toggle whether the overlay BrowserWindow accepts mouse events. The overlay
+	// is click-through by default (`setIgnoreMouseEvents(true, { forward: true })`);
+	// the renderer flips it off while the cursor is over the X cancel button so
+	// the click lands instead of falling through to the app beneath.
+	OVERLAY_SET_IGNORE_MOUSE: "overlay:set-ignore-mouse",
 
 	// Hotkey commands (renderer → main)
 	HOTKEY_REGISTER: "hotkey:register",
@@ -143,6 +153,12 @@ export const IPC = {
 
 	// Audio device events (main → renderer)
 	STT_DEVICE_SWITCH_FAILED: "stt:device-switch-failed",
+
+	// Clamshell lid events (main → renderer) — informational. The actual
+	// mic-swap is owned by the main-process detector; renderers can subscribe
+	// to surface a "switched to clamshell mic" toast or update overlay state.
+	LID_CLOSED: "lid:closed",
+	LID_OPENED: "lid:opened",
 
 	// Sound (renderer → main invoke, main → renderer push)
 	SOUND_GET_DATA: "sound:get-data",
@@ -265,12 +281,41 @@ export const IPC = {
 	SECURE_GET_KEY: "secure:get-key",
 	SECURE_INVOKE: "secure:invoke",
 
-	// Transcription history (renderer → main)
+	// Transcription history (renderer → main) — electron-store backed.
+	// Layered alongside the SQLite history (`history:*` channels below);
+	// not deleted yet because the settings panel still reads from it.
 	HISTORY_GET_ALL: "history:get-all",
 	HISTORY_CLEAR: "history:clear",
+	// Delete a single entry by id. Also unlinks the associated WAV (if
+	// `audioFilePath` was set) so disk usage drops in sync with the UI.
+	HISTORY_DELETE: "history:delete",
+	// Lazy-load the WAV bytes for an entry so the renderer can play it
+	// without granting raw filesystem access. Resolves to a base64 dataURI
+	// the <audio> element can consume directly.
+	HISTORY_LOAD_AUDIO: "history:load-audio",
 
 	// Transcription history (main → renderer)
 	HISTORY_ADDED: "history:added",
+	// Broadcast when a single entry is deleted (per-row) so other windows
+	// listing history (settings panel, future overlay history list) trim
+	// their local cache without a full reload.
+	HISTORY_DELETED: "history:deleted",
+
+	// SQLite-backed transcription history (renderer → main).
+	// Owns the `{userData}/history.db` rusqlite-equivalent table and the
+	// `{userData}/recordings/` WAV files. Pagination + retention live here;
+	// the legacy electron-store history above is kept until callers migrate.
+	HISTORY_LIST: "history:list",
+	HISTORY_ADD: "history:add",
+	HISTORY_DELETE_ROW: "history:delete-row",
+	HISTORY_TOGGLE: "history:toggle",
+	HISTORY_RECENT: "history:recent",
+	HISTORY_LOAD_AUDIO_BY_ROW: "history:load-audio-by-row",
+
+	// SQLite history broadcasts (main → renderer)
+	HISTORY_ROW_ADDED: "history:row-added",
+	HISTORY_ROW_DELETED: "history:row-deleted",
+	HISTORY_ROW_TOGGLED: "history:row-toggled",
 
 	// Diagnostics bundle (renderer → main)
 	DIAG_OPEN_LOGS_FOLDER: "diag:open-logs-folder",
@@ -348,6 +393,8 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_GET_LIVE_RESOURCES]: ["invoke"],
 	[IPC.STT_ASSESS_DICTATION_FIT]: ["invoke"],
 	[IPC.STT_ASSESS_OLLAMA_FIT]: ["invoke"],
+	[IPC.STT_ABORT_OPERATION]: ["send"],
+	[IPC.OVERLAY_SET_IGNORE_MOUSE]: ["send"],
 
 	// Hotkey
 	[IPC.HOTKEY_PRESSED]: ["on"],
@@ -424,6 +471,10 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_LOOPBACK_STARTED]: ["on"],
 	[IPC.STT_LOOPBACK_STOPPED]: ["on"],
 	[IPC.STT_DEVICE_SWITCH_FAILED]: ["on"],
+
+	// Clamshell lid events (informational broadcasts)
+	[IPC.LID_CLOSED]: ["on"],
+	[IPC.LID_OPENED]: ["on"],
 
 	// Sound
 	[IPC.SOUND_GET_DATA]: ["invoke"],
@@ -510,7 +561,21 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	// Transcription history
 	[IPC.HISTORY_GET_ALL]: ["invoke"],
 	[IPC.HISTORY_CLEAR]: ["invoke"],
+	[IPC.HISTORY_DELETE]: ["invoke"],
+	[IPC.HISTORY_LOAD_AUDIO]: ["invoke"],
 	[IPC.HISTORY_ADDED]: ["on"],
+	[IPC.HISTORY_DELETED]: ["on"],
+
+	// SQLite-backed transcription history
+	[IPC.HISTORY_LIST]: ["invoke"],
+	[IPC.HISTORY_ADD]: ["invoke"],
+	[IPC.HISTORY_DELETE_ROW]: ["invoke"],
+	[IPC.HISTORY_TOGGLE]: ["invoke"],
+	[IPC.HISTORY_RECENT]: ["invoke"],
+	[IPC.HISTORY_LOAD_AUDIO_BY_ROW]: ["invoke"],
+	[IPC.HISTORY_ROW_ADDED]: ["on"],
+	[IPC.HISTORY_ROW_DELETED]: ["on"],
+	[IPC.HISTORY_ROW_TOGGLED]: ["on"],
 
 	// LLM warmup status
 	[IPC.LLM_GET_WARMUP_STATUS]: ["invoke"],

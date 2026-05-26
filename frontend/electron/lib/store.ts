@@ -95,6 +95,11 @@ const storeValueSchemas = {
 	// audio
 	"audio.sileroSensitivity": z.number().catch(0.4),
 	"audio.sileroDeactivityDetection": z.boolean().catch(true),
+	"audio.inputDeviceIndex": z.number().int().nullable().catch(null),
+	// PyAudio index of the alternate mic activated when the laptop lid
+	// closes. Null disables the clamshell detector entirely; see
+	// electron/ipc/clamshell.ts for the polling state machine.
+	"audio.clamshellMicrophone": z.number().int().nullable().catch(null),
 	// llm — shared infrastructure (one Ollama instance, one OpenRouter account)
 	"llm.endpoint": z.string().catch("http://localhost:11434"),
 	"llm.openrouterApiKey": z.string().catch(""),
@@ -309,6 +314,7 @@ export const store = new Store({
 			minGapBetweenRecordings: 0,
 			preRecordingBufferDuration: 1.0,
 			sileroSensitivityByDeviceName: {},
+			clamshellMicrophone: null,
 		},
 		general: {
 			autoStart: false,

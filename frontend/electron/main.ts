@@ -19,6 +19,7 @@ import { registerAppMenuIpcHandlers } from "./ipc/app-menu-ipc";
 import type { AppMenuBuiltItem } from "./ipc/app-menu-template";
 import { flushMutePending, unmuteSystemAudio } from "./ipc/audio-mute";
 import { setupAutostartHandlers } from "./ipc/autostart";
+import { setupClamshellHandlers } from "./ipc/clamshell";
 import { createClipboardHandler } from "./ipc/clipboard";
 import {
 	createContextMenuIpcHandler,
@@ -125,6 +126,7 @@ let cleanupSystemLocale: (() => void) | null = null;
 let cleanupDiagBundle: (() => void) | null = null;
 let cleanupAbout: (() => void) | null = null;
 let cleanupSoundLibrary: (() => void) | null = null;
+let cleanupClamshell: (() => void) | null = null;
 let autoUpdateCheckTimer: ReturnType<typeof setInterval> | null = null;
 const secureIpcKey = generateIpcPayloadKey();
 const updaterStatusHistory = createUpdaterStatusHistory({ maxEntries: 200 });
@@ -748,6 +750,8 @@ if (gotTheLock) {
 		cleanupAbout = null;
 		cleanupSoundLibrary?.();
 		cleanupSoundLibrary = null;
+		cleanupClamshell?.();
+		cleanupClamshell = null;
 		disposeGeneralSettingsWatcher?.();
 		disposeGeneralSettingsWatcher = null;
 		cleanupSettingsHandlers();
@@ -811,6 +815,10 @@ function setupGlobalIpcHandlers() {
 	cleanupDiagBundle = setupDiagBundleHandler();
 	cleanupAbout = setupAboutHandlers();
 	cleanupSoundLibrary = initSoundLibrary();
+	// Clamshell-mic switching. Starts polling only when
+	// `audio.clamshellMicrophone` is configured; otherwise the setup call
+	// is cheap and registers nothing more than a settings-store watcher.
+	cleanupClamshell = setupClamshellHandlers(sttClient);
 }
 
 function setupAppMenuHandlers(): () => void {

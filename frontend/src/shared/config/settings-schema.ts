@@ -71,6 +71,17 @@ export const audioSettingsSchema = z.object({
 		.record(z.string(), z.number().min(0).max(1))
 		.default({})
 		.catch({}),
+	// PyAudio device index of the alternate microphone activated when the
+	// laptop lid is closed (clamshell mode). When non-null, a platform-
+	// specific detector polls the OS lid state every few seconds; on close
+	// it swaps the live `input_device_index` to this value, on open it
+	// restores the user's previously-selected primary mic. Useful for
+	// docked-laptop setups where the lid is shut and an external USB mic
+	// is the only viable input. `.catch(null)` keeps an older build (no
+	// key) from wiping the whole audio section on upgrade. macOS uses
+	// `ioreg`; Linux reads `/proc/acpi/button/lid/`; Windows is a
+	// documented v1.1 deferral (no zero-cost equivalent probe).
+	clamshellMicrophone: z.number().int().nullable().default(null).catch(null),
 });
 
 // One entry in the recording-sound library. The default sound is implicit
