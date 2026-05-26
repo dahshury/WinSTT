@@ -1062,14 +1062,17 @@ class RecorderService:
         # at module load time. The hexagonal rulebook keeps bootstrap as the only
         # composition root; swaps are a tactical exception scoped to this method.
         from src.recorder.domain.model_registry import ModelCatalog
-        from src.recorder.infrastructure.device import providers_for_device
+        from src.recorder.infrastructure.device import providers_for_settings
         from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
         info = ModelCatalog().get(name)
         return OnnxAsrTranscriber(
             model_name=self._resolve_onnx_name(info, name),
             quantization=self._config.transcription.onnx_quantization or None,
-            providers=providers_for_device(self._config.transcription.device),
+            providers=providers_for_settings(
+                self._config.transcription.device,
+                self._config.transcription.accelerator,
+            ),
             on_download_progress=on_progress,
             normalize_audio=self._config.transcription.normalize_audio,
         )

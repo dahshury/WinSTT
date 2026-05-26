@@ -54,8 +54,31 @@ dependencies = [
 [project.optional-dependencies]
 # CPU-only ORT — recommended for SaaS / horizontal scaling. Smallest install.
 cpu = ["onnxruntime>=1.18.1"]
-# GPU build — onnxruntime-gpu + the full NVIDIA pip-distributed CUDA lib
-# set. The runtime ``_inject_cuda_dlls`` hook in
+# DirectML build — works on AMD, Intel and NVIDIA GPUs via DirectX 12.
+# This is now the DEFAULT Windows GPU flavor (see CLAUDE.md).
+#
+# ``onnxruntime-directml`` ships the ``DirectML.dll`` inside the wheel,
+# so no separate runtime install is needed on the user's box (Windows 10
+# 1903+ ships the system D3D12 stack). The bundled exe is ~10x smaller
+# than the CUDA flavor (~200 MB vs ~2 GB) because we don't ship the
+# NVIDIA CUDA wheel chain.
+#
+# Steady-state Whisper-tiny q4 latency on RTX 3080 Ti (idle system,
+# N=20, 5 warmup): DirectML p50=85 ms / p95=89 ms / stdev=3 ms vs CUDA
+# p50=120 ms / p95=151 ms / stdev=37 ms. DirectML wins on consistency
+# AND median, while being lighter and vendor-agnostic — hence default.
+#
+# Note: ``onnxruntime-directml``, ``onnxruntime-gpu`` and ``onnxruntime``
+# SHARE the ``onnxruntime/`` package directory; uv's ``conflicts`` table
+# below enforces that only one is installed at a time.
+directml = ["onnxruntime-directml>=1.18.1"]
+# CUDA build — onnxruntime-gpu + the full NVIDIA pip-distributed CUDA lib
+# set. Kept as an opt-in alternate flavor for power users on NVIDIA hardware
+# who want CUDA's lower minimum latency on long-form / batched workloads.
+# Not the default — DirectML is faster steady-state on our workload and
+# bundles ~10x smaller (see the ``directml`` extra above for the numbers).
+#
+# The runtime ``_inject_cuda_dlls`` hook in
 # ``src/recorder/infrastructure/device.py`` adds each wheel's ``bin/``
 # directory to Python's DLL search path before ORT loads.
 #
@@ -113,9 +136,11 @@ dev = [
 
 [tool.uv]
 link-mode = "copy"
-# CPU and GPU ORT wheels are mutually exclusive — picking both would cause
-# DLL conflicts. uv enforces the constraint at resolution time.
-conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]
+# CPU, GPU (CUDA) and DirectML ORT wheels are mutually exclusive — they
+# share the ``onnxruntime/`` package directory, so picking more than one
+# would corrupt the install (whichever sync ran last would overwrite the
+# other's .pyd files). uv enforces the constraint at resolution time.
+conflicts = [[{ extra = "cpu" }, { extra = "gpu" }, { extra = "directml" }]]
 
 # Resolver-level metadata patch for openwakeword: upstream's wheel hard-pins
 # ``onnxruntime`` (the CPU package). If left alone, ``uv sync --extra gpu``

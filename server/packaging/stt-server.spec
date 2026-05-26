@@ -1,21 +1,26 @@
 # PyInstaller spec for the WinSTT STT server.
 #
-# Single spec, two flavors. The build flavor is determined by which extra
-# was installed in the venv (``uv sync --extra cpu`` vs ``--extra gpu``).
-# We sniff the venv at spec-evaluation time:
+# Single spec, three flavors. The build flavor is determined by which
+# extra was installed in the venv (``uv sync --extra cpu`` /
+# ``--extra directml`` / ``--extra gpu``). We sniff the venv at
+# spec-evaluation time:
 #
-#   - ``nvidia`` namespace package present → GPU build → bundle every
+#   - ``nvidia`` namespace package present → CUDA build → bundle every
 #     ``nvidia/*/bin/*.dll`` so onnxruntime-gpu's CUDA EP works offline.
 #     Total artifact ~2 GB.
-#   - ``nvidia`` absent → CPU build → only onnxruntime CPU DLLs.
-#     Total artifact ~150–200 MB.
+#   - DirectML build (``onnxruntime-directml`` installed, no ``nvidia``):
+#     ``collect_all("onnxruntime")`` already pulls in DirectML.dll from
+#     the wheel's ``onnxruntime/capi/`` directory — no special handling
+#     needed. Total artifact ~200 MB.
+#   - CPU build (``onnxruntime`` installed, no ``nvidia``): only the CPU
+#     onnxruntime DLLs. Total artifact ~150 MB.
 #
 # Build command (from server/):
 #   uv run pyinstaller build/stt-server.spec --clean --noconfirm --distpath dist
 #
 # Output: dist/stt-server/  (onedir layout — Electron spawns the exe in-place
 # via ``process.resourcesPath/stt-server/stt-server.exe``; onefile would
-# extract to %TEMP% on every start which is unacceptable for a 2 GB GPU
+# extract to %TEMP% on every start which is unacceptable for a 2 GB CUDA
 # bundle).
 
 # ruff: noqa  — PyInstaller specs run under its own interpreter context

@@ -58,6 +58,15 @@ class TranscriptionConfig(StrictMutableModel):
     # "cpu" still pin the device explicitly; persisted configs from before
     # the "auto" default landed continue to work.
     device: str = "auto"
+    # User-facing accelerator preference. "auto" walks the per-OS priority
+    # list (Windows: DirectML > CUDA > CPU; Linux: CUDA > ROCm > CPU; macOS:
+    # CoreML > CPU). Explicit values pin a specific EP — "cuda", "directml",
+    # "rocm", "coreml", "cpu" — and fall back to CPU with a log line when
+    # that EP isn't registered with the bundled onnxruntime wheel. Lets
+    # power users override the default DirectML choice on Windows without
+    # touching the legacy ``device`` field. See
+    # :func:`device.resolve_accelerator`.
+    accelerator: str = "auto"
     beam_size: int = 5
     initial_prompt: str | list[int] | None = None
     suppress_tokens: list[int] | None = Field(default_factory=lambda: [-1])

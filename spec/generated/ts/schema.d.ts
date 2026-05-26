@@ -313,6 +313,16 @@ export interface components {
         ComputeType: "default" | "auto" | "int8" | "int8_float16" | "int8_float32" | "int8_bfloat16" | "int16" | "float16" | "float32" | "bfloat16";
         /** @enum {string} */
         DeviceType: "auto" | "cpu";
+        /**
+         * @description User-facing GPU acceleration preference. `auto` walks the per-OS
+         *     priority list (Windows: DirectML > CUDA > CPU; Linux: CUDA > ROCm >
+         *     CPU; macOS: CoreML > CPU). Explicit values pin a specific ONNX
+         *     Runtime execution provider; the server falls back to CPU with a
+         *     log line if the chosen EP isn't registered (e.g. `cuda` selected
+         *     on a DirectML-only build).
+         * @enum {string}
+         */
+        AcceleratorType: "auto" | "cuda" | "directml" | "rocm" | "coreml" | "cpu";
         /** @enum {string} */
         RecorderState: "inactive" | "listening" | "wakeword" | "recording" | "transcribing";
         /** @enum {string} */
@@ -382,6 +392,7 @@ export interface components {
             language?: string;
             computeType?: components["schemas"]["ComputeType"];
             device?: components["schemas"]["DeviceType"];
+            accelerator?: components["schemas"]["AcceleratorType"];
             backend?: components["schemas"]["TranscriberBackend"];
             onnxQuantization?: string;
             beamSize?: number;
