@@ -216,9 +216,7 @@ describe("isDeniedByList", () => {
 	});
 
 	test("matches an exe entry against the snapshot's appExe (case-insensitive)", () => {
-		expect(isDeniedByList(makeSnapshot({ appExe: "1Password.exe" }), ["1password.exe"])).toBe(
-			true
-		);
+		expect(isDeniedByList(makeSnapshot({ appExe: "1Password.exe" }), ["1password.exe"])).toBe(true);
 	});
 
 	test("matches a bare-host pattern against the snapshot's URL host", () => {

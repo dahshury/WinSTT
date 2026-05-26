@@ -549,7 +549,7 @@ export interface components {
          * @description Which LLM backend to use for text transformation.
          * @enum {string}
          */
-        LlmProvider: "ollama" | "openrouter";
+        LlmProvider: "ollama" | "openrouter" | "apple-intelligence";
         /** @description Per-feature provider config. Dictation and transforms each carry their own copy, so one can run on Ollama while the other uses OpenRouter (or both can share the same provider with different models). */
         LlmFeatureConfig: {
             /**

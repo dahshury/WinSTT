@@ -63,6 +63,18 @@ win:
     - portable
   icon: build/icon.ico
   artifactName: ${productName}-GPU-Portable-${version}.${ext}
+# macOS-only resources. The Swift Apple Intelligence CLI lands at
+# frontend/electron/resources/macos/winstt-apple-llm (built by
+# `bash tools/apple-intelligence-cli/build.sh` on Darwin only). The GPU
+# flavor is technically Windows-only today, but keeping the `mac` block
+# here means a future cross-flavor macOS build will pick it up
+# automatically.
+mac:
+  extraResources:
+    - from: electron/resources/macos/
+      to: macos
+      filter:
+        - "winstt-apple-llm"
 portable:
   artifactName: ${productName}-GPU-Portable-${version}.${ext}
   # Extract once to a stable folder under %LOCALAPPDATA% on first launch.

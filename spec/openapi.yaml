@@ -987,8 +987,12 @@ components:
 
     LlmProvider:
       type: string
-      enum: [ollama, openrouter]
-      description: Which LLM backend to use for text transformation.
+      enum: [ollama, openrouter, apple-intelligence]
+      description: >-
+        Which LLM backend to use for text transformation. `apple-intelligence`
+        is only selectable on macOS Apple Silicon (darwin+arm64); the renderer
+        hides the option on other platforms but accepts the value if it was
+        persisted on a different machine.
 
     LlmFeatureConfig:
       type: object

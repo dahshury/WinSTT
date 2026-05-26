@@ -112,7 +112,7 @@ const storeValueSchemas = {
 	"llm.timeout": z.number().int().catch(5000),
 	// llm.dictation — per-feature config for dictation post-processing
 	"llm.dictation.enabled": z.boolean().catch(false),
-	"llm.dictation.provider": z.enum(["ollama", "openrouter"]).catch("ollama"),
+	"llm.dictation.provider": z.enum(["ollama", "openrouter", "apple-intelligence"]).catch("ollama"),
 	"llm.dictation.model": z.string().catch(""),
 	"llm.dictation.openrouterModel": z.string().catch(""),
 	"llm.dictation.openrouterFallbackModel": z.string().catch(""),
@@ -156,7 +156,7 @@ const storeValueSchemas = {
 	"llm.dictation.thinkingEffort": z.enum(["off", "low", "medium", "high"]).catch("medium"),
 	// llm.transforms — per-feature config for custom-prompt transforms
 	"llm.transforms.enabled": z.boolean().catch(false),
-	"llm.transforms.provider": z.enum(["ollama", "openrouter"]).catch("ollama"),
+	"llm.transforms.provider": z.enum(["ollama", "openrouter", "apple-intelligence"]).catch("ollama"),
 	"llm.transforms.model": z.string().catch(""),
 	"llm.transforms.openrouterModel": z.string().catch(""),
 	"llm.transforms.openrouterFallbackModel": z.string().catch(""),

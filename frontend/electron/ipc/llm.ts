@@ -30,6 +30,7 @@ import {
 	getPostProcessingVocab,
 	type ReplacementPair,
 } from "../lib/text-processing";
+import { AppleIntelligenceError, callAppleIntelligenceCli } from "./apple-intelligence";
 
 const execFileAsync = promisify(execFile);
 const NEWLINE_RE = /\r?\n/;
@@ -2419,6 +2420,42 @@ function runOllamaPath(
 	);
 }
 
+/**
+ * Build the dictation prompt for Apple Intelligence. Reuses the same
+ * vocab/context/compose-rules layering as the Ollama path so the Apple
+ * Intelligence output is consistent with the other providers — only the
+ * delivery channel differs.
+ */
+function buildAppleIntelligenceUserPrompt(text: string): string {
+	return `Transform the following text according to the style guide above. Return ONLY the transformed text with no additional commentary, explanations, or JSON formatting. Just the plain transformed text.\n\nText to transform:\n${text}`;
+}
+
+async function runAppleIntelligencePath(
+	text: string,
+	presets: readonly PresetEntry[],
+	context: string
+): Promise<string> {
+	const systemPrompt = buildDictationSystemPrompt(presets, context);
+	const userPrompt = buildAppleIntelligenceUserPrompt(text);
+	try {
+		const cleaned = await callAppleIntelligenceCli({
+			system: systemPrompt,
+			user: userPrompt,
+		});
+		return cleaned.trim() || text;
+	} catch (err) {
+		// Apple Intelligence is a soft-fail provider — when the CLI isn't
+		// available (Windows build, missing binary, model still loading on
+		// first call), we paste the original text rather than blocking the
+		// dictation pipeline. The error is logged so users see why.
+		if (err instanceof AppleIntelligenceError) {
+			dbg("llm", `Apple Intelligence ${err.reason}: ${err.message}`);
+			return text;
+		}
+		throw err;
+	}
+}
+
 function runProcessText(
 	text: string,
 	presets: readonly PresetEntry[],
@@ -2426,6 +2463,9 @@ function runProcessText(
 	context: string,
 	cfg: FeatureLlmConfig
 ): Promise<string> {
+	if (cfg.provider === "apple-intelligence") {
+		return runAppleIntelligencePath(text, presets, context);
+	}
 	if (cfg.provider === "openrouter") {
 		return runOpenRouterPath(text, presets, timeout, context, cfg);
 	}
@@ -2639,12 +2679,32 @@ async function runOpenRouterCustomWithFallback(
 	}
 }
 
+async function runAppleIntelligenceCustomPath(text: string, systemPrompt: string): Promise<string> {
+	const userPrompt = `Apply the system instructions above to the following text. Return ONLY the transformed text with no commentary, explanations, or JSON formatting.\n\nText:\n${text}`;
+	try {
+		const cleaned = await callAppleIntelligenceCli({
+			system: systemPrompt,
+			user: userPrompt,
+		});
+		return cleaned.trim() || text;
+	} catch (err) {
+		if (err instanceof AppleIntelligenceError) {
+			dbg("llm", `Apple Intelligence (transforms) ${err.reason}: ${err.message}`);
+			return text;
+		}
+		throw err;
+	}
+}
+
 function runCustomPromptPath(
 	text: string,
 	systemPrompt: string,
 	provider: string,
 	timeout: number
 ): Promise<string> {
+	if (provider === "apple-intelligence") {
+		return runAppleIntelligenceCustomPath(text, systemPrompt);
+	}
 	if (provider === "openrouter") {
 		const apiKey = getStoreValue("llm.openrouterApiKey");
 		const primary = getStoreValue("llm.transforms.openrouterModel");

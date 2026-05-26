@@ -24,7 +24,7 @@ interface WarmupStatusBannerProps {
 	model: string;
 	onOpenManager?: () => void;
 	onRetry?: () => void;
-	provider: "ollama" | "openrouter";
+	provider: "ollama" | "openrouter" | "apple-intelligence";
 	status: LlmWarmupStatus | null;
 }
 

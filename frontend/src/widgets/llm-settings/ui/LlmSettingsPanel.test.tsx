@@ -132,7 +132,7 @@ describe("LlmSettingsPanel helpers — presets array mutators", () => {
 });
 
 describe("LlmSettingsPanel helpers — buildProviderOpts", () => {
-	test("returns ollama and openrouter providers", () => {
+	test("returns ollama and openrouter providers by default (Windows/Linux)", () => {
 		const opts = helpers.buildProviderOpts(tStub);
 		expect(opts.map((o) => o.value)).toEqual(["ollama", "openrouter"]);
 	});
@@ -142,6 +142,28 @@ describe("LlmSettingsPanel helpers — buildProviderOpts", () => {
 		for (const opt of opts) {
 			expect(opt.label.length).toBeGreaterThan(0);
 		}
+	});
+
+	test("appends Apple Intelligence on Apple Silicon", () => {
+		const opts = helpers.buildProviderOpts(tStub, { appleIntelligenceSupported: true });
+		expect(opts.map((o) => o.value)).toEqual(["ollama", "openrouter", "apple-intelligence"]);
+		const apple = opts.find((o) => o.value === "apple-intelligence");
+		expect(apple?.disabled).toBeUndefined();
+	});
+
+	test("appends disabled Apple Intelligence with tooltip on Intel Macs", () => {
+		const opts = helpers.buildProviderOpts(tStub, {
+			appleIntelligenceUnavailableOnIntel: true,
+		});
+		const apple = opts.find((o) => o.value === "apple-intelligence");
+		expect(apple?.disabled).toBe(true);
+		expect(typeof apple?.disabledTooltip).toBe("string");
+		expect((apple?.disabledTooltip ?? "").length).toBeGreaterThan(0);
+	});
+
+	test("omits Apple Intelligence entirely when neither platform flag is set", () => {
+		const opts = helpers.buildProviderOpts(tStub, {});
+		expect(opts.some((o) => o.value === "apple-intelligence")).toBe(false);
 	});
 });
 

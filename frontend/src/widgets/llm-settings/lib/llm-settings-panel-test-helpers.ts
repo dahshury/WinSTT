@@ -321,11 +321,58 @@ export function buildLevelOpts(t: TranslateFn) {
 	}));
 }
 
-export function buildProviderOpts(t: TranslateFn) {
-	return [
+export interface ProviderOptsContext {
+	/**
+	 * Apple Silicon Mac — render Apple Intelligence as a normal selectable
+	 * option. Defaults to false so non-mac builds stay unchanged.
+	 */
+	appleIntelligenceSupported?: boolean;
+	/**
+	 * Intel Mac — render Apple Intelligence greyed-out with a tooltip
+	 * explaining the Apple Silicon requirement. Falls back to false so the
+	 * row is omitted entirely on non-mac platforms (Windows/Linux), matching
+	 * the spec: hide on platforms that physically can't run it.
+	 */
+	appleIntelligenceUnavailableOnIntel?: boolean;
+}
+
+export interface ProviderOption {
+	/** Forwarded to the Switcher option — dims the row and blocks selection.
+	 *  Used for Intel Macs where Apple Intelligence is visible-but-disabled. */
+	disabled?: boolean;
+	/** Tooltip shown next to a disabled option explaining why it's unavailable.
+	 *  Maps to the Switcher's badge tooltip surface. */
+	disabledTooltip?: string;
+	label: string;
+	value: "ollama" | "openrouter" | "apple-intelligence";
+}
+
+/**
+ * Build the provider switcher options. Apple Intelligence is opt-in via
+ * `ctx.appleIntelligenceSupported` (Apple Silicon) or shown as a
+ * disabled-with-tooltip row when `ctx.appleIntelligenceUnavailableOnIntel`
+ * (Intel Mac) is set. On Windows/Linux the option is omitted entirely so
+ * the Switcher only renders the two installable providers.
+ */
+export function buildProviderOpts(
+	t: TranslateFn,
+	ctx: ProviderOptsContext = {}
+): readonly ProviderOption[] {
+	const opts: ProviderOption[] = [
 		{ value: "ollama", label: t("providerOllama") },
 		{ value: "openrouter", label: t("providerOpenRouter") },
-	] as const;
+	];
+	if (ctx.appleIntelligenceSupported) {
+		opts.push({ value: "apple-intelligence", label: t("providerAppleIntelligence") });
+	} else if (ctx.appleIntelligenceUnavailableOnIntel) {
+		opts.push({
+			value: "apple-intelligence",
+			label: t("providerAppleIntelligence"),
+			disabled: true,
+			disabledTooltip: t("providerAppleIntelligenceIntelTooltip"),
+		});
+	}
+	return opts;
 }
 
 function findFirstDifferentModel(models: readonly OllamaModel[], current: string): string | null {

@@ -362,13 +362,18 @@ const customModifierSchema = z.object({
 });
 
 // Per-feature provider config. Dictation and transforms each pick their own
-// provider (Ollama or OpenRouter) and own model selection independently — so
-// e.g. dictation can run a fast local Ollama while transforms hits an
-// OpenRouter frontier model. Infra-level fields (Ollama endpoint URL,
-// OpenRouter API key) stay shared on `llmSettingsSchema` — one Ollama
-// instance, one OpenRouter account.
+// provider (Ollama, OpenRouter, or Apple Intelligence) and own model
+// selection independently — so e.g. dictation can run a fast local Ollama
+// while transforms hits an OpenRouter frontier model. Infra-level fields
+// (Ollama endpoint URL, OpenRouter API key) stay shared on
+// `llmSettingsSchema` — one Ollama instance, one OpenRouter account.
+// `apple-intelligence` is a no-config provider that runs Apple's on-device
+// FoundationModels through a bundled Swift CLI; it has no endpoint/key/
+// model field of its own (the platform decides). The UI hides this option
+// on non-darwin / non-arm64 hosts; settings will round-trip the value if
+// it was persisted on a different machine.
 const llmFeatureBaseShape = {
-	provider: z.enum(["ollama", "openrouter"]).default("ollama"),
+	provider: z.enum(["ollama", "openrouter", "apple-intelligence"]).default("ollama"),
 	model: z.string().default(""),
 	openrouterModel: z.string().default(""),
 	openrouterFallbackModel: z.string().default(""),
