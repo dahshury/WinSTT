@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { debugLogMock } from "@test/mocks/debug-log";
 import { electronMock } from "@test/mocks/electron";
+import { storeMock } from "@test/mocks/store";
 import { APICallError } from "ai";
 import { IPC } from "../../src/shared/api/ipc-channels";
 
@@ -10,8 +11,14 @@ mock.module("electron", () => electronMock());
 
 // `loadApiKey` reads from the electron-store via `../lib/store`. Stub it so
 // the API-key path can be covered without spinning up a real Store.
+//
+// CRITICAL: `mock.module("../lib/store", ...)` is process-global. A partial
+// shim (only `getStoreValue`) breaks downstream consumers in the full suite
+// that expect the full surface (`store`, `getStoreRaw`, `store.set`, etc.).
+// Spread the canonical `storeMock()` and override only what this test needs.
 const storeStub: { values: Record<string, unknown> } = { values: {} };
 mock.module("../lib/store", () => ({
+	...storeMock(),
 	getStoreValue: (key: string) => storeStub.values[key],
 }));
 

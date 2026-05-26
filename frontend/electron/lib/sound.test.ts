@@ -4,6 +4,16 @@ import { type ElectronMockHandle, electronMock } from "../../test/mocks/electron
 import { electronStoreMock } from "../../test/mocks/electron-store";
 import { storeMock } from "../../test/mocks/store";
 
+// CRITICAL: snapshot the real `node:fs` namespace into a plain object BEFORE
+// any `mock.module(...)` call runs. The mock factory below is invoked every
+// time a downstream module imports `node:fs`. If the factory closed over
+// `realFs` directly (`* as` namespace), the `...realFs` spread inside the
+// factory would re-trigger module resolution through the very mock we're
+// installing, causing infinite recursion (and the test process to hang at
+// import time with no output beyond the bun banner).
+const realFsSnapshot = { ...realFs };
+const realReadFileSync = realFs.readFileSync;
+
 // `electron` and `node:fs` mocks are kept loose to coexist with other test
 // files that mock the same modules — `mock.module(...)` is process-global so
 // the LAST file's mock wins, but the source's captured `ipcMain` reference
@@ -21,18 +31,29 @@ mock.module("electron-store", () => electronStoreMock());
 // other path (e.g. the z-index discipline scanner reading source files in a
 // later test) delegate to the real fs so the process-global mock doesn't poison
 // downstream readers.
-const SOUND_PATH_MARKER = ".wav";
+const SOUND_PATH_MARKERS = [".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac"];
+function isSoundPath(p: unknown): boolean {
+	if (typeof p !== "string") {
+		return false;
+	}
+	const lower = p.toLowerCase();
+	return SOUND_PATH_MARKERS.some((ext) => lower.endsWith(ext));
+}
 let readFileImpl: (p: string) => Buffer = (_p) => Buffer.from("fake-wav-bytes");
+// Wrap readFileSync once so the same function is exposed both as a named
+// export and on the `default` export. sound.ts uses `import fs from "node:fs"`
+// (default), so `fs.readFileSync` must resolve to our wrapped impl too.
+const wrappedReadFileSync = ((p: string, ...rest: unknown[]) =>
+	isSoundPath(p)
+		? readFileImpl(p)
+		: (realReadFileSync as (...a: unknown[]) => unknown)(
+				p,
+				...rest
+			)) as unknown as typeof realFs.readFileSync;
 mock.module("node:fs", () => ({
-	...realFs,
-	default: realFs,
-	readFileSync: ((p: string, ...rest: unknown[]) =>
-		typeof p === "string" && p.endsWith(SOUND_PATH_MARKER)
-			? readFileImpl(p)
-			: (realFs.readFileSync as (...a: unknown[]) => unknown)(
-					p,
-					...rest
-				)) as unknown as typeof realFs.readFileSync,
+	...realFsSnapshot,
+	default: { ...realFsSnapshot, readFileSync: wrappedReadFileSync },
+	readFileSync: wrappedReadFileSync,
 }));
 
 // Configurable store mock — tests set storeValues to drive getStoreValue().
