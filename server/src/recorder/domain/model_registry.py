@@ -463,6 +463,7 @@ class ModelCatalog:
                     "available": m.available,
                     "error_message": m.error_message,
                     "local_path": m.local_path,
+                    "sha256": m.sha256,
                 }
             )
         return result
