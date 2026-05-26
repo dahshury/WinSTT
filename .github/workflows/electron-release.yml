@@ -8,12 +8,18 @@ on:
 permissions:
   contents: write
 
-# Build CPU and GPU flavors as parallel jobs. Both publish to the same GitHub
-# Release on this repo (`dahshury/WinSTT`, public). electron-builder appends
-# each artifact under its distinct ``artifactName`` (set in
-# electron-builder.{cpu,gpu}.yml), so the release page ends up with two
+# Build CPU and DirectML flavors as parallel jobs. Both publish to the same
+# GitHub Release on this repo (`dahshury/WinSTT`, public). electron-builder
+# appends each artifact under its distinct ``artifactName`` (set in
+# electron-builder.{cpu,directml}.yml), so the release page ends up with two
 # installers side by side. electron-updater treats them as separate update
-# channels: a user installed via CPU gets only CPU updates, GPU users get GPU.
+# channels: a user installed via CPU gets only CPU updates, DirectML users
+# get DirectML.
+#
+# DirectML is the default Windows GPU build (replaces the legacy CUDA flavor —
+# ~10x lighter and faster on our workload per the EP benchmark in device.py).
+# CUDA EP detection is preserved in src/recorder/infrastructure/device.py for
+# the eventual Linux NVIDIA build, but no Windows CUDA installer is shipped.
 #
 # The TTS support pack also publishes here (under the version-independent
 # `tts-pack-v1` tag), keyed to the URL the server reads in
@@ -28,7 +34,7 @@ jobs:
       # special tag manipulation.
       fail-fast: false
       matrix:
-        flavor: [cpu, gpu]
+        flavor: [cpu, directml]
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       WINSTT_ENABLE_AUTO_UPDATES: "1"

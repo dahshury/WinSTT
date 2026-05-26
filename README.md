@@ -136,16 +136,16 @@ Opens at http://localhost:3000.
 
 WinSTT ships in two flavors per release. Build the server first, then the matching installer:
 
-Run from the **repo root**. All packaging configs and intermediate bundles live under `packaging/` (`electron-builder.{cpu,gpu}.yml`, `stt-server-dist/{cpu,gpu}/`); the final installer lands at `<repo>/dist/`.
+Run from the **repo root**. All packaging configs and intermediate bundles live under `packaging/` (`electron-builder.{cpu,directml}.yml`, `stt-server-dist/{cpu,directml}/`); the final installer lands at `<repo>/dist/`.
 
 | Command | Description |
 |---------|-------------|
 | `pwsh server/packaging/build.ps1 -Flavor cpu` | Build the CPU `stt-server.exe` → `packaging/stt-server-dist/cpu/` |
-| `pwsh server/packaging/build.ps1 -Flavor gpu` | Build the GPU `stt-server.exe` → `packaging/stt-server-dist/gpu/` |
+| `pwsh server/packaging/build.ps1 -Flavor directml` | Build the DirectML GPU `stt-server.exe` → `packaging/stt-server-dist/directml/` |
 | `bun run electron:build:cpu` | Build the CPU installer (output: `<repo>/dist/`) |
-| `bun run electron:build:gpu` | Build the GPU installer (output: `<repo>/dist/`) |
+| `bun run electron:build:directml` | Build the DirectML GPU installer (output: `<repo>/dist/`) |
 
-Tagging a release (`git tag v0.X.0 && git push --tags`) runs the CPU + GPU jobs as a matrix and publishes both installers to the same GitHub Release.
+Tagging a release (`git tag v0.X.0 && git push --tags`) runs the CPU + DirectML jobs as a matrix and publishes both installers to the same GitHub Release. DirectML is the default GPU build because it's lighter (~200 MB vs the retired CUDA build's ~2 GB), faster on our workload, and vendor-agnostic (AMD / Intel / NVIDIA via DirectX 12).
 
 ### macOS-only: Apple Intelligence CLI
 

@@ -4,7 +4,7 @@
 #   1. dotnet publish the .NET 8 self-contained launcher (PortableLauncher.exe,
 #      ~12 MB compressed single-file).
 #   2. 7z a the entire <repo>/packaging/stt-server-dist/<flavor>/ tree into bundle.7z
-#      (LZMA2 -mx=7, ~2 GB for the GPU build).
+#      (LZMA2 -mx=7, ~200 MB for the DirectML build, ~150 MB for CPU).
 #   3. Concat [launcher.exe][bundle.7z][24-byte footer] → final .exe. The
 #      footer encodes the archive's offset and length so the launcher can
 #      seek into its own file at runtime and stream the 7z to SharpCompress.
@@ -16,7 +16,7 @@
 # stdio inheritance + CLI arg forwarding + exit-code propagation.
 #
 # Usage (from anywhere):
-#   pwsh server/packaging/build-portable.ps1 -Flavor gpu
+#   pwsh server/packaging/build-portable.ps1 -Flavor directml
 #   pwsh server/packaging/build-portable.ps1 -Flavor cpu
 #
 # Requires:
@@ -27,7 +27,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("cpu", "gpu")]
+    [ValidateSet("cpu", "directml")]
     [string]$Flavor
 )
 

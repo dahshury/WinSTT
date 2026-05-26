@@ -5,9 +5,9 @@ setlocal enabledelayedexpansion
 ::  WinSTT — Dev Environment Setup (Windows)
 ::
 ::  Usage:
-::    setup-dev.bat                  Auto-detect GPU vs CPU (nvidia-smi → gpu)
-::    setup-dev.bat --flavor gpu     Force GPU runtime (NVIDIA CUDA wheels)
-::    setup-dev.bat --flavor cpu     Force CPU-only runtime
+::    setup-dev.bat                       Auto-detect: any GPU → DirectML, else CPU
+::    setup-dev.bat --flavor directml     Force DirectML runtime (AMD/Intel/NVIDIA via DX12)
+::    setup-dev.bat --flavor cpu          Force CPU-only runtime
 ::
 ::  Prereqs handled automatically:
 ::    * uv         (Astral's Python toolchain)         — installed if missing
@@ -39,7 +39,7 @@ if /i "%~1"=="--flavor" (
     goto parse_args
 )
 echo  [ERROR] Unknown argument: %~1
-echo  Usage: setup-dev.bat [--flavor cpu^|gpu]
+echo  Usage: setup-dev.bat [--flavor cpu^|directml]
 exit /b 1
 :args_done
 
@@ -51,19 +51,18 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: ── Detect flavor (GPU if nvidia-smi present, otherwise CPU) ─
+:: ── Detect flavor ─────────────────────────────────────────────
+:: DirectML works on AMD / Intel / NVIDIA via DirectX 12 — covers
+:: virtually every desktop Windows machine made in the last decade,
+:: so we default to it. The runtime in device.py auto-falls-back to
+:: CPU on hosts without a D3D12-capable GPU, so the DirectML build
+:: is the safe default for "any GPU likely present".
 if not defined FLAVOR (
-    where nvidia-smi >nul 2>&1
-    if !errorlevel! equ 0 (
-        set "FLAVOR=gpu"
-        echo  Detected NVIDIA GPU ^(nvidia-smi found^). Using GPU runtime.
-    ) else (
-        set "FLAVOR=cpu"
-        echo  No NVIDIA GPU detected. Using CPU runtime.
-    )
+    set "FLAVOR=directml"
+    echo  Defaulting to DirectML runtime ^(AMD/Intel/NVIDIA via DX12; falls back to CPU automatically^).
 ) else (
-    if /i not "%FLAVOR%"=="cpu" if /i not "%FLAVOR%"=="gpu" (
-        echo  [ERROR] --flavor must be 'cpu' or 'gpu', got '%FLAVOR%'
+    if /i not "%FLAVOR%"=="cpu" if /i not "%FLAVOR%"=="directml" (
+        echo  [ERROR] --flavor must be 'cpu' or 'directml', got '%FLAVOR%'
         exit /b 1
     )
     echo  Manual flavor override: %FLAVOR%

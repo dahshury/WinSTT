@@ -52,19 +52,18 @@ Each sub-project has its own detailed `CLAUDE.md`:
 | `bun generate` | Regenerate TS types from OpenAPI spec |
 | `bun knip` | Detect unused exports/files |
 
-### Packaging (release builds — produces three portable installers)
+### Packaging (release builds — produces two portable installers)
 
-WinSTT ships in three flavors per release:
+WinSTT ships in two flavors per release on Windows:
 
 | Flavor | Size | ORT wheel | When to use |
 |---|---|---|---|
 | **DirectML** (default GPU) | ~200 MB | `onnxruntime-directml` | Any Windows GPU (AMD / Intel / NVIDIA via DirectX 12). This is the unmarked default download. |
 | **CPU** | ~150 MB | `onnxruntime` | Servers, headless boxes, NPU-less laptops, or anyone who wants the smallest bundle. |
-| **CUDA** (legacy) | ~2 GB | `onnxruntime-gpu` + 8 NVIDIA cu12 wheels | Power users on NVIDIA hardware who want the absolute minimum latency on long-form / batched workloads. |
 
-All three wrap the same Electron app; only the bundled `stt-server.exe` differs. The runtime in `server/src/recorder/infrastructure/device.py` (`resolve_accelerator`) probes the active EP at startup and falls back to CPU when the requested GPU path isn't viable — a user who installs the CUDA build on a machine without a working CUDA stack still gets a functional app, and the DirectML build auto-degrades to CPU on hosts without a D3D12-capable GPU.
+Both wrap the same Electron app; only the bundled `stt-server.exe` differs. The runtime in `server/src/recorder/infrastructure/device.py` (`resolve_accelerator`) probes the active EP at startup and falls back to CPU when the requested GPU path isn't viable — so the DirectML build auto-degrades to CPU on hosts without a D3D12-capable GPU.
 
-Benchmark notes (whisper-tiny q4, RTX 3080 Ti, idle, N=20, 5 warmup): DirectML p50=85 ms / p95=89 ms / stdev=3 ms vs CUDA p50=120 ms / p95=151 ms / stdev=37 ms. DirectML wins on consistency AND median while being ~10x lighter, hence the default-flip.
+Benchmark notes (whisper-tiny q4, RTX 3080 Ti, idle, N=20, 5 warmup): DirectML p50=85 ms / p95=89 ms / stdev=3 ms vs CUDA p50=120 ms / p95=151 ms / stdev=37 ms. DirectML wins on consistency AND median while being ~10x lighter — hence we no longer ship a separate CUDA installer on Windows. The `[gpu]` extra in `server/pyproject.toml` is kept for the eventual Linux NVIDIA build (device.py's per-OS priority list still favors CUDA on Linux, where DirectML doesn't exist).
 
 Run from the **repo root** — all `.exe` packaging lives under `packaging/`:
 
@@ -73,11 +72,9 @@ packaging/
 ├── electron-builder.yml
 ├── electron-builder.cpu.yml
 ├── electron-builder.directml.yml   # default GPU
-├── electron-builder.gpu.yml        # legacy NVIDIA-only CUDA
 └── stt-server-dist/
     ├── cpu/        # PyInstaller output (CPU flavor)
-    ├── directml/   # PyInstaller output (DirectML flavor)
-    └── gpu/        # PyInstaller output (CUDA flavor)
+    └── directml/   # PyInstaller output (DirectML flavor)
 ```
 
 The final installer lands at `<repo>/dist/`.
@@ -86,17 +83,16 @@ The final installer lands at `<repo>/dist/`.
 |---|---|
 | `pwsh server/packaging/build.ps1 -Flavor cpu` | Build the CPU `stt-server.exe` → `packaging/stt-server-dist/cpu/` |
 | `pwsh server/packaging/build.ps1 -Flavor directml` | Build the DirectML `stt-server.exe` → `packaging/stt-server-dist/directml/` |
-| `pwsh server/packaging/build.ps1 -Flavor gpu` | Build the CUDA `stt-server.exe` → `packaging/stt-server-dist/gpu/` |
 | `bun run electron:build:cpu` | Build the CPU installer (root script; reads `packaging/electron-builder.cpu.yml`) |
 | `bun run electron:build:directml` | Build the DirectML installer (default GPU; reads `packaging/electron-builder.directml.yml`) |
-| `bun run electron:build:gpu` | Build the CUDA installer (legacy NVIDIA; reads `packaging/electron-builder.gpu.yml`) |
 
-The release workflow `.github/workflows/electron-release.yml` runs the matrix on tag push, publishing all three installers to the same GitHub Release. Users see three download buttons:
+The release workflow `.github/workflows/electron-release.yml` runs the matrix on tag push, publishing both installers to the same GitHub Release. Users see two download buttons:
 - `WinSTT-Portable-<version>.exe` (DirectML — the unmarked default GPU build)
 - `WinSTT-CPU-Portable-<version>.exe`
-- `WinSTT-GPU-Portable-<version>.exe` (CUDA legacy)
 
-To cut a release: `git tag v0.X.0 && git push --tags`. The PyInstaller spec at `server/packaging/stt-server.spec` auto-detects whether `nvidia` is in the venv (CUDA flavor) and bundles DLLs accordingly — the build script picks the right `[cpu]` / `[directml]` / `[gpu]` extra before invoking it.
+To cut a release: `git tag v0.X.0 && git push --tags`. The PyInstaller spec at `server/packaging/stt-server.spec` auto-detects whether `nvidia` is in the venv (i.e. the `[gpu]` extra is installed) and bundles CUDA DLLs accordingly — but for shipped Windows builds neither flavor installs `[gpu]`, so no NVIDIA DLLs are bundled. The build script picks the right `[cpu]` / `[directml]` extra before invoking PyInstaller.
+
+The `dev` flow (`bun electron:dev` from `frontend/`) uses whichever extra is currently installed in `server/.venv`. Run `cd server && uv sync --extra directml` once to make `bun dev` use DirectML (the recommended default).
 
 ## Architecture
 

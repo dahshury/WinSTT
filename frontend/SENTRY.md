@@ -8,7 +8,7 @@ environment.
 ## Enabling Sentry in installers
 
 Set `WINSTT_BUILD_SENTRY_DSN` in the build environment before running
-`bun electron:build` (or any of the `electron:build:cpu` / `electron:build:gpu`
+`bun electron:build` (or any of the `electron:build:cpu` / `electron:build:directml`
 variants):
 
 ```bash

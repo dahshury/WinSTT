@@ -207,7 +207,9 @@ app; only the bundled `stt-server.exe` differs:
 | Installer | Size | Contents |
 |-----------|------|----------|
 | `WinSTT-CPU-Setup-<version>.exe` | ~150 MB | `onnxruntime` (CPU) |
-| `WinSTT-GPU-Setup-<version>.exe` | ~2 GB | `onnxruntime-gpu` + all NVIDIA CUDA wheels (falls back to CPU if CUDA isn't viable) |
+| `WinSTT-Setup-<version>.exe` (DirectML, default) | ~200 MB | `onnxruntime-directml` — DirectX 12 GPU acceleration on AMD / Intel / NVIDIA; auto-falls-back to CPU on hosts without a D3D12-capable GPU |
+
+The legacy CUDA-bundle build (`onnxruntime-gpu` + 8 NVIDIA cu12 wheels, ~2 GB) was retired for Windows because DirectML is faster on our workload, more consistent in tail latency, and ~10× smaller. CUDA EP detection is preserved in `server/src/recorder/infrastructure/device.py` for the eventual Linux NVIDIA build.
 
 Build the server executables, then the installers. Both commands run from the **repo root**. Packaging configs and intermediate PyInstaller output live under `packaging/`:
 
@@ -215,30 +217,30 @@ Build the server executables, then the installers. Both commands run from the **
 packaging/
 ├── electron-builder.yml
 ├── electron-builder.cpu.yml
-├── electron-builder.gpu.yml
+├── electron-builder.directml.yml
 └── stt-server-dist/
     ├── cpu/
-    └── gpu/
+    └── directml/
 ```
 
 The final installer lands at `<repo>/dist/`.
 
-<Tabs items={['CPU', 'GPU']}>
+<Tabs items={['CPU', 'DirectML (default GPU)']}>
 <Tab value="CPU">
 ```bash
-pwsh server/packaging/build.ps1 -Flavor cpu   # -> packaging/stt-server-dist/cpu/
-bun run electron:build:cpu                    # -> dist/
+pwsh server/packaging/build.ps1 -Flavor cpu        # -> packaging/stt-server-dist/cpu/
+bun run electron:build:cpu                         # -> dist/
 ```
 </Tab>
-<Tab value="GPU">
+<Tab value="DirectML (default GPU)">
 ```bash
-pwsh server/packaging/build.ps1 -Flavor gpu   # -> packaging/stt-server-dist/gpu/
-bun run electron:build:gpu                    # -> dist/
+pwsh server/packaging/build.ps1 -Flavor directml   # -> packaging/stt-server-dist/directml/
+bun run electron:build:directml                    # -> dist/
 ```
 </Tab>
 </Tabs>
 
-Tagging a release runs the CPU and GPU builds as a CI matrix and publishes both
+Tagging a release runs the CPU and DirectML builds as a CI matrix and publishes both
 installers to the same GitHub Release ([github.com/dahshury/WinSTT](https://github.com/dahshury/WinSTT)):
 
 ```bash

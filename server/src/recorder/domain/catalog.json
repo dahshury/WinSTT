@@ -1520,40 +1520,6 @@
       ]
     },
     {
-      "id": "gigaam-v3-ctc",
-      "display_name": "GigaAM v3 CTC",
-      "family": "gigaam",
-      "languages": [
-        "ru"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "gigaam-v3-ctc",
-      "description": "GigaAM gigaam-v3-ctc (Russian)",
-      "param_count": 243000000,
-      "available_quantizations": [
-        "",
-        "int8"
-      ]
-    },
-    {
-      "id": "gigaam-v3-rnnt",
-      "display_name": "GigaAM v3 RNNT",
-      "family": "gigaam",
-      "languages": [
-        "ru"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "gigaam-v3-rnnt",
-      "description": "GigaAM gigaam-v3-rnnt (Russian)",
-      "param_count": 243000000,
-      "available_quantizations": [
-        "",
-        "int8"
-      ]
-    },
-    {
       "id": "gigaam-v3-e2e-ctc",
       "display_name": "GigaAM v3 E2E CTC",
       "family": "gigaam",

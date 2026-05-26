@@ -1,19 +1,24 @@
-# Build the standalone stt-server.exe for one of three EP flavors.
+# Build the standalone stt-server.exe for one of two Windows flavors.
 #
 # Usage (from the repo root or anywhere — paths are resolved relative to
 # this script):
 #
 #   pwsh server/packaging/build.ps1 -Flavor cpu
 #   pwsh server/packaging/build.ps1 -Flavor directml   # default Windows GPU
-#   pwsh server/packaging/build.ps1 -Flavor gpu        # NVIDIA-only legacy
 #
 # Flavor → ORT wheel mapping (driven by the pyproject ``[project.optional-
 # dependencies]`` extras of the same name):
 #
 #   cpu       → onnxruntime (CPU-only)
 #   directml  → onnxruntime-directml (DirectX 12 — AMD/Intel/NVIDIA, default
-#               Windows GPU flavor as of the DirectML benchmark in the PR)
-#   gpu       → onnxruntime-gpu + 8 NVIDIA cu12 wheels (CUDA EP, ~2 GB)
+#               Windows GPU flavor as of the DirectML benchmark in CLAUDE.md)
+#
+# CUDA: the legacy ``-Flavor gpu`` path was retired for Windows because the
+# DirectML EP is strictly better here (faster median, 12x lower stdev,
+# 10x lighter — see CLAUDE.md). The ``[gpu]`` extra in pyproject.toml is
+# kept for the future Linux NVIDIA build (device.py per-OS priority list
+# still favors CUDA on Linux). On a Linux host this script will not run;
+# a future build.sh will use ``uv sync --extra gpu`` directly.
 #
 # The script:
 #   1. Resolves the venv to the requested flavor via ``uv sync --extra``
@@ -31,7 +36,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("cpu", "gpu", "directml")]
+    [ValidateSet("cpu", "directml")]
     [string]$Flavor
 )
 
