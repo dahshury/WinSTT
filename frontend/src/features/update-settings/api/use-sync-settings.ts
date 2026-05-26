@@ -78,9 +78,22 @@ export function useSyncSettings(): void {
 		return onSettingsChanged(applyBroadcast);
 	}, [setSettings]);
 
-	// When server signals ready (recorder fully initialized), push all saved settings
+	// When server signals ready (recorder fully initialized), push all saved settings.
+	// Gated on `fromIpcLoadRef.current` so we don't sync the stale Zustand-persist
+	// localStorage cache before the canonical electron-store snapshot has arrived.
+	// See shouldSyncOnConnect for the full rationale — short version: localStorage
+	// hydration flips `isLoaded` to true synchronously with potentially-stale data;
+	// without the IPC gate, the first sync after connect re-asserts the cache via
+	// `sttSetParameter("model", stale)` and the server swaps to the wrong model.
 	useEffect(() => {
-		if (shouldSyncOnConnect(serverStatus, isLoaded, hasSyncedOnConnect.current)) {
+		if (
+			shouldSyncOnConnect(
+				serverStatus,
+				isLoaded,
+				hasSyncedOnConnect.current,
+				fromIpcLoadRef.current
+			)
+		) {
 			hasSyncedOnConnect.current = true;
 			syncToServer(DEPS, latestSettingsRef.current);
 		}
@@ -88,7 +101,7 @@ export function useSyncSettings(): void {
 		if (serverStatus === "idle") {
 			hasSyncedOnConnect.current = false;
 		}
-	}, [serverStatus, isLoaded]);
+	}, [serverStatus, isLoaded, settings]);
 
 	// Flush any pending debounced save on window close or unmount
 	useEffect(() => {

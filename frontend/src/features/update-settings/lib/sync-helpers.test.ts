@@ -289,20 +289,28 @@ describe("advanceSkipRefs", () => {
 });
 
 describe("shouldSyncOnConnect", () => {
-	test("returns true when server is running, loaded, and not yet synced", () => {
-		expect(shouldSyncOnConnect("running", true, false)).toBe(true);
+	test("returns true when server running, loaded, IPC-load complete, not yet synced", () => {
+		expect(shouldSyncOnConnect("running", true, false, true)).toBe(true);
 	});
 
 	test("returns false when server is not running", () => {
-		expect(shouldSyncOnConnect("idle", true, false)).toBe(false);
+		expect(shouldSyncOnConnect("idle", true, false, true)).toBe(false);
 	});
 
 	test("returns false when settings are not loaded", () => {
-		expect(shouldSyncOnConnect("running", false, false)).toBe(false);
+		expect(shouldSyncOnConnect("running", false, false, true)).toBe(false);
 	});
 
 	test("returns false when already synced", () => {
-		expect(shouldSyncOnConnect("running", true, true)).toBe(false);
+		expect(shouldSyncOnConnect("running", true, true, true)).toBe(false);
+	});
+
+	test("returns false when only localStorage hydrated (IPC load not yet complete)", () => {
+		// The bug we're fixing: localStorage hydration flips isLoaded=true
+		// synchronously with potentially-stale data. Without the fromIpcLoad
+		// gate, the first syncToServer re-asserts the stale cache and
+		// triggers a spurious model swap on the server.
+		expect(shouldSyncOnConnect("running", true, false, false)).toBe(false);
 	});
 });
 

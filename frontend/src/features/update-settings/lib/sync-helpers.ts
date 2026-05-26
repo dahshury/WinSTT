@@ -196,15 +196,40 @@ export function getRecordingMode(settings: AppSettings): string {
 
 /**
  * Whether the initial settings sync to the STT server should be triggered.
- * True only when the server just became ready, settings are loaded, and we
- * haven't already synced in this session.
+ * True only when the server just became ready, settings are loaded FROM
+ * ELECTRON-STORE (not just from the Zustand-persist localStorage cache),
+ * and we haven't already synced in this session.
+ *
+ * The `fromIpcLoad` gate is load-bearing: `isLoaded` flips to `true` the
+ * moment localStorage hydration completes (synchronous, during the store's
+ * `create` call). That cached snapshot can be STALE relative to
+ * electron-store — most commonly when the user changed `model.model` in a
+ * previous session, the renderer wrote it through, but localStorage was
+ * not updated for some reason (window force-killed before the persist
+ * middleware flushed, dev-server hot reload during a write, …). Without
+ * the IPC gate, the first `syncToServer` after connect re-asserts the
+ * stale Zustand cache via `sttSetParameter("model", staleValue)`, the
+ * server obediently swaps from its CLI-arg-loaded model to the stale
+ * value, and the user sees "Switching to <stale>" loop until they
+ * manually re-pick. The server was already spawned with the correct
+ * disk value from electron-store (see `SETTINGS_TO_CLI` in
+ * stt-process.ts), so the only "initial sync" worth doing is one that
+ * reflects the same disk state.
+ *
+ * `fromIpcLoad` is set inside `useSyncSettings` the moment the
+ * `settingsLoad()` IPC promise resolves with the disk snapshot, so this
+ * gate buys us "wait one async tick for the canonical state before
+ * touching the server." On a clean install where localStorage and disk
+ * agree it adds at most a few milliseconds; on the divergent case it
+ * prevents the spurious model-revert loop entirely.
  */
 export function shouldSyncOnConnect(
 	serverStatus: string,
 	isLoaded: boolean,
-	alreadySynced: boolean
+	alreadySynced: boolean,
+	fromIpcLoad: boolean
 ): boolean {
-	return serverStatus === "running" && isLoaded && !alreadySynced;
+	return serverStatus === "running" && isLoaded && fromIpcLoad && !alreadySynced;
 }
 
 /**
