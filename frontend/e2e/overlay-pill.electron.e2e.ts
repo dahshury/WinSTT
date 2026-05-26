@@ -21,6 +21,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 interface E2EHooks {
 	hideOverlay: () => void;
+	// Focus-pass-through introspection — see main.ts E2E hook block.
+	isOverlayAlwaysOnTop: () => boolean;
+	isOverlayFocusable: () => boolean;
 	isOverlayVisible: () => boolean;
 	showOverlay: () => void;
 	simulateHotkeyPress: () => void;
@@ -97,6 +100,25 @@ test.describe("overlay pill — robust hide on rapid toggle", () => {
 
 	test.afterAll(async () => {
 		await app?.close();
+	});
+
+	test("overlay BrowserWindow is non-focusable and pinned topmost (NSPanel-imitation)", async () => {
+		// The pill MUST NOT accept keyboard focus or the dictation paste lands
+		// in the pill instead of the user's target app — see overlay.ts's
+		// `applyFocusPassThroughFlags`. Pinning topmost (`alwaysOnTop`) keeps
+		// the pill above fullscreen apps without stealing activation. Both
+		// flags are applied at BrowserWindow construction AND re-asserted in
+		// `setOverlayWindow` so any registration path gets the same hardening.
+		const focusable = await app.evaluate(() => {
+			const hooks = (globalThis as { __winsttE2E__?: E2EHooks }).__winsttE2E__;
+			return hooks?.isOverlayFocusable() ?? true;
+		});
+		expect(focusable).toBe(false);
+		const onTop = await app.evaluate(() => {
+			const hooks = (globalThis as { __winsttE2E__?: E2EHooks }).__winsttE2E__;
+			return hooks?.isOverlayAlwaysOnTop() ?? false;
+		});
+		expect(onTop).toBe(true);
 	});
 
 	test("single show → hide leaves the pill hidden", async () => {

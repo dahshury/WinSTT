@@ -35,6 +35,16 @@ const storeValueSchemas = {
 	"general.fileTranscriptionSaveLocation": z.enum(["auto", "ask"]).catch("auto"),
 	"general.showRecordingOverlay": z.boolean().catch(true),
 	"general.overlayMode": z.enum(["floating-bottom", "dynamic-island"]).catch("floating-bottom"),
+	// Coarse-grained screen-edge gate, modeled after Handy's `OverlayPosition`.
+	// Distinct from `overlayMode` (which is the visual layout style — pill vs.
+	// dynamic-island capsule): this controls WHETHER the overlay surface is
+	// allowed to appear at all, and on which side of the screen it docks. The
+	// `"none"` value disables the pill entirely without touching the user's
+	// chosen `showRecordingOverlay` master toggle — used as the Linux default
+	// because GTK / Wayland focus-stealing breaks the paste pipeline on some
+	// compositors (see overlay.ts's gate). `"auto"` is the canonical default
+	// and resolves to platform behavior in `resolveOverlayPosition`.
+	"general.overlayPosition": z.enum(["auto", "none", "top", "bottom"]).catch("auto"),
 	"general.visualizerSize": z.enum(["xs", "sm", "md", "lg", "xl"]).catch("xs"),
 	"general.liveTranscriptionDisplay": z.enum(["none", "in-app", "in-pill", "both"]).catch("both"),
 	"general.systemAudioReductionWhileDictating": z.number().int().min(0).max(100).catch(0),
@@ -89,12 +99,27 @@ const storeValueSchemas = {
 	"general.onboarded": z.boolean().catch(false),
 	"general.onboardedAt": z.number().nullable().catch(null),
 	"general.onboardedTrack": z.enum(["", "local", "cloud"]).catch(""),
+	// Output audio device for TTS playback and recording chimes.
+	// Web Audio `MediaDeviceInfo.deviceId`; empty = system default.
+	"general.outputDeviceId": z.string().catch(""),
+	// Auto-press a "submit" key after each dictation paste lands.
+	"general.autoSubmit": z.boolean().catch(false),
+	"general.autoSubmitKey": z.enum(["enter", "ctrl_enter"]).catch("enter"),
+	// Cap on persisted history entries; trimmed on each insert.
+	"general.historyMaxEntries": z.number().int().min(10).max(10_000).catch(1000),
+	// Auto-delete saved WAVs by retention policy.
+	"general.recordingRetention": z.enum(["never", "cap", "days3", "weeks2", "months3"]).catch("cap"),
 	// quality
 	"quality.useMainModelForRealtime": z.boolean().catch(false),
 	"quality.ensureSentenceEndsWithPeriod": z.boolean().catch(true),
 	// audio
 	"audio.sileroSensitivity": z.number().catch(0.4),
 	"audio.sileroDeactivityDetection": z.boolean().catch(true),
+	"audio.inputDeviceIndex": z.number().int().nullable().catch(null),
+	// PyAudio index of the alternate mic activated when the laptop lid
+	// closes. Null disables the clamshell detector entirely; see
+	// electron/ipc/clamshell.ts for the polling state machine.
+	"audio.clamshellMicrophone": z.number().int().nullable().catch(null),
 	// llm — shared infrastructure (one Ollama instance, one OpenRouter account)
 	"llm.endpoint": z.string().catch("http://localhost:11434"),
 	"llm.openrouterApiKey": z.string().catch(""),
@@ -282,6 +307,7 @@ export const store = new Store({
 			beamSizeRealtime: 3,
 			initialPrompt: "",
 			initialPromptRealtime: "",
+			translateToEnglish: false,
 		},
 		quality: {
 			// Stryker disable next-line BooleanLiteral: equivalent — the migration block at L171 forces this to false regardless of the initial default
@@ -309,6 +335,8 @@ export const store = new Store({
 			minGapBetweenRecordings: 0,
 			preRecordingBufferDuration: 1.0,
 			sileroSensitivityByDeviceName: {},
+			keepMicOpen: false,
+			clamshellMicrophone: null,
 		},
 		general: {
 			autoStart: false,
@@ -328,6 +356,10 @@ export const store = new Store({
 			wakeWordTimeout: 5,
 			showRecordingOverlay: true,
 			overlayMode: "floating-bottom" as "floating-bottom" | "dynamic-island",
+			// `auto` resolves to platform default in `resolveOverlayPosition`:
+			// Linux → `"none"` (focus-stealing risk on some compositors),
+			// macOS / Windows → `"bottom"`.
+			overlayPosition: "auto" as "auto" | "none" | "top" | "bottom",
 			visualizerSize: "xs" as const,
 			liveTranscriptionDisplay: "both" as const,
 			visualizerType: "bar",
@@ -347,6 +379,14 @@ export const store = new Store({
 			onboarded: false,
 			onboardedAt: null as number | null,
 			onboardedTrack: "" as "" | "local" | "cloud",
+			// Output device routing (TTS + recording chimes) — empty = system default.
+			outputDeviceId: "",
+			// Auto-press a "submit" key after each dictation paste lands.
+			autoSubmit: false,
+			autoSubmitKey: "enter" as "enter" | "ctrl_enter",
+			// Persisted history cap (10-10000) + auto-delete retention policy.
+			historyMaxEntries: 1000,
+			recordingRetention: "cap" as "never" | "cap" | "days3" | "weeks2" | "months3",
 		},
 		hotkey: {
 			pushToTalkKey: "LCtrl+LMeta",

@@ -1275,6 +1275,21 @@ function createOverlayWindow() {
 		alwaysOnTop: true,
 		skipTaskbar: true,
 		show: false,
+		// Critical for the dictation-paste pipeline: the pill MUST NOT accept
+		// keyboard focus, or `showInactive()` lands focus on the overlay
+		// BrowserWindow on some compositors and the paste goes to the pill
+		// instead of the user's target app. Set at construction so the very
+		// first paint of the pre-created hidden window already has the flag;
+		// `setOverlayWindow` re-asserts this + the screen-saver z-order +
+		// all-workspaces visibility at runtime (see overlay.ts).
+		focusable: false,
+		// On macOS, `type: "panel"` makes the BrowserWindow act like an
+		// NSPanel (the primitive `tauri-nspanel` wraps in Handy's overlay.rs):
+		// non-activating, stays above standard windows, doesn't show in
+		// Mission Control or get a Dock entry. Electron 28+ added this
+		// option; we require ^42.0.0 (see package.json). The option is a
+		// no-op on Windows / Linux but we gate on platform for clarity.
+		...(process.platform === "darwin" ? { type: "panel" as const } : {}),
 		backgroundColor: "#00000000",
 		// `backgroundThrottling: false` keeps the renderer painting normally
 		// while the overlay BrowserWindow is hidden between PTT presses. With
@@ -1300,8 +1315,13 @@ function createOverlayWindow() {
 		overlayWindow = null;
 	});
 
-	// Make window click-through (user can interact with apps beneath it)
-	overlayWindow.setIgnoreMouseEvents(true);
+	// Click-through by default so dictation doesn't intercept clicks meant for
+	// the app underneath. `forward: true` still delivers mousemove events to
+	// the renderer (without consuming them) so hover-based hit detection on
+	// the X cancel button works; the renderer flips ignore off via
+	// `overlay:set-ignore-mouse` while the cursor sits over the button so the
+	// click lands instead of falling through.
+	overlayWindow.setIgnoreMouseEvents(true, { forward: true });
 
 	// Hide instead of destroy on close — window is reused for instant re-show
 	overlayWindow.on("close", (event) => {
@@ -1548,6 +1568,13 @@ function createWindow() {
 				isOverlayVisible: () => boolean;
 				simulateHotkeyPress: () => void;
 				simulateRecordingStop: () => void;
+				// Focus-pass-through introspection — the overlay BrowserWindow
+				// MUST NOT accept keyboard focus, or the dictation paste lands
+				// in the pill instead of the user's target app. Exposing the
+				// flag lets Playwright assert the NSPanel-imitation hardening
+				// (see overlay.ts `applyFocusPassThroughFlags`).
+				isOverlayFocusable: () => boolean;
+				isOverlayAlwaysOnTop: () => boolean;
 			};
 		};
 		// Lazy-import to avoid pulling these into the production bundle
@@ -1566,6 +1593,8 @@ function createWindow() {
 			// Simulate a server `recording_stop` — clears the intent flag
 			// so subsequent stray `recording_start` events get rejected.
 			simulateRecordingStop: () => notifyRecordingStop(),
+			isOverlayFocusable: () => overlayWindow?.isFocusable() ?? true,
+			isOverlayAlwaysOnTop: () => overlayWindow?.isAlwaysOnTop() ?? false,
 		};
 	}
 }

@@ -15,6 +15,13 @@ export const modelSettingsSchema = z.object({
 	beamSizeRealtime: z.number().int().min(1).default(3),
 	initialPrompt: z.string().default(""),
 	initialPromptRealtime: z.string().default(""),
+	// Whisper-native task=translate. When true and the active model is a
+	// multilingual Whisper variant, audio is transcribed AND translated to
+	// English in a single decode (no extra latency, no LLM round-trip).
+	// Ignored when the model lacks translate support (e.g. *.en variants,
+	// non-Whisper families like Moonshine). `.catch(false)` keeps older
+	// builds from wiping the whole model section on a corrupt persisted value.
+	translateToEnglish: z.boolean().default(false).catch(false),
 });
 
 export const qualitySettingsSchema = z.object({
@@ -71,6 +78,25 @@ export const audioSettingsSchema = z.object({
 		.record(z.string(), z.number().min(0).max(1))
 		.default({})
 		.catch({}),
+	// Keep the input audio stream open between transcriptions (lazy-close).
+	// When true, the recorder pipeline reuses the existing PyAudio stream
+	// after a recording finalizes rather than calling cleanup() + setup() on
+	// the next listen, which trims ~50-200ms of startup latency per dictation.
+	// Off by default because some Windows audio drivers misbehave when a
+	// stream stays open across long idle gaps (low-quality USB headsets in
+	// particular drop to mono after ~30s with an idle stream).
+	keepMicOpen: z.boolean().default(false).catch(false),
+	// PyAudio device index of the alternate microphone activated when the
+	// laptop lid is closed (clamshell mode). When non-null, a platform-
+	// specific detector polls the OS lid state every few seconds; on close
+	// it swaps the live `input_device_index` to this value, on open it
+	// restores the user's previously-selected primary mic. Useful for
+	// docked-laptop setups where the lid is shut and an external USB mic
+	// is the only viable input. `.catch(null)` keeps an older build (no
+	// key) from wiping the whole audio section on upgrade. macOS uses
+	// `ioreg`; Linux reads `/proc/acpi/button/lid/`; Windows is a
+	// documented v1.1 deferral (no zero-cost equivalent probe).
+	clamshellMicrophone: z.number().int().nullable().default(null).catch(null),
 });
 
 // One entry in the recording-sound library. The default sound is implicit
@@ -155,6 +181,19 @@ export const generalSettingsSchema = z.object({
 		.enum(["floating-bottom", "dynamic-island"])
 		.default("floating-bottom")
 		.catch("floating-bottom"),
+	// Coarse-grained screen-edge gate, modeled after Handy's `OverlayPosition`
+	// (examples/Handy/src-tauri/src/overlay.rs). Distinct from `overlayMode`
+	// (which picks the visual layout style): this controls WHETHER the pill
+	// is allowed to appear and on which screen edge.
+	//   - `"auto"` (default): platform-derived in `resolveOverlayPosition`.
+	//     Linux → effectively `"none"` because some compositors break paste
+	//     pipelines when an always-on-top window appears mid-keystroke.
+	//     macOS / Windows → effectively `"bottom"`.
+	//   - `"none"`: never show the pill, regardless of platform.
+	//   - `"top"` / `"bottom"`: explicit screen edge.
+	// `.catch` keeps an older persisted value (or missing key on upgrade)
+	// from wiping the whole `general` section.
+	overlayPosition: z.enum(["auto", "none", "top", "bottom"]).default("auto").catch("auto"),
 	// `.catch` covers older builds that persisted an integer pixel value;
 	// without it an integer here fails the whole settings parse and the codec
 	// falls back to ALL defaults, wiping unrelated settings on upgrade.
@@ -234,6 +273,40 @@ export const generalSettingsSchema = z.object({
 	// reads the active model from `model.model`), but the wizard persists it
 	// so we can answer "did this user start on cloud?" in support tickets.
 	onboardedTrack: z.enum(["", "local", "cloud"]).default("").catch(""),
+	// Output audio device used for TTS playback and recording-mode chimes.
+	// Identified by `MediaDeviceInfo.deviceId` (renderer-side); the empty
+	// string falls back to the system default. Null is normalized to "" by
+	// `.catch` so consumers can treat both interchangeably. Web Audio's
+	// `setSinkId()` powers the routing — both surfaces (recording sounds via
+	// HTMLAudioElement, TTS via AudioContext) accept the deviceId verbatim.
+	outputDeviceId: z.string().default("").catch(""),
+	// Auto-press a "submit" key after each dictation paste lands. Off by
+	// default to preserve historical behaviour (paste, leave cursor where
+	// the user can review). When on, `autoSubmitKey` chooses which combo
+	// to inject — Enter for chat boxes, Ctrl+Enter for IDE prompts.
+	autoSubmit: z.boolean().default(false).catch(false),
+	autoSubmitKey: z.enum(["enter", "ctrl_enter"]).default("enter").catch("enter"),
+	// Cap on the number of transcription history entries persisted to disk.
+	// Larger histories slow the settings panel (rendering + load), so the
+	// upper bound is 10000; lower bound 10 keeps the UI useful. The main
+	// process trims on each insert and on settings change.
+	historyMaxEntries: z.number().int().min(10).max(10_000).default(1000).catch(1000),
+	// Auto-delete saved WAV recordings older than this policy. "never"
+	// preserves everything; "cap" deletes oldest recordings beyond
+	// historyMaxEntries; days3/weeks2/months3 are absolute age cutoffs.
+	// Cleanup runs once at app startup and again whenever the policy changes.
+	recordingRetention: z
+		.enum(["never", "cap", "days3", "weeks2", "months3"])
+		.default("cap")
+		.catch("cap"),
+	// Threshold for the server-side deterministic fuzzy corrector that
+	// runs BEFORE the LLM modifier pipeline. Lower = stricter (fewer
+	// false positives, more genuine near-misses left for the LLM to fix).
+	// 0.18 matches Handy's reference value (see
+	// `examples/Handy/src-tauri/src/audio_toolkit/text.rs`). `.catch(0.18)`
+	// keeps an older persisted value (or a corrupt entry) from wiping the
+	// whole `general` section on upgrade.
+	wordCorrectionThreshold: z.number().min(0).max(1).default(0.18).catch(0.18),
 });
 
 export const hotkeySettingsSchema = z.object({
