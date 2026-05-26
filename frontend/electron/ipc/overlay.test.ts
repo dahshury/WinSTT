@@ -531,6 +531,76 @@ describe("overlay handlers", () => {
 		expect(win.calls).toContain("show");
 	});
 
+	describe("overlayPosition platform gate", () => {
+		// `general.overlayPosition === "none"` is a hard "do not show" override
+		// — distinct from `showRecordingOverlay = false` (which is the
+		// user-facing master toggle). On Linux it defaults to "none" via the
+		// `auto` → platform mapping; macOS / Windows default to "bottom". The
+		// `WINSTT_FORCE_OVERLAY=1` env var escapes the Linux default.
+
+		test('overlayPosition="none" suppresses showOverlay even when showRecordingOverlay=true', () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			(storeData.general as Record<string, unknown>).overlayPosition = "none";
+			showOverlay();
+			expect(win.calls).toEqual([]);
+		});
+
+		test('overlayPosition="bottom" → pill renders at the bottom-edge work-area Y', () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			(storeData.general as Record<string, unknown>).overlayPosition = "bottom";
+			showOverlay();
+			// Same math as the default floating-bottom layout.
+			expect(win.positions[0]).toEqual([560, 900]);
+		});
+
+		test('overlayPosition="top" → pill docks at the top bezel (y=0) even with overlayMode=floating-bottom', () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			// `overlayMode` is still floating-bottom (visual layout style), but
+			// the user wants the top edge — `overlayPosition` overrides.
+			(storeData.general as Record<string, unknown>).overlayPosition = "top";
+			showOverlay();
+			expect(win.positions[0]).toEqual([560, 0]);
+		});
+
+		test("flipping overlayPosition to 'none' while pill is visible hides it (live store-change)", () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			const dispose = setupOverlayHandlers();
+			showOverlay();
+			expect(win.isVisible()).toBe(true);
+			// Simulate the user toggling the setting from the UI.
+			(storeData.general as Record<string, unknown>).overlayPosition = "none";
+			for (const cb of storeChangeHandlers.get("general.overlayPosition") ?? []) {
+				cb("none");
+			}
+			expect(win.calls).toContain("hide");
+			dispose();
+		});
+
+		test("flipping overlayPosition from 'bottom' to 'top' while visible repositions in place (no hide)", async () => {
+			const win = makeWindow();
+			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			const dispose = setupOverlayHandlers();
+			(storeData.general as Record<string, unknown>).overlayPosition = "bottom";
+			showOverlay();
+			await new Promise<void>((r) => setTimeout(r, 120));
+			const hidesBefore = win.calls.filter((c) => c === "hide").length;
+
+			(storeData.general as Record<string, unknown>).overlayPosition = "top";
+			for (const cb of storeChangeHandlers.get("general.overlayPosition") ?? []) {
+				cb("top");
+			}
+			// Reposition only — no hide pass.
+			const hidesAfter = win.calls.filter((c) => c === "hide").length;
+			expect(hidesAfter).toBe(hidesBefore);
+			expect(win.positions.at(-1)).toEqual([560, 0]);
+			dispose();
+		});
+	});
+
 	describe("canShowAfterMainBlur (predicate)", () => {
 		// Pure predicate — exhaustive truth table over the three inputs:
 		//   sessionWantsOverlay × overlayWindow !== null × !isOverlaySuppressedBySettings

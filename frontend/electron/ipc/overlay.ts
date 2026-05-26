@@ -1,6 +1,87 @@
 import type { BrowserWindow } from "electron";
-import { screen } from "electron";
+import { ipcMain, screen } from "electron";
 import { getStoreValue, store } from "../lib/store";
+
+/**
+ * Focus-pass-through hardening, modeled on Tauri's `tauri-nspanel` + Handy's
+ * overlay implementation (examples/Handy/src-tauri/src/overlay.rs). The pill
+ * is purely visual — it MUST NOT steal focus from the app the user is typing
+ * into, or the dictation paste lands in the wrong window. Achieved purely
+ * through Electron BrowserWindow APIs (no native NSPanel addon):
+ *
+ *   1. `setIgnoreMouseEvents(true, { forward: true })` — clicks fall through
+ *      to the app underneath; mouse-move events still reach the renderer so
+ *      the X cancel button can flip ignore off on hover.
+ *   2. `setFocusable(false)` — operating system never gives the pill keyboard
+ *      focus, even if the user clicks an interactive element on it.
+ *   3. `setAlwaysOnTop("screen-saver", 1)` — highest documented z-order; the
+ *      pill rides above other always-on-top windows and fullscreen apps.
+ *   4. `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })` — the
+ *      pill follows the user across virtual desktops and stays visible when
+ *      the target app is fullscreen (matches NSPanel's `canJoinAllSpaces` +
+ *      `fullScreenAuxiliary` collection behavior on macOS).
+ *   5. `skipTaskbar: true` and macOS `type: "panel"` are applied at
+ *      BrowserWindow construction in main.ts (`createOverlayWindow`).
+ *
+ * Belt-and-suspenders: every call is wrapped in `safeCall` because some flags
+ * are platform-specific (e.g. `setVisibleOnAllWorkspaces` is a no-op on
+ * Windows but throws on some Electron builds for some signatures).
+ */
+function applyFocusPassThroughFlags(win: BrowserWindow): void {
+	// `setIgnoreMouseEvents` was already applied in `createOverlayWindow` for
+	// the initial paint; re-apply here so a test that registers a window
+	// directly through `setOverlayWindow` (bypassing `createOverlayWindow`)
+	// still gets click-through. Idempotent.
+	safeCall(() => win.setIgnoreMouseEvents(true, { forward: true }));
+	safeCall(() => win.setFocusable(false));
+	safeCall(() => win.setAlwaysOnTop(true, "screen-saver", 1));
+	safeCall(() =>
+		win.setVisibleOnAllWorkspaces(true, {
+			visibleOnFullScreen: true,
+		})
+	);
+}
+
+/**
+ * Coarse-grained "should the overlay even exist on this OS?" gate. Mirrors
+ * Handy's behavior of defaulting Linux overlay to OFF because some Wayland /
+ * GTK compositors break the paste pipeline when a transparent always-on-top
+ * window appears mid-keystroke. Escape hatch: `WINSTT_FORCE_OVERLAY=1` lets
+ * Linux users opt-in (with the documented caveat that focus stealing /
+ * paste-failure may occur on their compositor).
+ *
+ * Truthy values: `"1"`, `"true"`, `"yes"`, `"on"` (case-insensitive). Empty
+ * string and `"0"` / `"false"` / `"no"` / `"off"` are falsy. Matches the
+ * convention in examples/Handy/src-tauri/src/overlay.rs `env_flag_enabled`.
+ */
+function isForceOverlayEnvFlagSet(): boolean {
+	const raw = process.env.WINSTT_FORCE_OVERLAY;
+	if (raw === undefined) {
+		return false;
+	}
+	const norm = raw.trim().toLowerCase();
+	if (norm === "" || norm === "0" || norm === "false" || norm === "no" || norm === "off") {
+		return false;
+	}
+	return true;
+}
+
+/**
+ * Resolve the user's `general.overlayPosition` setting to a concrete edge.
+ * `"auto"` falls back to platform default (Linux → `"none"` unless the env
+ * escape hatch is set, macOS / Windows → `"bottom"`).
+ */
+function resolveOverlayPosition(): "none" | "top" | "bottom" {
+	const raw = getStoreValue("general.overlayPosition");
+	if (raw === "none" || raw === "top" || raw === "bottom") {
+		return raw;
+	}
+	// "auto"
+	if (process.platform === "linux") {
+		return isForceOverlayEnvFlagSet() ? "bottom" : "none";
+	}
+	return "bottom";
+}
 
 /**
  * Robust hide/show for the transparent recording-pill BrowserWindow.
@@ -219,10 +300,14 @@ function startHideReconciler(): void {
 }
 
 /**
- * Store reference to the overlay window
+ * Store reference to the overlay window. Also (re-)applies the NSPanel-
+ * imitation focus-pass-through flags so any registration path — production
+ * `createOverlayWindow`, or a test injecting a mock — gets the same hardened
+ * behavior.
  */
 export function setOverlayWindow(win: BrowserWindow): void {
 	overlayWindow = win;
+	applyFocusPassThroughFlags(win);
 }
 
 /**
@@ -247,7 +332,12 @@ function isMainWindowFocused(): boolean {
 function isOverlaySuppressedBySettings(): boolean {
 	const enabled = getStoreValue("general.showRecordingOverlay");
 	const recordingMode = getStoreValue("general.recordingMode");
-	return !enabled || recordingMode === "listen";
+	// `overlayPosition === "none"` is a hard "do not show" override that
+	// resolves the cross-platform / env-flag matrix above. Keeping it inside
+	// the same suppression gate means every existing show/hide path — main
+	// window focus sync, settings live-changes, etc. — already respects it.
+	const position = resolveOverlayPosition();
+	return !enabled || recordingMode === "listen" || position === "none";
 }
 
 /**
@@ -262,6 +352,11 @@ function isOverlaySuppressedBySettings(): boolean {
  * asked for "no distance between it and the top bezel of the desktop", so
  * we use `bounds` not `workArea` — a top-mounted taskbar would still get
  * painted under, mirroring Apple's Dynamic Island behavior.
+ *
+ * `overlayPosition === "top"` forces the top anchor even when `overlayMode`
+ * is `floating-bottom` (and vice-versa for `"bottom"`). This mirrors Handy's
+ * `OverlayPosition::Top` / `OverlayPosition::Bottom` which is purely about
+ * screen-edge anchoring and orthogonal to layout style.
  */
 function computeOverlayPosition(
 	mode: "floating-bottom" | "dynamic-island",
@@ -269,7 +364,13 @@ function computeOverlayPosition(
 	winHeight: number
 ): { x: number; y: number } {
 	const primaryDisplay = screen.getPrimaryDisplay();
-	if (mode === "dynamic-island") {
+	const position = resolveOverlayPosition();
+	// `position === "none"` reaches here only if `showOverlay` was bypassed
+	// (defensive) — fall back to the resting position so the window doesn't
+	// flash at uninitialized (0,0). `position === "top"` and the dynamic-
+	// island layout share the same top-bezel anchor.
+	const wantTop = position === "top" || mode === "dynamic-island";
+	if (wantTop) {
 		const { x: boundsX, y: boundsY, width: boundsWidth } = primaryDisplay.bounds;
 		return {
 			x: boundsX + Math.round((boundsWidth - winWidth) / 2),
@@ -456,12 +557,40 @@ export function setupOverlayHandlers(): () => void {
 	const disposeOverlayMode = store.onDidChange("general.overlayMode", () => {
 		repositionIfVisible();
 	});
+	// Live screen-edge swap: same idea — reposition in place if the user
+	// flips `general.overlayPosition` from top to bottom (or vice-versa)
+	// mid-session. A flip TO `"none"` is handled by `isOverlaySuppressedBy
+	// Settings` on the next show; if a pill is currently visible the user
+	// would expect it to vanish, so call `performHide` directly here.
+	const disposeOverlayPosition = store.onDidChange("general.overlayPosition", () => {
+		if (resolveOverlayPosition() === "none") {
+			performHide();
+		} else {
+			repositionIfVisible();
+		}
+	});
+	// The overlay window is created with `setIgnoreMouseEvents(true, { forward: true })`
+	// so clicks pass through to the app underneath while hover events still reach
+	// the renderer for hit-testing. The renderer flips ignore off (`ignore: false`)
+	// while the cursor sits over the X cancel button so the click lands; on leave
+	// it flips back to (true, { forward: true }) so clicks resume falling through.
+	ipcMain.on("overlay:set-ignore-mouse", (_event, payload: unknown) => {
+		if (!overlayWindow || overlayWindow.isDestroyed()) {
+			return;
+		}
+		const ignore = Boolean(
+			payload && typeof payload === "object" && (payload as { ignore?: unknown }).ignore
+		);
+		overlayWindow.setIgnoreMouseEvents(ignore, ignore ? { forward: true } : undefined);
+	});
 	return () => {
 		disposeOverlaySetting();
 		disposeModeSetting();
 		disposeOverlayMode();
+		disposeOverlayPosition();
 		clearPendingTimers();
 		stopReconciler();
+		ipcMain.removeAllListeners("overlay:set-ignore-mouse");
 	};
 }
 
