@@ -52,6 +52,11 @@ extraResources:
     filter:
       - "winstt-paste.exe"
       - "winstt-context.exe"
+  # State-driven, theme-aware tray icons (see electron-builder.yml comment).
+  - from: electron/resources/tray/
+    to: tray
+    filter:
+      - "**/*.png"
   # End-user license + third-party notices. Read at runtime by the
   # About tab in Settings (see notices-resources.ts in electron/lib/).
   - from: ../LICENSE

@@ -92,6 +92,11 @@ export interface ElectronMockHandle {
 	nativeImage: {
 		createFromPath: (path: string) => { isEmpty: () => boolean };
 	};
+	nativeTheme: {
+		shouldUseDarkColors: boolean;
+		on: (event: string, cb: (...args: unknown[]) => void) => void;
+		off: (event: string, cb: (...args: unknown[]) => void) => void;
+	};
 	net: {
 		request: (...args: unknown[]) => unknown;
 	};
@@ -238,6 +243,11 @@ export function electronMock(): ElectronMockHandle {
 		},
 		nativeImage: {
 			createFromPath: () => ({ isEmpty: () => false }),
+		},
+		nativeTheme: {
+			shouldUseDarkColors: true,
+			on: () => undefined,
+			off: () => undefined,
 		},
 		powerMonitor: {
 			on: () => undefined,
