@@ -40,8 +40,35 @@
  *    keyboard hook stalls the input queue; we mitigate at the
  *    JS-side layer with a circuit-breaker cooldown after a timeout.
  *
+ * Why only ONE paste shape (Ctrl+V via VK), not a user-selectable enum:
+ *  - Reference projects (e.g. Handy/Tauri) ship a `PasteMethod` enum
+ *    with six choices (None / Direct / CtrlV / CtrlShiftV / ShiftInsert
+ *    / ExternalScript). We deliberately don't. The clipboard-paste mode
+ *    auto-picks Ctrl+Shift+V for the small set of terminal hosts that
+ *    require it (see TERMINAL_CLASSES / TERMINAL_EXES below); the
+ *    universal-typing mode (`--type`) covers every other dictation
+ *    target. Exposing more knobs to the user shifts a tuning problem
+ *    onto them with no upside. If a future target genuinely needs
+ *    ShiftInsert, add it to the terminal-detection branch — don't
+ *    surface a method picker.
+ *
  * Build: cl /O2 winstt-paste.c /Fe:winstt-paste.exe user32.lib
  *  - or: gcc -O2 winstt-paste.c -o winstt-paste.exe -luser32
+ *
+ * Cross-platform plan (NOT implemented — Windows-only today):
+ *  - macOS: separate native module (Cocoa CGEventCreateKeyboardEvent
+ *    with kVK_ANSI_V = 9, kCGEventFlagMaskCommand). Cmd+V is the system
+ *    paste shortcut; like VK_V on Windows, kVK_ANSI_V is layout-
+ *    independent. Needs accessibility-permission prompt at first run.
+ *  - Linux/X11: XSendEvent on the focused window or libei (for Wayland-
+ *    compatible apps). XK_V (0x76 keysym) ~ XKeysymToKeycode against
+ *    the current XkbDescPtr; Wayland generally has no synthetic-input
+ *    primitive outside privileged compositors, so on Wayland we'd
+ *    likely fall back to xdotool-style ipc or wtype where available.
+ *  - The JS orchestrator in `electron/lib/paste.ts` would dispatch per
+ *    `process.platform` and the helpers would live alongside this file
+ *    as `macstt-paste.m` and `linux-paste.c`. Today the JS guards with
+ *    `process.platform !== "win32"` (see `shouldSkipPaste` in paste.ts).
  *
  * Exit codes:
  *   0 — paste/type/copy injected
@@ -117,6 +144,39 @@ static BOOL get_exe_name(HWND hwnd, char* out, DWORD out_size) {
     return TRUE;
 }
 
+/*
+ * Build one INPUT record from a Win32 virtual-key code. Layout-INDEPENDENT
+ * by construction:
+ *
+ *  - We set `wVk` (NOT `wScan`) and we do NOT set `KEYEVENTF_SCANCODE` in
+ *    `dwFlags`. Per the Win32 KEYBDINPUT contract, with that flag clear the
+ *    OS dispatches on `wVk` and silently ignores `wScan` for routing — it's
+ *    carried along only so low-level keyboard hooks (some games, AV) can
+ *    inspect a sensible scancode.
+ *  - `wVk` is a virtual key code, not a character. ASCII letters A..Z
+ *    (0x41..0x5A) double as VK codes for the corresponding alphabet keys
+ *    by Microsoft's own definition (see learn.microsoft.com/.../virtual-
+ *    key-codes — "0x56 V key"). So writing `'V'` is identical to writing
+ *    a hypothetical `VK_V` macro; the Windows headers just don't define
+ *    one because the ASCII fall-through is the documented convention.
+ *  - Because we pass the VK code, the Windows input subsystem translates
+ *    it against whatever keyboard layout the FOREGROUND THREAD currently
+ *    has loaded. On AZERTY, ЙЦУКЕН, Dvorak, Colemak, etc. the kernel
+ *    routes `wVk=0x56` to the physical key bound to V in THAT layout, so
+ *    Ctrl+V always pastes regardless of layout. This is the same approach
+ *    Handy (Tauri+enigo) uses on Windows with `Key::Other(0x56)`.
+ *  - `wScan` is filled in with `MapVirtualKeyA(vk, MAPVK_VK_TO_VSC)` for
+ *    cosmetic completeness only — a few low-level hooks read it for
+ *    diagnostics. `MapVirtualKeyA` itself is layout-aware (uses the
+ *    current thread's layout), so even the cosmetic value matches what a
+ *    real user keystroke would produce.
+ *
+ * If you ever switch to `KEYEVENTF_SCANCODE`, you MUST recompute `wScan`
+ * against the target window's layout via
+ * `MapVirtualKeyExA(vk, MAPVK_VK_TO_VSC_EX, GetKeyboardLayout(targetTid))`
+ * or you will break Ctrl+V for every non-US-QWERTY user. Don't do it
+ * without a reason; the current `wVk`-only path already covers that case.
+ */
 static void set_key(INPUT* input, WORD vk, DWORD flags) {
     input->type = INPUT_KEYBOARD;
     input->ki.wVk = vk;
