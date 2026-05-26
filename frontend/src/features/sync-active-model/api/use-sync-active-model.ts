@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useConnectionStore } from "@/entities/connection";
-import { useModelSwapStore } from "@/entities/model-catalog";
+import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { recentIpcLoadAt } from "@/shared/lib/ipc-load-timing";
 
@@ -167,13 +167,30 @@ export function useSyncActiveModel(): void {
 		prevSettingsModelRef.current = settingsModel;
 
 		if (shouldAdoptRuntimeModel(isLoaded, serverStatus, runtimeModel, settingsModel, activeMain)) {
+			// Look up the runtime model in the catalog so we can also patch
+			// `model.backend` to match. Without this, adoptRuntime only fixes
+			// `model.model` and leaves `model.backend` at whatever stale
+			// localStorage / schema-default value the renderer hydrated with
+			// (typically "faster_whisper"). The next disk save then writes
+			// {model: canary, backend: faster_whisper} — and the NEXT
+			// server spawn reads back that wrong pairing, passing
+			// `--backend faster_whisper` for a model whose native engine is
+			// onnx_asr. Server tolerates the mismatch but the picker shows
+			// confusing inconsistencies and any backend-conditional code
+			// downstream (quantization eligibility, fp16 promotion, …)
+			// reads the wrong answer.
+			const catalogEntry = useCatalogStore.getState().models.find((m) => m.id === runtimeModel);
+			const patch: Parameters<typeof updateModelSettings>[0] = { model: runtimeModel };
+			if (catalogEntry?.backend) {
+				patch.backend = catalogEntry.backend as "faster_whisper" | "onnx_asr";
+			}
 			// region agent log — H-S-C
 			// eslint-disable-next-line no-console
 			console.warn(
-				`[diag-tiny] useSyncActiveModel.adoptRuntime newSettings=${runtimeModel} oldSettings=${settingsModel ?? "(null)"} ts=${Date.now()}`
+				`[diag-tiny] useSyncActiveModel.adoptRuntime newSettings=${runtimeModel} oldSettings=${settingsModel ?? "(null)"} backend=${catalogEntry?.backend ?? "(unknown)"} ts=${Date.now()}`
 			);
 			// endregion
-			updateModelSettings({ model: runtimeModel });
+			updateModelSettings(patch);
 		}
 	}, [isLoaded, serverStatus, runtimeModel, settingsModel, updateModelSettings]);
 }

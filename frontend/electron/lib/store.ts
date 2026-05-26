@@ -326,6 +326,16 @@ export const store = new Store({
 			initialPrompt: "",
 			initialPromptRealtime: "",
 			translateToEnglish: false,
+			// Idle-timeout for unloading the ONNX session. Must be declared
+			// here so snapshotSettings("model").modelUnloadTimeout has a
+			// concrete value on disks that predate the field. Without it
+			// `checkForRestartNeeded` sees the renderer-schema default
+			// `"min5"` vs the store's `undefined` and fires a 500 ms
+			// restart timer on every fresh launch (kills the just-spawned
+			// server and respawns — visible as "Restarting Electron-managed
+			// STT server" right after `stt-server READY`). Matches the
+			// renderer's `modelSettingsSchema.modelUnloadTimeout` default.
+			modelUnloadTimeout: "min5",
 		},
 		quality: {
 			// Stryker disable next-line BooleanLiteral: equivalent — the migration block at L171 forces this to false regardless of the initial default

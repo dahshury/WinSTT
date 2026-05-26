@@ -10,7 +10,17 @@ import {
 	sttSetParameter,
 } from "@/shared/api/ipc-client";
 import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
-import { markIpcLoadResolved } from "@/shared/lib/ipc-load-timing";
+import { markIpcLoadResolved, recentIpcLoadAt } from "@/shared/lib/ipc-load-timing";
+
+// Window during which we treat any debounced disk save as "potentially
+// racing a setSettings(loaded) revert". When the debounce timer fires
+// within this window, we re-check the latest settings against the value
+// the IPC load just stamped — if they match a load-induced revert, the
+// save is suppressed (we'd otherwise persist whichever transient state
+// won the StrictMode-double-mount race, which has been the source of
+// the recurring "disk gets stale tiny" → "switching to tiny" loop).
+// Matches the guard in `useSyncActiveModel`.
+const SAVE_IPC_LOAD_GUARD_MS = 500;
 import { type SyncDeps, syncToServer } from "../lib/sync-actions";
 import {
 	advanceSkipRefs,
@@ -168,11 +178,37 @@ export function useSyncSettings(): void {
 		// Wrap `settingsSave` so `lastSavedRef` keeps tracking the canonical
 		// post-save baseline. The merge in `onSettingsChanged` uses this to
 		// decide which sections the user has unsaved changes in.
+		//
+		// IPC-load guard: when the debounce fires, re-check whether we're
+		// still inside the boot reconciliation window. If yes, the latest
+		// settings might be a transient revert from a setSettings(loaded)
+		// call that hasn't been re-corrected by adoptRuntime yet — saving
+		// here would persist stale state to disk (the original 'switching
+		// to tiny' death-spiral cause). useSyncActiveModel re-asserts the
+		// runtime value after the window closes; a later settings change
+		// will schedule a fresh save with the corrected value. The guard
+		// uses the shared module-level timestamp set in settingsLoad.then.
 		scheduleSave(
 			settings,
 			isModeChanged(settings, prev),
 			debounceRef,
 			(s) => {
+				const sinceIpcLoad = Date.now() - recentIpcLoadAt();
+				if (sinceIpcLoad < SAVE_IPC_LOAD_GUARD_MS) {
+					// region agent log — H-S-A/H-S-B
+					// eslint-disable-next-line no-console
+					console.warn(
+						`[diag-tiny] scheduleSave.skip ipcLoadGuard sinceIpcLoad=${sinceIpcLoad}ms model=${s.model?.model ?? "(none)"} ts=${Date.now()}`
+					);
+					// endregion
+					return;
+				}
+				// region agent log — H-S-A/H-S-B
+				// eslint-disable-next-line no-console
+				console.warn(
+					`[diag-tiny] scheduleSave.fire model=${s.model?.model ?? "(none)"} backend=${s.model?.backend ?? "(none)"} ts=${Date.now()}`
+				);
+				// endregion
 				settingsSave(s);
 				lastSavedRef.current = s;
 			},
