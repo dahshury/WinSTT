@@ -109,6 +109,27 @@ const diarizationToggleFailedSchema = z.object({
 	detail: z.string().optional(),
 });
 
+// Sentence-completion / endpoint detector — emitted by the smart-endpoint
+// pipeline (DistilBERT classifier or the punctuation-heuristic fallback) so
+// the UI can render the "thinking, hold on" indicator while the post-speech
+// silence is being judged.
+const startTurnDetectionSchema = z.object({
+	type: z.literal("start_turn_detection"),
+});
+
+const stopTurnDetectionSchema = z.object({
+	type: z.literal("stop_turn_detection"),
+});
+
+// Fires the moment the main transcribe job begins (audio bytes already
+// captured + queued). Carries the recorded PCM as a base64 blob so the
+// frontend can persist a copy under `userData/recordings/` for the history
+// feature without having to re-decode from disk.
+const transcriptionStartSchema = z.object({
+	type: z.literal("transcription_start"),
+	audio_bytes_base64: z.string().optional(),
+});
+
 // ── Union + public types ─────────────────────────────────────────────
 
 const serverEventSchema = z.discriminatedUnion("type", [
@@ -129,6 +150,9 @@ const serverEventSchema = z.discriminatedUnion("type", [
 	diarizationToggleStartedSchema,
 	diarizationToggleCompletedSchema,
 	diarizationToggleFailedSchema,
+	startTurnDetectionSchema,
+	stopTurnDetectionSchema,
+	transcriptionStartSchema,
 ]);
 
 export type WsServerEvent = z.infer<typeof serverEventSchema>;
@@ -152,6 +176,9 @@ export const SUPPORTED_EVENT_TYPES = [
 	"diarization_toggle_started",
 	"diarization_toggle_completed",
 	"diarization_toggle_failed",
+	"start_turn_detection",
+	"stop_turn_detection",
+	"transcription_start",
 ] as const;
 
 export type SupportedEventType = (typeof SUPPORTED_EVENT_TYPES)[number];
