@@ -25,6 +25,7 @@ import {
 	registerContextMenuIpcHandler,
 } from "./ipc/context-menu-handler";
 import { setupCredentials } from "./ipc/credentials";
+import { setupCustomModelsHandlers } from "./ipc/custom-models";
 import { setupDevicePickerHandlers } from "./ipc/device-picker-window";
 import { setupDiagBundleHandler } from "./ipc/diag-bundle";
 import { setupDialogHandlers } from "./ipc/dialog";
@@ -124,6 +125,7 @@ let cleanupOverlay: (() => void) | null = null;
 let cleanupSystemLocale: (() => void) | null = null;
 let cleanupDiagBundle: (() => void) | null = null;
 let cleanupAbout: (() => void) | null = null;
+let cleanupCustomModels: (() => void) | null = null;
 let cleanupSoundLibrary: (() => void) | null = null;
 let autoUpdateCheckTimer: ReturnType<typeof setInterval> | null = null;
 const secureIpcKey = generateIpcPayloadKey();
@@ -746,6 +748,8 @@ if (gotTheLock) {
 		cleanupDiagBundle = null;
 		cleanupAbout?.();
 		cleanupAbout = null;
+		cleanupCustomModels?.();
+		cleanupCustomModels = null;
 		cleanupSoundLibrary?.();
 		cleanupSoundLibrary = null;
 		disposeGeneralSettingsWatcher?.();
@@ -810,6 +814,7 @@ function setupGlobalIpcHandlers() {
 	cleanupSystemLocale = setupSystemLocaleHandler();
 	cleanupDiagBundle = setupDiagBundleHandler();
 	cleanupAbout = setupAboutHandlers();
+	cleanupCustomModels = setupCustomModelsHandlers();
 	cleanupSoundLibrary = initSoundLibrary();
 }
 

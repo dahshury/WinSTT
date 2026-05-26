@@ -370,6 +370,20 @@ def _resolve_log_dir(args_log_dir: str | None) -> Path | None:
     return Path(raw).expanduser()
 
 
+def _resolve_custom_models_dir(args_custom_dir: str | None) -> Path | None:
+    """Pick the custom-models scan dir: CLI flag wins, then ``WINSTT_CUSTOM_MODELS_DIR`` env var.
+
+    ``None`` (the default) tells :class:`ModelCatalog` to skip the scan
+    entirely. Electron passes the userData-anchored path on launch so the
+    scan and the "open custom models folder" action both target the same
+    on-disk location.
+    """
+    raw = args_custom_dir or os.environ.get("WINSTT_CUSTOM_MODELS_DIR")
+    if not raw:
+        return None
+    return Path(raw).expanduser()
+
+
 def _resolve_release() -> str | None:
     """Read the server's own package version for Sentry's ``release`` field."""
     try:
@@ -391,6 +405,17 @@ async def main_async() -> None:
         debug=bool(getattr(args, "debug", False)),
         release=_resolve_release(),
     )
+
+    # Wire the user-provided custom-models directory into the catalog
+    # before any catalog construction. Idempotent module-level config —
+    # subsequent ``ModelCatalog()`` calls (control_handler, bootstrap, …)
+    # all see the configured directory and surface the user's bundles.
+    from src.recorder.domain.model_registry import set_custom_models_dir
+
+    custom_dir = _resolve_custom_models_dir(getattr(args, "custom_models_dir", None))
+    if custom_dir is not None:
+        custom_dir.mkdir(parents=True, exist_ok=True)
+    set_custom_models_dir(custom_dir)
 
     # Seed the bundled offline base model into the HF cache before any
     # model load so the app transcribes with zero network on first run.

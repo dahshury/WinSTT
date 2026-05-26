@@ -1,10 +1,12 @@
 "use client";
 
 import { Combobox } from "@base-ui/react/combobox";
-import { ServerStack01Icon } from "@hugeicons/core-free-icons";
+import { FolderOpenIcon, ServerStack01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
+import { openCustomModelsFolder } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { cn } from "@/shared/lib/cn";
 import {
 	type AuthorGroup,
 	bundleVariants,
@@ -53,6 +55,37 @@ function AuthorLabel({ family }: { family: FamilyKey }) {
 			</span>
 			<span className="text-[10px] text-foreground-dim">· {config.label}</span>
 		</Combobox.GroupLabel>
+	);
+}
+
+/**
+ * Footer row for the "custom" family group: a CTA that opens the on-disk
+ * drop folder. Lives inside the group so it scrolls with the custom-models
+ * section and stays out of the way for users who don't use custom models.
+ */
+function OpenCustomModelsFolderRow() {
+	const handleOpen = () => {
+		// Fire-and-forget; the main process toasts on failure (rare — would
+		// require the OS shell to reject opening %APPDATA%). We deliberately
+		// don't await because the click handler doesn't need to block.
+		// Biome's noVoid rule blocks `void promise` so chain a noop ``then``
+		// to mark the dangling-promise as intentional.
+		openCustomModelsFolder().catch(() => undefined);
+	};
+	return (
+		<button
+			className={cn(
+				"mx-2 my-1 flex cursor-pointer items-center gap-2 rounded-md border border-border border-dashed",
+				"bg-surface-secondary/30 px-3 py-2.5 text-foreground-secondary text-sm outline-none transition-colors",
+				"hover:border-border-hover hover:bg-surface-hover/50 hover:text-foreground"
+			)}
+			onClick={handleOpen}
+			type="button"
+		>
+			<HugeiconsIcon className="size-4 shrink-0" icon={FolderOpenIcon} />
+			<span className="flex-1 truncate text-left">Open custom models folder</span>
+			<span className="text-[10px] text-foreground-dim">Drop HuggingFace ONNX bundles here</span>
+		</button>
 	);
 }
 
@@ -110,6 +143,7 @@ export function SttModelList({
 									systemInfo={systemInfo}
 								/>
 							))}
+							{group.value === "custom" ? <OpenCustomModelsFolderRow /> : null}
 						</Combobox.Group>
 					);
 				}}

@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
-from src.recorder.domain.model_registry import ModelCatalog, ModelInfo, TranscriberBackend
+from src.recorder.domain.custom_models import CustomModelEntry
+from src.recorder.domain.model_registry import (
+    CUSTOM_MODEL_FAMILY,
+    ModelCatalog,
+    ModelInfo,
+    TranscriberBackend,
+    get_custom_models_dir,
+    set_custom_models_dir,
+)
 
 WHISPER_IDS = [
     "tiny",
@@ -405,3 +414,232 @@ class TestModelCatalog:
 
     def test_is_universal_constrained_known_model(self, catalog: ModelCatalog) -> None:
         assert catalog._is_universal("gigaam-v3-ctc", "en") is False
+
+
+def _fake_path(slug: str) -> Path:
+    """Cross-platform fake path used by tests that never touch the filesystem."""
+    return Path("/fake") / "custom" / slug
+
+
+def _make_entry(
+    slug: str,
+    *,
+    valid: bool = True,
+    display_name: str | None = None,
+    description: str = "",
+    error_message: str = "",
+    config: dict[str, object] | None = None,
+    path: Path | None = None,
+) -> CustomModelEntry:
+    """Concise factory used by the custom-model registry tests."""
+    return CustomModelEntry(
+        slug=slug,
+        path=path or _fake_path(slug),
+        valid=valid,
+        display_name=display_name or slug,
+        description=description or f"Custom model in {_fake_path(slug)}",
+        error_message=error_message,
+        config=config or {},
+    )
+
+
+class TestCustomModelsInCatalog:
+    """ModelCatalog folds scanned custom-model entries alongside catalog.json."""
+
+    def test_valid_custom_entry_registered_with_custom_family(self) -> None:
+        def scanner(_: Path | str | None) -> list[CustomModelEntry]:
+            return [_make_entry("my-whisper", display_name="My Whisper")]
+
+        catalog = ModelCatalog(custom_models_dir="/fake/custom", custom_scanner=scanner)
+        info = catalog.get("custom-my-whisper")
+        assert info is not None
+        assert info.family == CUSTOM_MODEL_FAMILY
+        assert info.display_name == "My Whisper"
+        assert info.available is True
+        assert info.error_message == ""
+        assert info.local_path == str(_fake_path("my-whisper"))
+        # Custom models route through onnx-asr at runtime; the catalog
+        # tags them accordingly so the bootstrap loader takes the local
+        # path branch.
+        assert info.backend == TranscriberBackend.ONNX_ASR
+        assert info.supports_realtime is True
+
+    def test_invalid_custom_entry_surfaces_as_unavailable_with_error(self) -> None:
+        def scanner(_: Path | str | None) -> list[CustomModelEntry]:
+            return [
+                _make_entry(
+                    "broken",
+                    valid=False,
+                    error_message="missing tokenizer.json in broken",
+                    description="Broken custom model in /fake/custom/broken: missing tokenizer.json in broken",
+                ),
+            ]
+
+        catalog = ModelCatalog(custom_models_dir="/fake/custom", custom_scanner=scanner)
+        info = catalog.get("custom-broken")
+        assert info is not None
+        assert info.available is False
+        assert info.error_message == "missing tokenizer.json in broken"
+        # Broken entries still surface so the UI can grey them out — the
+        # alternative (silently hiding the folder) leaves the user
+        # wondering why their drop didn't appear.
+        assert info.family == CUSTOM_MODEL_FAMILY
+
+    def test_no_custom_dir_skips_scan(self) -> None:
+        calls: list[Path | str | None] = []
+
+        def scanner(directory: Path | str | None) -> list[CustomModelEntry]:
+            calls.append(directory)
+            return []
+
+        catalog = ModelCatalog(custom_models_dir=None, custom_scanner=scanner)
+        # No custom-* entries when the directory is None — the scanner
+        # should not have been called at all.
+        assert not [m for m in catalog.list_all() if m.family == CUSTOM_MODEL_FAMILY]
+        assert calls == []
+
+    def test_to_dicts_includes_custom_entry_fields(self) -> None:
+        def scanner(_: Path | str | None) -> list[CustomModelEntry]:
+            return [_make_entry("acme", display_name="Acme Voice")]
+
+        catalog = ModelCatalog(custom_models_dir="/fake/custom", custom_scanner=scanner)
+        dicts = catalog.to_dicts()
+        row = next(d for d in dicts if d["id"] == "custom-acme")
+        assert row["family"] == CUSTOM_MODEL_FAMILY
+        assert row["available"] is True
+        assert row["error_message"] == ""
+        assert row["local_path"] == str(_fake_path("acme"))
+
+    def test_to_dicts_includes_broken_entry_fields(self) -> None:
+        def scanner(_: Path | str | None) -> list[CustomModelEntry]:
+            return [
+                _make_entry(
+                    "halfbroken",
+                    valid=False,
+                    error_message="missing decoder_model.onnx in halfbroken",
+                )
+            ]
+
+        catalog = ModelCatalog(custom_models_dir="/fake/custom", custom_scanner=scanner)
+        row = next(d for d in catalog.to_dicts() if d["id"] == "custom-halfbroken")
+        assert row["available"] is False
+        assert row["error_message"] == "missing decoder_model.onnx in halfbroken"
+        assert row["local_path"] == str(_fake_path("halfbroken"))
+
+    def test_shipped_entries_keep_available_true_and_no_local_path(self) -> None:
+        catalog = ModelCatalog(custom_models_dir=None)
+        tiny = catalog.get("tiny")
+        assert tiny is not None
+        assert tiny.available is True
+        assert tiny.local_path is None
+        assert tiny.error_message == ""
+
+    def test_multiple_custom_entries_all_registered(self) -> None:
+        def scanner(_: Path | str | None) -> list[CustomModelEntry]:
+            return [
+                _make_entry("first"),
+                _make_entry("second"),
+                _make_entry("third", valid=False, error_message="missing encoder.onnx in third"),
+            ]
+
+        catalog = ModelCatalog(custom_models_dir="/fake/custom", custom_scanner=scanner)
+        ids = {m.id for m in catalog.list_all() if m.family == CUSTOM_MODEL_FAMILY}
+        assert ids == {"custom-first", "custom-second", "custom-third"}
+
+
+class TestCustomModelsDirGlobal:
+    """``set_custom_models_dir`` / ``get_custom_models_dir`` module-level config."""
+
+    def test_default_is_none(self) -> None:
+        # Tests that touch the module-level config must restore it afterwards
+        # so they don't bleed state into one another — the body uses a
+        # try/finally for that.
+        original = get_custom_models_dir()
+        try:
+            set_custom_models_dir(None)
+            assert get_custom_models_dir() is None
+        finally:
+            set_custom_models_dir(original)
+
+    def test_set_and_get_round_trip(self) -> None:
+        original = get_custom_models_dir()
+        try:
+            set_custom_models_dir("/some/path")
+            got = get_custom_models_dir()
+            assert got is not None
+            assert got == Path("/some/path")
+        finally:
+            set_custom_models_dir(original)
+
+    def test_set_none_disables(self) -> None:
+        original = get_custom_models_dir()
+        try:
+            set_custom_models_dir("/some/path")
+            set_custom_models_dir(None)
+            assert get_custom_models_dir() is None
+        finally:
+            set_custom_models_dir(original)
+
+    def test_catalog_uses_module_default_when_kwarg_missing(self) -> None:
+        """``ModelCatalog()`` with no kwargs picks up the module-level dir."""
+
+        def scanner(_: Path | str | None) -> list[CustomModelEntry]:
+            return [_make_entry("from-default")]
+
+        original = get_custom_models_dir()
+        try:
+            set_custom_models_dir("/default/scan/dir")
+            catalog = ModelCatalog(custom_scanner=scanner)
+            assert catalog.get("custom-from-default") is not None
+        finally:
+            set_custom_models_dir(original)
+
+    def test_default_scanner_resolves_to_infrastructure_implementation(self, tmp_path: Path) -> None:
+        """Without an explicit ``custom_scanner`` we lazily import the infrastructure scanner.
+
+        Domain code must not import infrastructure at module load (would
+        break the hexagonal contract); the lookup happens inside
+        :func:`_get_default_scanner` and is exercised by passing an empty
+        directory so the real scanner runs and returns ``[]``.
+        """
+        original = get_custom_models_dir()
+        try:
+            set_custom_models_dir(tmp_path)  # empty tmpdir = no entries
+            catalog = ModelCatalog()
+            # No custom entries — the directory is empty — but the real
+            # scanner was wired and called, covering the lazy import path.
+            assert [m for m in catalog.list_all() if m.family == CUSTOM_MODEL_FAMILY] == []
+        finally:
+            set_custom_models_dir(original)
+
+
+class TestModelInfoCustomFields:
+    """The new ``available`` / ``error_message`` / ``local_path`` fields."""
+
+    def test_defaults_are_backward_compatible(self) -> None:
+        info = ModelInfo(
+            id="x",
+            display_name="X",
+            backend=TranscriberBackend.ONNX_ASR,
+            family="x",
+        )
+        # Pre-existing constructors (mypy --strict + ruff already passed
+        # them as kwargs) must keep working — the new fields default to
+        # the "shipped catalog row" semantics.
+        assert info.available is True
+        assert info.error_message == ""
+        assert info.local_path is None
+
+    def test_custom_fields_round_trip(self) -> None:
+        info = ModelInfo(
+            id="custom-x",
+            display_name="X",
+            backend=TranscriberBackend.ONNX_ASR,
+            family=CUSTOM_MODEL_FAMILY,
+            available=False,
+            error_message="missing tokenizer.json in x",
+            local_path="/path/to/x",
+        )
+        assert info.available is False
+        assert info.error_message == "missing tokenizer.json in x"
+        assert info.local_path == "/path/to/x"

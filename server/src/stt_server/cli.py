@@ -605,6 +605,21 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
 
+    parser.add_argument(
+        "--custom-models-dir",
+        "--custom_models_dir",
+        type=str,
+        default=None,
+        help=(
+            "Directory whose immediate subfolders are scanned at startup for "
+            "user-provided ONNX Whisper model bundles. Each subfolder must "
+            "contain encoder.onnx / decoder_model.onnx / tokenizer.json / "
+            "config.json (HuggingFace-style layout). Falls back to the "
+            "WINSTT_CUSTOM_MODELS_DIR environment variable. Custom models "
+            "appear in the picker under a 'Custom' section."
+        ),
+    )
+
     # ─── TTS ────────────────────────────────────────────────────────────
     parser.add_argument(
         "--tts-voice",

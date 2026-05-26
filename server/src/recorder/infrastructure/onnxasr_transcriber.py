@@ -342,6 +342,7 @@ class OnnxAsrTranscriber(ITranscriber):
         quantization: str | None = None,
         providers: list[str | tuple[str, dict[str, str]]] | None = None,
         on_download_progress: Callable[[DownloadProgress], None] | None = None,
+        local_path: str | None = None,
         segment_with_vad: bool = True,
         normalize_audio: bool = True,
     ) -> None:
@@ -356,6 +357,13 @@ class OnnxAsrTranscriber(ITranscriber):
             kwargs["providers"] = providers_tuple
         if on_download_progress is not None:
             kwargs["progress_callback"] = _make_progress_adapter(model_name, on_download_progress)
+        # User-provided custom-model bundles go through ``path=`` so the
+        # HF resolver is bypassed and onnx-asr loads weights from the local
+        # directory directly. The model_name still drives onnx-asr's
+        # adapter selection (e.g. "whisper" vs "nemo") but the file IO is
+        # local-only — no network calls, no cache entries created.
+        if local_path is not None:
+            kwargs["path"] = local_path
         # Explicit fp16 selection on Whisper-family ONNX needs two
         # accommodations for the onnx-community export defects: lowered
         # session optimization to dodge an ORT SimplifiedLayerNormFusion

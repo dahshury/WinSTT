@@ -3,7 +3,7 @@ title: Available Models
 description: Overview of all supported speech recognition models
 ---
 
-WinSTT supports 30+ speech recognition models across six families: **whisper**, **lite-whisper**, **nemo**, **gigaam**, **kaldi**, and **t-one**.
+WinSTT supports 30+ first-party speech recognition models across six families — **whisper**, **lite-whisper**, **nemo**, **gigaam**, **kaldi**, and **t-one** — plus user-provided **custom** ONNX bundles dropped into the dedicated `models/custom/` folder.
 
 ## One ONNX Engine
 
@@ -36,3 +36,32 @@ Numerical precision is controlled by the `onnxQuantization` setting. An empty st
     ONNX quantization options that trade quality for speed and memory savings.
   </Card>
 </Cards>
+
+## Custom Models
+
+Drop a HuggingFace-style ONNX Whisper export into `{userData}/models/custom/{slug}/` and WinSTT will surface it in the picker on the next restart under the **Custom** group. The picker's "Open custom models folder" button takes you straight there — no need to hunt down the `%APPDATA%` path by hand.
+
+### Folder contract
+
+Each subfolder you drop becomes a single picker entry whose id is `custom-{slug}`. The slug is the folder name; we use the trailing path segment of `_name_or_path` from `config.json` for the display label when present, otherwise we title-case the slug.
+
+A folder is registered as **valid** when it contains all of the following:
+
+| File | Required | Notes |
+|---|---|---|
+| `encoder.onnx` **or** `encoder_model.onnx` | yes | Either filename is accepted (Optimum-style or onnx-community-style export). |
+| `decoder_model.onnx` **or** `decoder_model_merged.onnx` | yes | Merged-decoder graphs are preferred. |
+| `tokenizer.json` | yes | HuggingFace tokenizers JSON format. The legacy `vocab.json` + `merges.txt` pair is **not** accepted. |
+| `config.json` | yes | Must be a JSON object containing a non-empty `model_type` string. The optional `_name_or_path` drives the display label. |
+| `preprocessor_config.json` | no | Picked up automatically by onnx-asr if present. |
+| `generation_config.json` | no | Picked up automatically by onnx-asr if present. |
+
+### Broken drops
+
+Folders that fail the contract still appear in the picker, greyed out, with a tooltip explaining what's missing (e.g. `Unavailable: missing tokenizer.json in my-export`). This makes a partial download / wrong export layout obvious at a glance, instead of leaving you wondering why your folder didn't show up.
+
+### Caveats
+
+- WinSTT does not auto-quantize custom models. Use whatever precision you exported — the picker only offers the default (un-suffixed) graph for `custom-*` entries.
+- Custom models bypass the hardware-fit check because we don't know the parameter count without loading the weights. If your model exceeds the GPU's VRAM, ONNX Runtime will fail to create the session at load time.
+- Custom models are local-only — they do not appear in `list_models_with_state`'s download/cache metadata because they are already on disk.

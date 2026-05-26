@@ -282,6 +282,21 @@ function applyLogDirFlag(args: string[]): void {
 	}
 }
 
+/**
+ * Append `--custom-models-dir <userData>/models/custom` so the Python server
+ * scans that folder for user-provided ONNX whisper bundles. The directory
+ * itself is created lazily server-side on first scan, so we just propagate
+ * the path here — Electron doesn't need to ensure it exists ahead of time.
+ */
+function applyCustomModelsDirFlag(args: string[]): void {
+	try {
+		const customDir = path.join(app.getPath("userData"), "models", "custom");
+		args.push("--custom-models-dir", customDir);
+	} catch {
+		// userData may not be available pre-app-ready — skip silently.
+	}
+}
+
 function applySettingsToCliFlags(args: string[]): void {
 	for (const [storePath, cliFlag] of SETTINGS_TO_CLI) {
 		applyStoreTrueFlag(args, getStoreRaw(storePath), cliFlag);
@@ -306,6 +321,7 @@ function applyDerivedFlags(args: string[]): void {
 	applyWakeWordFlags(args);
 	applyInitialPromptFlags(args);
 	applyLogDirFlag(args);
+	applyCustomModelsDirFlag(args);
 }
 
 /** Read all relevant settings from electron-store and convert to CLI args */

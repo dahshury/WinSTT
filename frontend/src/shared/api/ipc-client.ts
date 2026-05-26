@@ -1230,6 +1230,19 @@ export interface DiagSaveBundleResult {
 export const diagSaveBundle = (): Promise<DiagSaveBundleResult> =>
 	invokeOrDefault(IPC.DIAG_SAVE_BUNDLE, { ok: false, error: "IPC unavailable" });
 
+// ── Custom models folder ─────────────────────────────────────────────
+// Open the user's custom-models drop folder (`{userData}/models/custom/`)
+// in the OS file manager so they can drag in HuggingFace-style ONNX
+// bundles. The directory is created lazily here on first click.
+export interface OpenCustomModelsFolderResult {
+	error?: string;
+	ok: boolean;
+	path?: string;
+}
+
+export const openCustomModelsFolder = (): Promise<OpenCustomModelsFolderResult> =>
+	invokeOrDefault(IPC.CUSTOM_MODELS_OPEN_FOLDER, { ok: false, error: "IPC unavailable" });
+
 // ── About / licenses ────────────────────────────────────────────────
 export interface AboutAppInfo {
 	copyright: string;

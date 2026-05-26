@@ -210,6 +210,11 @@ const CARD_BASE = cn(
 );
 const CARD_SELECTED = "border-accent/50 bg-accent/[0.08] ring-1 ring-accent/25";
 
+/** Class fragment that desaturates a broken custom-model card without
+ *  changing the dimensions — keeps the picker layout stable while making
+ *  the unavailable state obvious. */
+const CARD_UNAVAILABLE = "cursor-not-allowed opacity-60 hover:bg-surface-secondary/50";
+
 export function SttModelCard({
 	model,
 	state,
@@ -220,10 +225,21 @@ export function SttModelCard({
 	actions,
 }: SttModelCardProps) {
 	const isSelected = model.id === selectedId;
+	const isUnavailable = model.available === false;
 	const bytes = formatBytes(state?.estimated_bytes ?? 0);
 	const segments = buildAttributeSegments(model, state, systemInfo);
+	// Broken custom drops surface the scanner's error verbatim — much more
+	// useful than a generic "couldn't load" toast. The label itself is
+	// already shown; the tooltip explains *why* the card is greyed out.
+	const title =
+		isUnavailable && model.errorMessage ? `Unavailable: ${model.errorMessage}` : undefined;
 	return (
-		<Combobox.Item className={cn(CARD_BASE, isSelected && CARD_SELECTED)} value={model}>
+		<Combobox.Item
+			className={cn(CARD_BASE, isSelected && CARD_SELECTED, isUnavailable && CARD_UNAVAILABLE)}
+			disabled={isUnavailable}
+			title={title}
+			value={model}
+		>
 			<div className="flex items-center justify-between gap-2.5">
 				<div className="flex min-w-0 items-center gap-2">
 					{isSelected ? (
@@ -232,17 +248,27 @@ export function SttModelCard({
 					<span className="truncate font-semibold text-body-sm leading-tight">
 						{variantLabel(model)}
 					</span>
-					<Tooltip content={`${model.sizeLabel} parameters`} side="top">
-						<span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-foreground-muted tabular-nums">
-							<HugeiconsIcon className="size-3" icon={Atom01Icon} />
-							{model.sizeLabel}
-						</span>
-					</Tooltip>
+					{model.sizeLabel ? (
+						<Tooltip content={`${model.sizeLabel} parameters`} side="top">
+							<span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-foreground-muted tabular-nums">
+								<HugeiconsIcon className="size-3" icon={Atom01Icon} />
+								{model.sizeLabel}
+							</span>
+						</Tooltip>
+					) : null}
 					{bytes ? (
 						<Tooltip content={`Download size: ${bytes}`} side="top">
 							<span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-foreground-dim tabular-nums">
 								<HugeiconsIcon className="size-3" icon={HardDriveDownloadIcon} />
 								{bytes}
+							</span>
+						</Tooltip>
+					) : null}
+					{isUnavailable ? (
+						<Tooltip content={model.errorMessage || "Unavailable"} side="top">
+							<span className="inline-flex shrink-0 items-center gap-1 rounded bg-error/15 px-1.5 py-0.5 font-medium text-[10px] text-error">
+								<HugeiconsIcon className="size-3" icon={AlertCircleIcon} />
+								Broken
 							</span>
 						</Tooltip>
 					) : null}
@@ -252,13 +278,15 @@ export function SttModelCard({
 					{actions}
 				</div>
 			</div>
-			<PrecisionGroup
-				currentQuantization={currentQuantization}
-				isSelectedModel={isSelected}
-				model={model}
-				onSelect={onSelect}
-				state={state}
-			/>
+			{isUnavailable ? null : (
+				<PrecisionGroup
+					currentQuantization={currentQuantization}
+					isSelectedModel={isSelected}
+					model={model}
+					onSelect={onSelect}
+					state={state}
+				/>
+			)}
 		</Combobox.Item>
 	);
 }

@@ -595,6 +595,7 @@ components:
         - gigaam
         - kaldi
         - t-one
+        - custom
 
     ModelInfo:
       type: object
@@ -627,6 +628,27 @@ components:
           type: array
           items:
             type: string
+        available:
+          type: boolean
+          description: |
+            `true` for every shipped catalog entry. `false` only for
+            user-provided custom-model folders that failed the discovery
+            contract — the UI greys these out and shows `errorMessage`
+            as a tooltip.
+          default: true
+        errorMessage:
+          type: string
+          description: |
+            Non-empty only on broken custom-model entries. Surfaces the
+            scanner's failure reason (e.g. "missing tokenizer.json") so
+            the user can fix their drop without inspecting the folder.
+          default: ""
+        localPath:
+          type: string
+          nullable: true
+          description: |
+            Absolute path to the user-provided model folder for custom
+            entries; `null` for shipped catalog rows.
 
     LoopbackDevice:
       type: object

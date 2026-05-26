@@ -3,6 +3,7 @@ import {
 	AudioWave02Icon,
 	CpuIcon,
 	FlashIcon,
+	FolderLibraryIcon,
 	Radio01Icon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
@@ -57,6 +58,12 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
 		logoSrc: "/provider-icons/t-tech.png",
 	},
+	custom: {
+		icon: FolderLibraryIcon,
+		label: "Custom",
+		chip: "bg-slate-500/15 text-slate-600 dark:text-slate-400",
+		// No brand logo — these are user-provided drops, not first-party models.
+	},
 };
 
 export function getFamilyConfig(family: FamilyKey): FamilyConfig {
@@ -71,6 +78,7 @@ const FAMILY_AUTHOR: Record<FamilyKey, string> = {
 	gigaam: "Sber Salute",
 	kaldi: "Alpha Cephei",
 	"t-one": "T-Tech",
+	custom: "Your Models",
 };
 
 export function getAuthorLabel(family: FamilyKey): string {
@@ -89,6 +97,7 @@ const FAMILY_SEARCH_ALIASES: Record<FamilyKey, string[]> = {
 	gigaam: ["sber", "salute", "sberbank", "sberdevices", "salutedevices"],
 	kaldi: ["alpha cephei", "alphacephei", "vosk"],
 	"t-one": ["t-tech", "t tech", "t-bank", "tinkoff", "tbank"],
+	custom: ["custom", "user", "local", "byo", "bring your own"],
 };
 
 /**

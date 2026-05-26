@@ -276,6 +276,9 @@ export const IPC = {
 	DIAG_OPEN_LOGS_FOLDER: "diag:open-logs-folder",
 	DIAG_SAVE_BUNDLE: "diag:save-bundle",
 
+	// Custom-models management (renderer → main)
+	CUSTOM_MODELS_OPEN_FOLDER: "custom-models:open-folder",
+
 	// About panel (renderer → main) — reads the bundled LICENSE and
 	// THIRD_PARTY_NOTICES.md so the Settings → About tab can render them
 	// without having to ship the text inside the renderer bundle.
@@ -529,6 +532,9 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	// Diagnostics bundle (renderer → main)
 	[IPC.DIAG_OPEN_LOGS_FOLDER]: ["invoke"],
 	[IPC.DIAG_SAVE_BUNDLE]: ["invoke"],
+
+	// Custom-models management (renderer → main)
+	[IPC.CUSTOM_MODELS_OPEN_FOLDER]: ["invoke"],
 
 	// About panel
 	[IPC.ABOUT_GET_LICENSE]: ["invoke"],

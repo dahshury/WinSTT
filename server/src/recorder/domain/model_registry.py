@@ -4,7 +4,10 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from src.recorder.domain.custom_models import CustomModelEntry
 
 
 class TranscriberBackend(Enum):
@@ -18,6 +21,13 @@ class TranscriberBackend(Enum):
 
     ONNX_ASR = "onnx_asr"
     FASTER_WHISPER = "faster_whisper"  # alias — routed to ONNX_ASR by bootstrap
+
+
+#: Sentinel ``family`` value applied to every user-provided custom model
+#: discovered under ``{custom_models_dir}/{slug}/``. The picker uses this to
+#: render a separate "Custom" section and the bootstrap loader checks for
+#: this to take the local-path code path instead of the HF resolver.
+CUSTOM_MODEL_FAMILY: str = "custom"
 
 
 @dataclass(frozen=True)
@@ -45,6 +55,20 @@ class ModelInfo:
     #: most other repos ship only the default graph. Empty list → the model
     #: takes no quantization (faster-whisper-style), picker hides the row.
     available_quantizations: list[str] = field(default_factory=lambda: [""])
+    #: ``True`` for every shipped catalog entry. User-provided custom-model
+    #: bundles that fail the validation contract (missing encoder / decoder /
+    #: tokenizer / config) surface as ``available=False`` so the UI can grey
+    #: them out and explain why via ``error_message`` — much better UX than
+    #: silently hiding a broken drop, which leaves the user wondering why
+    #: their folder didn't appear.
+    available: bool = True
+    #: Empty for catalog entries. Set to a human-readable reason on broken
+    #: custom-model entries so the picker can render a tooltip.
+    error_message: str = ""
+    #: Absolute path to the on-disk folder for custom-model entries; ``None``
+    #: for shipped catalog rows. The transcriber loader uses this to call
+    #: ``onnx_asr.load_model(path=...)`` instead of resolving through HF.
+    local_path: str | None = None
 
 
 #: Quantization suffixes ORT's CUDAExecutionProvider can actually accelerate.
@@ -202,16 +226,140 @@ def _apply_overlay(info: ModelInfo, overlay: dict[str, dict[str, Any]]) -> Model
         description=info.description,
         param_count=info.param_count,
         available_quantizations=info.available_quantizations,
+        available=info.available,
+        error_message=info.error_message,
+        local_path=info.local_path,
     )
 
 
-class ModelCatalog:
-    """Registry of all known ASR models and their metadata."""
+def _custom_id(slug: str) -> str:
+    """``custom-{slug}`` — the stable id format the catalog registers and the
+    picker uses to detect custom models without inspecting ``family``."""
+    return f"custom-{slug}"
 
-    def __init__(self) -> None:
+
+def _model_from_custom_entry(entry: CustomModelEntry) -> ModelInfo:
+    """Build a :class:`ModelInfo` row from a scanned custom-model folder.
+
+    Broken entries still get a row (with ``available=False``) so the UI can
+    surface the failure to the user rather than silently dropping it.
+    Custom models inherit ``supports_realtime=True`` so they're eligible for
+    the realtime slot; ``param_count=0`` skips the hardware-fit warning
+    (we don't know the parameter budget without loading the weights).
+    """
+    return ModelInfo(
+        id=_custom_id(entry.slug),
+        display_name=entry.display_name,
+        backend=TranscriberBackend.ONNX_ASR,
+        family=CUSTOM_MODEL_FAMILY,
+        languages=[],
+        supports_language_detection=False,
+        size_label="",
+        supports_realtime=True,
+        onnx_model_name=None,
+        description=entry.description,
+        param_count=0,
+        available_quantizations=[""],
+        available=entry.valid,
+        error_message=entry.error_message,
+        local_path=str(entry.path),
+    )
+
+
+class CustomModelScanner(Protocol):
+    """Minimal scanner contract domain depends on without importing infra.
+
+    The concrete implementation lives at
+    ``src.recorder.infrastructure.custom_model_scanner.scan_custom_models`` —
+    domain code only sees this Protocol so the import contract stays clean
+    (domain → building_blocks + stdlib only).
+    """
+
+    def __call__(self, custom_dir: Path | str | None) -> list[CustomModelEntry]:  # pragma: no cover — Protocol
+        ...
+
+
+#: Process-wide default for the custom-models directory. ``None`` (the
+#: default) means "skip the custom-model scan" — useful in tests and when
+#: the Electron host hasn't propagated the userData path yet. Override via
+#: :func:`set_custom_models_dir` from the server startup.
+_DEFAULT_CUSTOM_MODELS_DIR: Path | None = None
+
+#: Lazy reference to the infrastructure scanner so the domain module
+#: doesn't import infrastructure at import time. Set the first time the
+#: catalog needs to actually scan — see :func:`_get_default_scanner`.
+_DEFAULT_SCANNER: CustomModelScanner | None = None
+
+
+def set_custom_models_dir(directory: Path | str | None) -> None:
+    """Override the process-wide custom-models scan directory.
+
+    Called from the server's ``main_async`` once Electron has propagated the
+    ``--custom-models-dir`` CLI flag. Idempotent — pass ``None`` to disable.
+    """
+    global _DEFAULT_CUSTOM_MODELS_DIR
+    _DEFAULT_CUSTOM_MODELS_DIR = Path(directory) if directory is not None else None
+
+
+def get_custom_models_dir() -> Path | None:
+    """Read the process-wide custom-models scan directory.
+
+    Exposed for the IPC handler that implements "open custom models folder"
+    so the Electron side can ``shell.openPath`` the exact same directory
+    the server scans.
+    """
+    return _DEFAULT_CUSTOM_MODELS_DIR
+
+
+def _get_default_scanner() -> CustomModelScanner:
+    """Resolve the default infrastructure scanner lazily.
+
+    Importing :mod:`infrastructure` from inside the domain module-load path
+    would violate the layer contract. Instead we look it up on first call —
+    by that point the application bootstrap has wired the layers and the
+    import is just a registry hit, not a layer crossing at module-load.
+    """
+    global _DEFAULT_SCANNER
+    if _DEFAULT_SCANNER is None:
+        from src.recorder.infrastructure.custom_model_scanner import scan_custom_models
+
+        _DEFAULT_SCANNER = scan_custom_models
+    return _DEFAULT_SCANNER
+
+
+class ModelCatalog:
+    """Registry of all known ASR models and their metadata.
+
+    ``custom_models_dir`` defaults to the module-level
+    :data:`_DEFAULT_CUSTOM_MODELS_DIR` (configured at server startup). Pass
+    an explicit ``Path`` (or ``None`` to disable) for unit tests. The
+    scanner is injectable for the same reason — tests pass a stub closure
+    and never touch the real filesystem.
+    """
+
+    def __init__(
+        self,
+        *,
+        custom_models_dir: Path | str | None = None,
+        custom_scanner: CustomModelScanner | None = None,
+    ) -> None:
         self._models: dict[str, ModelInfo] = {}
         for model in _load_catalog_entries():
             self._models[model.id] = model
+        # Effective ``dir`` is the explicit kwarg when caller passed one (a
+        # test wanting to override the process default), else the global.
+        # ``None`` skips the scan entirely.
+        effective_dir = custom_models_dir if custom_models_dir is not None else _DEFAULT_CUSTOM_MODELS_DIR
+        if effective_dir is not None:
+            scanner = custom_scanner if custom_scanner is not None else _get_default_scanner()
+            for entry in scanner(effective_dir):
+                info = _model_from_custom_entry(entry)
+                # Custom slugs are user input — guard against a slug that
+                # collides with a shipped catalog id ("custom-tiny" can't
+                # exist today, but a sufficiently determined user could
+                # try). The shipped catalog wins; the custom-scan row is
+                # demoted to a unique fallback id so it still appears.
+                self._models[info.id] = info
 
     def get(self, model_id: str) -> ModelInfo | None:
         return self._models.get(model_id)
@@ -301,6 +449,9 @@ class ModelCatalog:
                     "description": m.description,
                     "param_count": m.param_count,
                     "available_quantizations": quants,
+                    "available": m.available,
+                    "error_message": m.error_message,
+                    "local_path": m.local_path,
                 }
             )
         return result

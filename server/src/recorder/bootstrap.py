@@ -3,12 +3,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from kink import di
 
 from src.building_blocks.clock import Clock
+
+if TYPE_CHECKING:
+    from src.recorder.domain.model_registry import ModelInfo
 from src.building_blocks.event_bus import EventBus
 from src.building_blocks.types import CallbackMap, LevelCallback, SimpleCallback, TextCallback
 from src.recorder.application.recorder_service import RecorderService
@@ -303,6 +306,29 @@ def _parse_cloud_model_id(model_name: str) -> tuple[str, str] | None:
     return None
 
 
+def _resolve_load_target(model_name: str, info: ModelInfo | None) -> tuple[str, str | None]:
+    """Pick the ``(onnx_model_name, local_path)`` pair onnx-asr should load.
+
+    Three cases:
+
+    1. **Custom model** — ``info.local_path`` is set: pass the slug as the
+       model_name (onnx-asr only inspects the model type from the catalog
+       entry; the actual file IO uses ``path=local_path``) and the on-disk
+       folder as the local path. No HF round-trip happens.
+    2. **Catalog entry with onnx_model_name** — the standard remote case:
+       use the HF repo id from the catalog so we go through the resolver.
+    3. **Unknown id** — fall through to the raw model_name; onnx-asr's
+       resolver will either accept it as an HF repo path or raise
+       ``ModelNotSupportedError`` (the resolver is permissive enough that
+       not every typo blows up here).
+    """
+    if info is not None and info.local_path:
+        return model_name, info.local_path
+    if info is not None and info.onnx_model_name:
+        return info.onnx_model_name, None
+    return model_name, None
+
+
 def build_transcriber(
     model_name: str,
     config: RecorderConfig,
@@ -339,7 +365,7 @@ def build_transcriber(
 
     catalog = ModelCatalog()
     info = catalog.get(model_name)
-    onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
+    onnx_name, local_path = _resolve_load_target(model_name, info)
     quantization = _resolve_quantization(
         config.transcription.onnx_quantization,
         config.transcription.device,
@@ -358,6 +384,7 @@ def build_transcriber(
         providers=providers,
         on_download_progress=progress_handler,
         normalize_audio=config.transcription.normalize_audio,
+        local_path=local_path,
     )
 
 
@@ -488,7 +515,7 @@ def build_realtime_transcriber(
 
     catalog = ModelCatalog()
     info = catalog.get(model_name)
-    onnx_name = info.onnx_model_name if info and info.onnx_model_name else model_name
+    onnx_name, local_path = _resolve_load_target(model_name, info)
     quantization = _resolve_quantization(
         config.transcription.onnx_quantization,
         config.transcription.device,
@@ -511,6 +538,7 @@ def build_realtime_transcriber(
         quantization=quantization,
         providers=providers,
         on_download_progress=progress_handler,
+        local_path=local_path,
         segment_with_vad=False,
         normalize_audio=config.transcription.normalize_audio,
     )

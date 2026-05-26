@@ -26,6 +26,9 @@ const fixture: ModelInfo[] = [
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
+		available: true,
+		errorMessage: "",
+		localPath: null,
 	},
 	{
 		id: "large",
@@ -39,6 +42,9 @@ const fixture: ModelInfo[] = [
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
+		available: true,
+		errorMessage: "",
+		localPath: null,
 	},
 	{
 		id: "nemo-en",
@@ -52,6 +58,9 @@ const fixture: ModelInfo[] = [
 		onnxModelName: "model.onnx",
 		description: "",
 		availableQuantizations: ["", "int8"],
+		available: true,
+		errorMessage: "",
+		localPath: null,
 	},
 ];
 
