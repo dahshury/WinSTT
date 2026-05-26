@@ -121,6 +121,20 @@ const storeValueSchemas = {
 	// closes. Null disables the clamshell detector entirely; see
 	// electron/ipc/clamshell.ts for the polling state machine.
 	"audio.clamshellMicrophone": z.number().int().nullable().catch(null),
+	// Boot-time mic policy — both ported from Handy. See the renderer-side
+	// audioSettingsSchema for the full rationale + the on-demand-microphone
+	// project memory. They MUST be declared here so the main-process
+	// snapshot has a concrete value: without these entries
+	// `snapshotSettings()` returns `undefined` for both keys and the
+	// `checkForRestartNeeded` diff fires `Startup-only key changed:
+	// audio.alwaysOnMicrophone (undefined → false)` on the first save of
+	// every fresh launch, killing the just-spawned stt-server via the
+	// 500 ms restart timer (and cascading into the model picker reverting
+	// to the first catalog entry as the user-visible symptom).
+	"audio.alwaysOnMicrophone": z.boolean().catch(false),
+	"audio.lazyStreamClose": z.boolean().catch(false),
+	"audio.webrtcSensitivity": z.number().int().min(0).max(3).catch(3),
+	"audio.minLengthOfRecording": z.number().catch(1.1),
 	// llm — shared infrastructure (one Ollama instance, one OpenRouter account)
 	"llm.endpoint": z.string().catch("http://localhost:11434"),
 	"llm.openrouterApiKey": z.string().catch(""),
@@ -297,7 +311,10 @@ export const store = new Store({
 		// Stryker disable next-line ObjectLiteral: equivalent — same as parent;
 		// migration + codec defaults overwrite missing keys.
 		model: {
-			model: "large-v2",
+			// See settings-schema.ts: "tiny" is the bundled offline base
+			// and matches the renderer-side default. "large-v2" was the
+			// pre-offline-base default and is no longer in any picker.
+			model: "tiny",
 			realtimeModel: "tiny",
 			language: "en",
 			computeType: "default",
@@ -337,6 +354,14 @@ export const store = new Store({
 			preRecordingBufferDuration: 1.0,
 			sileroSensitivityByDeviceName: {},
 			clamshellMicrophone: null,
+			// Boot-time mic policy. Must appear here AND in the dotted
+			// schema above (else snapshotSettings reads undefined and
+			// checkForRestartNeeded triggers a spurious restart on the
+			// first save of every fresh launch — model picker reverts
+			// were the visible symptom).
+			alwaysOnMicrophone: false,
+			lazyStreamClose: false,
+			keepMicOpen: false,
 		},
 		general: {
 			autoStart: false,

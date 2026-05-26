@@ -4,7 +4,16 @@ import { COMPUTE_TYPES } from "./defaults";
 const computeTypeSchema = z.enum(COMPUTE_TYPES);
 
 export const modelSettingsSchema = z.object({
-	model: z.string().default("large-v2"),
+	// Bundled offline base model — see `project_offline_base_and_tts_pack`
+	// memory. tiny-q4 is vendored into the installer so first-run users
+	// transcribe with zero network traffic. The historical "large-v2"
+	// default predates the offline-base seeding and resolved to a Whisper
+	// catalog id that the picker no longer surfaces; falling back to it
+	// on a partial-save decode produced the "large v2 in the main window
+	// but vosk-russian in the picker" desync (different fallbacks across
+	// surfaces). "tiny" exists in every catalog flavor and matches the
+	// CLI default the Electron spawn passes (`--model tiny`).
+	model: z.string().default("tiny"),
 	realtimeModel: z.string().default("tiny"),
 	language: z.string().default("en"),
 	computeType: computeTypeSchema.default("default"),
@@ -89,6 +98,23 @@ export const audioSettingsSchema = z.object({
 	// `ioreg`; Linux reads `/proc/acpi/button/lid/`; Windows is a
 	// documented v1.1 deferral (no zero-cost equivalent probe).
 	clamshellMicrophone: z.number().int().nullable().default(null).catch(null),
+	// Matches Handy's ``always_on_microphone`` knob. When `false` (the
+	// default) the server boots without allocating an OS mic stream; the
+	// first PTT/toggle press lazily opens one and release closes it so
+	// the system mic-in-use indicator clears. Trade-off is ~10-50 ms of
+	// extra latency per press on Windows (the pre-roll buffer absorbs it
+	// for typical speech). When `true`, the stream stays open for the
+	// whole session — microseconds-fast PTT response but the OS sees the
+	// mic as in-use whenever the app is running. `.catch(false)` keeps
+	// older builds (or corrupt persisted values) from wiping the whole
+	// audio section.
+	alwaysOnMicrophone: z.boolean().default(false).catch(false),
+	// Only consulted when `alwaysOnMicrophone` is `false`. When `true`,
+	// PTT release stops the audio engine but defers the actual stream
+	// close by 30 s so back-to-back presses skip the open cost. When
+	// `false` (default), release closes immediately on the same key-up
+	// that ended the recording. Mirrors Handy's `lazy_stream_close`.
+	lazyStreamClose: z.boolean().default(false).catch(false),
 });
 
 // One entry in the recording-sound library. The default sound is implicit

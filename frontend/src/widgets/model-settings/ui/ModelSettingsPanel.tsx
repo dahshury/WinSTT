@@ -555,7 +555,13 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 		}
 	}, [catalogLoaded, catalogModels, statesById, settings?.realtimeModel, update]);
 
-	const selectedModel = settings?.model ?? "large-v2";
+	// Fallback matches the bundled offline base seeded into the HF cache by
+	// PyInstaller (see `seed_models.py` + `project_offline_base_and_tts_pack`
+	// memory). The legacy "large-v2" fallback resolved to a catalog id the
+	// picker no longer surfaces and produced a desync between the main
+	// window header ("large-v2") and the picker selection (vosk-russian as
+	// the first catalog row).
+	const selectedModel = settings?.model ?? "tiny";
 	const selectedIsCloud = providerOf(selectedModel) !== null;
 	const selectedInfo = selectedIsCloud ? undefined : getModel(selectedModel);
 	const isWhisperBackend = !selectedInfo || selectedInfo.backend === "faster_whisper";
