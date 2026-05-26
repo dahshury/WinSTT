@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useConnectionStore } from "@/entities/connection";
 import { useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
@@ -93,7 +93,43 @@ export function useSyncActiveModel(): void {
 	const settingsModel = useSettingsStore((s) => s.settings.model?.model ?? null);
 	const updateModelSettings = useSettingsStore((s) => s.updateModelSettings);
 
+	// Tracks the previously-observed settings.model so we can distinguish
+	// "initial mount value" from "subsequent change". `undefined` is the
+	// sentinel for "first observation" — only after the first effect run
+	// is the ref populated, so a same-launch settings.model change can be
+	// detected as such.
+	const prevSettingsModelRef = useRef<string | null | undefined>(undefined);
+
 	useEffect(() => {
+		// Cross-window swap-pending guard. When the user picks a new model in
+		// ANOTHER window (e.g. the detached settings panel), this window
+		// receives the change via the `settings:changed` broadcast — but the
+		// local `useModelSwapStore.activeMain` is null (`beginSwap` was only
+		// called synchronously in the source window's swap controller, see
+		// `use-model-swap-controller.ts::applyMainSwap`). Without the branch
+		// below, the next render sees `settings.model != runtime.model` and
+		// `activeMain == null`, trips `shouldAdoptRuntimeModel`, and reverts
+		// the picker back to whatever the server is still loading. The
+		// visible symptom is the "main-window picker stays on the old model
+		// after a settings pick" desync (user reported on a canary pick).
+		//
+		// We treat any cross-render change to `settings.model` (after the
+		// first observation) as an implicit `beginSwap` on this window's
+		// swap store. The server will subsequently emit `model_swap_started`
+		// (which the module-level listener in model-swap-store.ts pins via
+		// `setActive`) and finally `model_swap_completed` (which clears it).
+		// Initial mount — where the ref is still `undefined` — is
+		// intentionally NOT treated as a swap; the reconciliation below
+		// handles the cold-boot fallback case the original comment block
+		// documents.
+		const previousModel = prevSettingsModelRef.current;
+		if (previousModel !== undefined && previousModel !== settingsModel) {
+			if (settingsModel && settingsModel !== runtimeModel) {
+				useModelSwapStore.getState().beginSwap("main", previousModel ?? "", settingsModel);
+			}
+		}
+		prevSettingsModelRef.current = settingsModel;
+
 		const activeMain = useModelSwapStore.getState().activeMain;
 		if (shouldAdoptRuntimeModel(isLoaded, serverStatus, runtimeModel, settingsModel, activeMain)) {
 			updateModelSettings({ model: runtimeModel });

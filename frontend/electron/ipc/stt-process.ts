@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { app, ipcMain } from "electron";
 import { getErrorMessage, NotFoundError, ProcessSpawnError } from "../../src/shared/lib/errors";
@@ -65,6 +65,13 @@ const SETTINGS_TO_CLI: [storePath: string, cliFlag: string][] = [
  */
 const STORE_TRUE_CLI: [storePath: string, cliFlag: string][] = [
 	["general.speakerDiarization", "--enable_diarization"],
+	// Handy-style on-demand mic. The CLI defaults to off on the server
+	// side too (release-on-idle), so omitting the flag matches the
+	// frontend default. Only emit the flag when the user has opted into
+	// always-on (paid the OS mic-indicator cost in exchange for
+	// microseconds-fast PTT).
+	["audio.alwaysOnMicrophone", "--always_on_microphone"],
+	["audio.lazyStreamClose", "--lazy_stream_close"],
 ];
 
 function isEmptyStoreValue(value: unknown): boolean {
@@ -482,11 +489,65 @@ function buildServerEnv(): NodeJS.ProcessEnv {
 	return { ...process.env, SENTRY_DSN: dsn };
 }
 
+/**
+ * Reclaim ports held by orphan stt-server processes from prior dev sessions.
+ *
+ * Windows does NOT propagate parent-death to child processes the way Unix
+ * does (no process groups; no `prctl(PR_SET_PDEATHSIG)` equivalent without
+ * a JobObject). When `bun dev` is interrupted abruptly — terminal closed,
+ * Ctrl+C in mid-startup, electron crash, a hung `await app.quit()` — the
+ * `before-quit` handler that calls `killSttProcess()` never runs, and the
+ * spawned stt-server.exe (plus its python.exe ancestor) survives on the
+ * bound ports. The next `bun dev` then spawns a new server that fails to
+ * bind 8011/8012 with "Could not start server on specified ports", the
+ * renderer connects to the orphan instead, and the user sees stale model
+ * state from the previous session.
+ *
+ * Defensive reclamation: every spawn first kills any pre-existing
+ * `stt-server.exe`. `taskkill /F /IM` is synchronous and broadcasts SIGKILL
+ * to every matching process tree (the python.exe child dies with its
+ * parent under the same call because `uv run`'s wrapper exits when its
+ * child does). spawnSync with a short timeout keeps boot snappy when no
+ * orphans exist (taskkill returns ~10 ms with exit code 128 = "no such
+ * process", which we silently ignore).
+ *
+ * No-op on non-Windows: Unix already kills children when the controlling
+ * terminal dies (SIGHUP) and the parent's exit propagates through the
+ * process group, so the orphan class doesn't manifest there.
+ */
+function reclaimOrphanStttServers(): void {
+	if (process.platform !== "win32") {
+		return;
+	}
+	try {
+		const result = spawnSync("taskkill", ["/F", "/T", "/IM", "stt-server.exe"], {
+			stdio: "ignore",
+			windowsHide: true,
+			timeout: 3000,
+		});
+		// Exit code 128 / 0x80 == "no process matching pattern" — the happy
+		// case where no orphans exist. Codes 0 and 1 mean "killed at least
+		// one process" / "couldn't kill (access denied)". Either way, the
+		// next `spawn` either binds cleanly or surfaces its own error.
+		if (result.status === 0) {
+			dbg("stt-process", "reclaimOrphanStttServers: killed leftover stt-server.exe");
+		}
+	} catch (err) {
+		// Defensive — taskkill being missing/unhittable shouldn't block
+		// spawn (the user might be on a system without it, or AV is
+		// blocking; the port-bind will fail loudly enough on its own).
+		dbg("stt-process", "reclaimOrphanStttServers: ignored:", getErrorMessage(err));
+	}
+}
+
 /** Spawn the STT server process with the given CLI args. */
 function spawnServer(): void {
 	const serverDir = resolveServerDir();
 	const { command, args: baseArgs } = resolveSpawnArgs(serverDir);
 	const args = buildServerArgs(baseArgs);
+
+	// Kill orphans from any prior session BEFORE binding ports.
+	reclaimOrphanStttServers();
 
 	status = "starting";
 
