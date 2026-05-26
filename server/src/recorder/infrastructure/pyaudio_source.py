@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import threading
 from types import TracebackType
 from typing import Any, ClassVar
 
@@ -70,10 +71,47 @@ class PyAudioSource(IAudioSource):
         on_device_switch_failed: DeviceSwitchFailedCallback | None = None,
         on_device_became_available: DeviceBecameAvailableCallback | None = None,
         device_probe_every_n_chunks: int = _DEFAULT_DEVICE_PROBE_EVERY_N_CHUNKS,
+        always_on_microphone: bool = False,
+        lazy_stream_close: bool = False,
+        lazy_close_timeout_seconds: float = 30.0,
     ) -> None:
         self._input_device_index = input_device_index
         self._target_sample_rate = target_sample_rate
         self._buffer_size = buffer_size
+        # Mirrors Handy's two-axis design (see examples/Handy/src-tauri/src/
+        # managers/audio.rs MicrophoneMode):
+        #
+        # * ``always_on_microphone=True`` — boot opens the OS mic stream
+        #   and keeps it allocated for the entire session. PTT
+        #   press/release just gates the engine (``start_stream`` /
+        #   ``stop_stream``). Fastest possible response (microseconds)
+        #   but the OS mic-in-use indicator stays lit while the app runs.
+        #
+        # * ``always_on_microphone=False`` (default) — no stream opens at
+        #   boot; the first PTT press lazily allocates one. On PTT
+        #   release the close strategy depends on ``lazy_stream_close``:
+        #     - ``False`` (default): close immediately so the OS
+        #       releases the device on the same key-up that ended the
+        #       recording. The mic-in-use indicator clears decisively.
+        #     - ``True``: stop the engine, but defer the close for
+        #       ``lazy_close_timeout_seconds`` (30 s by default). A new
+        #       PTT inside that window reuses the still-open stream
+        #       (microseconds resume). Generation counter in the timer
+        #       handles the cancel-on-new-recording race.
+        #
+        # ``lazy_stream_close`` is ignored when ``always_on_microphone``
+        # is True — the stream never closes either way in that mode.
+        self._always_on_microphone = always_on_microphone
+        self._lazy_stream_close = lazy_stream_close
+        self._lazy_close_timeout_seconds = lazy_close_timeout_seconds
+        # Generation counter for the lazy-close timer — incremented on
+        # every pause() and on resume(). The timer thread snapshots the
+        # generation it scheduled with; on fire it bails out unless the
+        # generation still matches AND the source is still paused. This
+        # is the same pattern as Handy's ``close_generation`` (see
+        # ``schedule_lazy_close`` in their audio manager) and replaces
+        # the need for explicit thread cancellation.
+        self._lazy_close_generation = 0
         self._audio_interface: Any = None
         self._stream: Any = None
         self._device_sample_rate: int | None = None
@@ -111,6 +149,18 @@ class PyAudioSource(IAudioSource):
         # reader-loop sleep cadence aligned with the buffer size so PTT
         # latency is bounded by ~one chunk after resume().
         self._silence_sleep_seconds = float(self._buffer_size) / float(self._target_sample_rate)
+        # Serialises PyAudio Pa_ReadStream / Pa_CloseStream / Pa_StopStream
+        # calls. Without it, ``read_chunk`` runs on the audio-reader thread
+        # while ``pause()`` → ``_release_stream`` runs on the asyncio
+        # control-handler thread, and the two C calls on the same PaStream
+        # object race inside portaudio (manifests as Windows fatal exception
+        # 0xc0000374 / STATUS_HEAP_CORRUPTION at the close site). The race
+        # is documented across the portaudio/pyaudio bug trackers — Pa_*
+        # functions are not stream-level reentrant. Cost: an asyncio
+        # pause() may block up to ~one chunk duration (~32 ms at 16 kHz /
+        # 512 samples) waiting for the in-flight read to return, which is
+        # well under PTT-release perceptual latency.
+        self._stream_op_lock = threading.Lock()
         # When set to anything other than ``_NO_PENDING``, the next call to
         # ``read_chunk`` will close the current stream and re-open it on
         # the queued device index.  Single-attribute writes are atomic
@@ -129,6 +179,20 @@ class PyAudioSource(IAudioSource):
         try:
             self._audio_interface = pyaudio.PyAudio()
             pa: Any = self._audio_interface
+
+            # On-demand mode (the new default, matching Handy): skip the
+            # boot-time open entirely. The PyAudio interface is created so
+            # device enumeration / probe paths still work, but no stream
+            # is allocated until the user's first PTT press calls
+            # resume(). The OS mic-in-use indicator therefore never lights
+            # up just because the app is running. ``_stream=None`` is the
+            # signal read_chunk uses to drain silence.
+            if not self._always_on_microphone:
+                self._stream = None
+                self._device_sample_rate = None
+                self._active = True
+                self._capturing = False
+                return
 
             requested_index = self._input_device_index
             try:
@@ -264,8 +328,19 @@ class PyAudioSource(IAudioSource):
         # the next read picks up where we are now. Reference behaviour
         # (PyAudio record.py) keeps the default True; we deliberately
         # diverge for streaming.
+        #
+        # The read is wrapped in ``_stream_op_lock`` so a concurrent
+        # ``_release_stream`` (called from the asyncio thread on PTT release)
+        # can't tear the PaStream out from under us mid-read. The lock is
+        # only acquired around the actual ``Pa_ReadStream`` call — the
+        # hotplug / device-switch / silence branches above run lock-free
+        # because they touch only Python-side state.
         try:
-            raw: bytes = self._stream.read(self._buffer_size, exception_on_overflow=False)
+            with self._stream_op_lock:
+                if self._stream is None:
+                    # close raced us — fall back to silence for this tick.
+                    return b"\x00" * (self._buffer_size * self._sample_width)
+                raw: bytes = self._stream.read(self._buffer_size, exception_on_overflow=False)
         except OSError as e:
             # The device went away under us (USB unplug, Bluetooth drop,
             # driver reset). Don't take the whole audio thread down — drop
@@ -476,13 +551,28 @@ class PyAudioSource(IAudioSource):
 
     @override
     def pause(self) -> None:
-        """Stop hardware capture without releasing the stream.
+        """Stop hardware capture.
 
-        Uses PortAudio's ``stop_stream()`` rather than ``close()`` so resume()
-        can come back online in microseconds — closing would re-trigger
-        device probing (hundreds of ms). The OS mic-in-use indicator turns
-        off as soon as the underlying audio engine stops pulling buffers,
-        which is what users want when PTT isn't pressed.
+        Three behaviors gated by the construction-time flags:
+
+        * **always_on=True** — uses PortAudio's ``stop_stream()`` and
+          keeps the stream object alive. resume() can come back online
+          in microseconds; ``lazy_stream_close`` is ignored.
+
+        * **always_on=False, lazy_stream_close=False (default)** — fully
+          closes and nulls the stream so the device is genuinely
+          released on this very call. The next resume() opens a fresh
+          stream (already its normal path on Windows WASAPI shared
+          mode — see resume() docstring). Slight extra latency per PTT
+          press (~10-50 ms on Windows) is covered by the pre-roll
+          buffer; the OS mic-in-use indicator clears decisively.
+
+        * **always_on=False, lazy_stream_close=True** — stops the engine
+          (``stop_stream``) and schedules a delayed close after
+          ``lazy_close_timeout_seconds``. A new resume() inside the
+          window reuses the still-open stream (microseconds) and
+          cancels the pending close via the generation counter; if the
+          timer fires while still paused, it tears the stream down then.
 
         Idempotent: calling pause() on a paused source is a no-op.
         """
@@ -491,11 +581,108 @@ class PyAudioSource(IAudioSource):
         # delayed hotplug attach would start capturing against the user's
         # current wishes.
         self._capture_intent = False
-        if not self._capturing:
+        if not self._capturing and self._stream is None:
             return
         if self._stream is not None:
-            self._stop_stream_safely(self._stream)
+            self._pause_stream_per_policy()
         self._capturing = False
+
+    def _pause_stream_per_policy(self) -> None:
+        """Apply the configured pause-policy branch.
+
+        Split out so ``pause()`` stays at CC=1 and the three modes are
+        legible side-by-side rather than buried in nested ifs.
+        """
+        if self._always_on_microphone:
+            self._stop_stream_safely(self._stream)
+            return
+        if self._lazy_stream_close:
+            # Stop the engine NOW so the OS reclaims the input quickly,
+            # but keep the stream object alive so a follow-up PTT within
+            # the lazy window can resume with a microsecond start_stream
+            # instead of a full pa.open().
+            self._stop_stream_safely(self._stream)
+            self._schedule_lazy_close()
+            return
+        # always_on=False, lazy=False — release the device on this call.
+        self._release_stream()
+
+    def _release_stream(self) -> None:
+        """Tear down ``self._stream`` and null the pointer.
+
+        Used by both the immediate-close path in ``pause()`` and the
+        deferred close in ``_lazy_close_timer_callback``. Swallowing
+        stop/close exceptions matches the rest of this module's
+        defensive-cleanup convention.
+
+        Holds ``_stream_op_lock`` for the duration of the stop+close so an
+        in-flight ``read_chunk`` on the audio-reader thread can't race the
+        PaStream teardown — root cause of the
+        ``Windows fatal exception: code 0xc0000374`` (STATUS_HEAP_CORRUPTION)
+        we hit at PTT release. Reader will block up to ~one chunk duration
+        waiting for the lock, then see ``_stream is None`` on the next
+        iteration and fall through to the silence branch.
+        """
+        if self._stream is None:
+            return
+        # region agent log — H-C
+        _close_thread = threading.get_ident()
+        logger.warning(
+            "[debug-instrumentation] pyaudio._release_stream.enter thread=%d",
+            _close_thread,
+        )
+        # endregion
+        with self._stream_op_lock:
+            # Re-check after acquiring the lock — another caller may have
+            # released first.
+            if self._stream is None:
+                return
+            with contextlib.suppress(Exception):
+                self._stream.stop_stream()
+            with contextlib.suppress(Exception):
+                self._stream.close()
+            self._stream = None
+            self._device_sample_rate = None
+        # region agent log — H-C
+        logger.warning(
+            "[debug-instrumentation] pyaudio._release_stream.done thread=%d",
+            _close_thread,
+        )
+        # endregion
+
+    def _schedule_lazy_close(self) -> None:
+        """Spawn a daemon thread that closes the stream after the idle window.
+
+        Mirrors Handy's ``schedule_lazy_close``. The generation counter
+        guards the close: every pause() bumps it and every resume()
+        bumps it again, so a pending timer that wakes after a new
+        recording started (or after a manual cleanup ran) finds the
+        generation has moved on and exits without touching the live
+        stream. Daemon thread so server shutdown doesn't have to join.
+        """
+        import threading
+
+        self._lazy_close_generation += 1
+        my_gen = self._lazy_close_generation
+        timeout = self._lazy_close_timeout_seconds
+
+        def _fire() -> None:
+            import time
+
+            time.sleep(timeout)
+            # Guard: stream might already have been torn down (cleanup),
+            # or a new recording could be in progress (resume bumped the
+            # generation). Skip the close in either case.
+            if self._lazy_close_generation != my_gen:
+                return
+            if self._capturing:
+                return
+            if self._stream is None:
+                return
+            logger.info("Lazy-close timer firing — releasing idle audio stream")
+            self._release_stream()
+
+        threading.Thread(target=_fire, daemon=True, name="pyaudio-lazy-close").start()
 
     @override
     def resume(self) -> None:
@@ -522,6 +709,10 @@ class PyAudioSource(IAudioSource):
         # honor "user wants to capture" even when no device is available
         # right now.
         self._capture_intent = True
+        # Bump the lazy-close generation so any pending close-timer
+        # scheduled by a recent pause() exits without touching the live
+        # stream. Cheap; safe to call even when no timer is pending.
+        self._lazy_close_generation += 1
         if self._capturing:
             return
         pa = self._audio_interface

@@ -130,6 +130,15 @@ const transcriptionStartSchema = z.object({
 	audio_bytes_base64: z.string().optional(),
 });
 
+// PTT-release-with-no-speech signal: the user pressed the hotkey but the
+// recording captured nothing the VAD considered speech. Emitted by the
+// recorder service's `_handle_microphone_off` when state is LISTENING /
+// INACTIVE on release. The renderer uses it to dismiss the recording pill
+// without firing the "transcribing…" spinner.
+const noAudioDetectedSchema = z.object({
+	type: z.literal("no_audio_detected"),
+});
+
 // ── Union + public types ─────────────────────────────────────────────
 
 const serverEventSchema = z.discriminatedUnion("type", [
@@ -153,6 +162,7 @@ const serverEventSchema = z.discriminatedUnion("type", [
 	startTurnDetectionSchema,
 	stopTurnDetectionSchema,
 	transcriptionStartSchema,
+	noAudioDetectedSchema,
 ]);
 
 export type WsServerEvent = z.infer<typeof serverEventSchema>;
@@ -179,6 +189,7 @@ export const SUPPORTED_EVENT_TYPES = [
 	"start_turn_detection",
 	"stop_turn_detection",
 	"transcription_start",
+	"no_audio_detected",
 ] as const;
 
 export type SupportedEventType = (typeof SUPPORTED_EVENT_TYPES)[number];

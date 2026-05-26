@@ -422,11 +422,45 @@ class RecorderService:
         """
         if lock is None:
             lock = self._main_transcriber_lock
+        # region agent log — H-A/H-B/H-C
+        # Trace: lock identity, thread, transcriber identity. Confirms whether
+        # main and realtime actually share the same lock object on DirectML
+        # (H-A), and which thread is holding it at what wall-clock time so we
+        # can correlate with pyaudio.close races (H-C) and crash stacks (H-B).
+        _lock_id = id(lock)
+        _thread_id = threading.get_ident()
+        _transcriber_id = id(transcriber)
+        logger.warning(
+            "[debug-instrumentation] _safe_transcribe.acquire lock=%d thread=%d tx=%d audio_samples=%d",
+            _lock_id,
+            _thread_id,
+            _transcriber_id,
+            len(audio) if audio is not None else -1,
+        )
+        # endregion
         with lock:
+            # region agent log — H-A/H-B/H-C
+            logger.warning(
+                "[debug-instrumentation] _safe_transcribe.entered lock=%d thread=%d tx=%d",
+                _lock_id,
+                _thread_id,
+                _transcriber_id,
+            )
+            # endregion
             if not self._transcriber_ready(transcriber):
                 return None
             assert transcriber is not None  # narrowed by _transcriber_ready
-            return transcriber.transcribe(audio, language)
+            try:
+                return transcriber.transcribe(audio, language)
+            finally:
+                # region agent log — H-A/H-B/H-D
+                logger.warning(
+                    "[debug-instrumentation] _safe_transcribe.released lock=%d thread=%d tx=%d",
+                    _lock_id,
+                    _thread_id,
+                    _transcriber_id,
+                )
+                # endregion
 
     @staticmethod
     def _transcriber_ready(transcriber: ITranscriber | None) -> bool:
@@ -602,10 +636,29 @@ class RecorderService:
 
     def _toggle_hardware_capture(self, microphone_on: bool) -> None:
         action = self._audio_source.resume if microphone_on else self._audio_source.pause
+        # region agent log — H-C
+        # Heap corruption hypothesis: pyaudio.close() in the asyncio thread
+        # races with the realtime worker's run_with_iobinding call. This log
+        # times the start of the pyaudio teardown so we can correlate it
+        # against _safe_transcribe acquire/release windows on the realtime
+        # thread.
+        logger.warning(
+            "[debug-instrumentation] _toggle_hardware_capture microphone_on=%s thread=%d",
+            microphone_on,
+            threading.get_ident(),
+        )
+        # endregion
         try:
             action()
         except Exception:
             logger.exception("audio_source capture toggle raised (microphone_on=%s)", microphone_on)
+        # region agent log — H-C
+        logger.warning(
+            "[debug-instrumentation] _toggle_hardware_capture.done microphone_on=%s thread=%d",
+            microphone_on,
+            threading.get_ident(),
+        )
+        # endregion
 
     def _handle_microphone_off(self) -> None:
         if self._state_machine.is_recording:
@@ -1609,6 +1662,19 @@ class RecorderService:
         if not self._realtime_ready(state):
             return
         state.last_transcription = time.time()
+        # region agent log — H-B/H-D
+        # Per-tick beacon so we can count successful realtime inferences
+        # before the crash (H-D: accumulated heap damage) and confirm the
+        # crash is from a realtime tick specifically (H-B). Also exposes
+        # the frame_count which feeds the slice size — a sudden change in
+        # frame_count near the crash would hint at audio-buffer races.
+        logger.warning(
+            "[debug-instrumentation] _realtime_step.tick frame_count=%d committed=%d thread=%d",
+            self._audio_buffer.frame_count,
+            self._realtime_committed_frames,
+            threading.get_ident(),
+        )
+        # endregion
         self._realtime_process_once()
 
     def _realtime_mark_recording_start(self, state: _RealtimeLoopState) -> None:
