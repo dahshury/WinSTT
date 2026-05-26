@@ -227,15 +227,73 @@ class RecorderService:
         transcriber: ITranscriber,
         realtime_transcriber: ITranscriber | None,
     ) -> threading.Lock:
-        """Share the main lock when both slots hold the same transcriber.
+        """Share the main lock when both slots hold the same transcriber OR when
+        either is running on ORT's DirectML execution provider.
 
-        A shared ORT session isn't reentrant-safe, so the same instance in
-        both slots must serialise against itself; distinct instances get
-        independent locks so main + realtime don't block each other.
+        Two cases force a shared lock:
+
+        1. **Same instance in both slots.** A shared ORT session isn't
+           reentrant-safe, so the same instance in both slots must serialise
+           against itself.
+
+        2. **DirectML in the active provider list.** ORT-DirectML 1.x has a
+           documented concurrent-session reentrancy bug: two independent
+           ``InferenceSession``s on the same ``IDMLDevice`` running inference
+           back-to-back from different threads trip
+           ``Windows fatal exception: code 0xc0000374`` (STATUS_HEAP_CORRUPTION)
+           deep inside ``run_with_iobinding`` — most reliably on the whisper
+           decoder's KV-cache binding path. The Microsoft-recommended
+           workaround (see onnxruntime/issues #15883 / #22034 and the
+           DirectML EP docs' "thread safety" note) is to serialise every
+           inference call through one process-wide mutex; the underlying
+           ``IDMLDevice`` is single-threaded by D3D12 design. Sharing the
+           main lock with the realtime slot does exactly that, and matches
+           the user-facing design intent ("once realtime finishes, main
+           takes over and transcribes the whole thing"). The 80-100 ms of
+           added end-of-dictation latency (main waiting for the last
+           realtime tick on a whisper-tiny window) is well below the
+           perception threshold and worth trading for stability.
+
+        Distinct CUDA / CoreML / CPU instances still get independent locks
+        so main + realtime run in parallel where the EP is thread-safe.
         """
         if realtime_transcriber is not None and realtime_transcriber is transcriber:
             return self._main_transcriber_lock
+        if self._uses_directml(transcriber) or self._uses_directml(realtime_transcriber):
+            logger.warning(
+                "Serialising realtime + main transcribers on a single lock "
+                "(DirectML EP detected — ORT-DirectML's concurrent-session "
+                "heap-corruption workaround). Costs ~80-100 ms at end-of-dictation; "
+                "buys process stability.",
+            )
+            return self._main_transcriber_lock
         return threading.Lock()
+
+    @staticmethod
+    def _uses_directml(transcriber: ITranscriber | None) -> bool:
+        """True when ``transcriber`` reports DirectML in its active providers.
+
+        ``OnnxAsrTranscriber.active_providers`` is a ``@property`` returning
+        ``list[str]`` — not a method — so we read it directly via ``getattr``
+        with a default of ``[]`` to defend against transcriber adapters
+        that don't expose it (cloud remote transcribers, fakes in tests).
+        Those return False so they keep the historical independent-lock fast path.
+        """
+        if transcriber is None:
+            return False
+        providers: object = getattr(transcriber, "active_providers", [])
+        # Properties return the value; callables (legacy or test fakes) need invoking.
+        if callable(providers):
+            try:
+                providers = providers()
+            except Exception:  # pragma: no cover — defensive
+                logger.debug("active_providers() raised; assuming non-DML", exc_info=True)
+                return False
+        try:
+            iterator = iter(providers)  # type: ignore[arg-type]
+        except TypeError:
+            return False
+        return any("DmlExecutionProvider" in str(p) for p in iterator)
 
     def text(self, on_transcription_finished: TextCallback | None = None) -> str:
         self.listen()

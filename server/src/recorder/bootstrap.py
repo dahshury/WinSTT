@@ -582,34 +582,12 @@ def build_realtime_transcriber(
         info.param_count if info else 0,
         info.available_quantizations if info else None,
     )
-    from src.recorder.infrastructure.device import providers_for_settings, resolve_accelerator
+    from src.recorder.infrastructure.device import providers_for_settings
 
     providers = providers_for_settings(
         config.transcription.device,
         config.transcription.accelerator,
     )
-
-    # DirectML safety net: pin the realtime worker to CPU when the main
-    # transcriber is on DirectML. Two concurrent DirectML sessions running
-    # whisper-tiny inference back-to-back trip
-    # ``Windows fatal exception: code 0xc0000374`` (STATUS_HEAP_CORRUPTION)
-    # deep inside ``onnxruntime.run_with_iobinding`` — DirectML 1.x has
-    # known thread/session reentrancy issues on some drivers. The realtime
-    # window is bounded-short (<=20 s) and whisper-tiny on CPU still hits
-    # well under the 50 ms /tick budget the realtime worker targets, so
-    # the CPU pinning costs nothing perceptible. CUDA / CoreML / CPU
-    # mainlines stay on the chosen EP (CUDA has thread-safe ORT bindings,
-    # CoreML inference is process-serialized at the framework level, and
-    # CPU is trivially safe).
-    main_chosen = resolve_accelerator(
-        config.transcription.accelerator if config.transcription.accelerator != "auto" else config.transcription.device
-    )
-    if main_chosen == "directml":
-        logger.info(
-            "Pinning realtime transcriber to CPU (main is on DirectML — "
-            "avoids concurrent-session heap corruption in ORT-DirectML 1.x).",
-        )
-        providers = ["CPUExecutionProvider"]
 
     from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
