@@ -328,7 +328,7 @@ export interface components {
         /** @enum {string} */
         TranscriberBackend: "faster_whisper" | "onnx_asr";
         /** @enum {string} */
-        ModelFamily: "whisper" | "lite-whisper" | "nemo" | "gigaam" | "kaldi" | "t-one";
+        ModelFamily: "whisper" | "lite-whisper" | "nemo" | "gigaam" | "kaldi" | "t-one" | "custom";
         ModelInfo: {
             id: string;
             displayName: string;
@@ -341,6 +341,20 @@ export interface components {
             onnxModelName?: string | null;
             description?: string;
             availableQuantizations?: string[];
+            /** @description `true` for every shipped catalog entry. `false` only for
+             *     user-provided custom-model folders that failed the discovery
+             *     contract — the UI greys these out and shows `errorMessage`
+             *     as a tooltip.
+             *      */
+            available?: boolean;
+            /** @description Non-empty only on broken custom-model entries. Surfaces the
+             *     scanner's failure reason (e.g. "missing tokenizer.json") so
+             *     the user can fix their drop without inspecting the folder.
+             *      */
+            errorMessage?: string;
+            /** @description Absolute path to the user-provided model folder for custom
+             *     entries; `null` for shipped catalog rows. */
+            localPath?: string | null;
         };
         LoopbackDevice: {
             index: number;

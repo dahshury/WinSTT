@@ -668,17 +668,17 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--data-dir",
-        "--data_dir",
+        "--custom-models-dir",
+        "--custom_models_dir",
         type=str,
         default=None,
         help=(
-            "Root directory for server-side user data (model cache base, persisted "
-            "settings file, recordings if ever server-written). The Electron frontend "
-            "passes this so portable installs (a `portable` marker file alongside the "
-            "executable) keep everything under `Data/` next to the exe instead of in "
-            "`~/.winstt` / platform caches. Falls back to the WINSTT_DATA_DIR env var. "
-            "When neither is set, the historic `~/.winstt` location is used."
+            "Directory whose immediate subfolders are scanned at startup for "
+            "user-provided ONNX Whisper model bundles. Each subfolder must "
+            "contain encoder.onnx / decoder_model.onnx / tokenizer.json / "
+            "config.json (HuggingFace-style layout). Falls back to the "
+            "WINSTT_CUSTOM_MODELS_DIR environment variable. Custom models "
+            "appear in the picker under a 'Custom' section."
         ),
     )
 

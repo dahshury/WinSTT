@@ -11,17 +11,7 @@ const originalElectronApi = window.electronAPI;
 const { useCatalogStore } = await import("./catalog-store");
 
 const BACKENDS = ["faster_whisper", "onnx_asr"] as const;
-const FAMILIES = [
-	"whisper",
-	"lite-whisper",
-	"nemo",
-	"gigaam",
-	"kaldi",
-	"t-one",
-	"moonshine",
-	"cohere",
-	"granite",
-] as const;
+const FAMILIES = ["whisper", "lite-whisper", "nemo", "gigaam", "kaldi", "t-one", "custom"] as const;
 
 interface RawValid {
 	available_quantizations?: string[];

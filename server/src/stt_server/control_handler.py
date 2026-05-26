@@ -608,6 +608,29 @@ async def _handle_get_runtime_info(ws: ServerConnection, state: ServerState, dat
     await ws.send(json.dumps(payload))
 
 
+@register_command("get_custom_models_dir", pre_ready=True)
+async def _handle_get_custom_models_dir(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Reply with the absolute path the server scans for custom ONNX bundles.
+
+    Electron uses the returned path for "Open custom models folder" so both
+    sides agree on the location without re-deriving it from the userData
+    path twice. Returns ``None`` (JSON ``null``) when no directory has been
+    configured for this run (typical in dev when the flag is unset).
+    """
+    from src.recorder.domain.model_registry import get_custom_models_dir
+
+    request_id = data.get("request_id")
+    directory = get_custom_models_dir()
+    payload: dict[str, Any] = {
+        "status": "success",
+        "command": "get_custom_models_dir",
+        "value": str(directory) if directory is not None else None,
+    }
+    if request_id is not None:
+        payload["request_id"] = request_id
+    await ws.send(json.dumps(payload))
+
+
 @register_command("list_input_devices", pre_ready=True)
 async def _handle_list_input_devices(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     request_id = data.get("request_id")

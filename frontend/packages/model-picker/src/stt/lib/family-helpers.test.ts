@@ -21,6 +21,9 @@ function model(id: string, family: FamilyKey, sizeLabel = "39M"): ModelInfo {
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
+		available: true,
+		errorMessage: "",
+		localPath: null,
 	} as ModelInfo;
 }
 
@@ -32,6 +35,15 @@ describe("getFamilyConfig", () => {
 		expect(getFamilyConfig("kaldi").label).toBe("Kaldi");
 		expect(getFamilyConfig("t-one").label).toBe("T-One");
 		expect(getFamilyConfig("whisper").icon).toBeDefined();
+	});
+
+	test("includes the custom family for user-provided ONNX bundles", () => {
+		const cfg = getFamilyConfig("custom");
+		expect(cfg.label).toBe("Custom");
+		expect(cfg.icon).toBeDefined();
+		// Custom drops are user-provided — no brand logo overrides the
+		// HugeIcon fallback (the icon is what's rendered in the picker).
+		expect(cfg.logoSrc).toBeUndefined();
 	});
 });
 
@@ -97,6 +109,16 @@ describe("groupByFamily", () => {
 			"gigaam",
 			"lite-whisper",
 		]);
+	});
+
+	test("custom family forms its own group when present", () => {
+		const grouped = groupByFamily([
+			model("custom-my-whisper", "custom", ""),
+			model("whisper-tiny", "whisper", "38M"),
+		]);
+		const families = grouped.map(([fam]) => fam);
+		expect(families).toContain("custom");
+		expect(families).toContain("whisper");
 	});
 });
 

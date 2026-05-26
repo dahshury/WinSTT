@@ -283,19 +283,17 @@ function applyLogDirFlag(args: string[]): void {
 }
 
 /**
- * Append `--data-dir <userData>` so the Python server roots its model
- * cache / recordings / settings file under the same directory as Electron
- * persists its store. In portable mode this points at the ``Data/`` dir
- * next to the executable; otherwise it's the OS userData path. The server
- * uses this as the base for any directories that would otherwise default
- * to ``~/.winstt`` or platform-specific caches — see
- * ``server/src/stt_server/cli.py`` for the consumer side.
+ * Append `--custom-models-dir <userData>/models/custom` so the Python server
+ * scans that folder for user-provided ONNX whisper bundles. The directory
+ * itself is created lazily server-side on first scan, so we just propagate
+ * the path here — Electron doesn't need to ensure it exists ahead of time.
  */
-function applyDataDirFlag(args: string[]): void {
+function applyCustomModelsDirFlag(args: string[]): void {
 	try {
-		args.push("--data-dir", app.getPath("userData"));
+		const customDir = path.join(app.getPath("userData"), "models", "custom");
+		args.push("--custom-models-dir", customDir);
 	} catch {
-		// userData may not be available pre-app-ready in dev edge cases — skip silently.
+		// userData may not be available pre-app-ready — skip silently.
 	}
 }
 
@@ -323,7 +321,7 @@ function applyDerivedFlags(args: string[]): void {
 	applyWakeWordFlags(args);
 	applyInitialPromptFlags(args);
 	applyLogDirFlag(args);
-	applyDataDirFlag(args);
+	applyCustomModelsDirFlag(args);
 }
 
 /** Read all relevant settings from electron-store and convert to CLI args */

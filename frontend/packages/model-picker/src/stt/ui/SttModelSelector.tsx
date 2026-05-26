@@ -254,7 +254,10 @@ export function SttModelSelector({
 			}
 			onValueChange={(next) => {
 				// Choosing the card itself selects the model at its default precision.
-				if (next) {
+				// Broken custom-model entries (``available=false``) are guarded
+				// against here — the user clicked a greyed-out row to read the
+				// tooltip, not to actually load broken weights.
+				if (next && next.available !== false) {
 					handleSelect(next.id);
 				}
 			}}

@@ -3,6 +3,7 @@ import {
 	AudioWave02Icon,
 	CpuIcon,
 	FlashIcon,
+	FolderLibraryIcon,
 	Radio01Icon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
@@ -57,20 +58,11 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
 		logoSrc: "/provider-icons/t-tech.png",
 	},
-	moonshine: {
-		icon: FlashIcon,
-		label: "Moonshine",
-		chip: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
-	},
-	cohere: {
-		icon: AiChipIcon,
-		label: "Cohere",
-		chip: "bg-pink-500/15 text-pink-600 dark:text-pink-400",
-	},
-	granite: {
-		icon: CpuIcon,
-		label: "Granite",
-		chip: "bg-slate-500/15 text-slate-700 dark:text-slate-300",
+	custom: {
+		icon: FolderLibraryIcon,
+		label: "Custom",
+		chip: "bg-slate-500/15 text-slate-600 dark:text-slate-400",
+		// No brand logo — these are user-provided drops, not first-party models.
 	},
 };
 
@@ -86,9 +78,7 @@ const FAMILY_AUTHOR: Record<FamilyKey, string> = {
 	gigaam: "Sber Salute",
 	kaldi: "Alpha Cephei",
 	"t-one": "T-Tech",
-	moonshine: "Useful Sensors",
-	cohere: "Cohere",
-	granite: "IBM",
+	custom: "Your Models",
 };
 
 export function getAuthorLabel(family: FamilyKey): string {
@@ -107,9 +97,7 @@ const FAMILY_SEARCH_ALIASES: Record<FamilyKey, string[]> = {
 	gigaam: ["sber", "salute", "sberbank", "sberdevices", "salutedevices"],
 	kaldi: ["alpha cephei", "alphacephei", "vosk"],
 	"t-one": ["t-tech", "t tech", "t-bank", "tinkoff", "tbank"],
-	moonshine: ["useful sensors", "usefulsensors", "moonshine"],
-	cohere: ["cohere", "cohere labs", "transcribe"],
-	granite: ["ibm", "granite", "granite speech"],
+	custom: ["custom", "user", "local", "byo", "bring your own"],
 };
 
 /**

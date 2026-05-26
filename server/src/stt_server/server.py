@@ -394,45 +394,18 @@ def _resolve_log_dir(args_log_dir: str | None) -> Path | None:
     return Path(raw).expanduser()
 
 
-def _apply_data_dir(args_data_dir: str | None) -> Path | None:
-    """Resolve + apply the user-data root for a portable / electron-launched run.
+def _resolve_custom_models_dir(args_custom_dir: str | None) -> Path | None:
+    """Pick the custom-models scan dir: CLI flag wins, then ``WINSTT_CUSTOM_MODELS_DIR`` env var.
 
-    Precedence: ``--data-dir`` CLI flag → ``WINSTT_DATA_DIR`` env var →
-    ``None`` (keep historic platform defaults). When a value is resolved
-    we route the HuggingFace cache under ``<data-dir>/hf/`` so on-demand
-    model downloads land inside the portable tree instead of the user's
-    ``%LOCALAPPDATA%``. Idempotent — already-set env vars take precedence
-    so the Electron-supplied values (set by ``electron/portable-boot.ts``)
-    are never clobbered by the fallback chain.
-
-    Returns the resolved path so callers can pass it to log-dir resolution
-    when ``--log-dir`` itself wasn't provided.
+    ``None`` (the default) tells :class:`ModelCatalog` to skip the scan
+    entirely. Electron passes the userData-anchored path on launch so the
+    scan and the "open custom models folder" action both target the same
+    on-disk location.
     """
-    raw = args_data_dir or os.environ.get("WINSTT_DATA_DIR")
+    raw = args_custom_dir or os.environ.get("WINSTT_CUSTOM_MODELS_DIR")
     if not raw:
         return None
-    data_dir = Path(raw).expanduser()
-    # Best-effort mkdir: a read-only USB stick may refuse the write. We
-    # still honor the path for the env vars below so onnx-asr writes its
-    # tempfiles consistently — failures will surface later with better
-    # diagnostic context than this early helper can provide.
-    with contextlib.suppress(OSError):
-        data_dir.mkdir(parents=True, exist_ok=True)
-
-    hf_cache = data_dir / "hf"
-    with contextlib.suppress(OSError):
-        hf_cache.mkdir(parents=True, exist_ok=True)
-
-    # Only fill env vars when they're missing so the Electron-side values
-    # (electron/portable-boot.ts) keep precedence over the CLI fallback.
-    os.environ.setdefault("WINSTT_DATA_DIR", str(data_dir))
-    os.environ.setdefault("HF_HOME", str(hf_cache))
-    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(hf_cache / "hub"))
-    # When ``--log-dir`` itself wasn't supplied, default it under the data
-    # dir so a single CLI flag is enough to relocate everything.
-    os.environ.setdefault("WINSTT_LOG_DIR", str(data_dir / "logs"))
-
-    return data_dir
+    return Path(raw).expanduser()
 
 
 def _resolve_release() -> str | None:
@@ -462,6 +435,17 @@ async def main_async() -> None:
         debug=bool(getattr(args, "debug", False)),
         release=_resolve_release(),
     )
+
+    # Wire the user-provided custom-models directory into the catalog
+    # before any catalog construction. Idempotent module-level config —
+    # subsequent ``ModelCatalog()`` calls (control_handler, bootstrap, …)
+    # all see the configured directory and surface the user's bundles.
+    from src.recorder.domain.model_registry import set_custom_models_dir
+
+    custom_dir = _resolve_custom_models_dir(getattr(args, "custom_models_dir", None))
+    if custom_dir is not None:
+        custom_dir.mkdir(parents=True, exist_ok=True)
+    set_custom_models_dir(custom_dir)
 
     # Seed the bundled offline base model into the HF cache before any
     # model load so the app transcribes with zero network on first run.
