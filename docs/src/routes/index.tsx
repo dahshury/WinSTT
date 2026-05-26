@@ -1,4 +1,5 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
+import appIconUrl from "@app-icon";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { HomeLayout } from "fumadocs-ui/layouts/home";
 import { AppMock } from "@/components/app-mock";
 import { baseOptions } from "@/lib/layout.shared";
@@ -53,7 +54,7 @@ const features = [
         <line x1="12" x2="12" y1="22.08" y2="12" />
       </svg>
     ),
-    title: "30+ AI Models",
+    title: "29 AI Models",
     description:
       "OpenAI Whisper, NVIDIA NeMo, GigaAM, Kaldi, and more. Switch models with a single setting change.",
     href: "/docs/models",
@@ -331,6 +332,20 @@ function CpuIcon() {
   );
 }
 
+function HeartIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    </svg>
+  );
+}
+
 const privacyBadges = [
   { icon: <ShieldIcon />, label: "100% local" },
   { icon: <WifiOffIcon />, label: "Works offline" },
@@ -341,58 +356,69 @@ function HomePage() {
   return (
     <HomeLayout {...baseOptions()}>
       <div className="flex flex-col items-center flex-1 overflow-hidden">
-        <section className="relative w-full flex flex-col items-center pt-24 pb-12 px-6">
+        <section className="relative w-full flex flex-col items-center pt-5 pb-12 px-6">
           <div
             className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] rounded-full blur-3xl pointer-events-none"
             style={{
               background:
-                "radial-gradient(ellipse, hsla(43, 96%, 56%, 0.06) 0%, transparent 70%)",
+                "radial-gradient(ellipse, oklch(62% 0.19 260 /0.06) 0%, transparent 70%)",
             }}
           />
 
-          <div className="relative mb-8">
+          <div className="relative mb-10">
             <div
-              className="absolute inset-0 rounded-full animate-ping"
+              className="absolute inset-0 rounded-[28px] animate-ping"
               style={{
-                background: "hsla(43, 96%, 56%, 0.08)",
+                background: "oklch(62% 0.19 260 /0.08)",
                 animationDuration: "3s",
               }}
             />
             <div
-              className="relative z-10 p-5 rounded-full"
+              className="relative z-10 p-4 rounded-[28px]"
               style={{
-                background: "hsla(43, 96%, 56%, 0.08)",
-                border: "1px solid hsla(43, 96%, 56%, 0.15)",
-                boxShadow: "0 0 40px hsla(43, 96%, 56%, 0.08)",
+                background: "oklch(62% 0.19 260 /0.06)",
+                border: "1px solid oklch(62% 0.19 260 /0.2)",
+                boxShadow:
+                  "inset 0 1px 0 0 oklch(100% 0 0 / 0.06), 0 0 80px oklch(62% 0.19 260 /0.18), 0 20px 60px -20px oklch(0% 0 0 / 0.6)",
               }}
             >
-              <svg
-                width="32"
-                height="32"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ color: "hsl(43, 96%, 56%)" }}
-                aria-hidden="true"
-              >
-                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <line x1="12" x2="12" y1="19" y2="22" />
-              </svg>
+              <img
+                src={appIconUrl}
+                width={168}
+                height={168}
+                alt="WinSTT application icon"
+                style={{ display: "block", borderRadius: "22px" }}
+              />
             </div>
           </div>
+
+          <a
+            href="https://github.com/dahshury/WinSTT/blob/main/LICENSE"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full mb-4 transition-all hover:brightness-110"
+            style={{
+              background: "oklch(62% 0.19 260 / 0.1)",
+              border: "1px solid oklch(62% 0.19 260 / 0.28)",
+              color: "oklch(82% 0.13 260)",
+              fontSize: "11.5px",
+              fontWeight: 600,
+              letterSpacing: "0.03em",
+              textTransform: "uppercase",
+            }}
+          >
+            <HeartIcon />
+            100% Free · Open Source · MIT
+          </a>
 
           <h1 className="text-5xl font-bold tracking-tight mb-4">WinSTT</h1>
           <p
             className="text-lg max-w-xl text-center leading-relaxed"
-            style={{ color: "hsla(0, 0%, 100%, 0.5)" }}
+            style={{ color: "oklch(94% 0.015 265 /0.55)" }}
           >
-            Local speech-to-text for Windows. Real-time transcription powered
-            by Whisper, NeMo, and 30+ AI models — completely offline, entirely
-            on your hardware.
+            Local speech-to-text for Windows. Real-time transcription powered by
+            Whisper, NeMo, and 29 AI models — completely offline, entirely on
+            your hardware. Free forever, source on GitHub.
           </p>
 
           <div className="flex items-center gap-4 mt-6">
@@ -401,9 +427,9 @@ function HomePage() {
                 key={badge.label}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
                 style={{
-                  background: "hsla(150, 60%, 40%, 0.06)",
-                  border: "1px solid hsla(150, 60%, 40%, 0.12)",
-                  color: "hsla(150, 60%, 65%, 0.9)",
+                  background: "oklch(68% 0.17 150 / 0.08)",
+                  border: "1px solid oklch(68% 0.17 150 / 0.18)",
+                  color: "oklch(82% 0.12 150 / 0.9)",
                   fontSize: "12px",
                   fontWeight: 500,
                 }}
@@ -420,9 +446,10 @@ function HomePage() {
               params={{ _splat: "" }}
               className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-110"
               style={{
-                background: "hsl(43, 96%, 56%)",
-                color: "hsl(240, 10%, 3.9%)",
-                boxShadow: "0 0 20px hsla(43, 96%, 56%, 0.15)",
+                background: "var(--brand-accent)",
+                color: "var(--fg-strong)",
+                boxShadow:
+                  "inset 0 1px 0 0 oklch(100% 0 0 / 0.12), 0 0 24px oklch(62% 0.19 260 / 0.25)",
               }}
             >
               Documentation
@@ -447,9 +474,9 @@ function HomePage() {
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-125"
               style={{
-                background: "hsla(0, 0%, 100%, 0.05)",
-                border: "1px solid hsla(0, 0%, 100%, 0.1)",
-                color: "hsla(0, 0%, 100%, 0.7)",
+                background: "oklch(94% 0.015 265 /0.05)",
+                border: "1px solid oklch(94% 0.015 265 /0.1)",
+                color: "oklch(94% 0.015 265 /0.7)",
               }}
             >
               <GitHubIcon />
@@ -463,7 +490,7 @@ function HomePage() {
             className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[400px] rounded-full blur-3xl pointer-events-none"
             style={{
               background:
-                "radial-gradient(ellipse, hsla(43, 96%, 56%, 0.04) 0%, transparent 70%)",
+                "radial-gradient(ellipse, oklch(62% 0.19 260 /0.04) 0%, transparent 70%)",
             }}
           />
 
@@ -473,12 +500,13 @@ function HomePage() {
             className="mt-4 text-center"
             style={{
               fontSize: "12px",
-              color: "hsla(0, 0%, 100%, 0.25)",
+              color: "oklch(94% 0.015 265 /0.25)",
               fontFamily: '"Geist Mono", monospace',
               letterSpacing: "0.3px",
             }}
           >
-            Real-time waveform visualization with live transcription overlay
+            The main window — 9-band audio visualizer with live hotkey, mic and
+            model chips
           </p>
         </section>
 
@@ -487,16 +515,16 @@ function HomePage() {
             className="relative overflow-hidden rounded-xl p-6"
             style={{
               background:
-                "linear-gradient(135deg, hsla(150, 40%, 12%, 0.3) 0%, hsla(240, 10%, 8%, 0.5) 100%)",
-              border: "1px solid hsla(150, 50%, 30%, 0.15)",
+                "linear-gradient(135deg, oklch(22% 0.06 155 / 0.35) 0%, var(--surface-1) 100%)",
+              border: "1px solid oklch(60% 0.15 150 / 0.2)",
             }}
           >
             <div className="flex items-start gap-4">
               <div
                 className="shrink-0 p-2.5 rounded-lg mt-0.5"
                 style={{
-                  background: "hsla(150, 60%, 40%, 0.1)",
-                  color: "hsla(150, 60%, 65%, 0.9)",
+                  background: "oklch(68% 0.17 150 / 0.12)",
+                  color: "oklch(82% 0.12 150 / 0.9)",
                 }}
               >
                 <svg
@@ -517,13 +545,13 @@ function HomePage() {
               <div>
                 <h3
                   className="font-semibold text-sm mb-1.5"
-                  style={{ color: "hsla(150, 60%, 75%, 0.95)" }}
+                  style={{ color: "oklch(86% 0.1 150 / 0.95)" }}
                 >
                   Your voice stays on your machine
                 </h3>
                 <p
                   className="text-sm leading-relaxed"
-                  style={{ color: "hsla(0, 0%, 100%, 0.45)" }}
+                  style={{ color: "oklch(94% 0.015 265 /0.45)" }}
                 >
                   Transcription runs entirely on your local hardware. Audio is
                   processed in-memory by on-device AI models and never written
@@ -540,16 +568,16 @@ function HomePage() {
           <div className="text-center mb-10">
             <h2
               className="text-2xl font-bold tracking-tight mb-2"
-              style={{ color: "hsla(0, 0%, 100%, 0.9)" }}
+              style={{ color: "oklch(94% 0.015 265 /0.9)" }}
             >
               Everything you need
             </h2>
             <p
               className="text-sm"
-              style={{ color: "hsla(0, 0%, 100%, 0.35)" }}
+              style={{ color: "oklch(94% 0.015 265 /0.35)" }}
             >
-              A complete speech-to-text toolkit, running locally on your
-              Windows machine
+              A complete speech-to-text toolkit, running locally on your Windows
+              machine
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -559,34 +587,34 @@ function HomePage() {
                 href={feature.href}
                 className="feature-card group p-5 rounded-xl"
                 style={{
-                  background: "hsla(240, 5%, 10%, 0.4)",
-                  border: "1px solid hsla(240, 3.8%, 20%, 0.25)",
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--divider)",
                 }}
               >
                 <div
                   className="feature-icon inline-flex p-2.5 rounded-lg mb-3 transition-all duration-300"
                   style={{
-                    background: "hsla(43, 96%, 56%, 0.08)",
-                    color: "hsl(43, 96%, 56%)",
+                    background: "oklch(62% 0.19 260 /0.08)",
+                    color: "var(--brand-accent)",
                   }}
                 >
                   {feature.icon}
                 </div>
                 <h3
                   className="font-semibold text-[13.5px] mb-1.5 transition-colors duration-200"
-                  style={{ color: "hsla(0, 0%, 100%, 0.9)" }}
+                  style={{ color: "oklch(94% 0.015 265 /0.9)" }}
                 >
                   {feature.title}
                 </h3>
                 <p
                   className="text-[13px] leading-relaxed"
-                  style={{ color: "hsla(0, 0%, 100%, 0.4)" }}
+                  style={{ color: "oklch(94% 0.015 265 /0.4)" }}
                 >
                   {feature.description}
                 </p>
                 <div
                   className="mt-3 flex items-center gap-1 text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-                  style={{ color: "hsl(43, 96%, 56%)" }}
+                  style={{ color: "var(--brand-accent)" }}
                 >
                   Learn more
                   <svg

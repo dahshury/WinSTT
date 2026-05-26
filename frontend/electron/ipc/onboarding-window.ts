@@ -1,5 +1,5 @@
 import path from "node:path";
-import { BrowserWindow, ipcMain, screen, shell } from "electron";
+import { app, BrowserWindow, ipcMain, screen, shell } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
 import { dbg } from "../lib/debug-log";
 import { isAllowedRendererUrl, isHttpUrl, loadRendererPage } from "../lib/renderer-url";
@@ -30,10 +30,13 @@ function isWindowAlive(win: BrowserWindow | null): win is BrowserWindow {
 }
 
 function getWindowIconPath(): string | undefined {
-	if (process.platform === "win32") {
-		return path.join(import.meta.dirname, "..", "build", "icon.ico");
+	if (process.platform !== "win32") {
+		return;
 	}
-	return;
+	if (app.isPackaged) {
+		return path.join(process.resourcesPath, "renderer", "icon.ico");
+	}
+	return path.join(import.meta.dirname, "..", "build", "icon.ico");
 }
 
 function centerOnPrimaryDisplay(): { x: number; y: number } {

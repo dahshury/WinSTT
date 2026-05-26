@@ -7,8 +7,10 @@ from src.recorder.domain.config import (
     AudioConfig,
     DiarizationConfig,
     EndpointConfig,
+    HistoryConfig,
     RealtimeConfig,
     RecorderConfig,
+    TextCorrectionConfig,
     TranscriptionConfig,
     UIConfig,
     VADConfig,
@@ -115,7 +117,42 @@ class TestRecorderConfig:
             UIConfig,
             EndpointConfig,
             DiarizationConfig,
+            TextCorrectionConfig,
+            HistoryConfig,
         ) == RecorderConfig._SUBCONFIGS
+
+    def test_history_defaults_are_off(self) -> None:
+        # Saving WAV files is opt-in — defaults must not write anything.
+        cfg = HistoryConfig()
+        assert cfg.save_wav is False
+        assert cfg.recordings_dir == ""
+
+    def test_from_kwargs_routes_history(self) -> None:
+        cfg = RecorderConfig.from_kwargs(
+            save_wav=True,
+            recordings_dir="/tmp/winstt-rec",
+        )
+        assert cfg.history.save_wav is True
+        assert cfg.history.recordings_dir == "/tmp/winstt-rec"
+
+    def test_text_correction_defaults(self) -> None:
+        cfg = TextCorrectionConfig()
+        assert cfg.custom_words == []
+        assert cfg.threshold == 0.18
+
+    def test_text_correction_threshold_validation(self) -> None:
+        with pytest.raises(ValidationError):
+            TextCorrectionConfig(threshold=1.5)
+        with pytest.raises(ValidationError):
+            TextCorrectionConfig(threshold=-0.1)
+
+    def test_from_kwargs_routes_text_correction(self) -> None:
+        cfg = RecorderConfig.from_kwargs(
+            custom_words=["ChargeBee", "OpenAI"],
+            threshold=0.22,
+        )
+        assert cfg.text_correction.custom_words == ["ChargeBee", "OpenAI"]
+        assert cfg.text_correction.threshold == 0.22
 
 
 class TestRouteKwargsHelpers:
@@ -125,6 +162,9 @@ class TestRouteKwargsHelpers:
         assert owner["buffer_size"] == 0  # AudioConfig
         assert owner["post_speech_silence_duration"] == 1  # VADConfig
         assert owner["detection_speed"] == 6  # EndpointConfig
+        # HistoryConfig sits last so its fields don't shadow earlier ones.
+        assert owner["save_wav"] == 9
+        assert owner["recordings_dir"] == 9
         assert "unknown_key" not in owner
 
     def test_field_owner_index_precedence_on_shared_name(self) -> None:

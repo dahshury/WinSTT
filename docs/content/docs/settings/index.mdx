@@ -3,32 +3,53 @@ title: Settings Overview
 description: Configure WinSTT to match your needs
 ---
 
-WinSTT settings are organized into eight panels. Each panel groups related options so you can quickly find what you need.
+The WinSTT settings window has **nine panels**, accessible from the sidebar on the left. They appear in this order:
 
 <Cards>
-  <Card title="Model Settings" href="/docs/settings/model">
-    Choose transcription models, set precision via ONNX quantization, and tune beam search parameters.
+  <Card title="General" href="/docs/settings/general">
+    Application behavior, recording mode (PTT / toggle / listen / wake word), push-to-talk hotkey, audio ducking, overlay, wake word, and file transcription.
   </Card>
-  <Card title="Audio Settings" href="/docs/settings/audio">
-    Select your microphone, configure sample rate, and adjust voice activity detection sensitivity.
+  <Card title="Model" href="/docs/settings/model">
+    Choose the main and realtime transcription models, pick an ONNX quantization, and enable LLM enhancement or text-to-speech (LLM and TTS live as sub-sections inside this panel).
   </Card>
-  <Card title="Quality & Transcription" href="/docs/settings/quality">
-    Control realtime preview behavior, batch sizes, endpoint detection, and text formatting rules.
+  <Card title="Audio" href="/docs/settings/audio">
+    Select the input microphone, set sample rate, and tune voice activity detection sensitivity and silence-stop timing.
   </Card>
-  <Card title="General Settings" href="/docs/settings/general">
-    Set application behavior, recording mode, wake word, audio ducking, overlay, and file transcription.
+  <Card title="Processing (Quality)" href="/docs/settings/quality">
+    Realtime preview behavior, beam search and batch sizes, smart endpoint detection, and text formatting rules.
   </Card>
-  <Card title="Hotkey Settings" href="/docs/settings/hotkey">
-    Configure the global push-to-talk keyboard shortcut.
+  <Card title="Dictionary" href="/docs/dictionary">
+    Fuzzy-match corrections that nudge mistranscribed names and terms toward the right spelling.
   </Card>
-  <Card title="LLM Enhancement" href="/docs/settings/llm">
-    Clean up dictated text and run hotkey-driven text transforms via local or cloud LLMs.
+  <Card title="Snippets" href="/docs/dictionary">
+    Trigger words that expand into full text — covered alongside the dictionary feature.
   </Card>
-  <Card title="Text-to-Speech" href="/docs/settings/tts">
-    Read selected text aloud with the bundled Kokoro-82M ONNX voice.
+  <Card title="History" href="/docs/transcription-history">
+    A local dashboard of everything you've dictated: word stats, an activity heatmap, and a searchable log.
   </Card>
 </Cards>
 
-Dictionary & Snippets are configured separately — see [Dictionary](/docs/dictionary).
+The remaining two panels do not have their own docs page yet:
 
-Settings are persisted automatically when changed. The Electron main process saves them to disk and syncs them to the Python STT server over the control WebSocket channel.
+- **Integrations** — API keys and verification for the optional cloud providers (Ollama, OpenRouter, OpenAI, ElevenLabs). All cloud usage is opt-in; the app is fully functional with everything offline.
+- **About** — version info, links, and license.
+
+## Where else settings appear
+
+A handful of features are documented outside the settings tree:
+
+<Cards>
+  <Card title="LLM Enhancement" href="/docs/settings/llm">
+    Clean up dictated text and run hotkey-driven text transforms via local Ollama or OpenRouter. Configured inside the **Model** panel.
+  </Card>
+  <Card title="Text-to-Speech" href="/docs/settings/tts">
+    Read selected text aloud with the bundled Kokoro-82M ONNX voice. Configured inside the **Model** panel.
+  </Card>
+  <Card title="Hotkey reference" href="/docs/settings/hotkey">
+    Combo-string format and the re-paste shortcut. The hotkey itself is set in the **General** panel.
+  </Card>
+</Cards>
+
+## Persistence
+
+Settings are saved automatically when changed. The Electron main process writes them to disk (`electron-store`) and syncs them to the Python STT server over the control WebSocket channel — there is no "save" or "apply" button.

@@ -167,6 +167,25 @@ export class TtsPlaybackQueue {
 	private startCallbacks: Array<() => void> = [];
 	/** Request id we've already fired `onStart` for — once per request. */
 	private startedFor: string | null = null;
+	/** User-selected output device id (`""` = system default). */
+	private outputDeviceId = "";
+
+	/**
+	 * Switch the user-selected output sink. Applied to a new AudioContext
+	 * on the next utterance; an in-flight context is also re-routed via
+	 * `setSinkId` so the change is heard immediately when supported.
+	 */
+	setOutputDeviceId(deviceId: string): void {
+		this.outputDeviceId = deviceId;
+		const ctx = this.ctx as
+			| (AudioContext & {
+					setSinkId?: (id: string | { type: "none" }) => Promise<void>;
+			  })
+			| null;
+		if (ctx?.setSinkId) {
+			ctx.setSinkId(deviceId || { type: "none" }).catch(() => undefined);
+		}
+	}
 
 	get isPlaying(): boolean {
 		return this.activeRequestId !== null;
@@ -184,7 +203,10 @@ export class TtsPlaybackQueue {
 
 	private createOrReuseCtx(): AudioContext {
 		if (this.ctx == null || this.ctx.state === "closed") {
-			this.ctx = new AudioContext();
+			const opts = this.outputDeviceId
+				? ({ sinkId: this.outputDeviceId } as unknown as AudioContextOptions)
+				: undefined;
+			this.ctx = opts ? new AudioContext(opts) : new AudioContext();
 		}
 		return this.ctx;
 	}

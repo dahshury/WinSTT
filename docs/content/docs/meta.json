@@ -6,6 +6,7 @@
     "settings",
     "models",
     "recording-modes",
+    "cli",
     "dictionary",
     "transcription-history",
     "verify-releases",

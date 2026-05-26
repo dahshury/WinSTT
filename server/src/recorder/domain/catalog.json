@@ -776,6 +776,23 @@
       ]
     },
     {
+      "id": "breeze-asr-25",
+      "display_name": "Breeze ASR 25",
+      "family": "whisper",
+      "languages": [
+        "en",
+        "zh"
+      ],
+      "supports_language_detection": true,
+      "supports_realtime": true,
+      "onnx_model_name": "xeonchen/Breeze-ASR-25-ONNX",
+      "description": "MediaTek Breeze ASR 25 — Whisper-large-v2 fine-tune for Mandarin/English code-switching",
+      "param_count": 1545107214,
+      "available_quantizations": [
+        ""
+      ]
+    },
+    {
       "id": "lite-whisper-large-v3-turbo",
       "display_name": "Lite-Whisper Large v3 Turbo",
       "family": "whisper",
@@ -1121,6 +1138,218 @@
       ]
     },
     {
+      "id": "moonshine-tiny",
+      "display_name": "Moonshine Tiny",
+      "family": "moonshine",
+      "languages": [
+        "en"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-tiny",
+      "description": "Useful Sensors Moonshine tiny — raw-audio encoder, ~5.8x faster than Whisper tiny",
+      "param_count": 27092835,
+      "available_quantizations": [
+        ""
+      ]
+    },
+    {
+      "id": "moonshine-base",
+      "display_name": "Moonshine Base",
+      "family": "moonshine",
+      "languages": [
+        "en"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-base",
+      "description": "Useful Sensors Moonshine base — raw-audio encoder, low-latency English ASR",
+      "param_count": 61514019,
+      "available_quantizations": [
+        ""
+      ]
+    },
+    {
+      "id": "moonshine-tiny-zh",
+      "display_name": "Moonshine Tiny (ZH)",
+      "family": "moonshine",
+      "languages": [
+        "zh"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-tiny-zh",
+      "description": "Useful Sensors Moonshine tiny — Mandarin Chinese fine-tune",
+      "param_count": 27092835,
+      "available_quantizations": [
+        ""
+      ]
+    },
+    {
+      "id": "moonshine-tiny-ja",
+      "display_name": "Moonshine Tiny (JA)",
+      "family": "moonshine",
+      "languages": [
+        "ja"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-tiny-ja",
+      "description": "Useful Sensors Moonshine tiny — Japanese fine-tune",
+      "param_count": 27092835,
+      "available_quantizations": [
+        ""
+      ]
+    },
+    {
+      "id": "moonshine-tiny-ko",
+      "display_name": "Moonshine Tiny (KO)",
+      "family": "moonshine",
+      "languages": [
+        "ko"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-tiny-ko",
+      "description": "Useful Sensors Moonshine tiny — Korean fine-tune",
+      "param_count": 27092835,
+      "available_quantizations": [
+        ""
+      ]
+    },
+    {
+      "id": "moonshine-tiny-ar",
+      "display_name": "Moonshine Tiny (AR)",
+      "family": "moonshine",
+      "languages": [
+        "ar"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-tiny-ar",
+      "description": "Useful Sensors Moonshine tiny — Arabic fine-tune",
+      "param_count": 27092835,
+      "available_quantizations": [
+        ""
+      ]
+    },
+    {
+      "id": "moonshine-tiny-vi",
+      "display_name": "Moonshine Tiny (VI)",
+      "family": "moonshine",
+      "languages": [
+        "vi"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-tiny-vi",
+      "description": "Useful Sensors Moonshine tiny — Vietnamese fine-tune",
+      "param_count": 27092835,
+      "available_quantizations": [
+        ""
+      ]
+    },
+    {
+      "id": "moonshine-base-zh",
+      "display_name": "Moonshine Base (ZH)",
+      "family": "moonshine",
+      "languages": [
+        "zh"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-base-zh",
+      "description": "Useful Sensors Moonshine base — Mandarin Chinese fine-tune",
+      "param_count": 61514019,
+      "available_quantizations": [
+        ""
+      ]
+    },
+    {
+      "id": "moonshine-base-ja",
+      "display_name": "Moonshine Base (JA)",
+      "family": "moonshine",
+      "languages": [
+        "ja"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-base-ja",
+      "description": "Useful Sensors Moonshine base — Japanese fine-tune",
+      "param_count": 61514019,
+      "available_quantizations": [
+        ""
+      ]
+    },
+    {
+      "id": "moonshine-base-ko",
+      "display_name": "Moonshine Base (KO)",
+      "family": "moonshine",
+      "languages": [
+        "ko"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-base-ko",
+      "description": "Useful Sensors Moonshine base — Korean fine-tune",
+      "param_count": 61514019,
+      "available_quantizations": [
+        ""
+      ]
+    },
+    {
+      "id": "granite-4.0-1b-speech",
+      "display_name": "Granite Speech 4.0 1B",
+      "family": "granite",
+      "languages": [
+        "de",
+        "en",
+        "es",
+        "fr",
+        "ja",
+        "pt"
+      ],
+      "supports_language_detection": true,
+      "supports_realtime": true,
+      "onnx_model_name": "granite-4.0-1b-speech",
+      "description": "IBM Granite Speech 4.0 — Conformer + Q-Former + Granite 1B LLM decoder",
+      "param_count": 1243916628,
+      "available_quantizations": [
+        "",
+        "q4"
+      ]
+    },
+    {
+      "id": "cohere-transcribe",
+      "display_name": "Cohere Transcribe",
+      "family": "cohere",
+      "languages": [
+        "ar",
+        "de",
+        "el",
+        "en",
+        "es",
+        "fr",
+        "it",
+        "ja",
+        "ko",
+        "nl",
+        "pl",
+        "pt",
+        "vi",
+        "zh"
+      ],
+      "supports_language_detection": true,
+      "supports_realtime": true,
+      "onnx_model_name": "cohere-transcribe",
+      "description": "Cohere Transcribe — 2B Conformer + lightweight Transformer decoder, 14 languages (#1 on HF Open ASR Leaderboard)",
+      "param_count": 2000000000,
+      "available_quantizations": [
+        "",
+        "q4"
+      ]
+    },
+    {
       "id": "nemo-parakeet-ctc-0.6b",
       "display_name": "NeMo Parakeet CTC 0.6B",
       "family": "nemo",
@@ -1148,23 +1377,6 @@
       "supports_realtime": true,
       "onnx_model_name": "nemo-parakeet-rnnt-0.6b",
       "description": "NVIDIA Parakeet RNNT model",
-      "param_count": 600000000,
-      "available_quantizations": [
-        "",
-        "int8"
-      ]
-    },
-    {
-      "id": "nemo-parakeet-tdt-0.6b-v2",
-      "display_name": "NeMo Parakeet TDT 0.6B v2",
-      "family": "nemo",
-      "languages": [
-        "en"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "nemo-parakeet-tdt-0.6b-v2",
-      "description": "NVIDIA Parakeet TDT v2",
       "param_count": 600000000,
       "available_quantizations": [
         "",
@@ -1254,6 +1466,26 @@
       ]
     },
     {
+      "id": "nemo-canary-180m-flash",
+      "display_name": "NeMo Canary 180M Flash",
+      "family": "nemo",
+      "languages": [
+        "de",
+        "en",
+        "es",
+        "fr"
+      ],
+      "supports_language_detection": true,
+      "supports_realtime": true,
+      "onnx_model_name": "istupakov/canary-180m-flash-onnx",
+      "description": "NVIDIA Canary 180M Flash (en/de/fr/es, >1200 RTFx)",
+      "param_count": 194168492,
+      "available_quantizations": [
+        "",
+        "int8"
+      ]
+    },
+    {
       "id": "nemo-fastconformer-ru-ctc",
       "display_name": "NeMo FastConformer RU CTC",
       "family": "nemo",
@@ -1282,40 +1514,6 @@
       "onnx_model_name": "nemo-fastconformer-ru-rnnt",
       "description": "NVIDIA FastConformer Russian RNNT",
       "param_count": 114078382,
-      "available_quantizations": [
-        "",
-        "int8"
-      ]
-    },
-    {
-      "id": "gigaam-v2-ctc",
-      "display_name": "GigaAM v2 CTC",
-      "family": "gigaam",
-      "languages": [
-        "ru"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "gigaam-v2-ctc",
-      "description": "GigaAM gigaam-v2-ctc (Russian)",
-      "param_count": 232561341,
-      "available_quantizations": [
-        "",
-        "int8"
-      ]
-    },
-    {
-      "id": "gigaam-v2-rnnt",
-      "display_name": "GigaAM v2 RNNT",
-      "family": "gigaam",
-      "languages": [
-        "ru"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "gigaam-v2-rnnt",
-      "description": "GigaAM gigaam-v2-rnnt (Russian)",
-      "param_count": 233727546,
       "available_quantizations": [
         "",
         "int8"

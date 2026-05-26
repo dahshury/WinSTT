@@ -395,13 +395,15 @@ export class SttClient extends EventEmitter {
 	}
 
 	private handleClose() {
-		// Always tear down sockets + reject pending requests, but emit
-		// "disconnected" + breadcrumb only ONCE per disconnected period so
-		// the UI / logs don't get one event per retry. Critically, we must
-		// always re-schedule another reconnect — otherwise a slow server
-		// boot (e.g. the bundled stt-server.exe needs ~5–7 s to load the
-		// Whisper/Silero ONNX sessions) outlives the first retry and the
-		// client gives up while the backend is still coming online.
+		// Always tear down sockets + reject pending requests. The "disconnected"
+		// event + breadcrumb is emit-gated so the UI / logs don't spam one
+		// event per failed retry, but scheduleReconnect MUST run on every
+		// call — otherwise a slow server boot (handleClose fires from each
+		// retry attempt's failed sockets, all observing _disconnectedEmitted=
+		// true after the first one) would kill the retry loop after one tick.
+		// The double-timer hazard (each disconnect fires handleClose twice,
+		// once per socket) is handled inside scheduleReconnect itself via
+		// clearTimeout.
 		this.closeAll();
 		this.rejectAllPending(
 			new ConnectionError("Connection lost", `${this.host}:${this.controlPort}`, true)
@@ -417,6 +419,15 @@ export class SttClient extends EventEmitter {
 	private scheduleReconnect() {
 		if (!this.shouldReconnect) {
 			return;
+		}
+		// Cancel any pending timer first. Defence-in-depth alongside the
+		// once-per-period gate in handleClose — if a caller ever invokes
+		// scheduleReconnect twice without the gate, only the most-recent
+		// timer survives. Orphaned timers from earlier cycles otherwise
+		// fire long after success and start spurious connect attempts.
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
 		}
 		const baseDelay = Math.min(
 			INITIAL_RECONNECT_DELAY_MS * 2 ** this.reconnectAttempt,

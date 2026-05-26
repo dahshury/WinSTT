@@ -81,7 +81,34 @@ ALLOWED_METHODS: list[str] = [
     "wakeup",
     "shutdown",
     "text",
+    # Runtime diarization toggle — flip diarization on/off without rebooting
+    # the whole server. Renderer-side ``sttRequestDiarizationToggle(bool)``
+    # routes through here. The recorder facade builds/tears down the
+    # diarizer on a background thread and emits ``diarization_toggle_*``
+    # lifecycle events back on the data channel.
+    "request_diarization_toggle",
 ]
+
+
+def augment_runtime_info(info: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Augment a ``runtime_info`` dict with the live capability set.
+
+    The renderer's stale-server canary inspects ``info.allowed_methods`` to
+    decide whether the connected server build supports the protocol methods
+    this frontend was built against. Without this field every fresh boot
+    would trip the "STT server is outdated" toast because the canary would
+    see an empty allowed-methods list and assume the server is missing
+    everything.
+
+    Returns ``None`` when ``info`` itself was ``None`` so the existing
+    "couldn't read runtime_info" fallbacks stay untouched.
+    """
+    if info is None:
+        return None
+    enriched = dict(info)
+    enriched["allowed_methods"] = list(ALLOWED_METHODS)
+    return enriched
+
 
 ALLOWED_PARAMETERS: list[str] = [
     "model",
@@ -106,6 +133,13 @@ ALLOWED_PARAMETERS: list[str] = [
     "end_of_sentence_detection_pause",
     "mid_sentence_detection_pause",
     "unknown_sentence_detection_pause",
+    # Deterministic post-ASR fuzzy corrector. Both are bridged through the
+    # standard ``setattr(state.recorder, parameter, value)`` path because
+    # the facade exposes matching properties (see ``recorder/__init__.py``).
+    # ``custom_words`` accepts a list[str]; ``word_correction_threshold``
+    # accepts a float clamped to ``[0.0, 1.0]`` by Pydantic.
+    "custom_words",
+    "word_correction_threshold",
 ]
 
 # Sentence-pause parameters that live on ``ServerState`` rather than the
@@ -185,7 +219,7 @@ async def control_handler(websocket: ServerConnection, state: ServerState) -> No
         # whether the server is on CUDA / CPU / DML providers.
         try:
             if state.recorder is not None:
-                ready_payload["runtime_info"] = state.recorder.runtime_info()
+                ready_payload["runtime_info"] = augment_runtime_info(state.recorder.runtime_info())
         except Exception:
             logger.warning("runtime_info() failed while building server_ready payload", exc_info=True)
         await websocket.send(json.dumps(ready_payload))
@@ -466,6 +500,29 @@ async def _handle_list_models(ws: ServerConnection, state: ServerState, data: di
     )
 
 
+def _build_models_with_state_payload(device: str | None) -> dict[str, Any]:
+    """Synchronous catalog + cache-state assembly. Runs in a worker thread.
+
+    Walks the HF snapshot tree once per model via ``model_state_dict`` — that
+    rglob is the reason this is off-loop. Returning the ``value`` dict shape
+    expected by the client's ``sendRequest`` promise resolver.
+    """
+    from src.recorder.domain.model_registry import ModelCatalog
+    from src.recorder.infrastructure.model_state import (
+        model_state_dict,
+        system_info_dict,
+    )
+    from src.recorder.infrastructure.system_info import get_system_info
+
+    catalog = ModelCatalog()
+    sys_info = get_system_info()
+    return {
+        "models": catalog.to_dicts(device=device),
+        "states": [model_state_dict(m, sys_info) for m in catalog.list_all()],
+        "system_info": system_info_dict(sys_info),
+    }
+
+
 @register_command("list_models_with_state")
 async def _handle_list_models_with_state(
     ws: ServerConnection,
@@ -480,29 +537,21 @@ async def _handle_list_models_with_state(
     keeping ``states`` separate from ``models`` lets the renderer
     cache the (slow-changing) catalog and only refresh the (fast-changing)
     states after a download completes.
-    """
-    from src.recorder.domain.model_registry import ModelCatalog
-    from src.recorder.infrastructure.model_state import (
-        model_state_dict,
-        system_info_dict,
-    )
-    from src.recorder.infrastructure.system_info import get_system_info
 
-    catalog = ModelCatalog()
-    sys_info = get_system_info()
-    states = [model_state_dict(m, sys_info) for m in catalog.list_all()]
+    Catalog assembly is off-loaded to a worker thread because each entry
+    rglobs the HF cache snapshot dir (twice — overall + per-quantization);
+    with ~50 catalog entries that's enough disk I/O to block the control
+    channel's event loop past the renderer's 10s request timeout.
+    """
     request_id = data.get("request_id")
     device = _active_device(state)
+    value = await asyncio.to_thread(_build_models_with_state_payload, device)
     # Wrap in ``value`` so SttClient.sendRequest() resolves the promise
     # with the full payload (it reads ``data.value`` by convention).
     payload: dict[str, Any] = {
         "status": "success",
         "command": "list_models_with_state",
-        "value": {
-            "models": catalog.to_dicts(device=device),
-            "states": states,
-            "system_info": system_info_dict(sys_info),
-        },
+        "value": value,
     }
     if request_id is not None:
         payload["request_id"] = request_id
@@ -550,7 +599,7 @@ async def _handle_get_runtime_info(ws: ServerConnection, state: ServerState, dat
     info: dict[str, Any] | None = None
     if state.recorder is not None:
         try:
-            info = state.recorder.runtime_info()
+            info = augment_runtime_info(state.recorder.runtime_info())
         except Exception as e:  # pragma: no cover — defensive
             print(f"{bcolors.WARNING}runtime_info() raised: {e}{bcolors.ENDC}")
     payload: dict[str, Any] = {"status": "success", "command": "get_runtime_info", "value": info}

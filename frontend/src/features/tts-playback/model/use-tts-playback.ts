@@ -1,4 +1,5 @@
 import { type MutableRefObject, useEffect, useRef, useState } from "react";
+import { useSettingsStore } from "@/entities/setting";
 import {
 	onTtsChunk,
 	onTtsCompleted,
@@ -113,6 +114,7 @@ export function reduceQueueEnd(prev: TtsPlaybackState): TtsPlaybackState {
  */
 export function useTtsPlayback(): TtsPlaybackState {
 	const queueRef = useRef<TtsPlaybackQueue | null>(null);
+	const outputDeviceId = useSettingsStore((s) => s.settings.general.outputDeviceId);
 	// The id whose audio is currently scheduled — needed so `onEnd` (which
 	// carries no id) can tell main *which* request finished.
 	const activeIdRef = useRef<string | null>(null);
@@ -153,6 +155,13 @@ export function useTtsPlayback(): TtsPlaybackState {
 			unEnd();
 		};
 	}, []);
+
+	// Live-route to the user's currently selected output device. Kept as a
+	// separate effect so the heavy IPC subscriber wiring above doesn't churn
+	// every time outputDeviceId changes.
+	useEffect(() => {
+		queueRef.current?.setOutputDeviceId(outputDeviceId);
+	}, [outputDeviceId]);
 
 	useEffect(
 		() => () => {

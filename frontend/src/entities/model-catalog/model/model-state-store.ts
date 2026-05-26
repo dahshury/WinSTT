@@ -35,20 +35,38 @@ function toMap(entries: ModelStateEntry[]): Record<string, ModelStateEntry> {
 	return out;
 }
 
+// In-flight refresh promise. Multiple callers (settings panel mount,
+// model-picker window mount, push events from `onModelCacheChanged` /
+// `onModelSwapCompleted`) used to fire parallel IPC round-trips that all
+// queued behind the same blocked control-channel handler and timed out
+// together. Sharing a single pending promise collapses bursts into one
+// request without changing the contract — every caller still awaits a
+// fresh result.
+let pendingRefresh: Promise<void> | null = null;
+
 export const useModelStateStore = create<ModelStateStore>()((set, get) => ({
 	statesById: {},
 	systemInfo: null,
 	isLoaded: false,
 	setAll: (entries, systemInfo) => set({ statesById: toMap(entries), systemInfo, isLoaded: true }),
-	refresh: async () => {
-		const payload = await fetchModelsWithState();
-		if (payload && Array.isArray(payload.states)) {
-			set({
-				statesById: toMap(payload.states),
-				systemInfo: payload.system_info,
-				isLoaded: true,
-			});
+	refresh: () => {
+		if (pendingRefresh) {
+			return pendingRefresh;
 		}
+		const run = async () => {
+			const payload = await fetchModelsWithState();
+			if (payload && Array.isArray(payload.states)) {
+				set({
+					statesById: toMap(payload.states),
+					systemInfo: payload.system_info,
+					isLoaded: true,
+				});
+			}
+		};
+		pendingRefresh = run().finally(() => {
+			pendingRefresh = null;
+		});
+		return pendingRefresh;
 	},
 	getState: (id) => get().statesById[id],
 }));

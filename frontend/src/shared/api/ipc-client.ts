@@ -209,6 +209,21 @@ export const sttGetParameter = (parameter: AllowedParameter) =>
 export const sttCallMethod = (method: AllowedMethod, args?: unknown[]) =>
 	send(IPC.STT_CALL_METHOD, { method, args });
 
+/**
+ * Cancel the in-flight dictation session — discards the recording, aborts any
+ * running LLM cleanup, and hides the overlay. Mirrors what hotkey+Backspace
+ * does; used by the X button on the overlay pill.
+ */
+export const sttAbortOperation = () => send(IPC.STT_ABORT_OPERATION);
+
+/**
+ * Toggle whether the overlay BrowserWindow accepts mouse events. The window is
+ * click-through by default; the renderer flips this to `false` while the cursor
+ * is over the X cancel button so the click lands instead of falling through.
+ */
+export const overlaySetIgnoreMouse = (ignore: boolean) =>
+	send(IPC.OVERLAY_SET_IGNORE_MOUSE, { ignore });
+
 // Hotkey
 export const hotkeyRegister = (accelerator: string) =>
 	invokeOrDefault<boolean>(IPC.HOTKEY_REGISTER, false, { accelerator });
@@ -773,6 +788,12 @@ export const onWindowTelemetry = (cb: (payload: WindowTelemetryPayload) => void)
 
 // Transcription history
 export interface TranscriptionHistoryEntry {
+	/**
+	 * Absolute path on disk to the saved WAV (under userData/recordings/).
+	 * Omitted on entries created before audio-saving shipped, and on
+	 * cloud-STT entries (no PCM ever touches our process).
+	 */
+	audioFilePath?: string;
 	durationMs: number;
 	id: string;
 	/**
@@ -794,8 +815,18 @@ export const fetchTranscriptionHistory = () =>
 export const clearTranscriptionHistory = () =>
 	invokeOrDefault<{ cleared: true }>(IPC.HISTORY_CLEAR, { cleared: true });
 
+export const deleteTranscriptionHistoryEntry = (id: string) =>
+	invokeOrDefault<{ deleted: boolean }>(IPC.HISTORY_DELETE, { deleted: false }, id);
+
+/** Load the WAV for an entry as a data URI ready for an `<audio src>`. */
+export const loadTranscriptionHistoryAudio = (id: string) =>
+	invokeOrDefault<string | null>(IPC.HISTORY_LOAD_AUDIO, null, id);
+
 export const onTranscriptionHistoryAdded = (cb: (entry: TranscriptionHistoryEntry) => void) =>
 	onCast<TranscriptionHistoryEntry>(IPC.HISTORY_ADDED, cb);
+
+export const onTranscriptionHistoryDeleted = (cb: (payload: { id: string }) => void) =>
+	onCast<{ id: string }>(IPC.HISTORY_DELETED, cb);
 
 // File transcription
 export const fileTranscribe = (filePath: string) =>

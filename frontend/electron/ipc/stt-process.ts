@@ -282,6 +282,23 @@ function applyLogDirFlag(args: string[]): void {
 	}
 }
 
+/**
+ * Append `--data-dir <userData>` so the Python server roots its model
+ * cache / recordings / settings file under the same directory as Electron
+ * persists its store. In portable mode this points at the ``Data/`` dir
+ * next to the executable; otherwise it's the OS userData path. The server
+ * uses this as the base for any directories that would otherwise default
+ * to ``~/.winstt`` or platform-specific caches — see
+ * ``server/src/stt_server/cli.py`` for the consumer side.
+ */
+function applyDataDirFlag(args: string[]): void {
+	try {
+		args.push("--data-dir", app.getPath("userData"));
+	} catch {
+		// userData may not be available pre-app-ready in dev edge cases — skip silently.
+	}
+}
+
 function applySettingsToCliFlags(args: string[]): void {
 	for (const [storePath, cliFlag] of SETTINGS_TO_CLI) {
 		applyStoreTrueFlag(args, getStoreRaw(storePath), cliFlag);
@@ -306,6 +323,7 @@ function applyDerivedFlags(args: string[]): void {
 	applyWakeWordFlags(args);
 	applyInitialPromptFlags(args);
 	applyLogDirFlag(args);
+	applyDataDirFlag(args);
 }
 
 /** Read all relevant settings from electron-store and convert to CLI args */

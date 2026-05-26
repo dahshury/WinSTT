@@ -31,6 +31,9 @@ from src.recorder.domain.audio_buffer import AudioBuffer
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.errors import DownloadCancelledError, InvalidStateTransition
 from src.recorder.domain.events import (
+    DiarizationToggleCompleted,
+    DiarizationToggleFailed,
+    DiarizationToggleStarted,
     DownloadProgress,
     ModelSwapCompleted,
     ModelSwapFailed,
@@ -207,6 +210,17 @@ class RecorderService:
         # available; ``None`` means progress events are dropped (still
         # safe — the swap completes either way).
         self._swap_progress_sink: Any = None
+        # Diarization toggle bookkeeping — single-slot (only one kind of
+        # toggle, unlike model_swap which has main + realtime). A second
+        # request mid-flight sets the event so the worker exits its next
+        # checkpoint and emits a SUPERSEDED failure for the prior attempt.
+        self._diar_toggle_thread: threading.Thread | None = None
+        self._diar_toggle_cancel_event: threading.Event | None = None
+        # Atomic-ish lock for diarizer slot mutations. ``_safe_diarize``
+        # reads ``self._diarizer is None`` (CPython atomic), so a torn
+        # read is impossible — this lock just serialises the toggle
+        # worker against itself + any future concurrent updaters.
+        self._diarizer_lock = threading.Lock()
 
     def _pick_realtime_lock(
         self,
@@ -254,11 +268,44 @@ class RecorderService:
         else:
             text = self._run_full_transcription(audio, frame_count, audio_seconds)
 
-        self._event_bus.publish(TranscriptionCompleted(timestamp=self._clock.get_current_time(), text=text))
+        wav_path = self._maybe_save_wav(raw_audio)
+        self._event_bus.publish(
+            TranscriptionCompleted(
+                timestamp=self._clock.get_current_time(),
+                text=text,
+                wav_path=wav_path,
+            )
+        )
         self._maybe_emit_speaker_segments(audio, text)
         self._finalize_transcription_state()
         self._dispatch_transcription_callback(on_transcription_finished, text)
         return text
+
+    def _maybe_save_wav(self, raw_audio: bytes) -> str:
+        """Persist the just-captured PCM to a WAV under ``HistoryConfig.recordings_dir``.
+
+        Returns the absolute path on success, "" when:
+          * ``HistoryConfig.save_wav`` is False (default),
+          * the audio buffer is empty (PTT release with no speech),
+          * the recordings dir is unwritable (logged + swallowed).
+
+        Kept tiny + branch-light so the per-utterance hot path stays cheap
+        when the feature is off — short-circuits before importing the writer
+        module.
+        """
+        history = self._config.history
+        if not history.save_wav:
+            return ""
+        # Import lazily so a config-disabled run never imports the wave stdlib
+        # or hits the recordings dir.
+        from src.recorder.application.wav_writer import write_pcm_wav
+
+        return write_pcm_wav(
+            history.recordings_dir,
+            raw_audio,
+            sample_rate=self._config.audio.sample_rate,
+            timestamp=self._clock.get_current_time(),
+        )
 
     def _maybe_emit_speaker_segments(self, audio: np.ndarray[Any, Any], text: str) -> None:
         """Diarize and publish speaker segments after the transcript event.
@@ -843,6 +890,194 @@ class RecorderService:
         prior_cancel = self._swap_cancel_events.get(kind)
         if prior_cancel is not None:
             prior_cancel.set()
+
+    # ── Runtime diarization toggle ──────────────────────────────────────
+    #
+    # ``request_diarization_toggle(enabled)`` lets the renderer flip
+    # diarization on or off without rebooting the server. The transition
+    # runs on a daemon thread (so we never block the WS handler), emits
+    # ``DiarizationToggleStarted`` immediately, then either
+    # ``DiarizationToggleCompleted`` once the new state is committed or
+    # ``DiarizationToggleFailed`` with a stable category if anything went
+    # wrong. A second request mid-flight cancels the prior attempt
+    # (SUPERSEDED) the same way model swaps do.
+    #
+    # No-op fast path: a request whose target matches the live state
+    # still publishes Started → Completed so the renderer's pending
+    # spinner clears. We never publish "already in that state" as a
+    # failure — the user-facing semantics are "you asked for it on, it's
+    # on", regardless of whether work was actually needed.
+
+    def request_diarization_toggle(self, enabled: bool) -> None:
+        """Kick off a background diarization on/off transition.
+
+        ``enabled`` is the *target* state. The pre-flight checks reject
+        requests we can't possibly honor (no segmentation/embedding model
+        configured) up-front so the worker thread only runs when there is
+        actual work to do. Cancels any in-flight prior toggle.
+        """
+        cancel_event = threading.Event()
+        prior_cancel = self._diar_toggle_cancel_event
+        if prior_cancel is not None:
+            prior_cancel.set()
+        self._diar_toggle_cancel_event = cancel_event
+
+        worker = threading.Thread(
+            target=self._diar_toggle_worker,
+            args=(enabled, cancel_event),
+            name=f"diar-toggle-{'on' if enabled else 'off'}",
+            daemon=True,
+        )
+        self._diar_toggle_thread = worker
+        worker.start()
+
+    def _diarization_already_in_state(self, enabled: bool) -> bool:
+        """``True`` when the requested toggle direction is already live.
+
+        Reads ``self._diarizer is None`` (atomic in CPython) so we don't
+        need to take the slot lock for a no-op check.
+        """
+        currently_enabled = self._diarizer is not None
+        return currently_enabled == enabled
+
+    def _publish_diarization_toggle_failed(self, enabled: bool, info: SwapErrorInfo) -> None:
+        """Emit ``DiarizationToggleFailed`` mirroring the model-swap pattern."""
+        self._event_bus.publish(
+            DiarizationToggleFailed(
+                timestamp=self._clock.get_current_time(),
+                enabled=enabled,
+                reason=info.user_message,
+                category=info.category.value,
+                detail=info.technical_detail,
+            )
+        )
+
+    def _diar_toggle_worker(self, enabled: bool, cancel_event: threading.Event) -> None:
+        """Background worker for a diarization on/off transition.
+
+        Publishes the lifecycle events and (for ``enabled=True``) builds
+        the diarizer on this thread — the first ORT session load can
+        take a few hundred ms, which is exactly why we never run it
+        inline on the WS handler thread.
+        """
+        self._event_bus.publish(DiarizationToggleStarted(timestamp=self._clock.get_current_time(), enabled=enabled))
+
+        # No-op fast path — UI still sees Started → Completed so the
+        # pending spinner clears without a misleading "no change needed"
+        # toast.
+        if self._diarization_already_in_state(enabled):
+            self._event_bus.publish(
+                DiarizationToggleCompleted(
+                    timestamp=self._clock.get_current_time(),
+                    enabled=enabled,
+                )
+            )
+            return
+
+        if enabled:
+            self._diar_toggle_enable(cancel_event)
+            return
+        self._diar_toggle_disable()
+
+    def _diar_toggle_enable(self, cancel_event: threading.Event) -> None:
+        """Build and install the diarizer; emit terminal event."""
+        diar_cfg = self._config.diarization
+        if not diar_cfg.segmentation_model or not diar_cfg.embedding_model:
+            self._publish_diarization_toggle_failed(
+                enabled=True,
+                info=SwapErrorInfo(
+                    category=SwapErrorCategory.MODEL_NOT_FOUND,
+                    user_message=(
+                        "Diarization models are not configured — set "
+                        "segmentation_model and embedding_model in DiarizationConfig."
+                    ),
+                    technical_detail=(
+                        f"segmentation_model={diar_cfg.segmentation_model!r}, "
+                        f"embedding_model={diar_cfg.embedding_model!r}"
+                    ),
+                ),
+            )
+            return
+
+        # ``build_diarizer`` is imported lazily so the application layer
+        # doesn't pin the infrastructure import at module load (matches the
+        # facade's pattern). The bootstrap module is the canonical site for
+        # adapter construction.
+        from src.recorder.bootstrap import build_diarizer
+
+        try:
+            new_diarizer = build_diarizer(diar_cfg)
+        except Exception as exc:
+            info = classify_swap_error(exc)
+            logger.exception(
+                "Diarization enable failed [%s]: %s",
+                info.category.value,
+                info.technical_detail,
+            )
+            self._publish_diarization_toggle_failed(enabled=True, info=info)
+            return
+
+        # A second toggle landed while we were loading — drop the
+        # half-built diarizer and report SUPERSEDED so the renderer
+        # collapses its spinner without flipping state. The half-built
+        # diarizer was never installed, so no lock is needed here (this
+        # diverges from the swap worker's tear-down path, which does
+        # take the slot lock because the slot was already updated).
+        if cancel_event.is_set():
+            self._shutdown_diarizer_safely(new_diarizer)
+            self._publish_diarization_toggle_failed(
+                enabled=True,
+                info=SwapErrorInfo(
+                    category=SwapErrorCategory.UNKNOWN,
+                    user_message="A newer diarization toggle superseded this one.",
+                    technical_detail="cancel_event set before commit",
+                ),
+            )
+            return
+
+        with self._diarizer_lock:
+            self._diarizer = new_diarizer
+        self._event_bus.publish(DiarizationToggleCompleted(timestamp=self._clock.get_current_time(), enabled=True))
+
+    def _diar_toggle_disable(self) -> None:
+        """Tear down the live diarizer; emit terminal event.
+
+        Disable never fails in practice: we null the slot first (so the
+        next ``_safe_diarize`` short-circuits cleanly) then call
+        ``shutdown()`` outside the lock so any pending diarize call
+        finishes against the slot's previous instance without blocking
+        us on its ORT cleanup.
+        """
+        with self._diarizer_lock:
+            old = self._diarizer
+            self._diarizer = None
+        self._shutdown_diarizer_safely(old)
+        # Free the ORT sessions' memory eagerly — same reasoning as the
+        # ``gc.collect()`` in the model-swap worker, just less critical
+        # because the diarizer's footprint is ~200 MB rather than
+        # multi-GB. Still worth doing so a user toggling off mid-session
+        # actually gets the memory back.
+        gc.collect()
+        self._event_bus.publish(DiarizationToggleCompleted(timestamp=self._clock.get_current_time(), enabled=False))
+
+    @staticmethod
+    def _shutdown_diarizer_safely(diarizer: IDiarizer | None) -> None:
+        """Call ``shutdown()`` on a diarizer, swallowing failures.
+
+        IDiarizer has no formal ``shutdown`` in the port today; the
+        concrete OnnxAsrDiarizer just lets Python GC reclaim its
+        sessions. We still ``getattr`` defensively so a future port
+        addition is picked up automatically.
+        """
+        if diarizer is None:
+            return
+        shutdown = getattr(diarizer, "shutdown", None)
+        if not callable(shutdown):
+            return
+        try:
+            shutdown()
+        except Exception:
+            logger.exception("Diarizer shutdown raised — continuing anyway")
 
     def _publish_swap_failed(self, kind: str, name: str, info: SwapErrorInfo) -> None:
         """Emit a structured ``ModelSwapFailed`` carrying category + detail.
@@ -1542,8 +1777,29 @@ class RecorderService:
 
     def _preprocess_output(self, text: str) -> str:
         text = re.sub(r"\s+", " ", text.strip())
+        text = self._apply_custom_words(text)
         text = self._apply_starting_uppercase(text)
         return self._apply_trailing_period(text)
+
+    def _apply_custom_words(self, text: str) -> str:
+        """Deterministic fuzzy correction against the user's word list.
+
+        Runs BEFORE the LLM modifier pipeline (which lives in the
+        Electron main process and consumes the text we return). If the
+        deterministic pass already corrected a brand/jargon misrecognition
+        the LLM still sees a polished input — and if anything remains
+        unfixed, the LLM gets a second crack at it. Empty word list is the
+        common case and short-circuits cleanly inside ``apply_custom_words``.
+        """
+        cfg = self._config.text_correction
+        if not cfg.custom_words or not text:
+            return text
+        # Local import keeps the application layer free of the rapidfuzz /
+        # jellyfish modules at process import time; they only load when the
+        # user has actually configured a non-empty custom-word list.
+        from src.recorder.text.dictionary import apply_custom_words
+
+        return apply_custom_words(text, cfg.custom_words, cfg.threshold)
 
     def _apply_starting_uppercase(self, text: str) -> str:
         if self._config.ui.ensure_sentence_starting_uppercase and text:

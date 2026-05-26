@@ -16,9 +16,11 @@
     "allowJs": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
+    "types": ["vite/client"],
     "paths": {
       "@/*": ["./src/*"],
-      "@source/*": ["./.source/*"]
+      "@source/*": ["./.source/*"],
+      "@app-icon": ["../frontend/build/icon.png"]
     }
   }
 }

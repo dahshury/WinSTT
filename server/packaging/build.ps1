@@ -42,12 +42,20 @@ try {
     & uv sync --extra $Flavor --group dev
     if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
 
+    # pvporcupine<2.0.0 transitively pulls enum34 (Py2 backport). PyInstaller
+    # refuses to run while it's installed. Remove it after every sync.
+    # Wrap in cmd to keep PowerShell's $ErrorActionPreference='Stop' from
+    # treating uv's stderr writes as a terminating error.
+    cmd /c "uv pip uninstall enum34 1>nul 2>nul"
+
     Write-Host "==> Seeding offline base model (whisper-tiny q4)" -ForegroundColor Cyan
-    & uv run python packaging/seed_models.py --out packaging/seed-cache --quant q4
+    # --no-sync: don't let `uv run` reinstall enum34 between the uninstall above
+    # and PyInstaller below.
+    & uv run --no-sync python packaging/seed_models.py --out packaging/seed-cache --quant q4
     if ($LASTEXITCODE -ne 0) { throw "seed model download failed" }
 
     Write-Host "==> Running PyInstaller" -ForegroundColor Cyan
-    & uv run pyinstaller packaging/stt-server.spec --clean --noconfirm --distpath dist --workpath dist/build
+    & uv run --no-sync pyinstaller packaging/stt-server.spec --clean --noconfirm --distpath dist --workpath dist/build
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
     $BuildOutput = Join-Path $ServerDir "dist/stt-server"

@@ -114,6 +114,49 @@ function AttributeGroup({ segments }: { segments: AttributeSegment[] }) {
 	);
 }
 
+interface PerfBarsProps {
+	accuracyScore: number;
+	speedScore: number;
+}
+
+/**
+ * Two stacked progress bars showing relative speed and accuracy. Hidden
+ * when the catalog reports the unknown-default 0.5/0.5 — drawing two
+ * half-full bars on every variant would teach the user to ignore them.
+ */
+function PerfBars({ speedScore, accuracyScore }: PerfBarsProps) {
+	const hasSignal = speedScore !== 0.5 || accuracyScore !== 0.5;
+	if (!hasSignal) {
+		return null;
+	}
+	const speedPct = Math.round(speedScore * 100);
+	const accPct = Math.round(accuracyScore * 100);
+	return (
+		<div className="hidden shrink-0 flex-col gap-1 sm:flex">
+			<Tooltip content={`Accuracy ${accPct}%`} side="top">
+				<div className="flex items-center gap-1.5">
+					<span className="w-14 text-end font-medium text-[9px] text-foreground-muted uppercase tracking-wide">
+						Accuracy
+					</span>
+					<div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-secondary">
+						<div className="h-full rounded-full bg-accent" style={{ width: `${accPct}%` }} />
+					</div>
+				</div>
+			</Tooltip>
+			<Tooltip content={`Speed ${speedPct}%`} side="top">
+				<div className="flex items-center gap-1.5">
+					<span className="w-14 text-end font-medium text-[9px] text-foreground-muted uppercase tracking-wide">
+						Speed
+					</span>
+					<div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-secondary">
+						<div className="h-full rounded-full bg-accent" style={{ width: `${speedPct}%` }} />
+					</div>
+				</div>
+			</Tooltip>
+		</div>
+	);
+}
+
 interface PrecisionGroupProps {
 	currentQuantization: OnnxQuantization;
 	isSelectedModel: boolean;
@@ -248,6 +291,7 @@ export function SttModelCard({
 					) : null}
 				</div>
 				<div className="flex shrink-0 items-center gap-2">
+					<PerfBars accuracyScore={model.accuracyScore} speedScore={model.speedScore} />
 					<AttributeGroup segments={segments} />
 					{actions}
 				</div>

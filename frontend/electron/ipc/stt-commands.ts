@@ -31,6 +31,12 @@ const ALLOWED_PARAMETERS = new Set([
 	"end_of_sentence_detection_pause",
 	"mid_sentence_detection_pause",
 	"unknown_sentence_detection_pause",
+	// Deterministic post-ASR fuzzy corrector. List[str] / float — the
+	// renderer pushes the live dictionary terms (no `replacement` set)
+	// here so the server can correct misrecognitions BEFORE the LLM
+	// modifier pipeline runs in this main process.
+	"custom_words",
+	"word_correction_threshold",
 ]);
 
 const ALLOWED_METHODS = new Set([
@@ -540,6 +546,13 @@ export function setupSttCommandHandlers(sttClient: SttClient): void {
 	ipcMain.handle("stt:assess-ollama-fit", (_event, payload: unknown) =>
 		handleAssessOllamaFit(sttClient, payload)
 	);
+
+	// User clicked the X on the overlay pill (or invoked any other UI-driven
+	// cancel). Routes to the same handler the hotkey+Backspace combo uses so
+	// both entry points run the full five-step cleanup.
+	ipcMain.on("stt:abort-operation", () => {
+		handleAbortOperation(sttClient);
+	});
 
 	// Stryker disable next-line ArrowFunction: handler thunk; the arrow body is exercised by the audio:get-devices integration test, but Stryker's `() => undefined` mutation returns undefined which is also a valid Promise<AudioDevice[]> ⊂ unknown — equivalent at the IPC layer.
 	ipcMain.handle("audio:get-devices", () => handleGetAudioDevices(sttClient));

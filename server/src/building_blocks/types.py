@@ -41,6 +41,25 @@ ModelSwapCallback = Callable[[str, str], None]
 ModelSwapFailedCallback = Callable[[str, str, str], None]
 """Callback for model-swap failures: (kind, name, reason)."""
 
+DiarizationToggleCallback = Callable[[bool], None]
+"""Callback for diarization-toggle started/completed: (enabled,).
+
+Cannot reuse ``ModelSwapCallback`` because the diarization toggle carries
+a single boolean (the target on/off state), not the (kind, name) pair
+that drives the per-slot model swap. The renderer's lifecycle store
+(``diarization-toggle-store``) keys off the boolean directly.
+"""
+
+DiarizationToggleFailedCallback = Callable[[bool, str, str, str], None]
+"""Callback for diarization-toggle failures: (enabled, reason, category, detail).
+
+Mirrors the shape of :data:`ModelSwapFailedCallback` plus the ``enabled``
+target so the renderer can revert its toggle to the right state. The
+``category`` vocabulary is shared with
+:class:`src.recorder.domain.swap_errors.SwapErrorCategory` so the frontend
+can reuse its toast-variant lookup.
+"""
+
 VADSensitivityAdaptedCallback = Callable[[float, float, float], None]
 """Callback for adaptive Silero updates: (new_sensitivity, noise_floor_rms, peak_rms)."""
 
@@ -54,6 +73,8 @@ CallbackMap = dict[
     | DeviceBecameAvailableCallback
     | ModelSwapCallback
     | ModelSwapFailedCallback
+    | DiarizationToggleCallback
+    | DiarizationToggleFailedCallback
     | VADSensitivityAdaptedCallback
     | None,
 ]
@@ -67,6 +88,8 @@ __all__ = [
     "ChunkCallback",
     "DeviceBecameAvailableCallback",
     "DeviceSwitchFailedCallback",
+    "DiarizationToggleCallback",
+    "DiarizationToggleFailedCallback",
     "LevelCallback",
     "ModelSwapCallback",
     "ModelSwapFailedCallback",

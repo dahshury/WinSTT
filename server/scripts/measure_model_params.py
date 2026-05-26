@@ -25,8 +25,6 @@ OUTPUT_PATH = Path(__file__).parent / "_model_param_counts.json"
 
 # onnx-asr resolver bare-name -> HF repo mapping (from examples/onnx-asr/.../resolver.py).
 RESOLVER_REPOS: dict[str, str] = {
-    "gigaam-v2-ctc": "istupakov/gigaam-v2-onnx",
-    "gigaam-v2-rnnt": "istupakov/gigaam-v2-onnx",
     "gigaam-v3-ctc": "istupakov/gigaam-v3-onnx",
     "gigaam-v3-rnnt": "istupakov/gigaam-v3-onnx",
     "gigaam-v3-e2e-ctc": "istupakov/gigaam-v3-onnx",
@@ -35,9 +33,22 @@ RESOLVER_REPOS: dict[str, str] = {
     "nemo-fastconformer-ru-rnnt": "istupakov/stt_ru_fastconformer_hybrid_large_pc_onnx",
     "nemo-parakeet-ctc-0.6b": "istupakov/parakeet-ctc-0.6b-onnx",
     "nemo-parakeet-rnnt-0.6b": "istupakov/parakeet-rnnt-0.6b-onnx",
-    "nemo-parakeet-tdt-0.6b-v2": "istupakov/parakeet-tdt-0.6b-v2-onnx",
     "nemo-parakeet-tdt-0.6b-v3": "istupakov/parakeet-tdt-0.6b-v3-onnx",
     "nemo-canary-1b-v2": "istupakov/canary-1b-v2-onnx",
+    "nemo-canary-180m-flash": "istupakov/canary-180m-flash-onnx",
+    "breeze-asr-25": "xeonchen/Breeze-ASR-25-ONNX",
+    "moonshine-tiny": "onnx-community/moonshine-tiny-ONNX",
+    "moonshine-base": "onnx-community/moonshine-base-ONNX",
+    "moonshine-tiny-zh": "onnx-community/moonshine-tiny-zh-ONNX",
+    "moonshine-tiny-ja": "onnx-community/moonshine-tiny-ja-ONNX",
+    "moonshine-tiny-ko": "onnx-community/moonshine-tiny-ko-ONNX",
+    "moonshine-tiny-ar": "onnx-community/moonshine-tiny-ar-ONNX",
+    "moonshine-tiny-vi": "onnx-community/moonshine-tiny-vi-ONNX",
+    "moonshine-base-zh": "onnx-community/moonshine-base-zh-ONNX",
+    "moonshine-base-ja": "onnx-community/moonshine-base-ja-ONNX",
+    "moonshine-base-ko": "onnx-community/moonshine-base-ko-ONNX",
+    "cohere-transcribe": "onnx-community/cohere-transcribe-03-2026-ONNX",
+    "granite-4.0-1b-speech": "onnx-community/granite-4.0-1b-speech-ONNX",
     "whisper-base": "istupakov/whisper-base-onnx",
 }
 
@@ -128,8 +139,8 @@ NEMO_CONFORMER_CTC_FILES = ["encoder-model.onnx", "model.onnx"]  # CTC head + en
 NEMO_CONFORMER_RNNT_FILES = ["encoder-model.onnx", "decoder_joint-model.onnx"]
 NEMO_CONFORMER_TDT_FILES = ["encoder-model.onnx", "decoder_joint-model.onnx"]
 NEMO_CONFORMER_AED_FILES = ["encoder-model.onnx", "decoder-model.onnx"]
-GIGAAM_V2_CTC_FILES = ["v2_ctc.onnx"]
-GIGAAM_V2_RNNT_FILES = ["v2_rnnt_encoder.onnx", "v2_rnnt_decoder.onnx", "v2_rnnt_joint.onnx"]
+MOONSHINE_FILES = ["encoder_model.onnx", "decoder_model.onnx"]
+GRANITE_FILES = ["audio_encoder.onnx", "embed_tokens.onnx", "decoder_model_merged.onnx"]
 GIGAAM_V3_CTC_FILES = ["v3_ctc.onnx"]
 GIGAAM_V3_RNNT_FILES = ["v3_rnnt_encoder.onnx", "v3_rnnt_decoder.onnx", "v3_rnnt_joint.onnx"]
 GIGAAM_V3_E2E_CTC_FILES = ["v3_e2e_ctc.onnx"]
@@ -151,7 +162,6 @@ PUBLISHED: dict[str, tuple[int, str]] = {
     # NeMo Parakeet 0.6B family — NVIDIA NeMo model cards.
     "nemo-parakeet-ctc-0.6b": (600_000_000, "NVIDIA NeMo parakeet_ctc_0.6b card"),
     "nemo-parakeet-rnnt-0.6b": (600_000_000, "NVIDIA NeMo parakeet_rnnt_0.6b card"),
-    "nemo-parakeet-tdt-0.6b-v2": (600_000_000, "NVIDIA NeMo parakeet_tdt_0.6b_v2 card"),
     "nemo-canary-1b-v2": (978_000_000, "NVIDIA NeMo canary-1b-v2 card (978M)"),
     # GigaAM v3 family — Sber Salute model cards.
     "gigaam-v3-ctc": (243_000_000, "Sber GigaAM-v3 model card"),
@@ -177,22 +187,24 @@ def _files_for(model_id: str) -> list[str] | None:
         return WHISPER_HF_FILES
     if model_id.startswith("lite-whisper-"):
         return WHISPER_HF_FILES
+    if model_id == "breeze-asr-25":
+        return WHISPER_HF_FILES
+    if model_id.startswith("moonshine-"):
+        return MOONSHINE_FILES
+    if model_id.startswith("granite-"):
+        return GRANITE_FILES
     if model_id == "nemo-parakeet-ctc-0.6b":
         return NEMO_CONFORMER_CTC_FILES
     if model_id == "nemo-parakeet-rnnt-0.6b":
         return NEMO_CONFORMER_RNNT_FILES
-    if model_id in ("nemo-parakeet-tdt-0.6b-v2", "nemo-parakeet-tdt-0.6b-v3"):
+    if model_id == "nemo-parakeet-tdt-0.6b-v3":
         return NEMO_CONFORMER_TDT_FILES
-    if model_id == "nemo-canary-1b-v2":
+    if model_id in ("nemo-canary-1b-v2", "nemo-canary-180m-flash"):
         return NEMO_CONFORMER_AED_FILES
     if model_id == "nemo-fastconformer-ru-ctc":
         return ["model.onnx"]  # hybrid CTC head packaged as monolithic graph
     if model_id == "nemo-fastconformer-ru-rnnt":
         return ["encoder-model.onnx", "decoder_joint-model.onnx"]
-    if model_id == "gigaam-v2-ctc":
-        return GIGAAM_V2_CTC_FILES
-    if model_id == "gigaam-v2-rnnt":
-        return GIGAAM_V2_RNNT_FILES
     if model_id == "gigaam-v3-ctc":
         return GIGAAM_V3_CTC_FILES
     if model_id == "gigaam-v3-rnnt":

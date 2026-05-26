@@ -1,7 +1,15 @@
 import { ContextMenu } from "@base-ui/react/context-menu";
+import { Delete02Icon, PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "next-intl";
+import { useEffect, useRef, useState } from "react";
 import { VList } from "virtua";
-import { clipboardWriteText } from "@/shared/api/ipc-client";
+import { useSettingsStore } from "@/entities/setting";
+import {
+	clipboardWriteText,
+	deleteTranscriptionHistoryEntry,
+	loadTranscriptionHistoryAudio,
+} from "@/shared/api/ipc-client";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceClasses, surfaceHighlightedBg } from "@/shared/lib/surface";
@@ -24,7 +32,7 @@ const VIRTUALIZE_THRESHOLD = 50;
 // settings sidebar expands. Without this, fixed widths summed to 534px and
 // squeezed the text column to ~0 inside the 700px settings window.
 const COLUMN_TEMPLATE =
-	"minmax(100px, 150px) minmax(40px, 56px) minmax(48px, 64px) minmax(40px, 56px) minmax(60px, 110px) minmax(100px, 1fr)";
+	"minmax(100px, 150px) minmax(40px, 56px) minmax(48px, 64px) minmax(40px, 56px) minmax(60px, 110px) minmax(100px, 1fr) 64px";
 const MENU_SURFACE_LEVEL = 6;
 const MENU_SHADOW_LEVEL = 7;
 
@@ -59,7 +67,119 @@ function copyEntryText(text: string): void {
 	clipboardWriteText(text).catch(() => undefined);
 }
 
-function HistoryRow({ entry, copyLabel, copyOriginalLabel }: HistoryRowProps) {
+/**
+ * Switch the underlying audio sink for an HTMLAudioElement. `setSinkId` is
+ * gated on a "speaker-selection" permission that Electron grants by default
+ * for the file-loaded renderer, but the call still fails on devices that
+ * don't exist or aren't reachable — swallow that case (the play silently
+ * falls back to the system default rather than throwing inside the JSX).
+ */
+async function routeAudioToSink(el: HTMLAudioElement, deviceId: string): Promise<void> {
+	if (!deviceId) {
+		return;
+	}
+	const setSinkId = (el as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> })
+		.setSinkId;
+	if (!setSinkId) {
+		return;
+	}
+	try {
+		await setSinkId.call(el, deviceId);
+	} catch {
+		// device unavailable — system default takes over
+	}
+}
+
+interface PlayButtonProps {
+	entryId: string;
+	outputDeviceId: string;
+}
+
+function PlayButton({ entryId, outputDeviceId }: PlayButtonProps) {
+	const audioRef = useRef<HTMLAudioElement | null>(null);
+	const [playing, setPlaying] = useState(false);
+	const [loading, setLoading] = useState(false);
+
+	useEffect(
+		() => () => {
+			audioRef.current?.pause();
+			audioRef.current = null;
+		},
+		[]
+	);
+
+	const togglePlay = async () => {
+		if (playing && audioRef.current) {
+			audioRef.current.pause();
+			setPlaying(false);
+			return;
+		}
+		// Lazy-load on first click — avoids fetching every WAV up front.
+		if (!audioRef.current) {
+			setLoading(true);
+			const dataUri = await loadTranscriptionHistoryAudio(entryId);
+			setLoading(false);
+			if (!dataUri) {
+				return;
+			}
+			const el = new Audio(dataUri);
+			el.onended = () => setPlaying(false);
+			audioRef.current = el;
+		}
+		await routeAudioToSink(audioRef.current, outputDeviceId);
+		await audioRef.current.play().catch(() => undefined);
+		setPlaying(true);
+	};
+
+	return (
+		<button
+			aria-label={playing ? "Pause recording" : "Play recording"}
+			className="inline-flex size-6 items-center justify-center rounded-sm text-foreground-muted hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
+			disabled={loading}
+			onClick={togglePlay}
+			type="button"
+		>
+			<HugeiconsIcon className="size-3.5" icon={playing ? PauseIcon : PlayIcon} />
+		</button>
+	);
+}
+
+function DeleteButton({ entryId }: { entryId: string }) {
+	return (
+		<button
+			aria-label="Delete entry"
+			className="inline-flex size-6 items-center justify-center rounded-sm text-foreground-muted hover:bg-error/15 hover:text-error"
+			onClick={() => {
+				deleteTranscriptionHistoryEntry(entryId).catch(() => undefined);
+			}}
+			type="button"
+		>
+			<HugeiconsIcon className="size-3.5" icon={Delete02Icon} />
+		</button>
+	);
+}
+
+interface ActionsCellProps {
+	entry: TranscriptionHistoryEntry;
+	outputDeviceId: string;
+}
+
+function ActionsCell({ entry, outputDeviceId }: ActionsCellProps) {
+	return (
+		<span className="flex items-center justify-end gap-0.5 px-2">
+			{entry.audioFilePath ? (
+				<PlayButton entryId={entry.id} outputDeviceId={outputDeviceId} />
+			) : null}
+			<DeleteButton entryId={entry.id} />
+		</span>
+	);
+}
+
+interface HistoryRowFullProps extends HistoryRowProps {
+	outputDeviceId: string;
+}
+
+function HistoryRow({ entry, copyLabel, copyOriginalLabel, outputDeviceId }: HistoryRowFullProps) {
 	const hasOriginal = entry.originalText !== undefined && entry.originalText.length > 0;
 	return (
 		<ContextMenu.Root>
@@ -90,6 +210,7 @@ function HistoryRow({ entry, copyLabel, copyOriginalLabel }: HistoryRowProps) {
 				<span className="truncate px-3 py-2 text-foreground" title={entry.text}>
 					{entry.text}
 				</span>
+				<ActionsCell entry={entry} outputDeviceId={outputDeviceId} />
 			</ContextMenu.Trigger>
 			<ContextMenu.Portal>
 				<SurfaceProvider value={MENU_SURFACE_LEVEL}>
@@ -133,6 +254,7 @@ function HistoryRow({ entry, copyLabel, copyOriginalLabel }: HistoryRowProps) {
 
 export function HistoryTable({ entries }: HistoryTableProps) {
 	const t = useTranslations("history");
+	const outputDeviceId = useSettingsStore((s) => s.settings.general.outputDeviceId);
 	// Most recent first; entries are stored chronologically by the main process.
 	const sorted = [...entries].reverse();
 	const copyLabel = t("copy");
@@ -144,6 +266,7 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 			copyOriginalLabel={copyOriginalLabel}
 			entry={entry}
 			key={entry.id}
+			outputDeviceId={outputDeviceId}
 		/>
 	));
 
@@ -185,6 +308,7 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 				<span className="px-3 py-2 text-right">{t("colWpm")}</span>
 				<span className="px-3 py-2 text-left">{t("colModel")}</span>
 				<span className="px-3 py-2 text-left">{t("colText")}</span>
+				<span className="px-3 py-2 text-right">{""}</span>
 			</div>
 			{body}
 		</div>

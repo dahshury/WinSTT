@@ -204,6 +204,29 @@ describe("SUPPORTED_EVENT_TYPES", () => {
 				progress: 0,
 			},
 			wakeword_detected: { type: "wakeword_detected" },
+			model_swap_started: { type: "model_swap_started", kind: "main", name: "m" },
+			model_swap_completed: { type: "model_swap_completed", kind: "main", name: "m" },
+			model_swap_failed: {
+				type: "model_swap_failed",
+				kind: "main",
+				name: "m",
+				reason: "boom",
+			},
+			model_cache_changed: { type: "model_cache_changed", model_id: "m" },
+			model_catalog_updated: { type: "model_catalog_updated", models: [] },
+			diarization_toggle_started: {
+				type: "diarization_toggle_started",
+				enabled: true,
+			},
+			diarization_toggle_completed: {
+				type: "diarization_toggle_completed",
+				enabled: false,
+			},
+			diarization_toggle_failed: {
+				type: "diarization_toggle_failed",
+				enabled: true,
+				reason: "boom",
+			},
 		};
 		for (const t of SUPPORTED_EVENT_TYPES) {
 			expect(validateServerEvent(minimal[t])).not.toBeNull();

@@ -5,23 +5,84 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
-# ─── Settings persistence ───────────────────────────────────────────────
-# Persists parameters set at runtime (e.g. model) so the next server
-# startup uses the same values without waiting for a frontend sync.
-SETTINGS_DIR = Path.home() / ".winstt"
+# ─── Data root resolution (portable-aware) ─────────────────────────────
+# WinSTT's Electron main process forwards the active user-data directory
+# via the ``--data-dir`` CLI flag (and also as the ``WINSTT_DATA_DIR``
+# environment variable — covers raw ``stt-server`` launches from a
+# portable tree where the flag may be missing).
+#
+# When set, that path is the root for every server-side artifact that
+# would otherwise default to ``~/.winstt`` / a platform cache:
+#   - ``server-settings.json`` (persisted model choice)
+#   - rotating log file (when ``--log-dir`` itself is missing)
+#   - recordings (if ever written from server side; client-side WAVs
+#     come from the Electron main process)
+#
+# We resolve it ONCE at module import (before the argparse defaults run)
+# so every helper in this module sees the same root. CLI ``--data-dir``
+# overrides the env var when both are present.
+
+
+def _resolve_data_dir(argv: list[str]) -> Path | None:
+    """Pick the active user-data directory, honoring CLI > env > None.
+
+    Looks for ``--data-dir <path>`` / ``--data-dir=<path>`` /
+    ``--data_dir`` in ``argv`` so the value is available BEFORE the main
+    parser runs (the persistence helpers below need it at module load).
+    Falls back to ``$WINSTT_DATA_DIR``. Returns ``None`` when neither is
+    present — callers then keep the historic ``~/.winstt`` default.
+    """
+    flags = ("--data-dir", "--data_dir")
+    for i, tok in enumerate(argv):
+        if tok in flags and i + 1 < len(argv):
+            return Path(argv[i + 1]).expanduser()
+        for flag in flags:
+            prefix = f"{flag}="
+            if tok.startswith(prefix):
+                return Path(tok[len(prefix) :]).expanduser()
+    env_value = os.environ.get("WINSTT_DATA_DIR")
+    if env_value:
+        return Path(env_value).expanduser()
+    return None
+
+
+def _settings_dir() -> Path:
+    """Resolve the directory that holds ``server-settings.json``.
+
+    Honors the portable / Electron-supplied data dir when set, otherwise
+    falls back to the historic ``~/.winstt`` location so non-Electron
+    launches (CI, manual ``stt-server`` runs) keep working unchanged.
+    """
+    data_dir = _resolve_data_dir(sys.argv[1:])
+    return data_dir if data_dir is not None else Path.home() / ".winstt"
+
+
+def get_settings_file() -> Path:
+    """Path of the persisted ``server-settings.json`` (portable-aware)."""
+    return _settings_dir() / "server-settings.json"
+
+
+# Back-compat module-level constants. Several tests + downstream callers
+# still reference ``SETTINGS_DIR`` / ``SETTINGS_FILE`` directly; keep them
+# pointing at the resolved values so non-portable launches behave exactly
+# as before. The portable-aware accessors above are the new canonical
+# entry points.
+SETTINGS_DIR = _settings_dir()
 SETTINGS_FILE = SETTINGS_DIR / "server-settings.json"
 PERSISTED_PARAMETERS: set[str] = {"model"}
 
 
 def load_persisted_settings() -> dict[str, Any]:
-    if not SETTINGS_FILE.exists():
+    settings_file = get_settings_file()
+    if not settings_file.exists():
         return {}
     try:
-        data: dict[str, Any] = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        data: dict[str, Any] = json.loads(settings_file.read_text(encoding="utf-8"))
         return data
     except (json.JSONDecodeError, OSError):
         return {}
@@ -32,9 +93,10 @@ def persist_setting(key: str, value: object) -> None:
         return
     settings = load_persisted_settings()
     settings[key] = value
+    settings_file = get_settings_file()
     try:
-        SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
-        SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        settings_file.parent.mkdir(parents=True, exist_ok=True)
+        settings_file.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     except OSError:
         pass
 
@@ -602,6 +664,21 @@ def parse_arguments() -> argparse.Namespace:
             "Directory to write the rotating server log file (stt-server.log) into. "
             "Falls back to the WINSTT_LOG_DIR environment variable. When neither is "
             "set, the server logs only to stdout. The directory is created if missing."
+        ),
+    )
+
+    parser.add_argument(
+        "--data-dir",
+        "--data_dir",
+        type=str,
+        default=None,
+        help=(
+            "Root directory for server-side user data (model cache base, persisted "
+            "settings file, recordings if ever server-written). The Electron frontend "
+            "passes this so portable installs (a `portable` marker file alongside the "
+            "executable) keep everything under `Data/` next to the exe instead of in "
+            "`~/.winstt` / platform caches. Falls back to the WINSTT_DATA_DIR env var. "
+            "When neither is set, the historic `~/.winstt` location is used."
         ),
     )
 

@@ -45,16 +45,20 @@ class TestModelCatalog:
             )
 
     def test_onnx_asr_models_present(self, catalog: ModelCatalog) -> None:
+        # Older parakeet-tdt-v2 and gigaam-v2 entries were removed in favour of
+        # their v3 successors (same architecture, strictly improved). Older
+        # versions are intentionally NOT in the catalog — they'd clutter the
+        # picker with options that are dominated on every axis by a newer
+        # sibling.
         onnx_ids = [
             "nemo-parakeet-ctc-0.6b",
             "nemo-parakeet-rnnt-0.6b",
-            "nemo-parakeet-tdt-0.6b-v2",
             "nemo-parakeet-tdt-0.6b-v3",
             "nemo-canary-1b-v2",
+            "nemo-canary-180m-flash",
+            "breeze-asr-25",
             "nemo-fastconformer-ru-ctc",
             "nemo-fastconformer-ru-rnnt",
-            "gigaam-v2-ctc",
-            "gigaam-v2-rnnt",
             "gigaam-v3-ctc",
             "gigaam-v3-rnnt",
             "gigaam-v3-e2e-ctc",
@@ -62,6 +66,18 @@ class TestModelCatalog:
             "alphacep/vosk-model-ru",
             "alphacep/vosk-model-small-ru",
             "t-tech/t-one",
+            "moonshine-tiny",
+            "moonshine-base",
+            "moonshine-tiny-zh",
+            "moonshine-tiny-ja",
+            "moonshine-tiny-ko",
+            "moonshine-tiny-ar",
+            "moonshine-tiny-vi",
+            "moonshine-base-zh",
+            "moonshine-base-ja",
+            "moonshine-base-ko",
+            "cohere-transcribe",
+            "granite-4.0-1b-speech",
         ]
         for model_id in onnx_ids:
             info = catalog.get(model_id)
@@ -72,7 +88,7 @@ class TestModelCatalog:
         # Every catalog entry now routes through onnx-asr post Track B step 1.
         assert catalog.get_backend("tiny") == TranscriberBackend.ONNX_ASR
         assert catalog.get_backend("nemo-parakeet-ctc-0.6b") == TranscriberBackend.ONNX_ASR
-        assert catalog.get_backend("gigaam-v2-ctc") == TranscriberBackend.ONNX_ASR
+        assert catalog.get_backend("gigaam-v3-ctc") == TranscriberBackend.ONNX_ASR
 
     def test_get_backend_defaults_to_onnx_asr_for_unknown(self, catalog: ModelCatalog) -> None:
         """Unknown IDs fall through to onnx-asr — the resolver will then either
@@ -339,6 +355,15 @@ class TestModelCatalog:
             assert catalog.is_language_compatible("nemo-canary-1b-v2", lang) is True
         for lang in ("ar", "zh", "hi", "ja", "ko"):
             assert catalog.is_language_compatible("nemo-canary-1b-v2", lang) is False
+
+    def test_is_language_compatible_canary_flash_restricted_to_four(self, catalog: ModelCatalog) -> None:
+        # Canary 180M Flash supports only en/de/fr/es per its HF model card.
+        # All other European codes that 1B v2 covers (ru, uk, mt, hr, …)
+        # must be rejected even though the model has language detection.
+        for lang in ("en", "de", "es", "fr"):
+            assert catalog.is_language_compatible("nemo-canary-180m-flash", lang) is True
+        for lang in ("ru", "uk", "mt", "hr", "ar", "zh", "ja"):
+            assert catalog.is_language_compatible("nemo-canary-180m-flash", lang) is False
 
     def test_is_language_compatible_english_only_rejects_others(self, catalog: ModelCatalog) -> None:
         assert catalog.is_language_compatible("tiny.en", "en") is True

@@ -15,6 +15,12 @@ export const modelSettingsSchema = z.object({
 	beamSizeRealtime: z.number().int().min(1).default(3),
 	initialPrompt: z.string().default(""),
 	initialPromptRealtime: z.string().default(""),
+	// Whisper-native task=translate. When true and the active model is a
+	// multilingual Whisper variant, audio is transcribed AND translated to
+	// English in a single decode (no extra latency, no LLM round-trip).
+	// Ignored when the model lacks translate support (e.g. *.en variants,
+	// non-Whisper families like Moonshine).
+	translateToEnglish: z.boolean().default(false).catch(false),
 });
 
 export const qualitySettingsSchema = z.object({
@@ -71,6 +77,11 @@ export const audioSettingsSchema = z.object({
 		.record(z.string(), z.number().min(0).max(1))
 		.default({})
 		.catch({}),
+	// Keep the input audio stream open between transcriptions (lazy-close).
+	// When true, the recorder pipeline reuses the existing PyAudio stream
+	// after a recording finalizes rather than calling cleanup() + setup() on
+	// the next listen, which trims ~50-200ms of startup latency per dictation.
+	keepMicOpen: z.boolean().default(false).catch(false),
 });
 
 // One entry in the recording-sound library. The default sound is implicit
@@ -234,6 +245,37 @@ export const generalSettingsSchema = z.object({
 	// reads the active model from `model.model`), but the wizard persists it
 	// so we can answer "did this user start on cloud?" in support tickets.
 	onboardedTrack: z.enum(["", "local", "cloud"]).default("").catch(""),
+	// Output audio device used for TTS playback and recording-mode chimes.
+	// Identified by `MediaDeviceInfo.deviceId` (renderer-side); the empty
+	// string falls back to the system default. Web Audio's `setSinkId()`
+	// powers the routing — both surfaces (recording sounds via
+	// HTMLAudioElement, TTS via AudioContext) accept the deviceId verbatim.
+	outputDeviceId: z.string().default("").catch(""),
+	// Auto-press a "submit" key after each dictation paste lands. Off by
+	// default to preserve historical behaviour (paste, leave cursor where
+	// the user can review). When on, `autoSubmitKey` chooses which combo
+	// to inject — Enter for chat boxes, Ctrl+Enter for IDE prompts.
+	autoSubmit: z.boolean().default(false).catch(false),
+	autoSubmitKey: z.enum(["enter", "ctrl_enter"]).default("enter").catch("enter"),
+	// Cap on the number of transcription history entries persisted to disk.
+	// Larger histories slow the settings panel (rendering + load), so the
+	// upper bound is 10000; lower bound 10 keeps the UI useful.
+	historyMaxEntries: z.number().int().min(10).max(10_000).default(1000).catch(1000),
+	// Auto-delete saved WAV recordings older than this policy. "never"
+	// preserves everything; "cap" deletes oldest recordings beyond
+	// historyMaxEntries; days3/weeks2/months3 are absolute age cutoffs.
+	recordingRetention: z
+		.enum(["never", "cap", "days3", "weeks2", "months3"])
+		.default("cap")
+		.catch("cap"),
+	// Threshold for the server-side deterministic fuzzy corrector that
+	// runs BEFORE the LLM modifier pipeline. Lower = stricter (fewer
+	// false positives, more genuine near-misses left for the LLM to fix).
+	// 0.18 matches Handy's reference value (see
+	// `examples/Handy/src-tauri/src/audio_toolkit/text.rs`). `.catch(0.18)`
+	// keeps an older persisted value (or a corrupt entry) from wiping the
+	// whole `general` section on upgrade.
+	wordCorrectionThreshold: z.number().min(0).max(1).default(0.18).catch(0.18),
 });
 
 export const hotkeySettingsSchema = z.object({

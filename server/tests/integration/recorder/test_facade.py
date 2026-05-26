@@ -194,6 +194,14 @@ class TestAudioToTextRecorderFacade:
         facade.request_model_swap("realtime", "some-model")
         facade.shutdown()
 
+    def test_delegates_request_diarization_toggle(self) -> None:
+        # Diarization is off by default in the fakes config — disabling it
+        # again is a no-op fast-path that exercises delegation without
+        # depending on the OnnxAsrDiarizer infrastructure.
+        facade = _make_facade_with_fakes()
+        facade.request_diarization_toggle(False)
+        facade.shutdown()
+
     def test_delegates_transcribe(self) -> None:
         facade = _make_facade_with_fakes()
         result = facade.transcribe()
@@ -431,3 +439,59 @@ class TestAudioToTextRecorderFacade:
         assert audio_source.switched_to == [9]
         assert facade.input_device_index == 9
         facade.shutdown()
+
+    def test_custom_words_round_trip(self) -> None:
+        # Default list is empty; the setter persists to config and the getter
+        # returns a copy (mutating the returned list must not leak back).
+        facade = _make_facade_with_fakes()
+        assert facade.custom_words == []
+        facade.custom_words = ["ChargeBee", "OpenAI"]
+        assert facade.custom_words == ["ChargeBee", "OpenAI"]
+        assert facade._config.text_correction.custom_words == ["ChargeBee", "OpenAI"]
+        # Defensive-copy invariant: mutating the returned list mustn't
+        # mutate the live config.
+        snapshot = facade.custom_words
+        snapshot.append("Mutated")
+        assert facade.custom_words == ["ChargeBee", "OpenAI"]
+        facade.shutdown()
+
+    def test_custom_words_setter_normalises_none(self) -> None:
+        # The control handler delivers ``None`` only via a malformed payload,
+        # but tests exercise the boundary so the setter's defensive ``value or []``
+        # guard doesn't atrophy.
+        facade = _make_facade_with_fakes()
+        facade.custom_words = ["Foo"]
+        facade.custom_words = None  # type: ignore[assignment]
+        assert facade.custom_words == []
+        facade.shutdown()
+
+    def test_word_correction_threshold_round_trip(self) -> None:
+        facade = _make_facade_with_fakes()
+        assert facade.word_correction_threshold == 0.18
+        facade.word_correction_threshold = 0.32
+        assert facade.word_correction_threshold == 0.32
+        assert facade._config.text_correction.threshold == 0.32
+        facade.shutdown()
+
+    def test_constructor_routes_custom_words_into_config(self) -> None:
+        # End-to-end check: the facade accepts the kwargs and they land
+        # in :class:`TextCorrectionConfig` (mirrors the constructor-shape
+        # parity test in test_accepts_all_original_params).
+        recorder = AudioToTextRecorder(
+            model="tiny",
+            use_microphone=False,
+            custom_words=["ChargeBee"],
+            word_correction_threshold=0.22,
+        )
+        assert recorder._config.text_correction.custom_words == ["ChargeBee"]
+        assert recorder._config.text_correction.threshold == 0.22
+
+    def test_constructor_custom_words_none_normalises_to_empty(self) -> None:
+        # ``None`` is the documented default; the constructor must not
+        # share a mutable list across instances.
+        recorder = AudioToTextRecorder(
+            model="tiny",
+            use_microphone=False,
+            custom_words=None,
+        )
+        assert recorder._config.text_correction.custom_words == []

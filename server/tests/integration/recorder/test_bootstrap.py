@@ -78,6 +78,84 @@ class TestBootstrap:
         config = RecorderConfig.from_kwargs(model="org/some-unknown-model", language="ja")
         _validate_language_against_model(config)
 
+    def test_diarization_toggle_callbacks_wired(self) -> None:
+        """``wire_all_callbacks`` dispatches the 3 toggle events with the
+        right argument shapes (started/completed → ``(enabled,)``;
+        failed → ``(enabled, reason, category, detail)``)."""
+        from src.recorder.bootstrap import wire_all_callbacks
+        from src.recorder.domain.events import (
+            DiarizationToggleCompleted,
+            DiarizationToggleFailed,
+            DiarizationToggleStarted,
+        )
+
+        event_bus = EventBus()
+        started: list[bool] = []
+        completed: list[bool] = []
+        failed: list[tuple[bool, str, str, str]] = []
+        callbacks: dict[str, object] = {
+            "on_diarization_toggle_started": lambda enabled: started.append(enabled),
+            "on_diarization_toggle_completed": lambda enabled: completed.append(enabled),
+            "on_diarization_toggle_failed": lambda enabled, reason, category, detail: failed.append(
+                (enabled, reason, category, detail)
+            ),
+        }
+        wire_all_callbacks(event_bus, callbacks)  # type: ignore[arg-type]
+
+        event_bus.publish(DiarizationToggleStarted(timestamp=1.0, enabled=True))
+        event_bus.publish(DiarizationToggleCompleted(timestamp=2.0, enabled=False))
+        event_bus.publish(
+            DiarizationToggleFailed(
+                timestamp=3.0,
+                enabled=True,
+                reason="boom",
+                category="network",
+                detail="DNS",
+            )
+        )
+
+        assert started == [True]
+        assert completed == [False]
+        assert failed == [(True, "boom", "network", "DNS")]
+
+    def test_build_diarizer_constructs_with_config_args(self) -> None:
+        """``build_diarizer`` passes every DiarizationConfig knob into
+        OnnxAsrDiarizer so the runtime toggle worker constructs identically
+        to cold boot."""
+        from unittest.mock import patch
+
+        from src.recorder.bootstrap import build_diarizer
+        from src.recorder.domain.config import DiarizationConfig
+
+        cfg = DiarizationConfig(
+            enabled=True,
+            max_speakers=5,
+            delta_new=0.42,
+            rho_update=0.7,
+            segmentation_model="seg/model",
+            embedding_model="emb/model",
+        )
+        captured: dict[str, object] = {}
+
+        class _FakeDiarizer:
+            def __init__(self, **kwargs: object) -> None:
+                captured.update(kwargs)
+
+        with patch(
+            "src.recorder.infrastructure.onnxasr_diarizer.OnnxAsrDiarizer",
+            _FakeDiarizer,
+        ):
+            result = build_diarizer(cfg)
+
+        assert isinstance(result, _FakeDiarizer)
+        assert captured == {
+            "max_speakers": 5,
+            "delta_new": 0.42,
+            "rho_update": 0.7,
+            "segmentation_model": "seg/model",
+            "embedding_model": "emb/model",
+        }
+
 
 class TestResolveQuantization:
     """``_resolve_quantization`` enforces the param-count-gated auto-fp16-on-CUDA

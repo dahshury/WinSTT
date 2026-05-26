@@ -9,7 +9,11 @@ import {
 } from "@/features/audio-visualizer";
 import { useTranscriptionFeed } from "@/features/live-transcription";
 import { useLlmProcessingFeed, useLlmProcessingStore } from "@/features/llm-processing";
-import { onSettingsChanged } from "@/shared/api/ipc-client";
+import {
+	onSettingsChanged,
+	overlaySetIgnoreMouse,
+	sttAbortOperation,
+} from "@/shared/api/ipc-client";
 import { decodeSettingsPayload } from "@/shared/api/settings-codec";
 import {
 	DynamicIsland,
@@ -334,7 +338,10 @@ function DynamicIslandPillContent({
 					<div className="flex items-center" style={{ zoom: visualizerZoom }}>
 						<AudioVisualizer size="icon" />
 					</div>
-					{/* Recording dot + mm:ss timer, hugged to the top-right */}
+					{/* Recording dot + mm:ss timer, hugged to the top-right. The
+					    X cancel button is rendered separately (absolute-positioned
+					    in the parent shell) so it stays visible during LLM-thinking
+					    too — the header row hides in that state. */}
 					<div className="flex items-center gap-1.5">
 						<LivePulse isSpeaking={isSpeaking} />
 						<span
@@ -343,6 +350,9 @@ function DynamicIslandPillContent({
 						>
 							{elapsed}
 						</span>
+						{/* Spacer reserves room for the absolute-positioned X so the
+						    timer doesn't sit flush against the right corner curve. */}
+						<span aria-hidden="true" className="inline-block w-3 shrink-0" />
 					</div>
 				</div>
 			) : null}
@@ -365,6 +375,57 @@ function DynamicIslandPillContent({
 				</div>
 			) : null}
 		</div>
+	);
+}
+
+/**
+ * Small X button that cancels the in-flight dictation session. Routes through
+ * the same `handleAbortOperation` pipeline the hotkey+Backspace combo uses
+ * (markSessionAborted + abort Ollama chats + recorder.abort + clear queue +
+ * hide overlay).
+ *
+ * The overlay BrowserWindow is click-through by default
+ * (`setIgnoreMouseEvents(true, { forward: true })`), so the renderer flips
+ * ignore off while the cursor hovers the button — otherwise the click would
+ * fall through to the app underneath. Leaving the button restores click-
+ * through so the rest of the pill never blocks input.
+ */
+function CancelButton({ size = 16 }: { size?: number }) {
+	const handleEnter = () => overlaySetIgnoreMouse(false);
+	const handleLeave = () => overlaySetIgnoreMouse(true);
+	const handleClick = () => {
+		// Restore click-through immediately — the overlay hides as part of the
+		// abort flow but the next session re-uses the same window, so leaving
+		// it in interactive mode would block clicks until the user hovered the
+		// X again.
+		overlaySetIgnoreMouse(true);
+		sttAbortOperation();
+	};
+	return (
+		<button
+			aria-label="Cancel transcription"
+			className="flex shrink-0 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white/95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40"
+			onClick={handleClick}
+			onMouseEnter={handleEnter}
+			onMouseLeave={handleLeave}
+			style={{ width: size, height: size }}
+			type="button"
+		>
+			<svg
+				aria-hidden="true"
+				fill="none"
+				height={Math.round(size * 0.6)}
+				stroke="currentColor"
+				strokeLinecap="round"
+				strokeWidth={2}
+				viewBox="0 0 24 24"
+				width={Math.round(size * 0.6)}
+				xmlns="http://www.w3.org/2000/svg"
+			>
+				<line x1="6" x2="18" y1="6" y2="18" />
+				<line x1="6" x2="18" y1="18" y2="6" />
+			</svg>
+		</button>
 	);
 }
 
@@ -402,6 +463,14 @@ function DynamicIslandPill(args: IslandStateArgs) {
 
 	return (
 		<DynamicIsland fitContent flatTop id="winstt-overlay-island">
+			{/* X cancel anchored to the top-right of the island, just inside the
+			    rounded bottom-right area. Absolute-positioned so it stays visible
+			    in both the recording state (alongside the timer) and the LLM-
+			    thinking state (which hides the header row entirely). The 8px
+			    top inset matches the island's `pt-1` content padding. */}
+			<div className="pointer-events-auto absolute top-2 right-3 z-10">
+				<CancelButton size={14} />
+			</div>
 			<DynamicIslandPillContent {...args} />
 		</DynamicIsland>
 	);
@@ -454,7 +523,23 @@ export function OverlayPage() {
 	// `showOverlay()` and STT_RECORDING_START arriving. `isThinking`
 	// bypasses it so the pill survives the recording → LLM-thinking
 	// transition (when `isRecordingActive` has already flipped off).
-	const showPill = (isRecordingActive && hasText) || isThinking;
+	const sessionShouldShow = (isRecordingActive && hasText) || isThinking;
+	// Sticky once-on: hold the pill mounted for the rest of the session even
+	// if `currentRealtime` momentarily empties between realtime chunks.
+	// Without this, the AnimatePresence around chip + bubble unmounts on every
+	// brief text drop and the chip's chipVariants exit (`y: 4`) makes the
+	// whole pill visibly bounce up/down as the user speaks. The flag clears
+	// when the session truly ends (recording inactive AND not thinking) — the
+	// `useResetOnOverlayShow` visibilitychange handler already clears the
+	// underlying stores before the next session paints.
+	const [showPill, setShowPill] = useState(false);
+	useEffect(() => {
+		if (sessionShouldShow) {
+			setShowPill(true);
+		} else if (!(isRecordingActive || isThinking)) {
+			setShowPill(false);
+		}
+	}, [sessionShouldShow, isRecordingActive, isThinking]);
 
 	const heightPx = PRESET_HEIGHT_PX[sizePreset];
 	// CSS `zoom` (Chromium-supported, including Electron) scales both visual and
@@ -508,13 +593,11 @@ export function OverlayPage() {
 		// `layout`, restoring the pre-DynamicIsland floating-pill behavior.
 		<LazyMotion features={domAnimation} strict>
 			<div className="flex h-screen w-screen items-end justify-center overflow-hidden pb-3">
-				{/* Two-piece stack. The visualizer chip is pinned to the screen
-				    bottom and never moves; the text bubble lives above it and
-				    can grow upward without dragging the chip's shadows along
-				    for the ride. They share one glass material so the pair
-				    still reads as one device — the radius is the only thing
-				    that diverges (organic capsule chip vs. editorial bubble). */}
-				<div className="flex flex-col items-center gap-1">
+				{/* `relative` wrapper anchors the absolute-positioned X cancel
+				    button to the bottom-right of the bubble/chip column without
+				    expanding the column itself. The button floats in the
+				    transparent margin to the right of the pill. */}
+				<div className="relative flex flex-col items-center gap-1">
 					{/* TEXT BUBBLE — appears with first transcribed word or
 					    when LLM is thinking. `layout` smooths the height
 					    growth as new lines wrap via Framer's FLIP, so the
@@ -572,50 +655,73 @@ export function OverlayPage() {
 					{/* VISUALIZER CHIP — bottom-anchored, never moves. The
 					    capsule (rounded-full) reads as the persistent
 					    "instrument" while the bubble above is the
-					    transient "output". */}
-					<AnimatePresence>
-						{showPill && (
-							<m.div
-								animate="animate"
-								className={`relative inline-flex items-center justify-center overflow-hidden rounded-full px-2.5 py-1 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
-								exit="exit"
-								initial="initial"
-								key="visualizer-chip"
-								variants={chipVariants}
-							>
-								{/* Glass refraction hairline at the very top
+					    transient "output". The chip is wrapped in a `relative
+					    w-fit` container so the X cancel button can be
+					    absolutely positioned at the chip's top-right corner
+					    without expanding the chip itself (the chip has
+					    overflow-hidden for the breathing inset glow). `w-fit`
+					    sizes the wrapper to the chip's intrinsic width so the
+					    X stays anchored to the chip, not the column (which
+					    would grow with the bubble's width). */}
+					<div className="relative w-fit">
+						<AnimatePresence>
+							{showPill && (
+								<m.div
+									animate="animate"
+									className="absolute -top-1 -right-3 z-10"
+									exit="exit"
+									initial="initial"
+									key="cancel-button"
+									variants={chipVariants}
+								>
+									<CancelButton size={16} />
+								</m.div>
+							)}
+						</AnimatePresence>
+						<AnimatePresence>
+							{showPill && (
+								<m.div
+									animate="animate"
+									className={`relative inline-flex items-center justify-center overflow-hidden rounded-full px-2.5 py-1 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
+									exit="exit"
+									initial="initial"
+									key="visualizer-chip"
+									variants={chipVariants}
+								>
+									{/* Glass refraction hairline at the very top
 								    of the capsule. */}
-								<div
-									aria-hidden="true"
-									className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent"
-								/>
-								{/* Breathing inset glow while user is
+									<div
+										aria-hidden="true"
+										className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent"
+									/>
+									{/* Breathing inset glow while user is
 								    actively speaking. Opacity-only — chip
 								    dimensions stay pixel-identical to its
 								    resting state. */}
-								<AnimatePresence>
-									{isSpeaking && !isThinking && (
-										<m.div
-											animate="animate"
-											aria-hidden="true"
-											className="pointer-events-none absolute inset-0 rounded-full"
-											exit="exit"
-											initial="initial"
-											key="speaking-breathe"
-											style={{
-												boxShadow:
-													"inset 0 0 18px 0 oklch(62% 0.19 260 / 0.28), inset 0 0 1px 0 oklch(75% 0.15 260 / 0.4)",
-											}}
-											variants={breatheVariants}
-										/>
-									)}
-								</AnimatePresence>
-								<div className="flex items-center justify-center" style={{ zoom }}>
-									<AudioVisualizer size="icon" />
-								</div>
-							</m.div>
-						)}
-					</AnimatePresence>
+									<AnimatePresence>
+										{isSpeaking && !isThinking && (
+											<m.div
+												animate="animate"
+												aria-hidden="true"
+												className="pointer-events-none absolute inset-0 rounded-full"
+												exit="exit"
+												initial="initial"
+												key="speaking-breathe"
+												style={{
+													boxShadow:
+														"inset 0 0 18px 0 oklch(62% 0.19 260 / 0.28), inset 0 0 1px 0 oklch(75% 0.15 260 / 0.4)",
+												}}
+												variants={breatheVariants}
+											/>
+										)}
+									</AnimatePresence>
+									<div className="flex items-center justify-center" style={{ zoom }}>
+										<AudioVisualizer size="icon" />
+									</div>
+								</m.div>
+							)}
+						</AnimatePresence>
+					</div>
 				</div>
 			</div>
 		</LazyMotion>

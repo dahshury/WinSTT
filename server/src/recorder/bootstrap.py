@@ -12,12 +12,15 @@ from src.building_blocks.clock import Clock
 from src.building_blocks.event_bus import EventBus
 from src.building_blocks.types import CallbackMap, LevelCallback, SimpleCallback, TextCallback
 from src.recorder.application.recorder_service import RecorderService
-from src.recorder.domain.config import RecorderConfig
+from src.recorder.domain.config import DiarizationConfig, RecorderConfig
 from src.recorder.domain.events import (
     AudioChunkRecorded,
     AudioLevelComputed,
     DeviceBecameAvailable,
     DeviceSwitchFailed,
+    DiarizationToggleCompleted,
+    DiarizationToggleFailed,
+    DiarizationToggleStarted,
     DownloadProgress,
     ModelSwapCompleted,
     ModelSwapFailed,
@@ -43,6 +46,7 @@ from src.recorder.domain.events import (
     WakeWordTimeout,
 )
 from src.recorder.domain.ports.audio_source import IAudioSource
+from src.recorder.domain.ports.diarizer import IDiarizer
 from src.recorder.domain.ports.transcriber import ITranscriber
 from src.recorder.domain.ports.vad import IVoiceActivityDetector
 from src.recorder.domain.ports.wake_word import IWakeWordDetector
@@ -105,6 +109,9 @@ CALLBACK_EVENT_MAP: dict[str, type[RecorderEvent]] = {
     "on_model_swap_started": ModelSwapStarted,
     "on_model_swap_completed": ModelSwapCompleted,
     "on_model_swap_failed": ModelSwapFailed,
+    "on_diarization_toggle_started": DiarizationToggleStarted,
+    "on_diarization_toggle_completed": DiarizationToggleCompleted,
+    "on_diarization_toggle_failed": DiarizationToggleFailed,
     "on_vad_sensitivity_adapted": VADSensitivityAdapted,
     "on_speaker_segments_detected": SpeakerSegmentsDetected,
 }
@@ -204,6 +211,44 @@ def wire_callback_with_model_swap_failed(
     event_bus.subscribe(event_type, _handler)
 
 
+def wire_callback_with_diarization_toggle(
+    event_bus: EventBus,
+    event_type: type[RecorderEvent],
+    callback: Callable[[bool], None],
+) -> None:
+    """Wire DiarizationToggleStarted / DiarizationToggleCompleted callbacks.
+
+    Both events carry a single ``enabled`` boolean (the target state).
+    The wrapper unpacks it and invokes the user callback.
+    """
+
+    def _handler(event: object) -> None:
+        # Same shape on both started + completed → casting to Started is safe.
+        e = cast(DiarizationToggleStarted, event)
+        callback(e.enabled)
+
+    event_bus.subscribe(event_type, _handler)
+
+
+def wire_callback_with_diarization_toggle_failed(
+    event_bus: EventBus,
+    event_type: type[RecorderEvent],
+    callback: Callable[[bool, str, str, str], None],
+) -> None:
+    """Wire DiarizationToggleFailed callback (enabled, reason, category, detail).
+
+    Mirrors :func:`wire_callback_with_model_swap_failed` — the renderer's
+    failure-toast pipeline shares the same shape so the variant lookup
+    works for both swap and toggle failures.
+    """
+
+    def _handler(event: object) -> None:
+        e = cast(DiarizationToggleFailed, event)
+        callback(e.enabled, e.reason, e.category, e.detail)
+
+    event_bus.subscribe(event_type, _handler)
+
+
 def wire_callback_with_vad_sensitivity(
     event_bus: EventBus,
     event_type: type[RecorderEvent],
@@ -265,6 +310,18 @@ def wire_all_callbacks(event_bus: EventBus, callbacks: CallbackMap) -> None:
                 event_bus,
                 event_type,
                 cast(Callable[[str, str, str, str, str], None], cb_func),
+            )
+        elif event_type in {DiarizationToggleStarted, DiarizationToggleCompleted}:
+            wire_callback_with_diarization_toggle(
+                event_bus,
+                event_type,
+                cast(Callable[[bool], None], cb_func),
+            )
+        elif event_type is DiarizationToggleFailed:
+            wire_callback_with_diarization_toggle_failed(
+                event_bus,
+                event_type,
+                cast(Callable[[bool, str, str, str], None], cb_func),
             )
         elif event_type is VADSensitivityAdapted:
             wire_callback_with_vad_sensitivity(
@@ -513,6 +570,30 @@ def build_realtime_transcriber(
         on_download_progress=progress_handler,
         segment_with_vad=False,
         normalize_audio=config.transcription.normalize_audio,
+    )
+
+
+def build_diarizer(diarization_config: DiarizationConfig) -> IDiarizer:
+    """Construct the live diarizer from a ``DiarizationConfig``.
+
+    Mirrors :func:`build_transcriber`: pulled out of the facade so both
+    cold-boot composition (`AudioToTextRecorder._ensure_service`) and the
+    runtime toggle worker (`RecorderService.request_diarization_toggle`)
+    construct the same way without duplicating the import + arg list. The
+    onnx-asr segmentation+embedding sessions are loaded lazily inside
+    ``OnnxAsrDiarizer.__init__``; the first call to ``diarize()`` warms
+    the kernels (the facade's ``warmup()`` does this proactively on cold
+    boot — the toggle worker can rely on the regular hot path for runtime
+    enables since the spinner is on the UI anyway).
+    """
+    from src.recorder.infrastructure.onnxasr_diarizer import OnnxAsrDiarizer
+
+    return OnnxAsrDiarizer(
+        max_speakers=diarization_config.max_speakers,
+        delta_new=diarization_config.delta_new,
+        rho_update=diarization_config.rho_update,
+        segmentation_model=diarization_config.segmentation_model,
+        embedding_model=diarization_config.embedding_model,
     )
 
 

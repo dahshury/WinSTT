@@ -50,6 +50,9 @@ _NON_SIMPLE_CALLBACKS: frozenset[str] = frozenset(
         "on_model_swap_started",
         "on_model_swap_completed",
         "on_model_swap_failed",
+        "on_diarization_toggle_started",
+        "on_diarization_toggle_completed",
+        "on_diarization_toggle_failed",
         "on_vad_sensitivity_adapted",
         "on_speaker_segments_detected",
         # Domain events the server intentionally does not relay over the wire.
@@ -184,9 +187,39 @@ def on_model_swap_completed(
     state: ServerState,
     loop: asyncio.AbstractEventLoop,
 ) -> None:
-    """Forward a model-swap-completed event — the new model is now live."""
+    """Forward a model-swap-completed event — the new model is now live.
+
+    Emission order is load-bearing: we push fresh ``runtime_info`` on the
+    control channel **first**, then announce ``model_swap_completed`` on
+    the data channel. The renderer's ``useSyncActiveModel`` reconciler
+    clears its ``activeMain`` guard on the latter and then compares
+    ``runtimeInfo.model`` against ``settings.model``. If those events
+    arrive in the opposite order the cached ``runtimeInfo`` still holds
+    the OLD model name when the guard drops, the reconciler "adopts" the
+    stale runtime, and the user's pick gets reverted ~one tick later. By
+    sending runtime_info before model_swap_completed we ensure the
+    renderer's snapshot is fresh by the time the guard drops.
+    """
     print(f"{bcolors.OKGREEN}[model-swap] done: kind={kind} name={name}{bcolors.ENDC}")
     persist_setting("model" if kind == "main" else "realtime_model_type", name)
+    # Push fresh runtime_info FIRST so the renderer's cached snapshot
+    # matches the just-committed model before the swap_completed event
+    # clears the activeMain reconcile guard.
+    from src.stt_server.control_handler import augment_runtime_info
+
+    if state.recorder is not None:
+        try:
+            info = augment_runtime_info(state.recorder.runtime_info())
+        except Exception:
+            # runtime_info() failed (post-swap inconsistency); the cache
+            # will heal on the next get_runtime_info request or server_ready.
+            info = None
+        if info is not None:
+            rt_payload = json.dumps(
+                {"command": "get_runtime_info", "status": "success", "value": info}
+            )
+            for ws in list(state.control_connections):
+                asyncio.run_coroutine_threadsafe(ws.send(rt_payload), loop)
     message = json.dumps({"type": "model_swap_completed", "kind": kind, "name": name})
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
     # The HF cache state for this model just flipped to "cached" — push an
@@ -194,23 +227,6 @@ def on_model_swap_completed(
     # badges without polling list_models_with_state.
     cache_message = json.dumps({"type": "model_cache_changed", "model_id": name})
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(cache_message), loop)
-    # Broadcast the fresh runtime_info to every control connection. Without
-    # this, the renderer's cached ``runtimeInfo.model`` lags behind the
-    # actually-loaded model — and the active-model reconciler races against
-    # the stale snapshot to revert the user's pick. Piggybacks on the
-    # existing ``handleGetRuntimeInfoEvent`` shape in the WS client so no
-    # new client-side wiring is needed.
-    if state.recorder is None:
-        return
-    try:
-        info = state.recorder.runtime_info()
-    except Exception:
-        # runtime_info() failed (post-swap inconsistency); the cache will
-        # heal on the next get_runtime_info request or server_ready.
-        return
-    rt_payload = json.dumps({"command": "get_runtime_info", "status": "success", "value": info})
-    for ws in list(state.control_connections):
-        asyncio.run_coroutine_threadsafe(ws.send(rt_payload), loop)
 
 
 def on_model_swap_failed(
@@ -239,6 +255,73 @@ def on_model_swap_failed(
             "type": "model_swap_failed",
             "kind": kind,
             "name": name,
+            "reason": reason,
+            "category": category,
+            "detail": detail,
+        }
+    )
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
+
+def on_diarization_toggle_started(
+    enabled: bool,
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Forward a diarization-toggle-started event — the worker has begun.
+
+    UI shows a "warming" / "tearing down" spinner on the diarization
+    toggle until ``on_diarization_toggle_completed`` (or
+    ``_failed``) arrives. ``enabled`` is the *target* state, not the
+    current state.
+    """
+    print(
+        f"{bcolors.OKBLUE}[diar-toggle] start: target={'on' if enabled else 'off'}{bcolors.ENDC}"
+    )
+    message = json.dumps({"type": "diarization_toggle_started", "enabled": enabled})
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
+
+def on_diarization_toggle_completed(
+    enabled: bool,
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Forward a successful diarization on/off commit.
+
+    For ``enabled=True``, the diarizer is loaded and the next utterance
+    will receive speaker labels. For ``False``, it's torn down and the
+    RAM has been released.
+    """
+    print(
+        f"{bcolors.OKGREEN}[diar-toggle] done: target={'on' if enabled else 'off'}{bcolors.ENDC}"
+    )
+    message = json.dumps({"type": "diarization_toggle_completed", "enabled": enabled})
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
+
+def on_diarization_toggle_failed(
+    enabled: bool,
+    reason: str,
+    category: str,
+    detail: str,
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Forward a diarization-toggle failure so the renderer can revert + toast.
+
+    Payload shape mirrors ``model_swap_failed`` — same ``category`` /
+    ``reason`` / ``detail`` triple, plus ``enabled`` so the renderer
+    knows which direction the failed attempt was trying to move.
+    """
+    print(
+        f"{bcolors.WARNING}[diar-toggle] failed: target={'on' if enabled else 'off'} "
+        f"category={category} reason={reason} detail={detail}{bcolors.ENDC}"
+    )
+    message = json.dumps(
+        {
+            "type": "diarization_toggle_failed",
+            "enabled": enabled,
             "reason": reason,
             "category": category,
             "detail": detail,
@@ -380,6 +463,15 @@ def build_recorder_callbacks(state: ServerState, loop: asyncio.AbstractEventLoop
     callbacks["on_model_swap_started"] = _make_state_callback(loop, on_model_swap_started, state)
     callbacks["on_model_swap_completed"] = _make_state_callback(loop, on_model_swap_completed, state)
     callbacks["on_model_swap_failed"] = _make_state_callback(loop, on_model_swap_failed, state)
+    callbacks["on_diarization_toggle_started"] = _make_state_callback(
+        loop, on_diarization_toggle_started, state
+    )
+    callbacks["on_diarization_toggle_completed"] = _make_state_callback(
+        loop, on_diarization_toggle_completed, state
+    )
+    callbacks["on_diarization_toggle_failed"] = _make_state_callback(
+        loop, on_diarization_toggle_failed, state
+    )
     callbacks["on_vad_sensitivity_adapted"] = _make_state_callback(loop, on_vad_sensitivity_adapted, state)
     callbacks["on_speaker_segments_detected"] = _make_state_callback(loop, on_speaker_segments_detected, state)
     callbacks["cancel_download_check"] = lambda: state.cancel_download_requested

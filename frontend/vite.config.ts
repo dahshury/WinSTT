@@ -75,6 +75,7 @@ export default defineConfig({
 				"model-picker": resolve(rootDir, "windows/model-picker.html"),
 				"device-picker": resolve(rootDir, "windows/device-picker.html"),
 				onboarding: resolve(rootDir, "windows/onboarding.html"),
+				history: resolve(rootDir, "windows/history.html"),
 			},
 			output: {
 				// Hand-curated chunk split to keep per-page bundles lean. Without
@@ -85,17 +86,21 @@ export default defineConfig({
 				// tray-menu, pickers) skip the download entirely.
 				manualChunks: (id) => {
 					if (id.includes("node_modules")) {
-						if (id.includes("@base-ui/react")) {
-							return "vendor-base-ui";
+						// React core, react-dom, and @base-ui/* must share one chunk.
+						// Splitting them produces circular ESM imports between
+						// vendor-react and vendor-base-ui — each chunk's top-level
+						// code runs while the other half-initialized, and Base UI
+						// crashes the renderer with "Cannot read properties of
+						// undefined (reading 'useLayoutEffect')" on a React
+						// namespace that hasn't bound its hooks yet.
+						if (id.includes("@base-ui/") || id.includes("react-dom") || id.includes("/react/")) {
+							return "vendor-react";
 						}
 						if (id.includes("/motion/") || id.includes("framer-motion")) {
 							return "vendor-motion";
 						}
 						if (id.includes("@hugeicons/")) {
 							return "vendor-hugeicons";
-						}
-						if (id.includes("react-dom") || id.includes("/react/")) {
-							return "vendor-react";
 						}
 						if (id.includes("next-intl") || id.includes("@formatjs/")) {
 							return "vendor-intl";

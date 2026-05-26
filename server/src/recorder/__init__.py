@@ -145,6 +145,15 @@ class AudioToTextRecorder:
         on_model_swap_started: Callable[[str, str], None] | None = None,
         on_model_swap_completed: Callable[[str, str], None] | None = None,
         on_model_swap_failed: Callable[[str, str, str], None] | None = None,
+        # Diarization toggle lifecycle — fired when request_diarization_toggle()
+        # begins, succeeds, or fails. ``started`` / ``completed`` receive the
+        # target ``enabled`` boolean; ``failed`` adds (reason, category, detail)
+        # mirroring on_model_swap_failed so the renderer can share its toast
+        # variant lookup. ``None`` (the default) leaves the callback unwired;
+        # the toggle still functions, but the UI gets no lifecycle pushes.
+        on_diarization_toggle_started: Callable[[bool], None] | None = None,
+        on_diarization_toggle_completed: Callable[[bool], None] | None = None,
+        on_diarization_toggle_failed: Callable[[bool, str, str, str], None] | None = None,
         on_vad_sensitivity_adapted: Callable[[float, float, float], None] | None = None,
         #: Diarization callback — fires after each utterance when speaker
         #: segmentation is enabled. Receives the tuple of segments from
@@ -182,9 +191,21 @@ class AudioToTextRecorder:
         # ``enable_diarization=True`` build downloads ~32 MB of ONNX models.
         enable_diarization: bool = False,
         diarization_max_speakers: int = 8,
+        # Deterministic post-ASR fuzzy corrector — see
+        # :class:`TextCorrectionConfig`. Empty list (the default) is a no-op
+        # fast path; populated, each transcription is run through the n-gram
+        # fuzzy matcher BEFORE the LLM modifier pipeline so the LLM sees
+        # already-corrected text.
+        custom_words: list[str] | None = None,
+        word_correction_threshold: float = 0.18,
     ) -> None:
         if suppress_tokens is None:
             suppress_tokens = [-1]
+
+        # ``list`` defaults are mutable — accept ``None`` and normalise here
+        # so the kwarg's identity isn't shared across instances.
+        if custom_words is None:
+            custom_words = []
 
         # Build config from all kwargs
         self._config = RecorderConfig.from_kwargs(
@@ -253,6 +274,13 @@ class AudioToTextRecorder:
             # ``_field_owner_index`` lands them in the right bucket.
             enabled=enable_diarization,
             max_speakers=diarization_max_speakers,
+            # Text correction — list + threshold are unique field names on
+            # :class:`TextCorrectionConfig`. Both are renamed for the public
+            # API (``custom_words`` and ``word_correction_threshold``) so the
+            # facade signature matches the OpenAPI spec; ``threshold`` in
+            # config-space is the bare numeric value.
+            custom_words=custom_words,
+            threshold=word_correction_threshold,
         )
 
         # Collect callbacks
@@ -280,6 +308,9 @@ class AudioToTextRecorder:
             "on_model_swap_started": on_model_swap_started,
             "on_model_swap_completed": on_model_swap_completed,
             "on_model_swap_failed": on_model_swap_failed,
+            "on_diarization_toggle_started": on_diarization_toggle_started,
+            "on_diarization_toggle_completed": on_diarization_toggle_completed,
+            "on_diarization_toggle_failed": on_diarization_toggle_failed,
             "on_vad_sensitivity_adapted": on_vad_sensitivity_adapted,
             "on_speaker_segments_detected": on_speaker_segments_detected,
         }
@@ -411,18 +442,16 @@ class AudioToTextRecorder:
                     realtime_transcriber = build_realtime_transcriber(self._config, download_callbacks=dl_cbs)
 
             # Optional diarizer — only constructed when the feature flag is on,
-            # so disabled users don't pay the ~32 MB first-use download.
+            # so disabled users don't pay the ~32 MB first-use download. The
+            # runtime toggle (RecorderService.request_diarization_toggle)
+            # reuses ``build_diarizer`` to enable diarization later without a
+            # restart, so any change to the construction args has exactly one
+            # canonical site to update.
             diarizer: Any = None
             if self._config.diarization.enabled:
-                from src.recorder.infrastructure.onnxasr_diarizer import OnnxAsrDiarizer
+                from src.recorder.bootstrap import build_diarizer
 
-                diarizer = OnnxAsrDiarizer(
-                    max_speakers=self._config.diarization.max_speakers,
-                    delta_new=self._config.diarization.delta_new,
-                    rho_update=self._config.diarization.rho_update,
-                    segmentation_model=self._config.diarization.segmentation_model,
-                    embedding_model=self._config.diarization.embedding_model,
-                )
+                diarizer = build_diarizer(self._config.diarization)
 
             # Optional wake-word detector. The bootstrap registry maps every
             # accepted backend alias (pvp/pvporcupine/oww/openwakeword/...)
@@ -659,6 +688,21 @@ class AudioToTextRecorder:
         return self._config.realtime.enable_realtime_transcription
 
     @property
+    def event_bus(self) -> EventBus:
+        """Public handle on the facade's domain event bus.
+
+        Exposed so the WS server (and unit-test harnesses) can subscribe to
+        domain events emitted by the recorder — notably
+        :class:`src.recorder.domain.events.TranscriptionCompleted` whose
+        ``wav_path`` carries the just-written WAV file path. Direct
+        infrastructure access is forbidden by the hexagonal rulebook, but
+        the event bus itself is a building-blocks primitive (no domain
+        knowledge), so reading it on the facade is the canonical hook for
+        consumers that already live outside the recorder package.
+        """
+        return self._event_bus
+
+    @property
     def input_device_index(self) -> int | None:
         return self._config.audio.input_device_index
 
@@ -686,6 +730,41 @@ class AudioToTextRecorder:
         self._config.vad.silero_sensitivity = value
         if self._silero_vad is not None:
             self._silero_vad.sensitivity = value
+
+    @property
+    def custom_words(self) -> list[str]:
+        """The active deterministic-corrector word list.
+
+        Mirrors :attr:`TextCorrectionConfig.custom_words` so the
+        WebSocket control handler's ``set_parameter`` path can read and
+        write the live list via the standard ``setattr(state.recorder, ...)``
+        bridge. Returns a copy so callers can't mutate the live list
+        through the property's reference (matches Pydantic's own list
+        identity semantics).
+        """
+        return list(self._config.text_correction.custom_words)
+
+    @custom_words.setter
+    def custom_words(self, value: list[str]) -> None:
+        # Defensive copy: the renderer hands us a JSON-decoded list whose
+        # identity it may continue to mutate after the WebSocket frame
+        # returns. Owning our own list avoids "the value changed without
+        # going through the setter" races with the pipeline thread.
+        self._config.text_correction.custom_words = list(value or [])
+
+    @property
+    def word_correction_threshold(self) -> float:
+        """Maximum acceptable combined fuzzy score (0.0..1.0).
+
+        Same wiring as :attr:`custom_words` — exposed for the
+        ``set_parameter`` path so the threshold is tunable live without
+        a recorder rebuild.
+        """
+        return self._config.text_correction.threshold
+
+    @word_correction_threshold.setter
+    def word_correction_threshold(self, value: float) -> None:
+        self._config.text_correction.threshold = float(value)
 
     @property
     def wake_word_activation_delay(self) -> float:
@@ -721,6 +800,18 @@ class AudioToTextRecorder:
         ``ModelSwapStarted`` / ``ModelSwapCompleted`` / ``ModelSwapFailed``.
         """
         self._ensure_service().request_model_swap(kind, name)
+
+    def request_diarization_toggle(self, enabled: bool) -> None:
+        """Kick off a background diarization on/off toggle.
+
+        See ``RecorderService.request_diarization_toggle``. Returns
+        immediately; the toggle runs on a daemon thread and publishes
+        ``DiarizationToggleStarted`` then either ``DiarizationToggleCompleted``
+        or ``DiarizationToggleFailed``. A no-op (target state already
+        active) still emits Started → Completed so the renderer's
+        spinner clears.
+        """
+        self._ensure_service().request_diarization_toggle(enabled)
 
     def clear_audio_queue(self) -> None:
         self._ensure_service().clear_audio_queue()

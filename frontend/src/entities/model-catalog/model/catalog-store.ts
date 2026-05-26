@@ -3,15 +3,26 @@ import { create } from "zustand";
 import { fetchModelCatalog, onModelCatalog } from "@/shared/api/ipc-client";
 
 export interface ModelInfo {
+	accuracyScore: number;
 	availableQuantizations: string[];
 	backend: "faster_whisper" | "onnx_asr";
 	description: string;
 	displayName: string;
-	family: "whisper" | "lite-whisper" | "nemo" | "gigaam" | "kaldi" | "t-one";
+	family:
+		| "whisper"
+		| "lite-whisper"
+		| "nemo"
+		| "gigaam"
+		| "kaldi"
+		| "t-one"
+		| "moonshine"
+		| "cohere"
+		| "granite";
 	id: string;
 	languages: string[];
 	onnxModelName: string | null;
 	sizeLabel: string;
+	speedScore: number;
 	supportsLanguageDetection: boolean;
 	supportsRealtime: boolean;
 }
@@ -21,7 +32,17 @@ const rawModelInfoSchema = z.object({
 	id: z.string(),
 	display_name: z.string(),
 	backend: z.enum(["faster_whisper", "onnx_asr"]),
-	family: z.enum(["whisper", "lite-whisper", "nemo", "gigaam", "kaldi", "t-one"]),
+	family: z.enum([
+		"whisper",
+		"lite-whisper",
+		"nemo",
+		"gigaam",
+		"kaldi",
+		"t-one",
+		"moonshine",
+		"cohere",
+		"granite",
+	]),
 	languages: z.array(z.string()),
 	supports_language_detection: z.boolean(),
 	size_label: z.string(),
@@ -29,6 +50,10 @@ const rawModelInfoSchema = z.object({
 	onnx_model_name: z.string().nullable(),
 	description: z.string(),
 	available_quantizations: z.array(z.string()).default([""]),
+	// Server emits these post-v0.X (derived from param_count + family); the
+	// catch keeps older bundled servers from breaking the renderer parse.
+	speed_score: z.number().min(0).max(1).default(0.5).catch(0.5),
+	accuracy_score: z.number().min(0).max(1).default(0.5).catch(0.5),
 });
 
 type RawModelInfo = z.infer<typeof rawModelInfoSchema>;
@@ -46,6 +71,8 @@ function mapModel(raw: RawModelInfo): ModelInfo {
 		onnxModelName: raw.onnx_model_name,
 		description: raw.description,
 		availableQuantizations: raw.available_quantizations,
+		speedScore: raw.speed_score,
+		accuracyScore: raw.accuracy_score,
 	};
 }
 

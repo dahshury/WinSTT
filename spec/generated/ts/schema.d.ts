@@ -527,6 +527,21 @@ export interface components {
              *     the feature reads content from any focused app.
              */
             contextAwareness?: boolean;
+            /**
+             * Format: float
+             * @description Maximum acceptable combined score for the deterministic
+             *     custom-word fuzzy corrector that runs on the server
+             *     immediately AFTER ASR and BEFORE the LLM modifier pipeline.
+             *     Lower = stricter (fewer false positives, more genuine
+             *     near-misses left for the LLM to fix). 0.18 matches Handy's
+             *     reference value (see
+             *     `examples/Handy/src-tauri/src/audio_toolkit/text.rs`). The
+             *     word list itself is derived from the existing `dictionary`
+             *     array, using entries whose `replacement` field is empty as
+             *     the canonical vocabulary.
+             * @default 0.18
+             */
+            wordCorrectionThreshold: number;
         };
         HotkeySettings: {
             /** @description Electron accelerator string */

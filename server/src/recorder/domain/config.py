@@ -165,6 +165,25 @@ class DiarizationConfig(StrictMutableModel):
     embedding_model: str = "wespeaker-voxceleb-resnet34-LM"
 
 
+class TextCorrectionConfig(StrictMutableModel):
+    """Deterministic post-ASR fuzzy correction settings.
+
+    The runtime applies :func:`src.recorder.text.dictionary.apply_custom_words`
+    right after ASR finishes and before the per-sentence cleanup
+    (capitalisation, trailing period). When ``custom_words`` is empty the
+    correction is a no-op fast path. ``threshold`` is forwarded to the
+    matcher verbatim — 0.18 is the value Handy's reference implementation
+    ships, see ``examples/Handy/src-tauri/src/audio_toolkit/text.rs``.
+
+    This layer runs BEFORE any LLM modifier pipeline (the LLM step lives
+    in the Electron main process), so the LLM still sees post-dictionary
+    text and can fix anything the deterministic pass missed.
+    """
+
+    custom_words: list[str] = Field(default_factory=list)
+    threshold: float = Field(default=0.18, ge=0.0, le=1.0)
+
+
 class UIConfig(StrictMutableModel):
     spinner: bool = True
     ensure_sentence_starting_uppercase: bool = True
@@ -176,6 +195,27 @@ class UIConfig(StrictMutableModel):
     start_callback_in_new_thread: bool = False
 
 
+class HistoryConfig(StrictMutableModel):
+    """Server-side knobs for the SQLite transcription-history sidecar.
+
+    The recorder doesn't open the SQLite DB itself — that lives in the
+    Electron main process where it can be paged on demand. What the recorder
+    DOES do, when ``save_wav`` is true, is dump the just-transcribed PCM to a
+    WAV file under ``recordings_dir`` and surface the absolute path on the
+    :class:`TranscriptionCompleted` event so the IPC relay can persist a
+    matching history row. Disabled by default — opt-in costs disk + the
+    one-shot write per utterance.
+
+    ``recordings_dir`` is resolved by the facade against
+    ``app.getPath("userData")/recordings`` on Electron's behalf; in standalone
+    server runs it falls back to the OS temp dir so a dev test launch doesn't
+    write into a user's real data folder.
+    """
+
+    save_wav: bool = False
+    recordings_dir: str = ""
+
+
 class RecorderConfig(StrictMutableModel):
     audio: AudioConfig = Field(default_factory=AudioConfig)
     vad: VADConfig = Field(default_factory=VADConfig)
@@ -185,6 +225,8 @@ class RecorderConfig(StrictMutableModel):
     ui: UIConfig = Field(default_factory=UIConfig)
     endpoint: EndpointConfig = Field(default_factory=EndpointConfig)
     diarization: DiarizationConfig = Field(default_factory=DiarizationConfig)
+    text_correction: TextCorrectionConfig = Field(default_factory=TextCorrectionConfig)
+    history: HistoryConfig = Field(default_factory=HistoryConfig)
 
     # Sub-config classes in priority order: a kwarg is routed to the first
     # class that declares a matching field (preserves the original
@@ -198,6 +240,8 @@ class RecorderConfig(StrictMutableModel):
         UIConfig,
         EndpointConfig,
         DiarizationConfig,
+        TextCorrectionConfig,
+        HistoryConfig,
     )
 
     @staticmethod
@@ -249,6 +293,8 @@ class RecorderConfig(StrictMutableModel):
             ui_kw,
             endpoint_kw,
             diarization_kw,
+            text_correction_kw,
+            history_kw,
         ) = cls._route_kwargs(kwargs, cls._SUBCONFIGS)
         return cls(
             audio=AudioConfig(**audio_kw),
@@ -259,4 +305,6 @@ class RecorderConfig(StrictMutableModel):
             ui=UIConfig(**ui_kw),
             endpoint=EndpointConfig(**endpoint_kw),
             diarization=DiarizationConfig(**diarization_kw),
+            text_correction=TextCorrectionConfig(**text_correction_kw),
+            history=HistoryConfig(**history_kw),
         )

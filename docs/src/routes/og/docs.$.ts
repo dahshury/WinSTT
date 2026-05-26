@@ -20,8 +20,8 @@ export const Route = createFileRoute("/og/docs/$")({
           title: page.data.title,
           description: page.data.description,
           site: "WinSTT Docs",
-          primaryColor: "hsla(43, 96%, 56%, 0.3)",
-          primaryTextColor: "hsl(43, 96%, 56%)",
+          primaryColor: "oklch(62% 0.19 260 / 0.3)",
+          primaryTextColor: "oklch(70% 0.18 260)",
         });
       },
     },

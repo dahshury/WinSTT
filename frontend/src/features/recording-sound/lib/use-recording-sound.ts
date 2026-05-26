@@ -1,6 +1,12 @@
 import { useEffect, useRef } from "react";
+import { useSettingsStore } from "@/entities/setting";
 import { ipcInvoke, ipcOn } from "@/shared/api/ipc-client";
-import { decodeWav, playBuffer } from "@/shared/lib/web-audio";
+import {
+	createOutputContext,
+	decodeWav,
+	playBuffer,
+	routeContextToSink,
+} from "@/shared/lib/web-audio";
 
 /**
  * Fetches the recording-start WAV from the main process on mount,
@@ -9,10 +15,17 @@ import { decodeWav, playBuffer } from "@/shared/lib/web-audio";
  *
  * Latency: ~1-3ms (pre-decoded PCM played straight to hardware),
  * vs ~150-200ms with the old PowerShell approach.
+ *
+ * Routes through the user-configured output device
+ * (`general.outputDeviceId`) via Web Audio's `setSinkId`. Falls back to
+ * the system default when no device is selected or the chosen device is
+ * unavailable.
  */
 export function useRecordingSound(): void {
+	const outputDeviceId = useSettingsStore((s) => s.settings.general.outputDeviceId);
 	const ctxRef = useRef<AudioContext | null>(null);
 	const bufRef = useRef<AudioBuffer | null>(null);
+	const initialDeviceRef = useRef(outputDeviceId);
 
 	useEffect(() => {
 		const lifecycle = { disposed: false };
@@ -21,7 +34,7 @@ export function useRecordingSound(): void {
 			if (lifecycle.disposed || !data) {
 				return;
 			}
-			const ctx = new AudioContext();
+			const ctx = createOutputContext(initialDeviceRef.current);
 			ctxRef.current = ctx;
 			bufRef.current = await decodeWav(ctx, data);
 		};
@@ -45,4 +58,12 @@ export function useRecordingSound(): void {
 			bufRef.current = null;
 		};
 	}, []);
+
+	useEffect(() => {
+		const ctx = ctxRef.current;
+		if (!ctx) {
+			return;
+		}
+		routeContextToSink(ctx, outputDeviceId);
+	}, [outputDeviceId]);
 }

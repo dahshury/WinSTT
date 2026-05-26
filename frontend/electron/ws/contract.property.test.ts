@@ -49,6 +49,43 @@ const validEventArbitraries: Record<SupportedEventType, PayloadGen> = {
 	wakeword_detected: fc.record({
 		type: fc.constant("wakeword_detected"),
 	}),
+	model_swap_started: fc.record({
+		type: fc.constant("model_swap_started"),
+		kind: fc.constantFrom("main", "realtime"),
+		name: fc.string(),
+	}),
+	model_swap_completed: fc.record({
+		type: fc.constant("model_swap_completed"),
+		kind: fc.constantFrom("main", "realtime"),
+		name: fc.string(),
+	}),
+	model_swap_failed: fc.record({
+		type: fc.constant("model_swap_failed"),
+		kind: fc.constantFrom("main", "realtime"),
+		name: fc.string(),
+		reason: fc.string(),
+	}),
+	model_cache_changed: fc.record({
+		type: fc.constant("model_cache_changed"),
+		model_id: fc.string(),
+	}),
+	model_catalog_updated: fc.record({
+		type: fc.constant("model_catalog_updated"),
+		models: fc.array(fc.anything()),
+	}),
+	diarization_toggle_started: fc.record({
+		type: fc.constant("diarization_toggle_started"),
+		enabled: fc.boolean(),
+	}),
+	diarization_toggle_completed: fc.record({
+		type: fc.constant("diarization_toggle_completed"),
+		enabled: fc.boolean(),
+	}),
+	diarization_toggle_failed: fc.record({
+		type: fc.constant("diarization_toggle_failed"),
+		enabled: fc.boolean(),
+		reason: fc.string(),
+	}),
 };
 
 const anyValidEvent: fc.Arbitrary<Record<string, unknown>> = fc.oneof(

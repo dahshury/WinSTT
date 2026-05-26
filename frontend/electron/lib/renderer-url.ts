@@ -18,7 +18,8 @@ export type RendererPage =
 	| "tray-menu"
 	| "model-picker"
 	| "device-picker"
-	| "onboarding";
+	| "onboarding"
+	| "history";
 
 // `main` stays at the project root (Vite dev-root convention); the 6 secondary
 // window entries live under `windows/` so the frontend root isn't cluttered
@@ -32,6 +33,7 @@ const PAGE_TO_FILE: Record<RendererPage, string> = {
 	"model-picker": "windows/model-picker.html",
 	"device-picker": "windows/device-picker.html",
 	onboarding: "windows/onboarding.html",
+	history: "windows/history.html",
 };
 
 const DEV_BASE_URL = "http://localhost:3000";

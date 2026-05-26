@@ -33,6 +33,17 @@ const storeValueSchemas = {
 		.catch([]),
 	"general.fileTranscriptionFormat": z.enum(["txt", "srt"]).catch("txt"),
 	"general.fileTranscriptionSaveLocation": z.enum(["auto", "ask"]).catch("auto"),
+	"general.historyLimit": z.number().int().min(1).max(10_000).catch(5),
+	"general.historyMaxEntries": z.number().int().min(10).max(10_000).catch(1000),
+	"general.recordingRetention": z.enum(["never", "cap", "days3", "weeks2", "months3"]).catch("cap"),
+	// Output device routing (TTS + recording chimes) — empty = system default.
+	"general.outputDeviceId": z.string().catch(""),
+	// Auto-press a "submit" key after each dictation paste lands.
+	"general.autoSubmit": z.boolean().catch(false),
+	"general.autoSubmitKey": z.enum(["enter", "ctrl_enter"]).catch("enter"),
+	"general.recordingRetentionPeriod": z
+		.enum(["never", "preserveLimit", "cap", "days3", "weeks2", "months3"])
+		.catch("preserveLimit"),
 	"general.showRecordingOverlay": z.boolean().catch(true),
 	"general.overlayMode": z.enum(["floating-bottom", "dynamic-island"]).catch("floating-bottom"),
 	"general.visualizerSize": z.enum(["xs", "sm", "md", "lg", "xl"]).catch("xs"),
@@ -347,6 +358,14 @@ export const store = new Store({
 			onboarded: false,
 			onboardedAt: null as number | null,
 			onboardedTrack: "" as "" | "local" | "cloud",
+			// Output device routing (TTS + recording chimes) — empty = system default.
+			outputDeviceId: "",
+			// Auto-press a "submit" key after each dictation paste lands.
+			autoSubmit: false,
+			autoSubmitKey: "enter" as "enter" | "ctrl_enter",
+			// Persisted history cap (10-10000) + auto-delete retention policy.
+			historyMaxEntries: 1000,
+			recordingRetention: "cap" as "never" | "cap" | "days3" | "weeks2" | "months3",
 		},
 		hotkey: {
 			pushToTalkKey: "LCtrl+LMeta",

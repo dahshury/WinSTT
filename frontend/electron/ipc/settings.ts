@@ -22,10 +22,22 @@ const ALLOWED_SETTINGS_KEYS: ReadonlySet<string> = new Set(Object.keys(appSettin
 const STARTUP_ONLY_KEYS = new Set([
 	// model.model is NOT here — it's hot-reloaded via sttSetParameter("model") which triggers
 	// an in-place model swap on the server. Including it here would kill the recorder mid-swap.
-	"model.realtimeModel",
+	//
+	// model.realtimeModel is NOT here either — `reload_realtime_model` performs the same
+	// in-place swap for the realtime worker. The user's previous experience was a full
+	// server restart on every realtime-model pick, which closed the mic stream and forced
+	// reconnect. The setting still gets persisted for the next cold boot's CLI args; we
+	// just don't restart on the live change.
+	//
+	// model.backend is NOT here either — the backend is derived from the model id at load
+	// time (the catalog records each model's native backend). The swap controller writes
+	// both `model` and `backend` together when picking a cross-backend model; the model
+	// write already triggers an in-place swap that loads the correct backend. Including
+	// `backend` would race a 500 ms restart timer against the in-flight swap and kill the
+	// server mid-load — exactly the symptom the user hit on vosk → nemo (faster_whisper →
+	// onnx_asr) switches.
 	"model.computeType",
 	"model.device",
-	"model.backend",
 	"model.onnxQuantization",
 	"model.beamSize",
 	"model.beamSizeRealtime",
@@ -590,11 +602,15 @@ function settingsSaveImpl(
 		//   2. The snapshot is the canonical truth — every receiver ends up
 		//      with the same view as the one electron-store just persisted.
 		//
-		// Restart detection still compares against `settings` (the renderer's
-		// payload) because that's the change set the user actually requested;
-		// snapshotting again here would diff against itself and miss restarts.
+		// Restart detection compares oldSnapshot → newSnapshot, NOT the raw
+		// renderer payload. The raw payload misfires on partial saves:
+		// useVadCalibration sends `{ audio: ... }` after every utterance,
+		// which then reads as `model.realtimeModel: undefined` vs the on-disk
+		// "tiny" and triggers a spurious restart. Diffing snapshots is correct:
+		// nothing was written → nothing changed; real writes still show up
+		// because applySettings ran before the second snapshot.
 		const newSnapshot = snapshotSettings();
-		checkForRestartNeeded(oldSettings, settings);
+		checkForRestartNeeded(oldSettings, newSnapshot);
 		broadcastSettingsToOtherWindows(event.sender.id, newSnapshot);
 	} catch (error) {
 		console.error("[settings] Failed to save settings:", getErrorMessage(error));

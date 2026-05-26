@@ -943,6 +943,23 @@ components:
             it to the LLM cleanup step so names and jargon get spelled correctly.
             Off by default; requires an explicit opt-in dialog in the UI because
             the feature reads content from any focused app.
+        wordCorrectionThreshold:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          default: 0.18
+          description: |
+            Maximum acceptable combined score for the deterministic
+            custom-word fuzzy corrector that runs on the server
+            immediately AFTER ASR and BEFORE the LLM modifier pipeline.
+            Lower = stricter (fewer false positives, more genuine
+            near-misses left for the LLM to fix). 0.18 matches Handy's
+            reference value (see
+            `examples/Handy/src-tauri/src/audio_toolkit/text.rs`). The
+            word list itself is derived from the existing `dictionary`
+            array, using entries whose `replacement` field is empty as
+            the canonical vocabulary.
 
     HotkeySettings:
       type: object

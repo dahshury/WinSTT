@@ -18,6 +18,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const watchDir = path.join(projectRoot, "dist-electron");
 
+// Default STT_SERVER_DIR to the repo's server/ checkout when the user hasn't
+// set one explicitly. resolveServerDir in electron/ipc/stt-process.ts spawns
+// `uv run stt-server` from this directory, so pointing it at our live source
+// guarantees the dev Electron always boots the current server build — no more
+// "outdated build / missing request_diarization_toggle" drift when a stale
+// background uv-server process is running. Shell env wins if the user
+// overrides it from their terminal.
+const defaultServerDir = path.resolve(projectRoot, "..", "server");
+if (!process.env.STT_SERVER_DIR && existsSync(path.join(defaultServerDir, "pyproject.toml"))) {
+	process.env.STT_SERVER_DIR = defaultServerDir;
+}
+
 // node_modules/.bin/electron is the cross-platform launcher. Bun uses
 // `.exe` shims on Windows; npm/pnpm use `.cmd`. Fall back across the variants.
 function resolveElectronBinary(): string {
@@ -45,6 +57,7 @@ function log(message: string): void {
 }
 
 function startElectron(): void {
+	log(`STT_SERVER_DIR = ${process.env.STT_SERVER_DIR ?? "(unset)"}`);
 	log("starting electron .");
 	const proc = spawn(electronBinary, ["."], {
 		cwd: projectRoot,

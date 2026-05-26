@@ -57,6 +57,21 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
 		logoSrc: "/provider-icons/t-tech.png",
 	},
+	moonshine: {
+		icon: FlashIcon,
+		label: "Moonshine",
+		chip: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
+	},
+	cohere: {
+		icon: AiChipIcon,
+		label: "Cohere",
+		chip: "bg-pink-500/15 text-pink-600 dark:text-pink-400",
+	},
+	granite: {
+		icon: CpuIcon,
+		label: "Granite",
+		chip: "bg-slate-500/15 text-slate-700 dark:text-slate-300",
+	},
 };
 
 export function getFamilyConfig(family: FamilyKey): FamilyConfig {
@@ -71,6 +86,9 @@ const FAMILY_AUTHOR: Record<FamilyKey, string> = {
 	gigaam: "Sber Salute",
 	kaldi: "Alpha Cephei",
 	"t-one": "T-Tech",
+	moonshine: "Useful Sensors",
+	cohere: "Cohere",
+	granite: "IBM",
 };
 
 export function getAuthorLabel(family: FamilyKey): string {
@@ -83,12 +101,15 @@ export function getAuthorLabel(family: FamilyKey): string {
  * for Kaldi/Alpha Cephei) so users can type whatever brand they know.
  */
 const FAMILY_SEARCH_ALIASES: Record<FamilyKey, string[]> = {
-	whisper: ["openai", "open ai"],
+	whisper: ["openai", "open ai", "breeze", "mediatek"],
 	"lite-whisper": ["efficient-speech", "efficient speech", "lite", "litewhisper"],
 	nemo: ["nvidia", "parakeet", "canary"],
 	gigaam: ["sber", "salute", "sberbank", "sberdevices", "salutedevices"],
 	kaldi: ["alpha cephei", "alphacephei", "vosk"],
 	"t-one": ["t-tech", "t tech", "t-bank", "tinkoff", "tbank"],
+	moonshine: ["useful sensors", "usefulsensors", "moonshine"],
+	cohere: ["cohere", "cohere labs", "transcribe"],
+	granite: ["ibm", "granite", "granite speech"],
 };
 
 /**
@@ -211,6 +232,46 @@ export interface VariantBundle {
  * :func:`getBaseId` per biome's ``useTopLevelRegex`` perf rule. */
 const LITE_WHISPER_FLAVOR_SUFFIX_RE = /-(?:acc|fast)$/;
 
+/** Strip a trailing ``-turbo`` so Whisper's distilled-decoder variant
+ * collapses into the same bundle as the full-precision base. Hoisted per
+ * the ``useTopLevelRegex`` perf rule. */
+const TURBO_SUFFIX_RE = /-turbo$/;
+
+/**
+ * Architecture prefixes that group genuine variants of a single model into
+ * one bundle. Only families whose variants share the SAME architecture
+ * (differing in size, language fine-tune, or quantization flavour) belong
+ * here — CTC / RNN-T / TDT decoder choices are different models, not
+ * variants, and stay as separate cards.
+ *
+ * Ordering matters: more-specific prefixes appear FIRST so any future
+ * ``X-sub`` family doesn't get swallowed by a shorter ``X`` entry.
+ *
+ * Examples:
+ *   - ``nemo-canary-1b-v2`` + ``nemo-canary-180m-flash`` → ``nemo-canary``
+ *     (both are TDT-based Canary; differ only in size).
+ *   - ``moonshine-tiny`` + ``moonshine-tiny-zh`` / ``-ja`` / ``-ko`` / etc.
+ *       → ``moonshine-tiny`` (the same encoder-only model, language-tuned).
+ *   - ``moonshine-base`` likewise.
+ */
+const ARCH_BUNDLE_PREFIXES: readonly string[] = ["nemo-canary", "moonshine-tiny", "moonshine-base"];
+
+/**
+ * Return the longest matching architecture prefix for ``id``, or ``null``
+ * if none applies. ``id`` matches a prefix iff it equals the prefix or
+ * starts with ``${prefix}-`` (so ``moonshine-tiny`` matches the prefix
+ * ``moonshine-tiny`` itself, and ``moonshine-tiny-zh`` also matches but
+ * collapses down to the same bundle).
+ */
+function findArchPrefix(id: string): string | null {
+	for (const prefix of ARCH_BUNDLE_PREFIXES) {
+		if (id === prefix || id.startsWith(`${prefix}-`)) {
+			return prefix;
+		}
+	}
+	return null;
+}
+
 /** Strip wrapper prefixes/suffixes to find the model's architectural base id.
  *
  * - ``lite-whisper-X`` -> ``X`` (Lite-Whisper is an SVD compression of base
@@ -219,23 +280,50 @@ const LITE_WHISPER_FLAVOR_SUFFIX_RE = /-(?:acc|fast)$/;
  *   provider).
  * - ``lite-whisper-X-{acc,fast}`` -> ``X`` (further compression flavours all
  *   share the same base architecture as the canonical lite-whisper variant).
+ * - ``X-turbo`` -> ``X`` (Whisper's distilled-decoder variant — same encoder
+ *   weights as the base, faster decoder. Belongs in the base bundle so
+ *   "Large v3" and "Large v3 Turbo" stack as one card, not two).
  * - ``X.en`` -> ``X`` (English-only sibling of multilingual ``X``).
  *
  * Idempotent - anything that's already a base id passes through unchanged.
  */
 function getBaseId(id: string): string {
+	// Architecture prefixes (NeMo Canary, Parakeet, FastConformer; Moonshine
+	// tiny/base; GigaAM v2/v3/v3-e2e) bundle by family name with size /
+	// decoder / language suffixes as siblings. Checked first because their
+	// ids never carry the Whisper-style ``-turbo`` / ``.en`` / ``lite-``
+	// affordances handled below — short-circuiting here keeps the Whisper
+	// rules from accidentally trimming a NeMo id.
+	const archPrefix = findArchPrefix(id);
+	if (archPrefix !== null) {
+		return archPrefix;
+	}
 	let base = id;
 	if (base.startsWith("lite-whisper-")) {
 		base = base.slice("lite-whisper-".length).replace(LITE_WHISPER_FLAVOR_SUFFIX_RE, "");
 	}
+	// Strip .en before -turbo so any hypothetical ``X-turbo.en`` (none ships
+	// today; multilingual-only) collapses cleanly down to ``X``.
 	if (base.endsWith(".en")) {
 		base = base.slice(0, -3);
 	}
+	base = base.replace(TURBO_SUFFIX_RE, "");
 	return base;
 }
 
+/**
+ * Magnitude that comfortably exceeds every explicit key (0..3) and every
+ * lite-whisper key (10 + raw param count up to ~2 B). The catch-all leans
+ * on this to slot architecture bundles AFTER the Whisper-shaped ones
+ * within the same bucket without ever overlapping their integer slots.
+ */
+const ARCH_SORT_OFFSET = 1e12;
+
 /** Order variants inside a bundle: base first, then ``.en`` sibling, then
- * lite-whisper compressions sorted by parameter count (cheapest first). */
+ * ``-turbo`` variant, then lite-whisper compressions (smallest-param first).
+ * Architecture bundles (NeMo / Moonshine / GigaAM) fall through to a
+ * catch-all that orders the LARGER variant first, so Canary 1B-v2 lands
+ * on top with 180M-flash tucked underneath the chevron. */
 function variantSortKey(model: ModelInfo, baseId: string): number {
 	if (model.id === baseId) {
 		return 0;
@@ -243,13 +331,22 @@ function variantSortKey(model: ModelInfo, baseId: string): number {
 	if (model.id === `${baseId}.en`) {
 		return 1;
 	}
+	if (model.id === `${baseId}-turbo`) {
+		return 2;
+	}
+	if (model.id === `${baseId}-turbo.en`) {
+		return 3;
+	}
 	if (model.id.startsWith("lite-whisper-")) {
 		// Lite siblings sorted by param count (smallest first), offset to land
-		// after the primary + .en sibling.
+		// after the primary + .en + turbo siblings.
 		return 10 + parseParameterSize(model.sizeLabel);
 	}
-	// Unknown derivative — push to the end.
-	return Number.POSITIVE_INFINITY;
+	// Architecture-bundle catch-all (NeMo Canary 1B-v2 vs 180M-flash; Moonshine
+	// tiny vs tiny-zh; GigaAM v3-ctc vs v3-rnnt). Largest-param-first so the
+	// flagship lands on the primary card; the offset guarantees these all sort
+	// AFTER any explicit Whisper-shaped sibling that might share the bundle.
+	return ARCH_SORT_OFFSET - parseParameterSize(model.sizeLabel);
 }
 
 /**

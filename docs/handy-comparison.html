@@ -1,0 +1,1499 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Field Report №02 — The Adoption Briefing</title>
+<meta name="description" content="An action-oriented plan to adopt Handy's strongest features onto WinSTT's Electron + ONNX stack, including a path to macOS and Linux." />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1;1,9..144,300..900,0..100,0..1&family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+<style>
+/* ============================================================
+   FIELD REPORT №02 — Adoption Briefing
+   Editorial broadsheet. Same type system as №01.
+   Type: Fraunces (display) · Newsreader (body) · JBM (mono)
+   ============================================================ */
+
+:root {
+  --ink:        #0e0c08;
+  --ink-soft:   #161310;
+  --ink-card:   #14110c;
+  --paper:      #ece1cd;
+  --paper-dim:  #c4baa6;
+  --paper-faint:#766c5c;
+  --rule:       #2a2620;
+  --rule-soft:  #1c1814;
+
+  --winstt:     #ff7a1a;
+  --winstt-dim: #b85515;
+  --handy:      #7eb5a8;
+  --handy-dim:  #4d7f73;
+  --gold:       #d4a557;
+
+  /* Verdict badges */
+  --copy:       #8fd17e;
+  --copy-dim:   #4d8240;
+  --equiv:      #d4a557;
+  --equiv-dim:  #8a6b2f;
+  --custom:     #d97757;
+  --custom-dim: #8a4226;
+  --skip:       #6b6358;
+
+  --col-width:  78rem;
+  --gutter:     2.5rem;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--ink);
+  color: var(--paper);
+  font-family: 'Newsreader', Georgia, serif;
+  font-size: 19px;
+  line-height: 1.6;
+  font-weight: 380;
+  font-variation-settings: 'opsz' 18;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  background-image:
+    radial-gradient(at 12% 8%,  rgba(255,122,26,0.03) 0, transparent 45%),
+    radial-gradient(at 88% 68%, rgba(126,181,168,0.025) 0, transparent 55%),
+    radial-gradient(at 50% 100%,rgba(212,165,87,0.02)  0, transparent 60%);
+  overflow-x: hidden;
+}
+
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 1000;
+  opacity: 0.035;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  mix-blend-mode: overlay;
+}
+
+::selection { background: var(--winstt); color: var(--ink); }
+a { color: inherit; text-decoration: none; }
+
+/* ─── Layout primitives ─────────────────────────────────────── */
+.wrap {
+  max-width: var(--col-width);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+/* ─── Masthead ──────────────────────────────────────────────── */
+.masthead {
+  padding: 1.5rem 0 1rem;
+  border-bottom: 1px solid var(--rule);
+}
+.masthead-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 2rem;
+  flex-wrap: wrap;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+}
+.masthead-title {
+  font-family: 'Fraunces', serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-variation-settings: 'opsz' 18, 'SOFT' 100;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--paper);
+}
+.masthead-title em { color: var(--winstt); font-style: normal; font-weight: 700; }
+
+/* ─── Hero ──────────────────────────────────────────────────── */
+.hero {
+  padding: 6rem 0 4rem;
+  position: relative;
+}
+.kicker {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  margin-bottom: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+}
+.kicker::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+  max-width: 280px;
+}
+h1.hero-title {
+  font-family: 'Fraunces', serif;
+  font-weight: 320;
+  font-size: clamp(3rem, 9.5vw, 8.4rem);
+  line-height: 0.92;
+  letter-spacing: -0.04em;
+  font-variation-settings: 'opsz' 144, 'SOFT' 0;
+  margin-bottom: 1.5rem;
+}
+h1.hero-title em {
+  font-style: italic;
+  font-weight: 280;
+  font-variation-settings: 'opsz' 144, 'SOFT' 100, 'WONK' 1;
+  color: var(--gold);
+  padding: 0 0.05em;
+}
+.standfirst {
+  font-family: 'Newsreader', serif;
+  font-style: italic;
+  font-weight: 320;
+  font-variation-settings: 'opsz' 36;
+  font-size: clamp(1.25rem, 2.1vw, 1.7rem);
+  line-height: 1.45;
+  color: var(--paper-dim);
+  max-width: 58ch;
+  margin-bottom: 3rem;
+}
+
+/* ─── The Constraints panel — front-and-center ──────────────── */
+.constraints {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0;
+  border-top: 2px solid var(--paper);
+  border-bottom: 2px solid var(--paper);
+  position: relative;
+  margin: 3rem 0 0;
+}
+.constraints::before {
+  content: 'The Constraints';
+  position: absolute;
+  top: -0.7rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink);
+  padding: 0 1.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: var(--paper);
+}
+.constraints > div {
+  padding: 2.5rem 2rem 2rem;
+  border-right: 1px solid var(--rule);
+}
+.constraints > div:last-child { border-right: 0; }
+.constraints h3 {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-weight: 380;
+  font-variation-settings: 'opsz' 60;
+  font-size: 1.6rem;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.6rem;
+}
+.constraints .lock-tag {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--winstt);
+  border: 1px solid var(--winstt-dim);
+  padding: 0.25rem 0.65rem;
+  margin-bottom: 1rem;
+  border-radius: 999px;
+}
+.constraints .lock-tag.allow {
+  color: var(--copy);
+  border-color: var(--copy-dim);
+}
+.constraints p {
+  font-size: 0.97rem;
+  line-height: 1.55;
+  color: var(--paper-dim);
+}
+.constraints p b { color: var(--paper); font-weight: 600; }
+
+/* ─── Legend ────────────────────────────────────────────────── */
+.legend {
+  margin: 3rem 0 0;
+  padding: 1.5rem 2rem;
+  background: var(--ink-soft);
+  border: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 2rem;
+  row-gap: 0.6rem;
+  align-items: baseline;
+}
+.legend h4 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+}
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: var(--paper-dim);
+}
+.legend-row + .legend-row { margin-top: 0.4rem; }
+
+/* ─── Status badges ─────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.badge.copy   { background: rgba(143,209,126,0.12); color: var(--copy);   border: 1px solid var(--copy-dim); }
+.badge.equiv  { background: rgba(212,165,87,0.12);  color: var(--equiv);  border: 1px solid var(--equiv-dim); }
+.badge.custom { background: rgba(217,119,87,0.12);  color: var(--custom); border: 1px solid var(--custom-dim); }
+.badge.skip   { background: rgba(118,108,92,0.12);  color: var(--skip);   border: 1px solid var(--rule); }
+
+/* Effort dots */
+.effort {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+}
+.effort .dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--rule);
+}
+.effort .dot.filled { background: var(--paper); }
+
+/* Stack chips */
+.stack-chip {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 0.22rem 0.6rem;
+  border: 1px solid var(--rule);
+  color: var(--paper-faint);
+  background: var(--ink-soft);
+  margin-right: 0.35rem;
+  margin-bottom: 0.35rem;
+  border-radius: 3px;
+}
+.stack-chip.electron { color: #8db5e8; border-color: #2d4a6e; background: rgba(141,181,232,0.05); }
+.stack-chip.onnx     { color: var(--gold); border-color: var(--equiv-dim); background: rgba(212,165,87,0.05); }
+.stack-chip.python   { color: var(--handy); border-color: var(--handy-dim); background: rgba(126,181,168,0.05); }
+.stack-chip.ts       { color: #c8a4d4; border-color: #5d3d6b; background: rgba(200,164,212,0.05); }
+.stack-chip.native   { color: var(--custom); border-color: var(--custom-dim); background: rgba(217,119,87,0.05); }
+
+/* ─── Part label ────────────────────────────────────────────── */
+.part-label {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin: 6rem 0 2.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.32em;
+  color: var(--gold);
+}
+.part-label::before, .part-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--rule) 30%, var(--rule));
+}
+.part-label::after {
+  background: linear-gradient(90deg, var(--rule), var(--rule) 70%, transparent);
+}
+
+/* ─── Adoption card ─────────────────────────────────────────── */
+.card {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  column-gap: 2rem;
+  margin: 3.5rem 0;
+  padding-top: 2rem;
+  border-top: 1px solid var(--rule-soft);
+}
+
+.card-num {
+  font-family: 'Fraunces', serif;
+  font-weight: 300;
+  font-size: 3.5rem;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-variation-settings: 'opsz' 96;
+  color: var(--paper-faint);
+  font-style: italic;
+}
+.card-num small {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.2em;
+  color: var(--paper-faint);
+  font-style: normal;
+  margin-top: 0.4rem;
+}
+
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1rem 1.5rem;
+  margin-bottom: 1.2rem;
+}
+.card-head h2 {
+  font-family: 'Fraunces', serif;
+  font-weight: 420;
+  font-size: clamp(1.55rem, 2.7vw, 2.1rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variation-settings: 'opsz' 60;
+  flex: 1 1 auto;
+  min-width: 280px;
+}
+.card-meta {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* "They:" block — small Handy summary */
+.they {
+  margin: 0.5rem 0 1.6rem;
+  padding: 0.9rem 1.2rem;
+  background: rgba(126,181,168,0.04);
+  border-left: 2px solid var(--handy-dim);
+  font-size: 0.94rem;
+  line-height: 1.5;
+  color: var(--paper-dim);
+}
+.they::before {
+  content: 'Handy';
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--handy);
+  margin-bottom: 0.35rem;
+}
+
+/* "Our path:" block — the meaty one */
+.path {
+  margin: 0;
+  padding: 1.4rem 1.6rem 1.2rem;
+  background: linear-gradient(180deg, rgba(255,122,26,0.04), rgba(255,122,26,0.01));
+  border-left: 3px solid var(--winstt);
+}
+.path::before {
+  content: 'Our Path';
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--winstt);
+  margin-bottom: 0.7rem;
+}
+.path p { font-size: 0.97rem; line-height: 1.55; }
+.path p + p { margin-top: 0.7rem; }
+.path ol, .path ul {
+  margin-top: 0.7rem;
+  padding-left: 1.5rem;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+.path ol li, .path ul li {
+  margin-bottom: 0.45rem;
+}
+.path b { font-weight: 600; color: var(--paper); }
+
+/* Stack annotation footer */
+.stack-footer {
+  margin-top: 1.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+}
+.stack-footer .label {
+  margin-right: 0.4rem;
+}
+
+/* monospace tokens */
+.k { font-family: 'JetBrains Mono', monospace; font-size: 0.84em; color: var(--gold); font-weight: 500; }
+
+/* ─── OS Roadmap section ───────────────────────────────────── */
+.roadmap {
+  margin: 8rem 0 4rem;
+  padding: 5rem 0 4rem;
+  border-top: 2px solid var(--paper);
+  border-bottom: 2px solid var(--paper);
+  position: relative;
+}
+.roadmap::before {
+  content: 'Roadmap';
+  position: absolute;
+  top: -0.7rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink);
+  padding: 0 1.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: var(--paper);
+}
+.roadmap h2 {
+  font-family: 'Fraunces', serif;
+  font-weight: 340;
+  font-variation-settings: 'opsz' 144;
+  font-size: clamp(2.5rem, 6vw, 4.4rem);
+  letter-spacing: -0.035em;
+  line-height: 1;
+  text-align: center;
+  margin-bottom: 0.6rem;
+}
+.roadmap h2 em {
+  font-style: italic;
+  color: var(--gold);
+  font-weight: 280;
+}
+.roadmap > .standfirst {
+  text-align: center;
+  margin: 0 auto 4rem;
+}
+
+/* OS triptych */
+.os-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  border-top: 1px solid var(--rule);
+}
+.os-col {
+  padding: 2.5rem 2rem;
+  border-right: 1px solid var(--rule);
+  position: relative;
+}
+.os-col:last-child { border-right: 0; }
+
+.os-col h3 {
+  font-family: 'Fraunces', serif;
+  font-weight: 380;
+  font-size: 2.2rem;
+  letter-spacing: -0.02em;
+  font-variation-settings: 'opsz' 60;
+  margin-bottom: 0.3rem;
+}
+.os-col .os-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  margin-bottom: 2rem;
+  color: var(--paper-faint);
+}
+.os-col.windows h3   { color: var(--winstt); }
+.os-col.windows .os-status { color: var(--winstt); }
+.os-col.macos h3     { color: var(--paper); }
+.os-col.macos .os-status   { color: var(--gold); }
+.os-col.linux h3     { color: var(--handy); }
+.os-col.linux .os-status   { color: var(--handy); }
+
+.os-col dt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  margin-top: 1.3rem;
+  margin-bottom: 0.4rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px dotted var(--rule);
+}
+.os-col dd {
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.os-col dd b { color: var(--paper); font-weight: 600; }
+.os-col dd.warn { color: var(--custom); }
+.os-col dd.ok   { color: var(--copy); }
+
+/* Phase blocks under the OS grid */
+.phases {
+  margin-top: 5rem;
+}
+.phases h3 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 2rem;
+  text-align: center;
+}
+.phase {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: 2rem;
+  padding: 2rem 0;
+  border-top: 1px solid var(--rule);
+}
+.phase:last-child { border-bottom: 1px solid var(--rule); }
+.phase-num {
+  font-family: 'Fraunces', serif;
+  font-weight: 320;
+  font-style: italic;
+  font-variation-settings: 'opsz' 96;
+  font-size: 2.8rem;
+  letter-spacing: -0.03em;
+  color: var(--gold);
+  line-height: 1;
+}
+.phase-num small {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  font-style: normal;
+  margin-top: 0.4rem;
+}
+.phase-body h4 {
+  font-family: 'Fraunces', serif;
+  font-weight: 420;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.4rem;
+}
+.phase-body .ship {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--copy);
+  border: 1px solid var(--copy-dim);
+  padding: 0.2rem 0.6rem;
+  border-radius: 3px;
+  margin-bottom: 1rem;
+}
+.phase-body ul {
+  list-style: none;
+  margin-top: 0.5rem;
+}
+.phase-body ul li {
+  position: relative;
+  padding-left: 1.4rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.phase-body ul li::before {
+  content: '→';
+  position: absolute;
+  left: 0; top: 0;
+  color: var(--winstt);
+  font-weight: 500;
+}
+
+/* ─── Skip section ───────────────────────────────────────── */
+.skip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  margin-top: 3rem;
+}
+.skip-card {
+  padding: 2rem 1.8rem;
+  border-right: 1px solid var(--rule);
+}
+.skip-card:last-child { border-right: 0; }
+.skip-card h3 {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-weight: 380;
+  font-size: 1.4rem;
+  margin-bottom: 0.4rem;
+  color: var(--paper-dim);
+}
+.skip-card p {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--paper-faint);
+}
+
+/* ─── Colophon ──────────────────────────────────────────────── */
+.colophon {
+  text-align: center;
+  padding: 4rem 0 5rem;
+  border-top: 1px solid var(--rule);
+  margin-top: 6rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+}
+.colophon-mark {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-variation-settings: 'opsz' 144;
+  font-size: 2.4rem;
+  color: var(--paper);
+  letter-spacing: -0.04em;
+  margin-bottom: 1rem;
+  text-transform: none;
+}
+
+/* ─── Reveal on scroll ──────────────────────────────────────── */
+.reveal { opacity: 0; transform: translateY(20px); transition: opacity 0.9s ease, transform 0.9s ease; }
+.reveal.in { opacity: 1; transform: translateY(0); }
+
+/* ─── Responsive ───────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .constraints, .os-grid {
+    grid-template-columns: 1fr;
+  }
+  .constraints > div, .os-col {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .card, .phase {
+    grid-template-columns: 1fr;
+  }
+  .card-num, .phase-num {
+    font-size: 2.2rem;
+    margin-bottom: 0.5rem;
+  }
+  body { font-size: 17px; }
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <div class="masthead-title">The <em>WinSTT</em> Field Report</div>
+    <div>Issue №02 · The Adoption Briefing · 2026·05·26</div>
+    <div>Stack: <em style="color: var(--gold); font-style: normal; font-family: 'JetBrains Mono'; letter-spacing: 0;">Electron · Python · ONNX</em></div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ════════════════ HERO ════════════════ -->
+  <section class="hero">
+    <div class="kicker">An Action Plan, not a Comparison</div>
+
+    <h1 class="hero-title reveal">
+      What to<br>
+      <em>borrow</em> from<br>
+      Handy.
+    </h1>
+
+    <p class="standfirst reveal">
+      Sixteen features Handy ships that we don't — paired with the exact path to land each one
+      on our stack. We're not switching to Tauri. We're not dropping ONNX. We're taking what works
+      and bolting it onto what we have.
+    </p>
+
+    <!-- Constraints panel -->
+    <div class="constraints">
+      <div>
+        <div class="lock-tag">Non-negotiable · 01</div>
+        <h3>Electron stays.</h3>
+        <p>The Electron + Next.js shell is the spine. We're not rewriting the renderer in WebKit/Tauri. <b>Implication:</b> every adopted UX feature has to be reachable from <span class="k">electron/</span> main-process APIs, native Node addons, or shell-outs.</p>
+      </div>
+      <div>
+        <div class="lock-tag">Non-negotiable · 02</div>
+        <h3>ONNX stays.</h3>
+        <p>Our entire model catalog — Distil-Whisper, Lite-Whisper, Moonshine, Cohere, Parakeet, Canary — is ONNX. <b>Implication:</b> no whisper.cpp swap. <b>But:</b> Handy's <span class="k">transcribe-rs</span> already runs ONNX <em>alongside</em> whisper.cpp, which is academic — what we actually need from them is the <em>EP strategy per OS</em> (DirectML, CoreML, OpenVINO), all of which we already have ports for.</p>
+      </div>
+      <div>
+        <div class="lock-tag allow">Open · 03</div>
+        <h3>Everything else.</h3>
+        <p>Native Node addons, child-process shell-outs, Python pipeline changes, new npm packages, schema changes, SQLite, native menu bridges — all on the table. <b>The job:</b> map every Handy strength to a concrete change inside our existing stack.</p>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div class="legend">
+      <h4>Badge<br>legend</h4>
+      <div>
+        <div class="legend-row"><span class="badge copy">Copy</span> Algorithm or pattern ports near-verbatim into our stack.</div>
+        <div class="legend-row"><span class="badge equiv">Equivalent</span> Build the same UX with our existing libraries — different code, same effect.</div>
+        <div class="legend-row"><span class="badge custom">Custom</span> Needs a native addon or non-trivial new infrastructure.</div>
+        <div class="legend-row"><span class="badge skip">Skip</span> Either duplicates what we have, or the cost-to-value isn't there.</div>
+      </div>
+      <h4>Effort</h4>
+      <div>
+        <div class="legend-row">
+          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span> ≈ a day</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span> ≈ a week</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span> ≈ a month</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span> a quarter+</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ PART I — TIER A: COPY DIRECTLY ════════════════ -->
+  <div class="part-label">Tier A · Adopt this quarter</div>
+
+  <!-- ─── 01 PASTE ─── -->
+  <section class="card" id="adopt-paste">
+    <div class="card-num">01<small>PASTE</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Six paste methods + auto-submit + trailing-space</h2>
+        <div class="card-meta">
+          <span class="badge equiv">Equivalent</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">A configurable <span class="k">PasteMethod</span> enum (CtrlV / CtrlShiftV / ShiftInsert / Direct-type / None / ExternalScript), <span class="k">paste_delay_ms</span>, <span class="k">append_trailing_space</span>, <span class="k">auto_submit</span> with Enter/Ctrl-Enter/Cmd-Enter, and on Linux a five-tool fallback chain through wtype/kwtype/dotool/ydotool/xdotool.</div>
+
+      <div class="path">
+        <p>This is our single highest-leverage borrow — and it's pure Electron work. None of our Python pipeline is touched.</p>
+        <ol>
+          <li><b>Replace globalShortcut-based re-paste with a dispatcher</b> in <span class="k">electron/ipc/relay.ts</span>. New enum <span class="k">PasteMethod</span> in <span class="k">spec/openapi.yaml</span>; routed via existing IPC.</li>
+          <li><b>Add <span class="k">@nut-tree-fork/nut-js</span> (~30 MB native, cross-platform) for typing-simulation.</b> Wraps the same OS primitives Handy reaches for. <span class="k">Direct</span> mode = <span class="k">keyboard.type()</span>; <span class="k">CtrlV</span> = <span class="k">keyboard.pressKey()</span> sequence with platform-virtual-keys; <span class="k">ShiftInsert</span> = same.</li>
+          <li><b>Auto-submit is one IPC + one settings boolean.</b> After paste resolves, dispatch the configured submit key via the same nut.js path.</li>
+          <li><b>ExternalScript</b> is <span class="k">child_process.execFile(script, [text])</span> from main. Forty lines including timeout + stderr capture. Power-user feature parity.</li>
+          <li><b>On Linux, mirror Handy's <span class="k">clipboard.rs</span> tool detection</b> verbatim: shell out to <span class="k">which wtype</span> / <span class="k">kwtype</span> / <span class="k">dotool</span> / <span class="k">ydotool</span> / <span class="k">xdotool</span>, prefer based on Wayland-vs-X11 + KDE detection. Falls back to nut.js for portability.</li>
+        </ol>
+        <p>Memory we already have around this: <em>"Re-paste = only Electron globalShortcut"</em> — this redesign explicitly retires that limitation.</p>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip electron">Electron main</span>
+        <span class="stack-chip ts">Renderer (settings UI)</span>
+        <span class="stack-chip native">nut.js addon</span>
+        <span class="stack-chip">spec/openapi.yaml</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 02 CLI ─── -->
+  <section class="card">
+    <div class="card-num">02<small>CLI</small></div>
+    <div>
+      <div class="card-head">
+        <h2>CLI flags + single-instance forwarding + Unix signals</h2>
+        <div class="card-meta">
+          <span class="badge copy">Copy</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">A <span class="k">clap</span>-defined CLI (<span class="k">--toggle-transcription</span>, <span class="k">--start-hidden</span>, <span class="k">--cancel</span>…). The second invocation forwards argv through <span class="k">tauri-plugin-single-instance</span> to the running process, then exits. On Unix, <span class="k">SIGUSR1</span>/<span class="k">SIGUSR2</span> map to the same actions.</div>
+
+      <div class="path">
+        <p>Direct copy. Electron has every piece of this natively.</p>
+        <ol>
+          <li><b>Single-instance lock</b> in <span class="k">electron/main.ts</span> via <span class="k">app.requestSingleInstanceLock()</span>. The <span class="k">second-instance</span> event already passes argv to the first instance.</li>
+          <li><b>Argv parsing</b> with <span class="k">commander</span> or plain code — we don't need clap-grade ergonomics. Flags map 1:1 to existing IPC commands.</li>
+          <li><b>Unix signals</b>: <span class="k">process.on('SIGUSR2', toggleTranscribe)</span> in main. Six lines. Node refuses SIGUSR on Windows — wrap in <span class="k">if (process.platform !== 'win32')</span>.</li>
+          <li><b>Document the WM-integration pattern</b> in <span class="k">docs/</span>: bind Sway/Hyprland/KDE custom shortcut to <span class="k">winstt --toggle-transcription</span> or to <span class="k">pkill -USR2 -n winstt</span>. Wayland users get hotkey support without us solving Wayland.</li>
+        </ol>
+        <p>This is the unlock for Linux as a real platform — without it, Wayland users can't bind global hotkeys at all.</p>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip electron">electron/main.ts</span>
+        <span class="stack-chip ts">scripts/dev-electron.ts</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 03 PORTABLE ─── -->
+  <section class="card">
+    <div class="card-num">03<small>PORT</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Portable mode</h2>
+        <div class="card-meta">
+          <span class="badge copy">Copy</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">If a file literally named <span class="k">portable</span> sits next to the exe, every piece of user data (settings, models, recordings, db, logs) goes to <span class="k">./Data/</span> instead of <span class="k">%APPDATA%</span>.</div>
+
+      <div class="path">
+        <p>Eighty lines in Handy's <span class="k">portable.rs</span>. Roughly the same in our TypeScript main.</p>
+        <ol>
+          <li><b>Detection</b>: at boot, before any path resolution, check for <span class="k">path.join(path.dirname(app.getPath('exe')), 'portable')</span>.</li>
+          <li><b>Path override</b>: <span class="k">app.setPath('userData', dataDir)</span> + <span class="k">app.setPath('logs', dataDir/logs)</span> + <span class="k">app.setPath('temp', …)</span>. Done before any module reads paths.</li>
+          <li><b>electron-store</b> already inherits from <span class="k">app.getPath('userData')</span> — automatic.</li>
+          <li><b>Python server</b>: pass <span class="k">--data-dir</span> arg from main process spawning the server. Server resolves models, recordings, logs relative to it.</li>
+          <li><b>electron-builder.yml</b>: add a third NSIS target with <span class="k">"portable": true</span> that emits a single-file portable exe. The marker file is created on first run if missing.</li>
+        </ol>
+        <p>Huge value for IT-locked corporate users, USB sticks, and the "I don't want this in AppData" crowd. Eighty lines is one afternoon.</p>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip electron">electron/main.ts</span>
+        <span class="stack-chip python">server/bootstrap.py</span>
+        <span class="stack-chip">electron-builder.yml</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 04 HISTORY ─── -->
+  <section class="card">
+    <div class="card-num">04<small>HIST</small></div>
+    <div>
+      <div class="card-head">
+        <h2>SQLite history + WAV retention + tray submenu</h2>
+        <div class="card-meta">
+          <span class="badge copy">Copy</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">A real history table (file_name, timestamp, saved, title, raw text, post-processed text, prompt). WAV files saved concurrently with transcription and verified. <span class="k">recording_retention_period</span> garbage-collects on a schedule. Tray submenu shows the last N entries with click-to-copy.</div>
+
+      <div class="path">
+        <p>This is a feature gap regardless of cross-platform. We already keep "last transcription" — extending it to a full table is incremental.</p>
+        <ol>
+          <li><b>Add <span class="k">better-sqlite3</span> in the Electron main process</b> (we already use <span class="k">@electron/rebuild</span> for native modules; one more line in rebuild script). Sync API is fine on a background thread.</li>
+          <li><b>Schema</b> mirrors Handy's: <span class="k">transcription_history(id, file_name, ts, saved, title, text, post_processed_text, post_process_prompt, post_process_requested)</span>. Migrations as a sorted-array of SQL strings, tracked via <span class="k">PRAGMA user_version</span>.</li>
+          <li><b>WAV persistence</b>: Python server already produces samples — add an optional <span class="k">save_wav: bool</span> in the recorder's done-event, write to <span class="k">{dataDir}/recordings/handy-{ts}.wav</span> in the Python side, emit the filename back to main, save the DB row.</li>
+          <li><b>Retention</b>: a 1-hour <span class="k">setInterval</span> in main process. Deletes rows + WAV files older than the configured period.</li>
+          <li><b>Tray submenu</b>: build dynamically from a <span class="k">history.recent(10)</span> query on every tray-icon click. Click-to-copy → <span class="k">clipboard.writeText()</span>.</li>
+          <li><b>UI page</b> at <span class="k">/history</span> in the renderer. FSD slice <span class="k">entities/transcription-history</span> + a <span class="k">views/HistoryView</span>.</li>
+        </ol>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip electron">electron/ipc/history.ts (new)</span>
+        <span class="stack-chip native">better-sqlite3</span>
+        <span class="stack-chip python">recorder save-WAV hook</span>
+        <span class="stack-chip ts">new views slice</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 05 DICTIONARY ─── -->
+  <section class="card">
+    <div class="card-num">05<small>DICT</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Local fuzzy custom-dictionary (Levenshtein + Soundex + n-gram)</h2>
+        <div class="card-meta">
+          <span class="badge copy">Copy</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">~200 lines of Rust in <span class="k">audio_toolkit/text.rs</span>: lowercase + Levenshtein + Soundex phonetic match + n-gram for multi-word artifacts (e.g. "Charge B" → "ChargeBee"). Length-percentage early-exit. Threshold configurable.</div>
+
+      <div class="path">
+        <p>Port to Python so it runs inside the existing transcription pipeline — zero IPC round-trip. Today our dictionary correction is LLM-driven (modifier pipeline), which costs tokens; this is free and offline.</p>
+        <ol>
+          <li><b>Add <span class="k">jellyfish</span> (Soundex) + <span class="k">rapidfuzz</span> (fast Levenshtein) to <span class="k">server/pyproject.toml</span>.</b> Both pure-Python or ship wheels for every OS — no platform-specific compilation.</li>
+          <li><b>Translate <span class="k">apply_custom_words()</span> 1:1.</b> Same algorithm: build n-grams, score by Levenshtein normalized by length, boost phonetic matches by 0.3x, accept under threshold.</li>
+          <li><b>Drop into the post-transcription hook</b> in <span class="k">RecorderService</span>, before the modifier pipeline. If the dictionary fixes "ChargeBee", the LLM never has to see it.</li>
+          <li><b>Settings UI</b>: <span class="k">customWords: string[]</span> + <span class="k">wordCorrectionThreshold: number</span>. Already roughly in our settings schema — extend, don't add.</li>
+        </ol>
+        <p>This is purely additive. Keep the LLM-modifier path as the heavy-duty fallback; the fuzzy matcher handles the 80% case for free.</p>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip python">server/src/recorder/text/</span>
+        <span class="stack-chip onnx">post-transcription hook</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 06 LLM PROVIDERS ─── -->
+  <section class="card">
+    <div class="card-num">06<small>LLM</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Multi-provider LLM post-processing</h2>
+        <div class="card-meta">
+          <span class="badge equiv">Equivalent</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">Eight default providers (OpenAI, Anthropic, Z.AI, OpenRouter, Groq, Cerebras, AWS Bedrock, Custom→Ollama) plus Apple Intelligence on macOS ARM. Per-provider <span class="k">supports_structured_output</span> with JSON-schema enforcement. Strips invisible Unicode. Prompt library with named prompts.</div>
+
+      <div class="path">
+        <p>We already have the AI SDK on the Electron main side for cloud STT. Adding LLM post-processing reuses the same provider abstraction.</p>
+        <ol>
+          <li><b>Provider registry</b> in <span class="k">electron/ipc/llm-providers.ts</span>: same schema as Handy's <span class="k">PostProcessProvider</span>. Read from settings; default-merge on load.</li>
+          <li><b>AI SDK already abstracts</b> <span class="k">@ai-sdk/openai</span>, <span class="k">@ai-sdk/anthropic</span>, <span class="k">@ai-sdk/groq</span>, etc. Per-provider auth quirks (Anthropic <span class="k">x-api-key</span>) are handled by the SDK. Structured outputs via <span class="k">generateObject({ schema })</span>.</li>
+          <li><b>Redacted-log primitive</b>: copy Handy's <span class="k">SecretMap</span> idea — a thin TS wrapper whose <span class="k">toJSON</span> returns <span class="k">[REDACTED]</span> for non-empty values. Used everywhere we log settings.</li>
+          <li><b>Ollama-as-Custom</b>: the Custom provider defaults to <span class="k">http://localhost:11434/v1</span>. AI SDK has a <span class="k">@ai-sdk/openai-compatible</span> exactly for this.</li>
+          <li><b>Apple Intelligence</b>: defer to Tier C. Path is clear (Swift CLI bundled, called via <span class="k">child_process</span>) but only valuable post-macOS-launch.</li>
+          <li><b>Our modifier UI keeps its identity.</b> The provider/prompt layer is the engine; modifier toggles are the curated UX on top. They compose.</li>
+        </ol>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip electron">electron/ipc/llm-*.ts</span>
+        <span class="stack-chip ts">AI SDK providers</span>
+        <span class="stack-chip">spec/openapi.yaml</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 07 TRAY ─── -->
+  <section class="card">
+    <div class="card-num">07<small>TRAY</small></div>
+    <div>
+      <div class="card-head">
+        <h2>State-driven tray icon + history submenu + theme variants</h2>
+        <div class="card-meta">
+          <span class="badge copy">Copy</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">Three states (Idle / Recording / Transcribing), three theme palettes (dark / light / Linux-colored). Tray menu shows the last N transcriptions with click-to-copy.</div>
+
+      <div class="path">
+        <p>Electron's <span class="k">Tray</span> API has <span class="k">setImage()</span> and <span class="k">setContextMenu()</span>. Rebuilding the menu on every state change is fine.</p>
+        <ol>
+          <li><b>Asset prep</b>: produce <span class="k">tray_{idle,recording,transcribing}_{dark,light,color}.png</span> @ 2x. Pull from existing brand identity in <span class="k">docs/identity/</span>.</li>
+          <li><b>State machine</b> in <span class="k">electron/ipc/tray.ts</span> already exists — extend to subscribe to recorder events and call <span class="k">tray.setImage()</span> on transitions.</li>
+          <li><b>Theme detection</b>: <span class="k">nativeTheme.shouldUseDarkColors</span> + <span class="k">nativeTheme.on('updated', …)</span> picks dark/light. Linux always gets colored.</li>
+          <li><b>History submenu</b> piggybacks on #04. <span class="k">Menu.buildFromTemplate</span>, click handler → <span class="k">clipboard.writeText</span>.</li>
+        </ol>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip electron">electron/ipc/tray.ts</span>
+        <span class="stack-chip">assets pipeline</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 08 DOWNLOADS ─── -->
+  <section class="card">
+    <div class="card-num">08<small>DL</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Cancellable downloads + SHA-256 + auto-extract</h2>
+        <div class="card-meta">
+          <span class="badge copy">Copy</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">Per-model <span class="k">AtomicBool</span> cancel flag, SHA-256 verification on download, automatic <span class="k">.tar.gz</span> extraction for Parakeet models into named directories. <span class="k">DownloadCleanup</span> RAII guard ensures state always resets.</div>
+
+      <div class="path">
+        <p>Pure Electron-main + Python. We already do downloads, just without these guarantees.</p>
+        <ol>
+          <li><b>Cancellation</b>: <span class="k">AbortController</span> per active download, stored in a <span class="k">Map&lt;modelId, AbortController&gt;</span>. UI cancel button calls <span class="k">abort()</span>.</li>
+          <li><b>SHA-256</b>: Node <span class="k">crypto.createHash('sha256')</span> hooked into the stream. Compare to manifest. Manifest lives in <span class="k">spec/openapi.yaml</span> or alongside the model catalog.</li>
+          <li><b>Tar extraction</b>: <span class="k">tar</span> npm package, ~30 lines. Already needed for our offline TTS pack pattern.</li>
+          <li><b>Cleanup guarantee</b>: TypeScript doesn't have RAII, but a <span class="k">try/finally</span> in the download orchestrator gives the same property.</li>
+          <li><b>Progress events</b>: we already have download-progress UI from the recent updater work. Reuse the event shape.</li>
+        </ol>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip electron">electron model-download IPC</span>
+        <span class="stack-chip ts">model-catalog store</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ PART II — TIER B: PLATFORM + UX ════════════════ -->
+  <div class="part-label">Tier B · Adopt next quarter</div>
+
+  <!-- ─── 09 GPU EP STRATEGY ─── -->
+  <section class="card" id="adopt-ep">
+    <div class="card-num">09<small>EP</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Configurable GPU per backend + DirectML shrink</h2>
+        <div class="card-meta">
+          <span class="badge equiv">Equivalent</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">User-selectable <span class="k">whisper_accelerator</span> (Auto/CPU/GPU) and <span class="k">ort_accelerator</span> (Auto/CPU/CUDA/DirectML/ROCm). Whisper-cpp gets Metal on mac, Vulkan on Win/Linux. ONNX gets DirectML on Win, CUDA on Linux. Their GPU build is ~200 MB. Ours is 2 GB.</div>
+
+      <div class="path">
+        <p>The 2 GB GPU bundle is our biggest distribution problem. The fix doesn't require changing ML stacks — it requires changing <em>which ONNX execution provider we ship</em>. Comments in <span class="k">server/src/recorder/infrastructure/device.py</span> already reference DirectML and ROCm; we never finished the work.</p>
+        <ol>
+          <li><b>Add a <span class="k">[directml]</span> extra</b> in <span class="k">server/pyproject.toml</span> with <span class="k">onnxruntime-directml</span>. ~200 MB; works on AMD / Intel / NVIDIA via DirectX 12. Drops the eight NVIDIA CUDA wheels entirely on this build.</li>
+          <li><b>Add a <span class="k">[coreml]</span> extra</b> with <span class="k">onnxruntime-silicon</span> (or stock onnxruntime with CoreML EP). Native on Apple Silicon, no extra wheels.</li>
+          <li><b>Add an <span class="k">[openvino]</span> extra</b> for Linux Intel iGPU acceleration where CUDA isn't available.</li>
+          <li><b>Extend <span class="k">device.py</span></b> from CUDA-or-CPU to a priority-ordered list: try EP in order, fall through to CPU. Honor a user setting <span class="k">accelerator: "auto" | "cuda" | "directml" | "coreml" | "openvino" | "cpu"</span>.</li>
+          <li><b>Restructure release artifacts</b>: <span class="k">WinSTT-Win-DirectML-Setup.exe</span> (200 MB, default), <span class="k">WinSTT-Win-CUDA-Setup.exe</span> (2 GB, power users), <span class="k">WinSTT-macOS-Setup.dmg</span> (CoreML), <span class="k">WinSTT-Linux.AppImage</span> (CPU + optional OpenVINO).</li>
+        </ol>
+        <p>Result: same ONNX stack, same model catalog, much smaller default download, GPU on Intel/AMD Windows users for the first time.</p>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip onnx">onnxruntime EP selection</span>
+        <span class="stack-chip python">device.py</span>
+        <span class="stack-chip">packaging/electron-builder.*.yml</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 10 HOTKEY FALLBACK ─── -->
+  <section class="card">
+    <div class="card-num">10<small>KEYS</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Two hotkey backends with auto-fallback</h2>
+        <div class="card-meta">
+          <span class="badge equiv">Equivalent</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">Try <span class="k">handy-keys</span> first; on init failure fall back to <span class="k">tauri-plugin-global-shortcut</span> and persist the choice in settings. Per-named-binding (transcribe / post-process / cancel) independently configurable. Cancel is dynamically registered only during recording.</div>
+
+      <div class="path">
+        <p>We have <span class="k">uiohook-napi</span> (passive listener) + Electron <span class="k">globalShortcut</span> (active grab). They have different failure modes. Build the same try-and-persist pattern.</p>
+        <ol>
+          <li><b>Setting</b>: <span class="k">keyboardImplementation: "uiohook" | "globalShortcut"</span>, default <span class="k">"uiohook"</span> on Win/macOS, <span class="k">"globalShortcut"</span> on Linux.</li>
+          <li><b>Init wrapper</b> in <span class="k">electron/ipc/hotkey.ts</span>: try primary, catch init failures, swap to secondary, <span class="k">store.set('keyboardImplementation', secondary)</span> so the fallback persists.</li>
+          <li><b>Per-named-binding</b>: extend the settings schema from a single-hotkey-per-mode to <span class="k">bindings: Record&lt;BindingId, ShortcutBinding&gt;</span>. Migrate existing values on load.</li>
+          <li><b>Dynamic cancel</b>: register Escape only when the recorder enters Recording state; unregister on Idle. Stops accidentally trapping Escape in apps.</li>
+        </ol>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip electron">electron/ipc/hotkey.ts</span>
+        <span class="stack-chip ts">settings schema migration</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 11 i18n ─── -->
+  <section class="card">
+    <div class="card-num">11<small>i18n</small></div>
+    <div>
+      <div class="card-head">
+        <h2>i18next with locale support + ESLint enforcement</h2>
+        <div class="card-meta">
+          <span class="badge copy">Copy</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">Twenty locales, i18next, <span class="k">eslint-plugin-i18next</span> rule that fails CI if a JSX literal isn't wrapped in <span class="k">t()</span>. Tray menu localizes via <span class="k">tray_i18n.rs</span>. OpenCC converts Simplified ⇄ Traditional Chinese after transcription. RTL helpers.</div>
+
+      <div class="path">
+        <p>Our Next.js app supports <span class="k">next-intl</span> natively. Use that for the renderer; use i18next + a small JSON loader in main for tray strings.</p>
+        <ol>
+          <li><b>Add <span class="k">next-intl</span></b> to <span class="k">frontend/</span>, restructure <span class="k">src/shared/i18n/</span> with one JSON per locale. Start with <span class="k">en</span>; ship others via community contribution.</li>
+          <li><b>ESLint rule</b>: configure Biome's <span class="k">noJsxLiterals</span> or layer ESLint with <span class="k">eslint-plugin-i18next</span> in <span class="k">frontend/biome.json</span> ignore + eslint config. CI fails on bare strings.</li>
+          <li><b>Tray strings</b>: tiny <span class="k">electron/i18n/</span> with <span class="k">{ locale: { trayIdle, trayRecording, … } }</span>. Locale comes from settings.</li>
+          <li><b>OpenCC</b> for zh-Hans ⇄ zh-Hant: there's a Python port (<span class="k">opencc-python</span>) — drop it into the same post-transcription hook as the dictionary.</li>
+          <li><b>RTL</b>: Next.js <span class="k">dir="rtl"</span> attribute + Base UI's RTL support. Mostly free.</li>
+        </ol>
+        <p>The big cost is the sweep: every JSX literal in <span class="k">frontend/src/</span> has to migrate. One-time pain, sustained by the ESLint guard.</p>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip ts">frontend (full sweep)</span>
+        <span class="stack-chip electron">electron/i18n/</span>
+        <span class="stack-chip python">post-transcription (OpenCC)</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 12 CUSTOM MODELS ─── -->
+  <section class="card">
+    <div class="card-num">12<small>CMOD</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Custom user-model auto-discovery</h2>
+        <div class="card-meta">
+          <span class="badge copy">Copy</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">Drop a Whisper GGML <span class="k">.bin</span> in <span class="k">models/</span>, restart, it appears under "Custom Models" with the filename as the display name.</div>
+
+      <div class="path">
+        <p>Equivalent for our ONNX world: drop a HuggingFace-style ONNX folder (encoder + decoder + config) and we discover it.</p>
+        <ol>
+          <li><b>Directory contract</b>: <span class="k">{dataDir}/models/custom/{slug}/</span> containing <span class="k">encoder.onnx</span>, <span class="k">decoder_model_merged.onnx</span>, <span class="k">tokenizer.json</span>, <span class="k">config.json</span> (same shape onnx-asr expects).</li>
+          <li><b>Scanner</b> in <span class="k">server/src/recorder/infrastructure/model_registry.py</span>: on boot, glob <span class="k">custom/*</span>, validate the contract, register with the catalog. Slug → display name from <span class="k">config.json</span> or folder name.</li>
+          <li><b>UI</b>: existing model picker gets a "Custom" section. Greyed-out entries if validation fails, with a tooltip explaining what's missing.</li>
+          <li><b>Optional second contract</b> for Lite-Whisper variants (which have different file layouts) — gate behind a settings flag.</li>
+        </ol>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip python">model_registry.py</span>
+        <span class="stack-chip onnx">model loader contract</span>
+        <span class="stack-chip ts">model picker UI</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 13 MINISIGN ─── -->
+  <section class="card">
+    <div class="card-num">13<small>SIG</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Minisign-signed releases</h2>
+        <div class="card-meta">
+          <span class="badge equiv">Equivalent</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">Tauri's updater uses minisign signatures, with the pubkey embedded in <span class="k">tauri.conf.json</span>. README walks users through manual verification with the <span class="k">minisign</span> CLI.</div>
+
+      <div class="path">
+        <p>We already use <span class="k">electron-updater</span>, which has its own signing flow (Authenticode on Windows, codesign on macOS). Adding minisign on top is a power-user trust layer.</p>
+        <ol>
+          <li><b>Generate a minisign keypair</b>, commit pubkey to repo, keep secret key as a GitHub Actions secret.</li>
+          <li><b>CI step</b> in <span class="k">.github/workflows/electron-release.yml</span>: after build, sign every installer artifact with minisign; upload <span class="k">.sig</span> alongside.</li>
+          <li><b>Document verification</b> in <span class="k">docs/</span> with the same recipe Handy publishes.</li>
+          <li><b>Optional</b>: validate signature in the updater path itself before launching the new version. Lower priority — electron-updater already validates code signatures.</li>
+        </ol>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip">.github/workflows/</span>
+        <span class="stack-chip">docs/</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ PART III — TIER C: PLATFORM-SPECIFIC NATIVE ════════════════ -->
+  <div class="part-label">Tier C · Needed for the macOS/Linux launch</div>
+
+  <!-- ─── 14 OVERLAY ─── -->
+  <section class="card" id="adopt-overlay">
+    <div class="card-num">14<small>HUD</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Per-OS overlay primitives (NSPanel + layer-shell)</h2>
+        <div class="card-meta">
+          <span class="badge custom">Custom</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">macOS uses <span class="k">tauri-nspanel</span> — a true floating panel that doesn't steal focus from the app the user wants to type into. Linux uses <span class="k">gtk-layer-shell</span> for compositor-level layering, with an <span class="k">HANDY_NO_GTK_LAYER_SHELL=1</span> escape hatch. Linux defaults to no overlay because some compositors break paste with it on.</div>
+
+      <div class="path">
+        <p>Electron's <span class="k">BrowserWindow</span> can <em>almost</em> match NSPanel via <span class="k">setAlwaysOnTop('screen-saver', 1)</span> + <span class="k">setVisibleOnAllWorkspaces({ visibleOnFullScreen: true })</span> + <span class="k">setFocusable(false)</span>. It's not as clean — focus management is a known Electron sore spot on macOS — but it ships.</p>
+        <ol>
+          <li><b>macOS path A (cheap)</b>: use the above BrowserWindow flags. Test against Slack / VSCode / browsers to confirm paste lands in the previous focused app. If it does, ship.</li>
+          <li><b>macOS path B (expensive)</b>: write a small N-API native addon that wraps NSPanel via <span class="k">NodeRT</span>-style bridging. ~300 lines of Obj-C++ + TypeScript wrapper. Probably defer to v1.1.</li>
+          <li><b>Linux</b>: no off-the-shelf gtk-layer-shell binding for Node. Default overlay to <span class="k">none</span> on Linux (same default Handy ships). If a user wants it, they get a regular always-on-top window and the documented caveats.</li>
+          <li><b>Windows</b>: already done. Keep the existing implementation.</li>
+        </ol>
+        <p>Honest read: path A is enough for v1.0 macOS. Most users won't notice the difference.</p>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip electron">overlay BrowserWindow flags</span>
+        <span class="stack-chip native">(optional) NSPanel addon</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 15 APPLE INTELLIGENCE ─── -->
+  <section class="card">
+    <div class="card-num">15<small>AI</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Apple Intelligence as a local LLM provider</h2>
+        <div class="card-meta">
+          <span class="badge custom">Custom</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">Native Swift FFI to Apple's <span class="k">FoundationModels</span> framework on macOS ARM. No API key. Fully on-device. Used as a post-process provider. Availability check deferred to first use (early init crashes the app on macOS 26 beta).</div>
+
+      <div class="path">
+        <p>There's no Node binding for FoundationModels. The clean path is to bundle a tiny Swift CLI inside the macOS app and call it from Electron main.</p>
+        <ol>
+          <li><b>Tiny Swift CLI</b> (~80 lines): takes stdin JSON <span class="k">{ system, user }</span>, calls <span class="k">SystemLanguageModel.default</span>, prints stdout JSON. Compiled per-architecture.</li>
+          <li><b>Bundle in <span class="k">resources/macos/winstt-apple-llm</span></b> via electron-builder's <span class="k">extraResources</span>. Code-sign as part of the regular macOS signing pass.</li>
+          <li><b>Provider adapter</b> in <span class="k">electron/ipc/llm-providers.ts</span>: if <span class="k">provider === "apple_intelligence"</span> and <span class="k">process.platform === "darwin"</span>, shell out to the CLI. Availability check on first call (avoid Handy's early-init crash issue).</li>
+          <li><b>Settings UI</b> hides the provider on non-Apple-Silicon platforms.</li>
+        </ol>
+        <p>Realistic but a v1.1 feature. Cloud-API providers cover the same use case for v1.0.</p>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip native">Swift CLI (new)</span>
+        <span class="stack-chip electron">LLM provider routing</span>
+        <span class="stack-chip">macOS code-signing</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 16 CLAMSHELL ─── -->
+  <section class="card">
+    <div class="card-num">16<small>LID</small></div>
+    <div>
+      <div class="card-head">
+        <h2>Clamshell-mic switching</h2>
+        <div class="card-meta">
+          <span class="badge custom">Custom</span>
+          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+      </div>
+
+      <div class="they">Detects laptop lid close and swaps to a configured alternate microphone (e.g. external USB mic when the built-in disappears).</div>
+
+      <div class="path">
+        <p>Niche but charming. Detection is OS-specific.</p>
+        <ol>
+          <li><b>macOS</b>: <span class="k">IOPMrootDomain</span> notifications. Tiny native addon or <span class="k">caffeinate</span>-style polling of <span class="k">pmset -g</span>.</li>
+          <li><b>Linux</b>: poll <span class="k">/proc/acpi/button/lid/LID*/state</span> at 1 Hz. Twenty lines.</li>
+          <li><b>Windows</b>: <span class="k">WM_POWERBROADCAST</span> via a native message hook. Or skip — clamshell-mode is far less common on Windows laptops.</li>
+          <li><b>Settings</b>: <span class="k">clamshellMicrophone: string | null</span>. Empty = no swap.</li>
+        </ol>
+        <p>Pure UX nice-to-have. Defer past the cross-platform launch.</p>
+      </div>
+
+      <div class="stack-footer">
+        <span class="label">Touches</span>
+        <span class="stack-chip electron">main process lid watcher</span>
+        <span class="stack-chip native">macOS addon (optional)</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ ROADMAP ════════════════ -->
+  <section class="roadmap" id="roadmap">
+    <h2>How <em>WinSTT</em> reaches three platforms</h2>
+    <p class="standfirst">
+      With Electron and ONNX preserved, the cross-platform job decomposes into three workstreams:
+      Python server portability, Electron main-process platform-branching, and per-OS feature scope. Here's the lay of the land.
+    </p>
+
+    <!-- OS triptych -->
+    <div class="os-grid">
+      <div class="os-col windows">
+        <h3>Windows</h3>
+        <div class="os-status">Status · Shipping</div>
+        <dl>
+          <dt>Server bundling</dt><dd>PyInstaller → <span class="k">stt-server.exe</span>. Already in <span class="k">packaging/</span>. Two flavors today.</dd>
+          <dt>ONNX EP</dt><dd><b>Add DirectML.</b> Drops installer to ~200 MB and unlocks AMD / Intel GPUs.</dd>
+          <dt>Hotkeys</dt><dd><span class="k">uiohook-napi</span> + Electron globalShortcut. Both work. Status quo.</dd>
+          <dt>Paste</dt><dd>Existing path stays. Becomes one of six methods.</dd>
+          <dt>Overlay</dt><dd>BrowserWindow always-on-top. Status quo.</dd>
+          <dt>Signing</dt><dd>Authenticode via electron-builder. Add minisign sidecars.</dd>
+          <dt class="ok">Wakeword + Loopback</dt><dd class="ok"><b>Stays.</b> WASAPI is Win-only and remains a flagship Windows feature.</dd>
+        </dl>
+      </div>
+
+      <div class="os-col macos">
+        <h3>macOS</h3>
+        <div class="os-status">Target · v1.0</div>
+        <dl>
+          <dt>Server bundling</dt><dd>PyInstaller → universal Mach-O (Intel + Apple Silicon). Sign &amp; notarize separately from the Electron app.</dd>
+          <dt>ONNX EP</dt><dd><b>CoreML EP</b> via <span class="k">onnxruntime-silicon</span>. Native Apple Silicon path. CPU fallback on Intel.</dd>
+          <dt>Hotkeys</dt><dd><span class="k">uiohook-napi</span> works but requires Accessibility permission. Onboarding flow must request it.</dd>
+          <dt>Paste</dt><dd>nut.js + virtual key code <span class="k">Key::Other(9)</span> for Cmd+V (per Handy's <span class="k">input.rs</span>). Direct-type via enigo-equivalent.</dd>
+          <dt>Overlay</dt><dd>BrowserWindow with <span class="k">setAlwaysOnTop('screen-saver')</span> + <span class="k">setVisibleOnAllWorkspaces</span> + <span class="k">setFocusable(false)</span>. Test before considering NSPanel addon.</dd>
+          <dt>Signing</dt><dd>Developer ID cert + notarization. Required for distribution outside the App Store.</dd>
+          <dt class="warn">Wakeword</dt><dd class="warn">Loopback impossible without ScreenCaptureKit or virtual driver. <b>Loopback ships Windows-only for v1.0.</b></dd>
+          <dt class="warn">Context-awareness</dt><dd class="warn">UIA is Windows-only. Map to AXUIElement (Accessibility API) — separate adapter, requires permission.</dd>
+        </dl>
+      </div>
+
+      <div class="os-col linux">
+        <h3>Linux</h3>
+        <div class="os-status">Target · v1.1</div>
+        <dl>
+          <dt>Server bundling</dt><dd>PyInstaller → ELF. AppImage for the Electron app. Test on Ubuntu 22.04 / 24.04 + Arch.</dd>
+          <dt>ONNX EP</dt><dd>CPU baseline; <b>OpenVINO EP</b> for Intel iGPU; <b>CUDA EP</b> for NVIDIA users (drop the GPU bundling tax — let users install via system package manager).</dd>
+          <dt>Hotkeys</dt><dd>X11: uiohook works. <b>Wayland: can't grab globals.</b> Path: CLI flags + <span class="k">SIGUSR1/2</span> let the user's WM own hotkeys. This <em>is</em> the Wayland strategy.</dd>
+          <dt>Paste</dt><dd>Five-tool fallback chain: wtype / kwtype / dotool / ydotool / xdotool, then nut.js. Direct copy of Handy's <span class="k">clipboard.rs</span> logic.</dd>
+          <dt>Overlay</dt><dd>Default <span class="k">none</span>. Audio feedback as alternative. Power users can opt-in with documented caveats.</dd>
+          <dt class="warn">Wakeword + Loopback</dt><dd class="warn"><b>Wakeword ships</b> (OpenWakeWord is cross-plat). <b>Loopback skipped</b> — PulseAudio monitor source is doable but invasive; defer.</dd>
+          <dt class="warn">Tray</dt><dd class="warn">AppIndicator support varies by DE. Detect and degrade gracefully.</dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- Phased plan -->
+    <div class="phases">
+      <h3>The Three-Phase Plan</h3>
+
+      <div class="phase">
+        <div class="phase-num">i<small>Foundation</small></div>
+        <div class="phase-body">
+          <h4>Adopt the Tier-A wins on Windows</h4>
+          <span class="ship">Ships on Windows · v0.9</span>
+          <ul>
+            <li>Six paste methods (#01), CLI flags + signals (#02), portable mode (#03)</li>
+            <li>SQLite history (#04), local fuzzy dictionary (#05)</li>
+            <li>Multi-provider LLM via AI SDK (#06)</li>
+            <li>State-driven tray + theme variants (#07), cancellable downloads (#08)</li>
+            <li><b>Add DirectML EP</b> as the default Windows GPU build (#09). 2 GB CUDA build becomes the "advanced" option.</li>
+          </ul>
+          <p style="margin-top: 1rem; font-style: italic; color: var(--paper-dim); font-size: 0.95rem;">Net effect: Windows version becomes dramatically better — and the codebase is now cross-platform-ready in all the renderer/main-process places. No Python platform-porting yet.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-num">ii<small>Apple</small></div>
+        <div class="phase-body">
+          <h4>macOS support, feature-degraded</h4>
+          <span class="ship">Ships on Windows + macOS · v1.0</span>
+          <ul>
+            <li>PyInstaller server build on macOS, Developer ID signing + notarization for both binaries</li>
+            <li>CoreML EP wired into <span class="k">device.py</span> (#09)</li>
+            <li>Hotkey fallback chain (#10) + onboarding for Accessibility permission</li>
+            <li>Overlay BrowserWindow with NSPanel-imitation flags (#14)</li>
+            <li>i18next sweep complete (#11) — community contributes locales</li>
+            <li>Whisper custom-model auto-discovery (#12), minisign sidecar (#13)</li>
+            <li><b>Windows-only features</b>: loopback "listen mode", UIA-based context-awareness. Documented as such.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-num">iii<small>Penguin</small></div>
+        <div class="phase-body">
+          <h4>Linux support, Wayland-aware</h4>
+          <span class="ship">Ships on all three · v1.1</span>
+          <ul>
+            <li>PyInstaller ELF + AppImage packaging</li>
+            <li>Linux paste fallback chain (built in phase i, validated here)</li>
+            <li>Wayland strategy: CLI flags + Unix signals are the integration surface (built in phase i)</li>
+            <li>OpenVINO EP for Intel iGPUs (#09)</li>
+            <li>AppIndicator detection + degradation</li>
+            <li>Apple Intelligence as LLM provider (#15) — macOS bonus</li>
+            <li>Optional: clamshell-mic switching (#16), NSPanel native addon</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ SKIP SECTION ════════════════ -->
+  <div class="part-label">Skipping · Not worth adopting</div>
+
+  <div class="skip-grid">
+    <div class="skip-card">
+      <h3>Whisper.cpp instead of ONNX</h3>
+      <p>Handy uses <span class="k">whisper-rs</span> for Whisper and <span class="k">transcribe-rs</span> ONNX for everything else. We use ONNX for both. They get Metal/Vulkan via whisper.cpp; we get the same OS coverage via DirectML/CoreML EPs of ONNX. Switching ML stacks costs us Lite-Whisper, Distil-Whisper, Cohere, and our entire model-export tooling. The EP-swap path is strictly cheaper.</p>
+    </div>
+    <div class="skip-card">
+      <h3>Tauri rewrite</h3>
+      <p>Cleaner end state, but a multi-month rewrite that forces us to either FFI into Python (slow) or port the recorder to Rust (huge). Our Electron + Python topology already reaches three platforms — the work is incremental, not structural.</p>
+    </div>
+    <div class="skip-card">
+      <h3>Drop wakeword + loopback for parity</h3>
+      <p>Two of our most distinctive features. They're Windows-only and that's fine. Cross-platform parity isn't more valuable than feature differentiation.</p>
+    </div>
+    <div class="skip-card">
+      <h3>Replace modifier pipeline with free-form prompts</h3>
+      <p>Handy's prompt library is more general; ours is more opinionated. Keep the curated modifier UX as our identity. The provider/structured-output engine borrowed in #06 sits underneath the modifier UI without replacing it.</p>
+    </div>
+  </div>
+
+  <!-- ════════════════ COLOPHON ════════════════ -->
+  <footer id="colophon" class="colophon">
+    <div class="colophon-mark">⁂</div>
+    <div>Filed 2026 · 05 · 26 · Field Report №02 · The Adoption Briefing</div>
+    <div style="margin-top: 0.6rem;">Stack constraints honored throughout: <em style="font-family: 'JetBrains Mono'; font-style: normal; letter-spacing: 0; color: var(--gold);">Electron</em> · <em style="font-family: 'JetBrains Mono'; font-style: normal; letter-spacing: 0; color: var(--gold);">Python</em> · <em style="font-family: 'JetBrains Mono'; font-style: normal; letter-spacing: 0; color: var(--gold);">ONNX</em></div>
+    <div style="margin-top: 0.6rem;">Companion to <em style="font-family: 'JetBrains Mono'; font-style: normal; letter-spacing: 0; color: var(--gold);">examples/Handy</em> v0.8.3</div>
+  </footer>
+
+</main>
+
+<script>
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('in');
+        io.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+  document.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', (ev) => {
+      const id = a.getAttribute('href').slice(1);
+      const target = document.getElementById(id);
+      if (!target) return;
+      ev.preventDefault();
+      const top = target.getBoundingClientRect().top + window.scrollY - 24;
+      window.scrollTo({ top, behavior: 'smooth' });
+    });
+  });
+</script>
+
+</body>
+</html>

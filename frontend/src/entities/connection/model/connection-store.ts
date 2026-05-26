@@ -30,7 +30,12 @@ interface ConnectionState {
 }
 
 export const useConnectionStore = create<ConnectionState>()((set) => ({
-	connectionStatus: "disconnected",
+	// Initial "connecting" instead of "disconnected" so the cold-start
+	// chip reads "CONNECTING…" not "OFFLINE" while the stt-server binds
+	// its WS ports (5–8 s on first launch). The relay in main suppresses
+	// "disconnected" broadcasts until the first successful connect, so
+	// this state holds until either we connect or the renderer is closed.
+	connectionStatus: "connecting",
 	serverStatus: "idle",
 	gpuInfo: null,
 	runtimeInfo: null,

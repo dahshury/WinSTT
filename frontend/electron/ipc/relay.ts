@@ -1,12 +1,24 @@
+import { readFile as fsReadFile, unlink as fsUnlink } from "node:fs/promises";
 import { BrowserWindow, ipcMain } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
+
+function isEnoent(err: unknown): boolean {
+	return (
+		typeof err === "object" &&
+		err !== null &&
+		"code" in err &&
+		(err as { code?: unknown }).code === "ENOENT"
+	);
+}
+
 import { clearSessionAborted, isSessionAborted } from "../lib/abort-state";
 import { readWindowContextTree } from "../lib/context-reader";
+import { installCustomWordsSync } from "../lib/custom-words-sync";
 import { dbg, dbgVerbose } from "../lib/debug-log";
 import { installInitialPromptSync } from "../lib/initial-prompt-sync";
 import { createSafeSender, type SafeSend } from "../lib/ipc-helpers";
 import { setLastTranscription } from "../lib/last-transcription";
-import { pasteText } from "../lib/paste";
+import { injectSubmitKey, pasteText } from "../lib/paste";
 import { onAudioLevel, onRecordingStart, onRecordingStop } from "../lib/recording-indicator";
 import { consumeRecordingStart, notifyRecordingStop } from "../lib/recording-state";
 import { breadcrumb } from "../lib/sentry-main";
@@ -19,6 +31,7 @@ import {
 } from "../lib/text-processing";
 import type { SttClient } from "../ws/stt-client";
 import { muteSystemAudio, unmuteSystemAudio } from "./audio-mute";
+import { getActiveHistoryStore } from "./history";
 import { processText } from "./llm";
 import { hideOverlay, showOverlay } from "./overlay";
 import { type ContextCapture, createContextCapture } from "./relay-context-capture";
@@ -27,6 +40,15 @@ import {
 	type HistoryPersistence,
 	type TranscriptionHistoryEntry,
 } from "./transcription-history";
+
+function readHistoryMaxEntries(): number {
+	const raw = getStoreValue("general.historyMaxEntries");
+	const n = Number(raw);
+	if (!Number.isFinite(n)) {
+		return 1000;
+	}
+	return Math.max(10, Math.min(10_000, Math.floor(n)));
+}
 
 function extractEventText(event: Record<string, unknown>): string {
 	return String(event.text ?? "");
@@ -131,7 +153,16 @@ function pasteIfDictating(mode: unknown, text: string): void {
 		setLastTranscription(text);
 		// Stryker disable next-line StringLiteral: template literal trailing space is informational; pasteText is unobservable
 		pasteText(`${text} `);
+		maybeInjectAutoSubmit();
 	}
+}
+
+function maybeInjectAutoSubmit(): void {
+	if (getStoreValue("general.autoSubmit") !== true) {
+		return;
+	}
+	const key = getStoreValue("general.autoSubmitKey");
+	injectSubmitKey(key);
 }
 
 interface HistoryCapture {
@@ -472,9 +503,58 @@ async function handleFullSentence(
 ): Promise<void> {
 	const rawText = extractEventText(event);
 	const mode = getStoreValue("general.recordingMode");
+	maybePersistSqliteRow(event, rawText, mode);
 	const handled = handlePreLlmFullSentenceBranch(rawText, mode, safeSend, contextCapture);
 	const key = String(handled) as "true" | "false";
 	await POST_PRE_LLM_DISPATCH[key](rawText, mode, safeSend, history, contextCapture);
+}
+
+/**
+ * When the server's fullSentence event carries a `wav_path` (because
+ * `HistoryConfig.save_wav` is on for the running recorder), persist a row in
+ * the SQLite history. Pre-LLM text only — the LLM cleanup pipeline is
+ * downstream of this; we leave `postProcessedText` empty here and rely on
+ * the renderer's history-view to surface the raw transcript.
+ *
+ * Skipped in listen mode (captions only; no persistence) to match the
+ * existing electron-store history's policy.
+ */
+// Split on either separator so a Windows-style backslash-pathed wav_path from
+// the server still yields a clean basename on Linux/macOS dev runs. Hoisted to
+// module scope to satisfy biome's useTopLevelRegex rule (we'd otherwise
+// allocate it per fullSentence).
+const WAV_PATH_SEP = /[/\\]/;
+
+function maybePersistSqliteRow(
+	event: Record<string, unknown>,
+	rawText: string,
+	mode: unknown
+): void {
+	if (mode === "listen") {
+		return;
+	}
+	const trimmed = rawText.trim();
+	if (trimmed.length === 0) {
+		return;
+	}
+	const wavPath = event.wav_path;
+	if (typeof wavPath !== "string" || wavPath.length === 0) {
+		return;
+	}
+	const store = getActiveHistoryStore();
+	if (store === null) {
+		return;
+	}
+	const fileName = wavPath.split(WAV_PATH_SEP).pop() ?? wavPath;
+	try {
+		store.add({
+			fileName,
+			transcriptionText: trimmed,
+			postProcessRequested: isLlmConfigured(),
+		});
+	} catch (err) {
+		dbg("relay", "sqlite history add failed:", String(err));
+	}
 }
 
 /**
@@ -1452,15 +1532,25 @@ export function setupRelay(
 	// Stryker disable next-line BooleanLiteral: closure init — onDisconnected() resets this
 	let skewWarned = false;
 
-	// Persistent transcription history (capped at HISTORY_MAX_ENTRIES so we
-	// don't grow the user's settings file forever). Capture happens on each
-	// successful fullSentence event; speaking-duration WPM is derived from
-	// the recording_start → recording_stop interval tracked below.
-	const HISTORY_MAX_ENTRIES = 10_000;
+	// Persistent transcription history. Cap is driven by user setting
+	// `general.historyMaxEntries`; the upper bound is enforced in the
+	// schema (10000) so we never grow the file unboundedly. Capture happens
+	// on each successful fullSentence event; speaking-duration WPM is
+	// derived from the recording_start → recording_stop interval below.
+	const initialHistoryCap = readHistoryMaxEntries();
 	const historyStore = createTranscriptionHistoryStore({
-		maxEntries: HISTORY_MAX_ENTRIES,
+		maxEntries: initialHistoryCap,
 		store: store as unknown as HistoryPersistence,
 		storeKey: "transcriptionHistory",
+	});
+	// React to live setting changes from the settings window. `store.onDidChange`
+	// fires once per persisted write; trimming is idempotent so even spurious
+	// fires during settings hot-reload are harmless.
+	store.onDidChange("general.historyMaxEntries", (next: unknown) => {
+		const n = Number(next);
+		if (Number.isFinite(n)) {
+			historyStore.setMaxEntries(Math.max(10, Math.min(10_000, Math.floor(n))));
+		}
 	});
 	let lastRecordingStartMs = 0;
 	let lastRecordingStopMs = 0;
@@ -1493,6 +1583,51 @@ export function setupRelay(
 	ipcMain.handle(IPC.HISTORY_CLEAR, () => {
 		historyStore.clear();
 		return { cleared: true };
+	});
+
+	ipcMain.removeHandler(IPC.HISTORY_DELETE);
+	ipcMain.handle(IPC.HISTORY_DELETE, (_evt, id: unknown) => {
+		if (typeof id !== "string") {
+			return { deleted: false };
+		}
+		const before = historyStore.getHistory().find((e) => e.id === id);
+		const ok = historyStore.deleteEntry(id);
+		if (ok && before?.audioFilePath) {
+			// Unlink the WAV best-effort; missing files (already deleted by
+			// retention sweep, or never written for cloud-STT entries) are not
+			// an error so we silence ENOENT specifically. Other errors are
+			// logged but never bubbled — failing to delete a recording file
+			// must not block the entry-delete UX.
+			fsUnlink(before.audioFilePath).catch((err: unknown) => {
+				if (!isEnoent(err)) {
+					console.error("[history] failed to delete WAV", before.audioFilePath, err);
+				}
+			});
+		}
+		if (ok) {
+			broadcastToAll(IPC.HISTORY_DELETED, { id });
+		}
+		return { deleted: ok };
+	});
+
+	ipcMain.removeHandler(IPC.HISTORY_LOAD_AUDIO);
+	ipcMain.handle(IPC.HISTORY_LOAD_AUDIO, async (_evt, id: unknown) => {
+		if (typeof id !== "string") {
+			return null;
+		}
+		const entry = historyStore.getHistory().find((e) => e.id === id);
+		if (!entry?.audioFilePath) {
+			return null;
+		}
+		try {
+			const buf = await fsReadFile(entry.audioFilePath);
+			return `data:audio/wav;base64,${buf.toString("base64")}`;
+		} catch (err) {
+			if (!isEnoent(err)) {
+				console.error("[history] failed to read WAV", entry.audioFilePath, err);
+			}
+			return null;
+		}
 	});
 
 	// Allow any window (including settings) to request the cached catalog.
@@ -1572,6 +1707,14 @@ export function setupRelay(
 	const onDataEvent = (event: Record<string, unknown>): Promise<void> =>
 		processDataEvent(event, queues, ctx);
 
+	// Latches once the stt-server has connected at least once. Used to
+	// suppress the "disconnected" broadcast during the cold-start window
+	// (server takes 5–8 s to bind WS ports while models load) — without
+	// this latch the renderer chip flashes "OFFLINE" for the entire warmup
+	// before settling, which users read as a hard failure. We leave the
+	// initial "connecting" state in place until either the first connect
+	// succeeds or a real disconnect happens after that.
+	let hasEverConnected = false;
 	const broadcastConnectionChange = (connected: boolean) => {
 		broadcastToAll(IPC.STT_CONNECTION_CHANGE, { connected });
 	};
@@ -1579,6 +1722,7 @@ export function setupRelay(
 	const onConnected = () => {
 		// Stryker disable next-line StringLiteral: dbg() message is informational only
 		dbg("relay", "STT server CONNECTED");
+		hasEverConnected = true;
 		broadcastConnectionChange(true);
 	};
 
@@ -1588,6 +1732,12 @@ export function setupRelay(
 		serverIsReady = false;
 		skewWarned = false;
 		onRecordingStop();
+		if (!hasEverConnected) {
+			// Cold-start: server still binding. Keep the renderer chip in its
+			// initial "connecting" state — the next connect attempt is already
+			// scheduled by stt-client's reconnect loop.
+			return;
+		}
 		broadcastConnectionChange(false);
 	};
 
@@ -1647,6 +1797,13 @@ export function setupRelay(
 	// propagates straight into the live transcriber — see
 	// `OnnxAsrTranscriber.initial_prompt` + the WS control allow-list.
 	const disposeInitialPromptSync = installInitialPromptSync(client);
+	// Deterministic post-ASR fuzzy corrector. Pushes the live vocab-only
+	// dictionary entries + threshold to the server on every dictionary
+	// edit / threshold tweak / server-ready event. Runs on the server
+	// BEFORE the LLM modifier pipeline in this process so the LLM sees
+	// already-corrected text but still gets a chance to fix anything the
+	// deterministic pass missed (see project memory entry "dictionary").
+	const disposeCustomWordsSync = installCustomWordsSync(client);
 
 	return () => {
 		client.off("data-event", onDataEvent);
@@ -1656,6 +1813,7 @@ export function setupRelay(
 		client.off("runtime-info", onRuntimeInfo);
 		client.off("server-ready", onServerReady);
 		disposeInitialPromptSync();
+		disposeCustomWordsSync();
 		ipcMain.removeHandler(IPC.STT_CANCEL_DOWNLOAD);
 		ipcMain.removeHandler("stt:delete-model-cache");
 		ipcMain.removeHandler(IPC.STT_GET_MODEL_CATALOG);

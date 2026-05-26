@@ -39,6 +39,7 @@ clients on the data WebSocket.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ctypes
 import faulthandler
 import json
@@ -266,10 +267,13 @@ def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> Non
     # paint an honest GPU/CPU chip without an extra round-trip — the value
     # is also fetchable per-connection via the ``get_runtime_info`` control
     # command for late joiners.
+    from src.stt_server.control_handler import augment_runtime_info
+
     try:
-        runtime_info = state.recorder.runtime_info() if state.recorder is not None else None
+        raw_runtime_info = state.recorder.runtime_info() if state.recorder is not None else None
     except Exception:
-        runtime_info = None
+        raw_runtime_info = None
+    runtime_info = augment_runtime_info(raw_runtime_info)
     msg_payload: dict[str, Any] = {"type": "server_ready"}
     if runtime_info is not None:
         msg_payload["runtime_info"] = runtime_info
@@ -277,10 +281,30 @@ def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> Non
     for ws in list(state.control_connections):
         asyncio.run_coroutine_threadsafe(ws.send(msg), loop)
 
+    # Capture the wav_path emitted on TranscriptionCompleted so the fullSentence
+    # JSON forwarded to the renderer carries it alongside the text. Wired here
+    # (rather than in callbacks.py) because the recorder's facade publishes the
+    # event on its own thread, so this subscription happens on the same thread
+    # as `recorder.text(process_text)` below — no cross-thread lock needed.
+    from src.recorder.domain.events import TranscriptionCompleted as _TC
+
+    last_wav_path: list[str] = [""]
+
+    def _capture_wav(event: _TC) -> None:
+        last_wav_path[0] = event.wav_path
+
+    if state.recorder is not None:
+        state.recorder.event_bus.subscribe(_TC, _capture_wav)
+
     def process_text(full_sentence: str) -> None:
         state.prev_text = ""
         full_sentence = preprocess_text(full_sentence)
-        message = json.dumps({"type": "fullSentence", "text": full_sentence})
+        wav_path = last_wav_path[0]
+        last_wav_path[0] = ""
+        message_payload: dict[str, Any] = {"type": "fullSentence", "text": full_sentence}
+        if wav_path:
+            message_payload["wav_path"] = wav_path
+        message = json.dumps(message_payload)
         asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
 
         timestamp = format_now_hms_ms()
@@ -370,6 +394,47 @@ def _resolve_log_dir(args_log_dir: str | None) -> Path | None:
     return Path(raw).expanduser()
 
 
+def _apply_data_dir(args_data_dir: str | None) -> Path | None:
+    """Resolve + apply the user-data root for a portable / electron-launched run.
+
+    Precedence: ``--data-dir`` CLI flag → ``WINSTT_DATA_DIR`` env var →
+    ``None`` (keep historic platform defaults). When a value is resolved
+    we route the HuggingFace cache under ``<data-dir>/hf/`` so on-demand
+    model downloads land inside the portable tree instead of the user's
+    ``%LOCALAPPDATA%``. Idempotent — already-set env vars take precedence
+    so the Electron-supplied values (set by ``electron/portable-boot.ts``)
+    are never clobbered by the fallback chain.
+
+    Returns the resolved path so callers can pass it to log-dir resolution
+    when ``--log-dir`` itself wasn't provided.
+    """
+    raw = args_data_dir or os.environ.get("WINSTT_DATA_DIR")
+    if not raw:
+        return None
+    data_dir = Path(raw).expanduser()
+    # Best-effort mkdir: a read-only USB stick may refuse the write. We
+    # still honor the path for the env vars below so onnx-asr writes its
+    # tempfiles consistently — failures will surface later with better
+    # diagnostic context than this early helper can provide.
+    with contextlib.suppress(OSError):
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+    hf_cache = data_dir / "hf"
+    with contextlib.suppress(OSError):
+        hf_cache.mkdir(parents=True, exist_ok=True)
+
+    # Only fill env vars when they're missing so the Electron-side values
+    # (electron/portable-boot.ts) keep precedence over the CLI fallback.
+    os.environ.setdefault("WINSTT_DATA_DIR", str(data_dir))
+    os.environ.setdefault("HF_HOME", str(hf_cache))
+    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(hf_cache / "hub"))
+    # When ``--log-dir`` itself wasn't supplied, default it under the data
+    # dir so a single CLI flag is enough to relocate everything.
+    os.environ.setdefault("WINSTT_LOG_DIR", str(data_dir / "logs"))
+
+    return data_dir
+
+
 def _resolve_release() -> str | None:
     """Read the server's own package version for Sentry's ``release`` field."""
     try:
@@ -381,6 +446,12 @@ def _resolve_release() -> str | None:
 async def main_async() -> None:
     """Async entry point — sets up WebSocket servers, recorder, and shutdown handling."""
     args = parse_arguments()
+
+    # Apply the portable / Electron-supplied data-dir BEFORE observability so
+    # the log file lands inside ``<data-dir>/logs`` when ``--log-dir`` wasn't
+    # passed explicitly. No-op when neither ``--data-dir`` nor
+    # ``WINSTT_DATA_DIR`` is set — historic defaults stay in effect.
+    _apply_data_dir(getattr(args, "data_dir", None))
 
     # Configure logging + Sentry as early as possible so that any errors below
     # (websocket bind failures, recorder init crashes, etc.) land in the log

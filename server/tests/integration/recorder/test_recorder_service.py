@@ -39,6 +39,8 @@ class TestRecorderService:
         diarizer: FakeDiarizer | None = None,
         ensure_sentence_starting_uppercase: bool = True,
         ensure_sentence_ends_with_period: bool = True,
+        custom_words: list[str] | None = None,
+        word_correction_threshold: float = 0.18,
     ) -> tuple[RecorderService, FakeTranscriber, EventBus, FakeAudioSource]:
         config = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.05,
@@ -49,6 +51,8 @@ class TestRecorderService:
             use_microphone=use_microphone,
             ensure_sentence_starting_uppercase=ensure_sentence_starting_uppercase,
             ensure_sentence_ends_with_period=ensure_sentence_ends_with_period,
+            custom_words=custom_words or [],
+            threshold=word_correction_threshold,
         )
         transcriber = FakeTranscriber(
             result=TranscriptionResult(
@@ -439,6 +443,32 @@ class TestRecorderService:
         )
         result = service._preprocess_output("hello")
         assert result == "hello."
+
+    def test_preprocess_applies_custom_words(self) -> None:
+        """Custom-word fuzzy corrector runs before capitalisation + period."""
+        service, _, _, _ = self._make_service(
+            custom_words=["ChargeBee"],
+            word_correction_threshold=0.5,
+        )
+        # "Charge B" should fuzz-match to "ChargeBee" via the n-gram pass.
+        result = service._preprocess_output("we love Charge B")
+        # Greedy 3-gram absorbs "love Charge B" — the assertion only
+        # checks the substitution landed (mirrors the Handy test style).
+        assert "ChargeBee" in result
+        assert result.endswith(".")
+
+    def test_preprocess_custom_words_empty_short_circuits(self) -> None:
+        """Empty word list skips the matcher entirely — text passes through."""
+        service, _, _, _ = self._make_service(custom_words=[])
+        result = service._preprocess_output("hello world")
+        assert result == "Hello world."
+
+    def test_preprocess_custom_words_skip_on_empty_text(self) -> None:
+        """Empty text short-circuits even when custom_words is non-empty."""
+        service, _, _, _ = self._make_service(custom_words=["OpenAI"])
+        # Whitespace input after strip becomes "" — should not run the matcher.
+        result = service._preprocess_output("   ")
+        assert result == ""
 
     def test_post_speech_silence_duration_getter(self) -> None:
         """Property returns the pipeline's current value."""
@@ -1874,4 +1904,219 @@ class TestRecorderService:
         assert isinstance(result, _FakeAdapter)
         assert captured["providers"] == ["CPUExecutionProvider"]
         assert captured["on_download_progress"] is fake_progress
+
+    # ---- Runtime diarization toggle ----
+
+    def _wait_for_completion(
+        self,
+        completed: list[Any],
+        failed: list[Any],
+        timeout: float = 5.0,
+    ) -> None:
+        """Wait until the toggle worker publishes a terminal event."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if completed or failed:
+                return
+            time.sleep(0.005)
+        raise AssertionError("toggle worker never published a terminal event")
+
+    def test_diarization_toggle_enable_publishes_started_then_completed(self) -> None:
+        from unittest.mock import patch
+
+        from src.recorder.domain.events import (
+            DiarizationToggleCompleted,
+            DiarizationToggleFailed,
+            DiarizationToggleStarted,
+        )
+
+        service, _, event_bus, _ = self._make_service()
+        started: list[DiarizationToggleStarted] = []
+        completed: list[DiarizationToggleCompleted] = []
+        failed: list[DiarizationToggleFailed] = []
+        event_bus.subscribe(DiarizationToggleStarted, started.append)
+        event_bus.subscribe(DiarizationToggleCompleted, completed.append)
+        event_bus.subscribe(DiarizationToggleFailed, failed.append)
+        fake = FakeDiarizer()
+        with patch("src.recorder.bootstrap.build_diarizer", return_value=fake):
+            service.request_diarization_toggle(True)
+            self._wait_for_completion(completed, failed)
+        assert started and started[0].enabled is True
+        assert completed and completed[0].enabled is True
+        assert failed == []
+        assert service._diarizer is fake
+        service.shutdown()
+
+    def test_diarization_toggle_disable_tears_down_and_calls_shutdown(self) -> None:
+        from src.recorder.domain.events import (
+            DiarizationToggleCompleted,
+            DiarizationToggleFailed,
+        )
+
+        fake = FakeDiarizer()
+        service, _, event_bus, _ = self._make_service(diarizer=fake)
+        completed: list[DiarizationToggleCompleted] = []
+        failed: list[DiarizationToggleFailed] = []
+        event_bus.subscribe(DiarizationToggleCompleted, completed.append)
+        event_bus.subscribe(DiarizationToggleFailed, failed.append)
+
+        service.request_diarization_toggle(False)
+        self._wait_for_completion(completed, failed)
+
+        assert completed and completed[0].enabled is False
+        assert failed == []
+        assert service._diarizer is None
+        assert fake.shutdown_calls == 1
+        service.shutdown()
+
+    def test_diarization_toggle_noop_emits_completed_without_loading(self) -> None:
+        from unittest.mock import patch
+
+        from src.recorder.domain.events import (
+            DiarizationToggleCompleted,
+            DiarizationToggleFailed,
+        )
+
+        fake = FakeDiarizer()
+        service, _, event_bus, _ = self._make_service(diarizer=fake)
+        completed: list[DiarizationToggleCompleted] = []
+        failed: list[DiarizationToggleFailed] = []
+        event_bus.subscribe(DiarizationToggleCompleted, completed.append)
+        event_bus.subscribe(DiarizationToggleFailed, failed.append)
+
+        with patch("src.recorder.bootstrap.build_diarizer") as build_mock:
+            service.request_diarization_toggle(True)  # already on
+            self._wait_for_completion(completed, failed)
+            assert build_mock.call_count == 0
+
+        assert completed and completed[0].enabled is True
+        assert failed == []
+        assert fake.shutdown_calls == 0
+        assert service._diarizer is fake
+        service.shutdown()
+
+    def test_diarization_toggle_disable_noop_when_already_off(self) -> None:
+        from src.recorder.domain.events import (
+            DiarizationToggleCompleted,
+            DiarizationToggleFailed,
+        )
+
+        service, _, event_bus, _ = self._make_service()  # no diarizer
+        completed: list[DiarizationToggleCompleted] = []
+        failed: list[DiarizationToggleFailed] = []
+        event_bus.subscribe(DiarizationToggleCompleted, completed.append)
+        event_bus.subscribe(DiarizationToggleFailed, failed.append)
+
+        service.request_diarization_toggle(False)
+        self._wait_for_completion(completed, failed)
+
+        assert completed and completed[0].enabled is False
+        assert failed == []
+        assert service._diarizer is None
+        service.shutdown()
+
+    def test_diarization_toggle_missing_models_fails(self) -> None:
+        from src.recorder.domain.events import (
+            DiarizationToggleCompleted,
+            DiarizationToggleFailed,
+        )
+
+        service, _, event_bus, _ = self._make_service()
+        # Wipe the configured model names so the worker refuses on the
+        # pre-flight model_not_found branch.
+        service._config.diarization.segmentation_model = ""
+        service._config.diarization.embedding_model = ""
+
+        completed: list[DiarizationToggleCompleted] = []
+        failed: list[DiarizationToggleFailed] = []
+        event_bus.subscribe(DiarizationToggleCompleted, completed.append)
+        event_bus.subscribe(DiarizationToggleFailed, failed.append)
+
+        service.request_diarization_toggle(True)
+        self._wait_for_completion(completed, failed)
+
+        assert completed == []
+        assert failed and failed[0].enabled is True
+        assert failed[0].category == "model_not_found"
+        assert service._diarizer is None
+        service.shutdown()
+
+    def test_diarization_toggle_load_failure_classifies_exception(self) -> None:
+        from unittest.mock import patch
+
+        from src.recorder.domain.events import (
+            DiarizationToggleCompleted,
+            DiarizationToggleFailed,
+        )
+
+        service, _, event_bus, _ = self._make_service()
+        completed: list[DiarizationToggleCompleted] = []
+        failed: list[DiarizationToggleFailed] = []
+        event_bus.subscribe(DiarizationToggleCompleted, completed.append)
+        event_bus.subscribe(DiarizationToggleFailed, failed.append)
+
+        with patch(
+            "src.recorder.bootstrap.build_diarizer",
+            side_effect=RuntimeError("simulated load explosion"),
+        ):
+            service.request_diarization_toggle(True)
+            self._wait_for_completion(completed, failed)
+
+        assert completed == []
+        assert failed and failed[0].enabled is True
+        # classify_swap_error maps unexpected RuntimeError to "unknown".
+        assert failed[0].category == "unknown"
+        assert "simulated load explosion" in failed[0].detail
+        assert service._diarizer is None
+        service.shutdown()
+
+    def test_diarization_toggle_supersede_emits_failed_for_first(self) -> None:
+        """Two enables back-to-back: first thread sees cancel_event set and emits SUPERSEDED."""
+        from unittest.mock import patch
+
+        from src.recorder.domain.events import (
+            DiarizationToggleCompleted,
+            DiarizationToggleFailed,
+        )
+
+        service, _, event_bus, _ = self._make_service()
+        completed: list[DiarizationToggleCompleted] = []
+        failed: list[DiarizationToggleFailed] = []
+        event_bus.subscribe(DiarizationToggleCompleted, completed.append)
+        event_bus.subscribe(DiarizationToggleFailed, failed.append)
+
+        gate = threading.Event()
+        release_first = threading.Event()
+        first_diarizer = FakeDiarizer()
+        second_diarizer = FakeDiarizer()
+        call_count = {"n": 0}
+
+        def slow_build(_cfg: Any) -> FakeDiarizer:  # noqa: ANN401 — duck-typed FakeDiarizer ctor arg
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # First call: signal we're loading, then block until the
+                # test sets release_first. The test sets the supersede in
+                # between, so the cancel_event check after build sees it.
+                gate.set()
+                release_first.wait(timeout=5.0)
+                return first_diarizer
+            return second_diarizer
+
+        with patch("src.recorder.bootstrap.build_diarizer", side_effect=slow_build):
+            service.request_diarization_toggle(True)
+            assert gate.wait(timeout=5.0)
+            # Second request supersedes the first.
+            service.request_diarization_toggle(True)
+            # Let the first thread finish its build; it should detect the
+            # cancel event was set and report SUPERSEDED.
+            release_first.set()
+            self._wait_for(lambda: any(f.enabled is True for f in failed))
+
+        # The second toggle is a no-op (we set diarizer = first_diarizer? No,
+        # actually since first is SUPERSEDED, its commit never ran, so the
+        # second call finds diarizer still None and proceeds to build). The
+        # second build returns second_diarizer and commits.
+        self._wait_for(lambda: service._diarizer is second_diarizer)
+        assert any(f.category == "unknown" for f in failed)
+        service.shutdown()
         service.shutdown()

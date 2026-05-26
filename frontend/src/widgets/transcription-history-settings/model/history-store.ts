@@ -8,6 +8,7 @@ interface HistoryState {
 	clear: () => void;
 	entries: TranscriptionHistoryEntry[];
 	isLoaded: boolean;
+	removeEntry: (id: string) => void;
 	setAll: (entries: TranscriptionHistoryEntry[]) => void;
 }
 
@@ -21,6 +22,14 @@ export const useTranscriptionHistoryStore = create<HistoryState>()((set) => ({
 				return state;
 			}
 			return { entries: [...state.entries, entry] };
+		}),
+	removeEntry: (id) =>
+		set((state) => {
+			const next = state.entries.filter((e) => e.id !== id);
+			if (next.length === state.entries.length) {
+				return state;
+			}
+			return { entries: next };
 		}),
 	clear: () => set({ entries: [] }),
 }));

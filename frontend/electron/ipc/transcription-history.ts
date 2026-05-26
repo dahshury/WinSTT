@@ -1,6 +1,14 @@
 import { isRecord } from "../lib/ipc-helpers";
 
 export interface TranscriptionHistoryEntry {
+	/**
+	 * Absolute path to the WAV file captured for this dictation. Lives under
+	 * `userData/recordings/<id>.wav`. Omitted on entries created before the
+	 * audio-saving feature shipped, and on cloud-STT entries (no PCM ever
+	 * touches our process). The history UI conditionally renders the play
+	 * button on entries that have it set.
+	 */
+	audioFilePath?: string;
 	durationMs: number;
 	id: string;
 	/**
@@ -19,6 +27,12 @@ export interface TranscriptionHistoryEntry {
 
 export interface TranscriptionHistoryStore {
 	clear(): void;
+	/**
+	 * Remove a single entry by id and return whether it existed. Used by the
+	 * per-row delete affordance in the history UI; the renderer also removes
+	 * the associated WAV (if `audioFilePath` is set) via a separate IPC.
+	 */
+	deleteEntry(id: string): boolean;
 	getHistory(): TranscriptionHistoryEntry[];
 	/**
 	 * Persist a new history entry.
@@ -30,14 +44,26 @@ export interface TranscriptionHistoryStore {
 	 * disabled). When LLM ran, `originalText` is always preserved so the
 	 * history UI can offer "Copy Original" as a deterministic affordance
 	 * tied to LLM invocation, not to text-equality.
+	 *
+	 * `audioFilePath` (when present) is the absolute path to a WAV under
+	 * `userData/recordings/` saved during finalize. The history UI uses it
+	 * to render a play button and a delete-this-row affordance; the
+	 * retention policy sweeper deletes it when the entry ages out.
 	 */
 	record(
 		text: string,
 		durationMs: number,
 		originalText?: string,
 		llmRan?: boolean,
-		llmModel?: string
+		llmModel?: string,
+		audioFilePath?: string
 	): TranscriptionHistoryEntry | null;
+	/**
+	 * Update the cap and trim now. Used by the settings panel so changing
+	 * `general.historyMaxEntries` to a lower number takes effect immediately
+	 * (no need to wait for the next dictation to trigger a trim).
+	 */
+	setMaxEntries(maxEntries: number): void;
 }
 
 /**
@@ -170,6 +196,7 @@ function buildEntry(
 	originalText: string | undefined,
 	llmRan: boolean | undefined,
 	llmModel: string | undefined,
+	audioFilePath: string | undefined,
 	deps: EntryBuilderDeps
 ): TranscriptionHistoryEntry {
 	const entry: TranscriptionHistoryEntry = {
@@ -181,6 +208,9 @@ function buildEntry(
 	};
 	applyOriginalText(entry, originalText?.trim(), trimmedText, llmRan);
 	applyLlmModel(entry, llmModel, llmRan);
+	if (audioFilePath && audioFilePath.length > 0) {
+		entry.audioFilePath = audioFilePath;
+	}
 	return entry;
 }
 
@@ -195,7 +225,7 @@ export function createTranscriptionHistoryStore(options: CreateOptions): Transcr
 		now: options.now ?? Date.now,
 		makeId: options.makeId ?? (() => globalThis.crypto.randomUUID()),
 	};
-	const maxEntries = Math.max(1, options.maxEntries);
+	let currentMax = Math.max(1, options.maxEntries);
 	const entries: TranscriptionHistoryEntry[] = readPersisted(options.store, options.storeKey);
 
 	function persist(): void {
@@ -203,19 +233,43 @@ export function createTranscriptionHistoryStore(options: CreateOptions): Transcr
 	}
 
 	return {
-		record(text, durationMs, originalText, llmRan, llmModel) {
+		record(text, durationMs, originalText, llmRan, llmModel, audioFilePath) {
 			const trimmed = text.trim();
 			if (trimmed.length === 0) {
 				return null;
 			}
-			const entry = buildEntry(trimmed, durationMs, originalText, llmRan, llmModel, deps);
+			const entry = buildEntry(
+				trimmed,
+				durationMs,
+				originalText,
+				llmRan,
+				llmModel,
+				audioFilePath,
+				deps
+			);
 			entries.push(entry);
-			trimToMax(entries, maxEntries);
+			trimToMax(entries, currentMax);
 			persist();
 			return entry;
 		},
 		getHistory() {
 			return [...entries];
+		},
+		deleteEntry(id: string): boolean {
+			const idx = entries.findIndex((e) => e.id === id);
+			if (idx < 0) {
+				return false;
+			}
+			entries.splice(idx, 1);
+			persist();
+			return true;
+		},
+		setMaxEntries(maxEntries: number): void {
+			currentMax = Math.max(1, Math.floor(maxEntries));
+			if (entries.length > currentMax) {
+				trimToMax(entries, currentMax);
+				persist();
+			}
 		},
 		clear() {
 			entries.splice(0, entries.length);

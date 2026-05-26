@@ -1,10 +1,15 @@
 import { useEffect } from "react";
-import { fetchTranscriptionHistory, onTranscriptionHistoryAdded } from "@/shared/api/ipc-client";
+import {
+	fetchTranscriptionHistory,
+	onTranscriptionHistoryAdded,
+	onTranscriptionHistoryDeleted,
+} from "@/shared/api/ipc-client";
 import { useTranscriptionHistoryStore } from "../model/history-store";
 
 export function useTranscriptionHistorySync(): void {
 	const setAll = useTranscriptionHistoryStore((s) => s.setAll);
 	const addEntry = useTranscriptionHistoryStore((s) => s.addEntry);
+	const removeEntry = useTranscriptionHistoryStore((s) => s.removeEntry);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -13,12 +18,16 @@ export function useTranscriptionHistorySync(): void {
 				setAll(entries);
 			}
 		});
-		const unsub = onTranscriptionHistoryAdded((entry) => {
+		const unsubAdded = onTranscriptionHistoryAdded((entry) => {
 			addEntry(entry);
+		});
+		const unsubDeleted = onTranscriptionHistoryDeleted((payload) => {
+			removeEntry(payload.id);
 		});
 		return () => {
 			cancelled = true;
-			unsub();
+			unsubAdded();
+			unsubDeleted();
 		};
-	}, [setAll, addEntry]);
+	}, [setAll, addEntry, removeEntry]);
 }

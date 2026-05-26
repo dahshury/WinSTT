@@ -42,6 +42,19 @@ dependencies = [
     # imported by ``src/stt_server/observability.py``; whether it actually
     # phones home is gated on the ``SENTRY_DSN`` env var at runtime.
     "sentry-sdk>=2.18",
+    # Fast Levenshtein distance + ratio implementations used by the
+    # deterministic custom-word corrector in
+    # ``src/recorder/text/dictionary.py``. Pure-C++ extension with prebuilt
+    # cross-platform wheels (Win, macOS-arm64, macOS-x86_64, Linux x86_64,
+    # Linux aarch64) — the cross-platform port plan piggy-backs on these
+    # wheels so the fuzzy layer doesn't need a pure-Python fallback.
+    "rapidfuzz>=3.0",
+    # Soundex + Metaphone phonetic codes used by the same corrector to
+    # boost matches that share a pronunciation but differ in spelling.
+    # Ships C-extension wheels with the same cross-platform coverage as
+    # rapidfuzz; the package also embeds a pure-Python fallback that runs
+    # when no wheel matches the host (e.g. exotic CPython builds).
+    "jellyfish>=1.0",
 ]
 # Note: ``pyautogui``, ``keyboard``, ``pyperclip``, ``colorama``, and ``rich``
 # used to live here as runtime deps inherited from the original RealtimeSTT
@@ -152,7 +165,7 @@ requires-dist = [
 # so no local checkout is required for ``uv sync``. To hack on onnx-asr
 # alongside WinSTT, clone the fork as a sibling folder and temporarily swap
 # this entry for ``{ path = "../../onnx-asr", editable = true }``.
-onnx-asr = { git = "https://github.com/dahshury/onnx-asr.git", rev = "44685a815fb69cfa763dcc139cbf17b8914b9a34" }
+onnx-asr = { git = "https://github.com/dahshury/onnx-asr.git", rev = "7e235c28b514da5bd7049d4381c2e8d52a017951" }
 
 [project.scripts]
 stt-server = "src.stt_server.server:main"
@@ -193,7 +206,7 @@ warn_no_return = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","websocket.*","websockets.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnx.*","onnxruntime.*","torch.*","transformers.*","psutil.*","nvidia.*","pynvml.*","kokoro_onnx.*"]
+module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","websocket.*","websockets.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnx.*","onnxruntime.*","torch.*","transformers.*","psutil.*","nvidia.*","pynvml.*","kokoro_onnx.*","rapidfuzz.*","jellyfish.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

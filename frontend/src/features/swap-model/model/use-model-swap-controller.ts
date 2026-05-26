@@ -1,7 +1,11 @@
 import { resolveQuantCache } from "@picker";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { providerOf } from "@/entities/cloud-stt-provider";
-import type { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
+import {
+	type useCatalogStore,
+	type useModelStateStore,
+	useModelSwapStore,
+} from "@/entities/model-catalog";
 import type { useSettingsStore } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
 import {
@@ -349,11 +353,23 @@ function applyQuantOverride(
 function applyMainSwap(args: IssueSwapArgs, quantizationChanging: boolean): void {
 	const info = args.getModel(args.value);
 	args.prevMainModelRef.current = args.previous;
+	// Synchronously open the swap-in-flight guard BEFORE settings.model
+	// changes. ``useSyncActiveModel`` short-circuits on ``activeMain !==
+	// null``; if we wait for the server's ``model_swap_started`` echo to
+	// flip it (~50ms later), the renderer's next render sees the new
+	// settings.model vs the still-stale runtimeInfo.model and "adopts"
+	// the runtime back into settings — reverting the user's pick. The
+	// regression-guard comment in use-sync-active-model.ts assumed this
+	// already happened.
+	useModelSwapStore.getState().beginSwap("main", args.previous, args.value);
 	args.update(buildMainSwapPatch(args.value, info, args.quantization, quantizationChanging));
 }
 
 function applyRealtimeSwap(args: IssueSwapArgs, quantizationChanging: boolean): void {
 	args.prevRealtimeModelRef.current = args.previous;
+	// See applyMainSwap — same race; the realtime slot has the same
+	// reconciler guard via ``activeRealtime``.
+	useModelSwapStore.getState().beginSwap("realtime", args.previous, args.value);
 	args.update(buildRealtimeSwapPatch(args.value, args.quantization, quantizationChanging));
 }
 

@@ -1,0 +1,112 @@
+---
+title: CLI & Signals
+description: Command-line flags and Unix signals for scripting WinSTT (Wayland, autostart, automation)
+---
+
+WinSTT accepts a small set of command-line flags so window managers,
+autostart scripts, and shell pipelines can drive the app without going
+through the renderer UI. On Linux and macOS, two POSIX signals
+(`SIGUSR1`, `SIGUSR2`) cover the same use cases for scripts that talk
+to PIDs instead of binaries.
+
+> **Why this exists.** Wayland compositors (Sway, Hyprland, KDE Plasma)
+> own the global-hotkey registry — apps can't grab keys directly. The
+> Wayland convention is for the WM to bind a key to a shell command,
+> which is exactly what these flags are for.
+
+## Flags
+
+All flags are **runtime-only overrides** — they never modify your
+persisted settings file. Re-launch without the flag to restore the
+default behaviour.
+
+| Flag                     | Effect                                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------- |
+| `--toggle-transcription` | Toggle recording on/off. If WinSTT is already running, the request is forwarded to that instance and the second process exits. |
+| `--cancel`               | Cancel the in-flight transcription / LLM pass on a running instance.                            |
+| `--start-hidden`         | Launch without showing the main window (the tray icon is still visible).                        |
+| `--no-tray`              | Launch without the system tray icon. Closing the main window quits the app.                     |
+| `--debug`                | Verbose terminal logging. The file log under `%APPDATA%/WinSTT/debug.log` is always verbose.    |
+| `-h`, `--help`           | Print help and exit.                                                                            |
+
+### Single-instance behaviour
+
+WinSTT enforces a single instance. Launching a second time:
+
+- **Without action flags:** raises the already-running window to the
+  foreground. (Useful as the `Exec=` line in a `.desktop` file.)
+- **With `--toggle-transcription` or `--cancel`:** the request is
+  forwarded to the running instance via Electron's
+  `app.requestSingleInstanceLock()`, then the second process exits
+  immediately. **No window is raised**, so the WM hotkey doesn't
+  shuffle your window stack.
+
+### `--start-hidden` + `--no-tray`
+
+When both flags are set, the main window would be hidden and there'd be
+no tray icon to bring it back — so the window is shown anyway.
+
+## Unix signals (Linux / macOS)
+
+Send these to the running PID. Skipped on Windows; signals are a POSIX
+concept that Win32 doesn't model.
+
+| Signal    | Effect                                          |
+| --------- | ----------------------------------------------- |
+| `SIGUSR2` | Toggle transcription (same as `--toggle-transcription`). |
+| `SIGUSR1` | Cancel the current operation (same as `--cancel`).       |
+
+```bash
+pkill -USR2 -n winstt   # toggle transcription
+pkill -USR1 -n winstt   # cancel current operation
+```
+
+`pkill -n` picks the newest matching process — important if you have a
+detached debugger or a hung CI runner sharing the binary name.
+
+## Wayland window manager examples
+
+The use case the CLI flags were built for. Bind a hotkey in your WM to
+the `--toggle-transcription` command (or send `SIGUSR2`).
+
+### Sway / i3
+
+`~/.config/sway/config`:
+
+```sh
+bindsym $mod+grave exec winstt --toggle-transcription
+bindsym $mod+shift+grave exec winstt --cancel
+```
+
+### Hyprland
+
+`~/.config/hypr/hyprland.conf`:
+
+```ini
+bind = SUPER, grave, exec, winstt --toggle-transcription
+bind = SUPER SHIFT, grave, exec, winstt --cancel
+```
+
+### KDE Plasma
+
+KRunner → System Settings → Shortcuts → Custom Shortcuts → New
+Global Shortcut → Command/URL. Set the trigger to your chosen key and
+the command to `winstt --toggle-transcription`.
+
+### GNOME
+
+Settings → Keyboard → Custom Shortcuts → `+`. Set the command to
+`winstt --toggle-transcription` and bind your key.
+
+## Autostart with tray-only
+
+For users who want WinSTT to start with the desktop session but never
+flash the window:
+
+```sh
+winstt --start-hidden
+```
+
+Drop that command into your DE's autostart entry (`.desktop` file's
+`Exec=` line, or your WM's `exec-once` directive). The tray icon
+appears immediately; the window is one click away.

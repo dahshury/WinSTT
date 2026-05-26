@@ -421,7 +421,10 @@
     "autoAddDecline": "Dismiss",
     "emptyState": "No dictionary entries yet",
     "clearTitle": "Delete All Dictionary Entries?",
-    "clearDescription": "All dictionary entries will be permanently removed. This cannot be undone."
+    "clearDescription": "All dictionary entries will be permanently removed. This cannot be undone.",
+    "thresholdLabel": "Correction strictness",
+    "thresholdCaption": "Maximum fuzzy-match score the server-side corrector will accept. Lower = stricter (fewer false replacements).",
+    "thresholdTooltip": "The deterministic corrector runs on the server right after transcription and BEFORE the LLM cleanup. Anything it misses still gets a second pass through the LLM modifiers."
   },
   "swapFailure": {
     "headline": "Couldn't load {model}",

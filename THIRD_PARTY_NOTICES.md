@@ -37,7 +37,7 @@ this file.
 | NVIDIA NeMo Parakeet (CTC / RNNT / TDT)  | CC-BY-4.0           | Attribution required               |
 | NVIDIA NeMo Canary 1B v2                 | CC-BY-4.0           | Attribution required               |
 | NVIDIA NeMo FastConformer (Russian)      | CC-BY-4.0           | Attribution required               |
-| Sber/Salute GigaAM v2 / v3               | MIT                 |                                    |
+| Sber/Salute GigaAM v3                    | MIT                 |                                    |
 | Vosk / Alphacephei Russian models        | Apache-2.0          |                                    |
 | T-Bank T-One                             | Apache-2.0          |                                    |
 | Kokoro-82M (TTS model)                   | Apache-2.0          |                                    |
@@ -128,9 +128,9 @@ catalogue is defined in `server/src/recorder/domain/catalog.json`.
 ### NVIDIA NeMo — Parakeet / Canary / FastConformer
 
 - Models: `nemo-parakeet-ctc-0.6b`, `nemo-parakeet-rnnt-0.6b`,
-  `nemo-parakeet-tdt-0.6b-v2`, `nemo-parakeet-tdt-0.6b-v3`,
-  `nemo-canary-1b-v2`, `nemo-fastconformer-ru-ctc`,
-  `nemo-fastconformer-ru-rnnt`.
+  `nemo-parakeet-tdt-0.6b-v3`,
+  `nemo-canary-1b-v2`, `nemo-canary-180m-flash`,
+  `nemo-fastconformer-ru-ctc`, `nemo-fastconformer-ru-rnnt`.
 - Copyright (c) NVIDIA Corporation. All rights reserved.
 - License: **Creative Commons Attribution 4.0 International (CC-BY-4.0).**
   <https://creativecommons.org/licenses/by/4.0/>
@@ -139,8 +139,8 @@ catalogue is defined in `server/src/recorder/domain/catalog.json`.
 
 ### Sber/Salute GigaAM
 
-- Models: `gigaam-v2-ctc`, `gigaam-v2-rnnt`, `gigaam-v3-ctc`,
-  `gigaam-v3-rnnt`, `gigaam-v3-e2e-ctc`, `gigaam-v3-e2e-rnnt`.
+- Models: `gigaam-v3-ctc`, `gigaam-v3-rnnt`,
+  `gigaam-v3-e2e-ctc`, `gigaam-v3-e2e-rnnt`.
 - Copyright (c) Sber. License: MIT.
   <https://github.com/salute-developers/GigaAM>
 

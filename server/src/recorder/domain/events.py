@@ -25,7 +25,19 @@ class TranscriptionStarted(RecorderEvent):
 
 @dataclass(frozen=True)
 class TranscriptionCompleted(RecorderEvent):
+    """Final transcription is ready for delivery.
+
+    ``wav_path`` (when non-empty) is the absolute path of the WAV file just
+    written by the recorder. Populated only when
+    :class:`src.recorder.domain.config.HistoryConfig.save_wav` is true; the
+    Electron history relay subscribes to this event and inserts a matching
+    SQLite row referencing the file. Empty string means "no audio saved" —
+    the WS server forwards that as a missing field so downstream consumers
+    that don't care about persistence aren't forced to handle a sentinel.
+    """
+
     text: str
+    wav_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -181,6 +193,53 @@ class ModelSwapFailed(RecorderEvent):
 
     kind: str
     name: str
+    reason: str
+    category: str = "unknown"
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class DiarizationToggleStarted(RecorderEvent):
+    """A runtime diarization on/off transition has begun.
+
+    Fires when ``RecorderService.request_diarization_toggle(enabled)`` enters
+    its background worker. ``enabled`` is the *target* state — ``True`` when
+    we're spinning the diarizer up, ``False`` when we're tearing it down.
+    The renderer shows a "warming" spinner on the diarization toggle until
+    one of the terminal events arrives.
+    """
+
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class DiarizationToggleCompleted(RecorderEvent):
+    """A runtime diarization transition committed successfully.
+
+    For ``enabled=True``, the diarizer's ORT sessions are loaded and the
+    next utterance will receive speaker labels. For ``enabled=False``, the
+    diarizer has been torn down and freed (RAM/VRAM is reclaimed).
+    """
+
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class DiarizationToggleFailed(RecorderEvent):
+    """A runtime diarization transition aborted — load, network, or supersede.
+
+    The diarizer's state is unchanged on failure: if the toggle was an
+    enable, ``self._diarizer`` remains ``None``; if a disable, the
+    previous diarizer stays wired. ``category`` reuses the
+    :class:`src.recorder.domain.swap_errors.SwapErrorCategory` vocabulary
+    so the frontend can share its toast-variant lookup with model-swap
+    failures. ``detail`` carries the raw exception text for diagnostics.
+
+    ``enabled`` reflects the *target* state of the failed attempt so the
+    renderer knows which direction to revert its toggle to.
+    """
+
+    enabled: bool
     reason: str
     category: str = "unknown"
     detail: str = ""

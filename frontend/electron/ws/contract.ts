@@ -59,6 +59,56 @@ const wakewordDetectedSchema = z.object({
 	type: z.literal("wakeword_detected"),
 });
 
+const modelSwapStartedSchema = z.object({
+	type: z.literal("model_swap_started"),
+	kind: z.enum(["main", "realtime"]),
+	name: z.string(),
+});
+
+const modelSwapCompletedSchema = z.object({
+	type: z.literal("model_swap_completed"),
+	kind: z.enum(["main", "realtime"]),
+	name: z.string(),
+});
+
+const modelSwapFailedSchema = z.object({
+	type: z.literal("model_swap_failed"),
+	kind: z.enum(["main", "realtime"]),
+	name: z.string(),
+	reason: z.string(),
+	category: z.string().optional(),
+	detail: z.string().optional(),
+});
+
+const modelCacheChangedSchema = z.object({
+	type: z.literal("model_cache_changed"),
+	model_id: z.string(),
+});
+
+const modelCatalogUpdatedSchema = z.object({
+	type: z.literal("model_catalog_updated"),
+	models: z.array(z.unknown()),
+});
+
+const diarizationToggleStartedSchema = z.object({
+	type: z.literal("diarization_toggle_started"),
+	enabled: z.boolean(),
+});
+
+const diarizationToggleCompletedSchema = z.object({
+	type: z.literal("diarization_toggle_completed"),
+	enabled: z.boolean(),
+	message: z.string().optional(),
+});
+
+const diarizationToggleFailedSchema = z.object({
+	type: z.literal("diarization_toggle_failed"),
+	enabled: z.boolean(),
+	reason: z.string(),
+	category: z.string().optional(),
+	detail: z.string().optional(),
+});
+
 // ── Union + public types ─────────────────────────────────────────────
 
 const serverEventSchema = z.discriminatedUnion("type", [
@@ -71,6 +121,14 @@ const serverEventSchema = z.discriminatedUnion("type", [
 	audioLevelSchema,
 	modelDownloadProgressSchema,
 	wakewordDetectedSchema,
+	modelSwapStartedSchema,
+	modelSwapCompletedSchema,
+	modelSwapFailedSchema,
+	modelCacheChangedSchema,
+	modelCatalogUpdatedSchema,
+	diarizationToggleStartedSchema,
+	diarizationToggleCompletedSchema,
+	diarizationToggleFailedSchema,
 ]);
 
 export type WsServerEvent = z.infer<typeof serverEventSchema>;
@@ -86,6 +144,14 @@ export const SUPPORTED_EVENT_TYPES = [
 	"audio_level",
 	"model_download_progress",
 	"wakeword_detected",
+	"model_swap_started",
+	"model_swap_completed",
+	"model_swap_failed",
+	"model_cache_changed",
+	"model_catalog_updated",
+	"diarization_toggle_started",
+	"diarization_toggle_completed",
+	"diarization_toggle_failed",
 ] as const;
 
 export type SupportedEventType = (typeof SUPPORTED_EVENT_TYPES)[number];

@@ -1,3 +1,11 @@
+// biome-ignore-all assist/source/organizeImports: ./portable-boot MUST stay
+// as the FIRST import — it overrides app.setPath("userData", …) before any
+// downstream module (electron-store, electron-log, sentry-electron, our
+// ./lib/store) caches the OS default. Re-sorting it later in the import
+// block would break portable mode by letting those modules cache the wrong
+// path. See ./portable-boot.ts for the full rationale.
+import { portableState } from "./portable-boot";
+
 import path from "node:path";
 import {
 	app,
@@ -29,6 +37,7 @@ import { setupDevicePickerHandlers } from "./ipc/device-picker-window";
 import { setupDiagBundleHandler } from "./ipc/diag-bundle";
 import { setupDialogHandlers } from "./ipc/dialog";
 import { setupFileTranscribeHandlers } from "./ipc/file-transcribe";
+import { setupHistoryIpc } from "./ipc/history";
 import { type HotkeyComboAction, setupHotkeyHandlers } from "./ipc/hotkey";
 import {
 	decryptIpcPayload,
@@ -125,6 +134,7 @@ let cleanupSystemLocale: (() => void) | null = null;
 let cleanupDiagBundle: (() => void) | null = null;
 let cleanupAbout: (() => void) | null = null;
 let cleanupSoundLibrary: (() => void) | null = null;
+let cleanupHistory: (() => void) | null = null;
 let autoUpdateCheckTimer: ReturnType<typeof setInterval> | null = null;
 const secureIpcKey = generateIpcPayloadKey();
 const updaterStatusHistory = createUpdaterStatusHistory({ maxEntries: 200 });
@@ -549,10 +559,22 @@ app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
 // E2E runs need their own userData path so they don't fight a parallel
 // dev session for the single-instance lock (and so settings don't leak
-// between test runs).
-if (process.env.WINSTT_E2E === "1") {
+// between test runs). Portable mode wins if both are active — E2E is a
+// dev-only path and clobbering the portable Data/ dir would defeat the
+// whole point of an isolated USB-stick install.
+if (process.env.WINSTT_E2E === "1" && !portableState.isPortable) {
 	const e2eUserData = path.join(app.getPath("temp"), `winstt-e2e-${process.pid}`);
 	app.setPath("userData", e2eUserData);
+}
+
+// Surface the portable-mode outcome through dbg() now that the logger is
+// fully wired. The initial decision was already logged via electron-log's
+// `portable` scope in portable-boot.ts; this gives a single line in the
+// canonical `debug-log` tag so a quick grep finds it.
+if (portableState.isPortable) {
+	dbg("portable", `active — data dir: ${portableState.dataDir}`);
+} else {
+	dbg("portable", "inactive (no valid marker found next to exe)");
 }
 
 // ── Single-instance lock ─────────────────────────────────────────────
@@ -748,6 +770,8 @@ if (gotTheLock) {
 		cleanupAbout = null;
 		cleanupSoundLibrary?.();
 		cleanupSoundLibrary = null;
+		cleanupHistory?.();
+		cleanupHistory = null;
 		disposeGeneralSettingsWatcher?.();
 		disposeGeneralSettingsWatcher = null;
 		cleanupSettingsHandlers();
@@ -811,6 +835,38 @@ function setupGlobalIpcHandlers() {
 	cleanupDiagBundle = setupDiagBundleHandler();
 	cleanupAbout = setupAboutHandlers();
 	cleanupSoundLibrary = initSoundLibrary();
+	// SQLite-backed transcription history (history.db + recordings/ under
+	// userData). Honours the user's retention setting on an hourly sweeper
+	// + at startup. Disposed in app.before-quit so the WAL flushes cleanly.
+	cleanupHistory = setupHistoryIpc({
+		getRetention: () => {
+			const fromNewKey = getStoreValue("general.recordingRetentionPeriod");
+			const period =
+				typeof fromNewKey === "string" ? fromNewKey : getStoreValue("general.recordingRetention");
+			if (
+				period === "never" ||
+				period === "preserveLimit" ||
+				period === "cap" ||
+				period === "days3" ||
+				period === "weeks2" ||
+				period === "months3"
+			) {
+				return period;
+			}
+			return "preserveLimit";
+		},
+		getLimit: () => {
+			const fromNewKey = Number(getStoreValue("general.historyLimit"));
+			if (Number.isFinite(fromNewKey) && fromNewKey > 0) {
+				return Math.floor(fromNewKey);
+			}
+			const legacy = Number(getStoreValue("general.historyMaxEntries"));
+			if (Number.isFinite(legacy) && legacy > 0) {
+				return Math.floor(legacy);
+			}
+			return 5;
+		},
+	}).dispose;
 }
 
 function setupAppMenuHandlers(): () => void {

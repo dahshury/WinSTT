@@ -59,6 +59,84 @@
     "approximate": false,
     "note": "OpenAI Whisper paper Table 1"
   },
+  "breeze-asr-25": {
+    "params": 1545107214,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph (Whisper-large-v2 fine-tune)"
+  },
+  "moonshine-tiny": {
+    "params": 27092835,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph (encoder + non-cached decoder)"
+  },
+  "moonshine-base": {
+    "params": 61514019,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph (encoder + non-cached decoder)"
+  },
+  "moonshine-tiny-zh": {
+    "params": 27092835,
+    "source": "published",
+    "approximate": true,
+    "note": "shares tiny architecture (per-language fine-tune)"
+  },
+  "moonshine-tiny-ja": {
+    "params": 27092835,
+    "source": "published",
+    "approximate": true,
+    "note": "shares tiny architecture (per-language fine-tune)"
+  },
+  "moonshine-tiny-ko": {
+    "params": 27092835,
+    "source": "published",
+    "approximate": true,
+    "note": "shares tiny architecture (per-language fine-tune)"
+  },
+  "moonshine-tiny-ar": {
+    "params": 27092835,
+    "source": "published",
+    "approximate": true,
+    "note": "shares tiny architecture (per-language fine-tune)"
+  },
+  "moonshine-tiny-vi": {
+    "params": 27092835,
+    "source": "published",
+    "approximate": true,
+    "note": "shares tiny architecture (per-language fine-tune)"
+  },
+  "moonshine-base-zh": {
+    "params": 61514019,
+    "source": "published",
+    "approximate": true,
+    "note": "shares base architecture (per-language fine-tune)"
+  },
+  "moonshine-base-ja": {
+    "params": 61514019,
+    "source": "published",
+    "approximate": true,
+    "note": "shares base architecture (per-language fine-tune)"
+  },
+  "moonshine-base-ko": {
+    "params": 61514019,
+    "source": "published",
+    "approximate": true,
+    "note": "shares base architecture (per-language fine-tune)"
+  },
+  "cohere-transcribe": {
+    "params": 2000000000,
+    "source": "published",
+    "approximate": true,
+    "note": "Cohere Transcribe model card (2B params)"
+  },
+  "granite-4.0-1b-speech": {
+    "params": 1243916628,
+    "source": "measured",
+    "approximate": true,
+    "note": "from q4 graph excluding QDQ scales (audio_encoder + embed_tokens + decoder_model_merged)"
+  },
   "lite-whisper-large-v3-turbo": {
     "params": 534359083,
     "source": "measured",
@@ -89,12 +167,6 @@
     "approximate": false,
     "note": "NVIDIA NeMo parakeet_rnnt_0.6b card"
   },
-  "nemo-parakeet-tdt-0.6b-v2": {
-    "params": 600000000,
-    "source": "published",
-    "approximate": false,
-    "note": "NVIDIA NeMo parakeet_tdt_0.6b_v2 card"
-  },
   "nemo-parakeet-tdt-0.6b-v3": {
     "params": 626983558,
     "source": "measured",
@@ -107,6 +179,12 @@
     "approximate": false,
     "note": "NVIDIA NeMo canary-1b-v2 card (978M)"
   },
+  "nemo-canary-180m-flash": {
+    "params": 194168492,
+    "source": "measured",
+    "approximate": false,
+    "note": "from default fp32 graph"
+  },
   "nemo-fastconformer-ru-ctc": {
     "params": 109270705,
     "source": "measured",
@@ -115,18 +193,6 @@
   },
   "nemo-fastconformer-ru-rnnt": {
     "params": 114078382,
-    "source": "measured",
-    "approximate": true,
-    "note": "from quantized graph (slightly inflated by QDQ overhead)"
-  },
-  "gigaam-v2-ctc": {
-    "params": 232561341,
-    "source": "measured",
-    "approximate": true,
-    "note": "from quantized graph (slightly inflated by QDQ overhead)"
-  },
-  "gigaam-v2-rnnt": {
-    "params": 233727546,
     "source": "measured",
     "approximate": true,
     "note": "from quantized graph (slightly inflated by QDQ overhead)"

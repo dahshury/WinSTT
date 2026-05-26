@@ -4,36 +4,76 @@
 
 @source "../../node_modules/fumadocs-ui/dist/**/*.js";
 
-/* Force dark mode only */
+/* ── Docs theme — mirrors the WinSTT app (frontend/src/app/styles/globals.css)
+   Substrate: blue-tinted dark (hue ~265, OKLch).
+   Accent:    Docker Blue oklch(62% 0.19 260) — matches the app's --color-accent.
+   Foreground: blue-tinted whites — same hue/chroma as the app's
+   --color-foreground stack. */
 .dark,
 :root {
-  --color-fd-background: hsl(240, 10%, 3.9%);
-  --color-fd-foreground: hsl(0, 0%, 98%);
-  --color-fd-muted: hsl(240, 4%, 8%);
-  --color-fd-muted-foreground: hsla(240, 5%, 64.9%, 0.8);
-  --color-fd-popover: hsl(240, 5%, 8.6%);
-  --color-fd-popover-foreground: hsl(0, 0%, 85.9%);
-  --color-fd-card: hsl(240, 5%, 7.3%);
-  --color-fd-card-foreground: hsl(0, 0%, 98%);
-  --color-fd-border: hsla(240, 3.8%, 20%, 35%);
-  --color-fd-primary: hsl(43, 96%, 56%);
-  --color-fd-primary-foreground: hsl(240, 10%, 3.9%);
-  --color-fd-secondary: hsl(240, 4%, 10%);
-  --color-fd-secondary-foreground: hsl(0, 0%, 92%);
-  --color-fd-accent: hsl(240, 4%, 16%);
-  --color-fd-accent-foreground: hsl(0, 0%, 95%);
-  --color-fd-ring: hsl(43, 96%, 45%);
+  /* Brand tokens — read by inline styles via var(--brand-*) */
+  --brand-accent: oklch(62% 0.19 260);
+  --brand-accent-hover: oklch(70% 0.155 255);
+  --brand-accent-soft: oklch(62% 0.19 260 / 0.08);
+  --brand-accent-glow: oklch(62% 0.19 260 / 0.15);
+  --brand-accent-fg: oklch(7.5% 0.015 265);
+  --brand-teal: oklch(71% 0.13 245);
+  --brand-success: oklch(68% 0.17 150);
+  --brand-success-soft: oklch(68% 0.17 150 / 0.1);
+
+  /* Surface scale — blue-tinted oklch, same hue as the app */
+  --surface-0: oklch(7.5% 0.015 265);
+  --surface-1: oklch(9.5% 0.015 265);
+  --surface-2: oklch(12% 0.015 265);
+  --surface-3: oklch(16% 0.015 265);
+  --surface-4: oklch(20% 0.013 265);
+
+  /* Foreground scale — blue-tinted whites */
+  --fg-strong: oklch(94% 0.015 265);
+  --fg: oklch(86% 0.02 263);
+  --fg-secondary: oklch(73% 0.025 260);
+  --fg-muted: oklch(55% 0.035 255);
+  --fg-dim: oklch(38% 0.035 260);
+
+  /* Border / divider — same recipe as the app */
+  --border: oklch(19% 0.015 260);
+  --divider: oklch(94% 0.015 265 / 0.08);
+
+  /* Fumadocs token overrides */
+  --color-fd-background: var(--surface-0);
+  --color-fd-foreground: var(--fg-strong);
+  --color-fd-muted: var(--surface-2);
+  --color-fd-muted-foreground: var(--fg-muted);
+  --color-fd-popover: var(--surface-2);
+  --color-fd-popover-foreground: var(--fg);
+  --color-fd-card: var(--surface-1);
+  --color-fd-card-foreground: var(--fg-strong);
+  --color-fd-border: oklch(19% 0.015 260 / 0.55);
+  --color-fd-primary: var(--brand-accent);
+  --color-fd-primary-foreground: var(--brand-accent-fg);
+  --color-fd-secondary: var(--surface-2);
+  --color-fd-secondary-foreground: var(--fg-strong);
+  --color-fd-accent: var(--surface-3);
+  --color-fd-accent-foreground: var(--fg-strong);
+  --color-fd-ring: oklch(70% 0.18 260);
 }
 
 #nd-sidebar [data-active="true"],
 .bg-fd-primary\/10.text-fd-primary {
-  background-color: hsl(240, 4%, 18%);
+  background-color: var(--surface-3);
   color: var(--color-fd-foreground);
-  box-shadow: inset 2px 0 0 0 var(--color-fd-primary);
+  box-shadow: inset 2px 0 0 0 var(--brand-accent);
 }
 
 :root {
   --fd-layout-width: 1400px;
+}
+
+body {
+  font-family:
+    "Geist", var(--font-geist-sans, system-ui), -apple-system, sans-serif;
+  background: var(--surface-0);
+  color: var(--fg-strong);
 }
 
 body::before {
@@ -55,12 +95,17 @@ body::before {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsla(240, 3.8%, 20%, 50%);
+  background: var(--fg-dim);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(240, 3.7%, 25%);
+  background: var(--fg-muted);
+}
+
+::selection {
+  color: var(--fg-strong);
+  background: oklch(62% 0.19 260 / 0.3);
 }
 
 [data-theme-toggle],
@@ -91,66 +136,52 @@ button[aria-label="Toggle Theme"] {
 #nd-sidebar p {
   margin-top: 16px !important;
   padding-top: 12px;
-  border-top: 1px solid hsla(240, 3.8%, 20%, 0.25);
+  border-top: 1px solid var(--divider);
 }
 
-/* ── App mock waveform animations ── */
-@keyframes wave-drift {
-  0% { transform: translateX(0); }
-  50% { transform: translateX(-30px); }
-  100% { transform: translateX(0); }
-}
-
-@keyframes wave-drift-reverse {
-  0% { transform: translateX(0); }
-  50% { transform: translateX(20px); }
-  100% { transform: translateX(0); }
-}
-
-@keyframes wave-breathe {
-  0% { opacity: 0.85; }
-  50% { opacity: 0.65; }
-  100% { opacity: 0.85; }
+/* ── App mock animations ──
+   The hero AppMock mirrors the real audio-visualizer "bar" mode plus the
+   connection indicator pulse. Bars sway between 30% and full height with a
+   sequencer feel (per-bar animation-delay applied inline). */
+@keyframes mock-bar-sway {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
 }
 
 @keyframes glow-pulse {
-  0% { opacity: 0.03; }
-  50% { opacity: 0.07; }
-  100% { opacity: 0.03; }
-}
-
-@keyframes cursor-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.85;
+  }
 }
 
 @keyframes status-pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 6px hsl(43, 96%, 56%); }
-  50% { opacity: 0.4; box-shadow: 0 0 2px hsl(43, 96%, 56%); }
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 6px oklch(68% 0.17 150);
+  }
+  50% {
+    opacity: 0.45;
+    box-shadow: 0 0 2px oklch(68% 0.17 150);
+  }
 }
 
-.mock-wave-primary {
-  animation: wave-drift 8s ease-in-out infinite;
-}
-
-.mock-wave-secondary {
-  animation: wave-drift-reverse 10s ease-in-out infinite;
-}
-
-.mock-wave-tertiary {
-  animation: wave-drift 12s ease-in-out infinite;
-}
-
-.mock-wave-fill {
-  animation: wave-drift 9s ease-in-out infinite, wave-breathe 6s ease-in-out infinite;
+.mock-bar {
+  transform-origin: center;
+  animation: mock-bar-sway 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
 .mock-glow-pulse {
-  animation: glow-pulse 4s ease-in-out infinite;
-}
-
-.mock-cursor-blink {
-  animation: cursor-blink 1s step-end infinite;
+  animation: glow-pulse 3.2s ease-in-out infinite;
 }
 
 .mock-status-pulse {
@@ -171,30 +202,32 @@ button[aria-label="Toggle Theme"] {
   padding: 1px;
   background: linear-gradient(
     135deg,
-    hsla(43, 96%, 56%, 0) 0%,
-    hsla(43, 96%, 56%, 0) 100%
+    oklch(62% 0.19 260 / 0) 0%,
+    oklch(62% 0.19 260 / 0) 100%
   );
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
   mask-composite: exclude;
   pointer-events: none;
   transition: background 0.3s ease;
 }
 
 .feature-card:hover {
-  border-color: hsla(43, 96%, 56%, 0.15) !important;
-  box-shadow: 0 0 30px -10px hsla(43, 96%, 56%, 0.08);
+  border-color: oklch(62% 0.19 260 / 0.25) !important;
+  box-shadow: 0 0 30px -10px oklch(62% 0.19 260 / 0.18);
 }
 
 .feature-card:hover::before {
   background: linear-gradient(
     135deg,
-    hsla(43, 96%, 56%, 0.2) 0%,
-    hsla(43, 96%, 56%, 0) 50%,
-    hsla(43, 96%, 56%, 0.1) 100%
+    oklch(62% 0.19 260 / 0.28) 0%,
+    oklch(62% 0.19 260 / 0) 50%,
+    oklch(62% 0.19 260 / 0.14) 100%
   );
 }
 
 .feature-card:hover .feature-icon {
-  background: hsla(43, 96%, 56%, 0.14) !important;
-  box-shadow: 0 0 20px hsla(43, 96%, 56%, 0.08);
+  background: oklch(62% 0.19 260 / 0.16) !important;
+  box-shadow: 0 0 20px oklch(62% 0.19 260 / 0.12);
 }

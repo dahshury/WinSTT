@@ -744,6 +744,40 @@ export function pasteText(text: string): void {
 	enqueuePaste(text, Date.now());
 }
 
+/**
+ * Send a "submit" key combo into the currently focused window. Used by the
+ * auto-submit feature to fire chat-box send buttons (Enter) or IDE chat
+ * prompts (Ctrl+Enter) right after a dictation paste lands.
+ *
+ * Implementation: spawns PowerShell with `SendKeys` — slow (~300 ms cold
+ * start) but works without new native deps and respects current focus.
+ * Chained onto the in-flight paste so it fires AFTER the paste characters
+ * have been delivered. Failure is silent — auto-submit is opt-in, and a
+ * stale UAC / blocked PowerShell shouldn't surface a user-facing error.
+ */
+export function injectSubmitKey(key: "enter" | "ctrl_enter"): void {
+	const psSequence = key === "ctrl_enter" ? "^{ENTER}" : "{ENTER}";
+	const tail = pasteInFlight ?? Promise.resolve();
+	const next = tail.then(
+		() =>
+			new Promise<void>((resolve) => {
+				const child = spawn(
+					"powershell",
+					[
+						"-NoProfile",
+						"-NonInteractive",
+						"-Command",
+						`Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.SendKeys]::SendWait('${psSequence}')`,
+					],
+					{ stdio: "ignore", windowsHide: true }
+				);
+				child.once("exit", () => resolve());
+				child.once("error", () => resolve());
+			})
+	);
+	pasteInFlight = next.catch(() => undefined);
+}
+
 /** Test hook: await any pending paste work. */
 export function flushPastePending(): Promise<void> {
 	return pasteInFlight ?? Promise.resolve();
