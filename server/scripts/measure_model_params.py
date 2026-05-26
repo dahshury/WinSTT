@@ -25,8 +25,6 @@ OUTPUT_PATH = Path(__file__).parent / "_model_param_counts.json"
 
 # onnx-asr resolver bare-name -> HF repo mapping (from examples/onnx-asr/.../resolver.py).
 RESOLVER_REPOS: dict[str, str] = {
-    "gigaam-v3-ctc": "istupakov/gigaam-v3-onnx",
-    "gigaam-v3-rnnt": "istupakov/gigaam-v3-onnx",
     "gigaam-v3-e2e-ctc": "istupakov/gigaam-v3-onnx",
     "gigaam-v3-e2e-rnnt": "istupakov/gigaam-v3-onnx",
     "nemo-fastconformer-ru-ctc": "istupakov/stt_ru_fastconformer_hybrid_large_pc_onnx",
@@ -141,8 +139,6 @@ NEMO_CONFORMER_TDT_FILES = ["encoder-model.onnx", "decoder_joint-model.onnx"]
 NEMO_CONFORMER_AED_FILES = ["encoder-model.onnx", "decoder-model.onnx"]
 MOONSHINE_FILES = ["encoder_model.onnx", "decoder_model.onnx"]
 GRANITE_FILES = ["audio_encoder.onnx", "embed_tokens.onnx", "decoder_model_merged.onnx"]
-GIGAAM_V3_CTC_FILES = ["v3_ctc.onnx"]
-GIGAAM_V3_RNNT_FILES = ["v3_rnnt_encoder.onnx", "v3_rnnt_decoder.onnx", "v3_rnnt_joint.onnx"]
 GIGAAM_V3_E2E_CTC_FILES = ["v3_e2e_ctc.onnx"]
 GIGAAM_V3_E2E_RNNT_FILES = ["v3_e2e_rnnt_encoder.onnx", "v3_e2e_rnnt_decoder.onnx", "v3_e2e_rnnt_joint.onnx"]
 VOSK_FILES = ["encoder.onnx", "decoder.onnx", "joiner.onnx"]
@@ -164,8 +160,6 @@ PUBLISHED: dict[str, tuple[int, str]] = {
     "nemo-parakeet-rnnt-0.6b": (600_000_000, "NVIDIA NeMo parakeet_rnnt_0.6b card"),
     "nemo-canary-1b-v2": (978_000_000, "NVIDIA NeMo canary-1b-v2 card (978M)"),
     # GigaAM v3 family — Sber Salute model cards.
-    "gigaam-v3-ctc": (243_000_000, "Sber GigaAM-v3 model card"),
-    "gigaam-v3-rnnt": (243_000_000, "Sber GigaAM-v3 model card"),
     "gigaam-v3-e2e-ctc": (243_000_000, "Sber GigaAM-v3 E2E model card"),
     "gigaam-v3-e2e-rnnt": (243_000_000, "Sber GigaAM-v3 E2E model card"),
 }
@@ -205,10 +199,6 @@ def _files_for(model_id: str) -> list[str] | None:
         return ["model.onnx"]  # hybrid CTC head packaged as monolithic graph
     if model_id == "nemo-fastconformer-ru-rnnt":
         return ["encoder-model.onnx", "decoder_joint-model.onnx"]
-    if model_id == "gigaam-v3-ctc":
-        return GIGAAM_V3_CTC_FILES
-    if model_id == "gigaam-v3-rnnt":
-        return GIGAAM_V3_RNNT_FILES
     if model_id == "gigaam-v3-e2e-ctc":
         return GIGAAM_V3_E2E_CTC_FILES
     if model_id == "gigaam-v3-e2e-rnnt":

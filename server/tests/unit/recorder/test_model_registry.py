@@ -54,11 +54,11 @@ class TestModelCatalog:
             )
 
     def test_onnx_asr_models_present(self, catalog: ModelCatalog) -> None:
-        # Older parakeet-tdt-v2 and gigaam-v2 entries were removed in favour of
-        # their v3 successors (same architecture, strictly improved). Older
-        # versions are intentionally NOT in the catalog — they'd clutter the
-        # picker with options that are dominated on every axis by a newer
-        # sibling.
+        # Catalog excludes older entries dominated on every axis by a newer
+        # sibling: parakeet-tdt-v2 (→ v3), gigaam-v2-{ctc,rnnt} (→ v3), and
+        # gigaam-v3-{ctc,rnnt} (→ v3-e2e-{ctc,rnnt} — Sber's end-to-end
+        # retraining of the same encoder has strictly better WER on general
+        # transcription with identical compute and language coverage).
         onnx_ids = [
             "nemo-parakeet-ctc-0.6b",
             "nemo-parakeet-rnnt-0.6b",
@@ -68,8 +68,6 @@ class TestModelCatalog:
             "breeze-asr-25",
             "nemo-fastconformer-ru-ctc",
             "nemo-fastconformer-ru-rnnt",
-            "gigaam-v3-ctc",
-            "gigaam-v3-rnnt",
             "gigaam-v3-e2e-ctc",
             "gigaam-v3-e2e-rnnt",
             "alphacep/vosk-model-ru",
@@ -97,7 +95,7 @@ class TestModelCatalog:
         # Every catalog entry now routes through onnx-asr post Track B step 1.
         assert catalog.get_backend("tiny") == TranscriberBackend.ONNX_ASR
         assert catalog.get_backend("nemo-parakeet-ctc-0.6b") == TranscriberBackend.ONNX_ASR
-        assert catalog.get_backend("gigaam-v3-ctc") == TranscriberBackend.ONNX_ASR
+        assert catalog.get_backend("gigaam-v3-e2e-ctc") == TranscriberBackend.ONNX_ASR
 
     def test_get_backend_defaults_to_onnx_asr_for_unknown(self, catalog: ModelCatalog) -> None:
         """Unknown IDs fall through to onnx-asr — the resolver will then either
@@ -147,7 +145,7 @@ class TestModelCatalog:
         assert info.param_count == 978_000_000
 
     def test_gigaam_models_are_russian(self, catalog: ModelCatalog) -> None:
-        info = catalog.get("gigaam-v3-ctc")
+        info = catalog.get("gigaam-v3-e2e-ctc")
         assert info is not None
         assert info.languages == ["ru"]
         assert info.family == "gigaam"
@@ -257,11 +255,11 @@ class TestModelCatalog:
         assert info.available_quantizations == ["", "int8"]
 
     def test_gigaam_ships_default_and_int8(self, catalog: ModelCatalog) -> None:
-        """``istupakov/gigaam-v3-onnx`` ships both ``v3_ctc.onnx`` and
-        ``v3_ctc.int8.onnx`` (verified via HF API in the catalog refresh
+        """``istupakov/gigaam-v3-onnx`` ships both ``v3_e2e_ctc.onnx`` and
+        ``v3_e2e_ctc.int8.onnx`` (verified via HF API in the catalog refresh
         script). The picker exposes both — the old "default only" entry
         was outdated catalog data, not an intentional curation choice."""
-        info = catalog.get("gigaam-v3-ctc")
+        info = catalog.get("gigaam-v3-e2e-ctc")
         assert info is not None
         assert info.available_quantizations == ["", "int8"]
 
@@ -333,7 +331,7 @@ class TestModelCatalog:
 
     def test_to_dicts_cuda_handles_models_with_only_default(self, catalog: ModelCatalog) -> None:
         """Models that only ship fp32 stay loadable on CUDA — the empty-string default survives."""
-        giga = next(d for d in catalog.to_dicts(device="cuda") if d["id"] == "gigaam-v3-ctc")
+        giga = next(d for d in catalog.to_dicts(device="cuda") if d["id"] == "gigaam-v3-e2e-ctc")
         assert giga["available_quantizations"] == [""]
 
     def test_to_dicts_cpu_does_not_filter(self, catalog: ModelCatalog) -> None:
@@ -349,7 +347,7 @@ class TestModelCatalog:
         # Empty language = auto-detect; every model accepts that.
         assert catalog.is_language_compatible("tiny.en", "") is True
         assert catalog.is_language_compatible("large-v3", "") is True
-        assert catalog.is_language_compatible("gigaam-v3-ctc", "") is True
+        assert catalog.is_language_compatible("gigaam-v3-e2e-ctc", "") is True
 
     def test_is_language_compatible_unknown_model_passes(self, catalog: ModelCatalog) -> None:
         # Catalog is not exhaustive — onnx-asr accepts raw HF repo paths.
@@ -385,8 +383,8 @@ class TestModelCatalog:
         assert catalog.is_language_compatible("tiny.en", "fr") is False
 
     def test_is_language_compatible_russian_only_models(self, catalog: ModelCatalog) -> None:
-        assert catalog.is_language_compatible("gigaam-v3-ctc", "ru") is True
-        assert catalog.is_language_compatible("gigaam-v3-ctc", "en") is False
+        assert catalog.is_language_compatible("gigaam-v3-e2e-ctc", "ru") is True
+        assert catalog.is_language_compatible("gigaam-v3-e2e-ctc", "en") is False
         assert catalog.is_language_compatible("t-tech/t-one", "ru") is True
         assert catalog.is_language_compatible("t-tech/t-one", "en") is False
 
@@ -429,7 +427,7 @@ class TestModelCatalog:
         assert ModelCatalog._accepts_any_language(info) is False
 
     def test_is_universal_empty_language(self, catalog: ModelCatalog) -> None:
-        assert catalog._is_universal("gigaam-v3-ctc", "") is True
+        assert catalog._is_universal("gigaam-v3-e2e-ctc", "") is True
 
     def test_is_universal_unknown_model(self, catalog: ModelCatalog) -> None:
         assert catalog._is_universal("unknown/model-xyz", "en") is True
@@ -443,7 +441,7 @@ class TestModelCatalog:
         assert catalog.is_language_compatible("large-v3", "es") is True
 
     def test_is_universal_constrained_known_model(self, catalog: ModelCatalog) -> None:
-        assert catalog._is_universal("gigaam-v3-ctc", "en") is False
+        assert catalog._is_universal("gigaam-v3-e2e-ctc", "en") is False
 
 
 def _fake_path(slug: str) -> Path:

@@ -197,18 +197,6 @@
     "approximate": true,
     "note": "from quantized graph (slightly inflated by QDQ overhead)"
   },
-  "gigaam-v3-ctc": {
-    "params": 243000000,
-    "source": "published",
-    "approximate": false,
-    "note": "Sber GigaAM-v3 model card"
-  },
-  "gigaam-v3-rnnt": {
-    "params": 243000000,
-    "source": "published",
-    "approximate": false,
-    "note": "Sber GigaAM-v3 model card"
-  },
   "gigaam-v3-e2e-ctc": {
     "params": 243000000,
     "source": "published",

@@ -13,6 +13,7 @@ resolution-markers = [
 ]
 conflicts = [[
     { package = "winstt-server", extra = "cpu" },
+    { package = "winstt-server", extra = "directml" },
     { package = "winstt-server", extra = "gpu" },
 ]]
 
@@ -111,7 +112,7 @@ name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz", hash = "sha256:44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529", size = 523588, upload-time = "2025-09-08T23:24:04.541Z" }
 wheels = [
@@ -384,7 +385,7 @@ wheels = [
 
 [package.optional-dependencies]
 toml = [
-    { name = "tomli", marker = "python_full_version <= '3.11' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "tomli", marker = "python_full_version <= '3.11' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 
 [[package]]
@@ -450,34 +451,34 @@ wheels = [
 
 [package.optional-dependencies]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-cuda-runtime", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-cufft", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 cufile = [
-    { name = "nvidia-cufile", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-cufile", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-cuda-cupti", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-curand", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 cusolver = [
-    { name = "nvidia-cusolver", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-cusolver", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-cusparse", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-nvjitlink", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-nvtx", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 
 [[package]]
@@ -585,7 +586,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
     { name = "fsspec" },
-    { name = "hf-xet", marker = "platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "hf-xet", marker = "platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "packaging" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -1021,7 +1022,7 @@ version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ast-serialize" },
-    { name = "librt", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "librt", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "mypy-extensions" },
     { name = "pathspec" },
     { name = "typing-extensions" },
@@ -1539,6 +1540,24 @@ wheels = [
 ]
 
 [[package]]
+name = "onnxruntime-directml"
+version = "1.24.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "flatbuffers" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "protobuf" },
+    { name = "sympy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/90/99566dc6398028e7691a5b12720fd85f757a0901818b84599d28abb3f085/onnxruntime_directml-1.24.4-cp311-cp311-win_amd64.whl", hash = "sha256:96642a787e5a6f33bf043521c0f06eb1eb663f6b830e5862a2026d03f9c90543", size = 25106000, upload-time = "2026-03-17T21:47:15.438Z" },
+    { url = "https://files.pythonhosted.org/packages/88/ea/33814eb0ec96775eda4c1d30b0d86e91d7d2cd0d84c66d3915aef0e06fa3/onnxruntime_directml-1.24.4-cp312-cp312-win_amd64.whl", hash = "sha256:f2ecb68b7b7b259d2ef3112ae760149f9b5a1e7c0fbb73d539da6250a648a614", size = 25111930, upload-time = "2026-03-17T21:47:18.419Z" },
+    { url = "https://files.pythonhosted.org/packages/60/53/2bd2696fac19cf8ca55496a0bcfe431f3aff9579eabbb0e231dc238acf6f/onnxruntime_directml-1.24.4-cp313-cp313-win_amd64.whl", hash = "sha256:2f1031cb2281e5b27cca9efe0b9399317c7286e4d226f7a79d4ab79bbd94d19e", size = 25112253, upload-time = "2026-03-17T21:47:22.043Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/04/816932a3ade867a687e406716ca76e0774c6b921545b45818e3ebfcc54ce/onnxruntime_directml-1.24.4-cp314-cp314-win_amd64.whl", hash = "sha256:51d86bb949488e572b00422f344990a4a81d982416d73b6c0e4ced2bcd423d19", size = 25571098, upload-time = "2026-03-17T21:47:25.461Z" },
+]
+
+[[package]]
 name = "onnxruntime-gpu"
 version = "1.26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1569,7 +1588,7 @@ dependencies = [
     { name = "requests" },
     { name = "scikit-learn" },
     { name = "scipy" },
-    { name = "tflite-runtime", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "tflite-runtime", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b5/9b/73b7d98b07f4e1f525ad39703e0c5f30ff61c3fa16c8bfe4d99eadc0567a/openwakeword-0.6.0.tar.gz", hash = "sha256:36858d90f1183e307485597a912a4e3c3384b14ea9923f83feaffae7c1565565", size = 70830, upload-time = "2024-02-11T20:56:17.854Z" }
@@ -1880,11 +1899,11 @@ version = "6.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "altgraph" },
-    { name = "macholib", marker = "sys_platform == 'darwin' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "macholib", marker = "sys_platform == 'darwin' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "packaging" },
-    { name = "pefile", marker = "sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "pefile", marker = "sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "pyinstaller-hooks-contrib" },
-    { name = "pywin32-ctypes", marker = "sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "pywin32-ctypes", marker = "sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "setuptools" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/46/60/d03d52e6690d4e9caf333dcd14550cde634ce6c118b3bc8fa3112c3186fd/pyinstaller-6.20.0.tar.gz", hash = "sha256:95c5c7e03d5d61e9dfb8ef259c699cf492bb1041beb6dbe83696608cec07347a", size = 4048728, upload-time = "2026-04-22T20:59:36.96Z" }
@@ -1929,7 +1948,7 @@ name = "pytest"
 version = "9.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
@@ -2141,7 +2160,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
     { name = "rpds-py" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/22/f5/df4e9027acead3ecc63e50fe1e36aca1523e1719559c499951bb4b53188f/referencing-0.37.0.tar.gz", hash = "sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8", size = 78036, upload-time = "2025-10-13T15:30:48.871Z" }
 wheels = [
@@ -2765,20 +2784,20 @@ name = "torch"
 version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
-    { name = "cuda-toolkit", extra = ["cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "cuda-bindings", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "cuda-toolkit", extra = ["cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "filelock" },
     { name = "fsspec" },
     { name = "jinja2" },
     { name = "networkx" },
-    { name = "nvidia-cublas", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
-    { name = "nvidia-cudnn-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
-    { name = "nvidia-cusparselt-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
-    { name = "nvidia-nccl-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
-    { name = "nvidia-nvshmem-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-cublas", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-cudnn-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-cusparselt-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-nccl-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "nvidia-nvshmem-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "setuptools" },
     { name = "sympy" },
-    { name = "triton", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "triton", marker = "sys_platform == 'linux' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
     { name = "typing-extensions" },
 ]
 wheels = [
@@ -2813,7 +2832,7 @@ name = "tqdm"
 version = "4.67.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-directml') or (extra == 'extra-13-winstt-server-cpu' and extra == 'extra-13-winstt-server-gpu') or (extra == 'extra-13-winstt-server-directml' and extra == 'extra-13-winstt-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598, upload-time = "2026-02-03T17:35:53.048Z" }
 wheels = [
@@ -3046,6 +3065,9 @@ dependencies = [
 cpu = [
     { name = "onnxruntime" },
 ]
+directml = [
+    { name = "onnxruntime-directml" },
+]
 gpu = [
     { name = "nvidia-cublas-cu12" },
     { name = "nvidia-cuda-nvrtc-cu12" },
@@ -3098,6 +3120,7 @@ requires-dist = [
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnx-asr", extras = ["hub"], git = "https://github.com/dahshury/onnx-asr.git?rev=7e235c28b514da5bd7049d4381c2e8d52a017951" },
     { name = "onnxruntime", marker = "extra == 'cpu'", specifier = ">=1.18.1" },
+    { name = "onnxruntime-directml", marker = "extra == 'directml'", specifier = ">=1.18.1" },
     { name = "onnxruntime-gpu", marker = "extra == 'gpu'", specifier = ">=1.18.1" },
     { name = "openwakeword", specifier = ">=0.4.0" },
     { name = "psutil", specifier = ">=5.9" },
@@ -3114,7 +3137,7 @@ requires-dist = [
     { name = "webrtcvad-wheels", specifier = ">=2.0.14" },
     { name = "websockets", specifier = ">=16.0" },
 ]
-provides-extras = ["cpu", "gpu", "sentence-classifier", "tts"]
+provides-extras = ["cpu", "directml", "gpu", "sentence-classifier", "tts"]
 
 [package.metadata.requires-dev]
 dev = [

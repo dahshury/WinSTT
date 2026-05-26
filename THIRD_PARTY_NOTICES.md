@@ -139,8 +139,7 @@ catalogue is defined in `server/src/recorder/domain/catalog.json`.
 
 ### Sber/Salute GigaAM
 
-- Models: `gigaam-v3-ctc`, `gigaam-v3-rnnt`,
-  `gigaam-v3-e2e-ctc`, `gigaam-v3-e2e-rnnt`.
+- Models: `gigaam-v3-e2e-ctc`, `gigaam-v3-e2e-rnnt`.
 - Copyright (c) Sber. License: MIT.
   <https://github.com/salute-developers/GigaAM>
 

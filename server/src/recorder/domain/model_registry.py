@@ -69,6 +69,12 @@ class ModelInfo:
     #: for shipped catalog rows. The transcriber loader uses this to call
     #: ``onnx_asr.load_model(path=...)`` instead of resolving through HF.
     local_path: str | None = None
+    #: Optional SHA-256 digest of the canonical fp32 weights file, normalized
+    #: to lowercase hex. Populated by ``scripts/refresh_catalog.py`` when the
+    #: upstream repo exposes it; ``None`` for entries the refresh hasn't
+    #: covered yet. Used by the model cache to detect corrupted downloads
+    #: without having to re-fetch the entire weights file from HF.
+    sha256: str | None = None
 
 
 #: Quantization suffixes ORT's CUDAExecutionProvider can actually accelerate.
@@ -149,6 +155,7 @@ def _model_from_json(entry: dict[str, Any]) -> ModelInfo:
     languages = _str_list(entry.get("languages", []), default=[])
     raw_sha = entry.get("sha256")
     sha256 = str(raw_sha).lower() if isinstance(raw_sha, str) and raw_sha else None
+    family = str(entry.get("family", ""))
     return ModelInfo(
         id=str(entry["id"]),
         display_name=str(entry.get("display_name", entry["id"])),
@@ -232,6 +239,7 @@ def _apply_overlay(info: ModelInfo, overlay: dict[str, dict[str, Any]]) -> Model
         available=info.available,
         error_message=info.error_message,
         local_path=info.local_path,
+        sha256=info.sha256,
     )
 
 

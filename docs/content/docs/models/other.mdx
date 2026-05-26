@@ -11,10 +11,8 @@ GigaAM is a family of Russian-language ASR models.
 
 | Model | Architecture | Notes |
 |-------|-------------|-------|
-| `gigaam-v3-ctc` | CTC | Version 3, CTC decoding |
-| `gigaam-v3-rnnt` | RNN-T | Version 3, transducer decoding |
-| `gigaam-v3-e2e-ctc` | End-to-End CTC | Version 3, end-to-end CTC |
-| `gigaam-v3-e2e-rnnt` | End-to-End RNN-T | Version 3, end-to-end transducer |
+| `gigaam-v3-e2e-ctc` | End-to-End CTC | Version 3, end-to-end CTC (faster decoding) |
+| `gigaam-v3-e2e-rnnt` | End-to-End RNN-T | Version 3, end-to-end transducer (higher accuracy) |
 
 GigaAM models support `""` (default) and `int8` via `onnxQuantization`.
 
