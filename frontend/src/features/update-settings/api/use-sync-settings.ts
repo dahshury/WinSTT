@@ -10,6 +10,7 @@ import {
 	sttSetParameter,
 } from "@/shared/api/ipc-client";
 import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
+import { markIpcLoadResolved } from "@/shared/lib/ipc-load-timing";
 import { type SyncDeps, syncToServer } from "../lib/sync-actions";
 import {
 	advanceSkipRefs,
@@ -47,9 +48,22 @@ export function useSyncSettings(): void {
 	// Reconcile with electron-store (source of truth) after localStorage hydration.
 	// localStorage hydration already set isLoaded, so this just patches any drift.
 	useEffect(() => {
+		// region agent log — H-S-A
+		// eslint-disable-next-line no-console
+		console.warn(
+			`[diag-tiny] settingsLoad.start initialLocal=${useSettingsStore.getState().settings?.model?.model ?? "(none)"} ts=${Date.now()}`
+		);
+		// endregion
 		settingsLoad().then((loaded) => {
 			fromIpcLoadRef.current = true;
 			lastSavedRef.current = loaded;
+			markIpcLoadResolved();
+			// region agent log — H-S-A
+			// eslint-disable-next-line no-console
+			console.warn(
+				`[diag-tiny] settingsLoad.resolved diskModel=${loaded?.model?.model ?? "(none)"} ts=${Date.now()}`
+			);
+			// endregion
 			setSettings(loaded);
 		});
 	}, [setSettings]);
@@ -86,6 +100,12 @@ export function useSyncSettings(): void {
 	// without the IPC gate, the first sync after connect re-asserts the cache via
 	// `sttSetParameter("model", stale)` and the server swaps to the wrong model.
 	useEffect(() => {
+		// region agent log — H-S-B
+		// eslint-disable-next-line no-console
+		console.warn(
+			`[diag-tiny] sync-effect serverStatus=${serverStatus} isLoaded=${isLoaded} fromIpcLoad=${fromIpcLoadRef.current} alreadySynced=${hasSyncedOnConnect.current} latestModel=${latestSettingsRef.current?.model?.model ?? "(none)"} ts=${Date.now()}`
+		);
+		// endregion
 		if (
 			shouldSyncOnConnect(
 				serverStatus,
@@ -94,6 +114,12 @@ export function useSyncSettings(): void {
 				fromIpcLoadRef.current
 			)
 		) {
+			// region agent log — H-S-B
+			// eslint-disable-next-line no-console
+			console.warn(
+				`[diag-tiny] syncToServer.fire model=${latestSettingsRef.current?.model?.model ?? "(none)"} ts=${Date.now()}`
+			);
+			// endregion
 			hasSyncedOnConnect.current = true;
 			syncToServer(DEPS, latestSettingsRef.current);
 		}

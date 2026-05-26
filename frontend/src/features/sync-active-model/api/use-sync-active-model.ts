@@ -2,6 +2,20 @@ import { useEffect, useRef } from "react";
 import { useConnectionStore } from "@/entities/connection";
 import { useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
+import { recentIpcLoadAt } from "@/shared/lib/ipc-load-timing";
+
+// How long after an IPC settingsLoad we consider a settings.model transition
+// as "load-induced" (not a user pick). Crash + state-revert investigation
+// showed the death-spiral pattern: localStorage hydrates with stale model,
+// runtime adoption fixes it, settingsLoad's setSettings(loaded) reverts the
+// renderer back to the disk value, which fires this hook's beginSwap with a
+// "wrong" destination — activeMain gets stuck on the stale value and the
+// shouldAdoptRuntimeModel branch is blocked from re-correcting because
+// activeMain != null. 500 ms covers the worst-case window from settingsLoad
+// resolution through every dependent effect re-render under StrictMode
+// double-mount; longer than typical user-pick reaction time so no real
+// user action gets skipped.
+const IPC_LOAD_GUARD_WINDOW_MS = 500;
 
 /**
  * Reconcile the locally-persisted ``settings.model.model`` with the server's
@@ -123,15 +137,42 @@ export function useSyncActiveModel(): void {
 		// handles the cold-boot fallback case the original comment block
 		// documents.
 		const previousModel = prevSettingsModelRef.current;
+		const activeMain = useModelSwapStore.getState().activeMain;
+		// region agent log — H-S-C/H-S-E
+		// eslint-disable-next-line no-console
+		console.warn(
+			`[diag-tiny] useSyncActiveModel.effect prev=${previousModel ?? "(undef)"} settings=${settingsModel ?? "(null)"} runtime=${runtimeModel ?? "(null)"} activeMain=${activeMain ?? "(null)"} serverStatus=${serverStatus} isLoaded=${isLoaded} ts=${Date.now()}`
+		);
+		// endregion
 		if (previousModel !== undefined && previousModel !== settingsModel) {
-			if (settingsModel && settingsModel !== runtimeModel) {
+			const sinceIpcLoad = Date.now() - recentIpcLoadAt();
+			const ipcLoadInducedTransition = sinceIpcLoad < IPC_LOAD_GUARD_WINDOW_MS;
+			if (ipcLoadInducedTransition) {
+				// region agent log — H-S-C
+				// eslint-disable-next-line no-console
+				console.warn(
+					`[diag-tiny] useSyncActiveModel.beginSwap.skip ipcLoadGuard prev=${previousModel} settings=${settingsModel} runtime=${runtimeModel ?? "(null)"} sinceIpcLoad=${sinceIpcLoad}ms ts=${Date.now()}`
+				);
+				// endregion
+			} else if (settingsModel && settingsModel !== runtimeModel) {
+				// region agent log — H-S-C
+				// eslint-disable-next-line no-console
+				console.warn(
+					`[diag-tiny] useSyncActiveModel.beginSwap.willFire prev=${previousModel} settings=${settingsModel} runtime=${runtimeModel ?? "(null)"} ts=${Date.now()}`
+				);
+				// endregion
 				useModelSwapStore.getState().beginSwap("main", previousModel ?? "", settingsModel);
 			}
 		}
 		prevSettingsModelRef.current = settingsModel;
 
-		const activeMain = useModelSwapStore.getState().activeMain;
 		if (shouldAdoptRuntimeModel(isLoaded, serverStatus, runtimeModel, settingsModel, activeMain)) {
+			// region agent log — H-S-C
+			// eslint-disable-next-line no-console
+			console.warn(
+				`[diag-tiny] useSyncActiveModel.adoptRuntime newSettings=${runtimeModel} oldSettings=${settingsModel ?? "(null)"} ts=${Date.now()}`
+			);
+			// endregion
 			updateModelSettings({ model: runtimeModel });
 		}
 	}, [isLoaded, serverStatus, runtimeModel, settingsModel, updateModelSettings]);
