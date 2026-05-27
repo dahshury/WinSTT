@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 
 export interface ScrollingTextProps {
