@@ -6,7 +6,7 @@
 // path. See ./portable-boot.ts for the full rationale.
 import { portableState } from "./portable-boot";
 
-import * as fs from "node:fs";
+import { unlink } from "node:fs/promises";
 import { basename } from "node:path";
 import path from "node:path";
 import {
@@ -520,14 +520,14 @@ function extractDownloadedFilePath(info: unknown): string | null {
  * status history so the renderer can show it in the About panel.
  *
  * Fails OPEN (allow install, log a warning) when:
- *   * the bundled `docs/winstt.pub` doesn't exist yet (maintainer hasn't
+ * the bundled `docs/winstt.pub` doesn't exist yet (maintainer hasn't
  *     generated the keypair), OR
- *   * the .minisig sidecar isn't on the GitHub Release (a maintainer cut
+ * the .minisig sidecar isn't on the GitHub Release (a maintainer cut
  *     a release before the signing workflow ran — degraded but not unsafe,
  *     Authenticode still validates).
  *
  * Fails CLOSED (delete artifact, block install) when:
- *   * the pubkey IS bundled AND a sidecar IS published BUT the signature
+ * the pubkey IS bundled AND a sidecar IS published BUT the signature
  *     doesn't verify. That's the tamper signal we actually care about.
  */
 async function verifyDownloadedUpdateAndGate(info: unknown): Promise<void> {
@@ -581,7 +581,7 @@ async function verifyDownloadedUpdateAndGate(info: unknown): Promise<void> {
 
 	dbg("updater", `Minisign verification FAILED — deleting artifact: ${reason}`);
 	try {
-		await fs.promises.unlink(downloadedFile);
+		await unlink(downloadedFile);
 	} catch (e) {
 		dbg("updater", `Failed to delete tampered artifact: ${toErrorMessage(e)}`);
 	}

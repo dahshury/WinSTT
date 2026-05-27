@@ -283,7 +283,7 @@ function UpdatesSection({ t }: { t: AboutT }) {
 					}
 				/>
 				{isDownloading ? (
-					<ElevatedSurface className="px-3 py-3">
+					<ElevatedSurface className="p-3">
 						<DownloadProgressBar
 							label={
 								percent === null

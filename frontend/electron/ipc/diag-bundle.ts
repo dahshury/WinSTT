@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import AdmZip from "adm-zip";
+import type AdmZipType from "adm-zip";
 import { app, dialog, ipcMain, shell } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
 import { dbg } from "../lib/debug-log";
@@ -142,6 +142,13 @@ async function writeZipArchive(
 	// system-info.txt; typically 5-25 MB total), the transient memory cost
 	// is negligible compared to keeping `archiver` (~1 MB of dependencies
 	// inlined into main.js for streaming output we don't need).
+	//
+	// Lazy-imported because the diagnostic bundle is created at most once
+	// per session (and usually never). Top-level importing this would pull
+	// adm-zip into the main.js bundle at every boot just so we can save a
+	// debug zip — see also the lazy `await import("tar")` in
+	// `electron/lib/model-downloader.ts`.
+	const AdmZip = (await import("adm-zip")).default as unknown as new () => AdmZipType;
 	const zip = new AdmZip();
 	for (const entry of logFiles) {
 		// addLocalFile reads the file synchronously and embeds it under the

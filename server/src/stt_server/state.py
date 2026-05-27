@@ -98,6 +98,14 @@ class ServerState:
     # ─── TTS state ───────────────────────────────────────────────────
     tts_active_request_id: str | None = None
     cancel_tts_requested: bool = False
+    # Install-lifecycle control flags (separate from ``cancel_tts_requested``,
+    # which scopes only to in-flight synthesis). ``tts_install_paused`` is
+    # polled by the downloader's ``should_pause`` callback and causes the
+    # streaming loop to exit cleanly preserving the ``.partial`` file for
+    # resume. ``cancel_tts_install_requested`` is polled by ``should_cancel``
+    # and triggers an unlink + ``InterruptedError`` to abort the install.
+    tts_install_paused: bool = False
+    cancel_tts_install_requested: bool = False
 
     # ─── Logging ─────────────────────────────────────────────────────
     loglevel: int = logging.WARNING

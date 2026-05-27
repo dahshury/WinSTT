@@ -1,4 +1,10 @@
-import { PlayIcon, StopIcon, VolumeHighIcon } from "@hugeicons/core-free-icons";
+import {
+	Cancel01Icon,
+	PauseIcon,
+	PlayIcon,
+	StopIcon,
+	VolumeHighIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
@@ -16,8 +22,13 @@ import {
 	onTtsStarted,
 	type TtsVoiceCatalog,
 	ttsCancel,
+	ttsInstallCancel,
+	ttsInstallPause,
+	ttsInstallResume,
 	ttsSpeak,
 } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
+import { Button } from "@/shared/ui/button";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
@@ -330,6 +341,30 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 	);
 	const voicePlaceholder = voiceOptions.length === 0 ? t("noVoicesYet") : t("voiceCaption");
 
+	// While the on-demand install is downloading OR sitting paused, every
+	// settings control below the section header is locked. Two reasons:
+	//   1. Voice / speed / device changes can't take effect until the
+	//      engine is loaded — letting the user fiddle here pretends to
+	//      change something it doesn't, then surprises them once the
+	//      install finishes and the new settings retroactively apply.
+	//   2. Server-side, swap_parameter on a half-initialized synthesizer
+	//      races the warm-up executor. The pause/resume/cancel buttons
+	//      in the install banner are the only legitimate interactions
+	//      during this window.
+	// `installPhase` covers the WHOLE install (engine → model → ready),
+	// including the gaps between asset downloads (extraction, ORT session
+	// init) where no progress events fire. `downloadProgress.active` is a
+	// belt-and-suspenders backup for any window where bytes are streaming
+	// before the next status ping arrives.
+	const installing = installPhase !== null || downloadProgress.active;
+	const handleCancelInstall = (): void => {
+		ttsInstallCancel();
+		// Cancel means "discard, I don't want this anymore" — flip the
+		// toggle back off so the section returns to its pre-enable state
+		// rather than sitting on `enabled: true` with no engine.
+		update({ enabled: false });
+	};
+
 	return (
 		<>
 			<SettingSection
@@ -337,60 +372,99 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 				icon={VolumeHighIcon}
 				onToggle={handleEnabledToggle}
 				title={t("title")}
+				toggleDisabled={installing}
 				toggled={enabled}
 			>
 				<div className="flex flex-col divide-y divide-surface-1">
-					<FormControl caption={voicePlaceholder} label={t("voice")}>
-						<ElevatedSurface inline>
-							<SearchableSelect
-								inputTrailing={renderPreviewButton(voice, true)}
-								onChange={handleVoiceChange}
-								options={voiceOptions}
-								placeholder={t("noVoicesYet")}
-								renderItemTrailing={(option) => renderPreviewButton(option.id, true)}
-								value={voice}
-							/>
-						</ElevatedSurface>
-					</FormControl>
-					<FormControl
-						caption={t("speedCaption")}
-						label={t("speed")}
-						labelTrailing={
-							<SettingResetButton
-								isDefault={speed === DEFAULT_SETTINGS.tts.speed}
-								onReset={() => update({ speed: DEFAULT_SETTINGS.tts.speed })}
-							/>
-						}
+					<div
+						className={cn(
+							"flex flex-col divide-y divide-surface-1 transition-opacity duration-200 ease-out",
+							installing && "pointer-events-none opacity-40"
+						)}
 					>
-						<ElevatedSurface inline>
-							<Slider
-								aria-label={t("speed")}
-								formatValue={(v) => `${v.toFixed(1)}×`}
-								max={2.0}
-								min={0.5}
-								onChange={handleSpeedChange}
-								step={0.1}
-								value={speed}
-							/>
-						</ElevatedSurface>
-					</FormControl>
-					<FormControl caption={t("deviceCaption")} label={t("device")}>
-						<ElevatedSurface inline>
-							<Select
-								aria-label={t("device")}
-								onChange={handleDeviceChange}
-								options={deviceOptions}
-								value={device}
-							/>
-						</ElevatedSurface>
-					</FormControl>
+						<FormControl caption={voicePlaceholder} label={t("voice")}>
+							<ElevatedSurface inline>
+								<SearchableSelect
+									inputTrailing={renderPreviewButton(voice, true)}
+									onChange={handleVoiceChange}
+									options={voiceOptions}
+									placeholder={t("noVoicesYet")}
+									renderItemTrailing={(option) => renderPreviewButton(option.id, true)}
+									value={voice}
+								/>
+							</ElevatedSurface>
+						</FormControl>
+						<FormControl
+							caption={t("speedCaption")}
+							label={t("speed")}
+							labelTrailing={
+								<SettingResetButton
+									isDefault={speed === DEFAULT_SETTINGS.tts.speed}
+									onReset={() => update({ speed: DEFAULT_SETTINGS.tts.speed })}
+								/>
+							}
+						>
+							<ElevatedSurface inline>
+								<Slider
+									aria-label={t("speed")}
+									formatValue={(v) => `${v.toFixed(1)}×`}
+									max={2.0}
+									min={0.5}
+									onChange={handleSpeedChange}
+									step={0.1}
+									value={speed}
+								/>
+							</ElevatedSurface>
+						</FormControl>
+						<FormControl caption={t("deviceCaption")} label={t("device")}>
+							<ElevatedSurface inline>
+								<Select
+									aria-label={t("device")}
+									onChange={handleDeviceChange}
+									options={deviceOptions}
+									value={device}
+								/>
+							</ElevatedSurface>
+						</FormControl>
+					</div>
 					<div className="flex flex-col gap-3 py-3">
 						{downloadProgress.active ? (
-							<DownloadProgressBar
-								label={downloadProgress.label}
-								percent={downloadProgress.percent}
-								variant="active"
-							/>
+							<div className="flex flex-col gap-2">
+								<DownloadProgressBar
+									label={downloadProgress.label}
+									percent={downloadProgress.percent}
+									variant={downloadProgress.paused ? "paused" : "active"}
+								/>
+								<div className="flex items-center justify-end gap-1.5">
+									{downloadProgress.paused ? (
+										<Button
+											className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 text-foreground-secondary text-xs transition-colors hover:bg-surface-3"
+											onClick={() => ttsInstallResume()}
+											type="button"
+										>
+											<HugeiconsIcon icon={PlayIcon} size={13} />
+											<span>{t("resumeInstall")}</span>
+										</Button>
+									) : (
+										<Button
+											className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 text-foreground-secondary text-xs transition-colors hover:bg-surface-3"
+											onClick={() => ttsInstallPause()}
+											type="button"
+										>
+											<HugeiconsIcon icon={PauseIcon} size={13} />
+											<span>{t("pauseInstall")}</span>
+										</Button>
+									)}
+									<Button
+										className="inline-flex h-7 items-center gap-1.5 rounded-md border border-error/50 bg-error/10 px-2.5 text-error text-xs transition-colors hover:bg-error/20"
+										onClick={handleCancelInstall}
+										type="button"
+									>
+										<HugeiconsIcon icon={Cancel01Icon} size={13} />
+										<span>{t("cancelInstall")}</span>
+									</Button>
+								</div>
+							</div>
 						) : null}
 						{installError ? (
 							<div className="flex items-start gap-2 rounded-md border border-error/40 bg-error/10 p-2 text-error text-xs">

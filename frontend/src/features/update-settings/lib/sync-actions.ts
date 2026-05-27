@@ -35,7 +35,78 @@ export const AUDIO_PARAM_MAP: Record<string, AllowedParameter> = {
 	postSpeechSilenceDuration: "post_speech_silence_duration",
 	wakeWordActivationDelay: "wake_word_activation_delay",
 	inputDeviceIndex: "input_device_index",
+	// Hot-swappable via WebRTCVAD.set_sensitivity on the server (used to
+	// force a full server restart through STARTUP_ONLY_KEYS).
+	webrtcSensitivity: "webrtc_sensitivity",
+	// Config-only on the server today (no runtime consumer); pushed so
+	// the persisted value follows the renderer without needing a kill.
+	sileroDeactivityDetection: "silero_deactivity_detection",
 };
+
+/**
+ * Consolidated mic-release picker → three PyAudioSource knobs.
+ *
+ * The renderer stores a single ``audio.microphoneRelease`` enum (so the
+ * settings UI is one picker, not a checkbox + dependent dropdown), but
+ * the server's PyAudioSource takes them as three independent booleans/
+ * floats. We push all three on every change so the server-side state
+ * machine stays coherent regardless of which transition we picked:
+ *
+ *   "always"    → always_on=true,  lazy=false, timeout=0
+ *   "immediate" → always_on=false, lazy=false, timeout=0
+ *   "sec30"     → always_on=false, lazy=true,  timeout=30
+ *   "min1"      → always_on=false, lazy=true,  timeout=60
+ *   "min5"      → always_on=false, lazy=true,  timeout=300
+ *
+ * Unknown / corrupt values fall through to "immediate" (matches the
+ * schema's `.catch("immediate")` normalization).
+ */
+const MIC_RELEASE_LAZY_SECONDS: Record<string, number> = {
+	sec30: 30,
+	min1: 60,
+	min5: 300,
+};
+
+interface MicReleasePolicy {
+	alwaysOn: boolean;
+	lazyClose: boolean;
+	timeoutSeconds: number;
+}
+
+export function resolveMicReleasePolicy(value: unknown): MicReleasePolicy {
+	const raw = typeof value === "string" ? value : "immediate";
+	if (raw === "always") {
+		return { alwaysOn: true, lazyClose: false, timeoutSeconds: 0 };
+	}
+	const seconds = MIC_RELEASE_LAZY_SECONDS[raw];
+	if (seconds === undefined) {
+		return { alwaysOn: false, lazyClose: false, timeoutSeconds: 0 };
+	}
+	return { alwaysOn: false, lazyClose: true, timeoutSeconds: seconds };
+}
+
+/**
+ * ``model.modelUnloadTimeout`` enum → server seconds. ``-1`` is the
+ * "never unload" sentinel (server normalises to None internally).
+ * Mirrors the table in ``electron/ipc/stt-process.ts`` so the CLI-arg
+ * boot and the runtime hot-swap pick the same value for the same enum.
+ */
+const MODEL_UNLOAD_TIMEOUT_SECONDS: Record<string, number> = {
+	immediately: 0,
+	never: -1,
+	min2: 120,
+	min5: 300,
+	min10: 600,
+	min15: 900,
+	hour1: 3600,
+};
+
+const DEFAULT_MODEL_UNLOAD_SECONDS = 300;
+
+export function resolveModelUnloadTimeoutSeconds(value: unknown): number {
+	const raw = typeof value === "string" ? value : "min5";
+	return MODEL_UNLOAD_TIMEOUT_SECONDS[raw] ?? DEFAULT_MODEL_UNLOAD_SECONDS;
+}
 
 /** Whether a parameter must be pushed given the initial/incremental mode. */
 export function shouldSendParam<V>(
@@ -81,7 +152,35 @@ export function syncAudioParams(
 	if (!audio) {
 		return;
 	}
-	syncAudioEntries(deps, audio, prev?.audio, !prev);
+	const isInitial = !prev;
+	syncAudioEntries(deps, audio, prev?.audio, isInitial);
+	syncMicrophoneRelease(deps, audio, prev?.audio, isInitial);
+}
+
+/**
+ * Push the three PyAudioSource mic-release knobs whenever the
+ * consolidated picker value changes (or on initial connect). All three
+ * are pushed atomically so a server that only got two of the three
+ * updates can't sit in a half-applied state.
+ */
+function syncMicrophoneRelease(
+	deps: SyncDeps,
+	audio: NonNullable<AppSettings["audio"]>,
+	prevAudio: AppSettings["audio"] | undefined,
+	isInitial: boolean
+): void {
+	const current = audio.microphoneRelease;
+	const previous = prevAudio?.microphoneRelease;
+	if (!isInitial && current === previous) {
+		return;
+	}
+	if (current == null) {
+		return;
+	}
+	const policy = resolveMicReleasePolicy(current);
+	deps.sttSetParameter("always_on_microphone", policy.alwaysOn);
+	deps.sttSetParameter("lazy_stream_close", policy.lazyClose);
+	deps.sttSetParameter("lazy_close_timeout_seconds", policy.timeoutSeconds);
 }
 
 export function syncModelParams(
@@ -99,6 +198,80 @@ export function syncModelParams(
 	// — the recorder's `model.setter` spawns its own swap thread — and the two
 	// races produce duplicate downloads, duplicate Loading logs, and the
 	// download-cancel/revert dance we saw in production.
+	//
+	// The four knobs below used to live in STARTUP_ONLY_KEYS_LIST and force
+	// a process kill on every flip. The facade now exposes matching setters
+	// (recorder/__init__.py) that update config and trigger an in-place
+	// model reload via request_model_swap. The reload reuses the swap
+	// worker's daemon-thread + GC + lock-protected install pattern, so the
+	// WS, audio source, VAD, and pipeline state are all preserved.
+	sendIfChanged(
+		deps,
+		model?.onnxQuantization,
+		prevModel?.onnxQuantization,
+		"onnx_quantization",
+		isInitial
+	);
+	sendIfChanged(
+		deps,
+		model?.translateToEnglish,
+		prevModel?.translateToEnglish,
+		"translate_to_english",
+		isInitial
+	);
+	syncInitialPromptStatics(deps, model, prevModel, isInitial);
+	syncModelUnloadTimeout(deps, model, prevModel, isInitial);
+}
+
+/**
+ * Push the static (non-context, non-dictionary) initial prompt prefixes
+ * to the server. The composed prompt that includes the dictionary +
+ * volatile context tail is pushed separately by Electron's
+ * ``installInitialPromptSync`` whenever those upstream inputs change;
+ * this handler only fires on edits to the user-typed static prefix in
+ * the Settings UI. Both produce ``set_parameter("initial_prompt", ...)``
+ * frames the server's facade treats identically.
+ */
+function syncInitialPromptStatics(
+	deps: SyncDeps,
+	model: AppSettings["model"] | undefined,
+	prevModel: AppSettings["model"] | undefined,
+	isInitial: boolean
+): void {
+	sendIfChanged(deps, model?.initialPrompt, prevModel?.initialPrompt, "initial_prompt", isInitial);
+	sendIfChanged(
+		deps,
+		model?.initialPromptRealtime,
+		prevModel?.initialPromptRealtime,
+		"initial_prompt_realtime",
+		isInitial
+	);
+}
+
+/**
+ * Translate the enum-valued ``model.modelUnloadTimeout`` setting to the
+ * seconds the server CLI expects, then push only on actual changes.
+ * Unlike the static-prefix sync above, this one converts the enum to a
+ * number before the equality check — the renderer stores the enum, but
+ * we want the comparison to operate on the seconds the server actually
+ * sees so a no-op enum migration doesn't churn a hot-swap.
+ */
+function syncModelUnloadTimeout(
+	deps: SyncDeps,
+	model: AppSettings["model"] | undefined,
+	prevModel: AppSettings["model"] | undefined,
+	isInitial: boolean
+): void {
+	const current = model?.modelUnloadTimeout;
+	if (current == null) {
+		return;
+	}
+	const previous = prevModel?.modelUnloadTimeout;
+	if (!isInitial && current === previous) {
+		return;
+	}
+	const seconds = resolveModelUnloadTimeoutSeconds(current);
+	deps.sttSetParameter("model_unload_timeout_seconds", seconds);
 }
 
 /** Mapping of quality keys → AllowedParameter names. */

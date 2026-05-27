@@ -27,9 +27,21 @@ class FakeTranscriber(ITranscriber):
         audio: AudioArray,
         language: str = "",
         use_prompt: bool = True,
+        custom_words: list[str] | None = None,
+        initial_prompt_text: str | None = None,
     ) -> TranscriptionResult:
         self._call_count += 1
+        self._last_custom_words = custom_words
+        self._last_initial_prompt_text = initial_prompt_text
         return self._result
+
+    @property
+    def last_custom_words(self) -> list[str] | None:
+        return getattr(self, "_last_custom_words", None)
+
+    @property
+    def last_initial_prompt_text(self) -> str | None:
+        return getattr(self, "_last_initial_prompt_text", None)
 
     @override
     def is_ready(self) -> bool:

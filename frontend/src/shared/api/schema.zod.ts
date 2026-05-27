@@ -27,6 +27,16 @@ export const AllowedParameterSchema = z.enum([
 	"end_of_sentence_detection_pause",
 	"mid_sentence_detection_pause",
 	"unknown_sentence_detection_pause",
+	"initial_prompt",
+	"initial_prompt_realtime",
+	"onnx_quantization",
+	"translate_to_english",
+	"model_unload_timeout_seconds",
+	"webrtc_sensitivity",
+	"silero_deactivity_detection",
+	"always_on_microphone",
+	"lazy_stream_close",
+	"lazy_close_timeout_seconds",
 ]);
 export type AllowedParameter = z.infer<typeof AllowedParameterSchema>;
 
@@ -99,6 +109,7 @@ export const ModelFamilySchema = z.enum([
 	"t-one",
 	"moonshine",
 	"cohere",
+	"sense_voice",
 	"custom",
 ]);
 export type ModelFamily = z.infer<typeof ModelFamilySchema>;

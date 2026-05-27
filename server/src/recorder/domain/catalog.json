@@ -1705,6 +1705,31 @@
       }
     },
     {
+      "id": "sense-voice-small",
+      "display_name": "SenseVoice Small",
+      "family": "sense_voice",
+      "languages": [
+        "zh",
+        "en",
+        "ja",
+        "ko",
+        "yue"
+      ],
+      "supports_language_detection": true,
+      "supports_realtime": true,
+      "onnx_model_name": "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+      "description": "FunAudioLLM SenseVoice Small — Conformer encoder, multilingual ASR (Chinese / English / Japanese / Korean / Cantonese), ships as a single-pass int8 graph (Handy default).",
+      "param_count": 234000000,
+      "wer": 7.2,
+      "rtfx": 850,
+      "available_quantizations": [
+        "int8"
+      ],
+      "size_bytes_by_quantization": {
+        "int8": 159383552
+      }
+    },
+    {
       "id": "nemo-parakeet-ctc-0.6b",
       "display_name": "NeMo Parakeet CTC 0.6B",
       "family": "nemo",

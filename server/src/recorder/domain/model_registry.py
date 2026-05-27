@@ -154,7 +154,7 @@ _GPU_COMPATIBLE_QUANTIZATIONS: frozenset[str] = frozenset({"", "fp16"})
 #: provider list to CPU-only for these models when the user's selected
 #: accelerator is DML / ROCm / CoreML. Whisper / Moonshine / custom ship
 #: working fp32 DML graphs and are not in the set.
-_DML_INCOMPATIBLE_FAMILIES: frozenset[str] = frozenset({"nemo", "cohere", "gigaam", "kaldi", "t-one"})
+_DML_INCOMPATIBLE_FAMILIES: frozenset[str] = frozenset({"nemo", "cohere", "gigaam", "kaldi", "t-one", "sense_voice"})
 
 
 def gpu_filter_quantizations(quants: list[str]) -> list[str]:

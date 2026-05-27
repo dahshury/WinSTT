@@ -344,6 +344,8 @@
     "useMainModel": "Use Main Model",
     "useMainModelCaption": "Higher quality but slower",
     "useMainModelTooltip": "Use the larger, more accurate main model for live preview instead of the smaller realtime model. Gives better live text but significantly increases CPU/GPU usage and may cause lag on slower hardware.",
+    "realtimeLockedToMainCaption": "Using the main model for live preview",
+    "realtimeLockedToMainTooltip": "Your main model is small enough to drive the live preview, so it's already being used for realtime transcription. A separate realtime model would just duplicate work without improving quality. Pick a larger main model to unlock a dedicated realtime model.",
     "updateInterval": "Update Interval",
     "updateIntervalCaption": "Seconds between realtime updates",
     "updateIntervalTooltip": "Minimum time between live transcription updates. Lower values give more frequent updates but use more processing power. Increase if you experience stuttering or high CPU usage during dictation.",
@@ -375,9 +377,6 @@
     "postSpeechSilence": "Post-Speech Silence",
     "postSpeechSilenceCaption": "Seconds of silence to end recording",
     "postSpeechSilenceTooltip": "How long to wait after speech ends before finalizing the segment. Shorter values feel more responsive but may cut off pauses between sentences. Applies in Toggle and Listen modes — Push to Talk manages this automatically.",
-    "minRecordingLength": "Min Recording Length",
-    "minRecordingLengthCaption": "Minimum seconds for valid recording",
-    "minRecordingLengthTooltip": "Recordings shorter than this are discarded as noise. Prevents accidental triggers like coughs, clicks, or brief sounds from being transcribed.",
     "deviceSwitchFailed": "Couldn't open input device — {reason}",
     "clamshellLabel": "Clamshell microphone",
     "clamshellCaption": "Auto-swap to this mic when the lid is closed",
@@ -737,7 +736,11 @@
     "installCancel": "Cancel",
     "installRetry": "Retry",
     "installConfirm": "Download & Enable",
-    "installComponentInstalled": "Installed"
+    "installComponentInstalled": "Installed",
+    "paused": "Duraklatıldı",
+    "pauseInstall": "Duraklat",
+    "resumeInstall": "Devam et",
+    "cancelInstall": "İptal"
   },
   "errors": {
     "somethingWentWrong": "Something went wrong",

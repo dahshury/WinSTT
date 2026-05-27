@@ -1,5 +1,5 @@
 import { AnimatePresence, type HTMLMotionProps, m } from "motion/react";
-import { createContext, type ReactNode, useContext, useEffect, useReducer } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useReducer, useRef } from "react";
 
 /**
  * DynamicIsland — composable, animated capsule primitives for adaptive
@@ -176,6 +176,18 @@ export function useDynamicIslandSize(): ContextValue {
  */
 const shellTransition = { type: "spring" as const, stiffness: 420, damping: 32, mass: 1 };
 
+// Panel-slide reveal — mirrors the transitions.dev "panel reveal" spec, but
+// inverted so the island drops in from ABOVE its final position. translateY
+// + opacity + blur run together on the same ease/duration so a short travel
+// still reads as a full open / close. Replaces the previous behavior where
+// the empty (0×0) preset spring-grew its width/height, which looked like the
+// island was "expanding from the middle and downward" on first appear.
+const REVEAL_EASE = [0.22, 1, 0.36, 1] as const;
+const REVEAL_OPEN_DUR = 0.4;
+const REVEAL_CLOSE_DUR = 0.35;
+const REVEAL_OFFSET_PX = 12;
+const REVEAL_BLUR_PX = 2;
+
 export interface DynamicIslandProps extends Omit<HTMLMotionProps<"div">, "id"> {
 	children?: ReactNode;
 	/**
@@ -218,11 +230,22 @@ export function DynamicIsland({
 	// shell out of view.
 	const isVisible = preset.width > 0 && (fitContent || preset.height > 0);
 
+	// Freeze the last visible preset so the reveal animation is a pure
+	// translate+opacity+blur tween at the box's final size — without this
+	// the empty (0×0) preset would spring its width/height up to the new
+	// preset while opacity is still ramping, recreating the "expand from
+	// the middle" feel the panel-slide reveal is meant to replace.
+	const lastVisiblePresetRef = useRef<Preset>(p.default);
+	if (isVisible) {
+		lastVisiblePresetRef.current = preset;
+	}
+	const sizingPreset = isVisible ? preset : lastVisiblePresetRef.current;
+
 	const baseClasses = [
 		"relative overflow-hidden bg-black text-white",
 		"shadow-[0_10px_30px_-10px_rgba(0,0,0,0.7)] ring-1 ring-white/[0.06] ring-inset",
-		isVisible ? "opacity-100" : "pointer-events-none opacity-0",
-	];
+		isVisible ? null : "pointer-events-none",
+	].filter(Boolean);
 	if (className) {
 		baseClasses.push(className);
 	}
@@ -230,17 +253,36 @@ export function DynamicIsland({
 	// Four-corner radii so `flatTop` can pin the top corners to 0 without
 	// touching the bottom. When flatTop is false this collapses to a uniform
 	// radius — equivalent to the old `borderRadius: preset.borderRadius`.
-	const topRadius = flatTop ? 0 : preset.borderRadius;
-	const animateTarget: Record<string, number> = {
-		width: preset.width,
+	const topRadius = flatTop ? 0 : sizingPreset.borderRadius;
+	const animateTarget: Record<string, number | string> = {
+		width: sizingPreset.width,
 		borderTopLeftRadius: topRadius,
 		borderTopRightRadius: topRadius,
-		borderBottomLeftRadius: preset.borderRadius,
-		borderBottomRightRadius: preset.borderRadius,
+		borderBottomLeftRadius: sizingPreset.borderRadius,
+		borderBottomRightRadius: sizingPreset.borderRadius,
+		opacity: isVisible ? 1 : 0,
+		y: isVisible ? 0 : -REVEAL_OFFSET_PX,
+		filter: isVisible ? "blur(0px)" : `blur(${REVEAL_BLUR_PX}px)`,
 	};
 	if (!fitContent) {
-		animateTarget.height = preset.height;
+		animateTarget.height = sizingPreset.height;
 	}
+
+	const revealTransition = {
+		duration: isVisible ? REVEAL_OPEN_DUR : REVEAL_CLOSE_DUR,
+		ease: REVEAL_EASE,
+	};
+	const transition = {
+		default: shellTransition,
+		opacity: revealTransition,
+		y: revealTransition,
+		filter: revealTransition,
+	};
+
+	const motionStyle = {
+		willChange: "transform, opacity, filter",
+		...(style ?? {}),
+	};
 
 	return (
 		<m.div
@@ -249,8 +291,8 @@ export function DynamicIsland({
 			id={id}
 			initial={false}
 			layout={fitContent}
-			transition={shellTransition}
-			{...(style !== undefined && { style })}
+			style={motionStyle}
+			transition={transition}
 			{...rest}
 		>
 			{fitContent ? (

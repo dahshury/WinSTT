@@ -40,34 +40,57 @@ const STARTUP_ONLY_KEYS_LIST = [
 	// model.backend is NOT here either — the backend is derived from the model id at load
 	// time (the catalog records each model's native backend). The swap controller writes
 	// both `model` and `backend` together when picking a cross-backend model; the model
-	// write already triggers an in-place swap that loads the correct backend. Including
-	// `backend` would race a 500 ms restart timer against the in-flight swap and kill the
-	// server mid-load — exactly the symptom the user hit on vosk → nemo (faster_whisper →
-	// onnx_asr) switches.
-	"model.computeType",
-	"model.device",
-	"model.onnxQuantization",
-	"model.initialPrompt",
-	"model.initialPromptRealtime",
+	// write already triggers an in-place swap that loads the correct backend.
+	//
+	// model.onnxQuantization is NOT here either — facade exposes an
+	// `onnx_quantization` setter that updates config and triggers an
+	// in-place model reload (the swap worker re-resolves the quant via
+	// `_resolve_quantization` on every load). Same shape as model swap,
+	// no process kill. Wired through sttSetParameter("onnx_quantization")
+	// in sync-actions.ts.
+	//
+	// model.initialPrompt is NOT here either — the recorder reads the
+	// live `_config.transcription.initial_prompt` on every transcribe
+	// (see RecorderService._safe_transcribe), so the setter takes
+	// effect on the NEXT utterance with no rebuild. The renderer's
+	// installInitialPromptSync already pushes via set_parameter; the
+	// startup-only entry just forced a redundant restart on top.
+	//
+	// model.initialPromptRealtime is NOT here either — facade setter
+	// triggers an in-place realtime model reload (the realtime worker
+	// only reads it at build time because use_prompt=False inside
+	// _safe_transcribe). Swap, not restart.
+	//
+	// model.translateToEnglish is NOT here either — facade setter
+	// triggers an in-place main model reload (the
+	// OnnxAsrTranscriber._patch_translate_prompt runs in the ctor, so a
+	// rebuild is required, but a rebuild is not a process restart).
+	//
+	// model.modelUnloadTimeout is NOT here either — facade setter
+	// forwards to RecorderService.set_unload_timeout_seconds which
+	// retunes the idle-poller live (starts/stops the daemon based on
+	// the new value).
+	//
 	// audio.inputDeviceIndex is hot-swapped via sttSetParameter("input_device_index")
 	// in use-sync-settings.ts — do NOT include it here or device picks would
 	// trigger a full server restart and lose the loaded models.
-	"audio.webrtcSensitivity",
-	"audio.minLengthOfRecording",
-	"audio.sileroDeactivityDetection",
-	// Consolidated mic-release picker. Boot-time policy: PyAudioSource
-	// reads always_on / lazy_stream_close / lazy_close_timeout_seconds
-	// once at construction and never re-checks. A flip needs a fresh
-	// server process to take effect.
-	"audio.microphoneRelease",
-	// Whisper task=translate is fixed in the decoder prompt array at
-	// model-load time (see OnnxAsrTranscriber._patch_translate_prompt).
-	// Toggling it requires a fresh model load.
-	"model.translateToEnglish",
-	// Idle-unload-timeout policy is read once at server boot. The
-	// runtime daemon that observes the timeout is a documented
-	// follow-up; once it lands, a hot-reload IPC can subsume this entry.
-	"model.modelUnloadTimeout",
+	//
+	// audio.webrtcSensitivity is NOT here either — facade setter calls
+	// WebRTCVAD.set_sensitivity() live; webrtcvad's underlying
+	// set_mode() is a cheap in-place mode swap on the C VAD struct.
+	//
+	// audio.sileroDeactivityDetection is NOT here either — currently a
+	// config-only knob with no runtime consumer (carried for Handy
+	// parity); the facade setter just persists the new value. Restart
+	// would buy nothing.
+	//
+	// audio.microphoneRelease is NOT here either — facade setters for
+	// always_on_microphone / lazy_stream_close /
+	// lazy_close_timeout_seconds call PyAudioSource.reconfigure(), which
+	// mutates the three policy fields in place. The next pause()
+	// observes the new flags; the live stream is never re-opened.
+	"model.computeType",
+	"model.device",
 	"quality.useMainModelForRealtime",
 	"quality.realtimeProcessingPause",
 	"quality.earlyTranscriptionOnSilence",
@@ -524,7 +547,7 @@ function walkSecretField(
 	if (segments.length < 2) {
 		return;
 	}
-	const leafKey = segments[segments.length - 1];
+	const leafKey = segments.at(-1);
 	if (!leafKey) {
 		return;
 	}

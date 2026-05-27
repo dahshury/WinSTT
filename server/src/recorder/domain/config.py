@@ -87,9 +87,22 @@ class VADConfig(StrictMutableModel):
     # unaffected.
     speech_onset_consecutive_chunks: int = Field(default=3, ge=1)
     post_speech_silence_duration: float = 0.6
-    min_length_of_recording: float = 0.5
     min_gap_between_recordings: float = 0.0
     pre_recording_buffer_duration: float = 1.0
+    # Leading-silence carry-forward, in milliseconds. On the first speech-
+    # classified chunk after a silence run, the last ``vad_prefill_ms`` of
+    # silence frames are PREPENDED to the recording buffer so the Whisper
+    # encoder sees the silence→speech transition. Weak starting consonants
+    # (the hardest part of far-mic speech) survive because the model has
+    # the leading-silence context it expects from training-data clips.
+    # Mirrors Handy's ``SmoothedVad.prefill_frames`` (15 * 30 ms = 450 ms);
+    # see ``examples/Handy/src-tauri/src/audio_toolkit/vad/smoothed.rs``.
+    # Orthogonal to ``speech_onset_consecutive_chunks`` (debounce decides
+    # WHETHER to start a recording; prefill decides WHAT audio context is
+    # included once started) and to ``pre_recording_buffer_duration``
+    # (which is a wider all-chunks net; the prefill is an explicit
+    # silence-only guarantee). 0 disables the feature.
+    vad_prefill_ms: int = Field(default=450, ge=0, le=2000)
 
 
 class TranscriptionConfig(StrictMutableModel):
@@ -138,6 +151,15 @@ class TranscriptionConfig(StrictMutableModel):
     # silently no-op with a warning. Mirrors Handy's
     # ``translate_to_english``.
     translate_to_english: bool = False
+    # Beam-search width for Whisper-family decoders. ``1`` runs the
+    # default greedy argmax path (byte-identical to historical
+    # behaviour). ``3`` matches Handy's ``SamplingStrategy::BeamSearch``
+    # default and typically buys ~1-3 % WER at ~2-3x decode wall-clock
+    # cost. Other engines (NeMo / Moonshine / GigaAM / Cohere / Kaldi /
+    # T-one) ignore the setting — their decoders are CTC / RNN-T which
+    # don't benefit from beam expansion. Capped at 5 to keep state
+    # bookkeeping bounded; sub-1 values are normalised to 1.
+    whisper_beam_size: int = Field(default=1, ge=1, le=5)
     # Idle-timeout that unloads the loaded ONNX session(s) to free RAM/
     # VRAM. Three modes mirroring Handy's ``ModelUnloadTimeout`` enum:
     #

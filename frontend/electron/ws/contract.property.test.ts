@@ -158,6 +158,39 @@ const validEventArbitraries: Record<SupportedEventType, PayloadGen> = {
 	wakeword_detection_end: fc.record({
 		type: fc.constant("wakeword_detection_end"),
 	}),
+	tts_complete: fc.record({
+		type: fc.constant("tts_complete"),
+		request_id: fc.string(),
+	}),
+	tts_failed: fc.record({
+		type: fc.constant("tts_failed"),
+		request_id: fc.string(),
+		reason: fc.string(),
+	}),
+	tts_model_download_start: fc.record({
+		type: fc.constant("tts_model_download_start"),
+	}),
+	tts_model_download_progress: fc.record({
+		type: fc.constant("tts_model_download_progress"),
+		progress: fc.double({ min: 0, max: 1, noNaN: true }),
+	}),
+	tts_model_download_complete: fc.record({
+		type: fc.constant("tts_model_download_complete"),
+	}),
+	tts_install_status: fc.record({
+		type: fc.constant("tts_install_status"),
+		phase: fc.string(),
+	}),
+	tts_install_paused: fc.record({
+		type: fc.constant("tts_install_paused"),
+	}),
+	tts_install_resumed: fc.record({
+		type: fc.constant("tts_install_resumed"),
+	}),
+	tts_install_failed: fc.record({
+		type: fc.constant("tts_install_failed"),
+		reason: fc.string(),
+	}),
 };
 
 const anyValidEvent: fc.Arbitrary<Record<string, unknown>> = fc.oneof(

@@ -9,7 +9,7 @@ import {
 	Video01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type ComponentPropsWithoutRef, memo, type ReactNode } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./Tooltip";
 
@@ -106,7 +106,7 @@ export interface ModelModalityIconsProps {
 	size?: "sm" | "md";
 }
 
-function ModelModalityIconsImpl({
+export function ModelModalityIcons({
 	className,
 	flat = false,
 	maxIcons = 4,
@@ -173,5 +173,3 @@ function ModelModalityIconsImpl({
 		</div>
 	);
 }
-
-export const ModelModalityIcons = memo(ModelModalityIconsImpl);

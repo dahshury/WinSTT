@@ -126,7 +126,7 @@ export function useSyncSettings(): void {
 		if (serverStatus === "idle") {
 			hasSyncedOnConnect.current = false;
 		}
-	}, [serverStatus, isLoaded, settings]);
+	}, [serverStatus, isLoaded]);
 
 	// Flush any pending debounced save on window close or unmount
 	useEffect(() => {

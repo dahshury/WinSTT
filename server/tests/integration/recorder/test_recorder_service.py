@@ -8,11 +8,12 @@ from collections.abc import Callable
 from typing import Any
 
 import numpy as np
+import pytest
 from typing_extensions import override
 
 from src.building_blocks.clock import Clock
-from src.building_blocks.types import AudioArray
 from src.building_blocks.event_bus import EventBus
+from src.building_blocks.types import AudioArray
 from src.recorder.application.recorder_service import RecorderService
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import (
@@ -46,7 +47,6 @@ class TestRecorderService:
     ) -> tuple[RecorderService, FakeTranscriber, EventBus, FakeAudioSource]:
         config = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.05,
-            min_length_of_recording=0.0,
             # These tests drive the end-to-end text() flow, not the
             # speech-onset debounce — keep legacy single-chunk start.
             speech_onset_consecutive_chunks=1,
@@ -113,6 +113,33 @@ class TestRecorderService:
         service.listen()
         service.abort()
         # Should not raise
+
+    def test_abort_clears_realtime_accumulator(self) -> None:
+        """abort() must wipe every per-session realtime field so a session-A
+        cancel can't leak text into session B's _reuse_realtime_text_if_eligible
+        path or stabilizer prefix-anchor. Regression guard against the bug
+        report: "previous transcription is still on and it gathers the words
+        from the previous one and the next one."""
+        service, _, _, _ = self._make_service()
+        # Simulate session A having left state behind: the realtime worker
+        # publishes _last_realtime_text + grows the stabilizer's commonprefix
+        # buffer + advances the committed-frames watermark.
+        service._last_realtime_text = "session-A leak"
+        service._realtime_committed_text = "session-A leak"
+        service._realtime_committed_frames = 42
+        # Stabilizer needs two update() calls before commonprefix populates
+        # stable_safetext (single-entry text_storage stays at "")
+        service._realtime_stabilizer.update("session-A leak prefix one")
+        service._realtime_stabilizer.update("session-A leak prefix two")
+        assert service._realtime_stabilizer.stable_safetext != ""
+
+        service.abort()
+
+        assert service._last_realtime_text == ""
+        assert service._realtime_committed_text == ""
+        assert service._realtime_committed_frames == 0
+        assert service._realtime_stabilizer.stable_safetext == ""
+        assert len(service._realtime_stabilizer.text_storage) == 0
 
     # ---- New tests for 100% coverage ----
 
@@ -748,7 +775,6 @@ class TestRecorderService:
     ) -> tuple[RecorderService, FakeTranscriber, EventBus]:
         config = RecorderConfig.from_kwargs(
             post_speech_silence_duration=5.0,
-            min_length_of_recording=0.0,
             use_microphone=False,
             speech_onset_consecutive_chunks=1,
             enable_realtime_transcription=True,
@@ -836,7 +862,6 @@ class TestRecorderService:
         """Realtime worker waits for init_realtime_after_seconds before first transcription."""
         config = RecorderConfig.from_kwargs(
             post_speech_silence_duration=5.0,
-            min_length_of_recording=0.0,
             use_microphone=False,
             speech_onset_consecutive_chunks=1,
             enable_realtime_transcription=True,
@@ -875,6 +900,8 @@ class TestRecorderService:
             audio: np.ndarray[Any, Any],
             language: str = "",
             use_prompt: bool = True,
+            custom_words: list[str] | None = None,
+            initial_prompt_text: str | None = None,
         ) -> TranscriptionResult:
             nonlocal call_count
             call_count += 1
@@ -1060,7 +1087,6 @@ class TestRecorderService:
     ) -> tuple[RecorderService, FakeTranscriber]:
         config = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.05,
-            min_length_of_recording=0.0,
             use_microphone=False,
             speech_onset_consecutive_chunks=1,
             enable_realtime_transcription=enable_realtime,
@@ -1911,6 +1937,8 @@ class TestRecorderService:
                 audio: AudioArray,
                 language: str = "",
                 use_prompt: bool = True,
+                custom_words: list[str] | None = None,
+                initial_prompt_text: str | None = None,
             ) -> TranscriptionResult:
                 raise RuntimeError("simulated ONNXRuntime DML kernel exception")
 
@@ -1931,6 +1959,8 @@ class TestRecorderService:
                 audio: AudioArray,
                 language: str = "",
                 use_prompt: bool = True,
+                custom_words: list[str] | None = None,
+                initial_prompt_text: str | None = None,
             ) -> TranscriptionResult:
                 raise RuntimeError("simulated ONNXRuntime DML kernel exception")
 
@@ -2432,4 +2462,87 @@ class TestRecorderService:
         service._install_transcriber("main", "after-swap", new_t)
 
         assert service._saved_main_model_name == "after-swap"
+        service.shutdown()
+
+    def test_unload_daemon_loop_fires_after_interval(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """End-to-end smoke: the ``_unload_check_loop`` actually wakes on
+        its interval, observes the idle window has elapsed, and tears the
+        transcribers down. Shrinks both the poll interval AND the timeout
+        to ~50 ms so the test stays deterministic without sleeping seconds.
+        """
+        # Compress the daemon's polling cadence so the test finishes fast.
+        monkeypatch.setattr(RecorderService, "_UNLOAD_CHECK_INTERVAL_SECONDS", 0.05)
+
+        config = RecorderConfig.from_kwargs(
+            use_microphone=False,
+            speech_onset_consecutive_chunks=1,
+            # Positive value spawns the poller; the loop's first wake hits
+            # immediately after the 50 ms tick above, and the idle-since
+            # init is > 0.001 s, so the tear-down fires on the first pass.
+            model_unload_timeout_seconds=1,
+        )
+        transcriber = FakeTranscriber(
+            result=TranscriptionResult(text="x", language="en", language_probability=0.99, duration_seconds=1.0)
+        )
+        service = RecorderService(
+            audio_source=FakeAudioSource(),
+            vad=FakeVAD(speech_pattern=[True] + [False] * 20),
+            transcriber=transcriber,
+            config=config,
+            event_bus=EventBus(),
+            clock=Clock.system_clock(),
+        )
+        # Force the activity stamp into the deep past so the first poll
+        # tick sees ``idle >= timeout`` (1 s) without us having to sleep.
+        service._last_activity_at = service._clock.get_current_time() - 10.0
+
+        # Spin until the daemon actually fires the tear-down. Cap the
+        # wait at 2 s — much longer than the 50 ms tick the daemon now
+        # runs on, so a failure here is a real bug rather than CI jitter.
+        deadline = time.time() + 2.0
+        while time.time() < deadline and service._transcriber is not None:
+            time.sleep(0.01)
+
+        assert service._transcriber is None, "daemon never tore down the transcriber"
+        assert transcriber.shutdown_called is True
+
+        # Calling ``_maybe_unload_for_idle`` again must be a safe no-op —
+        # both slots are already empty, so no further shutdown should fire.
+        service._maybe_unload_for_idle()  # must not raise
+        service.shutdown()
+
+    def test_relink_realtime_to_main_after_swap_when_slaved(self) -> None:
+        """When ``use_main_model_for_realtime`` is on, a successful main
+        swap must re-point the realtime slot at the freshly-committed
+        instance (otherwise the realtime slot is left dangling on a
+        shut-down transcriber and the live preview goes silent for the
+        rest of the session).
+        """
+        service, original, _, _ = self._make_service(
+            realtime_transcriber=FakeTranscriber(),
+        )
+        # Slave the realtime slot to main and pin both slots to the same
+        # transcriber instance — the boot-time state when the user has
+        # ``use_main_model_for_realtime`` enabled.
+        service._config.realtime.enable_realtime_transcription = True
+        service._config.realtime.use_main_model_for_realtime = True
+        with service._main_transcriber_lock:
+            service._transcriber = original
+        with service._realtime_transcriber_lock:
+            service._realtime_transcriber = original
+
+        new_main = FakeTranscriber(
+            result=TranscriptionResult(text="new", language="en", language_probability=0.99, duration_seconds=1.0)
+        )
+        service._install_transcriber("main", "swapped-model", new_main)
+
+        # Both slots must now point at the same new instance, and both
+        # slots must share the main lock so ORT is serialised against
+        # itself across realtime + main callers.
+        assert service._transcriber is new_main
+        assert service._realtime_transcriber is new_main
+        assert service._realtime_transcriber_lock is service._main_transcriber_lock
+        # The config's realtime model name is mirrored so a follow-up
+        # lazy-reload rebuilds the same model the user is now on.
+        assert service._config.realtime.realtime_model_type == "swapped-model"
         service.shutdown()

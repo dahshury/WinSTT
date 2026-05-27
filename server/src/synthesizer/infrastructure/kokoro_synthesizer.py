@@ -23,7 +23,11 @@ from src.synthesizer.domain.ports.synthesizer import (
     SynthesisChunk,
     VoiceInfo,
 )
-from src.synthesizer.infrastructure.asset_downloader import ensure_assets, resolve_cache_dir
+from src.synthesizer.infrastructure.asset_downloader import (
+    DownloadPaused,
+    ensure_assets,
+    resolve_cache_dir,
+)
 from src.synthesizer.infrastructure.voice_catalog import KOKORO_VOICE_CATALOG
 
 if TYPE_CHECKING:
@@ -47,6 +51,7 @@ class KokoroSynthesizer(ISpeechSynthesizer):
     _synth_lock: threading.Lock
     _on_progress: object | None
     _should_cancel: object | None
+    _should_pause: object | None
     _on_status: object | None
 
     def __init__(self, config: SynthesizerConfig) -> None:
@@ -56,6 +61,7 @@ class KokoroSynthesizer(ISpeechSynthesizer):
         self._synth_lock = threading.Lock()
         self._on_progress = None
         self._should_cancel = None
+        self._should_pause = None
         self._on_status = None
 
     def attach_download_callbacks(
@@ -63,6 +69,7 @@ class KokoroSynthesizer(ISpeechSynthesizer):
         on_progress: object,
         should_cancel: object,
         on_status: object | None = None,
+        should_pause: object | None = None,
     ) -> None:
         """Plug in the same lifecycle callbacks the STT side uses for downloads.
 
@@ -71,9 +78,13 @@ class KokoroSynthesizer(ISpeechSynthesizer):
         ``stt_server`` layer and we don't want to import that here.
         ``on_status`` (optional) takes a phase string so the UI can label
         which part of the install is running (engine vs model vs voices).
+        ``should_pause`` (optional) lets the install pause cleanly at the
+        next chunk boundary, preserving partials for resume on the next
+        ``warm_up`` invocation.
         """
         self._on_progress = on_progress
         self._should_cancel = should_cancel
+        self._should_pause = should_pause
         self._on_status = on_status
 
     def _emit_status(self, phase: str) -> None:
@@ -133,24 +144,32 @@ class KokoroSynthesizer(ISpeechSynthesizer):
 
         runtime_dir = resolve_runtime_dir()
         self._emit_status("engine")
-        ensure_support_pack(
+        outcome = ensure_support_pack(
             runtime_dir,
             on_progress=self._on_progress,  # type: ignore[arg-type]
             should_cancel=self._should_cancel,  # type: ignore[arg-type]
+            should_pause=self._should_pause,  # type: ignore[arg-type]
         )
+        if outcome == "paused":
+            raise DownloadPaused("TTS engine pack install paused")
         activate(runtime_dir)
 
         # Step 2: ensure the Kokoro weights + voicepacks.
         self._emit_status("model")
         cache_dir = resolve_cache_dir(self._config.cache_dir)
         # The callbacks are typed at the call site but kept opaque here.
-        model_path, voices_path = ensure_assets(
+        asset_outcome = ensure_assets(
             cache_dir,
             self._config.model_filename,
             self._config.voices_filename,
             on_progress=self._on_progress,  # type: ignore[arg-type]
             should_cancel=self._should_cancel,  # type: ignore[arg-type]
+            should_pause=self._should_pause,  # type: ignore[arg-type]
         )
+        if asset_outcome == "paused":
+            raise DownloadPaused("TTS voice model install paused")
+        model_path = cache_dir / self._config.model_filename
+        voices_path = cache_dir / self._config.voices_filename
         provider = self._resolve_provider()
         # kokoro-onnx selects its ORT execution provider from the
         # ``ONNX_PROVIDER`` environment variable (see kokoro_onnx.__init__:
@@ -169,11 +188,18 @@ class KokoroSynthesizer(ISpeechSynthesizer):
             # the pack, re-activate, and retry once before giving up.
             logger.warning("TTS import failed (%s); auto-repairing corrupt support pack", exc)
             self._emit_status("engine")
-            repair_and_reinstall(
+            repair_outcome = repair_and_reinstall(
                 runtime_dir,
                 on_progress=self._on_progress,  # type: ignore[arg-type]
                 should_cancel=self._should_cancel,  # type: ignore[arg-type]
+                should_pause=self._should_pause,  # type: ignore[arg-type]
             )
+            if repair_outcome == "paused":
+                # `from None` because the pause is the cooperative outcome of
+                # the repair attempt — chaining it with the ImportError that
+                # triggered the repair would mis-attribute the user's pause
+                # action to a kokoro_onnx import failure.
+                raise DownloadPaused("TTS engine pack repair paused") from None
             activate(runtime_dir)
             try:
                 from kokoro_onnx import Kokoro

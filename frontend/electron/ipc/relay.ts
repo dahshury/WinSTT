@@ -17,9 +17,14 @@ import {
 } from "../../src/shared/lib/realtime-enabled";
 import { clearSessionAborted, isSessionAborted } from "../lib/abort-state";
 import { readWindowContextTree } from "../lib/context-reader";
+import { extractAsrPromptTail } from "../lib/context-snapshot";
 import { installCustomWordsSync } from "../lib/custom-words-sync";
 import { dbg, dbgVerbose } from "../lib/debug-log";
-import { installInitialPromptSync } from "../lib/initial-prompt-sync";
+import {
+	clearVolatileContextTail,
+	installInitialPromptSync,
+	setVolatileContextTail,
+} from "../lib/initial-prompt-sync";
 import { createSafeSender, type SafeSend } from "../lib/ipc-helpers";
 import { setLastTranscription } from "../lib/last-transcription";
 import { injectSubmitKey, pasteText } from "../lib/paste";
@@ -1375,6 +1380,28 @@ const DELETE_MODEL_CACHE_DISPATCH: Record<
 	},
 };
 
+/** Per-quant delete relay. Validates the renderer payload, then forwards
+ *  to the server as a ``delete_model_quantization`` control command. The
+ *  quantization field is allowed to be empty (catalog "default precision"
+ *  is a real variant id) — only non-string types are rejected. */
+function handleDeleteModelQuantizationRequest(client: SttClient, payload: unknown): void {
+	if (payload === null || typeof payload !== "object") {
+		return;
+	}
+	const { modelId, quantization } = payload as { modelId?: unknown; quantization?: unknown };
+	if (!isValidModelId(modelId)) {
+		return;
+	}
+	if (typeof quantization !== "string") {
+		return;
+	}
+	client.sendControl({
+		command: "delete_model_quantization",
+		model_id: modelId as string,
+		quantization,
+	});
+}
+
 const ROUTE_BY_TYPE: Record<string, "fullSentence" | "recordingState"> = {
 	fullSentence: "fullSentence",
 	// `speaker_segments` rides the fullSentence queue so it is dispatched
@@ -1689,6 +1716,12 @@ export function setupRelay(
 	ipcMain.handle("stt:delete-model-cache", (_evt, modelId: unknown) => {
 		handleDeleteModelCacheRequest(client, modelId);
 	});
+	// Per-quant delete — same broadcast contract (model_cache_changed fires
+	// after the server deletes the matching weight files), only the affected
+	// quant's badge flips back to "not_cached" on the next probe.
+	ipcMain.handle("stt:delete-model-quantization", (_evt, payload: unknown) => {
+		handleDeleteModelQuantizationRequest(client, payload);
+	});
 	// Stryker disable next-line BooleanLiteral: closure init — only assigned via setMuted from recording_start handler before any read
 	let didMuteAudio = false;
 
@@ -1702,17 +1735,33 @@ export function setupRelay(
 
 	// Context-awareness capture: snapshots the focused window's UIA
 	// subtree on recording_start (when the user opted in) and serves
-	// the formatted snapshot to fullSentence so the LLM cleanup has
-	// the "what is on screen" context for proper-noun spelling and
-	// reply-to-this-email composition. The tree reader runs the same
-	// caret-split the legacy reader did, plus a hierarchical axHtml
-	// walk + browser URL + process exe. Apps/URLs on the user's
-	// deny-list still produce a snapshot, but with all sensitive
-	// fields stripped before reaching the LLM.
+	// the formatted snapshot to two consumers:
+	//   1. fullSentence → dictation LLM cleanup (proper-noun spelling,
+	//      reply-to-this-email composition).
+	//   2. onSnapshotReady → Whisper `initial_prompt` augmentation
+	//      (extractAsrPromptTail → setVolatileContextTail), so even
+	//      with the LLM disabled the captured prior-text biases the
+	//      decoder against mis-hearing what the user is replying to.
+	// The tree reader emits caret-split + hierarchical axHtml + browser
+	// URL + process exe. Apps/URLs on the user's deny-list still produce
+	// a snapshot, but with all sensitive fields stripped — and because
+	// extractAsrPromptTail reads `textBefore` (which redactSensitiveFields
+	// drops), the ASR-side bias is automatically suppressed for denied
+	// sessions too.
 	const contextCapture = createContextCapture({
 		isEnabled: () => getStoreValue("general.contextAwareness"),
 		getDenyList: () => getStoreValue("general.contextDenyList"),
 		read: readWindowContextTree,
+		onSnapshotReady: (snapshot) => {
+			const tail = extractAsrPromptTail(snapshot);
+			if (tail.length === 0) {
+				return;
+			}
+			setVolatileContextTail(client, tail);
+		},
+		onSnapshotCleared: () => {
+			clearVolatileContextTail(client);
+		},
 	});
 
 	const ctx: DispatchContext = {
@@ -1848,6 +1897,7 @@ export function setupRelay(
 		disposeCustomWordsSync();
 		ipcMain.removeHandler(IPC.STT_CANCEL_DOWNLOAD);
 		ipcMain.removeHandler("stt:delete-model-cache");
+		ipcMain.removeHandler("stt:delete-model-quantization");
 		ipcMain.removeHandler(IPC.STT_GET_MODEL_CATALOG);
 		ipcMain.removeHandler(IPC.STT_GET_RUNTIME_INFO);
 		ipcMain.removeHandler(IPC.STT_GET_SERVER_READY);

@@ -254,7 +254,15 @@ class RemoteTranscriber(ITranscriber):
         audio: AudioArray,
         language: str = "",
         use_prompt: bool = True,
+        custom_words: list[str] | None = None,
+        initial_prompt_text: str | None = None,
     ) -> TranscriptionResult:
+        # Decoder-bias prompts are local-engine concerns; remote cloud STT
+        # providers each have their own bias surface (OpenAI: ``prompt``;
+        # ElevenLabs: ``vocabulary``) and we don't expose them yet. Both
+        # parameters are accepted for ITranscriber signature parity and
+        # ignored — server-side rapidfuzz still cleans up.
+        del custom_words, initial_prompt_text
         if self._shutdown_event.is_set():
             raise TranscriptionError("RemoteTranscriber has been shut down")
 

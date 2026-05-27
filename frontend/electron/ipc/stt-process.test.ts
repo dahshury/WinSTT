@@ -721,7 +721,6 @@ describe("spawnServer argv builder", () => {
 		["audio.inputDeviceIndex", "--input-device", 3],
 		["audio.sileroSensitivity", "--silero_sensitivity", 0.7],
 		["audio.webrtcSensitivity", "--webrtc_sensitivity", 2],
-		["audio.minLengthOfRecording", "--min_length_of_recording", 0.4],
 		["quality.realtimeProcessingPause", "--realtime_processing_pause", 0.05],
 		["quality.earlyTranscriptionOnSilence", "--early_transcription_on_silence", 0.2],
 		["quality.initRealtimeAfterSeconds", "--init_realtime_after_seconds", 1.5],
@@ -1089,11 +1088,6 @@ const STORE_MAPPINGS: Mapping[] = [
 	{ storePath: "audio.inputDeviceIndex", cliFlag: "--input-device", value: 4 },
 	{ storePath: "audio.sileroSensitivity", cliFlag: "--silero_sensitivity", value: 0.61 },
 	{ storePath: "audio.webrtcSensitivity", cliFlag: "--webrtc_sensitivity", value: 2 },
-	{
-		storePath: "audio.minLengthOfRecording",
-		cliFlag: "--min_length_of_recording",
-		value: 1.7,
-	},
 	{
 		storePath: "quality.realtimeProcessingPause",
 		cliFlag: "--realtime_processing_pause",

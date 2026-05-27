@@ -1,5 +1,5 @@
 import type React from "react";
-import { memo, useRef } from "react";
+import { useRef } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import { RECORDING_MODE_COLOR_HEX, type RecordingMode } from "@/shared/config/recording-mode-color";
 import type { VisualizerSize, VisualizerType } from "../lib/audio-visualizer";
@@ -23,10 +23,7 @@ interface AudioVisualizerProps {
  * Renders the visualizer selected in settings.
  * Defaults to "bar" if no setting is configured.
  */
-export const AudioVisualizer = memo(function AudioVisualizer({
-	size = "lg",
-	className,
-}: AudioVisualizerProps) {
+export function AudioVisualizer({ size = "lg", className }: AudioVisualizerProps) {
 	const visualizerType: VisualizerType = useSettingsStore(
 		(s) => s.settings.general?.visualizerType ?? "bar"
 	);
@@ -56,7 +53,7 @@ export const AudioVisualizer = memo(function AudioVisualizer({
 			type={visualizerType}
 		/>
 	);
-});
+}
 
 interface AutoSizedVisualizerProps {
 	barCount?: number | undefined;

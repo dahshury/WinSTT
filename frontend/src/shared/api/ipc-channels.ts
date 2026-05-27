@@ -30,6 +30,7 @@ export const IPC = {
 	STT_MODEL_CACHE_CHANGED: "stt:model-cache-changed",
 	STT_CANCEL_DOWNLOAD: "stt:cancel-download",
 	STT_DELETE_MODEL_CACHE: "stt:delete-model-cache",
+	STT_DELETE_MODEL_QUANTIZATION: "stt:delete-model-quantization",
 	STT_GET_LIVE_RESOURCES: "stt:get-live-resources",
 	STT_ASSESS_DICTATION_FIT: "stt:assess-dictation-fit",
 	STT_ASSESS_OLLAMA_FIT: "stt:assess-ollama-fit",
@@ -220,6 +221,12 @@ export const IPC = {
 	// Side-effect-free probe: what enabling TTS will download (engine pack +
 	// model + voices). Drives the confirm dialog; never triggers a download.
 	TTS_DOWNLOAD_ESTIMATE: "tts:download-estimate",
+	// Install-lifecycle controls (renderer → main). Pause preserves the
+	// partial file for resume; cancel discards every partial. Distinct from
+	// TTS_CANCEL (which scopes to a single in-flight synthesis).
+	TTS_INSTALL_PAUSE: "tts:install-pause",
+	TTS_INSTALL_RESUME: "tts:install-resume",
+	TTS_INSTALL_CANCEL: "tts:install-cancel",
 	// The window that owns the Web Audio queue reports when audio actually
 	// starts / finishes playing (distinct from server-side synthesis
 	// dispatch / completion — there's a ~1s synthesis gap before audio).
@@ -246,6 +253,11 @@ export const IPC = {
 	// south). Distinct from TTS_FAILED, which is per-utterance. Drives the
 	// install-error banner in the Settings → TTS section.
 	TTS_INSTALL_FAILED: "tts:install-failed",
+	// Confirmation that the downloader actually paused / resumed after the
+	// renderer sent a pause/resume command. Drives the bar's "paused"
+	// styling and re-enables the Pause button after Resume.
+	TTS_INSTALL_PAUSED: "tts:install-paused",
+	TTS_INSTALL_RESUMED: "tts:install-resumed",
 
 	// LLM events (main → renderer)
 	LLM_CATALOG: "llm:catalog",
@@ -401,6 +413,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_LIST_MODELS_WITH_STATE]: ["invoke"],
 	[IPC.STT_CANCEL_DOWNLOAD]: ["invoke"],
 	[IPC.STT_DELETE_MODEL_CACHE]: ["invoke"],
+	[IPC.STT_DELETE_MODEL_QUANTIZATION]: ["invoke"],
 	[IPC.STT_GET_LIVE_RESOURCES]: ["invoke"],
 	[IPC.STT_ASSESS_DICTATION_FIT]: ["invoke"],
 	[IPC.STT_ASSESS_OLLAMA_FIT]: ["invoke"],
@@ -529,6 +542,9 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_INIT]: ["invoke"],
 	[IPC.TTS_LIST_VOICES]: ["invoke"],
 	[IPC.TTS_DOWNLOAD_ESTIMATE]: ["invoke"],
+	[IPC.TTS_INSTALL_PAUSE]: ["send"],
+	[IPC.TTS_INSTALL_RESUME]: ["send"],
+	[IPC.TTS_INSTALL_CANCEL]: ["send"],
 	[IPC.TTS_REPORT_PLAYBACK_STARTED]: ["send"],
 	[IPC.TTS_REPORT_PLAYBACK_ENDED]: ["send"],
 
@@ -544,6 +560,8 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_MODEL_DOWNLOAD_COMPLETE]: ["on"],
 	[IPC.TTS_INSTALL_STATUS]: ["on"],
 	[IPC.TTS_INSTALL_FAILED]: ["on"],
+	[IPC.TTS_INSTALL_PAUSED]: ["on"],
+	[IPC.TTS_INSTALL_RESUMED]: ["on"],
 
 	// LLM events (main → renderer)
 	[IPC.LLM_CATALOG]: ["on"],

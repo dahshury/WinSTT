@@ -26,12 +26,12 @@
  * keeps the TypeScript instantiation budget bounded if the schema grows).
  */
 
-type LeafPathsImpl<T, Depth extends ReadonlyArray<unknown>> = Depth["length"] extends 6
+type LeafPathsImpl<T, Depth extends readonly unknown[]> = Depth["length"] extends 6
 	? never
 	: T extends object
 		? {
 				[K in keyof T & string]: T[K] extends object
-					? T[K] extends ReadonlyArray<unknown>
+					? T[K] extends readonly unknown[]
 						? K
 						: `${K}.${LeafPathsImpl<T[K], [...Depth, unknown]>}`
 					: K;
@@ -41,7 +41,7 @@ type LeafPathsImpl<T, Depth extends ReadonlyArray<unknown>> = Depth["length"] ex
 /** Every dotted path that lands on a primitive (or array) leaf in ``T``. */
 export type LeafPaths<T> = LeafPathsImpl<T, []>;
 
-type LeafPathsToStringImpl<T, Depth extends ReadonlyArray<unknown>> = Depth["length"] extends 6
+type LeafPathsToStringImpl<T, Depth extends readonly unknown[]> = Depth["length"] extends 6
 	? never
 	: T extends string
 		? "__leaf__"
@@ -50,7 +50,7 @@ type LeafPathsToStringImpl<T, Depth extends ReadonlyArray<unknown>> = Depth["len
 					[K in keyof T & string]: T[K] extends string
 						? K
 						: T[K] extends object
-							? T[K] extends ReadonlyArray<unknown>
+							? T[K] extends readonly unknown[]
 								? never
 								: `${K}.${LeafPathsToStringImpl<T[K], [...Depth, unknown]>}`
 							: never;

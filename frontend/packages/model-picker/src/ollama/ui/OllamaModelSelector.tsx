@@ -16,7 +16,6 @@ import {
 	type ComponentPropsWithoutRef,
 	type ReactNode,
 	useEffect,
-	useMemo,
 	useRef,
 	useState,
 } from "react";
@@ -960,7 +959,7 @@ function LibraryRowTags({
 	return (
 		<div className="mt-2 flex flex-col gap-1.5 border-border/40 border-t pt-2">
 			{tagsState?.isLoading && tagsState.tags.length === 0 ? (
-				<div className="flex items-center gap-2 px-1 py-1 text-foreground-muted text-xs">
+				<div className="flex items-center gap-2 p-1 text-foreground-muted text-xs">
 					<Spinner className="size-3" />
 					Loading tags…
 				</div>
@@ -1000,7 +999,7 @@ function LibraryRow({
 	onResume,
 	onDiscard,
 }: LibraryRowProps) {
-	const handleClick = (e: React.MouseEvent) => {
+	const toggleExpand = (e: React.MouseEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
 		onExpand(hit.name);
@@ -1012,7 +1011,7 @@ function LibraryRow({
 			<LibraryRowHeader
 				expanded={expanded}
 				hit={hit}
-				onClick={handleClick}
+				onClick={toggleExpand}
 				progressPercent={progressPercent}
 				status={status}
 			/>
@@ -1637,12 +1636,6 @@ export function OllamaModelSelector({
 	const [query, setQuery] = useState("");
 	const [expandedHit, setExpandedHit] = useState<string | null>(null);
 
-	// Reset expanded library row when the query changes — stale tags shouldn't
-	// be displayed under a different model's name.
-	useEffect(() => {
-		setExpandedHit(null);
-	}, []);
-
 	// Kick off the catalog scrape as soon as we have a `librarySearch` prop.
 	// The store dedupes via `isLoaded`/`isLoading`, so this is a no-op after
 	// the first call. We don't gate on the dropdown opening because some
@@ -1661,120 +1654,105 @@ export function OllamaModelSelector({
 		onDiscardPull
 	);
 
-	const installedFiltered = useMemo(() => {
-		if (!query.trim()) {
-			return models;
-		}
-		return models.filter((m) => matchesInstalledQuery(m, query));
-	}, [models, query]);
+	const installedFiltered = query.trim()
+		? models.filter((m) => matchesInstalledQuery(m, query))
+		: models;
 
-	const grouped = useMemo(
-		() => groupOllamaModelsByPublisher(installedFiltered),
-		[installedFiltered]
-	);
+	const grouped = groupOllamaModelsByPublisher(installedFiltered);
 
-	const installedNameSet = useMemo(() => new Set(models.map((m) => m.name)), [models]);
+	const installedNameSet = new Set(models.map((m) => m.name));
 
-	const recommendedVisible = useMemo(() => {
-		if (!recommendedModels) {
-			return [] as RecommendedOllamaModel[];
-		}
-		return recommendedModels.filter(
-			(m) => !installedNameSet.has(m.name) && matchesRecommendedQuery(m, query)
-		);
-	}, [recommendedModels, installedNameSet, query]);
+	const recommendedVisible = recommendedModels
+		? recommendedModels.filter(
+				(m) => !installedNameSet.has(m.name) && matchesRecommendedQuery(m, query)
+			)
+		: ([] as RecommendedOllamaModel[]);
 
 	// Client-side fuzzy filter against the full Ollama library catalog. Uses
 	// fuse.js (same library the OpenRouter picker uses) so typos / partial
 	// names / maker names ("google", "lama") all surface results.
-	const filteredCatalog = useMemo(
-		() =>
-			librarySearch?.catalog
-				? filterLibraryHits(librarySearch.catalog, query)
-				: ([] as readonly OllamaLibraryHit[]),
-		[librarySearch?.catalog, query]
-	);
+	const filteredCatalog = librarySearch?.catalog
+		? filterLibraryHits(librarySearch.catalog, query)
+		: ([] as readonly OllamaLibraryHit[]);
 
-	const libraryGroupedByPublisher = useMemo(
-		() => groupLibraryHitsByPublisher(filteredCatalog),
-		[filteredCatalog]
-	);
+	const libraryGroupedByPublisher = groupLibraryHitsByPublisher(filteredCatalog);
 
 	// Build the shared rail tile list — one tile per family + an optional
 	// "Recommended" tile at the bottom. Matches the OpenRouter + STT pickers
 	// (same `GroupRail` shell).
-	const railItems: GroupRailItem[] = useMemo(() => {
-		const items: GroupRailItem[] = grouped.map(([publisherSlug, entries]) => {
+	const railItems: GroupRailItem[] = grouped.map(([publisherSlug, entries]) => {
+		const publisher = getOllamaPublisherBySlug(publisherSlug);
+		const iconSrc = getProviderIconWithFallback(publisher.slug);
+		return {
+			id: publisherSlug,
+			label: publisher.label,
+			badge: entries.length,
+			icon: (
+				<img
+					alt=""
+					className="size-5 rounded-[3px] object-cover"
+					height={20}
+					src={iconSrc}
+					width={20}
+				/>
+			),
+		};
+	});
+	if (showRecommendedSection && recommendedVisible.length > 0) {
+		railItems.push({
+			id: RECOMMENDED_RAIL_ID,
+			label: "Recommended",
+			icon: <HugeiconsIcon className="size-3.5 text-amber-500" icon={StarIcon} />,
+			badge: recommendedVisible.length,
+		});
+	}
+	if (librarySearch?.isLoaded && libraryGroupedByPublisher.length > 0) {
+		railItems.push({
+			id: LIBRARY_RAIL_ID,
+			label: "Ollama Library",
+			badge: filteredCatalog.length,
+		});
+		for (const [publisherSlug, hits] of libraryGroupedByPublisher) {
 			const publisher = getOllamaPublisherBySlug(publisherSlug);
 			const iconSrc = getProviderIconWithFallback(publisher.slug);
-			return {
-				id: publisherSlug,
+			railItems.push({
+				id: `${LIBRARY_RAIL_ID}:${publisherSlug}`,
 				label: publisher.label,
-				badge: entries.length,
+				badge: hits.length,
 				icon: (
 					<img
 						alt=""
-						className="size-5 rounded-[3px] object-cover"
+						className="size-5 rounded-[3px] object-cover opacity-80"
 						height={20}
 						src={iconSrc}
 						width={20}
 					/>
 				),
-			};
-		});
-		if (showRecommendedSection && recommendedVisible.length > 0) {
-			items.push({
-				id: RECOMMENDED_RAIL_ID,
-				label: "Recommended",
-				icon: <HugeiconsIcon className="size-3.5 text-amber-500" icon={StarIcon} />,
-				badge: recommendedVisible.length,
 			});
 		}
-		if (librarySearch?.isLoaded && libraryGroupedByPublisher.length > 0) {
-			items.push({
-				id: LIBRARY_RAIL_ID,
-				label: "Ollama Library",
-				badge: filteredCatalog.length,
-			});
-			for (const [publisherSlug, hits] of libraryGroupedByPublisher) {
-				const publisher = getOllamaPublisherBySlug(publisherSlug);
-				const iconSrc = getProviderIconWithFallback(publisher.slug);
-				items.push({
-					id: `${LIBRARY_RAIL_ID}:${publisherSlug}`,
-					label: publisher.label,
-					badge: hits.length,
-					icon: (
-						<img
-							alt=""
-							className="size-5 rounded-[3px] object-cover opacity-80"
-							height={20}
-							src={iconSrc}
-							width={20}
-						/>
-					),
-				});
-			}
-		}
-		return items;
-	}, [
-		grouped,
-		showRecommendedSection,
-		recommendedVisible.length,
-		librarySearch?.isLoaded,
-		libraryGroupedByPublisher,
-		filteredCatalog.length,
-	]);
+	}
 
+	// Reset the active rail to the selected publisher whenever the model
+	// changes. Stored as state so user clicks (``handleRailClick``) and
+	// scroll-spy events can override it independently — but tracked via
+	// the "previous-prop snapshot" pattern instead of a sync ``useEffect``.
 	const selectedPublisher = selected ? getOllamaPublisher(getOllamaFamily(selected)).slug : null;
 	const [activeRailId, setActiveRailId] = useState<string | null>(selectedPublisher);
-	useEffect(() => {
+	const [lastSelectedPublisher, setLastSelectedPublisher] = useState<string | null>(
+		selectedPublisher
+	);
+	if (lastSelectedPublisher !== selectedPublisher) {
+		setLastSelectedPublisher(selectedPublisher);
 		setActiveRailId(selectedPublisher);
-	}, [selectedPublisher]);
+	}
 
+	// The popup node is captured into ``popupRef`` via Base UI's callback
+	// ref AND forwarded to ``railSpy.attach`` so the spy's internal state
+	// fires its `useEffect` when the popup mounts/unmounts. No `useState`
+	// for the node lives at this layer — the hook owns it (avoiding the
+	// `react-doctor/rerender-state-only-in-handlers` smell).
 	const popupRef = useRef<HTMLElement | null>(null);
-	const [popupNode, setPopupNode] = useState<HTMLElement | null>(null);
 	const railSpy = useRailScrollSpy({
-		popupNode,
 		scrollContainerSelector: '[data-slot="ollama-model-list"]',
 		onActiveChange: (id) => setActiveRailId(id),
 	});
@@ -1870,7 +1848,7 @@ export function OllamaModelSelector({
 			popupHeightClass="h-[min(620px,var(--available-height))]"
 			popupRef={(node) => {
 				popupRef.current = node;
-				setPopupNode(node);
+				railSpy.attach(node);
 			}}
 			popupWidthClass="w-[max(620px,var(--anchor-width))]"
 			searchPlaceholder="Search the Ollama library"

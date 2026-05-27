@@ -5,7 +5,7 @@
  */
 
 import { cva } from "class-variance-authority";
-import { type ComponentProps, useMemo, useRef } from "react";
+import { type ComponentProps, useEffect, useRef } from "react";
 import { cn } from "@/shared/lib/cn";
 import type { VisualizerSize } from "../lib/audio-visualizer";
 import { DEFAULT_VISUALIZER_COLOR as DEFAULT_COLOR, hexToRgb } from "../lib/hex-to-rgb";
@@ -182,7 +182,7 @@ export function AudioVisualizerAura({
 	...props
 }: AudioVisualizerAuraProps & ComponentProps<"div">) {
 	const state = useAgentState();
-	const rgbColor = useMemo(() => hexToRgb(color) ?? DEFAULT_FALLBACK_COLOR, [color]);
+	const rgbColor = hexToRgb(color) ?? DEFAULT_FALLBACK_COLOR;
 
 	const resolvedTheme = resolveAuraTheme(themeMode);
 	const modeUniform = themeModeToUniform(resolvedTheme);
@@ -205,10 +205,13 @@ export function AudioVisualizerAura({
 		uColor: { type: "3fv", value: rgbColor },
 	});
 
-	// Keep non-animated uniforms in sync with props
-	uniformsRef.current.uColorShift = { type: "1f", value: colorShift };
-	uniformsRef.current.uMode = { type: "1f", value: modeUniform };
-	uniformsRef.current.uColor = { type: "3fv", value: rgbColor };
+	// Keep non-animated uniforms in sync with props (post-render mutation; ReactShaderToy
+	// reads uniformsRef on each rAF tick, so the next frame picks up the new values).
+	useEffect(() => {
+		uniformsRef.current.uColorShift = { type: "1f", value: colorShift };
+		uniformsRef.current.uMode = { type: "1f", value: modeUniform };
+		uniformsRef.current.uColor = { type: "3fv", value: rgbColor };
+	}, [colorShift, modeUniform, rgbColor]);
 
 	// Hook up motion-value-driven animations that write to uniformsRef (zero re-renders)
 	useAuraAnimator(state, uniformsRef);
@@ -221,6 +224,7 @@ export function AudioVisualizerAura({
 				onError={(error) => console.error("Shader error:", error)}
 				onWarning={(warning) => console.warn("Shader warning:", warning)}
 				style={{ width: "100%", height: "100%" }}
+				// react-doctor-disable-next-line react-hooks-js/refs -- intentional: ReactShaderToy reads this mutable container on each frame
 				uniforms={uniformsRef.current}
 			/>
 		</div>

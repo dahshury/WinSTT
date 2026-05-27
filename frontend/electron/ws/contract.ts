@@ -5,6 +5,16 @@
 // fields + the most-used optional fields) — they intentionally don't mirror
 // every nullable extra in `spec/openapi.yaml`. The opt-in entry point is
 // `validateServerEvent`; nothing in this folder calls it yet — see TESTING.md.
+//
+// Compile-time drift gate (see `_SpecCoverage` below): every event declared
+// in `spec/openapi.yaml`'s `DataEvent` union MUST have a Zod schema here
+// (modulo `SpecExclusion`). Adding a new event to the spec and forgetting
+// the Zod schema fails `bun typecheck` with the missing literal in the
+// error message — the same drift would otherwise only show up at runtime
+// as `[ws/contract] rejected server event`. The complementary
+// server-emit-vs-Zod drift is caught by `bun check:ws-contract`.
+
+import type { components } from "@spec/schema";
 import { z } from "zod";
 
 // ── Per-event schemas ────────────────────────────────────────────────
@@ -251,6 +261,68 @@ const fileTranscriptionErrorSchema = z.object({
 	error: z.string(),
 });
 
+// ── TTS data-channel events ──────────────────────────────────────────
+//
+// All synthesis/install events for the Kokoro-ONNX TTS sibling. The PCM
+// itself rides the binary channel as `tts_chunk` metadata + a float32
+// payload (see ``server/src/stt_server/tts_handler.py::_make_chunk_frame``)
+// and is not a JSON data-channel event, so it has no schema here. The
+// JSON events below are handled by ``electron/ipc/tts.ts`` after passing
+// through ``validateServerEvent`` — they previously sat in the
+// ``KNOWN_NON_VALIDATED`` allowlist in ``scripts/check-ws-contract.ts``
+// because the validator's union didn't know about them; that produced
+// recurring ``[ws/contract] rejected server event`` warnings in the
+// renderer. Now they validate properly.
+
+const ttsCompleteSchema = z.object({
+	type: z.literal("tts_complete"),
+	request_id: z.string(),
+	cancelled: z.boolean().optional(),
+	elapsed_ms: z.number().int().optional(),
+});
+
+const ttsFailedSchema = z.object({
+	type: z.literal("tts_failed"),
+	request_id: z.string(),
+	reason: z.string(),
+	category: z.string().optional(),
+});
+
+const ttsModelDownloadStartSchema = z.object({
+	type: z.literal("tts_model_download_start"),
+});
+
+const ttsModelDownloadProgressSchema = z.object({
+	type: z.literal("tts_model_download_progress"),
+	progress: z.number().min(0).max(1),
+	downloaded_bytes: z.number().int().optional(),
+	total_bytes: z.number().int().optional(),
+});
+
+const ttsModelDownloadCompleteSchema = z.object({
+	type: z.literal("tts_model_download_complete"),
+	cancelled: z.boolean().optional(),
+});
+
+const ttsInstallStatusSchema = z.object({
+	type: z.literal("tts_install_status"),
+	phase: z.string(),
+});
+
+const ttsInstallPausedSchema = z.object({
+	type: z.literal("tts_install_paused"),
+});
+
+const ttsInstallResumedSchema = z.object({
+	type: z.literal("tts_install_resumed"),
+});
+
+const ttsInstallFailedSchema = z.object({
+	type: z.literal("tts_install_failed"),
+	reason: z.string(),
+	category: z.string().optional(),
+});
+
 // ── Union + public types ─────────────────────────────────────────────
 
 const serverEventSchema = z.discriminatedUnion("type", [
@@ -288,6 +360,15 @@ const serverEventSchema = z.discriminatedUnion("type", [
 	fileTranscriptionProgressSchema,
 	fileTranscriptionCompleteSchema,
 	fileTranscriptionErrorSchema,
+	ttsCompleteSchema,
+	ttsFailedSchema,
+	ttsModelDownloadStartSchema,
+	ttsModelDownloadProgressSchema,
+	ttsModelDownloadCompleteSchema,
+	ttsInstallStatusSchema,
+	ttsInstallPausedSchema,
+	ttsInstallResumedSchema,
+	ttsInstallFailedSchema,
 ]);
 
 export type WsServerEvent = z.infer<typeof serverEventSchema>;
@@ -310,6 +391,66 @@ export type SupportedEventType = WsServerEvent["type"];
 export const SUPPORTED_EVENT_TYPES = serverEventSchema.options.map(
 	(option) => option.shape.type.value
 ) as readonly SupportedEventType[];
+
+// ── Compile-time spec coverage gate ──────────────────────────────────
+//
+// Tie the hand-maintained Zod union above to the OpenAPI-generated
+// `DataEvent` union so adding an event to `spec/openapi.yaml` (and
+// running `bun generate`) without adding a Zod schema here fails the
+// type check rather than the runtime validator. The negative direction
+// (Zod schema with no matching server emit) is covered by the
+// `bun check:ws-contract` script.
+//
+// If `_SpecCoverage` fails to compile, the error message contains the
+// exact missing discriminator literal — e.g.
+//   Type 'true' is not assignable to type '"tts_model_download_progress"'.
+// — telling you which schema to add below. After adding it, append the
+// schema to `serverEventSchema`'s `z.discriminatedUnion(…)` array so it
+// participates in `SupportedEventType` and the check passes again.
+
+/**
+ * Every discriminator value declared in `spec/openapi.yaml`'s `DataEvent`
+ * union, derived from the generated TS types via `bun generate`.
+ */
+type SpecEventType = NonNullable<components["schemas"]["DataEvent"]>["type"];
+
+/**
+ * Spec-declared events that intentionally never reach `validateServerEvent`
+ * and therefore don't need a Zod schema.
+ *
+ * - `tts_chunk` is the JSON header of a binary PCM frame produced by
+ *   `_make_chunk_frame` in `server/src/stt_server/tts_handler.py`. The
+ *   binary handler in `stt-client.ts` consumes the frame before any
+ *   JSON-event dispatch, so it never hits the runtime validator.
+ */
+type SpecExclusion = "tts_chunk";
+
+/**
+ * Self-check on `SpecExclusion`: if someone lists a value that isn't
+ * actually in the spec union (typo, removed event), this assertion
+ * fails to compile.
+ */
+const _specExclusionIsValid: SpecExclusion extends SpecEventType ? true : never = true;
+
+/**
+ * Events declared in the spec that are NOT yet covered by a Zod schema.
+ * `never` when in sync. When non-empty, the assertion below fails with
+ * the missing literal in the error message.
+ */
+type _MissingFromZod = Exclude<Exclude<SpecEventType, SpecExclusion>, SupportedEventType>;
+
+/**
+ * Compile-time invariant: see the section comment above. Fails with a
+ * `Type 'true' is not assignable to type '"<missing-event>"'` error when
+ * the spec adds an event without a matching Zod schema.
+ */
+const _SpecCoverage: [_MissingFromZod] extends [never] ? true : _MissingFromZod = true;
+
+// `void` references so noUnusedVariables doesn't trip on the asserts.
+// biome-ignore lint/complexity/noVoid: discard for compile-time type-assert var
+void _specExclusionIsValid;
+// biome-ignore lint/complexity/noVoid: discard for compile-time type-assert var
+void _SpecCoverage;
 
 // ── Public entry point ───────────────────────────────────────────────
 

@@ -20,6 +20,19 @@ export interface SttModelSelectorTriggerProps {
 	 *  of the in-flight transition view. */
 	catalog: readonly ModelInfo[];
 	disabled: boolean;
+	/** Live model-download progress observed by the consumer (parsed out of
+	 *  the renderer's `useDownloadStore`). When the in-flight download target
+	 *  matches the in-flight swap target, the trigger replaces the
+	 *  `[from → ◌ → to]` "Switching" view with a download-aware
+	 *  `[currently selected] · Downloading X · 23%` view — so the user sees
+	 *  the picker remain on the model that's actually loaded right now,
+	 *  while still being told the new variant is on its way.
+	 *
+	 *  The model-picker package is self-contained (no `@/shared/*` imports
+	 *  by design — see `package.json`); the consumer is responsible for
+	 *  wiring the store. `percent` is `null` when the first progress event
+	 *  hasn't landed yet (indeterminate start). */
+	downloadProgress?: { modelId: string; percent: number | null } | null;
 	/** Which swap-store slot this trigger should react to. */
 	kind: "main" | "realtime";
 	open: boolean;
@@ -96,8 +109,53 @@ function SttModelLabel({ model, side }: { model: ModelInfo; side: "from" | "to" 
 	);
 }
 
-function renderTriggerBody({
+/** Downloading body — shows the selected (still-active) model on the left
+ *  and "Downloading <target> · 23%" on the right. Distinct from the
+ *  `[from → ◌ → to]` switching view because here the picker is NOT in a
+ *  swap window: bytes are still flowing into the HF cache and the server
+ *  hasn't restarted yet. The user can still pick another already-cached
+ *  model from the popup — kicking off a new swap cancels this download
+ *  via the server-restart path. */
+function DownloadingBody({
+	ariaLabel,
+	selectedModel,
+	toModel,
+	percent,
+}: {
+	ariaLabel: string | undefined;
+	percent: number | null;
+	selectedModel: ModelInfo | undefined;
+	toModel: ModelInfo | undefined;
+}) {
+	const targetLabel = toModel ? stripFamilyPrefix(toModel) : "model";
+	const percentLabel = percent === null ? "Starting…" : `${percent}%`;
+	return (
+		<output
+			aria-label={ariaLabel}
+			aria-live="polite"
+			className="flex min-w-0 flex-1 items-center gap-2"
+			data-slot="downloading-body"
+		>
+			{selectedModel ? (
+				<SelectedContent selectedModel={selectedModel} />
+			) : (
+				<span className="font-medium text-body text-foreground-muted italic tracking-tight">
+					(no model)
+				</span>
+			)}
+			<span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-surface-secondary/60 px-2 py-0.5 font-medium text-[10px] text-foreground-secondary leading-none">
+				<span className="size-1.5 animate-pulse rounded-full bg-accent" />
+				<span className="truncate">↓ {targetLabel}</span>
+				<span className="font-mono text-foreground tabular-nums">{percentLabel}</span>
+			</span>
+		</output>
+	);
+}
+
+function TriggerBody({
 	isSwitching,
+	isDownloadingTarget,
+	downloadPercent,
 	fromModel,
 	toModel,
 	selectedModel,
@@ -105,12 +163,24 @@ function renderTriggerBody({
 	ariaLabel,
 }: {
 	ariaLabel: string | undefined;
+	downloadPercent: number | null;
 	fromModel: ModelInfo | undefined;
+	isDownloadingTarget: boolean;
 	isSwitching: boolean;
 	placeholder: string;
 	selectedModel: ModelInfo | undefined;
 	toModel: ModelInfo | undefined;
 }) {
+	if (isSwitching && isDownloadingTarget) {
+		return (
+			<DownloadingBody
+				ariaLabel={ariaLabel}
+				percent={downloadPercent}
+				selectedModel={selectedModel}
+				toModel={toModel}
+			/>
+		);
+	}
 	if (isSwitching) {
 		return (
 			<SwitchingFromToRow
@@ -160,7 +230,7 @@ interface TriggerButtonProps extends SttModelSelectorTriggerProps {
 // readable transition view that lasts the full swap. All three pieces come
 // from `@/shared/ui/switching-trigger` so the Ollama picker reads identically.
 function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
-	const { kind, catalog, selectedModel } = rest;
+	const { kind, catalog, selectedModel, downloadProgress } = rest;
 	const swapTargetName = useModelSwapStore((s) =>
 		kind === "main" ? s.activeMain : s.activeRealtime
 	);
@@ -170,10 +240,26 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 		? (catalog.find((m) => m.id === swapFromName) ?? undefined)
 		: undefined;
 	const toModel = resolveToModel(swapTargetName, selectedModel, catalog);
-	const ariaLabel =
-		isSwitching && toModel
-			? `Switching${fromModel ? ` from ${fromModel.displayName}` : ""} to ${toModel.displayName}`
-			: undefined;
+	// We're in the "downloading" sub-phase of the swap when a download is
+	// active AND its model id matches the in-flight swap target. The UI
+	// must read this from the caller-supplied download snapshot rather
+	// than peeking at the store directly — the model-picker package is
+	// self-contained (see package.json).
+	const isDownloadingTarget =
+		downloadProgress != null &&
+		swapTargetName !== null &&
+		downloadProgress.modelId === swapTargetName;
+	const downloadPercent = isDownloadingTarget ? (downloadProgress?.percent ?? null) : null;
+	const ariaLabel = (() => {
+		if (!(isSwitching && toModel)) {
+			return;
+		}
+		if (isDownloadingTarget) {
+			const pct = downloadPercent === null ? "starting" : `${downloadPercent} percent`;
+			return `Downloading ${toModel.displayName} (${pct}). Currently loaded: ${selectedModel?.displayName ?? "none"}.`;
+		}
+		return `Switching${fromModel ? ` from ${fromModel.displayName}` : ""} to ${toModel.displayName}`;
+	})();
 	const baseClass =
 		"group relative flex h-auto min-h-[3.25rem] w-full items-center justify-between gap-2 overflow-hidden rounded-lg bg-gradient-to-b from-[var(--color-surface-3)]/85 to-[var(--color-surface-2)]/95 px-3 py-2 text-left shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06),0_2px_6px_-3px_rgba(2,3,8,0.55)] ring-1 ring-white/[0.07] ring-inset transition-[transform,background-color,box-shadow] duration-150 ease-out hover:from-[var(--color-surface-4)]/85 hover:to-[var(--color-surface-3)]/95 hover:ring-white/[0.13] active:scale-[0.99] disabled:cursor-not-allowed data-[state=open]:from-[oklch(62%_0.19_260/0.10)] data-[state=open]:to-[var(--color-surface-2)]/95 data-[state=open]:ring-accent/40";
 	return (
@@ -194,16 +280,18 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 				aria-hidden="true"
 				className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-accent/55 to-transparent opacity-0 transition-opacity duration-200 group-data-[state=open]:opacity-100 group-data-[switching=true]:opacity-100"
 			/>
-			{renderTriggerBody({
-				isSwitching,
-				fromModel,
-				toModel,
-				selectedModel: rest.selectedModel,
-				placeholder: rest.placeholder,
-				ariaLabel,
-			})}
+			<TriggerBody
+				ariaLabel={ariaLabel}
+				downloadPercent={downloadPercent}
+				fromModel={fromModel}
+				isDownloadingTarget={isDownloadingTarget}
+				isSwitching={isSwitching}
+				placeholder={rest.placeholder}
+				selectedModel={rest.selectedModel}
+				toModel={toModel}
+			/>
 			{isSwitching ? (
-				<SwitchingPill />
+				<SwitchingPill label={isDownloadingTarget ? "Downloading" : "Switching"} />
 			) : (
 				<HugeiconsIcon
 					className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"

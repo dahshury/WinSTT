@@ -26,7 +26,6 @@ def _make_facade_with_fakes(
     config = RecorderConfig.from_kwargs(
         use_microphone=False,
         post_speech_silence_duration=0.05,
-        min_length_of_recording=0.0,
         # Facade delegation test, not the speech-onset debounce — keep
         # legacy single-chunk start so the single-True pattern records.
         speech_onset_consecutive_chunks=1,
@@ -81,7 +80,6 @@ class TestAudioToTextRecorderFacade:
             silero_deactivity_detection=False,
             webrtc_sensitivity=3,
             post_speech_silence_duration=0.6,
-            min_length_of_recording=0.5,
             min_gap_between_recordings=0.0,
             pre_recording_buffer_duration=1.0,
             on_vad_start=None,

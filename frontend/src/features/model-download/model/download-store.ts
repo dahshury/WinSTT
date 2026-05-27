@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
 	cancelDownload as ipcCancelDownload,
 	deleteModelCache as ipcDeleteModelCache,
+	deleteModelQuantization as ipcDeleteModelQuantization,
 } from "@/shared/api/ipc-client";
 
 export interface DownloadProgressPayload {
@@ -16,6 +17,10 @@ interface DownloadState {
 	cancelDownload: () => void;
 	cancelled: boolean;
 	discardCache: (modelId: string) => void;
+	/** Per-quant delete — only removes the weight files matching
+	 *  ``quantization``, leaving every other quant of ``modelId`` intact.
+	 *  Pass ``""`` for the catalog default precision. */
+	discardQuantCache: (modelId: string, quantization: string) => void;
 	downloadedBytes: number;
 	etaSeconds: number;
 	isDownloading: boolean;
@@ -77,5 +82,8 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 	},
 	discardCache: (modelId: string) => {
 		ipcDeleteModelCache(modelId);
+	},
+	discardQuantCache: (modelId: string, quantization: string) => {
+		ipcDeleteModelQuantization(modelId, quantization);
 	},
 }));

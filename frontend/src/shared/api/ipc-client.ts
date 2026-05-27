@@ -351,6 +351,14 @@ export const cancelDownload = () => invokeOrDefault<void>(IPC.STT_CANCEL_DOWNLOA
 export const deleteModelCache = (modelId: string) =>
 	invokeOrDefault<void>(IPC.STT_DELETE_MODEL_CACHE, undefined, modelId);
 
+/** Per-quant delete — drops just the weight files matching ``quantization``
+ *  from the HF cache of ``modelId``, leaving other quants intact. Powers
+ *  the trash icon on each cached/partial quant badge in the picker so the
+ *  user can wipe a 4 GB fp16 variant without nuking the 600 MB q4 they
+ *  actually use. Server broadcasts ``model_cache_changed`` on completion. */
+export const deleteModelQuantization = (modelId: string, quantization: string) =>
+	invokeOrDefault<void>(IPC.STT_DELETE_MODEL_QUANTIZATION, undefined, { modelId, quantization });
+
 export const onModelCatalog = (cb: (models: unknown[]) => void) =>
 	onTyped(IPC.STT_MODEL_CATALOG, (d: { models: unknown[] }) => d.models, cb);
 
@@ -1086,6 +1094,32 @@ export const ttsCancel = (requestId?: string): void => {
 };
 
 /**
+ * Pause the on-demand TTS install (engine pack / voice model download).
+ * Cooperative — the server's downloader exits cleanly at the next chunk
+ * boundary, preserving the partial file for resume.
+ */
+export const ttsInstallPause = (): void => {
+	send(IPC.TTS_INSTALL_PAUSE, {});
+};
+
+/**
+ * Resume a previously paused install. The server re-fires its warm-up
+ * task and the downloader picks up the partial via HTTP Range.
+ */
+export const ttsInstallResume = (): void => {
+	send(IPC.TTS_INSTALL_RESUME, {});
+};
+
+/**
+ * Discard the in-flight install and every partial download. Safe in
+ * both downloading and paused states; the server handles partial-file
+ * cleanup either way.
+ */
+export const ttsInstallCancel = (): void => {
+	send(IPC.TTS_INSTALL_CANCEL, {});
+};
+
+/**
  * Report (from the window that owns the Web Audio queue) that audio for
  * ``requestId`` has actually started playing — i.e. the ~1s synthesis gap
  * is over. Main re-broadcasts as {@link onTtsPlaybackStarted} so a UI in
@@ -1145,6 +1179,20 @@ export const onTtsInstallFailed = (
 export const onTtsModelDownloadComplete = (
 	callback: (payload: { cancelled: boolean }) => void
 ): (() => void) => onCast<{ cancelled: boolean }>(IPC.TTS_MODEL_DOWNLOAD_COMPLETE, callback);
+
+/**
+ * Fires once the server's downloader has actually entered the paused
+ * state (i.e. exited its streaming loop). Use it to flip the progress
+ * bar from "active" to "paused" only after the worker confirms — sending
+ * the pause command alone is not enough since the streaming loop may
+ * still be reading one final chunk.
+ */
+export const onTtsInstallPaused = (callback: () => void): (() => void) =>
+	onCast<Record<string, never>>(IPC.TTS_INSTALL_PAUSED, () => callback());
+
+/** Fires once a pause is released and warm-up has been re-fired server-side. */
+export const onTtsInstallResumed = (callback: () => void): (() => void) =>
+	onCast<Record<string, never>>(IPC.TTS_INSTALL_RESUMED, () => callback());
 
 export const onLlmCatalog = (callback: (models: OllamaModel[]) => void): (() => void) => {
 	if (!isElectron()) {

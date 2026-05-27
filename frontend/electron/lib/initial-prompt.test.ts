@@ -87,4 +87,43 @@ describe("composeInitialPrompt", () => {
 		const longPrefix = "y".repeat(800);
 		expect(composeInitialPrompt(longPrefix, [])).toHaveLength(600);
 	});
+
+	test("with no context tail, output is byte-identical to the two-arg call (backwards compatible)", () => {
+		expect(composeInitialPrompt("My name is Alex.", ["Ollama"], "")).toBe(
+			composeInitialPrompt("My name is Alex.", ["Ollama"])
+		);
+	});
+
+	test("context tail is prepended above prefix + glossary", () => {
+		const out = composeInitialPrompt("Static prefix.", ["Kubernetes"], "Hi Bob, thanks for");
+		expect(out).toBe("Hi Bob, thanks for\n\nStatic prefix.\n\nGlossary: Kubernetes.");
+	});
+
+	test("context tail alone (no prefix, no glossary) returns just the sanitised tail", () => {
+		expect(composeInitialPrompt("", [], "Dear Dr. Aljarbou,")).toBe("Dear Dr. Aljarbou,");
+	});
+
+	test("collapses runs of whitespace in the context tail", () => {
+		const out = composeInitialPrompt("", [], "Hi\n\nBob,\t  thanks\nfor\nthe\nheads up.");
+		expect(out).toBe("Hi Bob, thanks for the heads up.");
+	});
+
+	test("clips an oversized context tail to the LAST 250 chars (closest to caret = most relevant)", () => {
+		// A 400-char tail of distinct letters lets us assert the tail-clip
+		// direction precisely without depending on word-boundary heuristics.
+		const longTail = "a".repeat(150) + "b".repeat(250);
+		const out = composeInitialPrompt("", [], longTail);
+		expect(out).toBe("b".repeat(250));
+	});
+
+	test("context tail does NOT crowd out a glossary (last-resort cap clips the tail's front)", () => {
+		const huge = "z".repeat(2000);
+		const out = composeInitialPrompt("", ["Ollama", "Kubernetes"], huge);
+		expect(out.length).toBeLessThanOrEqual(600);
+		expect(out.endsWith("Glossary: Ollama, Kubernetes.")).toBe(true);
+	});
+
+	test("empty context tail leaves the prefix-only path untouched", () => {
+		expect(composeInitialPrompt("just prefix", [], "")).toBe("just prefix");
+	});
 });

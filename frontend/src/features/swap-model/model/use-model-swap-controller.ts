@@ -551,22 +551,34 @@ function dispatchGate(args: HandleChangeArgs): void {
 }
 
 function runHandleMainChange(args: HandleChangeArgs): void {
-	const quantizationChanging = isQuantizationChanging(args.quantization, args.currentQuantization);
-	const branches =
-		args.value === args.currentModel
-			? [() => applyPureQuantSwap(quantizationChanging, args.quantization, args.update)]
-			: [() => dispatchChange(args)];
-	branches.forEach(invokeReload);
+	// True no-op: same model + same quant. Skip the gate so we don't trigger
+	// the assessment round-trip and the begin/clear chrome for a setting that
+	// didn't change.
+	if (
+		args.value === args.currentModel &&
+		!isQuantizationChanging(args.quantization, args.currentQuantization)
+	) {
+		return;
+	}
+	// Always route through the gate. The old short-circuit to applyPureQuantSwap
+	// skipped the cache-state check, so a pure-quant swap to an uncached quant
+	// restarted the server with --onnx_quantization X, the server tried to
+	// fetch silently, the load failed, model_swap_failed fired, and the picker
+	// rolled back to the previous selection — the "default-quant revert"
+	// symptom on Cohere. Routing through dispatchChange opens the download
+	// dialog when the target quant isn't on disk.
+	dispatchChange(args);
 }
 
 function runHandleRealtimeChange(args: HandleChangeArgs): void {
-	// Same cloud short-circuit as the main picker. See note above.
-	const quantizationChanging = isQuantizationChanging(args.quantization, args.currentQuantization);
-	const branches =
-		args.value === args.currentModel
-			? [() => applyPureQuantSwap(quantizationChanging, args.quantization, args.update)]
-			: [() => dispatchChange(args)];
-	branches.forEach(invokeReload);
+	// Mirror runHandleMainChange — same no-op short-circuit, same gate.
+	if (
+		args.value === args.currentModel &&
+		!isQuantizationChanging(args.quantization, args.currentQuantization)
+	) {
+		return;
+	}
+	dispatchChange(args);
 }
 
 function runConfirmPendingDownload(

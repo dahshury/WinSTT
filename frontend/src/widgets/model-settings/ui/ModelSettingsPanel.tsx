@@ -27,7 +27,7 @@ import {
 	useSettingsTabStore,
 } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
-import { DownloadConfirmationDialog } from "@/features/model-download";
+import { DownloadConfirmationDialog, useDownloadStore } from "@/features/model-download";
 import { CloudModelSelect } from "@/features/select-cloud-stt-model";
 import { type SwapController, useModelSwapController } from "@/features/swap-model";
 import { LANGUAGES, type OnnxQuantization } from "@/shared/config/defaults";
@@ -35,6 +35,7 @@ import { isRealtimeEnabled } from "@/shared/lib/realtime-enabled";
 import { Button } from "@/shared/ui/button";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
+import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
@@ -67,10 +68,17 @@ interface MainModelSectionProps {
 	currentQuantization: OnnxQuantization;
 	deviceOpts: SwitcherOption<DeviceValue>[];
 	deviceValue: DeviceValue;
+	/** Snapshot of the in-flight download (model id + percent). Drives the
+	 *  picker's "Downloading X · 23%" trigger AND distinguishes "we're
+	 *  fetching bytes" from "the server is loading weights" so the picker
+	 *  doesn't lock down for the entire multi-GB download. */
+	downloadProgress: { modelId: string; percent: number | null } | null;
 	gpuAvailable: boolean;
 	handleModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	isSwapping: boolean;
 	langOpts: SelectOption[];
+	/** Per-quant delete handler (after the picker's AlertDialog confirms). */
+	onDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
 	selectedModel: string;
 	settings: ModelSettings | undefined;
 	statesById: StatesById;
@@ -95,9 +103,11 @@ function MainModelSection({
 	currentQuantization,
 	deviceOpts,
 	deviceValue,
+	downloadProgress,
 	gpuAvailable,
 	isSwapping,
 	langOpts,
+	onDeleteQuant,
 	selectedModel,
 	handleModelChange,
 	translateSupported,
@@ -187,10 +197,12 @@ function MainModelSection({
 						) : (
 							<SttModelSelector
 								currentQuantization={currentQuantization}
+								downloadProgress={downloadProgress}
 								isLoading={!catalogLoaded || isSwapping}
 								kind="main"
 								models={catalogModels}
 								onChange={handleModelChange}
+								onDeleteQuant={onDeleteQuant}
 								statesById={statesById}
 								systemInfo={systemInfo}
 								value={isCloud ? "" : selectedModel}
@@ -285,9 +297,19 @@ interface RealtimeModelSectionProps {
 	catalogLoaded: boolean;
 	catalogModels: CatalogModels;
 	currentQuantization: OnnxQuantization;
+	/** Same shape as MainModelSection — drives the realtime trigger's
+	 *  download-aware variant when a realtime swap is in flight. */
+	downloadProgress: { modelId: string; percent: number | null } | null;
 	handleRealtimeModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	isSwapping: boolean;
+	/** True when the main model is itself small enough for live-preview
+	 *  transcription. In that state the dedicated realtime slot is force-bound
+	 *  to the main model (a separate small model would just duplicate work),
+	 *  so the picker becomes informational. */
+	lockedToMainModel: boolean;
 	mainModelId: string;
+	/** Forwarded to the picker — same handler the main picker uses. */
+	onDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
 	onUseMainModel: () => void;
 	quality: QualitySettings | undefined;
 	settings: ModelSettings | undefined;
@@ -312,42 +334,59 @@ function RealtimeModelSection({
 	statesById,
 	systemInfo,
 	currentQuantization,
+	downloadProgress,
 	isSwapping,
 	handleRealtimeModelChange,
 	mainModelId,
+	onDeleteQuant,
 	onUseMainModel,
+	lockedToMainModel,
 }: RealtimeModelSectionProps): ReactNode {
 	// The dedicated realtime picker stays interactive at all times so the user
 	// can always pick a different realtime model. The "Use Main Model" affordance
 	// is the trailing button on the picker's header.
+	//
+	// Exception: when `lockedToMainModel` is set, the main model is itself
+	// realtime-viable so we force the realtime slot to mirror it and disable
+	// the picker — a separate small model would just duplicate work without
+	// adding any quality. The label shows an info tooltip explaining why.
 	const realtimeModelId = settings?.realtimeModel ?? "tiny";
 	const modelsMatch = realtimeModelId === mainModelId;
+	const trailing = lockedToMainModel ? (
+		<InfoTooltip content={t("realtimeLockedToMainTooltip")} />
+	) : (
+		<Tooltip content={t("useMainModelTooltip")}>
+			<Button
+				className="rounded-md bg-transparent px-1.5 py-0.5 font-medium text-2xs text-foreground-muted leading-none ring-1 ring-divider-strong ring-inset transition-colors hover:not-disabled:bg-surface-2 hover:not-disabled:text-foreground"
+				disabled={modelsMatch}
+				onClick={onUseMainModel}
+			>
+				{t("useMainModel")}
+			</Button>
+		</Tooltip>
+	);
 	return (
 		<SettingSection icon={AiMagicIcon} title={t("realtimeModelSection")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2">
 					<FormControl
-						caption={t("realtimeModelCaption")}
-						label={t("realtimeModel")}
-						labelTrailing={
-							<Tooltip content={t("useMainModelTooltip")}>
-								<Button
-									className="rounded-md bg-transparent px-1.5 py-0.5 font-medium text-2xs text-foreground-muted leading-none ring-1 ring-divider-strong ring-inset transition-colors hover:not-disabled:bg-surface-2 hover:not-disabled:text-foreground"
-									disabled={modelsMatch}
-									onClick={onUseMainModel}
-								>
-									{t("useMainModel")}
-								</Button>
-							</Tooltip>
+						caption={
+							lockedToMainModel ? t("realtimeLockedToMainCaption") : t("realtimeModelCaption")
 						}
+						disabled={lockedToMainModel}
+						label={t("realtimeModel")}
+						labelTrailing={trailing}
 						tooltip={t("realtimeModelTooltip")}
 					>
 						<SttModelSelector
 							currentQuantization={currentQuantization}
+							disabled={lockedToMainModel}
+							downloadProgress={downloadProgress}
 							isLoading={!catalogLoaded || isSwapping}
 							kind="realtime"
 							models={catalogModels}
 							onChange={handleRealtimeModelChange}
+							onDeleteQuant={onDeleteQuant}
 							prefilter={isRealtimeViable}
 							statesById={statesById}
 							systemInfo={systemInfo}
@@ -504,8 +543,30 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 	const statesById = useModelStateStore((s) => s.statesById);
 	const systemInfo = useModelStateStore((s) => s.systemInfo);
 	const refreshModelState = useModelStateStore((s) => s.refresh);
-	const mainSwapping = useModelSwapStore((s) => s.activeMain !== null);
-	const realtimeSwapping = useModelSwapStore((s) => s.activeRealtime !== null);
+	const mainSwapTarget = useModelSwapStore((s) => s.activeMain);
+	const realtimeSwapTarget = useModelSwapStore((s) => s.activeRealtime);
+	// Live snapshot of any in-flight model download. We split "downloading
+	// bytes" (the user can still pick another already-cached model) from
+	// "loading weights" (server is restarting / mid-load; the picker must
+	// freeze until it settles). The two states are different sub-phases
+	// of a swap and the old `activeMain !== null` gate conflated them,
+	// which is why selecting Cohere locked the picker into "Switching
+	// to Cohere" for the entire 4 GB transfer.
+	const downloadingModelName = useDownloadStore((s) => s.modelName);
+	const downloadingIsActive = useDownloadStore((s) => s.isDownloading);
+	const downloadingPercent = useDownloadStore((s) => s.progress);
+	const downloadProgress: { modelId: string; percent: number | null } | null =
+		downloadingIsActive && downloadingModelName !== null
+			? { modelId: downloadingModelName, percent: downloadingPercent }
+			: null;
+	// "Switching" — true only when the server is actually loading the
+	// model (no bytes left to fetch). The trigger uses this same logic
+	// to flip between "Downloading" and "Switching" chrome.
+	const mainSwapping =
+		mainSwapTarget !== null && !(downloadProgress && downloadProgress.modelId === mainSwapTarget);
+	const realtimeSwapping =
+		realtimeSwapTarget !== null &&
+		!(downloadProgress && downloadProgress.modelId === realtimeSwapTarget);
 
 	// Live host resource snapshot (RAM available, free VRAM, CPU%) for the
 	// resource-aware warning modal. Refreshed when the panel mounts.
@@ -626,6 +687,43 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 		}
 	};
 
+	// Per-quant trash button → AlertDialog confirm (rendered inside the
+	// picker) → this callback → IPC delete. Server broadcasts
+	// model_cache_changed; the model-state store listener refreshes the
+	// per-quant cache dots automatically (no manual refetch needed).
+	const discardQuantCache = useDownloadStore((s) => s.discardQuantCache);
+	const handleDeleteQuant = (modelId: string, quantization: OnnxQuantization) => {
+		discardQuantCache(modelId, quantization);
+	};
+
+	// When the active main model is itself small enough to drive the live
+	// preview, the dedicated realtime slot has no job — a second small model
+	// would just duplicate work without improving quality. Force the realtime
+	// slot to mirror the main model and flip the server flag so the realtime
+	// worker reuses the already-loaded main transcriber.
+	const mainIsRealtimeViable =
+		!selectedIsCloud && selectedInfo !== undefined && isRealtimeViable(selectedInfo);
+	const lockRealtimeToMain = realtimeEnabled && mainIsRealtimeViable;
+	const realtimeChange = controller.handleRealtimeModelChange;
+	useEffect(() => {
+		if (!lockRealtimeToMain) {
+			return;
+		}
+		if (settings?.realtimeModel !== selectedModel) {
+			realtimeChange(selectedModel);
+		}
+		if (!useMainModelFlag) {
+			updateQuality({ useMainModelForRealtime: true });
+		}
+	}, [
+		lockRealtimeToMain,
+		selectedModel,
+		settings?.realtimeModel,
+		useMainModelFlag,
+		realtimeChange,
+		updateQuality,
+	]);
+
 	return (
 		<div className="flex flex-col gap-2">
 			{isListenMode ? null : (
@@ -635,10 +733,12 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 					currentQuantization={currentQuantization}
 					deviceOpts={deviceOpts}
 					deviceValue={deviceValue}
+					downloadProgress={downloadProgress}
 					gpuAvailable={gpuAvailable}
 					handleModelChange={controller.handleModelChange}
 					isSwapping={mainSwapping}
 					langOpts={langOpts}
+					onDeleteQuant={handleDeleteQuant}
 					selectedModel={selectedModel}
 					settings={settings}
 					statesById={statesById}
@@ -653,9 +753,12 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 					catalogLoaded={catalogLoaded}
 					catalogModels={catalogModels}
 					currentQuantization={currentQuantization}
+					downloadProgress={downloadProgress}
 					handleRealtimeModelChange={handleRealtimePick}
 					isSwapping={realtimeSwapping}
+					lockedToMainModel={lockRealtimeToMain}
 					mainModelId={selectedModel}
+					onDeleteQuant={handleDeleteQuant}
 					onUseMainModel={handleUseMainModel}
 					quality={quality}
 					settings={settings}

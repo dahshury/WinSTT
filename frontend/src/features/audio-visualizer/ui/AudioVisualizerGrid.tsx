@@ -1,5 +1,5 @@
 import { cva } from "class-variance-authority";
-import { type ComponentProps, type CSSProperties, memo, useMemo } from "react";
+import type { ComponentProps, CSSProperties } from "react";
 import { cn } from "@/shared/lib/cn";
 import type { AgentState, VisualizerSize } from "../lib/audio-visualizer";
 import { useAgentState } from "../lib/use-agent-state";
@@ -79,7 +79,7 @@ interface GridCellProps {
 	volumeBands: number[];
 }
 
-const GridCell = memo(function GridCell({
+function GridCell({
 	index,
 	state,
 	interval,
@@ -111,7 +111,7 @@ const GridCell = memo(function GridCell({
 			style={{ transitionDuration: `${transitionDurationInSeconds}s` }}
 		/>
 	);
-});
+}
 
 export interface AudioVisualizerGridProps {
 	className?: string;
@@ -137,14 +137,10 @@ export function AudioVisualizerGrid({
 	const state = useAgentState();
 	const columnCount = _columnCount;
 	const rowCount = _rowCount;
-	const cells = useMemo(
-		() =>
-			Array.from({ length: columnCount * rowCount }, (_, position) => ({
-				id: `grid-${columnCount}x${rowCount}-${position}`,
-				position,
-			})),
-		[columnCount, rowCount]
-	);
+	const cells = Array.from({ length: columnCount * rowCount }, (_, position) => ({
+		id: `grid-${columnCount}x${rowCount}-${position}`,
+		position,
+	}));
 
 	const highlightedCoordinate = useGridAnimator(state, rowCount, columnCount, interval, radius);
 	const volumeBands = useMultibandVolume(columnCount);

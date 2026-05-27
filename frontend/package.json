@@ -11,8 +11,9 @@
     "preview": "vite preview",
     "typecheck": "tsgo --noEmit",
     "typecheck:tsc": "tsc --noEmit",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write .",
+    "lint": "ultracite check",
+    "lint:fix": "ultracite fix",
+    "lint:biome": "biome check .",
     "format": "biome format --write .",
     "test": "bun test",
     "test:watch": "bun test --watch",
@@ -44,7 +45,8 @@
     "electron:start": "wait-on tcp:3000 file:dist-electron/main.js file:dist-electron/preload.cjs && bun run scripts/dev-electron.ts",
     "electron:rebuild": "electron-rebuild -o uiohook-napi",
     "electron:rebuild:force": "electron-rebuild -f -o uiohook-napi",
-    "electron:dev": "concurrently -k --success first -n vite,main,app -c blue,green,magenta \"bun run dev:renderer\" \"bun run electron:watch:main\" \"bun run electron:start\""
+    "electron:dev": "concurrently -k --success first -n vite,main,app -c blue,green,magenta \"bun run dev:renderer\" \"bun run electron:watch:main\" \"bun run electron:start\"",
+    "doctor": "npx react-doctor@latest"
   },
   "dependencies": {
     "@ai-sdk/elevenlabs": "^2.0.33",
@@ -101,7 +103,7 @@
     "tailwindcss": "^4.2.4",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "ultracite": "latest",
+    "ultracite": "^7.8.0",
     "vite": "^7",
     "vite-tsconfig-paths": "^5",
     "wait-on": "^9.0.5"

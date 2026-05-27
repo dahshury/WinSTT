@@ -16,6 +16,7 @@ from src.synthesizer.domain.ports.synthesizer import ISpeechSynthesizer
 # DownloadCallbacks closure produced by ``recorder.bootstrap``.
 ProgressFn = Callable[[float, int, int], None]
 CancelFn = Callable[[], bool]
+PauseFn = Callable[[], bool]
 StatusFn = Callable[[str], None]
 
 
@@ -25,15 +26,20 @@ def build_synthesizer(
     on_progress: ProgressFn | None = None,
     should_cancel: CancelFn | None = None,
     on_status: StatusFn | None = None,
+    should_pause: PauseFn | None = None,
 ) -> ISpeechSynthesizer:
     """Construct the configured TTS adapter.
 
     Only Kokoro is wired today; this hook exists so adding a second engine
-    later is a single-file change.
+    later is a single-file change. ``should_pause`` (optional) lets the
+    UI pause the on-demand install at the next chunk boundary; partials
+    are preserved on disk so a later ``warm_up`` call resumes via HTTP
+    Range.
     """
     from src.synthesizer.infrastructure.kokoro_synthesizer import KokoroSynthesizer
 
     synthesizer = KokoroSynthesizer(config)
-    if on_progress is not None or should_cancel is not None or on_status is not None:
-        synthesizer.attach_download_callbacks(on_progress, should_cancel, on_status)
+    has_any_callback = any(cb is not None for cb in (on_progress, should_cancel, on_status, should_pause))
+    if has_any_callback:
+        synthesizer.attach_download_callbacks(on_progress, should_cancel, on_status, should_pause)
     return synthesizer

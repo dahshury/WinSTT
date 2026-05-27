@@ -454,6 +454,11 @@ export function ipcClientMock(): Record<string, unknown> {
 		// Model cache + fitness
 		deleteModelCache: (modelId: string) =>
 			invokeOrDefault<unknown>(IPC.STT_DELETE_MODEL_CACHE, null, { modelId }),
+		deleteModelQuantization: (modelId: string, quantization: string) =>
+			invokeOrDefault<unknown>(IPC.STT_DELETE_MODEL_QUANTIZATION, null, {
+				modelId,
+				quantization,
+			}),
 		fetchLiveResources: (forceRefresh = false) =>
 			invokeOrDefault<unknown>(IPC.STT_GET_LIVE_RESOURCES, null, { forceRefresh }),
 		assessDictationFit: (modelId: string, quantization = "", device: string | null = null) =>
@@ -500,6 +505,9 @@ export function ipcClientMock(): Record<string, unknown> {
 				source: "empty",
 			}),
 		ttsCancel: (requestId?: string) => send(IPC.TTS_CANCEL, { requestId }),
+		ttsInstallPause: () => send(IPC.TTS_INSTALL_PAUSE, {}),
+		ttsInstallResume: () => send(IPC.TTS_INSTALL_RESUME, {}),
+		ttsInstallCancel: () => send(IPC.TTS_INSTALL_CANCEL, {}),
 		ttsReportPlaybackStarted: (requestId: string) =>
 			send(IPC.TTS_REPORT_PLAYBACK_STARTED, { requestId }),
 		ttsReportPlaybackEnded: (requestId: string) =>
@@ -518,6 +526,10 @@ export function ipcClientMock(): Record<string, unknown> {
 			onCast(IPC.TTS_MODEL_DOWNLOAD_COMPLETE, cb),
 		onTtsInstallStatus: (cb: (payload: unknown) => void) => onCast(IPC.TTS_INSTALL_STATUS, cb),
 		onTtsInstallFailed: (cb: (payload: unknown) => void) => onCast(IPC.TTS_INSTALL_FAILED, cb),
+		onTtsInstallPaused: (cb: () => void) =>
+			onCast<Record<string, never>>(IPC.TTS_INSTALL_PAUSED, () => cb()),
+		onTtsInstallResumed: (cb: () => void) =>
+			onCast<Record<string, never>>(IPC.TTS_INSTALL_RESUMED, () => cb()),
 
 		// Diagnostics + About
 		diagOpenLogsFolder: () =>

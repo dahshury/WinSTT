@@ -172,15 +172,25 @@ describe("tray state machine", () => {
 		setPlatform("win32");
 	});
 
-	test("attaches a tray and renders idle by default", () => {
+	test("attaches a tray and renders idle by default (no native menu on Windows)", () => {
 		const tray = makeTray();
 		attachTray(tray as unknown as Electron.Tray, noopActions());
 		expect(getTrayState()).toBe("idle");
 		expect(tray.imageCount).toBe(1);
+		// Windows/macOS use the custom BrowserWindow-based menu shown by the
+		// `right-click` handler in tray.ts; setContextMenu MUST stay unset
+		// or the OS-native menu preempts the custom one.
+		expect(tray.contextMenus.length).toBe(0);
+	});
+
+	test("Linux gets a native context menu on attach", () => {
+		setPlatform("linux");
+		const tray = makeTray();
+		attachTray(tray as unknown as Electron.Tray, noopActions());
 		expect(tray.contextMenus.length).toBe(1);
 	});
 
-	test("setTrayState swaps the icon and rebuilds the menu", () => {
+	test("setTrayState swaps the icon (no native menu rebuild on Windows)", () => {
 		const tray = makeTray();
 		attachTray(tray as unknown as Electron.Tray, noopActions());
 		const baseImg = tray.imageCount;
@@ -188,6 +198,15 @@ describe("tray state machine", () => {
 		setTrayState("recording");
 		expect(getTrayState()).toBe("recording");
 		expect(tray.imageCount).toBe(baseImg + 1);
+		expect(tray.contextMenus.length).toBe(baseMenu);
+	});
+
+	test("setTrayState rebuilds the native menu on Linux", () => {
+		setPlatform("linux");
+		const tray = makeTray();
+		attachTray(tray as unknown as Electron.Tray, noopActions());
+		const baseMenu = tray.contextMenus.length;
+		setTrayState("recording");
 		expect(tray.contextMenus.length).toBe(baseMenu + 1);
 	});
 

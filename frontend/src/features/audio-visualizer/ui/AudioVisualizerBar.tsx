@@ -1,5 +1,5 @@
 import { cva } from "class-variance-authority";
-import { type ComponentProps, type CSSProperties, useMemo } from "react";
+import type { ComponentProps, CSSProperties } from "react";
 import { cn } from "@/shared/lib/cn";
 import type { AgentState, VisualizerSize } from "../lib/audio-visualizer";
 import { useAgentState } from "../lib/use-agent-state";
@@ -84,24 +84,15 @@ export function AudioVisualizerBar({
 }: AudioVisualizerBarProps & ComponentProps<"div">) {
 	const state = useAgentState();
 
-	const _barCount = useMemo(() => resolveBarCount(barCount, size), [barCount, size]);
+	const _barCount = resolveBarCount(barCount, size);
 
 	const volumeBands = useMultibandVolume(_barCount);
 
-	const sequencerInterval = useMemo(
-		() => resolveBarSequencerInterval(state, _barCount),
-		[state, _barCount]
-	);
+	const sequencerInterval = resolveBarSequencerInterval(state, _barCount);
 
 	const highlightedIndices = useBarAnimator(state, _barCount, sequencerInterval);
-	const bands = useMemo(
-		() => (state === "speaking" ? volumeBands : new Array(_barCount).fill(0)),
-		[state, volumeBands, _barCount]
-	);
-	const barIds = useMemo(
-		() => Array.from({ length: _barCount }, (_, i) => `bar-${_barCount}-${i}`),
-		[_barCount]
-	);
+	const bands = state === "speaking" ? volumeBands : new Array(_barCount).fill(0);
+	const barIds = Array.from({ length: _barCount }, (_, i) => `bar-${_barCount}-${i}`);
 
 	return (
 		<div

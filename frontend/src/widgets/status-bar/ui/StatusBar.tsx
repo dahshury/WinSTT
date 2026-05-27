@@ -2,7 +2,7 @@ import { Menu } from "@base-ui/react/menu";
 import { Separator } from "@base-ui/react/separator";
 import { AiAudioIcon, AiCloud01Icon, ArrowDown01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
 import { useInputDevices } from "@/entities/audio-device";
 import { providerDisplayName, providerOf } from "@/entities/cloud-stt-provider";
@@ -84,9 +84,9 @@ function FooterMenuChip({
 					<span className="min-w-0 truncate">{label}</span>
 					<HugeiconsIcon
 						aria-hidden="true"
-						className="shrink-0 text-foreground-dim/60"
+						className="shrink-0 text-foreground-dim"
 						icon={ArrowDown01Icon}
-						size={9}
+						size={11}
 					/>
 				</Menu.Trigger>
 			</Tooltip>
@@ -152,7 +152,7 @@ function FooterModelChip({
 	// message when the picker isn't shown, so the open flag is just a cheap
 	// guard to avoid sending on every idle click.
 	const openRef = useRef(false);
-	const handleClick = (e: MouseEvent<HTMLButtonElement>) => {
+	const openModelPicker = (e: MouseEvent<HTMLButtonElement>) => {
 		const r = e.currentTarget.getBoundingClientRect();
 		ipcSend(IPC.MODEL_PICKER_OPEN, {
 			x: r.x,
@@ -182,7 +182,7 @@ function FooterModelChip({
 				aria-label={ariaLabel}
 				className={`flex max-w-[140px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
 				data-slot="stt-model-selector-trigger"
-				onClick={handleClick}
+				onClick={openModelPicker}
 				type="button"
 			>
 				<HugeiconsIcon
@@ -194,9 +194,9 @@ function FooterModelChip({
 				<span className="min-w-0 truncate">{label}</span>
 				<HugeiconsIcon
 					aria-hidden="true"
-					className="shrink-0 text-foreground-dim/60"
+					className="shrink-0 text-foreground-dim"
 					icon={ArrowDown01Icon}
-					size={9}
+					size={11}
 				/>
 			</button>
 		</Tooltip>
@@ -290,7 +290,7 @@ export function StatusBar() {
 	const tModel = useTranslations("model");
 
 	const { devices, defaultDevice } = useInputDevices();
-	const { deviceOptions, deviceNameMap } = useMemo(() => {
+	const { deviceOptions, deviceNameMap } = (() => {
 		const defaultLabel = defaultDevice
 			? `${tAudio("systemDefault")} (${defaultDevice.name})`
 			: tAudio("systemDefault");
@@ -302,18 +302,15 @@ export function StatusBar() {
 			map.set(String(d.index), d.name);
 		}
 		return { deviceOptions: opts, deviceNameMap: map };
-	}, [devices, defaultDevice, tAudio]);
+	})();
 
 	const currentDeviceId = inputDeviceIndex == null ? "default" : String(inputDeviceIndex);
 	const currentDeviceName = deviceNameMap.get(currentDeviceId) ?? tAudio("systemDefault");
 
-	const handleDeviceChange = useCallback(
-		(v: string) =>
-			updateAudio({
-				inputDeviceIndex: v === "default" ? null : Number.parseInt(v, 10),
-			}),
-		[updateAudio]
-	);
+	const handleDeviceChange = (v: string) =>
+		updateAudio({
+			inputDeviceIndex: v === "default" ? null : Number.parseInt(v, 10),
+		});
 
 	const tIntegrations = useTranslations("integrations");
 

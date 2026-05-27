@@ -21,6 +21,15 @@ export interface SttModelListProps {
 	/** Bundle base ids the user has currently expanded — owned by the selector. */
 	expandedBundles: ReadonlySet<string>;
 	hasActiveFilters: boolean;
+	/** Forwarded down to the per-quant trash icon in each ``SttModelCard``. */
+	onRequestDeleteQuant?:
+		| ((
+				modelId: string,
+				quantization: OnnxQuantization,
+				displayName: string,
+				quantLabel: string
+		  ) => void)
+		| undefined;
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
 	/** Toggle handler for the variant-bundle chevron. */
 	onToggleExpanded: (baseId: string) => void;
@@ -113,6 +122,7 @@ export function SttModelList({
 	selectedId,
 	currentQuantization,
 	onSelect,
+	onRequestDeleteQuant,
 	hasActiveFilters,
 	expandedBundles,
 	onToggleExpanded,
@@ -147,6 +157,7 @@ export function SttModelList({
 									currentQuantization={currentQuantization}
 									expanded={expandedBundles.has(bundle.baseId)}
 									key={bundle.baseId}
+									onRequestDeleteQuant={onRequestDeleteQuant}
 									onSelect={onSelect}
 									onToggleExpanded={onToggleExpanded}
 									selectedId={selectedId}

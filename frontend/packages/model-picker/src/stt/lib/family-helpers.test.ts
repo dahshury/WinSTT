@@ -45,6 +45,35 @@ describe("getFamilyConfig", () => {
 		// HugeIcon fallback (the icon is what's rendered in the picker).
 		expect(cfg.logoSrc).toBeUndefined();
 	});
+
+	test("includes the SenseVoice family (the only Handy family WinSTT was missing)", () => {
+		const cfg = getFamilyConfig("sense_voice");
+		expect(cfg.label).toBe("SenseVoice");
+		expect(cfg.icon).toBeDefined();
+		// FunAudioLLM (Alibaba) doesn't ship a public provider-icon asset,
+		// so SenseVoice falls back to the HugeIcon — matches Moonshine's
+		// shape.
+		expect(cfg.logoSrc).toBeUndefined();
+	});
+});
+
+describe("SenseVoice family bundling", () => {
+	test("SenseVoice models group into their own family card", () => {
+		const grouped = groupByFamily([
+			model("sense-voice-small", "sense_voice", "234M"),
+			model("tiny", "whisper", "39M"),
+		]);
+		const families = grouped.map(([fam]) => fam);
+		expect(families).toContain("sense_voice");
+		expect(families).toContain("whisper");
+	});
+
+	test("SenseVoice singleton bundles cleanly (one variant, one card)", () => {
+		const bundles = bundleVariants([model("sense-voice-small", "sense_voice", "234M")]);
+		expect(bundles).toHaveLength(1);
+		expect(bundles[0]?.baseId).toBe("sense-voice-small");
+		expect(bundles[0]?.variants).toHaveLength(1);
+	});
 });
 
 describe("parseParameterSize", () => {

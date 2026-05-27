@@ -244,3 +244,236 @@ class TestResolveQuantization:
         # Off-catalog HF repos (available=None) keep the historical
         # assume-it-exists behaviour — we can't enumerate their variants.
         assert self._resolve("fp16", "cpu", 39_000_000, None) == "fp16"
+
+    def test_sense_voice_auto_routes_to_int8_on_cpu(self) -> None:
+        """SenseVoice ships int8-only (matches Handy's bundled flavour). With
+        ``auto`` quantization on CPU the resolver must pick ``int8`` from the
+        :data:`_INT8_PREFERRED_FAMILIES` set — fp32 would be a memory pessimi-
+        zation against the published export, and fp16 isn't available.
+        """
+        from src.recorder.bootstrap import _resolve_quantization
+
+        # CPU / non-CUDA path with int8 available + sense_voice family ⇒ int8.
+        assert (
+            _resolve_quantization("auto", "cpu", 234_000_000, ["int8"], family="sense_voice")
+            == "int8"
+        )
+        # Explicit int8 also passes through.
+        assert (
+            _resolve_quantization("int8", "cpu", 234_000_000, ["int8"], family="sense_voice")
+            == "int8"
+        )
+
+    def test_sense_voice_dml_override_routes_to_cpu(self) -> None:
+        """SenseVoice is in :data:`_DML_INCOMPATIBLE_FAMILIES` — the Conformer
+        encoder graph crashes on DirectML / ROCm / CoreML the same way NeMo /
+        Cohere / GigaAM / Kaldi / T-One do. ``_override_dml_to_cpu_for_incompatible_family``
+        must reroute providers to CPU EP only.
+
+        We monkey-patch ``resolve_accelerator`` so the test is hermetic — the
+        CI host doesn't have a DirectML EP registered, which would otherwise
+        cause the helper's internal ``resolve_accelerator("directml")`` call
+        to fall back to ``"cpu"`` and pass the providers through unchanged.
+        """
+        from unittest.mock import patch
+
+        from src.recorder.bootstrap import _override_dml_to_cpu_for_incompatible_family
+
+        original = ["DmlExecutionProvider", "CPUExecutionProvider"]
+        with patch(
+            "src.recorder.infrastructure.device.resolve_accelerator",
+            return_value="directml",
+        ):
+            result = _override_dml_to_cpu_for_incompatible_family(
+                original,
+                family="sense_voice",
+                accelerator="directml",
+                device="cuda",
+            )
+        assert result == ["CPUExecutionProvider"]
+
+    def test_sense_voice_is_in_dml_incompatible_set(self) -> None:
+        """SenseVoice belongs in :data:`_DML_INCOMPATIBLE_FAMILIES` — the
+        Conformer encoder graph crashes on DirectML / ROCm / CoreML the same
+        way NeMo / Cohere / GigaAM / Kaldi / T-One do. Pure-data assert (no
+        DML EP needed on the test host).
+        """
+        from src.recorder.domain.model_registry import _DML_INCOMPATIBLE_FAMILIES
+
+        assert "sense_voice" in _DML_INCOMPATIBLE_FAMILIES
+
+    def test_sense_voice_is_in_int8_preferred_set(self) -> None:
+        """SenseVoice belongs in :data:`_INT8_PREFERRED_FAMILIES` so the
+        ``auto`` quantization path picks the published int8 export instead
+        of asking onnx-asr for a non-existent fp32 graph."""
+        from src.recorder.bootstrap import _INT8_PREFERRED_FAMILIES
+
+        assert "sense_voice" in _INT8_PREFERRED_FAMILIES
+
+
+class TestWakeWordBackendSelection:
+    """Lock the registry invariant: each backend name routes to exactly ONE
+    builder. The default 'composite' case is the only path that ever
+    instantiates both Porcupine and openWakeWord; picking 'pvporcupine' or
+    'openwakeword' must NOT pull in the other engine's heavyweight import
+    (pvporcupine ~6 MB, openwakeword brings scipy + sklearn). This is the
+    "wake-word backend pruning" RAM-lifecycle guarantee — without it both
+    detectors stay co-resident even when the user only configured one.
+    """
+
+    def test_pvporcupine_alias_maps_to_porcupine_builder(self) -> None:
+        from src.recorder.bootstrap import WAKE_WORD_BACKENDS, _build_porcupine_detector
+
+        # Every Porcupine alias must route to the porcupine builder (one
+        # function), never to ``_build_composite_detector`` which would
+        # bring openwakeword into the import graph.
+        for alias in ("pvp", "pvporcupine"):
+            assert WAKE_WORD_BACKENDS[alias] is _build_porcupine_detector
+
+    def test_openwakeword_aliases_map_to_oww_builder(self) -> None:
+        from src.recorder.bootstrap import WAKE_WORD_BACKENDS, _build_oww_detector
+
+        for alias in ("oww", "openwakeword", "openwakewords"):
+            assert WAKE_WORD_BACKENDS[alias] is _build_oww_detector
+
+    def test_composite_alias_maps_to_composite_builder(self) -> None:
+        from src.recorder.bootstrap import WAKE_WORD_BACKENDS, _build_composite_detector
+
+        # Only the explicit 'composite' key is allowed to build the
+        # both-engines detector. No silent alias should leak both into
+        # memory.
+        assert WAKE_WORD_BACKENDS["composite"] is _build_composite_detector
+
+    def test_porcupine_builder_does_not_import_openwakeword(self) -> None:
+        """When the user selects 'pvporcupine', the builder must not
+        construct an ``OWWDetector``. We monkeypatch both engine classes
+        with sentinels and verify only the Porcupine sentinel was invoked.
+        """
+        from src.recorder.bootstrap import _build_porcupine_detector
+        from src.recorder.domain.config import RecorderConfig
+        from src.recorder.infrastructure import oww_detector as oww_module
+        from src.recorder.infrastructure import porcupine_detector as porcupine_module
+
+        config = RecorderConfig.from_kwargs(
+            wakeword_backend="pvporcupine",
+            wake_words="alexa",
+            use_microphone=False,
+        )
+
+        porcupine_calls, oww_calls = _swap_engine_classes(porcupine_module, oww_module)
+        try:
+            _build_porcupine_detector(config)
+        finally:
+            _restore_engine_classes(porcupine_module, oww_module)
+
+        assert len(porcupine_calls) == 1
+        assert oww_calls == [], "porcupine backend must not construct OWWDetector"
+
+    def test_oww_builder_does_not_import_porcupine(self) -> None:
+        """Symmetric: selecting 'openwakeword' must not construct a
+        Porcupine detector. Holding both engines costs ~15-30 MB of
+        session RAM for no benefit when only one backend is in use.
+        """
+        from src.recorder.bootstrap import _build_oww_detector
+        from src.recorder.domain.config import RecorderConfig
+        from src.recorder.infrastructure import oww_detector as oww_module
+        from src.recorder.infrastructure import porcupine_detector as porcupine_module
+
+        config = RecorderConfig.from_kwargs(
+            wakeword_backend="openwakeword",
+            openwakeword_model_paths="alexa",
+            use_microphone=False,
+        )
+
+        porcupine_calls, oww_calls = _swap_engine_classes(porcupine_module, oww_module)
+        try:
+            _build_oww_detector(config)
+        finally:
+            _restore_engine_classes(porcupine_module, oww_module)
+
+        assert len(oww_calls) == 1
+        assert porcupine_calls == [], "oww backend must not construct PorcupineDetector"
+
+
+# Module-level scratch storage for the wake-word sentinel swap helpers.
+_ORIGINAL_ENGINE_CLASSES: dict[str, object] = {}
+
+
+def _swap_engine_classes(
+    porcupine_module: object,
+    oww_module: object,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Replace the engine constructors with sentinels, return their call logs."""
+    porcupine_calls: list[dict[str, object]] = []
+    oww_calls: list[dict[str, object]] = []
+
+    class _PorcupineSentinel:
+        def __init__(self, **kwargs: object) -> None:
+            porcupine_calls.append(kwargs)
+
+    class _OwwSentinel:
+        def __init__(self, **kwargs: object) -> None:
+            oww_calls.append(kwargs)
+
+    _ORIGINAL_ENGINE_CLASSES["porcupine"] = porcupine_module.PorcupineDetector  # type: ignore[attr-defined]
+    _ORIGINAL_ENGINE_CLASSES["oww"] = oww_module.OWWDetector  # type: ignore[attr-defined]
+    porcupine_module.PorcupineDetector = _PorcupineSentinel  # type: ignore[attr-defined]
+    oww_module.OWWDetector = _OwwSentinel  # type: ignore[attr-defined]
+    return porcupine_calls, oww_calls
+
+
+def _restore_engine_classes(porcupine_module: object, oww_module: object) -> None:
+    porcupine_module.PorcupineDetector = _ORIGINAL_ENGINE_CLASSES["porcupine"]  # type: ignore[attr-defined]
+    oww_module.OWWDetector = _ORIGINAL_ENGINE_CLASSES["oww"]  # type: ignore[attr-defined]
+
+
+class TestSenseVoiceHfProgress:
+    """``_build_hf_progress_tqdm_class`` wires HF download progress into our event sink."""
+
+    def test_emits_aggregated_progress_across_files(self) -> None:
+        from src.recorder.bootstrap import _build_hf_progress_tqdm_class
+        from src.recorder.domain.events import DownloadProgress
+
+        events: list[DownloadProgress] = []
+        tqdm_cls = _build_hf_progress_tqdm_class("acme/test-model", events.append)
+
+        # Two concurrent files, totals 100 + 400 bytes.
+        a = tqdm_cls(total=100, unit="B", desc="a")
+        b = tqdm_cls(total=400, unit="B", desc="b")
+        # 50 of A, 100 of B -> 150 / 500 = 0.30.
+        a.update(50)
+        b.update(100)
+        # Close A: pins it to (100, 100). Aggregate downloaded 200 / 500 = 0.40.
+        a.close()
+        # Finish B: 100 + 400 / 500 = 1.0.
+        b.update(300)
+        b.close()
+
+        assert events, "expected at least one progress emission"
+        last = events[-1]
+        assert last.model == "acme/test-model"
+        assert last.total_bytes == 500
+        assert last.downloaded_bytes == 500
+        assert last.progress == pytest.approx(1.0)
+
+    def test_handles_unknown_total(self) -> None:
+        """HF can produce tqdm instances with ``total=None`` (chunked streams).
+
+        We must not divide by zero — progress stays 0.0 and the
+        downloaded-bytes counter still tracks correctly.
+        """
+        from src.recorder.bootstrap import _build_hf_progress_tqdm_class
+        from src.recorder.domain.events import DownloadProgress
+
+        events: list[DownloadProgress] = []
+        tqdm_cls = _build_hf_progress_tqdm_class("acme/test-model", events.append)
+
+        bar = tqdm_cls(total=None, unit="B")
+        bar.update(42)
+        bar.close()
+
+        # No division-by-zero crash, downloaded tracked, progress is 0.0.
+        assert events
+        seen_downloaded = max(e.downloaded_bytes for e in events)
+        assert seen_downloaded >= 42
+        assert all(0.0 <= e.progress <= 1.0 for e in events)

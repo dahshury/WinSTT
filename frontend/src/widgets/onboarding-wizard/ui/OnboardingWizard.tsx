@@ -145,7 +145,9 @@ export function OnboardingWizard() {
 						</span>
 					</TextureCardHeader>
 					<TextureSeparator />
-					<TextureCardBody className="px-5 py-4">{renderStep(currentStep)}</TextureCardBody>
+					<TextureCardBody className="px-5 py-4">
+						<StepBody step={currentStep} />
+					</TextureCardBody>
 				</TextureCard>
 			</ScrollArea>
 
@@ -188,7 +190,7 @@ function stepLabelFor(step: OnboardingStepId): string {
 	return "04 · LLM cleanup";
 }
 
-function renderStep(step: OnboardingStepId) {
+function StepBody({ step }: { step: OnboardingStepId }) {
 	if (step === "welcome") {
 		return <OnboardingLocalVsCloudStep />;
 	}

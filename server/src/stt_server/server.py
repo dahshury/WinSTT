@@ -295,6 +295,41 @@ def _broadcast_server_ready(
         asyncio.run_coroutine_threadsafe(ws.send(msg), loop)
 
 
+def _probe_audio_subsystem() -> str | None:
+    """Run a fast Pa_Initialize/Pa_Terminate cycle to detect a dead audio stack.
+
+    Returns a human-readable error string when the host audio subsystem
+    is unusable, ``None`` when the probe succeeds. Reasons we surface
+    this here rather than relying on the recorder's lazy ``setup()``:
+
+    * The lazy path crashes on the user's first PTT press, after the
+      model load has already burned a second or two of UX time.
+    * A Windows fatal access violation inside Pa_Initialize cannot be
+      caught from Python — surfacing the probe attempt at a fixed,
+      logged checkpoint gives operators an unambiguous diagnostic
+      pointer when faulthandler does kill the process.
+
+    Faulthandler still owns the access-violation case; the OSError path
+    (PortAudio init returns paInvalidHostApi etc. instead of crashing)
+    is the one we recover from gracefully.
+    """
+    try:
+        import pyaudio
+    except ImportError as e:
+        return f"PyAudio is not installed: {e}"
+    try:
+        audio = pyaudio.PyAudio()
+    except OSError as e:
+        return (
+            f"PortAudio Pa_Initialize failed ({e}). The Windows audio "
+            f"stack may be stuck — run Fix-Audio.cmd elevated to bounce "
+            f"Audiosrv / AudioEndpointBuilder, then restart WinSTT."
+        )
+    with contextlib.suppress(Exception):
+        audio.terminate()
+    return None
+
+
 def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> None:
     """Initialize the recorder and run the text-processing loop."""
     print(f"{bcolors.OKGREEN}Initializing RealtimeSTT server with parameters:{bcolors.ENDC}")
@@ -314,6 +349,22 @@ def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> Non
         for chunk in chunks[1:]:
             print(f"  {c}│{e} {' ' * key_w} {c}│{e} {chunk:<{val_w}} {c}│{e}")
     print(bot)
+    # Probe PortAudio Pa_Initialize before we sink time into loading any
+    # ONNX model. A broken Windows audio stack (CM_PROB_PHANTOM endpoints,
+    # hung Audiosrv/AEB/BluetoothUserService) makes pyaudio.PyAudio() either
+    # raise OSError or fatal-access-violate inside the C extension. Doing
+    # it here means:
+    #   * OSError → we broadcast a structured server_ready failure with a
+    #     pointer to Fix-Audio.cmd, instead of crashing mid-PTT after the
+    #     user has already waited for the model to load.
+    #   * Access violation → faulthandler still kills us, but the preceding
+    #     log line tells the operator exactly which subsystem died.
+    probe_error = _probe_audio_subsystem()
+    if probe_error is not None:
+        print(f"{bcolors.FAIL}[startup] audio subsystem probe failed: {probe_error}{bcolors.ENDC}")
+        state.recorder_ready.set()
+        _broadcast_server_ready(state, loop, ready=False, error=probe_error)
+        return
     print(f"{bcolors.OKGREEN}Loading and warming up models...{bcolors.ENDC}")
     load_ok = _load_recorder_with_fallback(state, loop)
     if not load_ok:
@@ -603,7 +654,6 @@ async def main_async() -> None:
         "silero_use_onnx": args.silero_use_onnx,
         "webrtc_sensitivity": args.webrtc_sensitivity,
         "post_speech_silence_duration": args.unknown_sentence_detection_pause,
-        "min_length_of_recording": args.min_length_of_recording,
         "min_gap_between_recordings": args.min_gap_between_recordings,
         "enable_realtime_transcription": args.enable_realtime_transcription,
         "realtime_processing_pause": args.realtime_processing_pause,

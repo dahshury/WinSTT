@@ -331,6 +331,8 @@
     "useMainModel": "Utiliser le modèle principal",
     "useMainModelCaption": "Meilleure qualité mais plus lent",
     "useMainModelTooltip": "Utilise le modèle principal, plus grand et plus précis, pour l'aperçu en direct au lieu du modèle temps réel plus petit. Donne un meilleur texte en direct mais augmente considérablement l'utilisation CPU/GPU et peut causer des ralentissements sur du matériel plus lent.",
+    "realtimeLockedToMainCaption": "Utilisation du modèle principal pour l'aperçu en direct",
+    "realtimeLockedToMainTooltip": "Votre modèle principal est suffisamment petit pour alimenter l'aperçu en direct, il est donc déjà utilisé pour la transcription temps réel. Un modèle temps réel séparé ne ferait que dupliquer le travail sans améliorer la qualité. Choisissez un modèle principal plus grand pour débloquer un modèle temps réel dédié.",
     "updateInterval": "Intervalle de mise à jour",
     "updateIntervalCaption": "Secondes entre les mises à jour temps réel",
     "updateIntervalTooltip": "Durée minimale entre les mises à jour de transcription en direct. Des valeurs plus basses donnent des mises à jour plus fréquentes mais utilisent plus de puissance de traitement. Augmentez si vous rencontrez des saccades ou une utilisation élevée du CPU pendant la dictée.",
@@ -372,9 +374,6 @@
     "postSpeechSilence": "Silence post-parole",
     "postSpeechSilenceCaption": "Secondes de silence pour terminer l'enregistrement",
     "postSpeechSilenceTooltip": "Durée d'attente après la fin de la parole avant de finaliser le segment. Des valeurs plus courtes semblent plus réactives mais peuvent couper les pauses entre les phrases. S'applique en modes Basculer et Écouter — Appuyer pour parler gère cela automatiquement.",
-    "minRecordingLength": "Durée min. d'enregistrement",
-    "minRecordingLengthCaption": "Durée minimale en secondes pour un enregistrement valide",
-    "minRecordingLengthTooltip": "Les enregistrements plus courts que cette durée sont ignorés comme du bruit. Empêche les déclenchements accidentels comme la toux, les clics ou les sons brefs d'être transcrits.",
     "deviceSwitchFailed": "Impossible d'ouvrir le périphérique d'entrée — {reason}",
     "outputDevice": "Output Device",
     "outputDeviceCaption": "Speaker / headphones for chimes and TTS playback",
@@ -737,7 +736,11 @@
     "installCancel": "Annuler",
     "installRetry": "Réessayer",
     "installConfirm": "Télécharger et activer",
-    "installComponentInstalled": "Installé"
+    "installComponentInstalled": "Installé",
+    "paused": "En pause",
+    "pauseInstall": "Pause",
+    "resumeInstall": "Reprendre",
+    "cancelInstall": "Annuler"
   },
   "errors": {
     "somethingWentWrong": "Une erreur est survenue",

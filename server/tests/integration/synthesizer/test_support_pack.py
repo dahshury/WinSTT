@@ -146,8 +146,14 @@ def test_ensure_raises_on_rmtree_failure(
     real_rmtree = support_pack.shutil.rmtree
 
     def failing_rmtree(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
-        # Only fail on the install-loop call (clearing dst inside rt).
-        if Path(path).is_relative_to(rt):
+        # Only fail on the install-loop call (clearing a dst directory
+        # name inside rt — e.g. `kokoro_onnx`). The post-r1 code creates
+        # its own staging dir under rt (``winstt-ttspack-…``) whose
+        # cleanup must succeed, otherwise we crash inside the
+        # ``TemporaryDirectory.__exit__`` instead of letting the
+        # install-loop's ``RuntimeError`` surface.
+        p = Path(path)
+        if p.is_relative_to(rt) and not p.name.startswith("winstt-ttspack-"):
             raise OSError("simulated lock")
         return real_rmtree(path, *args, **kwargs)
 

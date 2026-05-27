@@ -71,10 +71,16 @@ export function IntegrationsSettingsPanel() {
 	}>({ status: "idle" });
 	const openrouterDebounceRef = useRef<number | null>(null);
 	const openrouterReqIdRef = useRef(0);
-
-	useEffect(() => {
+	// Reset-on-prop-change pattern (React docs: "Adjusting state when a prop
+	// changes") — when the persisted store value changes from under us (e.g.
+	// settings reload), re-hydrate the local field during render rather than
+	// in an effect. Avoids a render-with-stale-state followed by a second
+	// render after the effect fires.
+	const prevPersistedRef = useRef(persistedOpenrouterKey);
+	if (prevPersistedRef.current !== persistedOpenrouterKey) {
+		prevPersistedRef.current = persistedOpenrouterKey;
 		setLocalOpenrouterKey(persistedOpenrouterKey);
-	}, [persistedOpenrouterKey]);
+	}
 
 	useEffect(
 		() => () => {
@@ -90,11 +96,11 @@ export function IntegrationsSettingsPanel() {
 	);
 
 	const runOpenrouterVerify = async (key: string) => {
-		const myReqId = ++openrouterReqIdRef.current;
 		if (key.trim().length === 0) {
 			setOpenrouterStatus({ status: "idle" });
 			return;
 		}
+		const myReqId = ++openrouterReqIdRef.current;
 		setOpenrouterStatus({ status: "verifying" });
 		try {
 			const response = await ipcInvoke<VerifyResponse>(IPC.INTEGRATIONS_VERIFY, {

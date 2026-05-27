@@ -15,6 +15,16 @@ export interface SttVariantBundleProps {
 	currentQuantization: OnnxQuantization;
 	/** Whether the bundle's nested variants are visible. */
 	expanded: boolean;
+	/** Forwarded to each card so the per-quant trash icon can call back
+	 *  into the selector-level confirm dialog. */
+	onRequestDeleteQuant?:
+		| ((
+				modelId: string,
+				quantization: OnnxQuantization,
+				displayName: string,
+				quantLabel: string
+		  ) => void)
+		| undefined;
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
 	/** Toggle handler — fires on chevron click; should not propagate to the row. */
 	onToggleExpanded: (baseId: string) => void;
@@ -116,6 +126,7 @@ export function SttVariantBundle({
 	currentQuantization,
 	expanded,
 	onSelect,
+	onRequestDeleteQuant,
 	onToggleExpanded,
 	selectedId,
 	statesById,
@@ -128,6 +139,7 @@ export function SttVariantBundle({
 	const sharedCardProps = {
 		currentQuantization,
 		onSelect,
+		onRequestDeleteQuant,
 		selectedId,
 		statesById,
 		systemInfo,
@@ -173,7 +185,7 @@ export function SttVariantBundle({
 					id={`bundle-siblings-${bundle.baseId}`}
 				>
 					{siblings.map((m) => (
-						<SttModelCard {...sharedCardProps} key={m.id} model={m} state={statesById[m.id]} />
+						<SttModelCard key={m.id} {...sharedCardProps} model={m} state={statesById[m.id]} />
 					))}
 				</div>
 			</Collapsible>

@@ -7,86 +7,85 @@ import {
 import { dbg } from "./debug-log";
 import { getStoreValue } from "./store";
 
-/** Number of discrete levels (0 through LEVELS inclusive). */
-const LEVELS = 10;
+// ── Bar visualizer parameters ────────────────────────────────────────
+//
+// Mirrors the pill's bar visualizer (frontend/src/features/audio-visualizer
+// `size="icon"`): 5 bars, 4px wide, 2px gap, centered vertically, fully
+// rounded ends. The pill math is ported below verbatim from
+// use-multiband-volume.ts so the tray icon undulates the same way.
 
-/** Minimum interval (ms) between icon swaps — caps at ~20 fps. */
-const THROTTLE_MS = 50;
+/** Output canvas size. Windows scales 32×32 down to 16×16 at 100% DPI. */
+const TARGET_SIZE = 32;
 
-/** RGB tint per recording mode. The tray icon blends with this color while
- * recording so the user can tell at a glance whether they're in PTT, toggle,
- * or listen mode. */
-type RGB = readonly [number, number, number];
+/** Bar count — matches the pill's `size="icon"` default (resolveBarCount). */
+const BAR_COUNT = 5;
 
-/** Blend opacity for tray icon tinting (0–1). */
-const BLEND_ALPHA = 0.6;
+/** Bar width in pixels (matches pill `w-[4px]`). */
+const BAR_WIDTH = 4;
 
-// ── Adaptive level normalization ─────────────────────────────────────
-// Tracks a rolling peak that rises fast and decays slowly, so the
-// indicator always fills meaningfully regardless of absolute volume.
+/** Gap between bars in pixels (matches pill `gap-[2px]`). */
+const BAR_GAP = 2;
 
-/** How fast the peak rises toward a louder sample (0–1, higher = faster). */
-const PEAK_ATTACK = 0.8;
+/** Vertical margin so the tallest bar doesn't touch the icon edge. */
+const VERTICAL_MARGIN = 2;
 
-/** Per-tick multiplier that slowly shrinks the peak when audio is quieter. */
-const PEAK_DECAY = 0.993;
+/** Update interval in ms — ~20 fps tick (pill uses rAF at ~60 fps; 20 fps is
+ *  the highest rate Windows can visibly render a tray icon swap at). */
+const TICK_MS = 50;
 
-/** Floor for the rolling peak — prevents division-by-tiny-number jitter. */
-const PEAK_FLOOR = 0.005;
-
-/** Power curve exponent — <1 expands quiet values, giving more visual range. */
-const CURVE_EXP = 0.45;
-
-/** Minimum visible level while recording (so silence still shows a sliver). */
-const MIN_VISUAL = 0.08;
+// Pill math constants — ported from
+// frontend/src/features/audio-visualizer/lib/use-multiband-volume.ts
+const PEAK_FLOOR = 0.1;
+const PEAK_DECAY = 0.99;
 
 // ── Module state ─────────────────────────────────────────────────────
 let trayRef: Tray | null = null;
 let winRef: BrowserWindow | null = null;
 let baseIcon: NativeImage | null = null;
 
-/** Per-mode tinted icons, generated once per init. */
-let levelIconsByMode: Partial<Record<RecordingMode, NativeImage[]>> = {};
-
 /** Mode active for the current recording session — captured at onRecordingStart so
- * mid-session mode toggles can't swap the icon set under us. */
+ * mid-session mode toggles can't swap the bar color under us. */
 let activeMode: RecordingMode = "ptt";
 
 let isRecording = false;
-let currentIndex = -1;
-let lastUpdateTs = 0;
 
-/** Rolling peak for adaptive normalization. */
-let rollingPeak = PEAK_FLOOR;
+/** Latest raw audio level from onAudioLevel; read by the render tick. */
+let rawLevel = 0;
+
+/** Rolling peak for adaptive amplification (matches pill). */
+let peak = PEAK_FLOOR;
+
+/** Recording start timestamp; feeds the time-based sinusoidal phases. */
+let sessionStartMs = 0;
+
+/** setInterval handle for the render tick. */
+let tickHandle: ReturnType<typeof setInterval> | null = null;
+
+// ── Pill math (ported 1:1) ───────────────────────────────────────────
+
+export function computeAmplified(
+	audioLevel: number,
+	prevPeak: number
+): { amplified: number; peak: number } {
+	const nextPeak = Math.max(PEAK_FLOOR, audioLevel, prevPeak * PEAK_DECAY);
+	const amplified = Math.sqrt(Math.min(1, Math.max(0, audioLevel) / nextPeak));
+	return { peak: nextPeak, amplified };
+}
+
+export function computeBandValue(
+	bandIndex: number,
+	bands: number,
+	time: number,
+	amplified: number
+): number {
+	const phase = (bandIndex / bands) * Math.PI * 2;
+	const v1 = 0.3 * Math.sin(time * 3.7 + phase);
+	const v2 = 0.2 * Math.sin(time * 7.3 + phase * 2.5);
+	const v3 = 0.1 * Math.sin(time * 13.1 + phase * 0.7);
+	return Math.max(0.05, Math.min(1, amplified * (0.8 + v1 + v2 + v3)));
+}
 
 // ── Public API ───────────────────────────────────────────────────────
-
-function tryGenerateLevelIcons(base: NativeImage, tint: RGB): NativeImage[] {
-	try {
-		return generateLevelIcons(base, tint);
-	} catch (err) {
-		dbg("indicator", "Failed to generate level icons:", String(err));
-		return [];
-	}
-}
-
-function logInitialized(base: NativeImage, totalIcons: number): void {
-	const size = base.getSize();
-	dbg("indicator", `Initialized: ${size.width}x${size.height} base, ${totalIcons} level icons`);
-}
-
-function generateAllModeIcons(base: NativeImage): Partial<Record<RecordingMode, NativeImage[]>> {
-	const modes: RecordingMode[] = ["ptt", "toggle", "listen", "wakeword"];
-	const out: Partial<Record<RecordingMode, NativeImage[]>> = {};
-	let total = 0;
-	for (const mode of modes) {
-		const icons = tryGenerateLevelIcons(base, RECORDING_MODE_COLOR_RGB[mode]);
-		out[mode] = icons;
-		total += icons.length;
-	}
-	logInitialized(base, total);
-	return out;
-}
 
 export function initRecordingIndicator(tray: Tray, win: BrowserWindow, iconPath: string): void {
 	trayRef = tray;
@@ -94,11 +93,12 @@ export function initRecordingIndicator(tray: Tray, win: BrowserWindow, iconPath:
 	baseIcon = nativeImage.createFromPath(iconPath);
 
 	if (baseIcon.isEmpty()) {
-		dbg("indicator", "Base icon is empty — indicator disabled");
-		levelIconsByMode = {};
-		return;
+		dbg("indicator", "Base icon is empty — indicator will skip revert step");
 	}
-	levelIconsByMode = generateAllModeIcons(baseIcon);
+	dbg(
+		"indicator",
+		`Initialized: bars=${BAR_COUNT} target=${TARGET_SIZE}x${TARGET_SIZE} tick=${TICK_MS}ms`
+	);
 }
 
 function readRecordingMode(): RecordingMode {
@@ -113,133 +113,226 @@ export function onRecordingStart(): void {
 	dbg("indicator", "Recording started");
 	activeMode = readRecordingMode();
 	isRecording = true;
-	currentIndex = -1; // force first update
-	rollingPeak = PEAK_FLOOR; // reset adaptive range for new session
-	applyLevel(0);
+	rawLevel = 0;
+	peak = PEAK_FLOOR;
+	sessionStartMs = nowMs();
+	startTick();
+	renderFrame();
 }
 
 export function onRecordingStop(): void {
-	// No-op when we weren't recording.  Without this guard, every WebSocket
-	// disconnect (including the noisy cold-start retry loop when the server
-	// isn't running yet) logs "Recording stopped" and revertIcons() — both
-	// pointless since we never showed the recording state in the first place.
+	// No-op when we weren't recording. Without this guard, every WebSocket
+	// disconnect (cold-start retry loop) would log "Recording stopped" and
+	// revertIcons() for a state we never showed.
 	if (!isRecording) {
 		return;
 	}
 	dbg("indicator", "Recording stopped");
 	isRecording = false;
-	currentIndex = -1;
+	rawLevel = 0;
+	peak = PEAK_FLOOR;
+	stopTick();
 	revertIcons();
-}
-
-function updateRollingPeak(level: number): void {
-	if (level > rollingPeak) {
-		// Rise fast toward louder input
-		rollingPeak += PEAK_ATTACK * (level - rollingPeak);
-	} else {
-		// Decay slowly when quieter
-		rollingPeak *= PEAK_DECAY;
-	}
-	rollingPeak = Math.max(rollingPeak, PEAK_FLOOR);
-}
-
-function shouldThrottle(now: number): boolean {
-	return now - lastUpdateTs < THROTTLE_MS;
-}
-
-function computeLevelIndex(level: number): number {
-	const normalized = Math.min(1, level / rollingPeak);
-	const curved = normalized ** CURVE_EXP;
-	const visual = MIN_VISUAL + curved * (1 - MIN_VISUAL);
-	return Math.min(LEVELS, Math.max(0, Math.round(visual * LEVELS)));
-}
-
-function maybeApplyThrottledLevel(level: number, now: number): void {
-	if (shouldThrottle(now)) {
-		return;
-	}
-	const index = computeLevelIndex(level);
-	if (index === currentIndex) {
-		return;
-	}
-	lastUpdateTs = now;
-	applyLevel(index);
 }
 
 export function onAudioLevel(level: number): void {
 	if (!isRecording) {
 		return;
 	}
-	updateRollingPeak(level);
-	maybeApplyThrottledLevel(level, Date.now());
+	rawLevel = Math.max(0, Math.min(1, level));
 }
 
 export function cleanupRecordingIndicator(): void {
+	stopTick();
 	trayRef = null;
 	winRef = null;
 	baseIcon = null;
-	levelIconsByMode = {};
 	isRecording = false;
-	currentIndex = -1;
+	rawLevel = 0;
+	peak = PEAK_FLOOR;
 }
 
-// ── Icon generation (via pngjs) ──────────────────────────────────────
+// ── Render tick ──────────────────────────────────────────────────────
 
-function blendPixel(data: Buffer, idx: number, tint: RGB): void {
-	const a = data[idx + 3]!;
-	if (a === 0) {
+function nowMs(): number {
+	return Date.now();
+}
+
+function startTick(): void {
+	if (tickHandle !== null) {
 		return;
 	}
-	data[idx] = Math.round(data[idx]! * (1 - BLEND_ALPHA) + tint[0] * BLEND_ALPHA);
-	data[idx + 1] = Math.round(data[idx + 1]! * (1 - BLEND_ALPHA) + tint[1] * BLEND_ALPHA);
-	data[idx + 2] = Math.round(data[idx + 2]! * (1 - BLEND_ALPHA) + tint[2] * BLEND_ALPHA);
+	tickHandle = setInterval(renderFrame, TICK_MS);
 }
 
-function blendRow(data: Buffer, y: number, width: number, tint: RGB): void {
-	for (let x = 0; x < width; x++) {
-		const idx = (y * width + x) * 4;
-		blendPixel(data, idx, tint);
+function stopTick(): void {
+	if (tickHandle !== null) {
+		clearInterval(tickHandle);
+		tickHandle = null;
 	}
 }
 
-function blendBottomRows(
+function renderFrame(): void {
+	if (!isRecording) {
+		return;
+	}
+	const next = computeAmplified(rawLevel, peak);
+	peak = next.peak;
+	const time = (nowMs() - sessionStartMs) / 1000;
+	const bands: number[] = [];
+	for (let i = 0; i < BAR_COUNT; i++) {
+		bands.push(computeBandValue(i, BAR_COUNT, time, next.amplified));
+	}
+	const icon = renderBarsIcon(bands, RECORDING_MODE_COLOR_RGB[activeMode]);
+	setIconOnTray(icon);
+	setIconOnWin(icon);
+}
+
+// ── Bar rasterization (transparent PNG via pngjs) ────────────────────
+
+type RGB = readonly [number, number, number];
+
+/** Render a transparent PNG of the bar visualizer state. Bars grow from
+ *  the vertical center outward (matches pill's `items-center`). Pixel
+ *  coverage at the rounded caps is alpha-blended for visual smoothness
+ *  at the tray icon's tiny scale. */
+export function renderBarsIcon(bands: readonly number[], tint: RGB): NativeImage {
+	const png = new PNG({ width: TARGET_SIZE, height: TARGET_SIZE });
+	png.data.fill(0); // fully transparent canvas
+
+	const totalWidth = BAR_COUNT * BAR_WIDTH + (BAR_COUNT - 1) * BAR_GAP;
+	const startX = Math.floor((TARGET_SIZE - totalWidth) / 2);
+	const maxBarHeight = TARGET_SIZE - VERTICAL_MARGIN * 2;
+	const cy = TARGET_SIZE / 2;
+
+	for (let i = 0; i < BAR_COUNT; i++) {
+		const band = clamp01(bands[i] ?? 0.05);
+		const h = Math.max(BAR_WIDTH, Math.round(band * maxBarHeight));
+		const x0 = startX + i * (BAR_WIDTH + BAR_GAP);
+		drawRoundedBar(png.data, x0, cy, BAR_WIDTH, h, tint);
+	}
+
+	const buf = PNG.sync.write(png);
+	return nativeImage.createFromBuffer(buf);
+}
+
+function clamp01(v: number): number {
+	if (Number.isNaN(v)) {
+		return 0;
+	}
+	return Math.max(0, Math.min(1, v));
+}
+
+/** Draws a vertically-centered rounded-cap bar with anti-aliased ends.
+ *  Origin of the bar is (x0, cy - h/2). The bar is BAR_WIDTH px wide and
+ *  `h` px tall, with semicircular caps of radius BAR_WIDTH/2. */
+function drawRoundedBar(
 	data: Buffer,
-	width: number,
-	height: number,
-	startRow: number,
+	x0: number,
+	cy: number,
+	w: number,
+	h: number,
 	tint: RGB
 ): void {
-	for (let y = startRow; y < height; y++) {
-		blendRow(data, y, width, tint);
+	const r = w / 2;
+	const y0 = cy - h / 2;
+	const y1 = cy + h / 2;
+
+	// The bar runs from y0 to y1. Cap regions are the top r pixels (y0 .. y0+r)
+	// and the bottom r pixels (y1-r .. y1); the straight middle runs y0+r .. y1-r.
+	for (let py = 0; py < TARGET_SIZE; py++) {
+		// Quick reject: pixel must fall inside the bar's vertical extent.
+		if (py + 1 <= y0 || py >= y1) {
+			continue;
+		}
+		for (let dx = 0; dx < w; dx++) {
+			const px = x0 + dx;
+			if (px < 0 || px >= TARGET_SIZE) {
+				continue;
+			}
+			const alpha = capCoverage(px - x0, py, x0, y0, y1, r, w);
+			if (alpha <= 0) {
+				continue;
+			}
+			blitPixel(data, px, py, tint, alpha);
+		}
 	}
 }
 
-function buildLevelIcon(
-	basePng: { width: number; height: number; data: Buffer },
-	lvl: number,
-	tint: RGB
-): NativeImage {
-	const { width, height } = basePng;
-	const fraction = lvl / LEVELS;
-	const greenRows = Math.round(height * fraction);
-	const startRow = height - greenRows;
-	const data = Buffer.from(basePng.data);
-	blendBottomRows(data, width, height, startRow, tint);
+/** Returns 0..255 coverage for a pixel given the bar's cap geometry. The
+ *  middle (non-cap) region has full coverage; caps fade based on the
+ *  signed distance from the cap circle's edge. */
+function capCoverage(
+	localX: number,
+	py: number,
+	_x0: number,
+	y0: number,
+	y1: number,
+	r: number,
+	w: number
+): number {
+	const localCenterX = w / 2;
+	const dx = localX + 0.5 - localCenterX;
+	const pyCenter = py + 0.5;
 
-	const out = new PNG({ width, height });
-	out.data = data;
-	const pngBuf = PNG.sync.write(out);
-	return nativeImage.createFromBuffer(pngBuf);
+	// In the straight middle section.
+	if (pyCenter >= y0 + r && pyCenter <= y1 - r) {
+		return 255;
+	}
+
+	// In the top cap.
+	if (pyCenter < y0 + r) {
+		const dy = pyCenter - (y0 + r);
+		const d = Math.hypot(dx, dy);
+		return discCoverage(d, r);
+	}
+
+	// In the bottom cap.
+	const dy = pyCenter - (y1 - r);
+	const d = Math.hypot(dx, dy);
+	return discCoverage(d, r);
 }
 
-function generateLevelIcons(base: NativeImage, tint: RGB): NativeImage[] {
-	const basePngBuf = base.toPNG();
-	const basePng = PNG.sync.read(basePngBuf);
-	const icons: NativeImage[] = [];
-	for (let lvl = 0; lvl <= LEVELS; lvl++) {
-		icons.push(buildLevelIcon(basePng, lvl, tint));
+/** Simple linear 1-pixel-wide anti-aliasing for a filled disc. */
+function discCoverage(d: number, r: number): number {
+	if (d <= r - 1) {
+		return 255;
 	}
-	return icons;
+	if (d >= r) {
+		return 0;
+	}
+	return Math.round((r - d) * 255);
+}
+
+/** Premultiplied SRC_OVER blit. The canvas starts fully transparent, so
+ *  this is effectively just "paint with given alpha" for any pixel a bar
+ *  hasn't yet written; for cap pixels where two bars never overlap, the
+ *  fast path also applies. */
+function blitPixel(data: Buffer, x: number, y: number, tint: RGB, alpha: number): void {
+	const idx = (y * TARGET_SIZE + x) * 4;
+	const dstA = data[idx + 3] ?? 0;
+	if (dstA === 0) {
+		data[idx] = tint[0];
+		data[idx + 1] = tint[1];
+		data[idx + 2] = tint[2];
+		data[idx + 3] = alpha;
+		return;
+	}
+	// SRC_OVER for the rare overlap case (shouldn't happen with our layout
+	// but kept defensive for correctness if gap/width are ever changed).
+	const srcA = alpha / 255;
+	const outA = srcA + (dstA / 255) * (1 - srcA);
+	if (outA <= 0) {
+		return;
+	}
+	data[idx] = Math.round((tint[0] * srcA + (data[idx] ?? 0) * (dstA / 255) * (1 - srcA)) / outA);
+	data[idx + 1] = Math.round(
+		(tint[1] * srcA + (data[idx + 1] ?? 0) * (dstA / 255) * (1 - srcA)) / outA
+	);
+	data[idx + 2] = Math.round(
+		(tint[2] * srcA + (data[idx + 2] ?? 0) * (dstA / 255) * (1 - srcA)) / outA
+	);
+	data[idx + 3] = Math.round(outA * 255);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -264,17 +357,6 @@ function setIconOnWin(icon: NativeImage): void {
 	}
 }
 
-function applyLevel(index: number): void {
-	currentIndex = index;
-	const icons = levelIconsByMode[activeMode] ?? [];
-	const icon = icons[index];
-	if (!icon) {
-		return;
-	}
-	setIconOnTray(icon);
-	setIconOnWin(icon);
-}
-
 function baseIconUsable(): boolean {
 	return baseIcon !== null && !baseIcon.isEmpty();
 }
@@ -289,21 +371,26 @@ function revertIcons(): void {
 }
 
 export const __recording_indicator_test_helpers__ = {
-	tryGenerateLevelIcons,
-	generateLevelIcons,
-	generateAllModeIcons,
-	logInitialized,
-	updateRollingPeak,
-	shouldThrottle,
-	computeLevelIndex,
-	maybeApplyThrottledLevel,
-	blendPixel,
-	blendRow,
-	blendBottomRows,
-	buildLevelIcon,
+	computeAmplified,
+	computeBandValue,
+	renderBarsIcon,
+	clamp01,
+	discCoverage,
+	capCoverage,
+	drawRoundedBar,
+	blitPixel,
 	trayIsLive,
 	winIsLive,
 	setIconOnTray,
 	setIconOnWin,
 	baseIconUsable,
+	get BAR_COUNT() {
+		return BAR_COUNT;
+	},
+	get TARGET_SIZE() {
+		return TARGET_SIZE;
+	},
+	get TICK_MS() {
+		return TICK_MS;
+	},
 };

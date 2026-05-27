@@ -1,12 +1,11 @@
 "use client";
 
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import { type ReactNode, useReducer, useRef, useState } from "react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import { GroupRail, type GroupRailItem } from "../../core/GroupRail";
-import { ModelPicker } from "../../core/ModelPicker";
+import type { GroupRailItem } from "../../core/GroupRail";
 import { useRailScrollSpy } from "../../core/use-rail-scroll-spy";
 import { extractCloseReason } from "../../lib/combobox-reasons";
 import {
@@ -25,20 +24,25 @@ import {
 } from "../lib/family-helpers";
 import {
 	collectFilterableLanguages,
-	EMPTY_FILTER_STATE,
 	filterSttModels,
 	hasActiveFilters,
-	type SttFilterState,
 } from "../lib/filter-state";
-import { SttFiltersMenu } from "./SttFiltersMenu";
-import { SttModelList } from "./SttModelList";
-import { SttModelSelectorTrigger } from "./SttModelSelectorTrigger";
+import { DeleteQuantConfirmDialog, type PendingDelete } from "./DeleteQuantConfirmDialog";
+import { SttModelSelectorView } from "./SttModelSelectorView";
+import {
+	createInitialUiState,
+	sttSelectorUiReducer,
+} from "./stt-selector-ui-state";
 
 type SttModelChange = (modelId: string, quantization?: OnnxQuantization) => void;
 
 export interface SttModelSelectorProps {
 	currentQuantization: OnnxQuantization;
 	disabled?: boolean;
+	/** Live download snapshot — drives the trigger's "downloading X · 23%"
+	 *  variant when the in-flight swap target matches the downloading model.
+	 *  Self-contained package, so the consumer wires the store. */
+	downloadProgress?: { modelId: string; percent: number | null } | null;
 	/** Render as an inline panel (no trigger/popup) that fills its host —
 	 *  used by the detached model-picker window. */
 	inline?: boolean;
@@ -49,6 +53,11 @@ export interface SttModelSelectorProps {
 	kind?: "main" | "realtime";
 	models: readonly ModelInfo[];
 	onChange: SttModelChange;
+	/** Per-quant delete handler. Receives the (modelId, quantization)
+	 *  tuple after the user confirms in the selector-level alert dialog.
+	 *  When omitted, the trash icon is NOT rendered next to cached/partial
+	 *  quants (the selector becomes read-only with respect to deletion). */
+	onDeleteQuant?: (modelId: string, quantization: OnnxQuantization) => void;
 	placeholder?: string;
 	/** Popup height class. Defaults to the roomy settings-panel height; the
 	 *  footer chip overrides this with a compact one to fit the status bar. */
@@ -88,6 +97,32 @@ function matchesQuery(model: ModelInfo, query: string): boolean {
 	return buildModelSearchCorpus(model).includes(q);
 }
 
+function buildRailItems(
+	groups: ReturnType<typeof groupModelsByAuthor>
+): GroupRailItem[] {
+	return groups.map((group) => {
+		const cfg = getFamilyConfig(group.value);
+		return {
+			id: group.value,
+			label: `${getAuthorLabel(group.value)} · ${cfg.label}`,
+			badge: group.items.length,
+			icon: cfg.logoSrc ? (
+				<img
+					alt=""
+					className="size-5 rounded-[3px] object-cover"
+					height={20}
+					src={cfg.logoSrc}
+					width={20}
+				/>
+			) : (
+				<span className={`flex size-5 items-center justify-center rounded ${cfg.chip}`}>
+					<HugeiconsIcon className="size-3" icon={cfg.icon} />
+				</span>
+			),
+		};
+	});
+}
+
 /**
  * Whisper / NeMo / GigaAM / Kaldi / Lite-Whisper / T-One transcription
  * picker. Composes the shared `ModelPicker` shell with an STT-specific
@@ -95,19 +130,21 @@ function matchesQuery(model: ModelInfo, query: string): boolean {
  * realtime / cached), and the grouped model list (per-row quantization
  * picker, hardware-fit warning, download progress pill).
  *
- * Filter state lives in this wrapper so the user's "cached only + Spanish"
- * choice survives across the popup's search clear; the shell auto-clears
- * only the search query on close (matching the OpenRouter + Ollama
- * behaviour).
+ * Filter state lives in this wrapper (via the consolidated `useReducer`)
+ * so the user's "cached only + Spanish" choice survives across the popup's
+ * search clear; the shell auto-clears only the search query on close
+ * (matching the OpenRouter + Ollama behaviour).
  */
 export function SttModelSelector({
 	models,
 	value,
 	currentQuantization,
 	onChange,
+	onDeleteQuant,
 	statesById,
 	systemInfo,
 	disabled = false,
+	downloadProgress = null,
 	isLoading = false,
 	placeholder = "Select a model",
 	prefilter,
@@ -117,9 +154,43 @@ export function SttModelSelector({
 	trigger,
 	inline = false,
 }: SttModelSelectorProps) {
-	const [filters, setFilters] = useState<SttFilterState>(EMPTY_FILTER_STATE);
+	// Pending delete confirmation — driven by trash-icon clicks bubbling
+	// up from any card via `onRequestDeleteQuant`. Lives at the selector
+	// level so the AlertDialog isn't trapped inside the Combobox.Item's
+	// focus context (which interferes with Base UI's combobox dismiss).
+	const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+	const handleRequestDelete = onDeleteQuant
+		? (
+				modelId: string,
+				quantization: OnnxQuantization,
+				displayName: string,
+				quantLabel: string
+			) => {
+				setPendingDelete({ modelId, quantization, displayName, quantLabel });
+			}
+		: undefined;
+	const handleConfirmDelete = () => {
+		if (pendingDelete && onDeleteQuant) {
+			onDeleteQuant(pendingDelete.modelId, pendingDelete.quantization);
+		}
+		setPendingDelete(null);
+	};
 
 	const baseModels = applyPrefilter(models, prefilter);
+	const selectedModel = baseModels.find((m) => m.id === value) ?? null;
+	const selectedFamily: FamilyKey | null = selectedModel?.family ?? null;
+	const selectedBaseId = selectedModel === null ? null : getBaseId(selectedModel.id);
+
+	// Consolidated UI/nav state — collapses the 4 separate `useState`s for
+	// filters / activeRailId / expandedBundles / open into one reducer to
+	// stay under the `react-doctor/prefer-useReducer` threshold.
+	const [uiState, dispatch] = useReducer(
+		sttSelectorUiReducer,
+		undefined,
+		() => createInitialUiState(selectedFamily, selectedBaseId)
+	);
+	const { filters, activeRailId, expandedBundles, open } = uiState;
+
 	// Menu filters (cached / realtime / language / hardware) prune the items
 	// before the picker sees them; the text query is then handled by Base
 	// UI's `filter` (via the shell) so groups + keyboard nav stay consistent.
@@ -130,113 +201,45 @@ export function SttModelSelector({
 		searchQuery: "",
 	});
 	const groups = groupModelsByAuthor(menuFilteredModels);
-	const selectedModel = baseModels.find((m) => m.id === value) ?? null;
 	const filtersActive = hasActiveFilters(filters);
 	const availableLanguages = collectFilterableLanguages(baseModels);
 
 	// Shared rail: one tile per family, with the family's branded icon and a
 	// count badge. Same `GroupRail` component the OpenRouter + Ollama
 	// pickers use — visual parity by construction, not by convention.
-	const railItems: GroupRailItem[] = useMemo(
-		() =>
-			groups.map((group) => {
-				const cfg = getFamilyConfig(group.value);
-				return {
-					id: group.value,
-					label: `${getAuthorLabel(group.value)} · ${cfg.label}`,
-					badge: group.items.length,
-					icon: cfg.logoSrc ? (
-						<img
-							alt=""
-							className="size-5 rounded-[3px] object-cover"
-							height={20}
-							src={cfg.logoSrc}
-							width={20}
-						/>
-					) : (
-						<span className={`flex size-5 items-center justify-center rounded ${cfg.chip}`}>
-							<HugeiconsIcon className="size-3" icon={cfg.icon} />
-						</span>
-					),
-				};
-			}),
-		[groups]
-	);
-	// Active rail tile = either the user's most recent rail click, or the
-	// family of the currently-selected model (whichever happened last).
-	// Re-syncs to the selection's family whenever the selected model
-	// changes, so a fresh open of the picker always highlights the
-	// currently-loaded model's family by default.
-	const selectedFamily: FamilyKey | null = selectedModel?.family ?? null;
-	const [activeRailId, setActiveRailId] = useState<FamilyKey | string | null>(selectedFamily);
-	// Re-sync to the selection's family during render whenever it changes,
-	// while still letting a user rail click override it until the selection
-	// moves again. The prev-value tracker is a ref (never read in JSX) so the
-	// resync doesn't schedule an extra render — see
-	// https://react.dev/learn/you-might-not-need-an-effect
+	const railItems: GroupRailItem[] = buildRailItems(groups);
+	// Re-sync the active rail tile to the selection's family during render
+	// whenever it changes, while still letting a user rail click override
+	// it until the selection moves again. The prev-value tracker is a ref
+	// (never read in JSX) so the resync doesn't schedule an extra render —
+	// see https://react.dev/learn/you-might-not-need-an-effect
 	const prevSelectedFamilyRef = useRef(selectedFamily);
 	if (prevSelectedFamilyRef.current !== selectedFamily) {
 		prevSelectedFamilyRef.current = selectedFamily;
-		setActiveRailId(selectedFamily);
+		dispatch({ type: "setActiveRailId", id: selectedFamily });
 	}
 
-	// Variant-bundle expansion (collapsible card mirroring the OpenRouter
-	// selector's pattern). One ``Set<string>`` of base ids — pre-seeded with
-	// the bundle that owns the currently-selected model so the variant card
-	// is registered in Base UI's listRef the moment the popup opens.
-	//
-	// Why this matters: Base UI's Combobox uses ``useListNavigation`` with
-	// ``focusItemOnOpen: 'auto'`` (AriaCombobox.tsx). On open it sets
-	// ``activeIndex = selectedIndex`` and ``forceScrollIntoView = true``,
-	// which calls ``scrollIntoView`` on the selected item automatically.
-	// But ``selectedIndex`` is resolved via ``findItemIndex(registry, value,
-	// isItemEqualToValue)`` over ``flatItems`` / ``allValuesRef`` — which
-	// only contain items whose ``<Combobox.Item>`` is currently mounted. So
-	// if the selected variant lives inside a collapsed bundle, its index is
-	// ``-1`` and the auto-scroll is a no-op. Keeping the bundle expanded at
-	// render time means the item is always registered, and Base UI takes
-	// care of scrolling it into view without us calling scrollIntoView
-	// manually.
-	const initialExpanded = (): Set<string> => {
-		if (selectedModel === null) {
-			return new Set();
-		}
-		return new Set([getBaseId(selectedModel.id)]);
-	};
-	const [expandedBundles, setExpandedBundles] = useState<Set<string>>(initialExpanded);
-	// Sync at render-time (cheaper than useEffect, no extra render pass —
-	// see https://react.dev/learn/you-might-not-need-an-effect): whenever
-	// the externally-controlled selection moves to a different variant,
-	// make sure its bundle is expanded BEFORE Combobox.Item renders, so
-	// the variant registers into Base UI's listRef and the built-in
-	// open-time autoscroll can find it.
-	const selectedBaseId = selectedModel === null ? null : getBaseId(selectedModel.id);
+	// Variant-bundle expansion. Sync at render-time (cheaper than useEffect,
+	// no extra render pass — see https://react.dev/learn/you-might-not-need-an-effect):
+	// whenever the externally-controlled selection moves to a different variant,
+	// make sure its bundle is expanded BEFORE Combobox.Item renders, so the
+	// variant registers into Base UI's listRef and the built-in open-time
+	// autoscroll can find it.
 	const prevSelectedBaseIdRef = useRef(selectedBaseId);
 	if (prevSelectedBaseIdRef.current !== selectedBaseId) {
 		prevSelectedBaseIdRef.current = selectedBaseId;
-		if (selectedBaseId !== null && !expandedBundles.has(selectedBaseId)) {
-			const next = new Set(expandedBundles);
-			next.add(selectedBaseId);
-			setExpandedBundles(next);
+		if (selectedBaseId !== null) {
+			dispatch({ type: "ensureBundleExpanded", baseId: selectedBaseId });
 		}
 	}
 	const handleToggleExpanded = (baseId: string) => {
-		setExpandedBundles((prev) => {
-			const next = new Set(prev);
-			if (next.has(baseId)) {
-				next.delete(baseId);
-			} else {
-				next.add(baseId);
-			}
-			return next;
-		});
+		dispatch({ type: "toggleBundle", baseId });
 	};
 
 	// Scope rail-section queries to THIS picker's popup so two STT pickers
 	// in the same window (e.g. main + realtime model in ModelSettingsPanel)
 	// can't fight for the same DOM matches.
 	const popupRef = useRef<HTMLElement | null>(null);
-	const [popupNode, setPopupNode] = useState<HTMLElement | null>(null);
 	// Controlled-open + click-tracking, mirroring the OpenRouter picker.
 	// Without this, the filter Popover's portaled content is treated as
 	// "outside" by Base UI's combobox dismiss logic, so the first click on
@@ -247,28 +250,26 @@ export function SttModelSelector({
 	// model selection) close the picker even though that click lands
 	// inside the popup, while ``outside-press`` from a filter row gets
 	// intercepted.
-	const [open, setOpen] = useState(false);
 	const lastClickTargetRef = useModelSelectorClickTracking();
 	const handleOpenChange = (next: boolean, eventDetails?: unknown) => {
 		if (next) {
-			setOpen(true);
+			dispatch({ type: "setOpen", open: true });
 			return;
 		}
 		applyCloseWith(
 			extractCloseReason(eventDetails),
 			"item-press",
 			isInsideMenuPopup(lastClickTargetRef.current, popupRef.current),
-			setOpen
+			(nextOpen) => dispatch({ type: "setOpen", open: nextOpen })
 		);
 	};
 	const railSpy = useRailScrollSpy({
-		popupNode,
 		scrollContainerSelector: '[data-slot="stt-model-list"]',
-		onActiveChange: (id) => setActiveRailId(id),
+		onActiveChange: (id) => dispatch({ type: "setActiveRailId", id }),
 	});
 	const handleRailClick = (id: string) => {
 		railSpy.suppress();
-		setActiveRailId(id);
+		dispatch({ type: "setActiveRailId", id });
 		const root: ParentNode = popupRef.current ?? document;
 		const target = root.querySelector<HTMLElement>(`[data-rail-section="${CSS.escape(id)}"]`);
 		target?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -278,93 +279,53 @@ export function SttModelSelector({
 		onChange(modelId, quantization);
 		// Reset our local filter state on selection so the next open starts
 		// fresh — the shell takes care of clearing the search query.
-		setFilters(EMPTY_FILTER_STATE);
+		dispatch({ type: "resetFilters" });
 	};
 
 	return (
-		<ModelPicker<ModelInfo, ModelInfo | null>
-			disabled={disabled || isLoading}
-			filter={matchesQuery}
-			filtersMenuSlot={
-				<SttFiltersMenu
-					availableLanguages={availableLanguages}
-					filters={filters}
-					onFiltersChange={setFilters}
-				/>
-			}
-			inline={inline}
-			isItemEqualToValue={(a, b) => a?.id === b?.id}
-			isLoading={isLoading}
-			// Base UI's Combobox.Root accepts the grouped ``{value, items}[]``
-			// shape (see ``AriaCombobox.d.ts`` overload #1). ModelPicker types
-			// this through as ``readonly unknown[]`` so the typed AuthorGroup
-			// array assigns directly via covariance — no cast needed.
-			items={groups}
-			itemToStringLabel={(item) => item?.displayName ?? ""}
-			list={
-				<SttModelList
-					currentQuantization={currentQuantization}
-					expandedBundles={expandedBundles}
-					hasActiveFilters={filtersActive}
-					onSelect={handleSelect}
-					onToggleExpanded={handleToggleExpanded}
-					selectedId={value}
-					statesById={statesById}
-					systemInfo={systemInfo}
-					visibleModelCount={menuFilteredModels.length}
-				/>
-			}
-			onOpenChange={handleOpenChange}
-			onValueChange={(next) => {
-				// Choosing the card itself selects the model at its default precision.
-				// Broken custom-model entries (``available=false``) are guarded
-				// against here — the user clicked a greyed-out row to read the
-				// tooltip, not to actually load broken weights.
-				if (next && next.available !== false) {
-					// If the user's current quantization isn't published by the
-					// target model (e.g. switching from a NeMo model on int8 to
-					// Cohere which only ships ["", "q4"]), carrying the old
-					// quant through would have the server resolve to fp32 with
-					// a warning AND still trip the picker's STARTUP_ONLY
-					// restart path inconsistently. Explicitly pick a quant the
-					// target model actually publishes — preferring the first
-					// in the catalog's order, which the refresh script puts in
-					// "default-then-smaller" order so we usually land on fp32.
-					const supportsCurrent = next.availableQuantizations.includes(currentQuantization);
-					const fallback = supportsCurrent
-						? undefined
-						: ((next.availableQuantizations[0] ?? "") as OnnxQuantization);
-					handleSelect(next.id, fallback);
-				}
-			}}
-			open={open}
-			popupHeightClass={popupHeightClass}
-			popupRef={(node) => {
-				popupRef.current = node;
-				setPopupNode(node);
-			}}
-			popupWidthClass={popupWidthClass}
-			searchPlaceholder="Search transcription models"
-			sidebarSlot={
-				railItems.length > 1 ? (
-					<GroupRail activeId={activeRailId} items={railItems} onClick={handleRailClick} />
-				) : undefined
-			}
-			trigger={
-				inline
-					? undefined
-					: (trigger ?? (
-							<SttModelSelectorTrigger
-								catalog={baseModels}
-								disabled={disabled || isLoading}
-								kind={kind}
-								open={open}
-								placeholder={placeholder}
-								selectedModel={selectedModel ?? undefined}
-							/>
-						))
-			}
-			value={selectedModel}
-		/>
+		<>
+			<SttModelSelectorView
+				activeRailId={activeRailId}
+				availableLanguages={availableLanguages}
+				baseModels={baseModels}
+				currentQuantization={currentQuantization}
+				disabled={disabled}
+				downloadProgress={downloadProgress}
+				expandedBundles={expandedBundles}
+				filter={matchesQuery}
+				filters={filters}
+				filtersActive={filtersActive}
+				groups={groups}
+				handleOpenChange={handleOpenChange}
+				handleRailClick={handleRailClick}
+				handleSelect={handleSelect}
+				inline={inline}
+				isLoading={isLoading}
+				kind={kind}
+				menuFilteredModels={menuFilteredModels}
+				onFiltersChange={(next) => dispatch({ type: "setFilters", filters: next })}
+				onRequestDelete={handleRequestDelete}
+				onToggleExpanded={handleToggleExpanded}
+				open={open}
+				placeholder={placeholder}
+				popupHeightClass={popupHeightClass}
+				popupRef={(node) => {
+					popupRef.current = node;
+					railSpy.attach(node);
+				}}
+				popupWidthClass={popupWidthClass}
+				railItems={railItems}
+				selectedModel={selectedModel}
+				statesById={statesById}
+				systemInfo={systemInfo}
+				trigger={trigger}
+				value={value}
+			/>
+			<DeleteQuantConfirmDialog
+				onCancel={() => setPendingDelete(null)}
+				onConfirm={handleConfirmDelete}
+				pending={pendingDelete}
+			/>
+		</>
 	);
 }

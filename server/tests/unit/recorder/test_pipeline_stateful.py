@@ -68,7 +68,6 @@ def _make_pipeline(
 ) -> tuple[RecordingPipeline, EventBus, RecorderStateMachine, AudioBuffer, FakeVAD]:
     cfg = config or RecorderConfig.from_kwargs(
         post_speech_silence_duration=0.1,
-        min_length_of_recording=0.0,
         speech_onset_consecutive_chunks=1,
         pre_recording_buffer_duration=_PRE_ROLL_SECONDS,
     )

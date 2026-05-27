@@ -7,6 +7,7 @@ import {
 	onRealtimeText,
 	onRecordingStart,
 	onSpeakerSegments,
+	onSttSessionAborted,
 } from "@/shared/api/ipc-client";
 
 export function useTranscriptionFeed(): void {
@@ -46,6 +47,21 @@ export function useTranscriptionFeed(): void {
 			setRecordingActive(false);
 		});
 
+		// User-initiated cancel. The relay's session-aborted gate drops the
+		// terminal events that would normally reset isRecordingActive
+		// (no_audio_detected during the abort epilogue, fullSentence from
+		// an in-flight transcribe). Without resetting here, the visualizer
+		// in the main window stays armed on isRecordingActive=true and the
+		// pill / waveform animate as if the recording were still live,
+		// even though the server has fully shut it down. Treat the abort
+		// as a terminal event so the renderer state matches the server's
+		// post-abort INACTIVE state.
+		const unsubAborted = onSttSessionAborted(() => {
+			setRealtimeText("");
+			clearEphemeral();
+			setRecordingActive(false);
+		});
+
 		// Diarization arrives a beat after fullSentence — the store attaches
 		// segments to the most-recent item (same utterance by construction).
 		const unsubSpeakerSegments = onSpeakerSegments((segments) => {
@@ -57,6 +73,7 @@ export function useTranscriptionFeed(): void {
 			unsubRealtime();
 			unsubFinal();
 			unsubNoAudio();
+			unsubAborted();
 			unsubSpeakerSegments();
 		};
 	}, [

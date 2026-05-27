@@ -93,7 +93,6 @@ describe("store module", () => {
 		expect(s("audio.sileroDeactivityDetection")).toBe(true);
 		expect(s("audio.webrtcSensitivity")).toBe(3);
 		expect(s("audio.postSpeechSilenceDuration")).toBe(0.7);
-		expect(s("audio.minLengthOfRecording")).toBe(1.1);
 		expect(s("audio.minGapBetweenRecordings")).toBe(0);
 		expect(s("audio.preRecordingBufferDuration")).toBe(1.0);
 	});

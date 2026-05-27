@@ -409,7 +409,11 @@ function useShaderToyEngine(
 		propsUniformsRef.current = propUniforms;
 	}, [propUniforms]);
 
+	// Sync animateWhenNotVisible prop into the latest-ref consumed by the long-running
+	// rAF loop (drawScene) — drawScene was created during the mount-only init effect
+	// below and cannot be re-created without tearing down the WebGL context.
 	useEffect(() => {
+		// react-doctor-disable-next-line react-doctor/no-event-handler -- latest-ref pattern for the persistent rAF loop; no parent handler exists
 		animateWhenNotVisibleRef.current = animateWhenNotVisible;
 		if (animateWhenNotVisible) {
 			isVisibleRef.current = true;
@@ -434,6 +438,9 @@ function useShaderToyEngine(
 		);
 		observer.observe(canvas);
 		return () => observer.disconnect();
+		// drawScene closes over refs only and is functionally stable; adding it to deps
+		// would loop because it's recreated each render and never compared by identity.
+		// react-doctor-disable-next-line react-doctor/exhaustive-deps
 	}, [animateWhenNotVisible]);
 
 	useEffect(() => {
@@ -478,6 +485,11 @@ function useShaderToyEngine(
 			cancelAnimationFrame(initFrameIdRef.current ?? 0);
 			cancelAnimationFrame(animFrameIdRef.current ?? 0);
 		};
+		// Mount-only WebGL setup. fs/vs/clearColor/etc. are intentionally read once
+		// at mount; re-running this effect would tear down and rebuild the entire
+		// WebGL context every render. propUniforms is mirrored via a separate effect
+		// (line 408) so live shader updates flow through propsUniformsRef.
+		// react-doctor-disable-next-line react-doctor/exhaustive-deps
 	}, []);
 }
 

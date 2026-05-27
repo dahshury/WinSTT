@@ -1,5 +1,5 @@
 import { cva } from "class-variance-authority";
-import { type ComponentProps, useMemo, useRef } from "react";
+import { type ComponentProps, useEffect, useRef } from "react";
 import { cn } from "@/shared/lib/cn";
 import type { VisualizerSize } from "../lib/audio-visualizer";
 import { DEFAULT_VISUALIZER_COLOR as DEFAULT_COLOR, hexToRgb } from "../lib/hex-to-rgb";
@@ -120,14 +120,15 @@ export function AudioVisualizerWave({
 }: AudioVisualizerWaveProps & ComponentProps<"div">) {
 	const state = useAgentState();
 
-	const _lineWidth = useMemo(() => {
-		if (lineWidth !== undefined) {
-			return lineWidth;
-		}
-		return size === "icon" || size === "sm" ? 2 : 1;
-	}, [lineWidth, size]);
+	let _lineWidth: number;
+	if (lineWidth !== undefined) {
+		_lineWidth = lineWidth;
+	} else {
+		_lineWidth = size === "icon" || size === "sm" ? 2 : 1;
+	}
 
-	const rgbColor = useMemo(() => hexToRgb(color ?? DEFAULT_COLOR), [color]);
+	const rgbColor = hexToRgb(color ?? DEFAULT_COLOR);
+	const smoothing = blur ?? 0.5;
 
 	// Mutable uniforms ref — animators write here directly, ReactShaderToy reads on each frame
 	const uniformsRef = useRef<Uniforms>({
@@ -136,16 +137,19 @@ export function AudioVisualizerWave({
 		uFrequency: { type: "1f", value: 10 },
 		uMix: { type: "1f", value: 1.0 },
 		uLineWidth: { type: "1f", value: _lineWidth },
-		uSmoothing: { type: "1f", value: blur ?? 0.5 },
+		uSmoothing: { type: "1f", value: smoothing },
 		uColor: { type: "3fv", value: rgbColor },
 		uColorShift: { type: "1f", value: colorShift },
 	});
 
-	// Keep non-animated uniforms in sync with props
-	uniformsRef.current.uLineWidth = { type: "1f", value: _lineWidth };
-	uniformsRef.current.uSmoothing = { type: "1f", value: blur ?? 0.5 };
-	uniformsRef.current.uColor = { type: "3fv", value: rgbColor };
-	uniformsRef.current.uColorShift = { type: "1f", value: colorShift };
+	// Keep non-animated uniforms in sync with props (post-render mutation; ReactShaderToy
+	// reads uniformsRef on each rAF tick, so the next frame picks up the new values).
+	useEffect(() => {
+		uniformsRef.current.uLineWidth = { type: "1f", value: _lineWidth };
+		uniformsRef.current.uSmoothing = { type: "1f", value: smoothing };
+		uniformsRef.current.uColor = { type: "3fv", value: rgbColor };
+		uniformsRef.current.uColorShift = { type: "1f", value: colorShift };
+	}, [_lineWidth, smoothing, rgbColor, colorShift]);
 
 	// Hook up motion-value-driven animations that write to uniformsRef (zero re-renders)
 	useWaveAnimator(state, uniformsRef);
@@ -166,6 +170,7 @@ export function AudioVisualizerWave({
 				onError={(error) => console.error("Shader error:", error)}
 				onWarning={(warning) => console.warn("Shader warning:", warning)}
 				style={{ width: "100%", height: "100%" }}
+				// react-doctor-disable-next-line react-hooks-js/refs -- intentional: ReactShaderToy reads this mutable container on each frame
 				uniforms={uniformsRef.current}
 			/>
 		</div>

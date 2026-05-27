@@ -36,6 +36,11 @@ class _FakeRecorder:
 
     def __init__(self) -> None:
         self.post_speech_silence_duration: float = 0.0
+        # ``silence_endpoint_enabled`` mirrors the production facade property;
+        # text_processing reads it to gate the noise-break auto-stop. Defaults
+        # to True so existing toggle-mode tests keep their behaviour; the new
+        # PTT-mode suppression test flips it explicitly.
+        self.silence_endpoint_enabled: bool = True
         self.stopped = 0
         self.cleared = 0
 
@@ -476,6 +481,26 @@ class TestNoiseRepetitionBreak:
         ]
         for c in chunks:
             text_detected(c, state, loop_fixture)
+        assert recorder.stopped == 0
+        assert recorder.cleared == 0
+
+    def test_suppressed_when_silence_endpoint_disabled(
+        self, loop_fixture: asyncio.AbstractEventLoop
+    ) -> None:
+        """PTT / toggle+manualToggleStop: ``silence_endpoint_enabled=False``
+        means only the user's hotkey release ends the recording, so the
+        noise-break MUST NOT fire ``recorder.stop`` even when Whisper
+        produces a repeating tail. Regression guard for the
+        "PTT pastes mid-hold on prolonged silence" bug — the realtime
+        worker keeps emitting the same hallucinated suffix for silent
+        frames and would otherwise trip the similarity gate ~3 s in.
+        """
+        state, recorder = _build_state()
+        recorder.silence_endpoint_enabled = False
+        tail = "this is the repeating tail " * 2
+        for _ in range(state.hard_break_even_on_background_noise_min_texts):
+            text_detected(f"Prefix {tail}", state, loop_fixture)
+
         assert recorder.stopped == 0
         assert recorder.cleared == 0
 

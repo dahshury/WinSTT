@@ -298,17 +298,6 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--min_length_of_recording",
-        type=float,
-        default=1.1,
-        help=(
-            "Minimum duration of valid recordings in seconds. This prevents very short "
-            "recordings from being processed, which could be caused by noise or "
-            "accidental sounds. Default is 1.1 seconds."
-        ),
-    )
-
-    parser.add_argument(
         "--min_gap_between_recordings",
         type=float,
         default=0,

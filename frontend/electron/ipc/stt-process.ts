@@ -47,7 +47,6 @@ const SETTINGS_TO_CLI: [storePath: string, cliFlag: string][] = [
 	["audio.inputDeviceIndex", "--input-device"],
 	["audio.sileroSensitivity", "--silero_sensitivity"],
 	["audio.webrtcSensitivity", "--webrtc_sensitivity"],
-	["audio.minLengthOfRecording", "--min_length_of_recording"],
 	["audio.extraRecordingBufferMs", "--extra_recording_buffer_ms"],
 	["quality.useMainModelForRealtime", "--use_main_model_for_realtime"],
 	["quality.realtimeProcessingPause", "--realtime_processing_pause"],

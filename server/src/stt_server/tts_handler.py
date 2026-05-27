@@ -121,7 +121,15 @@ def _ensure_synthesizer(state: ServerState) -> bool:
             _enqueue(state, loop, message)
 
         def _should_cancel() -> bool:
-            return state.cancel_tts_requested
+            # Install-cancel is scoped to the on-demand engine/model
+            # download lifecycle; synthesis-cancel (``cancel_tts_requested``)
+            # is per-utterance and deliberately doesn't abort an in-flight
+            # download. Keeping them separate so a stop-playback gesture
+            # can't accidentally trash a 190 MB download.
+            return state.cancel_tts_install_requested
+
+        def _should_pause() -> bool:
+            return state.tts_install_paused
 
         def _on_status(phase: str) -> None:
             _enqueue(state, loop, json.dumps({"type": "tts_install_status", "phase": phase}))
@@ -131,6 +139,7 @@ def _ensure_synthesizer(state: ServerState) -> bool:
             on_progress=_on_progress,
             should_cancel=_should_cancel,
             on_status=_on_status,
+            should_pause=_should_pause,
         )
         print(f"{bcolors.OKGREEN}TTS synthesizer constructed (lazy-load on first request){bcolors.ENDC}")
         return True
@@ -150,15 +159,35 @@ async def _warm_up_synthesizer(state: ServerState, loop: asyncio.AbstractEventLo
     means the install progress + any failure surface immediately on the
     off→on edge, before the user clicks Play.
 
-    Progress events flow naturally via the ``on_progress``/``on_status``
-    callbacks wired in ``_ensure_synthesizer`` — this coroutine only adds
-    the explicit failure event so the UI can show a Retry banner instead
-    of leaving the toggle stuck in "enabled with no engine".
+    Outcomes are surfaced as distinct WebSocket events:
+        - successful load → nothing extra (``tts_install_status: ready`` already fired)
+        - paused mid-download → ``tts_install_paused`` (caller can resume)
+        - cancelled → ``tts_model_download_complete`` with ``cancelled: true``
+          (the UI already treats that as the install-aborted signal)
+        - any other failure → ``tts_install_failed`` for the error banner
     """
     if state.synthesizer is None or state.synthesizer.is_ready():
         return
+    from src.synthesizer.infrastructure.asset_downloader import DownloadPaused
+
     try:
         await loop.run_in_executor(None, state.synthesizer.warm_up)
+    except DownloadPaused:
+        # Cooperative pause — partials are preserved on disk and the next
+        # ``init_tts`` call will resume from there via HTTP Range. The
+        # confirmation lets the UI flip from "Downloading" to "Paused".
+        _enqueue(state, loop, json.dumps({"type": "tts_install_paused"}))
+    except InterruptedError:
+        # Cooperative cancel — downloader unlinked the partial before
+        # raising, and the install-cancel flag stays set until the user
+        # re-enables TTS. Reuse the existing ``tts_model_download_complete``
+        # event so the renderer's progress hook resets without needing a
+        # separate channel.
+        _enqueue(
+            state,
+            loop,
+            json.dumps({"type": "tts_model_download_complete", "cancelled": True}),
+        )
     except Exception as exc:
         logger.warning("TTS warm-up failed", exc_info=True)
         from src.recorder.domain.swap_errors import classify_swap_error
@@ -184,8 +213,15 @@ async def _handle_init_tts(ws: ServerConnection, state: ServerState, data: dict[
     Two-step: ``_ensure_synthesizer`` builds the wrapper (cheap, no I/O),
     then a background task eagerly warms the engine so the download +
     progress + any failure surface immediately rather than waiting for
-    the user's first ``tts_synthesize``.
+    the user's first ``tts_synthesize``. Clears any sticky pause/cancel
+    flag from a prior install so a Resume-style re-fire of this command
+    actually proceeds instead of immediately re-pausing.
     """
+    # Pre-arm: clearing the flags here is what makes "Resume = init_tts
+    # again" work — the downloader's should_pause()/should_cancel()
+    # callbacks read directly from this state.
+    state.tts_install_paused = False
+    state.cancel_tts_install_requested = False
     ok = _ensure_synthesizer(state)
     await ws.send(
         json.dumps(
@@ -202,6 +238,131 @@ async def _handle_init_tts(ws: ServerConnection, state: ServerState, data: dict[
         task = asyncio.create_task(_warm_up_synthesizer(state, loop))
         _active_tasks.add(task)
         task.add_done_callback(_active_tasks.discard)
+
+
+@register_command("tts_install_pause", pre_ready=True)
+async def _handle_tts_install_pause(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Cooperatively pause the on-demand TTS install.
+
+    The downloader polls ``state.tts_install_paused`` and, when True,
+    exits cleanly at the next chunk boundary preserving the ``.partial``
+    file for resume. The confirmation ``tts_install_paused`` event is
+    emitted by ``_warm_up_synthesizer`` once the executor returns — that
+    way the UI flips to "Paused" only after the worker has actually
+    yielded, not optimistically.
+    """
+    state.tts_install_paused = True
+    await ws.send(
+        json.dumps(
+            {
+                "status": "success",
+                "type": "tts_install_pause",
+                "request_id": data.get("request_id"),
+            }
+        )
+    )
+
+
+@register_command("tts_install_resume", pre_ready=True)
+async def _handle_tts_install_resume(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Resume a paused TTS install by re-arming and re-firing warm_up.
+
+    Clearing the pause flag alone is not enough — the prior ``warm_up``
+    executor has already returned, so we need to spawn a fresh
+    background task that picks up the partial downloads from disk via
+    HTTP Range. Emits ``tts_install_resumed`` so the UI can flip back
+    from the Paused state immediately, before the next progress event
+    lands.
+    """
+    state.tts_install_paused = False
+    state.cancel_tts_install_requested = False
+    _enqueue(state, asyncio.get_event_loop(), json.dumps({"type": "tts_install_resumed"}))
+    await ws.send(
+        json.dumps(
+            {
+                "status": "success",
+                "type": "tts_install_resume",
+                "request_id": data.get("request_id"),
+            }
+        )
+    )
+    if _ensure_synthesizer(state):
+        loop = asyncio.get_event_loop()
+        task = asyncio.create_task(_warm_up_synthesizer(state, loop))
+        _active_tasks.add(task)
+        task.add_done_callback(_active_tasks.discard)
+
+
+def _scrub_orphan_install_partials(state: ServerState) -> None:
+    """Delete leftover ``*.partial`` files when cancelling while paused/idle.
+
+    When the user pauses a download and then chooses Cancel, the
+    streaming downloader is not currently running — so its
+    ``should_cancel`` callback can't take care of the cleanup. This
+    helper deletes any ``.partial`` files in both the engine-pack runtime
+    dir and the Kokoro cache dir so the next install starts from a clean
+    slate. Fully-downloaded files (no ``.partial`` suffix) are left
+    untouched on purpose.
+    """
+    from src.synthesizer.domain.config import SynthesizerConfig
+    from src.synthesizer.infrastructure.asset_downloader import (
+        nuke_partials,
+        resolve_cache_dir,
+    )
+    from src.synthesizer.infrastructure.support_pack import resolve_runtime_dir
+
+    cache_override = getattr(state.args, "tts_cache_dir", None)
+    cfg = SynthesizerConfig(cache_dir=cache_override)
+    nuke_partials(resolve_runtime_dir(), resolve_cache_dir(cfg.cache_dir))
+
+
+@register_command("tts_install_cancel", pre_ready=True)
+async def _handle_tts_install_cancel(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Abort the on-demand TTS install and discard every partial download.
+
+    If a warm-up is currently in flight the cancel flag triggers an
+    ``InterruptedError`` inside ``download_with_progress`` which unlinks
+    the partial; ``_warm_up_synthesizer`` then emits the
+    ``tts_model_download_complete{cancelled:true}`` event. If no warm-up
+    is in flight (the install was paused or never started downloading),
+    we scrub orphan ``.partial`` files here and emit the same completion
+    event ourselves so the UI converges on the same idle state either
+    way.
+    """
+    was_paused = state.tts_install_paused
+    state.cancel_tts_install_requested = True
+    state.tts_install_paused = False
+    # Drop the synthesizer so a later re-enable rebuilds cleanly rather
+    # than running ``warm_up`` on a wrapper whose internal "_ready" state
+    # could be stale after partials disappear.
+    if state.synthesizer is not None and not state.synthesizer.is_ready():
+        try:
+            state.synthesizer.shutdown()
+        except Exception:
+            logger.warning("synthesizer.shutdown() during cancel raised", exc_info=True)
+        state.synthesizer = None
+
+    if was_paused:
+        # No downloader running to pick up the cancel flag — clean up the
+        # partials ourselves and emit completion so the UI resets.
+        try:
+            _scrub_orphan_install_partials(state)
+        except Exception:
+            logger.warning("Cancel cleanup failed to remove partials", exc_info=True)
+        _enqueue(
+            state,
+            asyncio.get_event_loop(),
+            json.dumps({"type": "tts_model_download_complete", "cancelled": True}),
+        )
+    await ws.send(
+        json.dumps(
+            {
+                "status": "success",
+                "type": "tts_install_cancel",
+                "request_id": data.get("request_id"),
+            }
+        )
+    )
 
 
 @register_command("shutdown_tts")

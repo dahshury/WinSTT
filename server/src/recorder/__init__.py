@@ -134,7 +134,6 @@ class AudioToTextRecorder:
         silero_deactivity_detection: bool = False,
         webrtc_sensitivity: int = 3,
         post_speech_silence_duration: float = 0.6,
-        min_length_of_recording: float = 0.5,
         min_gap_between_recordings: float = 0.0,
         pre_recording_buffer_duration: float = 1.0,
         on_vad_start: SimpleCallback | None = None,
@@ -252,7 +251,6 @@ class AudioToTextRecorder:
             silero_deactivity_detection=silero_deactivity_detection,
             webrtc_sensitivity=webrtc_sensitivity,
             post_speech_silence_duration=post_speech_silence_duration,
-            min_length_of_recording=min_length_of_recording,
             min_gap_between_recordings=min_gap_between_recordings,
             pre_recording_buffer_duration=pre_recording_buffer_duration,
             # Transcription
@@ -356,6 +354,7 @@ class AudioToTextRecorder:
         self._clock = Clock.system_clock()
         self._service: RecorderService | None = None
         self._silero_vad: Any = None  # Live SileroVAD reference for runtime sensitivity updates
+        self._webrtc_vad: Any = None  # Live WebRTCVAD reference for runtime sensitivity updates
         self._vad_calibrator: Any = None  # Cross-utterance Silero sensitivity adapter
         self._init_lock = threading.Lock()
         self.use_microphone = _BoolFlag(use_microphone)
@@ -455,6 +454,7 @@ class AudioToTextRecorder:
             )
             vad = CompositeVAD(webrtc=webrtc, silero=silero)
             self._silero_vad = silero
+            self._webrtc_vad = webrtc
 
             # Build transcribers via shared bootstrap builders
             dl_cbs = DownloadCallbacks(
@@ -748,14 +748,14 @@ class AudioToTextRecorder:
     def initial_prompt(self) -> str | list[int] | None:
         """Whisper-style decode-bias prompt for the main transcriber.
 
-        Persisted on :class:`TranscriptionConfig` so a model swap (which
-        rebuilds the transcriber via :func:`build_transcriber`) picks up the
-        latest value. Wired to the WebSocket ``set_parameter`` path so the
-        renderer's dictionary→prompt pipe can push live updates. Runtime
-        propagation into the active onnx-asr engine is currently
-        config-only — the engine reads it on next build/swap. The post-ASR
-        ``custom_words`` corrector covers the live-correction case in the
-        meantime; see ``initial-prompt-sync.ts`` on the Electron side.
+        Read live from ``self._config.transcription.initial_prompt`` by
+        :meth:`RecorderService._safe_transcribe` on every transcribe call,
+        so a setter assignment takes effect on the NEXT utterance — no
+        model rebuild needed. The renderer's
+        ``installInitialPromptSync`` (electron/lib/initial-prompt-sync.ts)
+        pushes a freshly-composed prompt on every dictionary or static-
+        prefix edit via ``set_parameter("initial_prompt", ...)`` and the
+        live transcriber picks it up immediately.
         """
         return self._config.transcription.initial_prompt
 
@@ -777,9 +777,14 @@ class AudioToTextRecorder:
     def initial_prompt_realtime(self) -> str | list[int] | None:
         """Realtime-engine variant of :attr:`initial_prompt`.
 
-        Persisted on :class:`RealtimeConfig`. Same semantics as the main
-        prompt: stored in config, picked up by the realtime transcriber on
-        next build.
+        Persisted on :class:`RealtimeConfig`. Unlike the main prompt,
+        the realtime worker bypasses ``use_prompt`` per
+        :meth:`RecorderService._safe_transcribe`, so the value is only
+        consumed at realtime-transcriber BUILD time. The setter
+        therefore triggers an in-place realtime model reload when the
+        realtime worker is wired and not slaved to main — the swap
+        worker reads :attr:`RealtimeConfig.initial_prompt_realtime`
+        from config when it rebuilds.
         """
         return self._config.realtime.initial_prompt_realtime
 
@@ -792,7 +797,188 @@ class AudioToTextRecorder:
             normalized = list(value)
         else:
             normalized = value
+        if normalized == self._config.realtime.initial_prompt_realtime:
+            return
         self._config.realtime.initial_prompt_realtime = normalized
+        self._maybe_reload_realtime_model("initial_prompt_realtime change")
+
+    # ── Runtime-reconfigurable knobs (avoid full-process restart) ────────
+    #
+    # Each setter below mirrors a former STARTUP_ONLY_KEYS entry on the
+    # Electron side. The pattern: update config first (so the value is
+    # picked up by the swap worker / the next read), then trigger the
+    # minimal in-place change (model reload, VAD set_mode, audio source
+    # reconfigure, idle-unload-daemon retune). No process kill, no
+    # WebSocket reconnect, no audio-stream re-open. See
+    # ``frontend/electron/ipc/settings.ts`` for the renderer-side
+    # counterpart that stopped including these keys in
+    # ``STARTUP_ONLY_KEYS_LIST``.
+
+    def _maybe_reload_main_model(self, reason: str) -> None:
+        """Trigger an in-place main-model swap when the service is up.
+
+        The swap worker re-reads ``self._config.transcription.*`` when
+        it rebuilds the transcriber, so the new value (quantization,
+        translate-to-english, etc.) takes effect without any extra
+        plumbing through the swap RPC.
+        """
+        if self._service is None:
+            return
+        current = self._config.transcription.model
+        if not current:
+            return
+        logger.info("Triggering main-model reload (%s)", reason)
+        try:
+            self._service.request_model_swap("main", current)
+        except Exception:  # pragma: no cover — defensive
+            logger.exception("request_model_swap('main', %r) failed", current)
+
+    def _maybe_reload_realtime_model(self, reason: str) -> None:
+        """Trigger an in-place realtime-model swap when eligible.
+
+        Skipped silently when realtime is disabled or slaved to main
+        (the slaved case picks up the new config on the next main
+        swap). Without this guard, request_model_swap publishes a
+        ``ModelSwapFailed`` toast even though the user only meant to
+        change a config knob.
+        """
+        if self._service is None:
+            return
+        rt = self._config.realtime
+        if not rt.enable_realtime_transcription:
+            return
+        if rt.use_main_model_for_realtime:
+            return
+        current = rt.realtime_model_type
+        if not current:
+            return
+        logger.info("Triggering realtime-model reload (%s)", reason)
+        try:
+            self._service.request_model_swap("realtime", current)
+        except Exception:  # pragma: no cover — defensive
+            logger.exception("request_model_swap('realtime', %r) failed", current)
+
+    @property
+    def onnx_quantization(self) -> str:
+        return self._config.transcription.onnx_quantization
+
+    @onnx_quantization.setter
+    def onnx_quantization(self, value: str) -> None:
+        normalized = value or ""
+        if normalized == self._config.transcription.onnx_quantization:
+            return
+        self._config.transcription.onnx_quantization = normalized
+        # Quantization is resolved per-swap by
+        # :meth:`RecorderService._load_transcriber` from the live config,
+        # so both slots pick up the new value when reloaded. Realtime
+        # is best-effort: when the user has it slaved to main the
+        # ``_maybe_reload_realtime_model`` call is a no-op.
+        self._maybe_reload_main_model(f"onnx_quantization → {normalized!r}")
+        self._maybe_reload_realtime_model(f"onnx_quantization → {normalized!r}")
+
+    @property
+    def translate_to_english(self) -> bool:
+        return self._config.transcription.translate_to_english
+
+    @translate_to_english.setter
+    def translate_to_english(self, value: bool) -> None:
+        new_value = bool(value)
+        if new_value == self._config.transcription.translate_to_english:
+            return
+        self._config.transcription.translate_to_english = new_value
+        # ``_patch_translate_prompt`` is applied inside the
+        # OnnxAsrTranscriber ctor, so a fresh transcriber must be built
+        # for the toggle to take effect. The realtime worker does not
+        # call translate, so we only swap the main slot.
+        self._maybe_reload_main_model(f"translate_to_english → {new_value}")
+
+    @property
+    def model_unload_timeout_seconds(self) -> int | None:
+        return self._config.transcription.model_unload_timeout_seconds
+
+    @model_unload_timeout_seconds.setter
+    def model_unload_timeout_seconds(self, value: int | None) -> None:
+        # CLI uses -1 as the "Never" sentinel; normalize to None so the
+        # daemon-state machine in RecorderService can use a single
+        # truthiness check (``timeout is None or timeout <= 0``).
+        normalized: int | None
+        if value is None:
+            normalized = None
+        else:
+            ivalue = int(value)
+            normalized = None if ivalue < 0 else ivalue
+        if normalized == self._config.transcription.model_unload_timeout_seconds:
+            return
+        self._config.transcription.model_unload_timeout_seconds = normalized
+        if self._service is not None:
+            self._service.set_unload_timeout_seconds(normalized)
+
+    @property
+    def webrtc_sensitivity(self) -> int:
+        return self._config.vad.webrtc_sensitivity
+
+    @webrtc_sensitivity.setter
+    def webrtc_sensitivity(self, value: int) -> None:
+        ivalue = max(0, min(3, int(value)))
+        if ivalue == self._config.vad.webrtc_sensitivity:
+            return
+        self._config.vad.webrtc_sensitivity = ivalue
+        if self._webrtc_vad is not None:
+            self._webrtc_vad.set_sensitivity(ivalue)
+
+    @property
+    def silero_deactivity_detection(self) -> bool:
+        return self._config.vad.silero_deactivity_detection
+
+    @silero_deactivity_detection.setter
+    def silero_deactivity_detection(self, value: bool) -> None:
+        # Stored in config and threaded through the CLI for parity with
+        # the Handy port, but no current consumer reads it at runtime —
+        # the pipeline's ``_stop_recording_on_voice_deactivity`` is
+        # session-state, not config. Kept as a settable property so a
+        # future runtime consumer can read the live value without a
+        # restart; today the assignment is intentionally a no-op
+        # beyond persisting the new config value.
+        self._config.vad.silero_deactivity_detection = bool(value)
+
+    @property
+    def always_on_microphone(self) -> bool:
+        return self._config.audio.always_on_microphone
+
+    @always_on_microphone.setter
+    def always_on_microphone(self, value: bool) -> None:
+        new_value = bool(value)
+        if new_value == self._config.audio.always_on_microphone:
+            return
+        self._config.audio.always_on_microphone = new_value
+        if self._service is not None:
+            self._service.reconfigure_audio_source(always_on_microphone=new_value)
+
+    @property
+    def lazy_stream_close(self) -> bool:
+        return self._config.audio.lazy_stream_close
+
+    @lazy_stream_close.setter
+    def lazy_stream_close(self, value: bool) -> None:
+        new_value = bool(value)
+        if new_value == self._config.audio.lazy_stream_close:
+            return
+        self._config.audio.lazy_stream_close = new_value
+        if self._service is not None:
+            self._service.reconfigure_audio_source(lazy_stream_close=new_value)
+
+    @property
+    def lazy_close_timeout_seconds(self) -> float:
+        return self._config.audio.lazy_close_timeout_seconds
+
+    @lazy_close_timeout_seconds.setter
+    def lazy_close_timeout_seconds(self, value: float) -> None:
+        new_value = float(value)
+        if new_value == self._config.audio.lazy_close_timeout_seconds:
+            return
+        self._config.audio.lazy_close_timeout_seconds = new_value
+        if self._service is not None:
+            self._service.reconfigure_audio_source(lazy_close_timeout_seconds=new_value)
 
     @property
     def event_bus(self) -> EventBus:

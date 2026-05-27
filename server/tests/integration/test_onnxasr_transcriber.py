@@ -334,9 +334,14 @@ class TestOnnxAsrTranscriber:
         assert isinstance(sess_options, rt.SessionOptions)
         assert sess_options.graph_optimization_level == rt.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
 
-    def test_non_fp16_does_not_pass_sess_options(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Non-fp16 paths (fp32 / q4 / bnb4 / unknown) don't need the
-        SimplifiedLayerNormFusion workaround — sess_options stays absent."""
+    def test_non_fp16_still_passes_sess_options(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """sess_options is now ALWAYS passed (since the intra_op_num_threads
+        pinning policy landed — see :func:`_pick_intra_op_threads`).
+        Non-fp16 paths keep ``ORT_ENABLE_ALL`` graph optimization (the
+        SimplifiedLayerNormFusion workaround is fp16-only and now
+        per-Whisper-family — see :func:`_is_whisper_family`)."""
+        import onnxruntime as rt
+
         from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
         _install_fake_onnx_asr(monkeypatch)
@@ -349,7 +354,12 @@ class TestOnnxAsrTranscriber:
         monkeypatch.setattr(f"{_TRANSCRIBER_MODULE}.onnx_asr.load_model", fake_load_model)
 
         OnnxAsrTranscriber(model_name="onnx-community/whisper-tiny", quantization=None)
-        assert "sess_options" not in captured
+        # sess_options is always supplied for the intra-op pin.
+        assert "sess_options" in captured
+        sess_options = captured["sess_options"]
+        # Non-fp16 path keeps the default ORT_ENABLE_ALL — fp16 is the
+        # only path that drops to ORT_ENABLE_EXTENDED, and only on Whisper.
+        assert sess_options.graph_optimization_level == rt.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     def test_fp16_decoder_patch_retry_on_subgraph_error(
         self,
@@ -462,7 +472,19 @@ class TestSharedVadCache:
         assert second._vad is fake_vad
         _close_cached_vads()
 
-    def test_different_providers_get_independent_cache_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_different_providers_share_single_cpu_pinned_vad(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Post-Option-C invariant: Silero VAD is ALWAYS loaded on CPU
+        regardless of the requesting transcriber's providers — see
+        ``memory/project_silero_vad_cpu_pin_invariant.md`` for the full
+        rationale (CUDA + ``do_copy_in_default_stream=1`` silently
+        deadlocks the load otherwise).
+
+        Predecessor version of this test asserted that CPU and CUDA
+        transcribers got *independent* VAD cache entries; that assertion
+        is now wrong by design. Both providers collapse to the same CPU
+        cache key (:data:`_SILERO_CACHE_KEY`) → one load, shared
+        instance. The unit-level invariant is locked in
+        :func:`test_vad_cache_key_ignores_gpu_providers_input`."""
         from src.recorder.infrastructure.onnxasr_transcriber import (
             OnnxAsrTranscriber,
             _close_cached_vads,
@@ -470,24 +492,29 @@ class TestSharedVadCache:
 
         _close_cached_vads()
         load_vad_calls: list[Any] = []
-        fake_vads = [MagicMock(name="cpu_vad"), MagicMock(name="gpu_vad")]
+        cpu_vad = MagicMock(name="cpu_vad")
 
-        def varied_load_vad(*_a: Any, providers: Any = None, **_kw: Any) -> Any:  # noqa: ANN401 — monkeypatched onnx_asr loader
+        def counting_load_vad(*_a: Any, providers: Any = None, **_kw: Any) -> Any:  # noqa: ANN401 — monkeypatched onnx_asr loader
             load_vad_calls.append(providers)
-            return fake_vads[len(load_vad_calls) - 1]
+            return cpu_vad
 
         fake_model = MagicMock(name="fake_model")
         fake_model.with_vad.return_value = MagicMock()
         monkeypatch.setattr(f"{_TRANSCRIBER_MODULE}.onnx_asr.load_model", lambda *_a, **_kw: fake_model)
-        monkeypatch.setattr(f"{_TRANSCRIBER_MODULE}.onnx_asr.load_vad", varied_load_vad)
+        monkeypatch.setattr(f"{_TRANSCRIBER_MODULE}.onnx_asr.load_vad", counting_load_vad)
         monkeypatch.setattr(f"{_TRANSCRIBER_MODULE}._snapshot_providers", lambda _m: ["CPUExecutionProvider"])
 
         first = OnnxAsrTranscriber(model_name="whisper-base", providers=["CPUExecutionProvider"])
         second = OnnxAsrTranscriber(model_name="whisper-base", providers=["CUDAExecutionProvider"])
 
-        assert len(load_vad_calls) == 2
-        assert first._vad is fake_vads[0]
-        assert second._vad is fake_vads[1]
+        # Only one load — the cache is keyed by the CPU sentinel
+        # regardless of input providers.
+        assert len(load_vad_calls) == 1
+        # And the single load happened on CPU.
+        assert load_vad_calls[0] == ("CPUExecutionProvider",)
+        # Both transcribers reference the same shared VAD instance.
+        assert first._vad is cpu_vad
+        assert second._vad is cpu_vad
         _close_cached_vads()
 
     def test_close_cached_vads_releases_all_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:

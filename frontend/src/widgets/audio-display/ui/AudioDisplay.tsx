@@ -1,4 +1,4 @@
-import { type DragEvent, useCallback, useRef, useState } from "react";
+import { type DragEvent, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
@@ -57,22 +57,22 @@ export function AudioDisplay() {
 	const [isDragOver, setIsDragOver] = useState(false);
 	const dragCounter = useRef(0);
 
-	const handleDragEnter = useCallback((e: DragEvent) => {
+	const handleDragEnter = (e: DragEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
 		dragCounter.current++;
 		if (e.dataTransfer.types.includes("Files")) {
 			setIsDragOver(true);
 		}
-	}, []);
+	};
 
-	const handleDragOver = useCallback((e: DragEvent) => {
+	const handleDragOver = (e: DragEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
 		e.dataTransfer.dropEffect = "copy";
-	}, []);
+	};
 
-	const handleDragLeave = useCallback((e: DragEvent) => {
+	const handleDragLeave = (e: DragEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
 		dragCounter.current--;
@@ -80,31 +80,28 @@ export function AudioDisplay() {
 			dragCounter.current = 0;
 			setIsDragOver(false);
 		}
-	}, []);
+	};
 
-	const handleDrop = useCallback(
-		async (e: DragEvent) => {
-			e.preventDefault();
-			e.stopPropagation();
-			dragCounter.current = 0;
-			setIsDragOver(false);
+	const handleDrop = async (e: DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		dragCounter.current = 0;
+		setIsDragOver(false);
 
-			const file = Array.from(e.dataTransfer.files)[0];
-			const result = validateDroppedFile(file, tf);
-			if (!result.ok) {
-				if (result.errorMessage && result.fileName) {
-					setError(result.fileName, result.errorMessage);
-				}
-				return;
+		const file = Array.from(e.dataTransfer.files)[0];
+		const result = validateDroppedFile(file, tf);
+		if (!result.ok) {
+			if (result.errorMessage && result.fileName) {
+				setError(result.fileName, result.errorMessage);
 			}
-			await runTranscription(result.fileName as string, result.filePath as string, {
-				setProcessing,
-				setError,
-				tf,
-			});
-		},
-		[setProcessing, setError, tf]
-	);
+			return;
+		}
+		await runTranscription(result.fileName as string, result.filePath as string, {
+			setProcessing,
+			setError,
+			tf,
+		});
+	};
 
 	return (
 		<Elevated

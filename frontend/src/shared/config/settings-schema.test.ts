@@ -282,10 +282,6 @@ describe("audioSettingsSchema defaults (lock-down)", () => {
 		expect(audioSettingsSchema.parse({}).postSpeechSilenceDuration).toBe(0.7);
 	});
 
-	test("minLengthOfRecording defaults to 1.1", () => {
-		expect(audioSettingsSchema.parse({}).minLengthOfRecording).toBe(1.1);
-	});
-
 	test("minGapBetweenRecordings defaults to 0", () => {
 		expect(audioSettingsSchema.parse({}).minGapBetweenRecordings).toBe(0);
 	});

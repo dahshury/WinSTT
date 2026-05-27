@@ -1,7 +1,6 @@
 "use client";
 
 import type { ComponentPropsWithoutRef } from "react";
-import { memo } from "react";
 import type { OpenRouterEndpoint } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -39,7 +38,7 @@ function ChipBody({
 	);
 }
 
-function EndpointFeatureIconsImpl({
+export function EndpointFeatureIcons({
 	endpoint,
 	maxIcons = 4,
 	showLabels = false,
@@ -96,5 +95,3 @@ function EndpointFeatureIconsImpl({
 		</div>
 	);
 }
-
-export const EndpointFeatureIcons = memo(EndpointFeatureIconsImpl);

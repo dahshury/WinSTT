@@ -4,7 +4,7 @@ import {
 	Mic01Icon,
 	PowerSocket01Icon,
 } from "@hugeicons/core-free-icons";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
@@ -166,20 +166,11 @@ function SpeakerDiarizationControl({
 	// Diarization is toggled at runtime (no server restart). The server
 	// pushes started/completed/failed; this store tracks the in-flight
 	// window. Driven purely by broadcast IPC so it works in the settings
-	// window (its own BrowserWindow, no connection store there).
+	// window (its own BrowserWindow, no connection store there). The
+	// optimistic-revert on failure is performed in the toggle-store's
+	// IPC listener (`diarization-toggle-store.ts`) so the failure handler
+	// owns the lifecycle directly — no effect-in-render needed here.
 	const pending = useDiarizationToggleStore((s) => s.pending);
-	const lastError = useDiarizationToggleStore((s) => s.lastError);
-
-	// On activation failure (e.g. offline first-run download, OOM) the
-	// server stayed in its previous state — revert the optimistic toggle
-	// so the UI doesn't claim diarization is on when it isn't. The guard
-	// (`lastError.enabled === enabled`) makes this fire once: after the
-	// revert, `enabled` flips and the condition no longer holds.
-	useEffect(() => {
-		if (lastError && lastError.enabled === enabled) {
-			update({ speakerDiarization: !lastError.enabled });
-		}
-	}, [lastError, enabled, update]);
 
 	return (
 		<FormControl

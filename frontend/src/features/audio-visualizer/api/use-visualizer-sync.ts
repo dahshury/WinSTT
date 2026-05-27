@@ -4,6 +4,7 @@ import {
 	onFullSentence,
 	onRecordingStart,
 	onRecordingStop,
+	onSttSessionAborted,
 	onVadStart,
 	onVadStop,
 } from "@/shared/api/ipc-client";
@@ -103,6 +104,27 @@ export function useVisualizerSync(): void {
 				recordingStopped();
 			}),
 		[recordingStopped]
+	);
+
+	// User-initiated cancel. The server's abort flow doesn't emit
+	// RecordingStopped (it only flips the state machine to INACTIVE), and the
+	// relay's session-aborted gate now drops no_audio_detected too — so
+	// without an explicit reset here the rAF loop keeps ticking and the
+	// visualizer is stuck rendering the last frame's amplitude (the bars
+	// stay tall, the radial dots keep spinning) until the next recording
+	// kicks in. Treat the abort as a synthetic recording_stop.
+	useEffect(
+		() =>
+			onSttSessionAborted(() => {
+				cancelAnimationFrame(rafRef.current);
+				activeRef.current = false;
+				rawLevelRef.current = 0;
+				pulseRef.current = 0;
+				sentenceFiredRef.current = false;
+				recordingStopped();
+				setSpeaking(false);
+			}),
+		[recordingStopped, setSpeaking]
 	);
 
 	useEffect(() => {

@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
 	EMPTY_CONTEXT,
+	extractAsrPromptTail,
 	formatContextForPrompt,
 	isDeniedByList,
+	redactSensitiveFields,
 	type WindowContextSnapshot,
 } from "./context-snapshot";
 
@@ -276,5 +278,44 @@ describe("formatContextForPrompt — IDE detection", () => {
 	test("does not emit IDE marker when appExe is missing", () => {
 		const result = formatContextForPrompt(makeSnapshot({ windowTitle: "Untitled" }));
 		expect(result).not.toContain("IDE context");
+	});
+});
+
+describe("extractAsrPromptTail", () => {
+	test("returns empty string when textBefore is missing", () => {
+		expect(extractAsrPromptTail(EMPTY_CONTEXT)).toBe("");
+	});
+
+	test("returns empty string when textBefore is whitespace-only", () => {
+		expect(extractAsrPromptTail(makeSnapshot({ textBefore: "  \n\t " }))).toBe("");
+	});
+
+	test("returns trimmed textBefore when populated", () => {
+		expect(
+			extractAsrPromptTail(makeSnapshot({ textBefore: "  Hi Bob, thanks for the heads up. " }))
+		).toBe("Hi Bob, thanks for the heads up.");
+	});
+
+	test("ignores axHtml / url / appExe / window title (Whisper needs prior text, not metadata)", () => {
+		const out = extractAsrPromptTail(
+			makeSnapshot({
+				windowTitle: "Outlook — Reply",
+				url: "outlook.office.com",
+				appExe: "outlook.exe",
+				axHtml: "<window><edit>...</edit></window>",
+			})
+		);
+		expect(out).toBe("");
+	});
+
+	test("denied snapshots extract to '' (redactSensitiveFields drops textBefore)", () => {
+		const redacted = redactSensitiveFields(
+			makeSnapshot({
+				windowTitle: "Bank — Login",
+				appExe: "chrome.exe",
+				textBefore: "PIN: 1234",
+			})
+		);
+		expect(extractAsrPromptTail(redacted)).toBe("");
 	});
 });

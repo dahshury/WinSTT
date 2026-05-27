@@ -149,7 +149,6 @@ const storeValueSchemas = {
 	"audio.alwaysOnMicrophone": z.boolean().catch(false),
 	"audio.lazyStreamClose": z.boolean().catch(false),
 	"audio.webrtcSensitivity": z.number().int().min(0).max(3).catch(3),
-	"audio.minLengthOfRecording": z.number().catch(1.1),
 	// llm — shared infrastructure (one Ollama instance, one OpenRouter account)
 	"llm.endpoint": z.string().catch("http://localhost:11434"),
 	"llm.openrouterApiKey": z.string().catch(""),

@@ -21,6 +21,8 @@ class ITranscriber(ABC):
         audio: AudioArray,
         language: str = "",
         use_prompt: bool = True,
+        custom_words: list[str] | None = None,
+        initial_prompt_text: str | None = None,
     ) -> TranscriptionResult: ...
 
     @abstractmethod

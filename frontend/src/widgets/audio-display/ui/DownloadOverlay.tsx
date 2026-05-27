@@ -1,5 +1,4 @@
 import { Progress } from "@base-ui/react/progress";
-import { memo, useCallback } from "react";
 import { useTranslations } from "use-intl";
 import { useShallow } from "zustand/react/shallow";
 import { useDownloadStore } from "@/features/model-download";
@@ -33,7 +32,7 @@ function joinStats(parts: string[], sep = " \u00B7 "): string {
 	return parts.filter(Boolean).join(sep);
 }
 
-export const DownloadOverlay = memo(function DownloadOverlay() {
+export function DownloadOverlay() {
 	const {
 		isDownloading,
 		modelName,
@@ -59,9 +58,9 @@ export const DownloadOverlay = memo(function DownloadOverlay() {
 	);
 	const t = useTranslations("download");
 
-	const handleCancel = useCallback(() => {
+	const handleCancel = () => {
 		cancelDownload();
-	}, [cancelDownload]);
+	};
 
 	const substrate = useSurface();
 	const trackLevel = Math.min(substrate + 1, 8);
@@ -118,4 +117,4 @@ export const DownloadOverlay = memo(function DownloadOverlay() {
 			</Button>
 		</div>
 	);
-});
+}

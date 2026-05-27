@@ -621,6 +621,30 @@ export class SttClient extends EventEmitter {
 	ttsCancel(requestId?: string): void {
 		this.sendControl({ command: "tts_cancel", request_id: requestId ?? "" });
 	}
+
+	/**
+	 * Pause the on-demand TTS install (engine pack / voice model
+	 * download). Cooperative — the downloader exits cleanly at the next
+	 * chunk boundary, preserving the ``.partial`` file so a later
+	 * {@link initTts} call resumes via HTTP Range.
+	 */
+	ttsInstallPause(): void {
+		this.sendControl({ command: "tts_install_pause" });
+	}
+
+	/** Resume a previously paused install. The server re-fires warm-up. */
+	ttsInstallResume(): void {
+		this.sendControl({ command: "tts_install_resume" });
+	}
+
+	/**
+	 * Abort the install and discard every partial download. Safe whether
+	 * the download is currently running (cancel flag aborts it) or
+	 * already paused (server scrubs orphan partials directly).
+	 */
+	ttsInstallCancel(): void {
+		this.sendControl({ command: "tts_install_cancel" });
+	}
 }
 
 /**

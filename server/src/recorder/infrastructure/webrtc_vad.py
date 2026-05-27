@@ -24,9 +24,26 @@ class WebRTCVAD(IVoiceActivityDetector):
             msg = "webrtcvad is not installed"
             raise RuntimeError(msg)
         self._model: Any = webrtcvad.Vad()
+        self._sensitivity = sensitivity
         self._model.set_mode(sensitivity)
         self._sample_rate = sample_rate
         self._is_active = False
+
+    @property
+    def sensitivity(self) -> int:
+        return self._sensitivity
+
+    def set_sensitivity(self, sensitivity: int) -> None:
+        """Retune the WebRTC aggressiveness in-place (0..3).
+
+        webrtcvad's ``set_mode`` is a cheap setter on the underlying C
+        VAD struct — safe to call from any thread that holds a transient
+        reference (the detect() loop reads ``is_speech`` per chunk and
+        doesn't pin the mode for the duration of a recording).
+        """
+        clamped = max(0, min(3, int(sensitivity)))
+        self._sensitivity = clamped
+        self._model.set_mode(clamped)
 
     @override
     def detect(self, chunk: AudioChunk) -> VADResult:

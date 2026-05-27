@@ -408,7 +408,6 @@ def _build_recorder() -> RecorderHandle:
         # the silence threshold is mostly informational, but a tight value
         # makes silence-input edge cases finish quickly.
         post_speech_silence_duration=0.3,
-        min_length_of_recording=0.0,
         spinner=False,
         on_realtime_transcription_update=lambda _t: None,
     )

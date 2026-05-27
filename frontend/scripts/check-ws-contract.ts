@@ -68,29 +68,27 @@ const CONTRACT_FILE = resolve(import.meta.dir, "..", "electron", "ws", "contract
  *     ``validateServerEvent`` is wired up.
  *   - Control-channel responses (commands the renderer initiates) flow
  *     through a different schema.
- *   - TTS data/install/synth events are consumed by their own renderer
- *     handler ahead of the generic data-channel validator (see
- *     ``tts-handler.ts``).
- *   - ``init_tts`` / ``shutdown_tts`` are TTS lifecycle markers consumed
- *     by the same handler.
+ *   - Control-channel command echoes (``init_tts``, ``shutdown_tts``,
+ *     ``tts_synthesize``, ``tts_cancel``, ``tts_install_pause``,
+ *     ``tts_install_resume``, ``tts_install_cancel``) are sent via
+ *     ``ws.send`` on the control channel, not enqueued on the data
+ *     channel — they never reach ``validateServerEvent``.
+ *   - ``tts_chunk`` is the JSON header of a binary PCM frame on the
+ *     data channel (parsed by the chunk handler before validation).
  *
  * If you intentionally route a new event past the data-channel validator,
  * add it here with a one-line justification. Don't bypass it silently.
  */
 const KNOWN_NON_VALIDATED: ReadonlySet<string> = new Set([
 	"server_ready", // boot handshake
-	"init_tts", // TTS lifecycle (own handler)
-	"shutdown_tts", // TTS lifecycle (own handler)
-	"tts_synthesize", // TTS chunk stream (own handler)
-	"tts_chunk", // TTS chunk stream (own handler)
-	"tts_complete", // TTS chunk stream (own handler)
-	"tts_cancel", // TTS chunk stream (own handler)
-	"tts_failed", // TTS chunk stream (own handler)
-	"tts_install_status", // TTS installer (own handler)
-	"tts_install_failed", // TTS installer (own handler)
-	"tts_model_download_start", // TTS installer (own handler)
-	"tts_model_download_progress", // TTS installer (own handler)
-	"tts_model_download_complete", // TTS installer (own handler)
+	"init_tts", // control-channel reply
+	"shutdown_tts", // control-channel reply
+	"tts_synthesize", // control-channel reply (ack)
+	"tts_cancel", // control-channel reply
+	"tts_chunk", // binary-frame JSON header (not a JSON event)
+	"tts_install_pause", // control-channel reply
+	"tts_install_resume", // control-channel reply
+	"tts_install_cancel", // control-channel reply
 ]);
 
 const TYPE_LITERAL_RE = /"type":\s*"([a-zA-Z_][a-zA-Z0-9_]*)"/g;

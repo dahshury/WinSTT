@@ -76,6 +76,7 @@ describe("buildProgressLabel", () => {
 				progress: 0,
 				downloadedBytes: 0,
 				totalBytes: 0,
+				paused: false,
 			})
 		).toBe("Downloading…");
 	});
@@ -88,6 +89,7 @@ describe("buildProgressLabel", () => {
 			progress: 0.25,
 			downloadedBytes: 262_144,
 			totalBytes: 1_048_576,
+			paused: false,
 		});
 		expect(out.startsWith("PROGRESS")).toBe(true);
 		expect(out).toContain("percent=25");

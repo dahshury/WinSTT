@@ -1,10 +1,9 @@
 import { Progress } from "@base-ui/react/progress";
-import { memo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
 import { surfaceBg, surfaceBg90, useSurface } from "@/shared/lib/surface";
 
-export const FileOverlay = memo(function FileOverlay() {
+export function FileOverlay() {
 	const { status, progress, message, fileName } = useFileTranscriptionStore(
 		useShallow((s) => ({
 			status: s.status,
@@ -46,4 +45,4 @@ export const FileOverlay = memo(function FileOverlay() {
 			{status === "error" && <p className="font-medium text-error text-sm">{message}</p>}
 		</div>
 	);
-});
+}

@@ -84,6 +84,7 @@ class TestModelCatalog:
             "moonshine-base-ja",
             "moonshine-base-ko",
             "cohere-transcribe",
+            "sense-voice-small",
         ]
         for model_id in onnx_ids:
             info = catalog.get(model_id)
@@ -148,6 +149,33 @@ class TestModelCatalog:
         assert info is not None
         assert info.languages == ["ru"]
         assert info.family == "gigaam"
+
+    def test_sense_voice_small_catalog_entry(self, catalog: ModelCatalog) -> None:
+        """SenseVoice Small ships int8-only (the same flavour Handy bundles).
+
+        The five published languages (zh / en / ja / ko / yue) all need to
+        be present so the picker offers a multilingual chip and the
+        language-selector renders Cantonese (``yue``) which only this
+        catalog row contributes today.
+
+        Verified structurally — the upstream onnx-asr fork still needs to
+        merge the ``SenseVoice`` adapter class before transcribe() actually
+        runs; the catalog row + family enum + DML override are the WinSTT-
+        side prerequisites and they're independently testable.
+        """
+        info = catalog.get("sense-voice-small")
+        assert info is not None
+        assert info.family == "sense_voice"
+        assert info.backend == TranscriberBackend.ONNX_ASR
+        assert info.languages == ["zh", "en", "ja", "ko", "yue"]
+        assert info.supports_language_detection is True
+        assert info.supports_realtime is True
+        # Handy bundles the int8 graph; the catalog mirrors that as the only
+        # supported quantization. Surfacing fp32/fp16 here would tempt users
+        # with variants that no upstream export currently ships.
+        assert info.available_quantizations == ["int8"]
+        assert "yue" in info.languages  # Cantonese — SenseVoice is one of the
+        # only catalog rows that supports it.
 
     def test_all_onnx_models_support_realtime(self, catalog: ModelCatalog) -> None:
         for model in catalog.list_all():

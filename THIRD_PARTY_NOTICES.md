@@ -298,7 +298,11 @@ and are reproduced collectively here by reference.
 - Node.js — MIT. <https://github.com/nodejs/node>
 - Chromium — BSD-3-Clause and additional licenses; see the
   `LICENSES.chromium.html` shipped inside Electron's resources for the
-  full notice set.
+  full notice set. The same notices for the bundled Chromium version are
+  also published upstream at
+  <https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/resources/about_credits.html>
+  and inside the matching Electron release at
+  <https://github.com/electron/electron/releases>.
 - React, React DOM — MIT, (c) Meta Platforms.
 - Vite — MIT. <https://github.com/vitejs/vite>
 - Base UI — MIT, (c) MUI.

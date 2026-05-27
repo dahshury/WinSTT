@@ -331,6 +331,8 @@
     "useMainModel": "استخدام النموذج الرئيسي",
     "useMainModelCaption": "جودة أعلى لكن أبطأ",
     "useMainModelTooltip": "استخدام النموذج الرئيسي الأكبر والأكثر دقة للمعاينة المباشرة بدلاً من نموذج الوقت الفعلي الأصغر. يعطي نصًا مباشرًا أفضل لكنه يزيد استخدام CPU/GPU بشكل كبير وقد يسبب تأخرًا على الأجهزة الأبطأ.",
+    "realtimeLockedToMainCaption": "استخدام النموذج الرئيسي للمعاينة المباشرة",
+    "realtimeLockedToMainTooltip": "نموذجك الرئيسي صغير بما يكفي لتشغيل المعاينة المباشرة، لذا يتم استخدامه بالفعل لنسخ الوقت الفعلي. إن وجود نموذج وقت فعلي منفصل سيؤدي فقط إلى تكرار العمل دون تحسين الجودة. اختر نموذجًا رئيسيًا أكبر لإلغاء قفل نموذج وقت فعلي مخصص.",
     "updateInterval": "فترة التحديث",
     "updateIntervalCaption": "ثوانٍ بين تحديثات الوقت الفعلي",
     "updateIntervalTooltip": "الحد الأدنى للوقت بين تحديثات النسخ المباشرة. القيم الأقل تعطي تحديثات أكثر تكرارًا لكنها تستخدم قدرة معالجة أكثر. قم بزيادتها إذا واجهت تقطعًا أو استخدامًا عاليًا لـ CPU أثناء الإملاء.",
@@ -372,9 +374,6 @@
     "postSpeechSilence": "صمت ما بعد الكلام",
     "postSpeechSilenceCaption": "ثوانٍ من الصمت لإنهاء التسجيل",
     "postSpeechSilenceTooltip": "مدة الانتظار بعد انتهاء الكلام قبل إنهاء المقطع. القيم الأقصر تكون أكثر استجابة لكنها قد تقطع التوقفات بين الجمل. ينطبق في وضعي التبديل والاستماع — اضغط للتحدث يدير هذا تلقائيًا.",
-    "minRecordingLength": "الحد الأدنى لطول التسجيل",
-    "minRecordingLengthCaption": "الحد الأدنى بالثواني للتسجيل الصالح",
-    "minRecordingLengthTooltip": "يتم تجاهل التسجيلات الأقصر من هذا باعتبارها ضوضاء. يمنع التفعيلات العرضية مثل السعال أو النقرات أو الأصوات القصيرة من أن يتم نسخها.",
     "deviceSwitchFailed": "تعذّر فتح جهاز الإدخال — {reason}",
     "outputDevice": "Output Device",
     "outputDeviceCaption": "Speaker / headphones for chimes and TTS playback",
@@ -737,7 +736,11 @@
     "installCancel": "إلغاء",
     "installRetry": "إعادة المحاولة",
     "installConfirm": "تنزيل وتفعيل",
-    "installComponentInstalled": "مُثبَّت"
+    "installComponentInstalled": "مُثبَّت",
+    "paused": "متوقف مؤقتاً",
+    "pauseInstall": "إيقاف مؤقت",
+    "resumeInstall": "استئناف",
+    "cancelInstall": "إلغاء"
   },
   "errors": {
     "somethingWentWrong": "حدث خطأ ما",

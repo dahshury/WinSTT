@@ -21,9 +21,13 @@ mock.module("./debug-log", () => debugLogMock());
 const sharedStore = storeMock();
 mock.module("./store", () => sharedStore);
 
-const { installInitialPromptSync, readCurrentInitialPrompt } = await import(
-	"./initial-prompt-sync"
-);
+const {
+	__resetVolatileContextForTesting__,
+	clearVolatileContextTail,
+	installInitialPromptSync,
+	readCurrentInitialPrompt,
+	setVolatileContextTail,
+} = await import("./initial-prompt-sync");
 
 interface FakeClient {
 	calls: Array<{ key: string; value: string }>;
@@ -218,6 +222,79 @@ describe("installInitialPromptSync", () => {
 		// Connection is still false; trigger a watcher.
 		sharedStore.store.set("dictionary", [{ term: "Disconnected" }]);
 		expect(client.calls).toHaveLength(0);
+		cleanup();
+	});
+});
+
+describe("setVolatileContextTail / clearVolatileContextTail", () => {
+	beforeEach(() => {
+		resetStore();
+		__resetVolatileContextForTesting__();
+	});
+
+	test("an empty tail is a no-op (does NOT push)", () => {
+		const client = makeFakeClient(true);
+		setVolatileContextTail(client as unknown as SttClient, "");
+		expect(client.calls).toHaveLength(0);
+	});
+
+	test("setting a tail re-pushes the composed prompt with the tail prepended", () => {
+		const client = makeFakeClient(true);
+		sharedStore.store.set("dictionary", [{ term: "Kubernetes" }]);
+		setVolatileContextTail(client as unknown as SttClient, "We were talking about the cluster.");
+		const lastMain = client.calls.findLast((c) => c.key === "initial_prompt");
+		expect(lastMain?.value).toContain("We were talking about the cluster.");
+		expect(lastMain?.value).toContain("Glossary: Kubernetes.");
+		// Tail comes BEFORE the glossary (highest signal first).
+		const tailIdx = lastMain?.value.indexOf("We were talking") ?? -1;
+		const glossaryIdx = lastMain?.value.indexOf("Glossary:") ?? -1;
+		expect(tailIdx).toBeLessThan(glossaryIdx);
+	});
+
+	test("setting the same tail twice produces ONE additional push (idempotent)", () => {
+		const client = makeFakeClient(true);
+		setVolatileContextTail(client as unknown as SttClient, "Hi Bob.");
+		const after1 = client.calls.length;
+		setVolatileContextTail(client as unknown as SttClient, "Hi Bob.");
+		expect(client.calls.length).toBe(after1);
+	});
+
+	test("clear after set restores the base prompt (no tail)", () => {
+		const client = makeFakeClient(true);
+		sharedStore.store.set("dictionary", [{ term: "Kubernetes" }]);
+		setVolatileContextTail(client as unknown as SttClient, "Hi Bob.");
+		clearVolatileContextTail(client as unknown as SttClient);
+		const lastMain = client.calls.findLast((c) => c.key === "initial_prompt");
+		expect(lastMain?.value).not.toContain("Hi Bob.");
+		expect(lastMain?.value).toContain("Glossary: Kubernetes.");
+	});
+
+	test("clear with no volatile tail is a no-op (does NOT push)", () => {
+		const client = makeFakeClient(true);
+		clearVolatileContextTail(client as unknown as SttClient);
+		expect(client.calls).toHaveLength(0);
+	});
+
+	test("disconnected client + setTail = no-op", () => {
+		const client = makeFakeClient(false);
+		setVolatileContextTail(client as unknown as SttClient, "Should not push.");
+		expect(client.calls).toHaveLength(0);
+	});
+
+	test("an installed sync sees the volatile tail in its push payload", () => {
+		// This is the integration the conversation cared about: the next
+		// initial_prompt that lands on the server includes the prior-text
+		// from the UIA snapshot, so Whisper biases away from cabernet→Kubernetes.
+		const client = makeFakeClient(true);
+		sharedStore.store.set("dictionary", [{ term: "Kubernetes" }]);
+		const cleanup = install(client);
+		setVolatileContextTail(
+			client as unknown as SttClient,
+			"the cluster is on the new Kubernetes node"
+		);
+		const lastMain = client.calls.findLast((c) => c.key === "initial_prompt");
+		expect(lastMain?.value).toContain("the cluster is on the new Kubernetes node");
+		expect(lastMain?.value).toContain("Glossary: Kubernetes.");
 		cleanup();
 	});
 });

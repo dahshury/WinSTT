@@ -1,7 +1,7 @@
 "use client";
 
 import { Combobox } from "@base-ui/react/combobox";
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { VList, type VListHandle } from "virtua";
 import type { OpenRouterModel } from "@/shared/api/models";
 import {
@@ -32,7 +32,7 @@ export interface ModelListContentVirtualizedProps {
 		| undefined;
 }
 
-export const ModelListContentVirtualized = memo(function ModelListContentVirtualized({
+export function ModelListContentVirtualized({
 	groupedModels,
 	expandedModels,
 	parsedModelId,
@@ -45,26 +45,20 @@ export const ModelListContentVirtualized = memo(function ModelListContentVirtual
 }: ModelListContentVirtualizedProps): ReactNode {
 	const virtualizerHandleRef = useRef<VListHandle>(null);
 
-	const virtualItems = useMemo(
-		() => buildVirtualItems(groupedModels, expandedModels),
-		[groupedModels, expandedModels]
-	);
+	const virtualItems = buildVirtualItems(groupedModels, expandedModels);
 
 	const onActiveMakerChangeRef = useRef(onActiveMakerChange);
 	onActiveMakerChangeRef.current = onActiveMakerChange;
 	const lastNotifiedMakerRef = useRef<string | null>(null);
-	const handleVirtualScroll = useCallback(
-		(offset: number) => {
-			lastNotifiedMakerRef.current = applyVirtualScrollMakerUpdate(
-				virtualizerHandleRef.current,
-				virtualItems,
-				offset,
-				lastNotifiedMakerRef.current,
-				onActiveMakerChangeRef.current
-			);
-		},
-		[virtualItems]
-	);
+	const handleVirtualScroll = (offset: number) => {
+		lastNotifiedMakerRef.current = applyVirtualScrollMakerUpdate(
+			virtualizerHandleRef.current,
+			virtualItems,
+			offset,
+			lastNotifiedMakerRef.current,
+			onActiveMakerChangeRef.current
+		);
+	};
 
 	const lastNonceRef = useRef<number | null>(null);
 	useEffect(() => {
@@ -115,4 +109,4 @@ export const ModelListContentVirtualized = memo(function ModelListContentVirtual
 			</VList>
 		</Combobox.List>
 	);
-});
+}

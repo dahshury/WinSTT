@@ -522,6 +522,26 @@ components:
         - end_of_sentence_detection_pause
         - mid_sentence_detection_pause
         - unknown_sentence_detection_pause
+        # Live decoder-bias prompts pushed by installInitialPromptSync on
+        # every dictionary / static-prefix / context tail change. Read live
+        # by RecorderService._safe_transcribe (main) and at realtime model
+        # build time (realtime worker bypasses the prompt per use_prompt=False).
+        - initial_prompt
+        - initial_prompt_realtime
+        # Hot-swappable knobs that previously forced a full server restart
+        # via Electron's STARTUP_ONLY_KEYS_LIST. Each is now routed through
+        # set_parameter so the recorder updates its config in place and
+        # (where needed) triggers an in-place model reload or audio-source
+        # reconfigure. See recorder/__init__.py for the facade setters and
+        # recorder/application/recorder_service.py for the reconfigure path.
+        - onnx_quantization
+        - translate_to_english
+        - model_unload_timeout_seconds
+        - webrtc_sensitivity
+        - silero_deactivity_detection
+        - always_on_microphone
+        - lazy_stream_close
+        - lazy_close_timeout_seconds
 
     AllowedMethod:
       type: string
@@ -621,6 +641,7 @@ components:
         - t-one
         - moonshine
         - cohere
+        - sense_voice
         - custom
 
     ModelInfo:
@@ -898,8 +919,6 @@ components:
           minimum: 0
           maximum: 3
         postSpeechSilenceDuration:
-          type: number
-        minLengthOfRecording:
           type: number
         minGapBetweenRecordings:
           type: number

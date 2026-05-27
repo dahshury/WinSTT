@@ -22,6 +22,17 @@ export interface RawDictEntry {
 const MAX_PROMPT_CHARS = 600;
 
 /**
+ * Per-utterance hard cap on the dynamic context tail. The tail is the
+ * sanitised text immediately before the user's caret (captured via UIA
+ * when `general.contextAwareness` is on). It's the highest-signal slice
+ * — Whisper was trained to condition on prior text — but it must NOT
+ * crowd out the static prefix and dictionary glossary, so we cap it
+ * tightly. 250 chars covers a paragraph of preceding email/notes/code
+ * while leaving ~350 chars in the overall budget for prefix + glossary.
+ */
+const MAX_CONTEXT_TAIL_CHARS = 250;
+
+/**
  * Max number of distinct dictionary vocab terms to fold into the prompt.
  * Wispr Flow's documented ceiling is 200 per session; we pick 100 because
  * Whisper's prompt is decoder context, not an ASR boost list, so excess
@@ -137,8 +148,30 @@ function fitComposedWithinCap(prefix: string, glossary: string, composed: string
 	return clipPrefixToFitGlossary(prefix, glossary);
 }
 
-export function composeInitialPrompt(userPrefix: string, dictTerms: readonly string[]): string {
-	const prefix = userPrefix.trim();
+/**
+ * Collapse newlines/runs of whitespace into single spaces and clip to
+ * {@link MAX_CONTEXT_TAIL_CHARS}, keeping the LAST n chars (the slice
+ * closest to the caret is the most relevant prior-text signal).
+ */
+function sanitiseContextTail(rawTail: string): string {
+	const collapsed = rawTail.replace(/\s+/g, " ").trim();
+	if (collapsed.length <= MAX_CONTEXT_TAIL_CHARS) {
+		return collapsed;
+	}
+	return collapsed.slice(collapsed.length - MAX_CONTEXT_TAIL_CHARS);
+}
+
+function joinContextWithBody(contextTail: string, body: string): string {
+	if (contextTail.length === 0) {
+		return body;
+	}
+	if (body.length === 0) {
+		return contextTail;
+	}
+	return `${contextTail}\n\n${body}`;
+}
+
+function composeBody(prefix: string, dictTerms: readonly string[]): string {
 	if (dictTerms.length === 0) {
 		return clipPrefixOnly(prefix);
 	}
@@ -148,20 +181,72 @@ export function composeInitialPrompt(userPrefix: string, dictTerms: readonly str
 }
 
 /**
+ * Compose the final Whisper prompt from the three input tiers:
+ *
+ *   1. `contextTail` — per-utterance prior-text snippet from the UIA
+ *      capture (highest signal; Whisper conditions on it as prior speech).
+ *      Capped at {@link MAX_CONTEXT_TAIL_CHARS} *before* concat so it
+ *      can never drown out the glossary.
+ *   2. `userPrefix`  — static user-typed prefix from settings.
+ *   3. `dictTerms`   — user dictionary vocab, rendered as a glossary.
+ *
+ * Layout (each tier separated by a blank line, missing tiers elided):
+ *
+ *   <context>
+ *
+ *   <prefix>
+ *
+ *   Glossary: t1, t2, t3.
+ *
+ * Empty when all three are empty.
+ */
+export function composeInitialPrompt(
+	userPrefix: string,
+	dictTerms: readonly string[],
+	contextTail = ""
+): string {
+	const prefix = userPrefix.trim();
+	const tail = sanitiseContextTail(contextTail);
+	const body = composeBody(prefix, dictTerms);
+	const composed = joinContextWithBody(tail, body);
+	// Last-resort cap: if (context + body) blew the budget, prefer
+	// keeping the body intact (it holds the user-curated glossary) and
+	// clip the context tail from its front. Body alone is already known
+	// to fit because composeBody enforces MAX_PROMPT_CHARS.
+	if (composed.length <= MAX_PROMPT_CHARS) {
+		return composed;
+	}
+	if (body.length === 0) {
+		return tail.slice(tail.length - MAX_PROMPT_CHARS);
+	}
+	const roomForTail = MAX_PROMPT_CHARS - body.length - 2; // "\n\n"
+	if (roomForTail <= 0) {
+		return body;
+	}
+	return `${tail.slice(tail.length - roomForTail)}\n\n${body}`;
+}
+
+/**
  * Build the composed pair given the three inputs. The realtime variant
  * uses its own user-prefix slot but the SAME dictionary terms — the
  * live preview benefits from the bias too, otherwise users see "oh
  * llama" in the floating pill before the cleanup LLM rewrites it to
  * "Ollama".
+ *
+ * `contextTail` is a transient per-utterance hint (UIA prior-text). When
+ * empty the composer falls back to the legacy two-tier shape, so callers
+ * that don't opt into context-awareness see byte-identical output.
  */
 export function buildInitialPromptPair(input: {
+	contextTail?: string;
 	dictionary: readonly RawDictEntry[] | undefined;
 	mainPrefix: string;
 	realtimePrefix: string;
 }): { main: string; realtime: string } {
 	const dictTerms = collectDictionaryTerms(input.dictionary);
+	const tail = input.contextTail ?? "";
 	return {
-		main: composeInitialPrompt(input.mainPrefix, dictTerms),
-		realtime: composeInitialPrompt(input.realtimePrefix, dictTerms),
+		main: composeInitialPrompt(input.mainPrefix, dictTerms, tail),
+		realtime: composeInitialPrompt(input.realtimePrefix, dictTerms, tail),
 	};
 }

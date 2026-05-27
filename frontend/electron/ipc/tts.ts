@@ -200,6 +200,8 @@ function setupTtsImpl(sttClient: SttClient) {
 					typeof event.reason === "string" && event.reason ? event.reason : "TTS install failed",
 				category: typeof event.category === "string" ? event.category : null,
 			}),
+		tts_install_paused: () => broadcastAll(IPC.TTS_INSTALL_PAUSED, {}),
+		tts_install_resumed: () => broadcastAll(IPC.TTS_INSTALL_RESUMED, {}),
 	};
 
 	const onDataEvent = (event: Record<string, unknown>): void => {
@@ -219,10 +221,49 @@ function setupTtsImpl(sttClient: SttClient) {
 	// `pre_ready=True` server-side, so it's safe the moment the control
 	// channel is up — no need to wait for the STT recorder.
 	let lastTtsEnabled = isTtsEnabled();
+	// One-shot guard for the "the previous session was mid-install" check.
+	// We only want to flip the toggle off on the FIRST connect after app
+	// boot — subsequent reconnects (server crash recovery, dev hot-reload)
+	// should warm up as normal even if the install is incomplete, since
+	// the user already opted in earlier in the session.
+	let bootInstallCheckDone = false;
 
-	const maybeWarmup = (): void => {
+	const maybeWarmup = async (): Promise<void> => {
 		if (!(isTtsEnabled() && sttClient.isConnected)) {
 			return;
+		}
+		// First-connect-of-session check: if TTS was left enabled across an
+		// app restart but the install never finished (partial files on
+		// disk, or never started), DON'T silently auto-resume. Flip the
+		// store flag off so the user sees the toggle in OFF state on
+		// startup; re-enabling triggers the existing install gate which
+		// shows the dialog and resumes from the partials via HTTP Range.
+		// Subsequent reconnects skip this guard so a server restart in
+		// the middle of a session doesn't keep flipping the toggle off.
+		if (!bootInstallCheckDone) {
+			bootInstallCheckDone = true;
+			try {
+				const raw = (await sttClient.ttsDownloadEstimate()) as unknown;
+				const alreadyInstalled =
+					isPlainObject(raw) && (raw as { already_installed?: unknown }).already_installed === true;
+				if (!alreadyInstalled) {
+					dbg(
+						"tts",
+						"boot: install incomplete; flipping enabled OFF (user must re-enable to resume)"
+					);
+					store.set("tts.enabled", false);
+					// Keep lastTtsEnabled aligned so the store.onDidChange
+					// listener below doesn't fire a spurious warm-up when the
+					// store mutation lands.
+					lastTtsEnabled = false;
+					return;
+				}
+			} catch (err) {
+				// Probe failed (server / network blip). Fall through to the
+				// warm-up — if there's a real problem, it'll surface as
+				// tts_install_failed and the user sees the retry banner.
+				dbg("tts", `boot install-check probe failed: ${getErrorMessage(err)}`);
+			}
 		}
 		try {
 			sttClient.initTts();
@@ -233,16 +274,27 @@ function setupTtsImpl(sttClient: SttClient) {
 	};
 
 	// Fire now (covers the already-connected case) and on every
-	// (re)connect so a server restart re-warms the engine.
-	maybeWarmup();
-	sttClient.on("connected", maybeWarmup);
+	// (re)connect so a server restart re-warms the engine. ``maybeWarmup``
+	// is async now (it may probe the install estimate before deciding
+	// whether to fire ``init_tts``), but the caller doesn't care about
+	// the result — wrap in a void-returning closure so the event-emitter
+	// signature stays clean and the promise isn't accidentally awaited.
+	const fireWarmup = (): void => {
+		// Discard the promise via .catch so Biome's `useUndefined` (which
+		// rejects bare `void expr`) stays happy; any genuine rejection is
+		// already logged inside `maybeWarmup`'s try/catch blocks, so the
+		// no-op handler here is purely belt-and-suspenders.
+		maybeWarmup().catch(() => undefined);
+	};
+	fireWarmup();
+	sttClient.on("connected", fireWarmup);
 
 	// Re-warm when the user flips TTS on (off→on edge only — voice/speed
 	// edits don't need a re-init, and `init_tts` while disabled is wasted).
 	const ttsStoreUnsub = store.onDidChange("tts", () => {
 		const nowEnabled = isTtsEnabled();
 		if (nowEnabled && !lastTtsEnabled) {
-			maybeWarmup();
+			fireWarmup();
 		}
 		lastTtsEnabled = nowEnabled;
 	});
@@ -349,6 +401,32 @@ function setupTtsImpl(sttClient: SttClient) {
 		}
 	};
 
+	// Install lifecycle controls — pure passthroughs to the server which
+	// owns the partial-file state. Pause exits the streaming loop cleanly
+	// at the next chunk boundary; resume re-fires warm-up; cancel discards
+	// every partial download.
+	const handleInstallPause = (): void => {
+		try {
+			sttClient.ttsInstallPause();
+		} catch (err) {
+			dbg("tts", `ttsInstallPause failed: ${getErrorMessage(err)}`);
+		}
+	};
+	const handleInstallResume = (): void => {
+		try {
+			sttClient.ttsInstallResume();
+		} catch (err) {
+			dbg("tts", `ttsInstallResume failed: ${getErrorMessage(err)}`);
+		}
+	};
+	const handleInstallCancel = (): void => {
+		try {
+			sttClient.ttsInstallCancel();
+		} catch (err) {
+			dbg("tts", `ttsInstallCancel failed: ${getErrorMessage(err)}`);
+		}
+	};
+
 	// The window that owns the Web Audio queue (the main app window — the
 	// settings window has none) tells us when audio actually finished.
 	// Fan it out to every window so a play/stop button in any window can
@@ -436,6 +514,9 @@ function setupTtsImpl(sttClient: SttClient) {
 	ipcMain.handle(IPC.TTS_INIT, handleInit);
 	ipcMain.handle(IPC.TTS_LIST_VOICES, handleListVoices);
 	ipcMain.handle(IPC.TTS_DOWNLOAD_ESTIMATE, handleDownloadEstimate);
+	ipcMain.on(IPC.TTS_INSTALL_PAUSE, handleInstallPause);
+	ipcMain.on(IPC.TTS_INSTALL_RESUME, handleInstallResume);
+	ipcMain.on(IPC.TTS_INSTALL_CANCEL, handleInstallCancel);
 
 	return () => {
 		ipcMain.removeHandler(IPC.TTS_SPEAK);
@@ -446,9 +527,12 @@ function setupTtsImpl(sttClient: SttClient) {
 		ipcMain.removeHandler(IPC.TTS_INIT);
 		ipcMain.removeHandler(IPC.TTS_LIST_VOICES);
 		ipcMain.removeHandler(IPC.TTS_DOWNLOAD_ESTIMATE);
+		ipcMain.removeAllListeners(IPC.TTS_INSTALL_PAUSE);
+		ipcMain.removeAllListeners(IPC.TTS_INSTALL_RESUME);
+		ipcMain.removeAllListeners(IPC.TTS_INSTALL_CANCEL);
 		sttClient.off("data-binary", onDataBinary);
 		sttClient.off("data-event", onDataEvent);
-		sttClient.off("connected", maybeWarmup);
+		sttClient.off("connected", fireWarmup);
 		ttsStoreUnsub();
 		activeIds.clear();
 		activeCancelAll = null;

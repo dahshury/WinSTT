@@ -187,10 +187,27 @@ class PyAudioSource(IAudioSource):
             msg = "PyAudio is not installed. Install with: pip install pyaudio"
             raise DeviceError(msg)
 
+        # Pa_Initialize is the riskiest call in the whole boot path on
+        # Windows — when the host audio stack is in a CM_PROB_PHANTOM /
+        # stuck-endpoint state (Bluetooth user-service hung, MMDevAPI
+        # dead) it can either raise OSError or fatal-access-violate
+        # inside the PortAudio C extension. We can't catch the AV from
+        # Python, but the OSError path is recoverable: surface it as a
+        # ``DeviceError`` with a host-fix hint so the recorder thread
+        # logs a clean message instead of a raw traceback, and the
+        # caller can route it to the WS layer for the UI to surface.
         try:
             self._audio_interface = pyaudio.PyAudio()
-            pa: Any = self._audio_interface
-
+        except OSError as e:
+            msg = (
+                f"Audio subsystem unavailable: PortAudio Pa_Initialize "
+                f"failed ({_format_pa_error(e)}). The Windows audio stack "
+                f"may be stuck — run Fix-Audio.cmd elevated to bounce "
+                f"Audiosrv / AudioEndpointBuilder, then retry."
+            )
+            raise DeviceError(msg) from e
+        pa: Any = self._audio_interface
+        try:
             # On-demand mode (the new default, matching Handy): skip the
             # boot-time open entirely. The PyAudio interface is created so
             # device enumeration / probe paths still work, but no stream
@@ -291,10 +308,10 @@ class PyAudioSource(IAudioSource):
         # quantize step we don't get to control. Asking for f32 hands us
         # the engine's native buffer, then we do a deterministic
         # ``np.clip * 32767`` round-to-int16 in ``read_chunk``. Falls back
-        # to paInt16 when the device doesn't advertise f32 (rare — most
-        # USB / Bluetooth mics do). Reference: Handy's
+        # to paInt16 then paInt24 when the device doesn't advertise f32.
+        # Reference: Handy's
         # ``audio_toolkit/audio/recorder.rs::get_preferred_config`` which
-        # follows the same F32 > I16 priority.
+        # follows the same F32 > I16 > I24 priority.
         chosen_format = self._negotiate_format(pa, device_index, sample_rate)
 
         try:
@@ -315,30 +332,53 @@ class PyAudioSource(IAudioSource):
         self._capture_format = chosen_format
 
     def _negotiate_format(self, pa: Any, device_index: int, sample_rate: int) -> int:  # noqa: ANN401
-        """Return paFloat32 if the device supports it, otherwise paInt16.
+        """Pick the cleanest supported capture format in priority order.
 
-        ``is_format_supported`` raises ``ValueError`` (with paErr in
-        args[1]) when the requested format isn't valid for the device at
-        that rate; True otherwise. We silently downgrade to paInt16 on
-        any failure so the open path is robust to drivers that don't
-        implement the probe correctly (some virtual cables don't).
+        Mirrors Handy's ``audio_toolkit/audio/recorder.rs::get_preferred_config``
+        which probes F32 > I16 > I24 and picks the first one the driver
+        accepts. The rationale is that some cheap USB / Bluetooth drivers
+        report support for multiple input formats but only ONE of them is
+        actually the engine's native representation — the others involve
+        an in-driver dither/quantize step the host can't tune. Asking for
+        the engine's native format hands us the clean buffer and lets us
+        do the int16 conversion deterministically in
+        ``_float32_bytes_to_int16_bytes`` or the I24 equivalent.
+
+        Float32 wins on WASAPI shared mode (the Windows default for nearly
+        every input device); I16 is the universal fallback; I24 is the
+        last resort for high-end USB mics that pump packed 24-bit samples.
+        Any probe that raises ``ValueError`` / ``OSError`` is treated as
+        "format not supported" — some virtual-cable drivers throw instead
+        of returning False, and we don't want a noisy driver to mask a
+        format that would otherwise work.
         """
-        try:
-            pa.is_format_supported(
-                rate=sample_rate,
-                input_device=device_index,
-                input_channels=1,
-                input_format=pyaudio.paFloat32,
-            )
-        except (ValueError, OSError) as probe_err:
-            logger.debug(
-                "paFloat32 not supported on device %s @ %dHz (%s); using paInt16",
-                device_index,
-                sample_rate,
-                _format_pa_error(probe_err),
-            )
-            return int(pyaudio.paInt16)
-        return int(pyaudio.paFloat32)
+        formats: tuple[tuple[str, int], ...] = (
+            ("paFloat32", int(pyaudio.paFloat32)),
+            ("paInt16", int(pyaudio.paInt16)),
+            ("paInt24", int(pyaudio.paInt24)),
+        )
+        for label, fmt in formats:
+            try:
+                pa.is_format_supported(
+                    rate=sample_rate,
+                    input_device=device_index,
+                    input_channels=1,
+                    input_format=fmt,
+                )
+            except (ValueError, OSError) as probe_err:
+                logger.debug(
+                    "%s not supported on device %s @ %dHz (%s); trying next",
+                    label,
+                    device_index,
+                    sample_rate,
+                    _format_pa_error(probe_err),
+                )
+                continue
+            return fmt
+        # Nothing in the priority list probed clean — last-resort paInt16,
+        # which is what every well-behaved input driver advertises. If even
+        # that doesn't work the caller's ``pa.open`` will fail descriptively.
+        return int(pyaudio.paInt16)
 
     @override
     def read_chunk(self) -> AudioChunk:
@@ -400,12 +440,17 @@ class PyAudioSource(IAudioSource):
             logger.warning("Audio stream read failed (%s); re-entering hotplug-wait state", _format_pa_error(e))
             self._enter_waiting_state()
             return b"\x00" * (self._buffer_size * self._sample_width)
-        # If the stream was opened as paFloat32 (the WASAPI native), fold
-        # the f32 bytes down to int16 here so the rest of the pipeline
-        # (CompositeVAD, audio_buffer, resampler, all int16-shaped)
-        # doesn't need to know capture used floats.
-        if self._capture_format is not None and self._capture_format == pyaudio.paFloat32:
-            raw = self._float32_bytes_to_int16_bytes(raw)
+        # Fold whatever format the driver gave us down to the canonical
+        # int16 bytes so the rest of the pipeline (CompositeVAD,
+        # audio_buffer, resampler) doesn't need to know capture used
+        # something else. paFloat32 → int16 covers WASAPI's native f32;
+        # paInt24 → int16 covers high-end USB mics that pump packed
+        # 24-bit samples. paInt16 falls through untouched.
+        if self._capture_format is not None:
+            if self._capture_format == pyaudio.paFloat32:
+                raw = self._float32_bytes_to_int16_bytes(raw)
+            elif self._capture_format == pyaudio.paInt24:
+                raw = self._int24_bytes_to_int16_bytes(raw)
         if self._device_sample_rate and self._device_sample_rate != self._target_sample_rate:
             raw = self._resample(raw, self._device_sample_rate, self._target_sample_rate)
         return raw
@@ -423,6 +468,39 @@ class PyAudioSource(IAudioSource):
         samples = np.frombuffer(raw, dtype=np.float32)
         clipped = np.clip(samples, -1.0, 1.0)
         return bytes(np.rint(clipped * 32767.0).astype(np.int16).tobytes())
+
+    @staticmethod
+    def _int24_bytes_to_int16_bytes(raw: bytes) -> bytes:
+        """Convert a paInt24 capture buffer (packed 3-byte LE) to int16.
+
+        PortAudio's paInt24 hands us 3 bytes per sample, little-endian,
+        signed. numpy has no native int24 dtype, so we widen to int32 by
+        inserting a zero MSB and arithmetic-shifting back down 16 bits to
+        get the top 16 bits (lossy but deterministic — the bottom 8 bits
+        of dynamic range get truncated). The ``>>`` on a signed int32 is
+        arithmetic on numpy so sign extension is correct. If the byte
+        count isn't a multiple of 3 we drop the tail rather than crash:
+        a partial sample at the buffer boundary is benign in a streaming
+        VAD pipeline.
+        """
+        usable = len(raw) - (len(raw) % 3)
+        if usable == 0:
+            return b""
+        # Build an N x 3 array of bytes then pad each row with a zero MSB
+        # (the int24 → int32 widening trick). We then view the rows as
+        # little-endian int32 and shift right by 8 to land back in the
+        # int24-shaped range without sign loss.
+        bytes_2d = np.frombuffer(raw[:usable], dtype=np.uint8).reshape(-1, 3)
+        padded = np.zeros((bytes_2d.shape[0], 4), dtype=np.uint8)
+        padded[:, 1:4] = bytes_2d
+        as_int32 = padded.view(np.int32).reshape(-1) >> 8
+        # Now ``as_int32`` holds signed 24-bit samples in [-2^23, 2^23 - 1].
+        # Drop to int16 by truncating the low byte (>>8) so the high 16
+        # bits of the 24-bit dynamic range survive. ``clip`` guards
+        # against the rare driver glitch that produces an out-of-range
+        # sample even within the int24 envelope.
+        shifted = (as_int32 >> 8).astype(np.int32)
+        return bytes(np.clip(shifted, -32768, 32767).astype(np.int16).tobytes())
 
     def _try_attach_default_device(self) -> None:
         """Poll for a default input device; attach + notify when one appears.
@@ -623,6 +701,47 @@ class PyAudioSource(IAudioSource):
         device hotplug.
         """
         return self._waiting_for_device
+
+    def reconfigure(
+        self,
+        *,
+        always_on_microphone: bool | None = None,
+        lazy_stream_close: bool | None = None,
+        lazy_close_timeout_seconds: float | None = None,
+    ) -> None:
+        """Update mic-release policy in-place without re-opening the stream.
+
+        Each field is optional; ``None`` means "leave unchanged". The
+        three fields used to be construction-time constants because
+        ``PyAudioSource.__init__`` is the only place that reads them.
+        Promoting them to a settable surface lets the renderer flip
+        ``audio.microphoneRelease`` live — no process restart, no mic
+        re-open, the OS mic-in-use indicator doesn't blip.
+
+        Transitions that affect the *currently live* stream:
+
+        * Flipping ``always_on_microphone`` from True → False while the
+          source is paused has no immediate effect — the stream is
+          already alive. The NEXT pause() will respect the new policy
+          (and either lazy-close or full-release).
+        * Flipping it False → True while paused doesn't auto-open the
+          stream either. Whatever resume() path runs next observes the
+          new flag and keeps the stream alive across subsequent pauses.
+        * Changing ``lazy_close_timeout_seconds`` only affects timers
+          scheduled AFTER the assignment — already-running lazy-close
+          timers continue to use the value they captured at schedule
+          time (via the closure in :meth:`_schedule_lazy_close`).
+
+        Threading: each assignment is a single attribute write under
+        the GIL, so no lock is needed. The reader thread observes the
+        new values on its next read_chunk iteration.
+        """
+        if always_on_microphone is not None:
+            self._always_on_microphone = bool(always_on_microphone)
+        if lazy_stream_close is not None:
+            self._lazy_stream_close = bool(lazy_stream_close)
+        if lazy_close_timeout_seconds is not None:
+            self._lazy_close_timeout_seconds = float(lazy_close_timeout_seconds)
 
     @override
     def pause(self) -> None:
@@ -842,12 +961,22 @@ class PyAudioSource(IAudioSource):
     def _get_best_sample_rate(self, device_index: int) -> int:
         """Pick a sample rate the device actually supports for paInt16 input.
 
-        Order: target rate (16 kHz) → device's reported ``defaultSampleRate``
+        Order: device's reported ``defaultSampleRate`` → target rate (16 kHz)
         → standard fallbacks. Each candidate is probed via
         ``is_format_supported`` so we never hand PyAudio a rate it can't
         open — that was the source of the ``[Errno -9997] Invalid sample
         rate`` failures users hit on USB devices that report a default of
         44100 but only actually support 48 kHz (or vice versa).
+
+        Why device-default first (Handy parity): opening at 16 kHz forces
+        WASAPI / the kernel driver to resample inside the driver chain.
+        Cheap USB mics and Bluetooth audio drivers do this badly and
+        smear transients (the hardest part of far-mic speech). Opening at
+        the device's preferred rate (typically 44.1 / 48 kHz) hands us
+        the engine's clean buffer; we then resample to 16 kHz in-process
+        via ``scipy.signal.resample_poly`` — a high-quality phase-linear
+        polyphase filter equivalent to Handy's ``rubato::FftFixedIn``.
+        See ``examples/Handy/src-tauri/src/audio_toolkit/audio/resampler.rs``.
         """
         pa: Any = self._audio_interface
         try:
@@ -857,7 +986,11 @@ class PyAudioSource(IAudioSource):
         device_default = int(info.get("defaultSampleRate", 0)) or 0
 
         candidates: list[int] = []
-        for rate in (self._target_sample_rate, device_default, 48000, 44100, 22050, 16000, 8000):
+        # Device-native FIRST. If the device's preferred rate is already
+        # 16 kHz (rare on Windows — almost everything is 44.1/48 kHz) we
+        # short-circuit the software resample by picking it directly; if
+        # not, we capture at the native rate and resample on read.
+        for rate in (device_default, self._target_sample_rate, 48000, 44100, 22050, 16000, 8000):
             if rate and rate not in candidates:
                 candidates.append(rate)
 

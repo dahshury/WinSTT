@@ -60,7 +60,6 @@ def _make_service(
     """
     config = RecorderConfig.from_kwargs(
         post_speech_silence_duration=0.05,
-        min_length_of_recording=0.0,
         speech_onset_consecutive_chunks=1,
         use_microphone=use_microphone,
     )

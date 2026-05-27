@@ -36,6 +36,8 @@ from pathlib import Path
 
 from src.synthesizer.infrastructure.asset_downloader import (
     CancelFn,
+    DownloadOutcome,
+    PauseFn,
     ProgressFn,
     download_with_progress,
 )
@@ -156,24 +158,40 @@ def ensure_support_pack(
     runtime_dir: Path,
     on_progress: ProgressFn | None = None,
     should_cancel: CancelFn | None = None,
-) -> None:
+    should_pause: PauseFn | None = None,
+) -> DownloadOutcome:
     """Download + verify + extract the pack into ``runtime_dir`` if absent.
 
-    No-op when already installed. Raises ``RuntimeError`` on download /
-    integrity / extraction failure (the caller surfaces it as a
-    ``tts_failed`` event). ``InterruptedError`` propagates on cancel.
+    Returns ``"completed"`` when the pack is installed (either freshly or
+    because it was already on disk) and ``"paused"`` if the caller asked
+    to pause mid-download — the partial archive is preserved at a
+    persistent path under ``runtime_dir`` so the next call resumes via
+    HTTP Range. No-op when already installed. Raises ``RuntimeError`` on
+    download / integrity / extraction failure (the caller surfaces it as
+    a ``tts_install_failed`` event); :class:`InterruptedError` propagates
+    on cancel.
+
+    The archive download target is the runtime dir itself (not a temp
+    dir) so pause→resume across separate ``warm_up`` invocations finds
+    the prior ``.partial``; verification + extraction still use a
+    transient ``TemporaryDirectory`` for the staging swap.
     """
     if is_installed(runtime_dir):
-        return
+        return "completed"
 
     expected_sha = _read_remote_sha256(should_cancel)
-    with tempfile.TemporaryDirectory(prefix="winstt-ttspack-") as tmp:
-        archive = Path(tmp) / pack_filename()
-        download_with_progress(pack_url(), archive, on_progress, should_cancel)
+    archive = runtime_dir / pack_filename()
 
+    outcome = download_with_progress(pack_url(), archive, on_progress, should_cancel, should_pause)
+    if outcome == "paused":
+        return outcome
+
+    try:
         if expected_sha is not None:
             actual = _sha256(archive)
             if actual != expected_sha:
+                # Corrupt download — drop it so the next attempt re-fetches.
+                archive.unlink(missing_ok=True)
                 raise RuntimeError(
                     f"TTS pack integrity check failed (expected {expected_sha[:12]}…, got {actual[:12]}…)"
                 )
@@ -181,39 +199,46 @@ def ensure_support_pack(
         # Extract into a fresh staging dir, then swap atomically so a
         # crashed extract never leaves a half-populated runtime that
         # ``is_installed`` would wrongly trust.
-        staging = Path(tmp) / "extracted"
-        try:
-            with zipfile.ZipFile(archive) as zf:
-                zf.extractall(staging)
-        except (zipfile.BadZipFile, OSError) as exc:
-            raise RuntimeError(f"TTS pack extraction failed: {exc}") from exc
+        with tempfile.TemporaryDirectory(prefix="winstt-ttspack-", dir=str(runtime_dir)) as tmp:
+            staging = Path(tmp) / "extracted"
+            try:
+                with zipfile.ZipFile(archive) as zf:
+                    zf.extractall(staging)
+            except (zipfile.BadZipFile, OSError) as exc:
+                raise RuntimeError(f"TTS pack extraction failed: {exc}") from exc
 
-        for child in staging.iterdir():
-            dst = runtime_dir / child.name
-            if dst.exists():
-                # NEVER silently swallow: a half-removed dir leaves
-                # ``shutil.move(src_dir, existing_dir)`` falling back to
-                # "move INTO existing", which deposits the new package
-                # under ``runtime/<pkg>/<pkg>/`` and corrupts every
-                # subsequent import (see ``is_installed`` note).
-                try:
-                    if dst.is_dir():
-                        shutil.rmtree(dst)
-                    else:
-                        dst.unlink()
-                except OSError as exc:
-                    raise RuntimeError(
-                        f"Could not replace existing {dst.name} in TTS runtime "
-                        f"({exc}). A previous server process may be holding the "
-                        "file open — restart the app and try enabling TTS again."
-                    ) from exc
-            shutil.move(str(child), str(dst))
+            for child in staging.iterdir():
+                dst = runtime_dir / child.name
+                if dst.exists():
+                    # NEVER silently swallow: a half-removed dir leaves
+                    # ``shutil.move(src_dir, existing_dir)`` falling back to
+                    # "move INTO existing", which deposits the new package
+                    # under ``runtime/<pkg>/<pkg>/`` and corrupts every
+                    # subsequent import (see ``is_installed`` note).
+                    try:
+                        if dst.is_dir():
+                            shutil.rmtree(dst)
+                        else:
+                            dst.unlink()
+                    except OSError as exc:
+                        raise RuntimeError(
+                            f"Could not replace existing {dst.name} in TTS runtime "
+                            f"({exc}). A previous server process may be holding the "
+                            "file open — restart the app and try enabling TTS again."
+                        ) from exc
+                shutil.move(str(child), str(dst))
 
-    (runtime_dir / _SENTINEL).write_text(
-        json.dumps({"pack_filename": pack_filename(), "sha256": expected_sha}),
-        encoding="utf-8",
-    )
-    logger.info("TTS support pack installed → %s", runtime_dir)
+        (runtime_dir / _SENTINEL).write_text(
+            json.dumps({"pack_filename": pack_filename(), "sha256": expected_sha}),
+            encoding="utf-8",
+        )
+        logger.info("TTS support pack installed → %s", runtime_dir)
+    finally:
+        # Drop the archive once it's safely extracted (or on a thrown
+        # error post-download) so we don't leave ~30 MB of duplicate data
+        # parked next to the runtime forever.
+        archive.unlink(missing_ok=True)
+    return "completed"
 
 
 def activate(runtime_dir: Path) -> None:
@@ -260,7 +285,8 @@ def repair_and_reinstall(
     runtime_dir: Path,
     on_progress: ProgressFn | None = None,
     should_cancel: CancelFn | None = None,
-) -> None:
+    should_pause: PauseFn | None = None,
+) -> DownloadOutcome:
     """Force a clean re-download after detecting a corrupt pack at runtime.
 
     Used by the synthesizer's auto-recovery path: when ``import
@@ -269,9 +295,16 @@ def repair_and_reinstall(
     pattern). Removing the sentinel makes ``is_installed`` return False,
     evicting modules clears any namespace-package cache from the first
     failed attempt, and then ``ensure_support_pack`` re-extracts cleanly.
-    The caller still has to ``activate()`` + retry the import.
+    The caller still has to ``activate()`` + retry the import. Returns
+    the same outcome enum as :func:`ensure_support_pack` so a paused
+    repair can be resumed on the next attempt.
     """
     sentinel = runtime_dir / _SENTINEL
     sentinel.unlink(missing_ok=True)
     _evict_runtime_modules(runtime_dir)
-    ensure_support_pack(runtime_dir, on_progress=on_progress, should_cancel=should_cancel)
+    return ensure_support_pack(
+        runtime_dir,
+        on_progress=on_progress,
+        should_cancel=should_cancel,
+        should_pause=should_pause,
+    )

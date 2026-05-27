@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
+	onTtsInstallPaused,
+	onTtsInstallResumed,
 	onTtsModelDownloadComplete,
 	onTtsModelDownloadProgress,
 	onTtsModelDownloadStart,
@@ -11,11 +13,18 @@ import { formatBytes } from "@/shared/lib/format-bytes";
 interface DownloadState {
 	active: boolean;
 	downloadedBytes: number;
+	paused: boolean;
 	progress: number;
 	totalBytes: number;
 }
 
-const INITIAL: DownloadState = { active: false, progress: 0, downloadedBytes: 0, totalBytes: 0 };
+const INITIAL: DownloadState = {
+	active: false,
+	progress: 0,
+	downloadedBytes: 0,
+	totalBytes: 0,
+	paused: false,
+};
 
 export interface TtsDownloadProgress {
 	/** Whether a download is currently in flight (show the bar). */
@@ -26,6 +35,8 @@ export interface TtsDownloadProgress {
 	 * install reads as distinct steps, not one anonymous bar.
 	 */
 	label: string;
+	/** True while the install is paused (use to flip bar variant + buttons). */
+	paused: boolean;
 	/** Integer 0–100 for the progress bar. */
 	percent: number;
 }
@@ -94,20 +105,27 @@ export function composeBarLabel(phaseLabel: string, progressLabel: string): stri
 }
 
 function applyProgressEvent(
-	setDownload: (next: DownloadState) => void,
+	setDownload: (next: (prev: DownloadState) => DownloadState) => void,
 	payload: { downloadedBytes: number; progress: number; totalBytes: number }
 ): void {
-	setDownload({
+	// Use a functional update so a progress event arriving during the
+	// pause→resume round-trip clears `paused` automatically — the server
+	// only resumes streaming chunks once the worker is actively reading.
+	setDownload((prev) => ({
+		...prev,
 		active: true,
+		paused: false,
 		progress: payload.progress,
 		downloadedBytes: payload.downloadedBytes,
 		totalBytes: payload.totalBytes,
-	});
+	}));
 }
 
 /**
  * Tracks the on-demand TTS install download (engine pack → voice model
  * → voicepacks) and produces a phase-labelled progress descriptor.
+ * Also tracks paused-state so the bar can flip variants and the UI can
+ * swap Pause for Resume.
  */
 export function useTtsDownloadProgress(installPhase: TtsInstallPhase | null): TtsDownloadProgress {
 	const t = useTranslations("tts");
@@ -119,12 +137,21 @@ export function useTtsDownloadProgress(installPhase: TtsInstallPhase | null): Tt
 		[]
 	);
 	useEffect(() => onTtsModelDownloadComplete(() => setDownload(INITIAL)), []);
+	// Server confirms the downloader actually entered the paused state —
+	// only THEN do we flip the bar; sending the pause command alone
+	// doesn't guarantee the worker has yielded yet.
+	useEffect(() => onTtsInstallPaused(() => setDownload((prev) => ({ ...prev, paused: true }))), []);
+	useEffect(
+		() => onTtsInstallResumed(() => setDownload((prev) => ({ ...prev, paused: false }))),
+		[]
+	);
 
 	const phaseLabel = buildPhaseLabel(t, installPhase);
-	const progressLabel = buildProgressLabel(t, download);
+	const progressLabel = download.paused ? t("paused") : buildProgressLabel(t, download);
 
 	return {
 		active: download.active,
+		paused: download.paused,
 		percent: Math.round(download.progress * 100),
 		label: composeBarLabel(phaseLabel, progressLabel),
 	};

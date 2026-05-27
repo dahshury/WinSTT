@@ -262,6 +262,15 @@ describe("SUPPORTED_EVENT_TYPES", () => {
 			file_transcription_progress: { type: "file_transcription_progress", progress: 0 },
 			file_transcription_complete: { type: "file_transcription_complete" },
 			file_transcription_error: { type: "file_transcription_error", error: "boom" },
+			tts_complete: { type: "tts_complete", request_id: "r1" },
+			tts_failed: { type: "tts_failed", request_id: "r1", reason: "boom" },
+			tts_model_download_start: { type: "tts_model_download_start" },
+			tts_model_download_progress: { type: "tts_model_download_progress", progress: 0 },
+			tts_model_download_complete: { type: "tts_model_download_complete" },
+			tts_install_status: { type: "tts_install_status", phase: "ready" },
+			tts_install_paused: { type: "tts_install_paused" },
+			tts_install_resumed: { type: "tts_install_resumed" },
+			tts_install_failed: { type: "tts_install_failed", reason: "boom" },
 		};
 		for (const t of SUPPORTED_EVENT_TYPES) {
 			expect(validateServerEvent(minimal[t])).not.toBeNull();

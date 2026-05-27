@@ -152,31 +152,49 @@ def text_detected(text: str, state: ServerState, loop: asyncio.AbstractEventLoop
                 similarity > state.hard_break_even_on_background_noise_min_similarity
                 and len(first_text) > state.hard_break_even_on_background_noise_min_chars
             ):
-                # Audio-variance gate: when recent levels show meaningful
-                # variance the user is still speaking — Whisper is just
-                # hallucinating a repeating tail at low SNR. Killing the
-                # recording here truncates real speech mid-utterance, which
-                # was the reported toggle-mode bug. The break still fires
-                # for true stuck-on-noise sessions (flat RMS, no variance).
-                audio_variance = _recent_audio_variance(state, state.hard_break_even_on_background_noise)
-                if audio_variance > state.noise_break_audio_variance_threshold:
+                # Auto-stop gate: ``silence_endpoint_enabled`` is the master
+                # "server may auto-end the recording" switch. PTT and
+                # toggle+manualToggleStop both set it to False — in those
+                # modes ONLY the user's hotkey release defines the boundary,
+                # so noise-break must not fire here. Without this gate,
+                # holding PTT through silence triggers Whisper to hallucinate
+                # a repeating tail, the similarity gate trips ~3 s in
+                # (hard_break_even_on_background_noise), and ``recorder.stop``
+                # finalizes the recording and pastes mid-hold. See the
+                # ptt-only-user-stop bug report on 2026-05-27.
+                if not state.recorder.silence_endpoint_enabled:
                     print(
-                        f"{bcolors.OKCYAN}[noise-break] SUPPRESSED — repeating text "
-                        f"but audio still active (variance={audio_variance:.4f} > "
-                        f"threshold={state.noise_break_audio_variance_threshold:.4f}){bcolors.ENDC}",
+                        f"{bcolors.OKCYAN}[noise-break] SUPPRESSED — auto-stop disabled "
+                        f"(silence_endpoint_enabled=False; user controls stop){bcolors.ENDC}",
                         flush=True,
                     )
                 else:
-                    print(
-                        f"{bcolors.WARNING}[noise-break] FIRING — first_tail={first_tail!r} "
-                        f"last_tail={last_tail!r} similarity={similarity:.4f} "
-                        f"first_text_len={len(first_text)} "
-                        f"audio_variance={audio_variance:.4f}{bcolors.ENDC}",
-                        flush=True,
-                    )
-                    state.recorder.stop()
-                    state.recorder.clear_audio_queue()
-                    state.prev_text = ""
+                    # Audio-variance gate: when recent levels show meaningful
+                    # variance the user is still speaking — Whisper is just
+                    # hallucinating a repeating tail at low SNR. Killing the
+                    # recording here truncates real speech mid-utterance,
+                    # which was the reported toggle-mode bug. The break still
+                    # fires for true stuck-on-noise sessions (flat RMS,
+                    # no variance).
+                    audio_variance = _recent_audio_variance(state, state.hard_break_even_on_background_noise)
+                    if audio_variance > state.noise_break_audio_variance_threshold:
+                        print(
+                            f"{bcolors.OKCYAN}[noise-break] SUPPRESSED — repeating text "
+                            f"but audio still active (variance={audio_variance:.4f} > "
+                            f"threshold={state.noise_break_audio_variance_threshold:.4f}){bcolors.ENDC}",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"{bcolors.WARNING}[noise-break] FIRING — first_tail={first_tail!r} "
+                            f"last_tail={last_tail!r} similarity={similarity:.4f} "
+                            f"first_text_len={len(first_text)} "
+                            f"audio_variance={audio_variance:.4f}{bcolors.ENDC}",
+                            flush=True,
+                        )
+                        state.recorder.stop()
+                        state.recorder.clear_audio_queue()
+                        state.prev_text = ""
 
     state.prev_text = text
 

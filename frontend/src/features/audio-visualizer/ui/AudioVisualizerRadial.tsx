@@ -1,5 +1,5 @@
 import { cva } from "class-variance-authority";
-import { type ComponentProps, type CSSProperties, useMemo } from "react";
+import type { ComponentProps, CSSProperties } from "react";
 import { cn } from "@/shared/lib/cn";
 import type { AgentState, VisualizerSize } from "../lib/audio-visualizer";
 import { useAgentState } from "../lib/use-agent-state";
@@ -86,29 +86,24 @@ export function AudioVisualizerRadial({
 }: AudioVisualizerRadialProps & ComponentProps<"div">) {
 	const state = useAgentState();
 
-	const _barCount = useMemo(() => resolveRadialBarCount(barCount, size), [barCount, size]);
+	const _barCount = resolveRadialBarCount(barCount, size);
 
 	const volumeBands = useMultibandVolume(_barCount);
 
-	const sequencerInterval = useMemo(() => resolveRadialSequencerInterval(state), [state]);
+	const sequencerInterval = resolveRadialSequencerInterval(state);
 
-	const distanceFromCenter = useMemo(() => resolveRadialDistance(radius, size), [size, radius]);
+	const distanceFromCenter = resolveRadialDistance(radius, size);
 
 	const highlightedIndices = useRadialAnimator(state, _barCount, sequencerInterval);
-	const bands = useMemo(
-		() => (state === "speaking" ? volumeBands : new Array(_barCount).fill(0)),
-		[state, volumeBands, _barCount]
-	);
+	const bands = state === "speaking" ? volumeBands : new Array(_barCount).fill(0);
 
 	const dotSize = (distanceFromCenter * Math.PI) / _barCount;
 
 	// Available space from the radial ring out to the container edge.
 	// Mirrors the heights in `radialVariants` above (icon 24, sm 56, md 112, lg 224, xl 448);
 	// keep both in sync.
-	const maxBarHeight = useMemo(() => {
-		const containerHalf = { icon: 12, sm: 28, md: 56, lg: 112, xl: 224 }[size ?? "md"] ?? 56;
-		return Math.max(0, containerHalf - distanceFromCenter);
-	}, [size, distanceFromCenter]);
+	const containerHalf = { icon: 12, sm: 28, md: 56, lg: 112, xl: 224 }[size ?? "md"] ?? 56;
+	const maxBarHeight = Math.max(0, containerHalf - distanceFromCenter);
 
 	const minBarHeight = Math.min(dotSize, maxBarHeight);
 

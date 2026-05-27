@@ -308,33 +308,6 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 						/>
 					</ElevatedSurface>
 				</FormControl>
-				<FormControl
-					caption={ta("minRecordingLengthCaption")}
-					label={ta("minRecordingLength")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								(audio?.minLengthOfRecording ?? DEFAULT_SETTINGS.audio.minLengthOfRecording) ===
-								DEFAULT_SETTINGS.audio.minLengthOfRecording
-							}
-							onReset={() =>
-								updateAudio({
-									minLengthOfRecording: DEFAULT_SETTINGS.audio.minLengthOfRecording,
-								})
-							}
-						/>
-					}
-					tooltip={ta("minRecordingLengthTooltip")}
-				>
-					<ElevatedSurface className="w-fit" inline>
-						<NumberStepper
-							min={0.1}
-							onChange={(v) => updateAudio({ minLengthOfRecording: v })}
-							step={0.1}
-							value={audio?.minLengthOfRecording ?? DEFAULT_SETTINGS.audio.minLengthOfRecording}
-						/>
-					</ElevatedSurface>
-				</FormControl>
 			</div>
 		</SettingSection>
 	);
@@ -399,16 +372,25 @@ export function QualitySettingsPanel() {
 
 	return (
 		<div className="flex flex-col gap-2">
-			{/* ── Context Awareness ──────────────────────────── */}
+			{/* ── Context Awareness ────────────────────────────
+				 Two consumers (relay.ts → relay-context-capture):
+				 1. Whisper `initial_prompt` augmentation — the caret-leading
+				    text biases the ASR decoder against mis-hearing what
+				    the user is replying to. Works with the LLM off.
+				 2. Dictation-LLM cleanup prompt — when LLM is enabled,
+				    the same snapshot feeds the cleanup pass for proper-noun
+				    spelling and reply-to-this-email composition.
+				 So the section stays visible regardless of LLM state. */}
 			<SettingSection icon={EyeIcon} title={tg("contextAwarenessSection")}>
 				<div className="flex flex-col divide-y divide-surface-1">
 					<FormControl
 						caption={tg("contextAwarenessCaption")}
 						label={tg("contextAwareness")}
+						labelAddon={
+							<Toggle checked={contextAwarenessEnabled} onCheckedChange={handleContextToggle} />
+						}
 						tooltip={tg("contextAwarenessTooltip")}
-					>
-						<Toggle checked={contextAwarenessEnabled} onCheckedChange={handleContextToggle} />
-					</FormControl>
+					/>
 				</div>
 				<OptInDialog
 					body={tg("contextAwarenessDialogBody")}

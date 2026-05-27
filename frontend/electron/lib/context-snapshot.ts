@@ -326,3 +326,27 @@ function buildCaretSections(before: string, after: string): readonly PromptSecti
 		},
 	];
 }
+
+/**
+ * Extract a prior-text fragment from the snapshot for use as a Whisper
+ * `initial_prompt` tail. Returns "" when nothing useful is present.
+ *
+ * Whisper's prompt is decoder context — it conditions the model as if
+ * the prompt were prior speech. The highest-signal slice we have is
+ * `textBefore` (the user's caret-leading text in the focused field):
+ * a code editor's prior lines, an email's prior body, etc. We do NOT
+ * include `appExe` / `url` / `axHtml` / window titles here — those are
+ * structured metadata, not natural prior-text, and Whisper degrades when
+ * the prompt isn't shaped like real speech.
+ *
+ * The deny-list path emits {@link redactSensitiveFields} which already
+ * strips `textBefore`, so a denied snapshot extracts to "". Callers
+ * needn't re-apply the deny-list filter here.
+ */
+export function extractAsrPromptTail(snapshot: WindowContextSnapshot): string {
+	const before = snapshot.textBefore;
+	if (typeof before !== "string") {
+		return "";
+	}
+	return before.trim();
+}

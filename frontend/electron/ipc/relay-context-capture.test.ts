@@ -160,3 +160,160 @@ describe("createContextCapture", () => {
 		expect(out).not.toContain("URL: secure.bankofamerica.com");
 	});
 });
+
+describe("createContextCapture — onSnapshotReady / onSnapshotCleared", () => {
+	test("onSnapshotReady fires once with the post-filter snapshot after capture resolves", async () => {
+		const seen: WindowContextSnapshot[] = [];
+		const cap = createContextCapture({
+			isEnabled: () => true,
+			getDenyList: NO_DENY,
+			read: async () => ({ ...SNAP, textBefore: "Hi Bob," }),
+			onSnapshotReady: (s) => {
+				seen.push(s);
+			},
+		});
+		cap.capture();
+		// Wait one microtask cycle for the .then() chain to run.
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(seen).toHaveLength(1);
+		expect(seen[0]?.textBefore).toBe("Hi Bob,");
+	});
+
+	test("onSnapshotReady receives the redacted snapshot when the app is denied", async () => {
+		const seen: WindowContextSnapshot[] = [];
+		const cap = createContextCapture({
+			isEnabled: () => true,
+			getDenyList: () => ["1password.exe"],
+			read: async () => ({
+				windowTitle: "1Password",
+				elementName: "Master",
+				focusedText: "supersecret",
+				appExe: "1password.exe",
+				textBefore: "supersecret",
+			}),
+			onSnapshotReady: (s) => {
+				seen.push(s);
+			},
+		});
+		cap.capture();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(seen).toHaveLength(1);
+		expect(seen[0]?.textBefore).toBeUndefined();
+		expect(seen[0]?.focusedText).toBe("");
+	});
+
+	test("consume() fires onSnapshotCleared so ASR-side bias is dropped", async () => {
+		let cleared = 0;
+		const cap = createContextCapture({
+			isEnabled: () => true,
+			getDenyList: NO_DENY,
+			read: async () => SNAP,
+			onSnapshotCleared: () => {
+				cleared += 1;
+			},
+		});
+		cap.capture();
+		await cap.consume();
+		expect(cleared).toBe(1);
+	});
+
+	test("clear() fires onSnapshotCleared when there's pending state", async () => {
+		let cleared = 0;
+		const cap = createContextCapture({
+			isEnabled: () => true,
+			getDenyList: NO_DENY,
+			read: async () => SNAP,
+			onSnapshotCleared: () => {
+				cleared += 1;
+			},
+		});
+		cap.capture();
+		cap.clear();
+		expect(cleared).toBe(1);
+	});
+
+	test("clear() with no pending state does NOT fire onSnapshotCleared", () => {
+		let cleared = 0;
+		const cap = createContextCapture({
+			isEnabled: () => true,
+			getDenyList: NO_DENY,
+			read: async () => SNAP,
+			onSnapshotCleared: () => {
+				cleared += 1;
+			},
+		});
+		cap.clear();
+		expect(cleared).toBe(0);
+	});
+
+	test("disabled capture clears stale state and fires onSnapshotCleared once", async () => {
+		let cleared = 0;
+		let enabled = true;
+		const cap = createContextCapture({
+			isEnabled: () => enabled,
+			getDenyList: NO_DENY,
+			read: async () => SNAP,
+			onSnapshotCleared: () => {
+				cleared += 1;
+			},
+		});
+		cap.capture();
+		enabled = false;
+		cap.capture(); // setting flipped → should drop state
+		expect(cleared).toBe(1);
+	});
+
+	test("stale onSnapshotReady firings (race lost to a second capture) are suppressed", async () => {
+		// Two reads in flight: the first resolves AFTER the second is already
+		// the live snapshot. The first's onSnapshotReady must not fire.
+		let resolveFirst: (snap: WindowContextSnapshot) => void = () => {
+			// no-op; set inside the first read's executor
+		};
+		const firstRead = new Promise<WindowContextSnapshot>((resolve) => {
+			resolveFirst = resolve;
+		});
+		const reads: Array<() => Promise<WindowContextSnapshot>> = [
+			() => firstRead,
+			async () => ({ ...SNAP, textBefore: "winner" }),
+		];
+		const seen: WindowContextSnapshot[] = [];
+		const cap = createContextCapture({
+			isEnabled: () => true,
+			getDenyList: NO_DENY,
+			read: () => (reads.shift() ?? (() => Promise.resolve(SNAP)))(),
+			onSnapshotReady: (s) => {
+				seen.push(s);
+			},
+		});
+		cap.capture(); // kicks off firstRead — stays pending
+		cap.capture(); // kicks off the second; replaces `pending`
+		// Let the second read resolve.
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(seen.map((s) => s.textBefore)).toEqual(["winner"]);
+		// Now let the first resolve — its handler should see the identity
+		// check fail and drop the snapshot.
+		resolveFirst({ ...SNAP, textBefore: "loser" });
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(seen.map((s) => s.textBefore)).toEqual(["winner"]);
+	});
+
+	test("onSnapshotReady does NOT fire when isEnabled() is false", async () => {
+		let fired = 0;
+		const cap = createContextCapture({
+			isEnabled: () => false,
+			getDenyList: NO_DENY,
+			read: async () => SNAP,
+			onSnapshotReady: () => {
+				fired += 1;
+			},
+		});
+		cap.capture();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(fired).toBe(0);
+	});
+});

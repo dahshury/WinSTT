@@ -4,7 +4,6 @@ import {
 	Mic01Icon,
 	VolumeHighIcon,
 } from "@hugeicons/core-free-icons";
-import { useMemo } from "react";
 import { useTranslations } from "use-intl";
 import { useInputDevices, useOutputDevices } from "@/entities/audio-device";
 import {
@@ -53,7 +52,7 @@ export function AudioSettingsPanel() {
 		{ combo: repasteHotkey, label: repasteLabel },
 	];
 	const { devices, defaultDevice } = useInputDevices();
-	const deviceOptions = useMemo<SelectOption[]>(() => {
+	const deviceOptions: SelectOption[] = (() => {
 		const defaultLabel = defaultDevice
 			? `${t("systemDefault")} (${defaultDevice.name})`
 			: t("systemDefault");
@@ -62,18 +61,18 @@ export function AudioSettingsPanel() {
 			opts.push({ id: String(d.index), label: d.name });
 		}
 		return opts;
-	}, [devices, defaultDevice, t]);
+	})();
 
 	// Clamshell picker shares the device list but uses a "disabled" sentinel
 	// instead of "default" — null = feature off (don't poll), whereas a
 	// configured index = mic to swap to when the lid closes.
-	const clamshellOptions = useMemo<SelectOption[]>(() => {
+	const clamshellOptions: SelectOption[] = (() => {
 		const opts: SelectOption[] = [{ id: "disabled", label: t("clamshellDisabled") }];
 		for (const d of devices) {
 			opts.push({ id: String(d.index), label: d.name });
 		}
 		return opts;
-	}, [devices, t]);
+	})();
 
 	const currentDeviceId =
 		audio?.inputDeviceIndex == null ? "default" : String(audio.inputDeviceIndex);
@@ -99,7 +98,7 @@ export function AudioSettingsPanel() {
 	const ttsEnabled = useSettingsStore((s) => s.settings.tts?.enabled ?? false);
 	const { devices: outputDevices, defaultDevice: defaultOutputDevice } = useOutputDevices();
 	const showOutputDevice = recordingSoundEnabled || ttsEnabled;
-	const outputDeviceOptions = useMemo<SelectOption[]>(() => {
+	const outputDeviceOptions: SelectOption[] = (() => {
 		const defaultLabel = defaultOutputDevice
 			? `${t("systemDefault")} (${defaultOutputDevice.label})`
 			: t("systemDefault");
@@ -114,7 +113,7 @@ export function AudioSettingsPanel() {
 			opts.push({ id: d.deviceId, label: d.label });
 		}
 		return opts;
-	}, [outputDevices, defaultOutputDevice, t]);
+	})();
 
 	return (
 		<div className="flex flex-col gap-2">

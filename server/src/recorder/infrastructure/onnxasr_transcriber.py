@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
@@ -23,6 +24,14 @@ try:
 except ImportError:
     onnx_asr = None  # type: ignore[assignment]
 
+# Decoder-side safety patches (consecutive-repeat guard for Canary AED +
+# Cohere; suppress_blank / suppress_non_speech / no_speech_thold for
+# Whisper; audio-aware max_length cap for Moonshine). Side effect of the
+# import: ``apply_onnx_decoder_patches()`` runs at module load. Idempotent
+# across import order. The module also exposes the
+# ``maybe_pad_for_aed`` / ``maybe_prepend_silence_for_parakeet`` helpers
+# used in ``_recognize`` below.
+from src.recorder.infrastructure import onnx_decoder_patches  # noqa: E402
 
 # ── Shared Silero VAD cache ────────────────────────────────────────────
 #
@@ -257,32 +266,175 @@ def _pick_intra_op_threads(providers_tuple: tuple[Any, ...] | None) -> int:
     return 8
 
 
-def _build_sess_options(providers_tuple: tuple[Any, ...] | None, *, fp16: bool = False) -> Any:  # noqa: ANN401 — onnxruntime.SessionOptions
+def _resolve_optimized_model_cache_dir() -> Path:
+    """Return the directory used for ORT optimized-graph dumps.
+
+    Per the platform convention shared with the TTS asset downloader
+    (:func:`src.synthesizer.infrastructure.asset_downloader.resolve_cache_dir`),
+    Windows defaults to ``%LOCALAPPDATA%/winstt/ort/optimized`` and POSIX
+    falls back to ``~/.cache/winstt/ort/optimized``. The ORT runtime
+    version is appended as a subdirectory so a bump invalidates the
+    cache automatically — see :func:`_optimized_model_path`.
+
+    The directory is created lazily; missing parents are auto-created.
+    Failure to create is propagated so the caller can disable the
+    optimization rather than silently writing nowhere.
+    """
+    override = os.environ.get("WINSTT_ORT_CACHE_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    appdata = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+    base = Path(appdata) if appdata else Path.home() / ".cache"
+    return base / "winstt" / "ort" / "optimized"
+
+
+#: Characters that aren't safe in cross-platform filenames. The HF
+#: convention uses ``/`` between org and repo, and onnx-asr aliases sometimes
+#: include colons or spaces — collapse all to ``_`` so the resulting filename
+#: is safe on every OS we ship to.
+_MODEL_ID_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _slug_model_id(model_name: str, quantization: str | None) -> str:
+    """Return a filesystem-safe slug uniquely identifying a model+quant pair.
+
+    The slug embeds the quantization tag so e.g. ``whisper-tiny`` int8
+    and fp16 don't collide in the cache. Anything that's not
+    ``[A-Za-z0-9._-]`` is replaced with ``_``. Leading/trailing
+    underscores are stripped so the result is a clean filename stem.
+    """
+    base = model_name or "unknown"
+    quant_tag = (quantization or "default").strip() or "default"
+    raw = f"{base}__{quant_tag}"
+    return _MODEL_ID_SAFE_RE.sub("_", raw).strip("_") or "unknown"
+
+
+def _optimized_model_path(model_name: str, quantization: str | None) -> Path | None:
+    """Resolve the on-disk path ORT should dump the optimized graph into.
+
+    Returns ``None`` when onnxruntime can't be imported (test envs that
+    haven't installed any ORT wheel) or when the cache directory cannot
+    be created — the caller leaves ``optimized_model_filepath`` unset
+    in that case and just skips the dump.
+
+    Cache layout:
+        <cache_dir>/<ort_version>/<model_slug>.ort.bin
+
+    The ORT version is embedded in the path so a wheel upgrade is a
+    safe cache miss instead of an incompatible-graph crash. The
+    ``.ort.bin`` suffix matches what onnxruntime expects when loading
+    optimized-only graphs later. Idempotent — calling twice with the
+    same arguments returns the same path.
+
+    Known limitation: onnx_asr internally creates multiple ORT sessions
+    (preprocessor, encoder, decoder, decoder_merged) sharing a single
+    ``SessionOptions``. With ``optimized_model_filepath`` set, all of
+    them write to the same path — only the last write wins. The dump
+    is therefore best-effort and primarily useful for diagnostics /
+    future per-session redirection rather than as a hot-load cache.
+    A clean fix requires per-session SessionOptions in the onnx-asr
+    fork; tracked but not delivered in this change.
+    """
+    try:
+        import onnxruntime as rt
+    except ImportError:
+        return None
+    try:
+        cache_root = _resolve_optimized_model_cache_dir()
+    except OSError:
+        logger.debug("Failed to resolve ORT optimized-model cache dir", exc_info=True)
+        return None
+    ort_version = getattr(rt, "__version__", "unknown")
+    versioned = cache_root / ort_version
+    try:
+        versioned.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        logger.debug("Could not create ORT optimized-model cache dir %s", versioned, exc_info=True)
+        return None
+    return versioned / f"{_slug_model_id(model_name, quantization)}.ort.bin"
+
+
+#: Whisper-family detection for the fp16 graph-optimization downgrade.
+#: Matches the canonical "whisper" string anywhere in the model name —
+#: also covers ``lite-whisper``, ``distil-whisper``, ``whisper-large-v3``,
+#: ``onnx-community/whisper-tiny.en``, etc. Case-insensitive to handle
+#: HF-style ``Whisper`` casing and our lowercase catalog ids uniformly.
+def _is_whisper_family(model_name: str | None) -> bool:
+    """True iff ``model_name`` belongs to the Whisper family (any variant).
+
+    The fp16 ``ORT_ENABLE_EXTENDED`` workaround targets the
+    ``SimplifiedLayerNormFusion`` bug in legacy onnx-community Whisper
+    fp16 encoder exports. Parakeet, Moonshine, Canary, GigaAM, Cohere,
+    and other non-Whisper fp16 models do NOT have this bug, so they
+    keep the default ``ORT_ENABLE_ALL`` for full fusion savings (5-10 %
+    per inference on fp16 paths — see ``docs/handy-comparison.html``
+    Axis IV.1).
+    """
+    if not model_name:
+        return False
+    return "whisper" in model_name.lower()
+
+
+def _build_sess_options(
+    providers_tuple: tuple[Any, ...] | None,
+    *,
+    fp16: bool = False,
+    model_name: str | None = None,
+    quantization: str | None = None,
+    optimize_to_disk: bool = False,
+) -> Any:  # noqa: ANN401 — onnxruntime.SessionOptions
     """SessionOptions tuned for the chosen execution provider.
 
     Always pinned ``intra_op_num_threads`` (see :func:`_pick_intra_op_threads`
-    for the rationale and measurements). ``fp16=True`` additionally lowers
-    the graph optimization level to dodge an ORT
-    ``SimplifiedLayerNormFusion`` bug on Whisper fp16 encoder exports —
-    see the original ``_build_fp16_sess_options`` rationale below.
+    for the rationale and measurements). The fp16 graph-optimization
+    downgrade to ``ORT_ENABLE_EXTENDED`` is now gated on the Whisper
+    family (see :func:`_is_whisper_family`) — non-Whisper fp16 models
+    don't have the ``SimplifiedLayerNormFusion`` bug and keep
+    ``ORT_ENABLE_ALL`` for the full fusion savings (5-10 % per
+    inference). Whisper fp16 still needs the downgrade because legacy
+    onnx-community exports trigger the upstream ORT bug.
 
-    The fp16-related drop to ``ORT_ENABLE_EXTENDED`` is benign for our
-    other (non-fp16) sessions when they happen to share this
-    SessionOptions instance — the missing fusions are encoder-shape-
-    specific and don't materially affect throughput on small/mid
-    Whisper variants.
+    ``model_name`` defaults to ``None`` so legacy callers that don't
+    know the model (e.g. the ``_build_fp16_sess_options`` shim) keep
+    the pre-2026 behaviour of unconditional downgrade on fp16. New
+    call sites pass ``model_name`` to opt into per-family selection.
+
+    ``optimize_to_disk=True`` additionally sets
+    :attr:`SessionOptions.optimized_model_filepath` to a versioned
+    cache path so ORT serializes the optimized graph for diagnostics
+    and future per-session reload. The path includes
+    ``onnxruntime.__version__`` so an ORT wheel bump auto-invalidates
+    the cache. Best-effort: any error resolving the cache dir leaves
+    the option unset (no behaviour change). See
+    :func:`_optimized_model_path` for the known multi-session-shared-
+    options limitation that makes this strictly opt-in.
     """
     import onnxruntime as rt
 
     opts = rt.SessionOptions()
-    if fp16:
+    # Drop to EXTENDED only when fp16 AND the model is a Whisper variant.
+    # Other fp16 paths (Parakeet, Moonshine, Canary, …) keep ORT_ENABLE_ALL.
+    # The fallback when ``model_name`` is None preserves the legacy
+    # behaviour so untyped callers don't accidentally lose the workaround.
+    needs_whisper_workaround = fp16 and (model_name is None or _is_whisper_family(model_name))
+    if needs_whisper_workaround:
         opts.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
     opts.intra_op_num_threads = _pick_intra_op_threads(providers_tuple)
+    if optimize_to_disk and model_name is not None:
+        cache_path = _optimized_model_path(model_name, quantization)
+        if cache_path is not None:
+            opts.optimized_model_filepath = str(cache_path)
+            logger.debug("ORT optimized-model dump target: %s", cache_path)
     return opts
 
 
 def _build_fp16_sess_options() -> Any:  # noqa: ANN401 — onnxruntime.SessionOptions
-    """Backwards-compat shim — see :func:`_build_sess_options`."""
+    """Backwards-compat shim — see :func:`_build_sess_options`.
+
+    Defaults ``model_name=None`` which preserves the legacy unconditional
+    downgrade on fp16, the safe behaviour for callers that pre-date the
+    per-family gate.
+    """
     return _build_sess_options(None, fp16=True)
 
 
@@ -447,6 +599,8 @@ class OnnxAsrTranscriber(ITranscriber):
         segment_with_vad: bool = True,
         normalize_audio: bool = True,
         translate_to_english: bool = False,
+        use_optimized_model_cache: bool = False,
+        whisper_beam_size: int = 1,
     ) -> None:
         if onnx_asr is None:
             msg = "onnx_asr is not installed"
@@ -474,8 +628,17 @@ class OnnxAsrTranscriber(ITranscriber):
         # (over-subscribed CPU threads stall small device-fallback ops).
         # The fp16 flag additionally lowers the graph optimization level
         # to dodge a SimplifiedLayerNormFusion bug on Whisper fp16
-        # encoder exports; orthogonal to threading.
-        kwargs["sess_options"] = _build_sess_options(providers_tuple, fp16=(quantization == "fp16"))
+        # encoder exports; orthogonal to threading. The ``model_name``
+        # argument gates the fp16 downgrade per-family — only Whisper
+        # variants pay the EXTENDED tax now (see
+        # :func:`_is_whisper_family`).
+        kwargs["sess_options"] = _build_sess_options(
+            providers_tuple,
+            fp16=(quantization == "fp16"),
+            model_name=model_name,
+            quantization=quantization,
+            optimize_to_disk=use_optimized_model_cache,
+        )
 
         logger.info("Loading onnx-asr model %s (quantization=%s)", model_name, quantization)
         self._model: Any = self._load_model_with_fp16_repair(model_name, kwargs)
@@ -545,6 +708,27 @@ class OnnxAsrTranscriber(ITranscriber):
                 )
             else:
                 self._patch_translate_prompt()
+
+        # Beam-search width for Whisper-family engines (greedy elsewhere).
+        # Stashed on the underlying engine instance so the patched
+        # ``_decoding`` picks it up via ``_winstt_beam_size``. No-op on
+        # engines that aren't WhisperHf — they ignore the attribute.
+        self._whisper_beam_size = int(max(1, whisper_beam_size))
+        if self._whisper_beam_size > 1:
+            target = self._resolve_whisper_engine()
+            if target is not None:
+                target._winstt_beam_size = self._whisper_beam_size
+                logger.info(
+                    "Whisper beam search enabled on %s — beam_size=%d",
+                    model_name,
+                    self._whisper_beam_size,
+                )
+            else:
+                logger.info(
+                    "whisper_beam_size=%d ignored on non-Whisper engine %s",
+                    self._whisper_beam_size,
+                    model_name,
+                )
 
     def _is_canary_engine(self) -> bool:
         """Heuristic: detect a NeMo Canary engine without importing nemo."""
@@ -798,13 +982,46 @@ class OnnxAsrTranscriber(ITranscriber):
         audio: AudioArray,
         language: str = "",
         use_prompt: bool = True,
+        custom_words: list[str] | None = None,
+        initial_prompt_text: str | None = None,
     ) -> TranscriptionResult:
         start_t = time.time()
         lang_arg = language if language else None
 
-        # Plain text: merge VAD chunks for speed — granularity is irrelevant
-        # once the segment texts are concatenated.
-        segments = self._recognize(audio, lang_arg, merge=True)
+        # Decoder-bias prompt: we feed prior context into the decoder via
+        # Whisper's classic ``<|startofprev|>`` mechanism — or, on Canary
+        # AED and Cohere, via the trained ``<|startofcontext|>`` slot
+        # (positions [1]→[2] of the upstream 10-token prompt). The
+        # patched ``_decoding`` reads ``_winstt_initial_prompt_ids`` and
+        # prepends / splices accordingly. Non-supported engines
+        # (Moonshine, SenseVoice, CTC/RNN-T families) are no-ops.
+        #
+        # Two input shapes are supported:
+        #   * ``initial_prompt_text`` — free-form prior text from the
+        #     UIA snapshot composer on the frontend; this is the
+        #     preferred path (richer signal than a comma-joined word list).
+        #   * ``custom_words`` — legacy dictionary-only list. Used as a
+        #     fallback when ``initial_prompt_text`` is empty so the
+        #     personal-dictionary path keeps working on transcribers that
+        #     don't get a live composed prompt push.
+        #
+        # Realtime callers pass ``use_prompt=False`` so the latency
+        # overhead of decoder prompt-cache warmup doesn't compound per
+        # tick.
+        installed_prompt = False
+        if use_prompt:
+            prompt_text = initial_prompt_text.strip() if isinstance(initial_prompt_text, str) else ""
+            if not prompt_text and custom_words:
+                prompt_text = ", ".join(w.strip() for w in custom_words if w.strip())
+            if prompt_text:
+                installed_prompt = self._install_initial_prompt_text(prompt_text)
+        try:
+            # Plain text: merge VAD chunks for speed — granularity is irrelevant
+            # once the segment texts are concatenated.
+            segments = self._recognize(audio, lang_arg, merge=True)
+        finally:
+            if installed_prompt:
+                self._uninstall_initial_prompt_text()
         text = " ".join(seg_text.strip() for _, _, seg_text in segments if seg_text.strip())
 
         elapsed = time.time() - start_t
@@ -814,6 +1031,151 @@ class OnnxAsrTranscriber(ITranscriber):
             language_probability=0.0,
             duration_seconds=elapsed,
         )
+
+    def _resolve_whisper_engine(self) -> Any:  # noqa: ANN401
+        """Return the underlying ``WhisperHf`` engine, or ``None`` if not Whisper.
+
+        Walks the optional ``onnx_asr.TextResultsAsrAdapter`` wrapper
+        (``adapter.asr``) so we land on the class that owns ``_tokens`` and
+        the ``_transcribe_input`` prompt array.
+        """
+        return self._resolve_engine_by_class_name("WhisperHf")
+
+    def _resolve_engine_by_class_name(self, class_name: str) -> Any:  # noqa: ANN401
+        """Walk the optional adapter wrapper to find an engine by class name.
+
+        Used by all three prompt-bias install paths (Whisper / Canary AED /
+        Cohere). Each engine type exposes its vocab on a slightly different
+        attribute (``_tokens`` for Whisper + Canary, ``_token_to_id`` for
+        Cohere) so callers do the attribute pick after this returns.
+        """
+        engine = self._model
+        for candidate in (engine, getattr(engine, "asr", None), getattr(engine, "model", None)):
+            if candidate is None:
+                continue
+            if type(candidate).__name__ == class_name:
+                return candidate
+        return None
+
+    def _resolve_canary_aed_engine(self) -> Any:  # noqa: ANN401
+        """Return the underlying ``NemoConformerAED`` engine, or ``None``."""
+        return self._resolve_engine_by_class_name("NemoConformerAED")
+
+    def _resolve_cohere_engine(self) -> Any:  # noqa: ANN401
+        """Return the underlying ``CohereAsr`` engine, or ``None``."""
+        return self._resolve_engine_by_class_name("CohereAsr")
+
+    def _install_whisper_initial_prompt(self, custom_words: list[str]) -> bool:
+        """Push an encoded prompt prefix onto the WhisperHf engine.
+
+        Returns ``True`` when the prompt was installed (caller must invoke
+        ``_uninstall_whisper_initial_prompt`` in a ``finally`` block) and
+        ``False`` when there's nothing to do — engine isn't Whisper, vocab
+        lacks ``<|startofprev|>``, or custom_words encode to nothing.
+        """
+        target = self._resolve_whisper_engine()
+        if target is None:
+            return False
+        tokens_dict = getattr(target, "_tokens", None)
+        if not isinstance(tokens_dict, dict):
+            return False
+        prompt_ids = onnx_decoder_patches.whisper_initial_prompt_tokens(custom_words, tokens_dict)
+        if not prompt_ids:
+            return False
+        target._winstt_initial_prompt_ids = prompt_ids
+        return True
+
+    def _uninstall_whisper_initial_prompt(self) -> None:
+        """Clear the prompt prefix attribute on the Whisper engine."""
+        target = self._resolve_whisper_engine()
+        if target is None:
+            return
+        try:
+            target._winstt_initial_prompt_ids = None
+        except Exception:  # pragma: no cover — defensive
+            logger.exception("Failed to clear Whisper initial-prompt attribute")
+
+    def _install_initial_prompt_text(self, text: str) -> bool:
+        """Push a free-form prior-text prompt onto whichever engine is live.
+
+        Dispatches by engine class:
+          * ``WhisperHf`` → byte-BPE encode + ``<|startofprev|>`` prefix
+            (``onnx_decoder_patches.encode_whisper_prompt``).
+          * ``NemoConformerAED`` → SentencePiece encode, spliced between
+            ``<|startofcontext|>`` and ``<|startoftranscript|>`` by the
+            patched ``_canary_aed_decoding`` (the slot Canary's training
+            recipe documents as the prior-context anchor).
+          * ``CohereAsr`` → same mechanism as Canary; same SOC/SOT slot.
+
+        Returns ``True`` when the prompt was installed; the caller must
+        then invoke :meth:`_uninstall_initial_prompt_text` in a finally.
+        Returns ``False`` for non-supported engines (Moonshine, Sense
+        Voice, CTC/RNN-T families) and for empty text.
+        """
+        stripped = text.strip() if isinstance(text, str) else ""
+        if not stripped:
+            return False
+        # Whisper path — reuses the existing ``<|startofprev|>`` helper.
+        whisper = self._resolve_whisper_engine()
+        if whisper is not None:
+            tokens_dict = getattr(whisper, "_tokens", None)
+            if isinstance(tokens_dict, dict):
+                sop = tokens_dict.get("<|startofprev|>")
+                if sop is None:
+                    return False
+                encoded = onnx_decoder_patches.encode_whisper_prompt(stripped, tokens_dict)
+                if not encoded:
+                    return False
+                whisper._winstt_initial_prompt_ids = [int(sop), *encoded]
+                return True
+            return False
+        # Canary AED path.
+        canary = self._resolve_canary_aed_engine()
+        if canary is not None:
+            tokens_dict = getattr(canary, "_tokens", None)
+            if not isinstance(tokens_dict, dict):
+                return False
+            prompt_ids = onnx_decoder_patches.canary_initial_prompt_tokens(stripped, tokens_dict)
+            if not prompt_ids:
+                return False
+            canary._winstt_initial_prompt_ids = prompt_ids
+            return True
+        # Cohere path.
+        cohere = self._resolve_cohere_engine()
+        if cohere is not None:
+            tokens_dict = getattr(cohere, "_token_to_id", None)
+            if not isinstance(tokens_dict, dict):
+                return False
+            prompt_ids = onnx_decoder_patches.canary_initial_prompt_tokens(stripped, tokens_dict)
+            if not prompt_ids:
+                return False
+            cohere._winstt_initial_prompt_ids = prompt_ids
+            return True
+        return False
+
+    def _uninstall_initial_prompt_text(self) -> None:
+        """Clear ``_winstt_initial_prompt_ids`` on whichever engine is live.
+
+        Idempotent — clears on every supported engine type without checking
+        which one was actually installed. The attribute is read-only-on-
+        decode so leaving a stale ``None`` is harmless on engines we
+        didn't touch.
+        """
+        for resolver in (
+            self._resolve_whisper_engine,
+            self._resolve_canary_aed_engine,
+            self._resolve_cohere_engine,
+        ):
+            target = resolver()
+            if target is None:
+                continue
+            try:
+                target._winstt_initial_prompt_ids = None
+            except Exception:  # pragma: no cover — defensive
+                logger.exception(
+                    "Failed to clear initial-prompt attribute on %s",
+                    type(target).__name__,
+                )
 
     def transcribe_segments(
         self,
@@ -842,12 +1204,57 @@ class OnnxAsrTranscriber(ITranscriber):
         instance) — so every path gets the same conditioning, and the
         long-audio path's internal Silero segmentation VAD sees the
         normalized signal too.
+
+        Two engine-specific input-side pads also run here, since this is the
+        single chokepoint every transcribe path flows through:
+
+        * **AED short-audio pad** (Canary, Cohere): clips < 1 s confuse
+          AED decoders into dot-loops. Pad to 1.25 s of trailing silence.
+        * **Parakeet leading-silence pad** (RNN-T/TDT): models were
+          trained against silence-prefixed inputs; without it the first
+          word is occasionally dropped or duplicated. Add 250 ms.
         """
         if self._normalize_audio:
             audio = _peak_normalize(audio)
+        audio = self._maybe_apply_engine_pads(audio)
         if self._segment_with_vad:
             return self._recognize_vad_segments(audio, lang_arg, merge=merge)
         return self._recognize_direct(audio, lang_arg)
+
+    def _maybe_apply_engine_pads(self, audio: AudioArray) -> AudioArray:
+        """Apply Canary/Cohere short-audio pad or Parakeet leading-silence pad.
+
+        Engine detection is one-time per call (cheap, just an isinstance-
+        equivalent class-name walk) so we don't cache it on the
+        transcriber — engine identity is fixed for a transcriber's
+        lifetime, but it's cheap enough to re-resolve and keeps the
+        method side-effect-free w.r.t. instance state.
+
+        AED engines (Canary, Cohere) get two transformations in this order:
+
+        1. ``maybe_trim_leading_silence_for_aed`` — strip any leading
+           zero-pad the pipeline spliced in via ``vad_prefill_ms``. This
+           prefix wrecks Canary's cross-attention on short clips and
+           reproduces the "I speak if I spe, ikkkkkkkk" stutter the user
+           reported.
+        2. ``maybe_pad_for_aed`` — extend the (now-trimmed) clip with
+           trailing zeros up to ``AED_PAD_TO_SAMPLES`` (1.25 s) so the
+           decoder gets the end-of-utterance acoustic cue Handy provides
+           via ``managers/audio.rs:472-480``.
+
+        Order matters: trim FIRST so the pad measures against the
+        trimmed length, not the pre-trim length. Otherwise a 0.6 s clip
+        with 0.45 s of leading silence would pass the
+        ``shape[0] >= AED_MIN_SAMPLES`` check before trimming and exit
+        the pad path with only 0.15 s of real audio.
+        """
+        engine = self._model
+        if onnx_decoder_patches.is_canary_aed_engine(engine) or onnx_decoder_patches.is_cohere_engine(engine):
+            trimmed = onnx_decoder_patches.maybe_trim_leading_silence_for_aed(audio)
+            return onnx_decoder_patches.maybe_pad_for_aed(trimmed)
+        if onnx_decoder_patches.is_parakeet_transducer_engine(engine):
+            return onnx_decoder_patches.maybe_prepend_silence_for_parakeet(audio)
+        return audio
 
     @override
     def is_ready(self) -> bool:

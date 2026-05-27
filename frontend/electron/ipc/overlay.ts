@@ -113,6 +113,25 @@ const RECONCILE_INTERVAL_MS = 200;
 const RECONCILE_MAX_DURATION_MS = 2000;
 
 /**
+ * Grace period before the OS-level hide pass actually runs in dynamic-island
+ * mode. The renderer plays a panel-slide exit (translateY up + opacity-fade +
+ * blur) inside the window when its `isVisible` flips false — if we yanked the
+ * OS window to opacity:0 / hide() the instant the session ended, the user
+ * would see a hard cut instead of the exit animation. Keeping the window
+ * composited at full opacity for this many ms lets the renderer's animation
+ * play out before the OS catches up. The value tracks the renderer's
+ * REVEAL_CLOSE_DUR (350ms) in `shared/ui/dynamic-island/DynamicIsland.tsx`
+ * plus a small buffer for the final frame to land in the compositor.
+ *
+ * Floating-bottom mode keeps the original synchronous hide — its chip /
+ * bubble exit is 160ms and the user hasn't reported a missing animation
+ * there. Both `desired = "hidden"` and `sessionWantsOverlay = false` flip
+ * synchronously regardless of mode so any concurrent show race-check sees
+ * the right intent; only the actual `applyHide()` is deferred.
+ */
+const DYNAMIC_ISLAND_HIDE_GRACE_MS = 400;
+
+/**
  * DWM caches the most recently composited surface of transparent / always-on-
  * top windows. When the overlay is hidden after one session and shown again
  * for the next PTT press, the cached frame (pill + previous text) is what the
@@ -467,19 +486,13 @@ export function showOverlay(): void {
 }
 
 /**
- * Drop the pill off-screen with the full DWM-fighting retry dance, WITHOUT
- * touching `sessionWantsOverlay`. Used both by the public `hideOverlay()`
- * (session over) and by `syncOverlayToMainWindow` (session still live, the
- * main window is just covering for the pill).
+ * Run the actual OS-level hide pass: `applyHide()` synchronously, then the
+ * three DWM-defense re-applies on a tail of timers, then start the visible-
+ * surface reconciler. Extracted so the two call paths in `performHide()`
+ * (immediate for floating-bottom, deferred for dynamic-island) can share it.
  */
-function performHide(): void {
-	if (!overlayWindow) {
-		return;
-	}
-	desired = "hidden";
-	clearPendingTimers();
+function runHidePass(): void {
 	applyHide();
-
 	// Re-apply at intervals to combat DWM compositor swallowing the first
 	// hide under rapid show/hide cycles. Each tick checks `desired` so a
 	// show that lands during the retry window cancels the work.
@@ -492,8 +505,41 @@ function performHide(): void {
 			}, delay)
 		);
 	}
-
 	startHideReconciler();
+}
+
+/**
+ * Drop the pill off-screen with the full DWM-fighting retry dance, WITHOUT
+ * touching `sessionWantsOverlay`. Used both by the public `hideOverlay()`
+ * (session over) and by `syncOverlayToMainWindow` (session still live, the
+ * main window is just covering for the pill).
+ *
+ * In `dynamic-island` overlay mode the actual OS hide is deferred by
+ * `DYNAMIC_ISLAND_HIDE_GRACE_MS` so the renderer can play its slide-up exit
+ * animation in a still-composited window. `desired = "hidden"` flips
+ * immediately so a concurrent `showOverlay()` race-check still sees the
+ * right intent (and cancels the pending hide via `clearPendingTimers`).
+ * Floating-bottom keeps the original synchronous behavior.
+ */
+function performHide(): void {
+	if (!overlayWindow) {
+		return;
+	}
+	desired = "hidden";
+	clearPendingTimers();
+
+	if (resolveOverlayMode() === "dynamic-island") {
+		pendingTimers.push(
+			setTimeout(() => {
+				if (desired === "hidden") {
+					runHidePass();
+				}
+			}, DYNAMIC_ISLAND_HIDE_GRACE_MS)
+		);
+		return;
+	}
+
+	runHidePass();
 }
 
 /**

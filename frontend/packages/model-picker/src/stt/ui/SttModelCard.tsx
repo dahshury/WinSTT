@@ -1,14 +1,16 @@
 "use client";
 
 import { Combobox } from "@base-ui/react/combobox";
+import { Slider } from "@base-ui/react/slider";
 import {
 	AlertCircleIcon,
-	Atom01Icon,
 	BinaryCodeIcon,
 	CheckmarkCircle02Icon,
+	Delete02Icon,
 	GlobeIcon,
 	HardDriveDownloadIcon,
 	LiveStreaming02Icon,
+	NeuralNetworkIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ModelInfo } from "@/entities/model-catalog";
@@ -119,13 +121,70 @@ interface PerfBarsProps {
 	speedScore: number;
 }
 
-// Map a 0..1 score to a hue: 0 = red (bad), 1 = blue (good). The midpoint
-// lands in green — intuitive for "neutral / average". Saturation and
-// lightness are tuned to read well on both light and dark surfaces.
+/**
+ * Map a 0..1 score to a Tekken/Mortal-Kombat-style health-bar colour —
+ * red (worst) → amber (mid) → blue (best). Deliberately skips green so
+ * "neutral / average" doesn't accidentally read as "passing".
+ *
+ * Piecewise RGB interpolation through two anchor stops keeps the
+ * transition perceptually monotonic on dark surfaces and avoids the
+ * grey-mud that a single linear yellow→blue mix would land on.
+ */
 function scoreColor(score: number): string {
-	const clamped = Math.max(0, Math.min(1, score));
-	const hue = clamped * 220;
-	return `hsl(${hue}, 72%, 52%)`;
+	const t = Math.max(0, Math.min(1, score));
+	// Anchor colours, tuned to read on the surface-secondary track:
+	//   t=0.0  → red  (220, 60, 60)
+	//   t=0.5  → amber-yellow (230, 180, 50)
+	//   t=1.0  → blue (60, 130, 230)
+	const mix = (a: number, b: number, k: number): number => Math.round(a + (b - a) * k);
+	if (t < 0.5) {
+		const k = t * 2;
+		return `rgb(${mix(220, 230, k)}, ${mix(60, 180, k)}, ${mix(60, 50, k)})`;
+	}
+	const k = (t - 0.5) * 2;
+	return `rgb(${mix(230, 60, k)}, ${mix(180, 130, k)}, ${mix(50, 230, k)})`;
+}
+
+interface PerfBarProps {
+	label: string;
+	score: number;
+	tooltip: string;
+}
+
+/**
+ * One disabled Base UI Slider acting as a coloured progress bar. Mirrors
+ * the "comfortable disabled" pattern shown on the Fluid Functionalism
+ * Slider docs — small, thumb hidden, indicator filled to the score, no
+ * pointer interaction. Same primitive as the other Sliders in the app
+ * (``@base-ui/react/slider``), kept compact via ``Slider.Root`` controlled
+ * by the percent value and a fixed max of 100.
+ */
+function PerfBar({ label, score, tooltip }: PerfBarProps) {
+	const pct = Math.round(score * 100);
+	return (
+		<Tooltip content={tooltip} side="top">
+			<div className="flex items-center gap-1.5">
+				<span className="w-14 text-end font-medium text-[9px] text-foreground-muted uppercase tracking-wide">
+					{label}
+				</span>
+				<Slider.Root disabled max={100} value={pct}>
+					<Slider.Control className="flex h-1.5 w-16 select-none items-center">
+						<Slider.Track className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-secondary">
+							<Slider.Indicator
+								className="rounded-full"
+								style={{ backgroundColor: scoreColor(score) }}
+							/>
+							{/* Thumb is required by Base UI's Slider for keyboard
+							    a11y registration but hidden visually — these
+							    bars are read-only "score" displays, not
+							    interactive sliders. */}
+							<Slider.Thumb className="sr-only" />
+						</Slider.Track>
+					</Slider.Control>
+				</Slider.Root>
+			</div>
+		</Tooltip>
+	);
 }
 
 /**
@@ -142,32 +201,8 @@ function PerfBars({ speedScore, accuracyScore }: PerfBarsProps) {
 	const accPct = Math.round(accuracyScore * 100);
 	return (
 		<div className="hidden shrink-0 flex-col gap-1 sm:flex">
-			<Tooltip content={`Accuracy ${accPct}%`} side="top">
-				<div className="flex items-center gap-1.5">
-					<span className="w-14 text-end font-medium text-[9px] text-foreground-muted uppercase tracking-wide">
-						Accuracy
-					</span>
-					<div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-secondary">
-						<div
-							className="h-full rounded-full"
-							style={{ backgroundColor: scoreColor(accuracyScore), width: `${accPct}%` }}
-						/>
-					</div>
-				</div>
-			</Tooltip>
-			<Tooltip content={`Speed ${speedPct}%`} side="top">
-				<div className="flex items-center gap-1.5">
-					<span className="w-14 text-end font-medium text-[9px] text-foreground-muted uppercase tracking-wide">
-						Speed
-					</span>
-					<div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-secondary">
-						<div
-							className="h-full rounded-full"
-							style={{ backgroundColor: scoreColor(speedScore), width: `${speedPct}%` }}
-						/>
-					</div>
-				</div>
-			</Tooltip>
+			<PerfBar label="Accuracy" score={accuracyScore} tooltip={`Accuracy ${accPct}%`} />
+			<PerfBar label="Speed" score={speedScore} tooltip={`Speed ${speedPct}%`} />
 		</div>
 	);
 }
@@ -176,6 +211,14 @@ interface PrecisionGroupProps {
 	currentQuantization: OnnxQuantization;
 	isSelectedModel: boolean;
 	model: ModelInfo;
+	onRequestDeleteQuant?:
+		| ((
+				modelId: string,
+				quantization: OnnxQuantization,
+				displayName: string,
+				quantLabel: string
+		  ) => void)
+		| undefined;
 	onSelect: (modelId: string, quantization: OnnxQuantization) => void;
 	state: ModelStateEntry | undefined;
 }
@@ -186,13 +229,14 @@ function PrecisionGroup({
 	currentQuantization,
 	isSelectedModel,
 	onSelect,
+	onRequestDeleteQuant,
 }: PrecisionGroupProps) {
 	const options = getQuantizationOptions(model);
 	if (options.length === 0) {
 		return null;
 	}
 	return (
-		<div className="flex items-center gap-2">
+		<div className="flex flex-wrap items-center gap-2">
 			<Tooltip
 				content="Precision — the numeric format of the model's weights. Lower precision (q4 / int8) makes the model load and run faster and take less disk/RAM, at the cost of a small drop in transcription accuracy. Higher precision (fp32 / fp16) is the most accurate but slowest."
 				side="top"
@@ -201,24 +245,33 @@ function PrecisionGroup({
 					<HugeiconsIcon className="size-3" icon={BinaryCodeIcon} />
 				</span>
 			</Tooltip>
-			<ButtonGroup
-				aria-label={`Precision for ${model.displayName}`}
-				className="flex-wrap rounded-md ring-1 ring-border ring-inset"
-			>
-				{options.map((opt, i) => {
-					const isActive = isSelectedModel && opt.value === currentQuantization;
-					const cache = resolveQuantCache(state, opt.value);
-					return (
+			{options.map((opt) => {
+				const isActive = isSelectedModel && opt.value === currentQuantization;
+				const cache = resolveQuantCache(state, opt.value);
+				const isOnDisk = cache?.state === "cached" || cache?.state === "partial";
+				const canDelete = onRequestDeleteQuant !== undefined && isOnDisk;
+				// Per-quant button + optional trash icon, joined into a single
+				// ButtonGroup so they read as one control. Trash is only
+				// rendered when the variant actually has bytes on disk —
+				// matching the user's spec: "All model quantizations that
+				// are partially downloaded should have their badge as
+				// resume or delete. All models that are already downloaded
+				// should have delete as a button group beside their badge."
+				return (
+					<ButtonGroup
+						aria-label={`Precision ${opt.label} for ${model.displayName}`}
+						className="rounded-md ring-1 ring-border ring-inset"
+						key={opt.value || "default"}
+					>
 						<Tooltip
 							content={`${opt.label} — ${quantCacheStatus(cache)}. ${opt.tooltip}`}
-							key={opt.value || "default"}
 							side="top"
 						>
 							<button
 								className={cn(
 									"inline-flex h-6 cursor-pointer items-center gap-1.5 px-2 font-medium text-[10.5px] leading-none transition-colors",
-									i > 0 && "border-border border-l",
-									"first:rounded-l-[5px] last:rounded-r-[5px]",
+									"rounded-l-[5px]",
+									!canDelete && "rounded-r-[5px]",
 									isActive
 										? "bg-accent/20 text-accent"
 										: "bg-surface-secondary/40 text-foreground-secondary hover:bg-surface-hover"
@@ -234,9 +287,37 @@ function PrecisionGroup({
 								{opt.label}
 							</button>
 						</Tooltip>
-					);
-				})}
-			</ButtonGroup>
+						{canDelete ? (
+							<Tooltip
+								content={
+									cache?.state === "partial"
+										? `Delete partial ${opt.label} download`
+										: `Delete cached ${opt.label} weights`
+								}
+								side="top"
+							>
+								<button
+									aria-label={`Delete ${opt.label} weights for ${model.displayName}`}
+									className={cn(
+										"inline-flex h-6 cursor-pointer items-center justify-center border-border border-l px-1.5 leading-none transition-colors",
+										"rounded-r-[5px]",
+										"bg-surface-secondary/40 text-foreground-muted",
+										"hover:bg-error/15 hover:text-error"
+									)}
+									onClick={(e) => {
+										e.preventDefault();
+										e.stopPropagation();
+										onRequestDeleteQuant(model.id, opt.value, model.displayName, opt.label);
+									}}
+									type="button"
+								>
+									<HugeiconsIcon className="size-3" icon={Delete02Icon} />
+								</button>
+							</Tooltip>
+						) : null}
+					</ButtonGroup>
+				);
+			})}
 		</div>
 	);
 }
@@ -261,6 +342,21 @@ export interface SttModelCardProps {
 	 */
 	hasSelectedVariant?: boolean;
 	model: ModelInfo;
+	/**
+	 * Optional handler invoked when the user clicks the trash icon next
+	 * to a cached/partial quant badge. Receives `(modelId, quantization,
+	 * displayName, quantLabel)` so the consumer can render its own
+	 * confirmation dialog. When omitted, no trash icon is rendered (the
+	 * card stays read-only as it was before).
+	 */
+	onRequestDeleteQuant?:
+		| ((
+				modelId: string,
+				quantization: OnnxQuantization,
+				displayName: string,
+				quantLabel: string
+		  ) => void)
+		| undefined;
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
 	selectedId: string | undefined;
 	state: ModelStateEntry | undefined;
@@ -291,6 +387,7 @@ export function SttModelCard({
 	selectedId,
 	currentQuantization,
 	onSelect,
+	onRequestDeleteQuant,
 	actions,
 	hasSelectedVariant = false,
 }: SttModelCardProps) {
@@ -333,7 +430,7 @@ export function SttModelCard({
 					{model.sizeLabel ? (
 						<Tooltip content={`${model.sizeLabel} parameters`} side="top">
 							<span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-foreground-muted tabular-nums">
-								<HugeiconsIcon className="size-3" icon={Atom01Icon} />
+								<HugeiconsIcon className="size-3" icon={NeuralNetworkIcon} />
 								{model.sizeLabel}
 							</span>
 						</Tooltip>
@@ -366,6 +463,7 @@ export function SttModelCard({
 					currentQuantization={currentQuantization}
 					isSelectedModel={isSelected}
 					model={model}
+					onRequestDeleteQuant={onRequestDeleteQuant}
 					onSelect={onSelect}
 					state={state}
 				/>

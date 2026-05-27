@@ -117,6 +117,7 @@ export function ReasoningControls({
 							icon={BrainIcon}
 						/>
 						<input
+							aria-label="Max output tokens"
 							className="h-full w-full bg-transparent text-body text-foreground tabular-nums outline-none placeholder:text-foreground-muted"
 							inputMode="numeric"
 							min={1}

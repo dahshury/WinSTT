@@ -40,7 +40,6 @@ class TestRecordingPipeline:
     ) -> tuple[RecordingPipeline, EventBus, RecorderStateMachine, AudioBuffer]:
         cfg = config or RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
             # Preserve the legacy single-chunk onset semantics these tests
             # were written against; the speech-onset debounce is the new
             # production default (3) and is covered by its own tests below.
@@ -75,7 +74,6 @@ class TestRecordingPipeline:
     ) -> tuple[RecordingPipeline, EventBus, RecorderStateMachine, AudioBuffer, FakeVAD]:
         cfg = config or RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
             # Preserve the legacy single-chunk onset semantics these tests
             # were written against; the speech-onset debounce is the new
             # production default (3) and is covered by its own tests below.
@@ -227,47 +225,11 @@ class TestRecordingPipeline:
         assert sm.state == RecorderState.INACTIVE
         assert len(stopped_events) == 0
 
-    def test_request_stop_too_early_aborts_instead_of_leaving_stuck(self) -> None:
-        """When elapsed < min_length_of_recording, request_stop() ABORTS the
-        recording (state → INACTIVE) instead of returning early with state
-        stuck at RECORDING.
-
-        Locks in the fix for the regression where the realtime worker
-        tight-looped on stale audio after an accidental-tap PTT: pre-fix,
-        request_stop returned silently when elapsed < min_length so the
-        state machine stayed at RECORDING, while set_microphone(False)
-        had already paused the audio source — no new frames arrived but
-        is_recording stayed True forever. With the abort, state goes
-        INACTIVE, the buffer clears, and the realtime worker idles.
-        """
-        clock = Clock.fixed_clock(1000.0)
-        cfg = RecorderConfig.from_kwargs(
-            post_speech_silence_duration=0.1,
-            min_length_of_recording=10.0,  # Very large min length
-        )
-        pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(clock, config=cfg)
-
-        stopped_events: list[object] = []
-        event_bus.subscribe(RecordingStopped, stopped_events.append)
-
-        # Start recording (clock is fixed at 1000.0, so recording_start_time = 1000.0)
-        pipeline.request_start()
-        assert sm.state == RecorderState.RECORDING
-
-        # Stop immediately — elapsed = 1000.0 - 1000.0 = 0.0 < 10.0
-        pipeline.request_stop()
-        # State must be INACTIVE (aborted), not stuck at RECORDING.
-        assert sm.state == RecorderState.INACTIVE
-        # No RecordingStopped event — abort doesn't emit it (would mislead
-        # the renderer into expecting a transcription).
-        assert len(stopped_events) == 0
-
     def test_request_stop_with_backdate(self) -> None:
         """Lines 96-97: request_stop() with backdate_seconds > 0 calls buffer.backdate()."""
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
         )
         pipeline, event_bus, sm, buf, _vad = self._make_pipeline_with_clock(clock, config=cfg)
 
@@ -296,7 +258,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
         )
         pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(clock, config=cfg)
 
@@ -332,7 +293,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
             wakeword_backend="openwakeword",  # Enables use_wake_words
         )
         wake_detector = FakeWakeWordDetector(detect_at_call=-1)  # Never detects
@@ -389,40 +349,11 @@ class TestRecordingPipeline:
         # Still recording (did not call VAD or stop)
         assert sm.state == RecorderState.RECORDING
 
-    def test_process_recording_silence_min_length_not_met(self) -> None:
-        """Line 154: During recording, silence detected but elapsed < min_length_of_recording."""
-        clock = Clock.fixed_clock(1000.0)
-        cfg = RecorderConfig.from_kwargs(
-            post_speech_silence_duration=0.1,
-            min_length_of_recording=100.0,  # Very long min length
-        )
-        pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
-            clock,
-            speech_pattern=[False],
-            config=cfg,
-        )
-
-        turn_events: list[object] = []
-        event_bus.subscribe(TurnDetectionStarted, turn_events.append)
-
-        # Start recording (recording_start_time = 1000.0)
-        pipeline.request_start()
-        assert sm.state == RecorderState.RECORDING
-
-        # Process a silent chunk - elapsed = 0 < 100.0, should return early
-        chunk = _make_chunk()
-        pipeline._process_recording(chunk)
-
-        # Should still be recording, no turn detection started
-        assert sm.state == RecorderState.RECORDING
-        assert len(turn_events) == 0
-
     def test_process_recording_silence_triggers_stop(self) -> None:
         """Lines 162-163: Enough silence to trigger VADStopped + request_stop."""
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.0,  # Zero = immediate stop on silence
-            min_length_of_recording=0.0,
         )
         pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
             clock,
@@ -456,7 +387,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=999.0,  # Very long, so silence won't trigger stop
-            min_length_of_recording=0.0,
         )
         pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
             clock,
@@ -488,7 +418,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
             wakeword_backend="openwakeword",  # Enables use_wake_words
         )
         wake_detector = FakeWakeWordDetector(detect_at_call=1, word="jarvis")
@@ -518,7 +447,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
             wakeword_backend="openwakeword",
             # This test exercises the wake-word → VAD-onset wiring, not the
             # speech-onset debounce — keep the legacy single-chunk start.
@@ -605,7 +533,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
         )
         pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
             clock,
@@ -650,7 +577,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=999.0,  # Very long — would never fire
-            min_length_of_recording=0.0,
         )
         pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
             clock,
@@ -712,7 +638,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
             wakeword_backend="openwakeword",  # Enables use_wake_words
         )
         # wake_word_detector is None (the default)
@@ -754,7 +679,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.0,  # Would fire immediately if enabled
-            min_length_of_recording=0.0,
         )
         pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
             clock,
@@ -780,7 +704,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.0,
-            min_length_of_recording=0.0,
         )
         pipeline, _event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
             clock,
@@ -802,7 +725,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
         )
         pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
             clock,
@@ -836,36 +758,6 @@ class TestRecordingPipeline:
         assert sm.state == RecorderState.INACTIVE
         pipeline.request_stop()
         assert sm.state == RecorderState.INACTIVE
-        assert len(no_audio_events) == 1
-
-    def test_request_stop_emits_no_audio_and_aborts_when_too_short_in_ptt_mode(self) -> None:
-        """In PTT mode, request_stop below min_length emits NoAudioDetected
-        AND aborts (state → INACTIVE).
-
-        Post-fix: leaving state at RECORDING after a too-short stop caused
-        the realtime worker to tight-loop on stale audio (frame_count
-        frozen, audio source paused, but is_recording stayed True). Abort
-        guarantees no state machine remains in an active branch after a
-        rejected stop.
-        """
-        clock = Clock.fixed_clock(1000.0)
-        cfg = RecorderConfig.from_kwargs(
-            post_speech_silence_duration=0.1,
-            min_length_of_recording=10.0,
-        )
-        pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(clock, config=cfg)
-
-        no_audio_events: list[object] = []
-        event_bus.subscribe(NoAudioDetected, no_audio_events.append)
-
-        pipeline.request_start()
-        pipeline.silence_endpoint_enabled = False
-        assert sm.state == RecorderState.RECORDING
-
-        pipeline.request_stop()
-        # State no longer stuck at RECORDING; abort transitions to INACTIVE.
-        assert sm.state == RecorderState.INACTIVE
-        # NoAudioDetected still emitted for the PTT UI feedback.
         assert len(no_audio_events) == 1
 
     def test_handle_chunk_swallows_processing_errors(self) -> None:
@@ -914,7 +806,6 @@ class TestRecordingPipeline:
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
         )
         pipeline, _event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(
             clock,
@@ -940,7 +831,6 @@ class TestRecordingPipeline:
     ) -> tuple[RecordingPipeline, list[object], RecorderStateMachine, AudioBuffer]:
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
             speech_onset_consecutive_chunks=required,
         )
         pipeline, event_bus, sm, buf, _vad = self._make_pipeline_with_clock(
@@ -993,7 +883,6 @@ class TestRecordingPipeline:
         """PTT calls request_start() directly — the debounce never applies."""
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
             speech_onset_consecutive_chunks=3,
         )
         pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(Clock.fixed_clock(1000.0), config=cfg)
@@ -1014,7 +903,6 @@ class TestRecordingPipeline:
         """
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
             wakeword_backend="openwakeword",
         )
         pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(Clock.fixed_clock(1000.0), config=cfg)
@@ -1033,7 +921,6 @@ class TestRecordingPipeline:
         """_maybe_expire_wake_word clears an armed gate past its timeout."""
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
-            min_length_of_recording=0.0,
             wakeword_backend="openwakeword",
         )
         pipeline, _event_bus, _sm, _buf, _vad = self._make_pipeline_with_clock(Clock.fixed_clock(1000.0), config=cfg)

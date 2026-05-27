@@ -91,6 +91,7 @@ export interface ElectronMockHandle {
 	};
 	nativeImage: {
 		createFromPath: (path: string) => { isEmpty: () => boolean };
+		createFromBuffer: (buf: Buffer) => { isEmpty: () => boolean };
 	};
 	nativeTheme: {
 		shouldUseDarkColors: boolean;
@@ -243,6 +244,7 @@ export function electronMock(): ElectronMockHandle {
 		},
 		nativeImage: {
 			createFromPath: () => ({ isEmpty: () => false }),
+			createFromBuffer: () => ({ isEmpty: () => false }),
 		},
 		nativeTheme: {
 			shouldUseDarkColors: true,

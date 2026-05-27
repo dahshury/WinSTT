@@ -285,19 +285,50 @@ describe("dispatchChange / dispatchGate", () => {
 });
 
 describe("runHandleMainChange / runHandleRealtimeChange", () => {
-	test("pure quant swap when value equals currentModel", () => {
+	test("pure quant swap routes through the gate so the cache check + download dialog can fire", () => {
+		// Old behavior wrote settings.onnxQuantization synchronously via update,
+		// skipping the cache check. That triggered a server restart with an
+		// uncached quant, the load failed, and the picker rolled back — the
+		// "default-quant revert" symptom on Cohere/DirectML. The fix routes
+		// pure-quant swaps through dispatchChange / gateWithAssessment just
+		// like a model swap, so the dialog can offer a Download before the
+		// server is allowed to restart with files that aren't on disk.
 		const update = mock(() => undefined);
+		const gateWithAssessment = mock(() => Promise.resolve());
 		t.runHandleMainChange({
 			currentModel: "m",
 			currentQuantization: "int8",
-			gateWithAssessment: mock(() => Promise.resolve()) as never,
+			gateWithAssessment: gateWithAssessment as never,
 			issueSwap: mock(() => undefined) as never,
 			kind: "main",
 			quantization: "fp16",
 			update: update as never,
 			value: "m",
 		});
-		expect((update.mock.calls as unknown[][])[0]?.[0]).toEqual({ onnxQuantization: "fp16" });
+		expect(gateWithAssessment).toHaveBeenCalled();
+		expect(update).not.toHaveBeenCalled();
+	});
+
+	test("no-op short-circuit when neither model nor quant changed", () => {
+		// Same model + same quant must not round-trip the gate. The picker
+		// re-fires onChange in a few benign cases (re-mount, ItemIndicator
+		// reflow) and we don't want those triggering a server restart.
+		const update = mock(() => undefined);
+		const gateWithAssessment = mock(() => Promise.resolve());
+		const issueSwap = mock(() => undefined);
+		t.runHandleMainChange({
+			currentModel: "m",
+			currentQuantization: "int8",
+			gateWithAssessment: gateWithAssessment as never,
+			issueSwap: issueSwap as never,
+			kind: "main",
+			quantization: "int8",
+			update: update as never,
+			value: "m",
+		});
+		expect(gateWithAssessment).not.toHaveBeenCalled();
+		expect(update).not.toHaveBeenCalled();
+		expect(issueSwap).not.toHaveBeenCalled();
 	});
 
 	test("dispatches when value changes", () => {
@@ -317,17 +348,19 @@ describe("runHandleMainChange / runHandleRealtimeChange", () => {
 
 	test("realtime path mirrors main path", () => {
 		const update = mock(() => undefined);
+		const gateWithAssessment = mock(() => Promise.resolve());
 		t.runHandleRealtimeChange({
 			currentModel: "rt",
 			currentQuantization: "int8",
-			gateWithAssessment: mock(() => Promise.resolve()) as never,
+			gateWithAssessment: gateWithAssessment as never,
 			issueSwap: mock(() => undefined) as never,
 			kind: "realtime",
 			quantization: "fp16",
 			update: update as never,
 			value: "rt",
 		});
-		expect((update.mock.calls as unknown[][])[0]?.[0]).toEqual({ onnxQuantization: "fp16" });
+		expect(gateWithAssessment).toHaveBeenCalled();
+		expect(update).not.toHaveBeenCalled();
 	});
 });
 

@@ -331,6 +331,8 @@
     "useMainModel": "使用主模型",
     "useMainModelCaption": "质量更高但速度较慢",
     "useMainModelTooltip": "使用更大、更准确的主模型进行实时预览，而不是较小的实时模型。实时文本质量更好，但会显著增加 CPU/GPU 使用率，在较慢的硬件上可能会导致卡顿。",
+    "realtimeLockedToMainCaption": "正在使用主模型进行实时预览",
+    "realtimeLockedToMainTooltip": "您的主模型足够小，可以驱动实时预览，因此已被用于实时转录。单独的实时模型只会重复工作而不会改善质量。选择更大的主模型以解锁专用的实时模型。",
     "updateInterval": "更新间隔",
     "updateIntervalCaption": "实时更新之间的秒数",
     "updateIntervalTooltip": "实时转录更新之间的最短时间。较低的值提供更频繁的更新，但会使用更多处理能力。如果听写时出现卡顿或 CPU 使用率过高，请增加此值。",
@@ -372,9 +374,6 @@
     "postSpeechSilence": "语音后静音时长",
     "postSpeechSilenceCaption": "结束录音所需的静音秒数",
     "postSpeechSilenceTooltip": "语音结束后等待多长时间才完成该段落。较短的值响应更快，但可能会截断句子之间的停顿。适用于切换和监听模式——按住说话模式会自动管理。",
-    "minRecordingLength": "最短录音时长",
-    "minRecordingLengthCaption": "有效录音的最短秒数",
-    "minRecordingLengthTooltip": "短于此时长的录音将被视为噪音而丢弃。防止咳嗽、点击声或短暂声音等意外触发被转录。",
     "deviceSwitchFailed": "无法打开输入设备 — {reason}",
     "outputDevice": "Output Device",
     "outputDeviceCaption": "Speaker / headphones for chimes and TTS playback",
@@ -737,7 +736,11 @@
     "installCancel": "取消",
     "installRetry": "重试",
     "installConfirm": "下载并启用",
-    "installComponentInstalled": "已安装"
+    "installComponentInstalled": "已安装",
+    "paused": "已暂停",
+    "pauseInstall": "暂停",
+    "resumeInstall": "继续",
+    "cancelInstall": "取消"
   },
   "errors": {
     "somethingWentWrong": "出了点问题",

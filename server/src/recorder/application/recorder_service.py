@@ -369,7 +369,7 @@ class RecorderService:
         frame_count = self._audio_buffer.frame_count
         audio_seconds = self._audio_buffer.duration_seconds
         raw_audio = b"".join(self._audio_buffer.frames)
-        audio = self._audio_buffer.get_audio_array()
+        audio = self._pad_short_audio(self._audio_buffer.get_audio_array())
         self._audio_buffer.clear()
         self._event_bus.publish(TranscriptionStarted(timestamp=self._clock.get_current_time(), audio=raw_audio))
 
@@ -466,6 +466,18 @@ class RecorderService:
         nonzero_frac = float(np.count_nonzero(audio)) / audio.size
         return peak, rms, nonzero_frac
 
+    def _pad_short_audio(self, audio: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+        """Zero-pad sub-1 s clips up to 1.25 s so Whisper still gets a usable
+        encoder window. Mirrors Handy's ``stop_recording`` policy at
+        ``examples/Handy/src-tauri/src/managers/audio.rs`` — they pad to
+        ``WHISPER_SAMPLE_RATE * 5 / 4`` whenever the clip is non-empty and
+        shorter than one second. Empty buffers pass through untouched."""
+        sample_rate = self._config.audio.sample_rate
+        if 0 < audio.size < sample_rate:
+            target = sample_rate * 5 // 4
+            return np.pad(audio, (0, target - audio.size))
+        return audio
+
     def _safe_transcribe(
         self,
         transcriber: ITranscriber | None,
@@ -473,6 +485,7 @@ class RecorderService:
         language: str,
         *,
         lock: threading.Lock | None = None,
+        use_prompt: bool = True,
     ) -> TranscriptionResult | None:
         """Call ``transcriber.transcribe`` under the slot's lock if available.
 
@@ -486,15 +499,41 @@ class RecorderService:
         ``transcribe()`` and warmup paths; explicit per-slot locks are
         passed by the main-text and realtime-worker call sites so they no
         longer block each other on different transcriber instances.
+
+        ``use_prompt`` gates the Whisper initial-prompt prefix that biases
+        the decoder toward user ``custom_words``. The realtime worker
+        sets it to ``False`` — its windows are short and the prompt
+        latency overhead would compound per tick. The realtime path uses
+        the post-decode rapidfuzz pass for custom-word correction
+        instead. The realtime worker also passes ``custom_words=None``
+        implicitly via this gate.
         """
         if lock is None:
             lock = self._main_transcriber_lock
+        cw = self._config.text_correction.custom_words if use_prompt else None
+        # ``initial_prompt`` (free-form prior-text from the frontend's UIA
+        # composer) is the preferred decoder-bias channel; it's richer than
+        # the dictionary list because it carries the actual caret-leading
+        # text. The transcriber falls back to ``custom_words`` when this is
+        # empty, preserving the legacy dict-only behaviour.
+        ipt: str | None
+        if use_prompt:
+            cfg_ipt = self._config.transcription.initial_prompt
+            ipt = cfg_ipt if isinstance(cfg_ipt, str) else None
+        else:
+            ipt = None
         with lock:
             if not self._transcriber_ready(transcriber):
                 return None
             assert transcriber is not None  # narrowed by _transcriber_ready
             try:
-                return transcriber.transcribe(audio, language)
+                return transcriber.transcribe(
+                    audio,
+                    language,
+                    use_prompt=use_prompt,
+                    custom_words=cw,
+                    initial_prompt_text=ipt,
+                )
             except Exception:
                 # Catch-all because the failure modes here are dominated by
                 # backend-specific exceptions we can't import without taking
@@ -832,6 +871,83 @@ class RecorderService:
         self._unload_check_thread = worker
         worker.start()
 
+    def set_unload_timeout_seconds(self, timeout: int | None) -> None:
+        """Retune the idle-unload daemon at runtime.
+
+        ``None``/negative → never unload (stop the poller).
+        ``0``             → tear down immediately after each transcription
+                            (handled by :meth:`_maybe_unload_immediately`;
+                            the poller is unnecessary).
+        positive int      → seconds of idleness before tear-down; the
+                            poller is (re)started if not already running.
+
+        Renderer counterpart: the ``model_unload_timeout_seconds``
+        :func:`set_parameter` handler reaches the facade setter which
+        forwards here. Existed previously only as a CLI-arg / constructor
+        knob; this method removes the last "model.* keys force restart"
+        entry from the Electron-side ``STARTUP_ONLY_KEYS_LIST``.
+        """
+        normalized: int | None
+        if timeout is None or timeout < 0:
+            normalized = None
+        else:
+            normalized = int(timeout)
+        self._unload_timeout_seconds = normalized
+        self._config.transcription.model_unload_timeout_seconds = normalized
+        # Decide what to do with the poller. Two cases need it running:
+        #   * positive timeout — periodic idle check
+        #   * (nothing else; 0 and None don't need polling)
+        wants_poller = normalized is not None and normalized > 0
+        poller = self._unload_check_thread
+        poller_alive = poller is not None and poller.is_alive()
+        if wants_poller and not poller_alive:
+            # Reset the stop event so a previously-killed loop can be
+            # restarted (without this, the new thread exits immediately
+            # because the event is still set from the prior shutdown).
+            self._unload_stop_event.clear()
+            # Bump the activity timestamp so a fresh window starts now
+            # rather than measuring idle from the original boot time.
+            self._last_activity_at = self._clock.get_current_time()
+            self._start_unload_check_thread()
+            return
+        if not wants_poller and poller_alive:
+            # Signal the loop to exit on its next wait wake-up. We don't
+            # join here — the poller is daemon and any pending wait
+            # returns within `_UNLOAD_CHECK_INTERVAL_SECONDS`.
+            self._unload_stop_event.set()
+            self._unload_check_thread = None
+
+    def reconfigure_audio_source(
+        self,
+        *,
+        always_on_microphone: bool | None = None,
+        lazy_stream_close: bool | None = None,
+        lazy_close_timeout_seconds: float | None = None,
+    ) -> None:
+        """Forward audio-source policy updates to the underlying adapter.
+
+        :class:`PyAudioSource` exposes a matching ``reconfigure`` method
+        that updates the three mic-release knobs in place. Other
+        :class:`IAudioSource` adapters (``FileAudioSource``, fakes) lack
+        the method — we duck-type and silently no-op so non-PyAudio
+        setups (file transcription, tests) aren't surprised by a
+        runtime ``AttributeError``.
+        """
+        reconfigure = getattr(self._audio_source, "reconfigure", None)
+        if not callable(reconfigure):
+            return
+        reconfigure(
+            always_on_microphone=always_on_microphone,
+            lazy_stream_close=lazy_stream_close,
+            lazy_close_timeout_seconds=lazy_close_timeout_seconds,
+        )
+        if always_on_microphone is not None:
+            self._config.audio.always_on_microphone = bool(always_on_microphone)
+        if lazy_stream_close is not None:
+            self._config.audio.lazy_stream_close = bool(lazy_stream_close)
+        if lazy_close_timeout_seconds is not None:
+            self._config.audio.lazy_close_timeout_seconds = float(lazy_close_timeout_seconds)
+
     def _unload_check_loop(self) -> None:
         """Poll for idleness; fire :meth:`_unload_models_for_idle` when due."""
         while not self._unload_stop_event.is_set():
@@ -1077,6 +1193,20 @@ class RecorderService:
         self._pipeline.request_abort()
         # Put a sentinel on the queue to unblock wait_audio() immediately
         self._pipeline.transcription_queue.put_nowait(None)
+        # Defense-in-depth: wipe the realtime accumulator + stabilizer +
+        # last_realtime_text on the abort thread itself. The realtime worker
+        # already resets these at the next recording start (via
+        # _realtime_mark_recording_start), but that gives a brief window
+        # where `_reuse_realtime_text_if_eligible` could observe the
+        # previous session's stabilized text, and where the stabilizer's
+        # text_storage deque still holds session-A prefixes that could
+        # mis-anchor the very first realtime call of session B. Clearing
+        # here closes that window. Operations are individual field assigns
+        # + deque.clear() — all atomic under the GIL, so the worker
+        # thread's concurrent stabilizer.update() either runs entirely
+        # before or after this reset (eventually consistent on the next
+        # _realtime_mark_recording_start regardless).
+        self._reset_realtime_accumulator(clear_last=True)
 
     def wait_audio(self) -> bool:
         """Block until the pipeline signals a recording is ready.
@@ -1141,7 +1271,7 @@ class RecorderService:
     def transcribe(self) -> str:
         self._mark_activity()
         self._ensure_main_transcriber_loaded()
-        audio = self._audio_buffer.get_audio_array()
+        audio = self._pad_short_audio(self._audio_buffer.get_audio_array())
         result = self._safe_transcribe(self._transcriber, audio, self._config.transcription.language)
         if result is None:
             logger.warning("transcribe() skipped — model swap in progress")
@@ -2108,6 +2238,7 @@ class RecorderService:
             audio,
             self._config.transcription.language,
             lock=self._realtime_transcriber_lock,
+            use_prompt=False,
         )
         if result is None:
             return None

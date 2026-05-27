@@ -33,7 +33,6 @@ from tests.fakes.fake_vad import FakeVAD
 def _make_service() -> RecorderService:
     config = RecorderConfig.from_kwargs(
         post_speech_silence_duration=0.05,
-        min_length_of_recording=0.0,
         use_microphone=False,
     )
     return RecorderService(

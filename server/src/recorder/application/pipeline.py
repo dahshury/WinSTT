@@ -68,6 +68,21 @@ class RecordingPipeline(Worker):
         # monolith's `wake_word_timeout`.
         self._wake_word_timeout: float = config.wake_word.wake_word_timeout
 
+        # Leading-silence carry-forward (Handy parity). The deque holds the
+        # most recent N silence-classified chunks while not recording. On
+        # the transition INACTIVE/LISTENING → RECORDING the deque contents
+        # are PREPENDED to the recording so the Whisper encoder sees the
+        # silence→speech boundary, giving weak starting consonants the
+        # context they need to survive far-mic acoustics. ``maxlen`` is
+        # derived from chunk_duration_ms = buffer_size / sample_rate;
+        # 0-ms (disabled) yields maxlen=0 (the deque accepts and discards
+        # immediately, which is cheaper than guarding every append). See
+        # examples/Handy/src-tauri/src/audio_toolkit/vad/smoothed.rs
+        # (``prefill_frames``).
+        self._silence_prefill: collections.deque[AudioChunk] = collections.deque(
+            maxlen=self._compute_silence_prefill_maxlen(config),
+        )
+
         self._audio_queue: queue.Queue[AudioChunk] = queue.Queue()
         self._recording_start_time: float = 0.0
         self._speech_end_silence_start: float = 0.0
@@ -89,6 +104,33 @@ class RecordingPipeline(Worker):
         self._speech_detected_in_recording: bool = False
         self._use_wake_words: bool = bool(config.wake_word.wakeword_backend)
         self._transcription_queue: queue.Queue[tuple[bool, float] | None] = queue.Queue()
+
+    @staticmethod
+    def _compute_silence_prefill_maxlen(config: RecorderConfig) -> int:
+        """Translate vad_prefill_ms into a chunk count for the prefill deque.
+
+        ``chunk_duration_ms = buffer_size / sample_rate * 1000``. At the
+        defaults (512 / 16000 = 32 ms) and prefill=450 ms this resolves to
+        ``ceil(450 / 32) = 15`` chunks — matching Handy's hardcoded
+        ``prefill_frames=15``. We round UP so we don't accidentally
+        truncate the prefill window when the buffer size doesn't divide
+        the prefill cleanly; an extra chunk of silence costs negligible
+        Whisper encoder time but a missing one re-introduces the bug.
+        """
+        prefill_ms = config.vad.vad_prefill_ms
+        if prefill_ms <= 0:
+            return 0
+        sample_rate = max(1, config.audio.sample_rate)
+        buffer_size = max(1, config.audio.buffer_size)
+        chunk_ms = (buffer_size * 1000.0) / sample_rate
+        if chunk_ms <= 0:
+            return 0
+        # math.ceil without importing math — int(x) + (1 if x % 1 else 0)
+        ratio = prefill_ms / chunk_ms
+        count = int(ratio)
+        if ratio > count:
+            count += 1
+        return count
 
     def feed_audio(self, chunk: AudioChunk) -> None:
         self._audio_queue.put(chunk)
@@ -119,10 +161,53 @@ class RecordingPipeline(Worker):
         self._enter_recording_state()
         self._recording_start_time = self._clock.get_current_time()
         self._buffer.start_recording()
+        # PREPEND the silence-prefill deque so the Whisper encoder sees
+        # the silence→speech boundary. ``start_recording`` above just
+        # promoted the pre-roll into ``_frames``; we splice the silence
+        # prefill in front of it. ``start_recording`` already cleared
+        # the pre-roll, but we still need to clear the silence_prefill
+        # ourselves — otherwise the next utterance double-prepends the
+        # same silence frames. Order: silence_prefill || pre_roll ||
+        # recording frames (rightmost is most recent).
+        self._splice_silence_prefill_in_front()
         self._stop_recording_on_voice_deactivity = True
         self._speech_detected_in_recording = False
         self._consecutive_speech_chunks = 0
         self._event_bus.publish(RecordingStarted(timestamp=self._clock.get_current_time()))
+
+    def _splice_silence_prefill_in_front(self) -> None:
+        """Prepend the silence-prefill deque to the recording frames buffer.
+
+        Called from ``request_start`` immediately after the pre-roll is
+        promoted into ``_frames``. The audio_buffer exposes ``frames``
+        as a list, so we splice via re-assignment. Clears the prefill
+        deque so the next recording doesn't double-count these frames.
+        Pre-roll and prefill overlap in content for the VAD-onset path
+        (both capture the same silence chunks) — that's deliberate. The
+        prefill is the explicit MINIMUM 450 ms silence guarantee even
+        when pre_recording_buffer_duration is shortened, and pre-roll
+        adds whatever extra context fits in its wider window. Whisper's
+        encoder is robust to a few hundred ms of redundant silence —
+        what matters is that the silence→speech transition is present.
+        """
+        if not self._silence_prefill:
+            return
+        prefill_frames = list(self._silence_prefill)
+        self._silence_prefill.clear()
+        # Splice into the buffer's frame list. We touch ``_frames``
+        # via the public ``frames`` property only for the read; the
+        # write goes through ``add_frame`` so the buffer's internal
+        # invariants stay owned by AudioBuffer. We rebuild the list
+        # rather than insert-at-zero to keep the operation O(n) once.
+        existing = list(self._buffer.frames)
+        # The cheapest way to splice with current AudioBuffer surface
+        # is to clear + re-add. ``clear`` resets pre_roll too but
+        # that's already empty post start_recording.
+        self._buffer.clear()
+        for frame in prefill_frames:
+            self._buffer.add_frame(frame)
+        for frame in existing:
+            self._buffer.add_frame(frame)
 
     def _emit_no_audio(self) -> None:
         self._event_bus.publish(NoAudioDetected(timestamp=self._clock.get_current_time()))
@@ -146,33 +231,26 @@ class RecordingPipeline(Worker):
            Emit ``NoAudioDetected`` on PTT so the UI can react, no state
            change needed.
 
-        2. **Recording too short** — recording elapsed below
-           ``min_length_of_recording`` (default 0.5 s). This is the
-           "accidental tap" case: the user pressed PTT and released before
-           any meaningful speech could be captured. **Abort** the recording
-           (state → INACTIVE, buffer cleared) — if we merely returned here
-           the state would stay at RECORDING with no audio reader feeding
-           the buffer (set_microphone(False) already paused the source),
-           and the realtime worker would tight-loop on the stale pre-roll
-           frames until process exit. (See
-           ``project_pipeline_stop_abort_too_short`` memory note + the
-           ``frame_count=27 forever`` regression that produced this fix.)
-
-        3. **PTT stop without speech** — recording lasted long enough but no
-           speech-active frame was registered (e.g., user held PTT during
-           silence). Same abort path as (2), with a non-PTT-gated
-           ``NoAudioDetected`` event so the UI knows nothing was captured.
+        2. **PTT stop without speech** — VAD never registered a speech-
+           active frame (e.g., user held PTT during silence). **Abort** the
+           recording (state → INACTIVE, buffer cleared) — if we merely
+           returned here the state would stay at RECORDING with no audio
+           reader feeding the buffer (set_microphone(False) already paused
+           the source), and the realtime worker would tight-loop on the
+           stale pre-roll frames until process exit. (See
+           ``project_pipeline_stop_abort_too_short`` memory note.) This is
+           the sole, content-based "no audio detected" gate — Handy's
+           ``SmoothedVad`` follows the same pattern
+           (examples/Handy/src-tauri/src/audio_toolkit/vad/smoothed.rs).
+           Short utterances are no longer rejected by a time floor; clips
+           shorter than 1.25 s are zero-padded to 1.25 s at transcribe time
+           (mirrors ``examples/Handy/src-tauri/src/managers/audio.rs``).
 
         Otherwise: finalize stop, transition to TRANSCRIBING, enqueue for
         transcription.
         """
         if not self._sm.is_recording:
             self._emit_no_audio_if_ptt()
-            return
-        elapsed = self._clock.get_current_time() - self._recording_start_time
-        if elapsed < self._config.vad.min_length_of_recording:
-            self._emit_no_audio_if_ptt()
-            self.request_abort()
             return
         if self._is_ptt_stop_without_speech():
             self._emit_no_audio()
@@ -212,6 +290,11 @@ class RecordingPipeline(Worker):
         self._consecutive_speech_chunks = 0
         self._wakeword_detected = False
         self._wakeword_detected_at = 0.0
+        # Drop the silence-prefill — an aborted recording shouldn't leak
+        # its trailing silence into the NEXT recording's prefill, and the
+        # deque would otherwise survive across the abort. ``maxlen``
+        # is preserved (deque.clear() leaves it intact).
+        self._silence_prefill.clear()
 
     @property
     def post_speech_silence_duration(self) -> float:
@@ -304,7 +387,7 @@ class RecordingPipeline(Worker):
     def _vad_onset_armed(self) -> bool:
         return self._start_recording_on_voice_activity or self._wakeword_detected
 
-    def _accumulate_onset_speech(self, chunk: AudioChunk) -> bool:
+    def _accumulate_onset_speech_from_result(self, is_speech: bool) -> bool:
         """Track consecutive-speech onset; return whether it's sustained.
 
         A non-speech chunk breaks the run — onset must be CONSECUTIVE
@@ -312,17 +395,21 @@ class RecordingPipeline(Worker):
         speech is present but not yet sustained the caller stays in
         LISTENING (no RecordingStarted) while still pre-rolling the chunk
         so the onset audio is preserved for when we do commit.
+
+        Takes the VAD verdict as a parameter rather than running VAD
+        again so the caller (``_process_not_recording``) can share one
+        VAD call with the silence-prefill bookkeeping.
         """
-        if not self._vad.detect(chunk).is_speech:
+        if not is_speech:
             self._consecutive_speech_chunks = 0
             return False
         self._consecutive_speech_chunks += 1
         return self._consecutive_speech_chunks >= self._speech_onset_required
 
-    def _try_start_on_voice_activity(self, chunk: AudioChunk) -> bool:
+    def _try_start_on_voice_activity_from_result(self, is_speech: bool) -> bool:
         if not self._vad_onset_armed():
             return False
-        if not self._accumulate_onset_speech(chunk):
+        if not self._accumulate_onset_speech_from_result(is_speech):
             return False
         self._consecutive_speech_chunks = 0
         self._event_bus.publish(VADStarted(timestamp=self._clock.get_current_time()))
@@ -333,7 +420,19 @@ class RecordingPipeline(Worker):
 
     def _process_not_recording(self, chunk: AudioChunk) -> None:
         self._maybe_detect_wake_word(chunk)
-        if self._try_start_on_voice_activity(chunk):
+        # Run VAD exactly once per chunk and share the verdict between
+        # the silence-prefill bookkeeping and the onset-debounce decision.
+        # Calling ``_vad.detect`` twice would double the CPU cost of the
+        # composite VAD (Silero is the expensive half) and risk Silero's
+        # internal LSTM state diverging across the two calls.
+        is_speech = self._vad.detect(chunk).is_speech
+        # Silence-prefill: bounded deque of the most recent N silence
+        # frames. On the first speech chunk that commits a recording
+        # (handled below), ``request_start`` drains this into the
+        # recording buffer so Whisper sees the silence→speech transition.
+        if not is_speech and self._silence_prefill.maxlen:
+            self._silence_prefill.append(chunk)
+        if self._try_start_on_voice_activity_from_result(is_speech):
             return
         self._buffer.add_to_pre_roll(chunk)
 
@@ -354,9 +453,6 @@ class RecordingPipeline(Worker):
             self.request_stop()
 
     def _handle_silence(self) -> None:
-        elapsed = self._clock.get_current_time() - self._recording_start_time
-        if elapsed < self._config.vad.min_length_of_recording:
-            return
         self._begin_silence_turn()
         self._maybe_fire_silence_end()
 

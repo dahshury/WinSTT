@@ -3,16 +3,69 @@ import { dbg } from "./debug-log";
 import { buildInitialPromptPair, type RawDictEntry } from "./initial-prompt";
 import { getStoreRaw, store } from "./store";
 
+/**
+ * Per-utterance dynamic context tail. Set by the context-capture
+ * pipeline (in relay.ts) when `general.contextAwareness` is on and the
+ * UIA snapshot resolves; cleared when the dictation session ends. Kept
+ * module-level so it survives across rebuilds — the alternative would
+ * be threading a callback through every consumer of pushInitialPrompts.
+ *
+ * Module-private to enforce the "only the context-capture pipeline
+ * touches this" invariant. Callers go through
+ * {@link setVolatileContextTail} / {@link clearVolatileContextTail}.
+ */
+let volatileContextTail = "";
+
 /** Pull all three inputs out of the store + build the composed pair. */
 function readCurrentInitialPrompt(): { main: string; realtime: string } {
 	const dictionary = store.get("dictionary") as RawDictEntry[] | undefined;
 	const mainPrefixRaw = getStoreRaw("model.initialPrompt");
 	const realtimePrefixRaw = getStoreRaw("model.initialPromptRealtime");
 	return buildInitialPromptPair({
+		contextTail: volatileContextTail,
 		dictionary,
 		mainPrefix: typeof mainPrefixRaw === "string" ? mainPrefixRaw : "",
 		realtimePrefix: typeof realtimePrefixRaw === "string" ? realtimePrefixRaw : "",
 	});
+}
+
+/**
+ * Push a per-utterance prior-text fragment into the next composed
+ * prompt and re-sync it to the server. No-op on empty input (callers
+ * use {@link clearVolatileContextTail} to clear).
+ *
+ * Idempotent: pushing the same tail twice produces one set_parameter
+ * round-trip (because `pushInitialPrompts` always pushes regardless;
+ * the server treats identical updates as cheap).
+ */
+export function setVolatileContextTail(client: SttClient, tail: string): void {
+	if (tail.length === 0) {
+		return;
+	}
+	if (volatileContextTail === tail) {
+		return;
+	}
+	volatileContextTail = tail;
+	pushInitialPrompts(client);
+}
+
+/**
+ * Drop the volatile context tail and re-sync the base prompt to the
+ * server. Called when a dictation session ends (fullSentence consumed,
+ * cancel, listen-mode passthrough) so the next non-context-aware
+ * utterance doesn't accidentally inherit stale prior-text.
+ */
+export function clearVolatileContextTail(client: SttClient): void {
+	if (volatileContextTail === "") {
+		return;
+	}
+	volatileContextTail = "";
+	pushInitialPrompts(client);
+}
+
+/** Test-only — drop the volatile state so suites don't leak across tests. */
+export function __resetVolatileContextForTesting__(): void {
+	volatileContextTail = "";
 }
 
 // Re-exported so existing callers (stt-process.ts) keep importing from

@@ -40,7 +40,6 @@ INIT_REALTIME_INITIAL_PAUSE = 0.2
 INIT_SILERO_SENSITIVITY = 0.4
 INIT_WEBRTC_SENSITIVITY = 3
 INIT_POST_SPEECH_SILENCE_DURATION = 0.6
-INIT_MIN_LENGTH_OF_RECORDING = 0.5
 INIT_MIN_GAP_BETWEEN_RECORDINGS = 0
 INIT_WAKE_WORDS_SENSITIVITY = 0.6
 INIT_PRE_RECORDING_BUFFER_DURATION = 1.0
@@ -107,7 +106,6 @@ class AudioToTextRecorderClient:
         silero_deactivity_detection: bool = False,
         webrtc_sensitivity: int = INIT_WEBRTC_SENSITIVITY,
         post_speech_silence_duration: float = INIT_POST_SPEECH_SILENCE_DURATION,
-        min_length_of_recording: float = INIT_MIN_LENGTH_OF_RECORDING,
         min_gap_between_recordings: float = INIT_MIN_GAP_BETWEEN_RECORDINGS,
         pre_recording_buffer_duration: float = INIT_PRE_RECORDING_BUFFER_DURATION,
         on_vad_start: SimpleCallback | None = None,
@@ -179,7 +177,6 @@ class AudioToTextRecorderClient:
         self.silero_deactivity_detection = silero_deactivity_detection
         self.webrtc_sensitivity = webrtc_sensitivity
         self.post_speech_silence_duration = post_speech_silence_duration
-        self.min_length_of_recording = min_length_of_recording
         self.min_gap_between_recordings = min_gap_between_recordings
         self.pre_recording_buffer_duration = pre_recording_buffer_duration
 
@@ -409,7 +406,6 @@ class AudioToTextRecorderClient:
         ("silero_sensitivity", "--silero_sensitivity", False),
         ("silero_use_onnx", "--silero_use_onnx", True),
         ("webrtc_sensitivity", "--webrtc_sensitivity", False),
-        ("min_length_of_recording", "--min_length_of_recording", False),
         ("min_gap_between_recordings", "--min_gap_between_recordings", False),
         ("realtime_processing_pause", "--realtime_processing_pause", False),
         ("early_transcription_on_silence", "--early_transcription_on_silence", False),

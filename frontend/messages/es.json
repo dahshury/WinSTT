@@ -331,6 +331,8 @@
     "useMainModel": "Usar modelo principal",
     "useMainModelCaption": "Mayor calidad pero más lento",
     "useMainModelTooltip": "Usa el modelo principal, más grande y preciso, para la vista previa en vivo en lugar del modelo en tiempo real más pequeño. Ofrece mejor texto en vivo pero aumenta significativamente el uso de CPU/GPU y puede causar retrasos en hardware más lento.",
+    "realtimeLockedToMainCaption": "Usando el modelo principal para la vista previa en vivo",
+    "realtimeLockedToMainTooltip": "Tu modelo principal es lo suficientemente pequeño para impulsar la vista previa en vivo, por lo que ya se usa para la transcripción en tiempo real. Un modelo en tiempo real separado solo duplicaría el trabajo sin mejorar la calidad. Elige un modelo principal más grande para desbloquear un modelo en tiempo real dedicado.",
     "updateInterval": "Intervalo de actualización",
     "updateIntervalCaption": "Segundos entre actualizaciones en tiempo real",
     "updateIntervalTooltip": "Tiempo mínimo entre actualizaciones de transcripción en vivo. Valores más bajos ofrecen actualizaciones más frecuentes pero usan más potencia de procesamiento. Aumenta si experimentas tartamudeo o alto uso de CPU durante el dictado.",
@@ -372,9 +374,6 @@
     "postSpeechSilence": "Silencio posterior al habla",
     "postSpeechSilenceCaption": "Segundos de silencio para finalizar la grabación",
     "postSpeechSilenceTooltip": "Cuánto tiempo esperar después de que termine el habla antes de finalizar el segmento. Valores más cortos se sienten más rápidos pero pueden cortar pausas entre oraciones. Se aplica en los modos Alternar y Escuchar — Pulsar para hablar gestiona esto automáticamente.",
-    "minRecordingLength": "Duración mínima de grabación",
-    "minRecordingLengthCaption": "Segundos mínimos para una grabación válida",
-    "minRecordingLengthTooltip": "Las grabaciones más cortas que esto se descartan como ruido. Evita activaciones accidentales como toses, clics o sonidos breves de ser transcritos.",
     "deviceSwitchFailed": "No se pudo abrir el dispositivo de entrada — {reason}",
     "outputDevice": "Output Device",
     "outputDeviceCaption": "Speaker / headphones for chimes and TTS playback",
@@ -737,7 +736,11 @@
     "installCancel": "Cancelar",
     "installRetry": "Reintentar",
     "installConfirm": "Descargar y activar",
-    "installComponentInstalled": "Instalado"
+    "installComponentInstalled": "Instalado",
+    "paused": "Pausado",
+    "pauseInstall": "Pausar",
+    "resumeInstall": "Reanudar",
+    "cancelInstall": "Cancelar"
   },
   "errors": {
     "somethingWentWrong": "Algo salió mal",

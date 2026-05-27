@@ -88,7 +88,6 @@ export const audioSettingsSchema = z.object({
 	sileroDeactivityDetection: z.boolean().default(true),
 	webrtcSensitivity: z.number().int().min(0).max(3).default(3),
 	postSpeechSilenceDuration: z.number().default(0.7),
-	minLengthOfRecording: z.number().default(1.1),
 	minGapBetweenRecordings: z.number().default(0),
 	preRecordingBufferDuration: z.number().default(1.0),
 	// Adaptive-VAD calibration map keyed by input-device name. The server

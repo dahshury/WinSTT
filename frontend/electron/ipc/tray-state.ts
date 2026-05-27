@@ -85,8 +85,9 @@ function trayResourcesRoot(): string {
 		return path.join(process.resourcesPath, "tray");
 	}
 	// Dev: the tsup bundle is at dist-electron/main.js; resources live at
-	// frontend/electron/resources/tray/ which is two `..` away.
-	return path.join(import.meta.dirname, "..", "resources", "tray");
+	// frontend/electron/resources/tray/ — i.e. `../electron/resources/tray`
+	// relative to the bundle.
+	return path.join(import.meta.dirname, "..", "electron", "resources", "tray");
 }
 
 /**
@@ -181,6 +182,17 @@ function applyTrayImage(): void {
 
 function rebuildContextMenu(): void {
 	if (!model.tray || model.tray.isDestroyed()) {
+		return;
+	}
+	// Native context menus are intentionally limited to Linux. On
+	// Windows/macOS, calling `Tray.setContextMenu` makes the OS surface
+	// the native menu on right-click — which preempts the custom
+	// BrowserWindow-based menu (`showTrayMenuAt` in tray-menu-window.ts)
+	// that owns the rich UI: mic selector, recording-mode switcher,
+	// file-transcribe, log/diag actions, etc. Linux AppIndicator backends
+	// don't fire `right-click` events reliably, so the native menu is the
+	// only viable fallback there.
+	if (process.platform !== "linux") {
 		return;
 	}
 	const template = buildMenuTemplate();

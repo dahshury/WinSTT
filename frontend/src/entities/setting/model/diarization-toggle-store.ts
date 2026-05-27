@@ -5,6 +5,7 @@ import {
 	onDiarizationToggleFailed,
 	onDiarizationToggleStarted,
 } from "@/shared/api/ipc-client";
+import { useSettingsStore } from "./settings-store";
 
 /**
  * Tracks the in-flight runtime diarization toggle. The server pushes
@@ -48,6 +49,17 @@ function initDiarizationToggleStore(): () => void {
 	});
 	const unsubFailed = onDiarizationToggleFailed((info) => {
 		useDiarizationToggleStore.getState().fail(info);
+		// On activation failure (e.g. offline first-run download, OOM) the
+		// server stayed in its previous state — revert the optimistic
+		// toggle in the settings store so the UI doesn't claim diarization
+		// is on when it isn't. Performed here (where the failure surfaces)
+		// rather than in a component effect so the source of truth lives
+		// alongside the IPC listener that owns the lifecycle.
+		const settings = useSettingsStore.getState();
+		const current = settings.settings.general?.speakerDiarization ?? false;
+		if (current === info.enabled) {
+			settings.updateGeneralSettings({ speakerDiarization: !info.enabled });
+		}
 	});
 	return () => {
 		unsubStarted();

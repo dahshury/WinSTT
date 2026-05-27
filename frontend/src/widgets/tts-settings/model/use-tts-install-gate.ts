@@ -145,10 +145,20 @@ export function useTtsInstallGate(): TtsInstallGate {
 			}),
 		[]
 	);
+	// The on-demand install fires THREE distinct download-complete events
+	// (engine pack → voice model → voicepacks), interleaved with phase
+	// pings. Resetting the phase on every complete event caused the
+	// section to briefly re-enable between assets — the toggle/voice/speed
+	// controls would flash interactive for ~50 ms each time. Only treat
+	// CANCELLED completion as "install over"; for successful completion,
+	// trust the server's `tts_install_status: ready` ping (which the other
+	// effect handles) to mark the install as done.
 	useEffect(
 		() =>
-			onTtsModelDownloadComplete(() => {
-				setInstallPhase(null);
+			onTtsModelDownloadComplete(({ cancelled }) => {
+				if (cancelled) {
+					setInstallPhase(null);
+				}
 			}),
 		[]
 	);

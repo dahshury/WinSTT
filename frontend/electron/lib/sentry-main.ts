@@ -798,7 +798,14 @@ function applySentryInit(mod: SentryMainModule, dsn: string, release: string, en
 		dsn,
 		release,
 		environment: env,
-		tracesSampleRate: 0,
+		// Sample 10% of performance traces. Desktop traffic is low-volume and
+		// occasional spans (model load, transcription latency) help diagnose
+		// slow paths without blowing the Sentry quota. Set to 0 to disable.
+		// (`@sentry/electron/main` ships without a replay integration, so the
+		// renderer-side `replaysSessionSampleRate` option doesn't exist on
+		// `ElectronMainOptions` — privacy on the desktop is preserved by NOT
+		// wiring the renderer-side `@sentry/electron/renderer` replay package.)
+		tracesSampleRate: 0.1,
 		beforeSend,
 		// Strip user-home paths from stack-frame filenames before they leave the device.
 		// (`@sentry/electron` ships with a normalizePathsIntegration by default.)

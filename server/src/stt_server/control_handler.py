@@ -156,6 +156,20 @@ ALLOWED_PARAMETERS: list[str] = [
     # ready.
     "initial_prompt",
     "initial_prompt_realtime",
+    # Hot-swappable model knobs — see facade setters in recorder/__init__.py.
+    # Each one updates the recorder config and triggers an in-place
+    # ``request_model_swap`` (or, for audio knobs, a ``reconfigure``) rather
+    # than forcing a full server restart. Without these here the renderer
+    # would have to keep them in ``STARTUP_ONLY_KEYS_LIST`` and pay the
+    # ~2-5s WS-reconnect + cold-load cost on every flip.
+    "onnx_quantization",
+    "translate_to_english",
+    "model_unload_timeout_seconds",
+    "webrtc_sensitivity",
+    "silero_deactivity_detection",
+    "always_on_microphone",
+    "lazy_stream_close",
+    "lazy_close_timeout_seconds",
 ]
 
 # Sentence-pause parameters that live on ``ServerState`` rather than the
@@ -1217,3 +1231,52 @@ async def _handle_delete_model_cache(ws: ServerConnection, state: ServerState, d
     cache_message = json.dumps({"type": "model_cache_changed", "model_id": model_id})
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(cache_message), loop)
     await ws.send(json.dumps({"status": "success", "message": f"cache deleted: {model_id}", "removed": removed}))
+
+
+@register_command("delete_model_quantization", pre_ready=True)
+async def _handle_delete_model_quantization(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Delete ONLY the weight files for one ``(model_id, quantization)`` tuple.
+
+    Powers the per-quant trash icon on the picker. The whole-repo
+    :func:`delete_model_cache` is destructive for users who keep multiple
+    precisions of the same model cached; this command surgically removes
+    a single variant (e.g. delete Cohere fp16 while keeping Cohere q4)
+    and rebroadcasts ``model_cache_changed`` so the picker's per-quant
+    cache dots refresh. ``pre_ready=True`` matches the sibling handler.
+    """
+    from src.recorder.domain.model_registry import ModelCatalog
+    from src.recorder.infrastructure.model_cache import delete_cache_by_quantization, resolve_hf_repo
+
+    model_id = data.get("model_id") or data.get("model")
+    if not isinstance(model_id, str) or not model_id:
+        await ws.send(json.dumps({"status": "error", "message": "missing or invalid 'model_id' field"}))
+        return
+    quantization_raw = data.get("quantization", "")
+    # An empty string is the catalog's "default precision" — that's a valid
+    # variant id, not a missing field — so we only reject non-string types.
+    if not isinstance(quantization_raw, str):
+        await ws.send(json.dumps({"status": "error", "message": "invalid 'quantization' field"}))
+        return
+    catalog = ModelCatalog()
+    info = catalog.get(model_id)
+    hf_repo = resolve_hf_repo(info.onnx_model_name if info else None)
+    if info is None or hf_repo is None:
+        await ws.send(json.dumps({"status": "error", "message": f"no HF repo for model '{model_id}'"}))
+        return
+    removed = delete_cache_by_quantization(hf_repo, quantization_raw)
+    print(
+        f"{bcolors.WARNING}[cache] per-quant delete requested for "
+        f"{model_id}@{quantization_raw or 'default'} (removed={removed}){bcolors.ENDC}"
+    )
+    loop = asyncio.get_event_loop()
+    cache_message = json.dumps({"type": "model_cache_changed", "model_id": model_id})
+    asyncio.run_coroutine_threadsafe(state.audio_queue.put(cache_message), loop)
+    await ws.send(
+        json.dumps(
+            {
+                "status": "success",
+                "message": f"quantization cache deleted: {model_id}@{quantization_raw or 'default'}",
+                "removed": removed,
+            }
+        )
+    )

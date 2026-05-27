@@ -29,9 +29,12 @@ from src.recorder.infrastructure.onnxasr_transcriber import (
     _build_sess_options,
     _extract_fp16_whisper_decoder_path,
     _is_external_data_missing_error,
+    _is_whisper_family,
     _make_progress_adapter,
+    _optimized_model_path,
     _peak_normalize,
     _pick_intra_op_threads,
+    _slug_model_id,
     _snapshot_providers,
     _vad_cache_key,
 )
@@ -336,8 +339,9 @@ def test_build_sess_options_sets_intra_threads_for_gpu() -> None:
 
 
 def test_build_sess_options_fp16_lowers_graph_optimization() -> None:
-    """fp16 path keeps ``ORT_ENABLE_EXTENDED`` (workaround for Whisper
-    fp16 encoder fusion bug) — see :func:`_build_sess_options` docstring."""
+    """Legacy unparametrized fp16 path (model_name=None) keeps
+    ``ORT_ENABLE_EXTENDED`` (workaround for Whisper fp16 encoder fusion
+    bug) — see :func:`_build_sess_options` docstring."""
     import onnxruntime as rt
 
     opts = _build_sess_options(("CPUExecutionProvider",), fp16=True)
@@ -351,3 +355,200 @@ def test_build_sess_options_non_fp16_keeps_default_graph_level() -> None:
 
     opts = _build_sess_options(("CPUExecutionProvider",), fp16=False)
     assert opts.graph_optimization_level == rt.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+
+# ── Per-model fp16 gate (sub-goal 1 from Axis IV.1) ─────────────────────
+#
+# The ``ORT_ENABLE_EXTENDED`` downgrade exists to dodge a
+# ``SimplifiedLayerNormFusion`` bug on legacy onnx-community Whisper fp16
+# encoder exports. Parakeet, Moonshine, Canary, and other non-Whisper
+# fp16 models don't have this bug and keep ``ORT_ENABLE_ALL`` for the
+# full fusion savings (5-10 % per inference). The gate is purely
+# string-based on the model name — see :func:`_is_whisper_family`.
+
+
+def test_is_whisper_family_matches_canonical_whisper() -> None:
+    assert _is_whisper_family("whisper-tiny.en") is True
+    assert _is_whisper_family("whisper-large-v3") is True
+
+
+def test_is_whisper_family_matches_lite_and_distil_variants() -> None:
+    """Variants we still consider Whisper-family — same fp16 bug applies."""
+    assert _is_whisper_family("lite-whisper-acc") is True
+    assert _is_whisper_family("distil-whisper-large-v3") is True
+
+
+def test_is_whisper_family_matches_onnx_community_repo_prefix() -> None:
+    """The HF org/repo form must still be classified."""
+    assert _is_whisper_family("onnx-community/whisper-tiny.en") is True
+
+
+def test_is_whisper_family_is_case_insensitive() -> None:
+    assert _is_whisper_family("Whisper-Tiny") is True
+
+
+def test_is_whisper_family_rejects_non_whisper_models() -> None:
+    """Non-Whisper families MUST not be classified — that's what
+    unlocks the ORT_ENABLE_ALL win for them."""
+    assert _is_whisper_family("nemo-parakeet-tdt-0.6b-v3") is False
+    assert _is_whisper_family("moonshine-base") is False
+    assert _is_whisper_family("nemo-canary-1b-v2") is False
+    assert _is_whisper_family("gigaam-v2-rnnt") is False
+    assert _is_whisper_family("cohere_asr_v1") is False
+
+
+def test_is_whisper_family_handles_empty_or_none() -> None:
+    assert _is_whisper_family(None) is False
+    assert _is_whisper_family("") is False
+
+
+def test_build_sess_options_fp16_with_whisper_drops_to_extended() -> None:
+    """Whisper fp16 with the model_name known: still downgrades."""
+    import onnxruntime as rt
+
+    opts = _build_sess_options(("CPUExecutionProvider",), fp16=True, model_name="whisper-tiny.en")
+    assert opts.graph_optimization_level == rt.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+
+
+def test_build_sess_options_fp16_with_parakeet_keeps_enable_all() -> None:
+    """The core Axis IV.1 assertion: non-Whisper fp16 KEEPS full
+    fusions — recovers 5-10 % per inference on those models."""
+    import onnxruntime as rt
+
+    opts = _build_sess_options(("CPUExecutionProvider",), fp16=True, model_name="nemo-parakeet-tdt-0.6b-v3")
+    assert opts.graph_optimization_level == rt.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+
+def test_build_sess_options_fp16_with_moonshine_keeps_enable_all() -> None:
+    import onnxruntime as rt
+
+    opts = _build_sess_options(("CPUExecutionProvider",), fp16=True, model_name="moonshine-base")
+    assert opts.graph_optimization_level == rt.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+
+def test_build_sess_options_fp16_with_canary_keeps_enable_all() -> None:
+    import onnxruntime as rt
+
+    opts = _build_sess_options(("CPUExecutionProvider",), fp16=True, model_name="nemo-canary-1b-v2")
+    assert opts.graph_optimization_level == rt.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+
+def test_build_sess_options_fp16_with_lite_whisper_drops_to_extended() -> None:
+    """Lite-Whisper IS a Whisper variant — the fp16 bug still applies."""
+    import onnxruntime as rt
+
+    opts = _build_sess_options(("CPUExecutionProvider",), fp16=True, model_name="lite-whisper-acc")
+    assert opts.graph_optimization_level == rt.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+
+
+def test_build_sess_options_non_fp16_with_whisper_keeps_enable_all() -> None:
+    """fp16=False bypasses the gate entirely regardless of model."""
+    import onnxruntime as rt
+
+    opts = _build_sess_options(("CPUExecutionProvider",), fp16=False, model_name="whisper-tiny.en")
+    assert opts.graph_optimization_level == rt.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+
+# ── Optimized-model cache path (sub-goal 3 from Axis IV.3) ──────────────
+
+
+def test_slug_model_id_replaces_unsafe_characters() -> None:
+    """HF org/repo and quant tags must collapse to a filesystem-safe stem."""
+    slug = _slug_model_id("onnx-community/whisper-tiny.en", "fp16")
+    # Slashes, colons, etc. are squashed to ``_``.
+    assert "/" not in slug
+    assert "onnx-community_whisper-tiny.en" in slug
+    assert "fp16" in slug
+
+
+def test_slug_model_id_embeds_quantization() -> None:
+    """Different quants of the same model must NOT collide."""
+    a = _slug_model_id("whisper-tiny", "fp16")
+    b = _slug_model_id("whisper-tiny", "int8")
+    assert a != b
+
+
+def test_slug_model_id_defaults_quantization_to_default() -> None:
+    """Empty/None quantization slugs as ``default`` for stable keys."""
+    a = _slug_model_id("whisper-tiny", None)
+    b = _slug_model_id("whisper-tiny", "")
+    assert a == b
+    assert "default" in a
+
+
+def test_optimized_model_path_includes_ort_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Cache key MUST embed ``onnxruntime.__version__`` so a wheel bump
+    invalidates the cache automatically (no incompatible-graph crashes)."""
+    import onnxruntime as rt
+
+    monkeypatch.setenv("WINSTT_ORT_CACHE_DIR", str(tmp_path))
+    path = _optimized_model_path("whisper-tiny", "fp16")
+    assert path is not None
+    assert rt.__version__ in str(path)
+    assert path.name.endswith(".ort.bin")
+    # Parent directory must exist after resolution (created on demand).
+    assert path.parent.is_dir()
+
+
+def test_optimized_model_path_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Calling twice with the same arguments returns the same path so
+    a second session load writes to the same place (cache reuse)."""
+    monkeypatch.setenv("WINSTT_ORT_CACHE_DIR", str(tmp_path))
+    first = _optimized_model_path("whisper-tiny", "fp16")
+    second = _optimized_model_path("whisper-tiny", "fp16")
+    assert first == second
+
+
+def test_optimized_model_path_distinct_per_model(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Different models MUST hash to distinct cache files."""
+    monkeypatch.setenv("WINSTT_ORT_CACHE_DIR", str(tmp_path))
+    a = _optimized_model_path("whisper-tiny", "fp16")
+    b = _optimized_model_path("nemo-parakeet-tdt-0.6b-v3", "fp16")
+    assert a != b
+
+
+def test_build_sess_options_optimize_to_disk_sets_filepath(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """With ``optimize_to_disk=True``, the SessionOptions exposes a
+    cache path that includes the ORT version (so ORT will serialize
+    the optimized graph on session creation)."""
+    import onnxruntime as rt
+
+    monkeypatch.setenv("WINSTT_ORT_CACHE_DIR", str(tmp_path))
+    opts = _build_sess_options(
+        ("CPUExecutionProvider",),
+        fp16=False,
+        model_name="whisper-tiny",
+        quantization="fp16",
+        optimize_to_disk=True,
+    )
+    assert opts.optimized_model_filepath
+    assert rt.__version__ in opts.optimized_model_filepath
+
+
+def test_build_sess_options_optimize_to_disk_default_off(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Default ``optimize_to_disk=False`` leaves the field blank — no
+    accidental disk writes for callers that don't opt in."""
+    monkeypatch.setenv("WINSTT_ORT_CACHE_DIR", str(tmp_path))
+    opts = _build_sess_options(
+        ("CPUExecutionProvider",),
+        fp16=False,
+        model_name="whisper-tiny",
+        quantization="fp16",
+    )
+    assert not opts.optimized_model_filepath
+
+
+def test_build_sess_options_optimize_to_disk_requires_model_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No model_name → no cache key → no filepath (best-effort
+    fail-quiet path)."""
+    monkeypatch.setenv("WINSTT_ORT_CACHE_DIR", str(tmp_path))
+    opts = _build_sess_options(
+        ("CPUExecutionProvider",),
+        fp16=False,
+        model_name=None,
+        quantization="fp16",
+        optimize_to_disk=True,
+    )
+    assert not opts.optimized_model_filepath

@@ -71,6 +71,14 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		chip: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
 		logoSrc: "/provider-icons/cohere.png",
 	},
+	sense_voice: {
+		icon: AudioWave02Icon,
+		label: "SenseVoice",
+		chip: "bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400",
+		// No brand logo bundled — FunAudioLLM (Alibaba) doesn't ship one in
+		// provider-icons/, so we fall back to the HugeIcon. Matches the
+		// pattern Moonshine uses.
+	},
 	custom: {
 		icon: FolderLibraryIcon,
 		label: "Custom",
@@ -93,6 +101,7 @@ const FAMILY_AUTHOR: Record<FamilyKey, string> = {
 	"t-one": "T-Tech",
 	moonshine: "Useful Sensors",
 	cohere: "Cohere",
+	sense_voice: "FunAudioLLM",
 	custom: "Your Models",
 };
 
@@ -114,6 +123,15 @@ const FAMILY_SEARCH_ALIASES: Record<FamilyKey, string[]> = {
 	"t-one": ["t-tech", "t tech", "t-bank", "tinkoff", "tbank"],
 	moonshine: ["useful sensors", "useful-sensors", "moon", "streaming"],
 	cohere: ["cohere ai", "command", "transcribe"],
+	sense_voice: [
+		"sensevoice",
+		"sense-voice",
+		"sense voice",
+		"funaudiollm",
+		"funasr",
+		"alibaba",
+		"damo",
+	],
 	custom: ["custom", "user", "local", "byo", "bring your own"],
 };
 

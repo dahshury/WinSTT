@@ -164,6 +164,7 @@ class _FakePyAudioModule:
 
     paInt16 = 8  # numeric value is irrelevant — only identity matters
     paFloat32 = 1  # ditto. Production negotiates f32 first and falls back.
+    paInt24 = 4  # third priority in the format probe — same identity convention.
 
     def __init__(self, pa: _FakePyAudio) -> None:
         self._pa = pa
@@ -594,3 +595,236 @@ class TestFormatNegotiation:
         assert len(chunk) == 512 * 2
         samples = struct.unpack("<512h", chunk)
         assert all(s == 16384 for s in samples)
+
+
+class TestFormatPriorityPrefersInt16OverInt24:
+    """When the device supports both paInt16 AND paInt24 but NOT paFloat32,
+    the priority probe must pick paInt16 (the cheaper widening path).
+    This locks down the F32 > I16 > I24 order documented in
+    ``_negotiate_format`` against accidental reordering.
+    """
+
+    class _Int16OrInt24PyAudio(_FakePyAudio):
+        def is_format_supported(
+            self,
+            rate: int,
+            *,
+            input_device: int,
+            input_channels: int,
+            input_format: int,
+        ) -> bool:
+            del input_channels
+            if input_format == _FakePyAudioModule.paFloat32:
+                raise ValueError("paFloat32 unsupported", -9994)
+            # Accept paInt16 AND paInt24 at the device's sample rate.
+            dev = self.devices.get(input_device, {})
+            return rate in (16000, int(dev.get("defaultSampleRate", 0)))
+
+    def test_picks_paInt16_when_both_int16_and_int24_supported(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        pa = self._Int16OrInt24PyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+        formats_opened: list[int] = []
+        original_open = pa.open
+
+        def capture_open(**kwargs: int | bool) -> _FakeStream:
+            formats_opened.append(int(kwargs["format"]))
+            return original_open(**kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(pa, "open", capture_open)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=True)
+        source.setup()
+
+        # F32 fails → I16 wins (priority: F32 > I16 > I24).
+        assert formats_opened == [_FakePyAudioModule.paInt16]
+
+
+class TestFormatPriorityFallsBackToInt24:
+    """When the device supports ONLY paInt24 (rare — some pro USB mics),
+    the source picks I24 rather than failing the open."""
+
+    class _OnlyInt24PyAudio(_FakePyAudio):
+        def is_format_supported(
+            self,
+            rate: int,
+            *,
+            input_device: int,
+            input_channels: int,
+            input_format: int,
+        ) -> bool:
+            del input_channels
+            if input_format != _FakePyAudioModule.paInt24:
+                raise ValueError("only int24 supported", -9994)
+            dev = self.devices.get(input_device, {})
+            return rate in (16000, int(dev.get("defaultSampleRate", 0)))
+
+    def test_picks_paInt24_when_only_int24_supported(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        pa = self._OnlyInt24PyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+        formats_opened: list[int] = []
+        original_open = pa.open
+
+        def capture_open(**kwargs: int | bool) -> _FakeStream:
+            formats_opened.append(int(kwargs["format"]))
+            return original_open(**kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(pa, "open", capture_open)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=True)
+        source.setup()
+
+        assert formats_opened == [_FakePyAudioModule.paInt24]
+
+    def test_int24_read_chunk_converts_to_int16(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When the stream is paInt24, ``read_chunk`` returns int16 bytes.
+
+        paInt24 is 3 bytes per sample (LE signed). A buffer of 512
+        samples of value ``0x010000`` (1.0% of int24 range) widens to
+        int32 ``0x010000``, then ``>> 8`` gives int16 ``0x0100`` = 256.
+        """
+        import struct
+
+        pa = self._OnlyInt24PyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+
+        # 512 samples of signed int24 with value 0x010000.
+        # LE encoding: bytes are 0x00, 0x00, 0x01.
+        int24_payload = b"\x00\x00\x01" * 512
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=True)
+        source.setup()
+        source.resume()
+        pa.streams[-1].read_payload = int24_payload
+
+        chunk = source.read_chunk()
+        # 512 samples → 1024 int16 bytes.
+        assert len(chunk) == 512 * 2
+        samples = struct.unpack("<512h", chunk)
+        # 0x010000 widened to int32 → >>8 to drop the synthetic MSB
+        # zero → >>8 again in the int24→int16 step. Net: high 16 bits
+        # of 24-bit value 0x010000 = 0x0100 = 256.
+        assert all(s == 256 for s in samples)
+
+
+class TestSampleRatePrefersDeviceDefault:
+    """``_get_best_sample_rate`` now prefers the device's reported
+    ``defaultSampleRate`` over the 16 kHz target so we don't force the
+    WASAPI / driver resampler to do a sloppy in-driver resample. The
+    in-process scipy.signal.resample_poly path is phase-linear and
+    high-quality, equivalent to Handy's rubato::FftFixedIn.
+    """
+
+    class _MultiRatePyAudio(_FakePyAudio):
+        """Accepts both 16 kHz and 48 kHz at paInt16."""
+
+        def is_format_supported(
+            self,
+            rate: int,
+            *,
+            input_device: int,
+            input_channels: int,
+            input_format: int,
+        ) -> bool:
+            del input_channels
+            if input_format != _FakePyAudioModule.paInt16:
+                raise ValueError("only paInt16 supported", -9994)
+            return rate in (16000, 48000)
+
+    def test_picks_device_default_48k_even_when_16k_also_supported(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Device's defaultSampleRate is 48 kHz; both rates probe clean.
+        # Previously the source picked 16000 (target) first; now it must
+        # pick the device default to avoid the in-driver resampler.
+        mic_48k = {**_USB_MIC, "defaultSampleRate": 48000}
+        pa = self._MultiRatePyAudio(devices={1: mic_48k}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+        opened_rates: list[int] = []
+        original_open = pa.open
+
+        def capture_open(**kwargs: int | bool) -> _FakeStream:
+            opened_rates.append(int(kwargs["rate"]))
+            return original_open(**kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(pa, "open", capture_open)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=True)
+        source.setup()
+
+        assert opened_rates == [48000]
+
+    def test_picks_16k_when_device_default_is_already_16k(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No resample needed when the device's native rate is already
+        16 kHz. The target-rate fallback selects 16 kHz directly."""
+        # _USB_MIC already has defaultSampleRate=16000.
+        pa = self._MultiRatePyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+        opened_rates: list[int] = []
+        original_open = pa.open
+
+        def capture_open(**kwargs: int | bool) -> _FakeStream:
+            opened_rates.append(int(kwargs["rate"]))
+            return original_open(**kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(pa, "open", capture_open)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=True)
+        source.setup()
+
+        assert opened_rates == [16000]
+
+
+class TestResamplePreservesSineFrequency:
+    """Native-SR capture + scipy polyphase resample preserves the audio
+    spectrum: a 1 kHz sine captured at 48 kHz and resampled to 16 kHz
+    must still have its FFT peak at 1 kHz. Polyphase filtering is
+    phase-linear so the peak does NOT shift."""
+
+    def test_48k_sine_resampled_to_16k_keeps_peak_at_1khz(self) -> None:
+        import struct
+
+        import numpy as np
+
+        # 1024 ms of audio at 48 kHz = 48000 samples; 1 kHz sine.
+        from_rate = 48000
+        to_rate = 16000
+        n_samples_in = from_rate  # 1 s of audio
+        freq_hz = 1000
+
+        t = np.arange(n_samples_in) / from_rate
+        sine = (0.5 * np.sin(2 * np.pi * freq_hz * t) * 32767).astype(np.int16)
+        raw_bytes = sine.tobytes()
+
+        # Use the production static method so the test exercises the
+        # actual ``resample_poly`` call PyAudioSource uses.
+        resampled = PyAudioSource._resample(raw_bytes, from_rate, to_rate)
+
+        # 1 s in -> 1/3 s * 16000 = 16000 samples out.
+        samples_out = np.frombuffer(resampled, dtype=np.int16).astype(np.float64)
+        assert len(samples_out) == to_rate
+
+        # FFT and find the peak frequency.
+        spectrum = np.abs(np.fft.rfft(samples_out))
+        peak_bin = int(np.argmax(spectrum))
+        peak_freq_hz = peak_bin * to_rate / len(samples_out)
+
+        # Allow ±1 bin tolerance (1 Hz at this resolution).
+        assert abs(peak_freq_hz - freq_hz) < 2.0
+
+        # Verify the resampler unpacks back to the expected byte size.
+        # 512 raw int16 bytes = 256 samples; we passed 48000 samples ⇒
+        # 96000 bytes input → 32000 bytes output (16000 samples).
+        assert len(resampled) == to_rate * 2
+
+        # Sanity: struct unpacks the result without errors.
+        struct.unpack(f"<{to_rate}h", resampled)

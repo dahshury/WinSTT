@@ -16,6 +16,7 @@ keep the state fresh between probes.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -219,6 +220,72 @@ def delete_cache(hf_repo_id: str) -> bool:
 
     shutil.rmtree(repo_dir, ignore_errors=True)
     return True
+
+
+def delete_cache_by_quantization(hf_repo_id: str, quantization: str) -> bool:
+    """Remove ONLY the weight files matching ``quantization`` from the HF cache
+    of ``hf_repo_id`` — leaves every other quant of the same repo intact.
+
+    Per-quant delete is the trash-icon affordance on the picker: the user
+    can wipe a 4 GB ``fp16`` Cohere variant without nuking the 600 MB
+    ``q4`` they actually use. The whole-repo :func:`delete_cache` wipes
+    everything (including the snapshot tree + blobs); this one walks the
+    snapshot, filters weight files by :func:`_file_quantization`, deletes
+    the symlink target blob, then unlinks the snapshot symlink.
+
+    Returns True when at least one matching file was found and removed
+    (so the UI can broadcast cache invalidation); False when there was
+    nothing matching on disk. Never raises — like :func:`delete_cache`,
+    OS errors are swallowed and the next cache probe surfaces residue.
+    """
+    resolved = _latest_snapshot(hf_repo_id)
+    if resolved is None:
+        return False
+    snapshot, blobs_dir = resolved
+    matching = [
+        weight_file
+        for weight_file in _collect_weight_files(snapshot)
+        if _file_quantization(weight_file) == quantization
+    ]
+    if not matching:
+        return False
+    removed_any = False
+    for weight_file in matching:
+        removed_any |= _remove_weight_and_blob(weight_file, blobs_dir)
+    return removed_any
+
+
+def _remove_weight_and_blob(weight_file: Path, blobs_dir: Path) -> bool:
+    """Unlink ``weight_file`` and its blob target. Best-effort, never raises.
+
+    HF's cache layout stores file content in ``blobs/<sha>`` and the
+    snapshot's named file is a symlink into ``blobs``. To reclaim disk
+    space we need to delete both the symlink and the underlying blob.
+    """
+    blob_target: Path | None = None
+    try:
+        if weight_file.is_symlink():
+            target = weight_file.readlink()
+            blob_target = target if target.is_absolute() else (weight_file.parent / target).resolve()
+    except OSError:
+        blob_target = None
+    try:
+        weight_file.unlink()
+    except OSError:
+        return False
+    if blob_target is not None and blob_target.exists() and _is_under(blob_target, blobs_dir):
+        with contextlib.suppress(OSError):
+            blob_target.unlink()
+    return True
+
+
+def _is_under(child: Path, parent: Path) -> bool:
+    """Best-effort containment check that survives missing parents."""
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def probe_cache_state(hf_repo_id: str) -> ModelCacheState:

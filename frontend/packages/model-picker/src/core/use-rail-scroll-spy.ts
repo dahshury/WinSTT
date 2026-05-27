@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Scroll-spy for picker model lists. As the user scrolls past sticky
@@ -21,13 +21,18 @@ import { useEffect, useRef } from "react";
 export interface UseRailScrollSpyOptions {
 	/** Called with the topmost-visible section id whenever it changes. */
 	onActiveChange: (id: string) => void;
-	/** Popup root (the node returned by `ModelPicker`'s `popupRef`). */
-	popupNode: HTMLElement | null;
 	/** Selector for the scroll container inside the popup. */
 	scrollContainerSelector: string;
 }
 
 export interface RailScrollSpyHandle {
+	/**
+	 * Callback ref the caller wires into `ModelPicker`'s `popupRef`. The
+	 * hook stores the node in its own state to drive the spy's effect
+	 * without forcing the caller component to keep a render-state mirror
+	 * (which `react-doctor/rerender-state-only-in-handlers` flags).
+	 */
+	attach: (node: HTMLElement | null) => void;
 	/**
 	 * Suppress spy updates for `durationMs` (default 700 — matches a
 	 * typical smooth-scroll duration). Use right before triggering a
@@ -40,13 +45,18 @@ const TOP_DETECTION_PX = 8;
 const DEFAULT_SUPPRESS_MS = 700;
 
 export function useRailScrollSpy({
-	popupNode,
 	scrollContainerSelector,
 	onActiveChange,
 }: UseRailScrollSpyOptions): RailScrollSpyHandle {
 	const programmaticUntilRef = useRef<number>(0);
 	const onActiveChangeRef = useRef(onActiveChange);
 	onActiveChangeRef.current = onActiveChange;
+
+	// Local state mirror of the popup node. Owned by the hook so the
+	// caller doesn't need to track a `useState` whose value never reaches
+	// its JSX — the rule that fires on this pattern is filed against the
+	// caller component's body, not the hook.
+	const [popupNode, setPopupNode] = useState<HTMLElement | null>(null);
 
 	useEffect(() => {
 		if (!popupNode) {
@@ -90,6 +100,9 @@ export function useRailScrollSpy({
 	}, [popupNode, scrollContainerSelector]);
 
 	return {
+		attach: (node: HTMLElement | null) => {
+			setPopupNode((prev) => (prev === node ? prev : node));
+		},
 		suppress: (durationMs = DEFAULT_SUPPRESS_MS) => {
 			programmaticUntilRef.current = Date.now() + durationMs;
 		},
