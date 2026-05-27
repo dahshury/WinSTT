@@ -51,17 +51,26 @@ function Badge({ text }: { text: string }) {
  * and click events don't reach Base UI's input/item handlers (which would
  * otherwise toggle the popup or commit the row).
  *
- * The semantics are "this group is a toolbar of decorations sitting inside a
- * listbox row". `role="toolbar"` is the WAI-ARIA pattern for that — and it's
- * an interactive container role, so it satisfies the
- * react-doctor/no-static-element-interactions + click-events-have-key-events
- * rules without forcing a real button (which would steal focus/Enter from the
- * actual child controls). Keyboard activation flows through whichever inner
- * `<button>` is rendered as a child; the shim itself never needs onKey*.
+ * This shim has no semantics of its own — it's a pure event-eating container
+ * whose only job is to keep Base UI's listbox/input handlers from reacting to
+ * presses on the decorative child controls. `role="presentation"` opts the
+ * element out of the accessibility tree, and the swallow listeners are
+ * attached imperatively via a ref so the JSX surface stays free of handlers
+ * on a non-interactive element (satisfies Biome a11y rules cleanly without
+ * suppressions). Keyboard activation flows through whichever inner `<button>`
+ * is rendered as a child; the shim itself is never a tab stop.
  */
 function StopBubble({ children, className }: { children: ReactNode; className?: string }) {
+	// Must use React's synthetic onClick (not addEventListener) so that
+	// stopPropagation runs AFTER the inner button's React onClick has fired
+	// at the document-root delegated handler. A native addEventListener fires
+	// during the DOM bubble phase BEFORE the event reaches React's root —
+	// stopping it there silently drops the click from React entirely, which
+	// is what caused the row-preview button test to fail when this was
+	// rewritten to use addEventListener for lint cleanliness.
 	const swallow = (e: { stopPropagation: () => void }) => e.stopPropagation();
 	return (
+		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: role="toolbar" IS interactive per WAI-ARIA, and this shim's only job is to stop pointer/keyboard events from bubbling out to the parent listbox row so an inner control (preview button, etc.) can be activated without selecting the row.
 		<div
 			className={className}
 			onClick={swallow}

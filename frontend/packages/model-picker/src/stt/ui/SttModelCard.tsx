@@ -254,6 +254,20 @@ interface PrecisionGroupProps {
 	state: ModelStateEntry | undefined;
 }
 
+type BadgeIconButtonTone = "neutral" | "danger" | "primary";
+
+/** Maps a {@link BadgeIconButtonTone} to its Tailwind class string. Extracted
+ *  to avoid a nested ternary in the button render path. */
+function toneClassName(tone: BadgeIconButtonTone): string {
+	const map: Record<BadgeIconButtonTone, string> = {
+		danger: "bg-surface-secondary/40 text-foreground-muted hover:bg-error/15 hover:text-error",
+		primary: "bg-surface-secondary/40 text-accent hover:bg-accent/20",
+		neutral:
+			"bg-surface-secondary/40 text-foreground-muted hover:bg-surface-hover hover:text-foreground",
+	};
+	return map[tone];
+}
+
 /** Inline icon button used for every per-badge download-control action
  *  (Download, Pause, Resume, Cancel, Delete). Same height + border-l
  *  treatment as the trash icon so the four controls compose into a
@@ -268,15 +282,10 @@ function BadgeIconButton({
 	ariaLabel: string;
 	icon: IconSvgElement;
 	onClick: () => void;
-	tone?: "neutral" | "danger" | "primary";
+	tone?: BadgeIconButtonTone;
 	tooltip: string;
 }) {
-	const toneClass =
-		tone === "danger"
-			? "bg-surface-secondary/40 text-foreground-muted hover:bg-error/15 hover:text-error"
-			: tone === "primary"
-				? "bg-surface-secondary/40 text-accent hover:bg-accent/20"
-				: "bg-surface-secondary/40 text-foreground-muted hover:bg-surface-hover hover:text-foreground";
+	const toneClass = toneClassName(tone);
 	return (
 		<Tooltip content={tooltip} side="top">
 			<button
@@ -296,6 +305,204 @@ function BadgeIconButton({
 				<HugeiconsIcon className="size-3" icon={icon} />
 			</button>
 		</Tooltip>
+	);
+}
+
+type QuantOption = ReturnType<typeof getQuantizationOptions>[number];
+type QuantCacheState = ReturnType<typeof resolveQuantCache>;
+
+interface QuantActionButtonsProps {
+	cache: QuantCacheState;
+	download: QuantDownloadSnapshot | undefined;
+	model: ModelInfo;
+	onDownloadAction:
+		| ((action: QuantDownloadAction, modelId: string, quantization: OnnxQuantization) => void)
+		| undefined;
+	onRequestDeleteQuant:
+		| ((
+				modelId: string,
+				quantization: OnnxQuantization,
+				displayName: string,
+				quantLabel: string
+		  ) => void)
+		| undefined;
+	opt: QuantOption;
+}
+
+/** Renders the 0..2 trailing action buttons (Pause / Resume / Cancel /
+ *  Download / Delete) appended to a precision badge in the same ButtonGroup.
+ *  Extracted from {@link QuantOptionButton} so each branch is counted in its
+ *  own scope, keeping both functions under the cognitive-complexity cap. */
+function QuantActionButtons({
+	cache,
+	download,
+	model,
+	opt,
+	onRequestDeleteQuant,
+	onDownloadAction,
+}: QuantActionButtonsProps) {
+	const isDownloading = download !== undefined;
+	const isOnDisk = cache?.state === "cached" || cache?.state === "partial";
+	const isPartial = cache?.state === "partial" && !isDownloading;
+	const canDelete = onRequestDeleteQuant !== undefined && isOnDisk;
+	const canDownload = onDownloadAction !== undefined;
+	const deleteTooltip =
+		cache?.state === "partial"
+			? `Delete partial ${opt.label} download`
+			: `Delete cached ${opt.label} weights`;
+	return (
+		<>
+			{/* Active download → Pause/Resume + Cancel. */}
+			{isDownloading && canDownload && download.paused ? (
+				<BadgeIconButton
+					ariaLabel={`Resume ${opt.label} download`}
+					icon={PlayIcon}
+					onClick={() => onDownloadAction("resume", model.id, opt.value)}
+					tone="primary"
+					tooltip="Resume download"
+				/>
+			) : null}
+			{isDownloading && canDownload && !download.paused ? (
+				<BadgeIconButton
+					ariaLabel={`Pause ${opt.label} download`}
+					icon={PauseIcon}
+					onClick={() => onDownloadAction("pause", model.id, opt.value)}
+					tooltip="Pause download (resumable mid-file)"
+				/>
+			) : null}
+			{isDownloading && canDownload ? (
+				<BadgeIconButton
+					ariaLabel={`Cancel ${opt.label} download`}
+					icon={CancelCircleIcon}
+					onClick={() => onDownloadAction("cancel", model.id, opt.value)}
+					tone="danger"
+					tooltip="Cancel download"
+				/>
+			) : null}
+			{/* Idle + partial → Resume button to restart. */}
+			{!isDownloading && isPartial && canDownload ? (
+				<BadgeIconButton
+					ariaLabel={`Resume ${opt.label} download`}
+					icon={PlayIcon}
+					onClick={() => onDownloadAction("start", model.id, opt.value)}
+					tone="primary"
+					tooltip="Resume partial download from where it stopped"
+				/>
+			) : null}
+			{/* Idle + not cached → start download from the badge. */}
+			{!(isDownloading || isOnDisk) && canDownload ? (
+				<BadgeIconButton
+					ariaLabel={`Download ${opt.label} weights`}
+					icon={CloudDownloadIcon}
+					onClick={() => onDownloadAction("start", model.id, opt.value)}
+					tooltip="Download (resumable mid-file)"
+				/>
+			) : null}
+			{canDelete && !isDownloading && onRequestDeleteQuant ? (
+				<BadgeIconButton
+					ariaLabel={`Delete ${opt.label} weights for ${model.displayName}`}
+					icon={Delete02Icon}
+					onClick={() => onRequestDeleteQuant(model.id, opt.value, model.displayName, opt.label)}
+					tone="danger"
+					tooltip={deleteTooltip}
+				/>
+			) : null}
+		</>
+	);
+}
+
+interface QuantOptionButtonProps {
+	currentQuantization: OnnxQuantization;
+	getDownloadSnapshot:
+		| ((modelId: string, quantization: OnnxQuantization) => QuantDownloadSnapshot | undefined)
+		| undefined;
+	isSelectedModel: boolean;
+	model: ModelInfo;
+	onDownloadAction:
+		| ((action: QuantDownloadAction, modelId: string, quantization: OnnxQuantization) => void)
+		| undefined;
+	onRequestDeleteQuant:
+		| ((
+				modelId: string,
+				quantization: OnnxQuantization,
+				displayName: string,
+				quantLabel: string
+		  ) => void)
+		| undefined;
+	onSelect: (modelId: string, quantization: OnnxQuantization) => void;
+	opt: QuantOption;
+	state: ModelStateEntry | undefined;
+}
+
+/** Renders one precision-badge ButtonGroup: the precision label button
+ *  followed by 0..2 contextual action buttons (download / pause / resume /
+ *  cancel / delete) supplied by {@link QuantActionButtons}.
+ *
+ *  Per-badge button-group composition:
+ *    - Always: the precision label button itself.
+ *    - Active download: progress label + Pause/Resume + Cancel.
+ *    - Partial, idle: Resume + Delete.
+ *    - Cached, idle: Delete.
+ *    - Not cached, idle: Download.
+ *
+ *  Matches the user spec: "All model quantizations that are partially
+ *  downloaded should have their badge as resume or delete. All models that
+ *  are already downloaded should have delete as a button group beside their
+ *  badge." */
+function QuantOptionButton({
+	opt,
+	model,
+	state,
+	currentQuantization,
+	isSelectedModel,
+	onSelect,
+	onRequestDeleteQuant,
+	getDownloadSnapshot,
+	onDownloadAction,
+}: QuantOptionButtonProps) {
+	const isActive = isSelectedModel && opt.value === currentQuantization;
+	const cache = resolveQuantCache(state, opt.value);
+	const download = getDownloadSnapshot?.(model.id, opt.value);
+	const isDownloading = download !== undefined;
+	return (
+		<ButtonGroup
+			aria-label={`Precision ${opt.label} for ${model.displayName}`}
+			className="rounded-md ring-1 ring-border ring-inset"
+		>
+			<Tooltip content={`${opt.label} — ${quantCacheStatus(cache)}. ${opt.tooltip}`} side="top">
+				<button
+					className={cn(
+						"inline-flex h-6 cursor-pointer items-center gap-1.5 px-2 font-medium text-[10.5px] leading-none transition-colors",
+						"rounded-l-[5px]",
+						isActive
+							? "bg-accent/20 text-accent"
+							: "bg-surface-secondary/40 text-foreground-secondary hover:bg-surface-hover"
+					)}
+					onClick={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						onSelect(model.id, opt.value);
+					}}
+					type="button"
+				>
+					<QuantCacheDot cache={cache} />
+					{opt.label}
+					{isDownloading ? (
+						<span className="ms-1 font-mono text-[9.5px] text-foreground-muted tabular-nums">
+							{download.progress === null ? "…" : `${download.progress}%`}
+						</span>
+					) : null}
+				</button>
+			</Tooltip>
+			<QuantActionButtons
+				cache={cache}
+				download={download}
+				model={model}
+				onDownloadAction={onDownloadAction}
+				onRequestDeleteQuant={onRequestDeleteQuant}
+				opt={opt}
+			/>
+		</ButtonGroup>
 	);
 }
 
@@ -323,124 +530,20 @@ function PrecisionGroup({
 					<HugeiconsIcon className="size-3" icon={BinaryCodeIcon} />
 				</span>
 			</Tooltip>
-			{options.map((opt) => {
-				const isActive = isSelectedModel && opt.value === currentQuantization;
-				const cache = resolveQuantCache(state, opt.value);
-				const download = getDownloadSnapshot?.(model.id, opt.value);
-				const isDownloading = download !== undefined;
-				const isOnDisk = cache?.state === "cached" || cache?.state === "partial";
-				const isPartial = cache?.state === "partial" && !isDownloading;
-				const canDelete = onRequestDeleteQuant !== undefined && isOnDisk;
-				const canDownload = onDownloadAction !== undefined;
-
-				// Per-badge button-group composition:
-				//   * Always: the precision label button itself.
-				//   * Active download: progress label + Pause/Resume + Cancel.
-				//   * Partial, idle: Resume + Delete.
-				//   * Cached, idle: Delete.
-				//   * Not cached, idle: Download.
-				// Matches the user spec: "All model quantizations that are
-				// partially downloaded should have their badge as resume
-				// or delete. All models that are already downloaded should
-				// have delete as a button group beside their badge."
-				return (
-					<ButtonGroup
-						aria-label={`Precision ${opt.label} for ${model.displayName}`}
-						className="rounded-md ring-1 ring-border ring-inset"
-						key={opt.value || "default"}
-					>
-						<Tooltip
-							content={`${opt.label} — ${quantCacheStatus(cache)}. ${opt.tooltip}`}
-							side="top"
-						>
-							<button
-								className={cn(
-									"inline-flex h-6 cursor-pointer items-center gap-1.5 px-2 font-medium text-[10.5px] leading-none transition-colors",
-									"rounded-l-[5px]",
-									isActive
-										? "bg-accent/20 text-accent"
-										: "bg-surface-secondary/40 text-foreground-secondary hover:bg-surface-hover"
-								)}
-								onClick={(e) => {
-									e.preventDefault();
-									e.stopPropagation();
-									onSelect(model.id, opt.value);
-								}}
-								type="button"
-							>
-								<QuantCacheDot cache={cache} />
-								{opt.label}
-								{isDownloading ? (
-									<span className="ms-1 font-mono text-[9.5px] text-foreground-muted tabular-nums">
-										{download.progress === null ? "…" : `${download.progress}%`}
-									</span>
-								) : null}
-							</button>
-						</Tooltip>
-						{/* Active download → Pause/Resume + Cancel. */}
-						{isDownloading && canDownload && download.paused ? (
-							<BadgeIconButton
-								ariaLabel={`Resume ${opt.label} download`}
-								icon={PlayIcon}
-								onClick={() => onDownloadAction("resume", model.id, opt.value)}
-								tone="primary"
-								tooltip="Resume download"
-							/>
-						) : null}
-						{isDownloading && canDownload && !download.paused ? (
-							<BadgeIconButton
-								ariaLabel={`Pause ${opt.label} download`}
-								icon={PauseIcon}
-								onClick={() => onDownloadAction("pause", model.id, opt.value)}
-								tooltip="Pause download (resumable mid-file)"
-							/>
-						) : null}
-						{isDownloading && canDownload ? (
-							<BadgeIconButton
-								ariaLabel={`Cancel ${opt.label} download`}
-								icon={CancelCircleIcon}
-								onClick={() => onDownloadAction("cancel", model.id, opt.value)}
-								tone="danger"
-								tooltip="Cancel download"
-							/>
-						) : null}
-						{/* Idle + partial → Resume button to restart. */}
-						{!isDownloading && isPartial && canDownload ? (
-							<BadgeIconButton
-								ariaLabel={`Resume ${opt.label} download`}
-								icon={PlayIcon}
-								onClick={() => onDownloadAction("start", model.id, opt.value)}
-								tone="primary"
-								tooltip="Resume partial download from where it stopped"
-							/>
-						) : null}
-						{/* Idle + not cached → start download from the badge. */}
-						{!(isDownloading || isOnDisk) && canDownload ? (
-							<BadgeIconButton
-								ariaLabel={`Download ${opt.label} weights`}
-								icon={CloudDownloadIcon}
-								onClick={() => onDownloadAction("start", model.id, opt.value)}
-								tooltip="Download (resumable mid-file)"
-							/>
-						) : null}
-						{canDelete && !isDownloading ? (
-							<BadgeIconButton
-								ariaLabel={`Delete ${opt.label} weights for ${model.displayName}`}
-								icon={Delete02Icon}
-								onClick={() =>
-									onRequestDeleteQuant(model.id, opt.value, model.displayName, opt.label)
-								}
-								tone="danger"
-								tooltip={
-									cache?.state === "partial"
-										? `Delete partial ${opt.label} download`
-										: `Delete cached ${opt.label} weights`
-								}
-							/>
-						) : null}
-					</ButtonGroup>
-				);
-			})}
+			{options.map((opt) => (
+				<QuantOptionButton
+					currentQuantization={currentQuantization}
+					getDownloadSnapshot={getDownloadSnapshot}
+					isSelectedModel={isSelectedModel}
+					key={opt.value || "default"}
+					model={model}
+					onDownloadAction={onDownloadAction}
+					onRequestDeleteQuant={onRequestDeleteQuant}
+					onSelect={onSelect}
+					opt={opt}
+					state={state}
+				/>
+			))}
 		</div>
 	);
 }

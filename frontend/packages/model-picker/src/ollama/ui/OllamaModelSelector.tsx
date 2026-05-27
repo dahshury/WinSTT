@@ -1589,6 +1589,100 @@ function selectorListSlot(body: ReactNode): ReactNode {
 	);
 }
 
+/** Build the GroupRail tile list: one tile per installed publisher, an
+ *  optional Recommended tile, and the Library section header + per-publisher
+ *  sub-tiles when the catalog has loaded. Extracted from `OllamaModelSelector`
+ *  to keep the component body under the cognitive-complexity cap. */
+function buildOllamaRailItems(opts: {
+	grouped: [string, OllamaModel[]][];
+	libraryGroupedByPublisher: [string, OllamaLibraryHit[]][];
+	libraryIsLoaded: boolean;
+	libraryTotalMatched: number;
+	recommendedVisibleCount: number;
+	showRecommendedSection: boolean;
+}): GroupRailItem[] {
+	const railItems: GroupRailItem[] = opts.grouped.map(([publisherSlug, entries]) => {
+		const publisher = getOllamaPublisherBySlug(publisherSlug);
+		const iconSrc = getProviderIconWithFallback(publisher.slug);
+		return {
+			id: publisherSlug,
+			label: publisher.label,
+			badge: entries.length,
+			icon: (
+				<img
+					alt=""
+					className="size-5 rounded-[3px] object-cover"
+					height={20}
+					src={iconSrc}
+					width={20}
+				/>
+			),
+		};
+	});
+	if (opts.showRecommendedSection && opts.recommendedVisibleCount > 0) {
+		railItems.push({
+			id: RECOMMENDED_RAIL_ID,
+			label: "Recommended",
+			icon: <HugeiconsIcon className="size-3.5 text-amber-500" icon={StarIcon} />,
+			badge: opts.recommendedVisibleCount,
+		});
+	}
+	if (opts.libraryIsLoaded && opts.libraryGroupedByPublisher.length > 0) {
+		railItems.push({
+			id: LIBRARY_RAIL_ID,
+			label: "Ollama Library",
+			badge: opts.libraryTotalMatched,
+		});
+		for (const [publisherSlug, hits] of opts.libraryGroupedByPublisher) {
+			const publisher = getOllamaPublisherBySlug(publisherSlug);
+			const iconSrc = getProviderIconWithFallback(publisher.slug);
+			railItems.push({
+				id: `${LIBRARY_RAIL_ID}:${publisherSlug}`,
+				label: publisher.label,
+				badge: hits.length,
+				icon: (
+					<img
+						alt=""
+						className="size-5 rounded-[3px] object-cover opacity-80"
+						height={20}
+						src={iconSrc}
+						width={20}
+					/>
+				),
+			});
+		}
+	}
+	return railItems;
+}
+
+/** Compose the `LibrarySectionState` passed to `ListBody`. Returns `undefined`
+ *  when no `librarySearch` prop is supplied (in which case the library section
+ *  isn't rendered at all). */
+function buildLibrarySectionState(opts: {
+	expandedHit: string | null;
+	filteredCatalogLength: number;
+	hasQuery: boolean;
+	libraryGroupedByPublisher: [string, OllamaLibraryHit[]][];
+	librarySearch: OllamaLibrarySearchProps | undefined;
+	onExpand: (name: string) => void;
+}): LibrarySectionState | undefined {
+	const search = opts.librarySearch;
+	if (!search) {
+		return;
+	}
+	return {
+		expandedHit: opts.expandedHit,
+		groupedByPublisher: opts.libraryGroupedByPublisher,
+		totalMatched: opts.filteredCatalogLength,
+		error: search.error ?? null,
+		hasQuery: opts.hasQuery,
+		isLoaded: search.isLoaded,
+		isLoading: search.isLoading,
+		onExpand: opts.onExpand,
+		tagsByModel: search.tagsByModel,
+	};
+}
+
 /**
  * Combobox picker for Ollama models. Composes the shared `ModelPicker`
  * shell (search + popup + close-on-select) with three sections inside
@@ -1674,57 +1768,14 @@ export function OllamaModelSelector({
 	// Build the shared rail tile list — one tile per family + an optional
 	// "Recommended" tile at the bottom. Matches the OpenRouter + STT pickers
 	// (same `GroupRail` shell).
-	const railItems: GroupRailItem[] = grouped.map(([publisherSlug, entries]) => {
-		const publisher = getOllamaPublisherBySlug(publisherSlug);
-		const iconSrc = getProviderIconWithFallback(publisher.slug);
-		return {
-			id: publisherSlug,
-			label: publisher.label,
-			badge: entries.length,
-			icon: (
-				<img
-					alt=""
-					className="size-5 rounded-[3px] object-cover"
-					height={20}
-					src={iconSrc}
-					width={20}
-				/>
-			),
-		};
+	const railItems = buildOllamaRailItems({
+		grouped,
+		libraryGroupedByPublisher,
+		libraryIsLoaded: librarySearch?.isLoaded ?? false,
+		libraryTotalMatched: filteredCatalog.length,
+		recommendedVisibleCount: recommendedVisible.length,
+		showRecommendedSection,
 	});
-	if (showRecommendedSection && recommendedVisible.length > 0) {
-		railItems.push({
-			id: RECOMMENDED_RAIL_ID,
-			label: "Recommended",
-			icon: <HugeiconsIcon className="size-3.5 text-amber-500" icon={StarIcon} />,
-			badge: recommendedVisible.length,
-		});
-	}
-	if (librarySearch?.isLoaded && libraryGroupedByPublisher.length > 0) {
-		railItems.push({
-			id: LIBRARY_RAIL_ID,
-			label: "Ollama Library",
-			badge: filteredCatalog.length,
-		});
-		for (const [publisherSlug, hits] of libraryGroupedByPublisher) {
-			const publisher = getOllamaPublisherBySlug(publisherSlug);
-			const iconSrc = getProviderIconWithFallback(publisher.slug);
-			railItems.push({
-				id: `${LIBRARY_RAIL_ID}:${publisherSlug}`,
-				label: publisher.label,
-				badge: hits.length,
-				icon: (
-					<img
-						alt=""
-						className="size-5 rounded-[3px] object-cover opacity-80"
-						height={20}
-						src={iconSrc}
-						width={20}
-					/>
-				),
-			});
-		}
-	}
 
 	// Reset the active rail to the selected publisher whenever the model
 	// changes. Stored as state so user clicks (``handleRailClick``) and
@@ -1773,19 +1824,14 @@ export function OllamaModelSelector({
 		fetchTags?.(name);
 	};
 
-	const librarySection: LibrarySectionState | undefined = librarySearch
-		? {
-				expandedHit,
-				groupedByPublisher: libraryGroupedByPublisher,
-				totalMatched: filteredCatalog.length,
-				error: librarySearch.error ?? null,
-				hasQuery: query.trim().length > 0,
-				isLoaded: librarySearch.isLoaded,
-				isLoading: librarySearch.isLoading,
-				onExpand: handleExpand,
-				tagsByModel: librarySearch.tagsByModel,
-			}
-		: undefined;
+	const librarySection = buildLibrarySectionState({
+		expandedHit,
+		filteredCatalogLength: filteredCatalog.length,
+		hasQuery: query.trim().length > 0,
+		libraryGroupedByPublisher,
+		librarySearch,
+		onExpand: handleExpand,
+	});
 
 	const body = (
 		<ListBody
@@ -1811,6 +1857,15 @@ export function OllamaModelSelector({
 		/>
 	);
 
+	const swapFromName = swap?.fromName ?? undefined;
+	const swapToName = swap?.toName ?? undefined;
+	const swapFromModel = swapFromName ? models.find((m) => m.name === swapFromName) : undefined;
+	const swapToModel = swapToName ? models.find((m) => m.name === swapToName) : undefined;
+	const sidebarSlot =
+		railItems.length > 1 ? (
+			<GroupRail activeId={activeRailId} items={railItems} onClick={handleRailClick} />
+		) : undefined;
+
 	return (
 		<ModelPicker<OllamaModel, OllamaModel | null>
 			disabled={disabled}
@@ -1826,19 +1881,7 @@ export function OllamaModelSelector({
 				onOpen?.();
 				librarySearch?.loadCatalog();
 			}}
-			onValueChange={(next) => {
-				// Base UI Combobox fires `onValueChange` twice when an item is
-				// clicked: once with the selected model object, and once with
-				// a synthetic value derived from the input filter (where the
-				// `.name` property is undefined). The looser `if (next)` guard
-				// let the second call through and wrote `setModel(undefined)`
-				// to the store, which then triggered the model-replacement
-				// effect and silently reverted the swap. Require a non-empty
-				// string `name` so only real selections propagate.
-				if (next && typeof next.name === "string" && next.name.length > 0) {
-					onChange(next.name);
-				}
-			}}
+			onValueChange={(next) => forwardOllamaSelection(next, onChange)}
 			popupHeightClass="h-[min(620px,var(--available-height))]"
 			popupRef={(node) => {
 				popupRef.current = node;
@@ -1846,23 +1889,19 @@ export function OllamaModelSelector({
 			}}
 			popupWidthClass="w-[max(620px,var(--anchor-width))]"
 			searchPlaceholder="Search the Ollama library"
-			sidebarSlot={
-				railItems.length > 1 ? (
-					<GroupRail activeId={activeRailId} items={railItems} onClick={handleRailClick} />
-				) : undefined
-			}
+			sidebarSlot={sidebarSlot}
 			trigger={
 				<OllamaTrigger
 					activePull={pickPrimaryPull(pulls)}
 					disabled={disabled}
-					fromModel={swap?.fromName ? models.find((m) => m.name === swap.fromName) : undefined}
-					fromName={swap?.fromName ?? undefined}
+					fromModel={swapFromModel}
+					fromName={swapFromName}
 					isLoading={isLoading}
-					isSwitching={!!swap?.toName}
+					isSwitching={!!swapToName}
 					placeholder={placeholder}
 					selected={selected}
-					toModel={swap?.toName ? models.find((m) => m.name === swap.toName) : undefined}
-					toName={swap?.toName ?? undefined}
+					toModel={swapToModel}
+					toName={swapToName}
 				/>
 			}
 			value={selected ?? null}
@@ -1872,4 +1911,19 @@ export function OllamaModelSelector({
 
 function noop() {
 	/* no-op fallback when caller doesn't supply pull callbacks */
+}
+
+/** Forward a real selection (non-empty string name) to `onChange`. Base UI's
+ *  Combobox fires `onValueChange` twice per click — once with the real model,
+ *  once with a synthetic value whose `.name` is undefined. The strict guard
+ *  prevents the second call from clearing the selection and reverting swaps.
+ *  Extracted out of `OllamaModelSelector` to keep its cognitive complexity
+ *  under the rule cap. */
+function forwardOllamaSelection(
+	next: OllamaModel | null,
+	onChange: (modelName: string) => void
+): void {
+	if (next && typeof next.name === "string" && next.name.length > 0) {
+		onChange(next.name);
+	}
 }

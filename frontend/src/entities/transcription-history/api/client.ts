@@ -7,7 +7,7 @@
  */
 
 import { IPC } from "@/shared/api/ipc-channels";
-import type { PaginatedHistory } from "../model/types";
+import type { PaginatedHistory } from "../model/transcription-history";
 
 interface ElectronApiLike {
 	invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;

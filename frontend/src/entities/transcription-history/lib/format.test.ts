@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { HistoryEntry, PaginatedHistory, RecordingRetentionPeriod } from "../model/types";
+import type {
+	HistoryEntry,
+	PaginatedHistory,
+	RecordingRetentionPeriod,
+} from "../model/transcription-history";
 import { effectiveText, entryWordCount, formatEntryTimestamp } from "./format";
 
 // Touch the unused exported types so knip + tsc recognise them as part of the

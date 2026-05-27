@@ -4,7 +4,7 @@
  * history timestamp render as" and "which text do we surface".
  */
 
-import type { HistoryEntry } from "../model/types";
+import type { HistoryEntry } from "../model/transcription-history";
 
 /**
  * Pick the user-facing transcription text for a row. Prefers the post-LLM

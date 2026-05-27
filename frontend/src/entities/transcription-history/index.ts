@@ -6,4 +6,4 @@ export {
 } from "./api/client";
 export { effectiveText, formatEntryTimestamp } from "./lib/format";
 export { useHistoryViewStore } from "./model/history-store";
-export type { HistoryEntry } from "./model/types";
+export type { HistoryEntry } from "./model/transcription-history";

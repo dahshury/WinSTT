@@ -9,7 +9,7 @@
  */
 
 import { create } from "zustand";
-import type { HistoryEntry } from "./types";
+import type { HistoryEntry } from "./transcription-history";
 
 interface HistoryViewState {
 	appendPage: (page: { entries: HistoryEntry[]; hasMore: boolean }) => void;
