@@ -12,8 +12,8 @@ import asyncio
 import logging
 import os
 import threading
-from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncIterator, Callable
+from typing import TYPE_CHECKING
 
 from typing_extensions import override
 
@@ -31,9 +31,18 @@ from src.synthesizer.infrastructure.asset_downloader import (
 from src.synthesizer.infrastructure.voice_catalog import KOKORO_VOICE_CATALOG
 
 if TYPE_CHECKING:
+    import numpy as np
     from kokoro_onnx import Kokoro
+    from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
+
+# Mirrors ``src.synthesizer.bootstrap``'s callback aliases so we can store
+# the wired callbacks here without smuggling ``Any`` through the class.
+ProgressFn = Callable[[float, int, int], None]
+CancelFn = Callable[[], bool]
+PauseFn = Callable[[], bool]
+StatusFn = Callable[[str], None]
 
 
 class KokoroSynthesizer(ISpeechSynthesizer):
@@ -49,10 +58,10 @@ class KokoroSynthesizer(ISpeechSynthesizer):
     _kokoro: Kokoro | None
     _ready: bool
     _synth_lock: threading.Lock
-    _on_progress: object | None
-    _should_cancel: object | None
-    _should_pause: object | None
-    _on_status: object | None
+    _on_progress: ProgressFn | None
+    _should_cancel: CancelFn | None
+    _should_pause: PauseFn | None
+    _on_status: StatusFn | None
 
     def __init__(self, config: SynthesizerConfig) -> None:
         self._config = config
@@ -66,16 +75,17 @@ class KokoroSynthesizer(ISpeechSynthesizer):
 
     def attach_download_callbacks(
         self,
-        on_progress: object,
-        should_cancel: object,
-        on_status: object | None = None,
-        should_pause: object | None = None,
+        on_progress: ProgressFn | None,
+        should_cancel: CancelFn | None,
+        on_status: StatusFn | None = None,
+        should_pause: PauseFn | None = None,
     ) -> None:
         """Plug in the same lifecycle callbacks the STT side uses for downloads.
 
-        Called from bootstrap right after construction. Stored as untyped
-        objects because the concrete callback signature lives in the
-        ``stt_server`` layer and we don't want to import that here.
+        Called from bootstrap right after construction. The callback shapes
+        are the ones defined in :mod:`src.synthesizer.bootstrap` —
+        re-declared at module top here so the class can hold them with a
+        precise type instead of leaking ``Any`` into mypy.
         ``on_status`` (optional) takes a phase string so the UI can label
         which part of the install is running (engine vs model vs voices).
         ``should_pause`` (optional) lets the install pause cleanly at the
@@ -90,7 +100,7 @@ class KokoroSynthesizer(ISpeechSynthesizer):
     def _emit_status(self, phase: str) -> None:
         """Best-effort phase ping for the UI (engine / model / ready)."""
         if self._on_status is not None:
-            self._on_status(phase)  # type: ignore[operator]
+            self._on_status(phase)
 
     def _resolve_provider(self) -> str:
         """Pick the ORT execution provider.
@@ -146,9 +156,9 @@ class KokoroSynthesizer(ISpeechSynthesizer):
         self._emit_status("engine")
         outcome = ensure_support_pack(
             runtime_dir,
-            on_progress=self._on_progress,  # type: ignore[arg-type]
-            should_cancel=self._should_cancel,  # type: ignore[arg-type]
-            should_pause=self._should_pause,  # type: ignore[arg-type]
+            on_progress=self._on_progress,
+            should_cancel=self._should_cancel,
+            should_pause=self._should_pause,
         )
         if outcome == "paused":
             raise DownloadPaused("TTS engine pack install paused")
@@ -162,9 +172,9 @@ class KokoroSynthesizer(ISpeechSynthesizer):
             cache_dir,
             self._config.model_filename,
             self._config.voices_filename,
-            on_progress=self._on_progress,  # type: ignore[arg-type]
-            should_cancel=self._should_cancel,  # type: ignore[arg-type]
-            should_pause=self._should_pause,  # type: ignore[arg-type]
+            on_progress=self._on_progress,
+            should_cancel=self._should_cancel,
+            should_pause=self._should_pause,
         )
         if asset_outcome == "paused":
             raise DownloadPaused("TTS voice model install paused")
@@ -190,9 +200,9 @@ class KokoroSynthesizer(ISpeechSynthesizer):
             self._emit_status("engine")
             repair_outcome = repair_and_reinstall(
                 runtime_dir,
-                on_progress=self._on_progress,  # type: ignore[arg-type]
-                should_cancel=self._should_cancel,  # type: ignore[arg-type]
-                should_pause=self._should_pause,  # type: ignore[arg-type]
+                on_progress=self._on_progress,
+                should_cancel=self._should_cancel,
+                should_pause=self._should_pause,
             )
             if repair_outcome == "paused":
                 # `from None` because the pause is the cooperative outcome of
@@ -273,7 +283,7 @@ class KokoroSynthesizer(ISpeechSynthesizer):
                 lang=effective_lang,
             )
             seq = 0
-            last: tuple[Any, int] | None = None
+            last: tuple[NDArray[np.float32], int] | None = None
             async for samples, sample_rate in stream:
                 if last is not None:
                     prev_samples, prev_sr = last

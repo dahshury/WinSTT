@@ -148,7 +148,13 @@ def handle_transcribe_file(
 
         # Route through the same OnnxAsrTranscriber the live recorder uses —
         # one WhisperX-style VAD-segmented codepath for both mic and files.
-        transcriber = state.recorder._service._transcriber  # type: ignore[union-attr]
+        service = state.recorder._service
+        assert service is not None, (
+            "Recorder service must be initialised before file transcription — "
+            "callers gate on state.recorder above, which only becomes non-None "
+            "after _ensure_service() succeeds in the facade."
+        )
+        transcriber = service._transcriber
         if not isinstance(transcriber, OnnxAsrTranscriber):
             _send_file_event(
                 {

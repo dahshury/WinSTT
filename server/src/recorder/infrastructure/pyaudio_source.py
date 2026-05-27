@@ -389,7 +389,8 @@ class PyAudioSource(IAudioSource):
         pending = self._pending_device_index
         if pending is not self._NO_PENDING:
             self._pending_device_index = self._NO_PENDING
-            self._apply_device_switch(pending)  # type: ignore[arg-type]
+            assert pending is None or isinstance(pending, int)
+            self._apply_device_switch(pending)
 
         # Hotplug poll: if we entered setup with no device (or lost the
         # device mid-run), periodically re-check the system default.

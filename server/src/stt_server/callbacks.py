@@ -7,16 +7,18 @@ import base64
 import json
 import time
 from collections.abc import Callable
-from typing import Any
-
-import numpy as np
+from typing import TYPE_CHECKING, Any
 
 from src.building_blocks.terminal import TerminalColors as bcolors
 from src.building_blocks.terminal import debug_print
 from src.recorder.bootstrap import CALLBACK_EVENT_MAP
-from src.recorder.domain.events import DownloadProgress
+from src.recorder.domain.events import DownloadProgress, SpeakerSegment
 from src.stt_server.cli import persist_setting
 from src.stt_server.state import ServerState
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 
 def make_callback(
@@ -130,7 +132,7 @@ def on_model_download_cancelled(model: str, state: ServerState, loop: asyncio.Ab
 
 
 def on_transcription_start(
-    _audio_bytes: np.ndarray[Any, np.dtype[np.int16]],
+    _audio_bytes: NDArray[np.int16],
     state: ServerState,
     loop: asyncio.AbstractEventLoop,
 ) -> None:
@@ -404,7 +406,7 @@ def on_device_switch_failed(
 
 
 def on_speaker_segments_detected(
-    segments: tuple[Any, ...],
+    segments: tuple[SpeakerSegment, ...],
     state: ServerState,
     loop: asyncio.AbstractEventLoop,
 ) -> None:

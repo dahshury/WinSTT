@@ -7,6 +7,7 @@ import queue
 import re
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -143,7 +144,7 @@ class RecorderService:
     ) -> None:
         self._audio_source = audio_source
         self._vad = vad
-        self._transcriber = transcriber
+        self._transcriber: ITranscriber | None = transcriber
         self._wake_word_detector = wake_word_detector
         self._realtime_transcriber = realtime_transcriber
         # Diarizer is optional — None means "no per-utterance speaker labels".
@@ -228,7 +229,7 @@ class RecorderService:
         # Wired by the facade in __init__.py when DownloadCallbacks are
         # available; ``None`` means progress events are dropped (still
         # safe — the swap completes either way).
-        self._swap_progress_sink: Any = None
+        self._swap_progress_sink: Callable[[DownloadProgress], None] | None = None
         # Diarization toggle bookkeeping — single-slot (only one kind of
         # toggle, unlike model_swap which has main + realtime). A second
         # request mid-flight sets the event so the worker exits its next
@@ -349,11 +350,9 @@ class RecorderService:
             except Exception:  # pragma: no cover — defensive
                 logger.debug("active_providers() raised; assuming non-DML", exc_info=True)
                 return False
-        try:
-            iterator = iter(providers)  # type: ignore[arg-type]
-        except TypeError:
+        if not isinstance(providers, Iterable):
             return False
-        return any("DmlExecutionProvider" in str(p) for p in iterator)
+        return any("DmlExecutionProvider" in str(p) for p in providers)
 
     def text(self, on_transcription_finished: TextCallback | None = None) -> str:
         # Idle-unload daemon (Handy parity) tears the transcribers down
@@ -1021,7 +1020,7 @@ class RecorderService:
         old_rt: ITranscriber | None
         with self._main_transcriber_lock:
             old_main = self._transcriber
-            self._transcriber = None  # type: ignore[assignment]
+            self._transcriber = None
         with self._realtime_transcriber_lock:
             old_rt = self._realtime_transcriber
             self._realtime_transcriber = None
@@ -1325,7 +1324,7 @@ class RecorderService:
     # with phase timings, RSS deltas, and CPU% — that's the only place
     # the diagnostic numbers are exposed; nothing on the event bus
     # carries them.
-    def set_swap_progress_sink(self, sink: Any | None) -> None:  # noqa: ANN401 — duck-typed callback
+    def set_swap_progress_sink(self, sink: Callable[[DownloadProgress], None] | None) -> None:
         """Install a download-progress callback used by ``request_model_swap``.
 
         Receives ``DownloadProgress`` instances per HF download chunk during
@@ -1747,7 +1746,7 @@ class RecorderService:
         with lock:
             if kind == "main":
                 old = self._transcriber
-                self._transcriber = None  # type: ignore[assignment]  # transient swap state — guarded by _safe_transcribe
+                self._transcriber = None  # transient swap state — guarded by _safe_transcribe
                 return old
             old = self._realtime_transcriber
             self._realtime_transcriber = None
@@ -1839,7 +1838,7 @@ class RecorderService:
     def _load_transcriber(
         self,
         name: str,
-        on_progress: Callable[[DownloadProgress], None],
+        on_progress: Callable[[DownloadProgress], None] | None,
     ) -> ITranscriber:
         # Late import to keep the application layer free of infrastructure imports
         # at module load time. The hexagonal rulebook keeps bootstrap as the only

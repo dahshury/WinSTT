@@ -155,7 +155,7 @@ class SileroVAD(IVoiceActivityDetector):
         self._tail = np.zeros(0, dtype=np.float32)
         self._last_prob = 0.0
 
-    def close(self) -> Any:  # noqa: ANN401
+    def close(self) -> int:
         """Release the ORT session (optional — fires on GC anyway)."""
         from onnx_asr._session_cleanup import release_inference_sessions
 

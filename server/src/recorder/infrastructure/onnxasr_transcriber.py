@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 from typing_extensions import override
@@ -438,6 +438,19 @@ def _build_fp16_sess_options() -> Any:  # noqa: ANN401 — onnxruntime.SessionOp
     return _build_sess_options(None, fp16=True)
 
 
+class _OnnxAsrProgressEvent(Protocol):
+    """Structural shape of ``onnx_asr.progress.DownloadProgress``.
+
+    onnx-asr's progress events are duck-typed at the boundary — we only
+    consume these three fields, so a local :class:`Protocol` lets us
+    annotate the callback without importing the upstream untyped module.
+    """
+
+    filename: str
+    downloaded: int
+    total: int | None
+
+
 def _make_progress_adapter(model_name: str, sink: Callable[[DownloadProgress], None]) -> Callable[[Any], None]:
     """Map onnx-asr's per-file :class:`onnx_asr.progress.DownloadProgress`
     events into the server's per-model :class:`DownloadProgress` event.
@@ -450,7 +463,7 @@ def _make_progress_adapter(model_name: str, sink: Callable[[DownloadProgress], N
     per_file: dict[str, tuple[int, int]] = {}
     start_time = time.monotonic()
 
-    def _on_progress(event: Any) -> None:  # noqa: ANN401 — onnx_asr.progress.DownloadProgress
+    def _on_progress(event: _OnnxAsrProgressEvent) -> None:
         per_file[event.filename] = (int(event.downloaded), int(event.total or 0))
         downloaded_bytes = sum(d for d, _ in per_file.values())
         total_bytes = sum(t for _, t in per_file.values())
