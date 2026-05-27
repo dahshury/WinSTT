@@ -70,7 +70,7 @@ interface StatusBannerProps {
 function StatusBanner({ action, detail, description, severity, title }: StatusBannerProps) {
 	const classes = STATUS_SEVERITY_CLASSES[severity];
 	return (
-		<div aria-live="polite" className={classes.container} role="status">
+		<output aria-live="polite" className={classes.container}>
 			<div className="font-medium">{title}</div>
 			<div className="mt-1">{description}</div>
 			{detail ? <div className={classes.detail}>{detail}</div> : null}
@@ -81,7 +81,7 @@ function StatusBanner({ action, detail, description, severity, title }: StatusBa
 					</Button>
 				</div>
 			) : null}
-		</div>
+		</output>
 	);
 }
 

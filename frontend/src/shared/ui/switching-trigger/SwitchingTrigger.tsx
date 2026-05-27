@@ -28,12 +28,11 @@ interface SwitchingFromToRowProps {
  *  switch reads as "active" even when one leg is unknown. */
 export function SwitchingFromToRow({ from, to, ariaLabel }: SwitchingFromToRowProps) {
 	return (
-		<div
+		<output
 			aria-label={ariaLabel}
 			aria-live="polite"
 			className="flex min-w-0 flex-1 items-center gap-1.5"
 			data-slot="switching-from-to"
-			role="status"
 		>
 			{from ? (
 				<>
@@ -56,33 +55,7 @@ export function SwitchingFromToRow({ from, to, ariaLabel }: SwitchingFromToRowPr
 					{to}
 				</>
 			) : null}
-		</div>
-	);
-}
-
-/** Compact uppercase pill (accent-glow background, pulsing dot, mono caps)
- *  intended to replace the trigger's chevron on the right edge while a swap
- *  is in flight. Single, calm state indicator — the bottom sweep carries the
- *  motion. */
-export function SwitchingPill({ label = "Switching" }: { label?: string }) {
-	return (
-		<span className="ms-2 inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-glow px-2 py-0.5 font-mono font-semibold text-[10px] text-accent uppercase tracking-[0.12em]">
-			<span className="size-1.5 animate-pulse rounded-full bg-accent" />
-			{label}
-		</span>
-	);
-}
-
-/** Continuously sweeping accent bar pinned to the parent's bottom edge.
- *  Requires the parent to be `position: relative` and `overflow: hidden`. */
-export function SwapSweepBar() {
-	return (
-		<span
-			aria-hidden="true"
-			className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] overflow-hidden bg-accent/15"
-		>
-			<span className="block h-full w-1/2 animate-swap-sweep bg-gradient-to-r from-transparent via-accent to-transparent" />
-		</span>
+		</output>
 	);
 }
 
