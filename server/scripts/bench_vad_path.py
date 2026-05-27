@@ -82,7 +82,7 @@ def main() -> int:
             audio = load_speech(dur)
             try:
                 med, text = bench(model, audio, prov_list, iters)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 print(f"  {model:<46} {dur:>5.1f}s  FAILED: {type(e).__name__}: {str(e)[:60]}")
                 continue
             print(f"  {model:<46} {dur:>5.1f}s  {med:7.2f}ms   {len(text)}")

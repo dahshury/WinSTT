@@ -94,7 +94,10 @@ def run_one(
     def patched(name: str, **kwargs: object) -> object:
         kwargs["sess_options"] = sess_opts
         if cuda_opts is not None and use_gpu:
-            providers: list[object] = [("CUDAExecutionProvider", dict(cuda_opts, device_id="0")), "CPUExecutionProvider"]
+            providers: list[object] = [
+                ("CUDAExecutionProvider", dict(cuda_opts, device_id="0")),
+                "CPUExecutionProvider",
+            ]
             kwargs["providers"] = providers
         return orig(name, **kwargs)
 
@@ -193,7 +196,7 @@ def main() -> int:
     for label, opts, cuda_opt in configs:
         try:
             samples, text = run_one(model, audio, opts, cuda_opt, iters, use_gpu=use_gpu)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"  {label:<55}  FAILED: {type(e).__name__}: {str(e)[:60]}")
             continue
         med = statistics.median(samples) * 1000
@@ -213,7 +216,9 @@ def main() -> int:
         rows_sorted = sorted(rows, key=lambda r: r[1])
         for label, med, _, _, identical in rows_sorted:
             delta = (med - base_med) / base_med * 100
-            print(f"  {label:<55}  {med:7.2f}ms  {('+' if delta >= 0 else '') + f'{delta:6.1f}%':>9}  {'OK' if identical else '**DRIFT**'}")
+            delta_str = ("+" if delta >= 0 else "") + f"{delta:6.1f}%"
+            drift = "OK" if identical else "**DRIFT**"
+            print(f"  {label:<55}  {med:7.2f}ms  {delta_str:>9}  {drift}")
     return 0
 
 

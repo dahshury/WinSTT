@@ -192,7 +192,7 @@ def main() -> int:
     for label, opts, cuda_opt in CONFIGS:
         try:
             samples, text = run_one(model, audio, opts, cuda_opt, iters)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"  {label:<58}  FAILED: {type(e).__name__}: {str(e)[:80]}")
             continue
         med = statistics.median(samples) * 1000
@@ -212,7 +212,9 @@ def main() -> int:
         rows_sorted = sorted(rows, key=lambda r: r[1])
         for label, med, _, _, identical in rows_sorted:
             delta = (med - base_med) / base_med * 100
-            print(f"  {label:<58}  {med:7.2f}ms  {('+' if delta >= 0 else '') + f'{delta:6.1f}%':>9}  {'OK' if identical else '**DRIFT**'}")
+            delta_str = ("+" if delta >= 0 else "") + f"{delta:6.1f}%"
+            drift = "OK" if identical else "**DRIFT**"
+            print(f"  {label:<58}  {med:7.2f}ms  {delta_str:>9}  {drift}")
 
     return 0
 

@@ -181,7 +181,7 @@ def is_cached(catalog_id: str) -> bool:
     if "/" not in catalog_id:
         return True  # bare short name — let load_model decide
     try:
-        from huggingface_hub import constants  # noqa: PLC0415  type: ignore[import-untyped]
+        from huggingface_hub import constants
     except ImportError:
         return False
     cache_root = Path(constants.HF_HUB_CACHE)

@@ -574,14 +574,12 @@ def _apply_data_dir(arg_data_dir: str | None) -> None:
     data_dir = Path(raw).expanduser()
     hf_dir = data_dir / "hf"
     logs_dir = data_dir / "logs"
+    # Best-effort mkdir: a portable install on a read-only USB stick will
+    # surface the error downstream when logging actually opens the file. Don't
+    # fail boot here.
     for d in (data_dir, hf_dir, logs_dir):
-        try:
+        with contextlib.suppress(OSError):
             d.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            # Best-effort: a portable install on a read-only USB stick will
-            # surface the error downstream when logging actually opens the
-            # file. Don't fail boot here.
-            pass
     os.environ.setdefault("WINSTT_DATA_DIR", str(data_dir))
     os.environ.setdefault("HF_HOME", str(hf_dir))
     os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(hf_dir))

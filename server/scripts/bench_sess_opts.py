@@ -30,9 +30,16 @@ def make_audio(duration_s: float = 6.0, sample_rate: int = 16_000) -> np.ndarray
     meaningful — synthetic sines produce empty transcripts regardless
     of session-option choices, so "no drift" is not informative.
     """
+    examples_dir = Path(__file__).resolve().parent.parent.parent / "examples"
     candidates = [
-        Path(__file__).resolve().parent.parent.parent / "examples" / "diart" / "tests" / "data" / "audio" / "sample.wav",
-        Path(__file__).resolve().parent.parent.parent / "examples" / "openWakeWord" / "notebooks" / "training_tutorial_data" / "turn_on_the_office_lights_test_clip.wav",
+        examples_dir / "diart" / "tests" / "data" / "audio" / "sample.wav",
+        (
+            examples_dir
+            / "openWakeWord"
+            / "notebooks"
+            / "training_tutorial_data"
+            / "turn_on_the_office_lights_test_clip.wav"
+        ),
     ]
     for wav_path in candidates:
         if wav_path.exists():
@@ -104,7 +111,15 @@ CONFIGS: list[tuple[str, rt.SessionOptions | None]] = [
 ]
 
 
-def run_one(model_name: str, audio: np.ndarray, label: str, opts: rt.SessionOptions | None, iters: int, *, use_gpu: bool = False) -> tuple[list[float], str]:
+def run_one(
+    model_name: str,
+    audio: np.ndarray,
+    label: str,
+    opts: rt.SessionOptions | None,
+    iters: int,
+    *,
+    use_gpu: bool = False,
+) -> tuple[list[float], str]:
     # Patch the OnnxAsrTranscriber to pass sess_options through. Since the
     # current wrapper only sets sess_options for fp16, we monkey-patch the
     # underlying onnx_asr.load_model call site by temporarily injecting
@@ -160,7 +175,7 @@ def main() -> int:
     for label, opts in CONFIGS:
         try:
             samples, text = run_one(model, audio, label, opts, iters, use_gpu=use_gpu)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"  {label:<32}  FAILED: {e}", flush=True)
             continue
         med = statistics.median(samples) * 1000

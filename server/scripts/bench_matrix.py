@@ -1,4 +1,4 @@
-"""Matrix benchmark — models × audio durations × EPs.
+"""Matrix benchmark — models x audio durations x EPs.
 
 Maps the optimization curve across the realistic workload variety:
 * Short audio (1-3 s) — realtime-tick path (live preview)
@@ -134,7 +134,7 @@ def main() -> int:
     use_gpu = "--gpu" in sys.argv
     iters = 10 if use_gpu else 8
     label = "CUDA" if use_gpu else "CPU"
-    print(f"\n=== Matrix: models × duration ({label}, N={iters}) ===\n")
+    print(f"\n=== Matrix: models x duration ({label}, N={iters}) ===\n")
     print(f"  {'model':<46} {'audio':>7} {'baseline':>10} {'tuned':>10} {'+do_copy':>10} {'best':>8}  drift?")
     for model in MODELS:
         for dur in DURATIONS:
@@ -142,7 +142,7 @@ def main() -> int:
             # Baseline = ORT pure defaults (no sess_opts, no providers override beyond list)
             try:
                 base_med, _, _, base_text = time_one(model, audio, baseline_opts(), None, iters, use_gpu)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 print(f"  {model:<46} {dur:>5.1f}s  BASELINE FAILED: {type(e).__name__}: {str(e)[:50]}")
                 continue
             # Tuned = wrapper's intra-only tuning

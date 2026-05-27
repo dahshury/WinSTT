@@ -886,11 +886,7 @@ class RecorderService:
         knob; this method removes the last "model.* keys force restart"
         entry from the Electron-side ``STARTUP_ONLY_KEYS_LIST``.
         """
-        normalized: int | None
-        if timeout is None or timeout < 0:
-            normalized = None
-        else:
-            normalized = int(timeout)
+        normalized: int | None = None if timeout is None or timeout < 0 else int(timeout)
         self._unload_timeout_seconds = normalized
         self._config.transcription.model_unload_timeout_seconds = normalized
         # Decide what to do with the poller. Two cases need it running:
